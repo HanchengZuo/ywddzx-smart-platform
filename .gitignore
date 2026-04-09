@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment
+.env
+*.env
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Upload / Generated files
+app/static/uploads/*
+app/static/final/*
+app/static/training_materials/*
+app/static/training_records/*
+
+# 保留目录结构
+!app/static/uploads/.gitkeep
+!app/static/final/.gitkeep
+!app/static/training_materials/.gitkeep
+!app/static/training_records/.gitkeep
+
+# OS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Docker
+*.pid
+*.sock
+
+storage/
+frontend/node_modules/

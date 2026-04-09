@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16
+    container_name: ywddzx-db
+    restart: always
+    environment:
+      POSTGRES_DB: ywddzx
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - ywddzx_pgdata:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d
+
+  backend:
+    build: ./backend
+    container_name: ywddzx-backend
+    restart: always
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ywddzx
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "5002:5000"
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      - db
+
+  frontend:
+    image: node:20
+    container_name: ywddzx-frontend
+    working_dir: /app
+    restart: always
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend
+
+volumes:
+  ywddzx_pgdata:
