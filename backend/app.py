@@ -3,15 +3,19 @@ from flask_cors import CORS
 import os
 import uuid
 from datetime import date, datetime
+from io import BytesIO
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from werkzeug.utils import secure_filename
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
 
 BASE_DIR = os.path.dirname(__file__)
 STORAGE_ROOT = os.path.join(BASE_DIR, "storage")
+MAX_IMAGE_BYTES = 500 * 1024
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 ISSUES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issues")
 RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
 
@@ -58,13 +62,56 @@ def save_uploaded_file(file_storage, category):
     else:
         raise ValueError("不支持的上传分类。")
 
-    target_dir, now = ensure_storage_subdir(base_dir)
-
     original_name = secure_filename(file_storage.filename)
-    ext = os.path.splitext(original_name)[1].lower() or ".jpg"
-    filename = f"{prefix}_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}{ext}"
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext and ext not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError("仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。")
+
+    target_dir, now = ensure_storage_subdir(base_dir)
+    filename = f"{prefix}_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}.jpg"
     save_path = os.path.join(target_dir, filename)
-    file_storage.save(save_path)
+
+    image_bytes = file_storage.read()
+    if not image_bytes:
+        raise ValueError("上传图片内容为空。")
+
+    try:
+        image = Image.open(BytesIO(image_bytes))
+    except Exception as exc:
+        raise ValueError("上传文件不是可识别的图片。") from exc
+
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    elif image.mode == "L":
+        image = image.convert("RGB")
+
+    max_width = 1600
+    if image.width > max_width:
+        ratio = max_width / float(image.width)
+        new_size = (max_width, max(1, int(image.height * ratio)))
+        image = image.resize(new_size, Image.LANCZOS)
+
+    quality = 82
+    output = BytesIO()
+    image.save(output, format="JPEG", quality=quality, optimize=True)
+
+    while output.tell() > MAX_IMAGE_BYTES and quality > 42:
+        quality -= 6
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=quality, optimize=True)
+
+    if output.tell() > MAX_IMAGE_BYTES:
+        temp_image = image
+        while output.tell() > MAX_IMAGE_BYTES and temp_image.width > 960:
+            new_width = int(temp_image.width * 0.9)
+            new_height = max(1, int(temp_image.height * 0.9))
+            temp_image = temp_image.resize((new_width, new_height), Image.LANCZOS)
+            output = BytesIO()
+            temp_image.save(output, format="JPEG", quality=70, optimize=True)
+        image = temp_image
+
+    with open(save_path, "wb") as f:
+        f.write(output.getvalue())
 
     relative_dir = os.path.relpath(target_dir, STORAGE_ROOT).replace("\\", "/")
     return f"/{relative_dir}/{filename}"

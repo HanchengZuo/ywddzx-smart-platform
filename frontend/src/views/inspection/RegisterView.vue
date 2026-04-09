@@ -217,6 +217,8 @@ const submitMessage = ref('')
 const submitMessageType = ref('info')
 const createdTime = ref('')
 const submitting = ref(false)
+const MAX_UPLOAD_BYTES = 500 * 1024
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
 const stations = ref([])
 const standards = ref([])
 const categories = ref([])
@@ -267,6 +269,80 @@ const formatCurrentTime = () => {
   const minutes = String(now.getMinutes()).padStart(2, '0')
   const seconds = String(now.getSeconds()).padStart(2, '0')
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+const loadImageFromFile = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('图片读取失败。'))
+      img.src = reader.result
+    }
+    reader.onerror = () => reject(new Error('图片读取失败。'))
+    reader.readAsDataURL(file)
+  })
+}
+
+const canvasToBlob = (canvas, quality = 0.82) => {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('图片压缩失败。'))
+        return
+      }
+      resolve(blob)
+    }, 'image/jpeg', quality)
+  })
+}
+
+const compressImageFile = async (file) => {
+  const img = await loadImageFromFile(file)
+  const maxWidth = 1600
+  let targetWidth = img.width
+  let targetHeight = img.height
+
+  if (img.width > maxWidth) {
+    const ratio = maxWidth / img.width
+    targetWidth = maxWidth
+    targetHeight = Math.max(1, Math.round(img.height * ratio))
+  }
+
+  let canvas = document.createElement('canvas')
+  canvas.width = targetWidth
+  canvas.height = targetHeight
+  let ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, targetWidth, targetHeight)
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+
+  let quality = 0.82
+  let blob = await canvasToBlob(canvas, quality)
+
+  while (blob.size > MAX_UPLOAD_BYTES && quality > 0.46) {
+    quality -= 0.08
+    blob = await canvasToBlob(canvas, quality)
+  }
+
+  while (blob.size > MAX_UPLOAD_BYTES && canvas.width > 960) {
+    const nextWidth = Math.max(960, Math.round(canvas.width * 0.9))
+    const nextHeight = Math.max(1, Math.round(canvas.height * 0.9))
+    const nextCanvas = document.createElement('canvas')
+    nextCanvas.width = nextWidth
+    nextCanvas.height = nextHeight
+    const nextCtx = nextCanvas.getContext('2d')
+    nextCtx.fillStyle = '#ffffff'
+    nextCtx.fillRect(0, 0, nextWidth, nextHeight)
+    nextCtx.drawImage(canvas, 0, 0, nextWidth, nextHeight)
+    canvas = nextCanvas
+    ctx = nextCtx
+    blob = await canvasToBlob(canvas, 0.7)
+  }
+
+  return new File([blob], `${(file.name || 'upload').replace(/\.[^.]+$/, '') || 'upload'}.jpg`, {
+    type: 'image/jpeg'
+  })
 }
 
 const fetchStations = async () => {
@@ -329,16 +405,41 @@ const selectStandard = (standard) => {
   standardDropdownVisible.value = false
 }
 
-const handleFileChange = (event) => {
+const handleFileChange = async (event) => {
   const file = event.target.files?.[0]
-  imageFile.value = file || null
 
   if (!file) {
-    imagePreviewUrl.value = ''
+    clearImage()
     return
   }
 
-  imagePreviewUrl.value = URL.createObjectURL(file)
+  if (file.type && !ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    submitMessageType.value = 'error'
+    submitMessage.value = '仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。'
+    event.target.value = ''
+    clearImage()
+    return
+  }
+
+  try {
+    const compressedFile = await compressImageFile(file)
+    imageFile.value = compressedFile
+
+    if (imagePreviewUrl.value) {
+      URL.revokeObjectURL(imagePreviewUrl.value)
+    }
+    imagePreviewUrl.value = URL.createObjectURL(compressedFile)
+
+    if (submitMessageType.value !== 'success') {
+      submitMessage.value = ''
+      submitMessageType.value = 'info'
+    }
+  } catch (error) {
+    submitMessageType.value = 'error'
+    submitMessage.value = error?.message || '图片处理失败，请更换图片后重试。'
+    event.target.value = ''
+    clearImage()
+  }
 }
 
 const clearImage = () => {
@@ -347,6 +448,10 @@ const clearImage = () => {
     URL.revokeObjectURL(imagePreviewUrl.value)
   }
   imagePreviewUrl.value = ''
+  const input = document.getElementById('issue-photo-upload')
+  if (input) {
+    input.value = ''
+  }
 }
 
 const resetForm = (preserveMessage = false) => {
