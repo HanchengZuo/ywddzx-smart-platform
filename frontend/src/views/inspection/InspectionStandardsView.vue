@@ -11,32 +11,36 @@
       <div class="filter-grid">
         <div class="filter-item filter-item-keyword">
           <label>关键词搜索</label>
-          <input
-            v-model.trim="filters.keyword"
-            type="text"
-            placeholder="可搜索编号、业务流程、检查项目、检查内容、规范要求、检查方法"
-          />
+          <input v-model.trim="filters.keyword" type="text" placeholder="可搜索规范ID、规范详情或检查表相关内容" />
         </div>
 
         <div class="filter-item">
-          <label>规范编号</label>
-          <input v-model.trim="filters.code" type="text" placeholder="搜索规范编号" />
+          <label>检查表</label>
+          <select v-model="filters.inspectionTableId">
+            <option value="">全部检查表</option>
+            <option v-for="table in inspectionTables" :key="table.id" :value="String(table.id)">
+              {{ table.table_name }}
+            </option>
+          </select>
         </div>
 
-        <div class="filter-item">
-          <label>业务流程</label>
-          <input v-model.trim="filters.businessProcess" type="text" placeholder="搜索业务流程" />
-        </div>
-
-        <div class="filter-item">
-          <label>检查项目</label>
-          <input v-model.trim="filters.checkItem" type="text" placeholder="搜索检查项目" />
+        <div v-for="field in filterableFields" :key="field.field_key" class="filter-item">
+          <label>{{ field.field_label }}</label>
+          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]">
+            <option value="">全部</option>
+            <option v-for="option in getFieldOptions(field.field_key)" :key="option" :value="option">
+              {{ option }}
+            </option>
+          </select>
+          <input v-else v-model.trim="dynamicFilters[field.field_key]" type="text"
+            :placeholder="`搜索${field.field_label}`" />
         </div>
       </div>
 
       <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" type="button" @click="fetchStandards" :disabled="loading">
+        <button class="btn btn-secondary" type="button" @click="fetchStandards"
+          :disabled="loading || !filters.inspectionTableId">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
       </div>
@@ -46,23 +50,26 @@
       <div class="list-card card-surface">
         <div class="list-toolbar">
           <div class="list-count">共 {{ filteredList.length }} 条规范</div>
+          <div class="list-table-name">{{ activeInspectionTableName }}</div>
         </div>
 
         <div class="list-wrap">
-          <button
-            v-for="item in filteredList"
-            :key="item.id"
-            class="standard-item"
-            :class="{ active: activeStandard && activeStandard.id === item.id }"
-            type="button"
-            @click="selectStandard(item)"
-          >
+          <button v-for="item in filteredList" :key="item.standard_id" class="standard-item"
+            :class="{ active: activeStandard && activeStandard.standard_id === item.standard_id }" type="button"
+            @click="selectStandard(item)">
             <div class="standard-item-top">
-              <span class="standard-code">{{ item.code }}</span>
-              <span class="standard-process">{{ item.business_process }}</span>
+              <span class="standard-code">{{ item.standard_id }}</span>
+              <span class="standard-process">{{ item.inspection_table_name || activeInspectionTableName || '未选择检查表'
+              }}</span>
             </div>
-            <div class="standard-check-item">{{ item.check_item }}</div>
-            <div class="standard-check-content">{{ item.check_content }}</div>
+            <div class="standard-check-item">{{ getStandardPrimaryTitle(item) }}</div>
+            <div class="standard-card-meta" v-if="getStandardSummaryFields(item).length">
+              <div v-for="entry in getStandardSummaryFields(item)" :key="`${item.standard_id}-${entry.key}`"
+                class="standard-meta-line">
+                <span class="standard-meta-label">{{ entry.label }}</span>
+                <span class="standard-meta-value">{{ entry.value }}</span>
+              </div>
+            </div>
           </button>
 
           <div v-if="!loading && filteredList.length === 0" class="empty-block">
@@ -80,41 +87,33 @@
           <div class="detail-header">
             <div>
               <div class="detail-kicker">规范详情</div>
-              <h3>{{ activeStandard.code }}｜{{ activeStandard.check_item }}</h3>
+              <h3>{{ activeStandard.standard_id }}｜{{ activeStandard.check_content || activeStandard.check_item ||
+                activeStandard.project_name || '未命名规范' }}</h3>
             </div>
             <div class="detail-actions">
-              <button class="btn btn-secondary" type="button" @click="copyCode">复制编号</button>
+              <button class="btn btn-secondary" type="button" @click="copyCode">复制规范ID</button>
               <button class="btn btn-primary" type="button" @click="copyStandard">复制整条规范</button>
             </div>
           </div>
 
           <div class="detail-meta-grid">
             <div class="meta-item">
-              <div class="meta-label">规范编号</div>
-              <div class="meta-value">{{ activeStandard.code }}</div>
+              <div class="meta-label">检查表</div>
+              <div class="meta-value">{{ activeStandard?.inspection_table_name || activeInspectionTableName || '未选择检查表'
+              }}</div>
             </div>
             <div class="meta-item">
-              <div class="meta-label">业务流程</div>
-              <div class="meta-value">{{ activeStandard.business_process }}</div>
-            </div>
-            <div class="meta-item">
-              <div class="meta-label">检查项目</div>
-              <div class="meta-value">{{ activeStandard.check_item }}</div>
-            </div>
-            <div class="meta-item">
-              <div class="meta-label">检查内容</div>
-              <div class="meta-value">{{ activeStandard.check_content }}</div>
+              <div class="meta-label">规范ID</div>
+              <div class="meta-value">{{ activeStandard.standard_id }}</div>
             </div>
           </div>
 
-          <div class="detail-block">
-            <div class="detail-block-title">规范要求</div>
-            <div class="detail-block-content multiline-content">{{ formatMultiline(activeStandard.requirement) || '暂无' }}</div>
-          </div>
-
-          <div class="detail-block">
-            <div class="detail-block-title">检查方法</div>
-            <div class="detail-block-content multiline-content">{{ formatMultiline(activeStandard.check_method) || '暂无' }}</div>
+          <div class="detail-detail-grid">
+            <div v-for="entry in activeStandardDetailEntries" :key="`${activeStandard.standard_id}-${entry.key}`"
+              class="detail-field-card">
+              <div class="detail-field-label">{{ entry.label }}</div>
+              <div class="detail-field-value multiline-content">{{ formatMultiline(entry.value) || '暂无' }}</div>
+            </div>
           </div>
 
           <div v-if="copyMessage" class="copy-message">{{ copyMessage }}</div>
@@ -123,7 +122,7 @@
         <div v-else class="empty-detail">
           <div class="empty-detail-icon">书</div>
           <div class="empty-detail-title">请选择一条巡检规范</div>
-          <div class="empty-detail-desc">左侧可按关键词、编号、业务流程、检查项目进行查询，点击后查看完整规范内容。</div>
+          <div class="empty-detail-desc">请先选择检查表，再按关键词或该检查表专属字段进行筛选，点击左侧规范后查看完整规范内容。</div>
         </div>
       </div>
     </div>
@@ -135,39 +134,167 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 
 const loading = ref(false)
+const inspectionTables = ref([])
+const inspectionTableFields = ref([])
 const standards = ref([])
 const activeStandard = ref(null)
 const copyMessage = ref('')
 
 const filters = ref({
   keyword: '',
-  code: '',
-  businessProcess: '',
-  checkItem: ''
+  inspectionTableId: ''
 })
+
+const dynamicFilters = ref({})
+
+const SUMMARY_FIELD_CANDIDATES = [
+  'serial_no',
+  'business_process',
+  'check_item',
+  'check_content',
+  'project_name',
+  'check_category',
+  'check_method',
+  'issue_code',
+  'is_forbidden'
+]
+
+const DETAIL_HIDDEN_FIELDS = [
+  'id',
+  'created_at',
+  'standard_detail_text',
+  'inspection_table_id',
+  'inspection_table_name',
+  'inspection_table_code'
+]
+const SELECT_OPTION_THRESHOLD = 12
+const SELECT_MAX_OPTION_TEXT_LENGTH = 16
+
+const CHECKLIST_LABEL_MAP = {
+  quality_check: {
+    standard_id: '规范ID',
+    serial_no: '序号',
+    business_process: '业务流程',
+    check_item: '检查项目',
+    check_content: '检查内容',
+    requirement: '规范要求',
+    check_method: '检查方法',
+    issue_code: '问题编号',
+    common_issue: '常见问题',
+    inspection_path: '检查路径',
+    is_forbidden: '是否禁止项'
+  },
+  service_hygiene_check: {
+    standard_id: '规范ID',
+    project_name: '项目',
+    check_category: '检查类别',
+    check_content: '检查内容',
+    evaluation_standard: '检查评比标准',
+    check_method: '检查方式'
+  }
+}
 
 const normalize = (value) => String(value || '').toLowerCase()
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
 
-const filteredList = computed(() => {
-  return standards.value.filter((item) => {
-    const keywordSource = [
-      item.code,
-      item.business_process,
-      item.check_item,
-      item.check_content,
-      item.requirement,
-      item.check_method
-    ].join(' ')
+const activeInspectionTable = computed(() => {
+  return inspectionTables.value.find((item) => String(item.id) === String(filters.value.inspectionTableId)) || null
+})
 
-    const matchedKeyword = !filters.value.keyword || normalize(keywordSource).includes(normalize(filters.value.keyword))
-    const matchedCode = !filters.value.code || normalize(item.code).includes(normalize(filters.value.code))
-    const matchedBusinessProcess =
-      !filters.value.businessProcess || normalize(item.business_process).includes(normalize(filters.value.businessProcess))
-    const matchedCheckItem = !filters.value.checkItem || normalize(item.check_item).includes(normalize(filters.value.checkItem))
+const activeInspectionTableName = computed(() => activeInspectionTable.value?.table_name || '')
 
-    return matchedKeyword && matchedCode && matchedBusinessProcess && matchedCheckItem
+const getChecklistLabelMap = (item) => {
+  const inspectionTableCode = item?.inspection_table_code || ''
+  return CHECKLIST_LABEL_MAP[inspectionTableCode] || {}
+}
+
+const getFieldLabel = (item, fieldKey) => {
+  const tableLabelMap = getChecklistLabelMap(item)
+  return tableLabelMap[fieldKey] || fieldMap.value[fieldKey] || fieldKey
+}
+
+const fieldMap = computed(() => {
+  const map = {}
+  inspectionTableFields.value.forEach((field) => {
+    map[field.field_key] = field.field_label
   })
+  return map
+})
+
+const fieldOptionsMap = computed(() => {
+  const map = {}
+  filterableFields.value.forEach((field) => {
+    const values = standards.value
+      .map((item) => String(item[field.field_key] || '').trim())
+      .filter((value) => value && !value.includes('\n') && value.length <= SELECT_MAX_OPTION_TEXT_LENGTH)
+    const uniqueValues = [...new Set(values)]
+    map[field.field_key] = uniqueValues.length > 0 && uniqueValues.length <= SELECT_OPTION_THRESHOLD ? uniqueValues : []
+  })
+  return map
+})
+
+const activeStandardDetailEntries = computed(() => {
+  if (!activeStandard.value) return []
+  return Object.entries(activeStandard.value)
+    .filter(([key, value]) => !DETAIL_HIDDEN_FIELDS.includes(key) && value !== null && String(value).trim())
+    .map(([key, value]) => ({
+      key,
+      label: getFieldLabel(activeStandard.value, key),
+      value: String(value)
+    }))
+})
+
+const filterableFields = computed(() => {
+  return inspectionTableFields.value.filter((item) => item.is_filterable)
+})
+
+const isFieldSelect = (fieldKey) => {
+  return getFieldOptions(fieldKey).length > 0
+}
+
+const getFieldOptions = (fieldKey) => {
+  return fieldOptionsMap.value[fieldKey] || []
+}
+
+const getStandardPrimaryTitle = (item) => {
+  return item.check_content || item.check_item || item.project_name || '未命名规范'
+}
+
+const getStandardSummaryFields = (item) => {
+  return SUMMARY_FIELD_CANDIDATES
+    .filter((key) => key in item)
+    .map((key) => ({
+      key,
+      label: getFieldLabel(item, key),
+      value: String(item[key] || '').trim()
+    }))
+    .filter((entry) => entry.value && !entry.value.includes('\n') && entry.value.length <= 40)
+    .slice(0, 3)
+}
+
+const filteredList = computed(() => {
+  return [...standards.value]
+    .filter((item) => {
+      const keywordSource = [
+        item.standard_id,
+        item.standard_detail_text,
+        item.check_content,
+        item.check_item,
+        item.project_name,
+        item.inspection_table_name
+      ].join(' ')
+
+      const matchedKeyword = !filters.value.keyword || normalize(keywordSource).includes(normalize(filters.value.keyword))
+
+      const matchedDynamic = filterableFields.value.every((field) => {
+        const keyword = dynamicFilters.value[field.field_key] || ''
+        if (!keyword) return true
+        return normalize(item[field.field_key]).includes(normalize(keyword))
+      })
+
+      return matchedKeyword && matchedDynamic
+    })
+    .sort((a, b) => Number(a.standard_id || 0) - Number(b.standard_id || 0))
 })
 
 watch(
@@ -178,7 +305,7 @@ watch(
       return
     }
 
-    const stillExists = list.find((item) => activeStandard.value && item.id === activeStandard.value.id)
+    const stillExists = list.find((item) => activeStandard.value && item.standard_id === activeStandard.value.standard_id)
     if (!stillExists) {
       activeStandard.value = list[0]
     }
@@ -186,12 +313,74 @@ watch(
   { immediate: true }
 )
 
+const fetchInspectionTables = async () => {
+  const response = await axios.get('/api/inspection-tables')
+  inspectionTables.value = response.data || []
+}
+
+const fetchInspectionTableFields = async () => {
+  if (!filters.value.inspectionTableId) {
+    inspectionTableFields.value = []
+    return
+  }
+  const response = await axios.get('/api/inspection-table-fields', {
+    params: {
+      table_id: filters.value.inspectionTableId
+    }
+  })
+  inspectionTableFields.value = response.data || []
+}
+
 const fetchStandards = async () => {
   try {
     loading.value = true
     copyMessage.value = ''
-    const response = await axios.get('/api/inspection-standards')
-    standards.value = response.data || []
+
+    if (!filters.value.inspectionTableId) {
+      const responses = await Promise.all(
+        inspectionTables.value.map((table) =>
+          axios.get('/api/inspection-table-standards', {
+            params: {
+              table_id: table.id,
+              ...(filters.value.keyword ? { keyword: filters.value.keyword } : {})
+            }
+          })
+        )
+      )
+
+      standards.value = responses.flatMap((response, index) => {
+        const table = inspectionTables.value[index]
+        return (response.data || []).map((item) => ({
+          ...item,
+          inspection_table_id: table.id,
+          inspection_table_name: table.table_name,
+          inspection_table_code: table.table_code
+        }))
+      })
+      return
+    }
+
+    const params = {
+      table_id: filters.value.inspectionTableId
+    }
+
+    if (filters.value.keyword) {
+      params.keyword = filters.value.keyword
+    }
+
+    Object.entries(dynamicFilters.value).forEach(([key, value]) => {
+      if (String(value || '').trim()) {
+        params[key] = value
+      }
+    })
+
+    const response = await axios.get('/api/inspection-table-standards', { params })
+    standards.value = (response.data || []).map((item) => ({
+      ...item,
+      inspection_table_id: activeInspectionTable.value?.id,
+      inspection_table_name: activeInspectionTable.value?.table_name || '',
+      inspection_table_code: activeInspectionTable.value?.table_code || ''
+    }))
   } catch (error) {
     standards.value = []
   } finally {
@@ -199,13 +388,16 @@ const fetchStandards = async () => {
   }
 }
 
-const resetFilters = () => {
+const resetFilters = async () => {
   filters.value = {
     keyword: '',
-    code: '',
-    businessProcess: '',
-    checkItem: ''
+    inspectionTableId: ''
   }
+  dynamicFilters.value = {}
+  inspectionTableFields.value = []
+  standards.value = []
+  activeStandard.value = null
+  copyMessage.value = ''
 }
 
 const selectStandard = (item) => {
@@ -216,8 +408,8 @@ const selectStandard = (item) => {
 const copyCode = async () => {
   if (!activeStandard.value) return
   try {
-    await navigator.clipboard.writeText(String(activeStandard.value.code || ''))
-    copyMessage.value = '规范编号已复制。'
+    await navigator.clipboard.writeText(String(activeStandard.value.standard_id || ''))
+    copyMessage.value = '规范ID已复制。'
   } catch (error) {
     copyMessage.value = '复制失败，请手动复制。'
   }
@@ -226,12 +418,9 @@ const copyCode = async () => {
 const copyStandard = async () => {
   if (!activeStandard.value) return
   const text = [
-    `编号：${activeStandard.value.code || ''}`,
-    `业务流程：${activeStandard.value.business_process || ''}`,
-    `检查项目：${activeStandard.value.check_item || ''}`,
-    `检查内容：${activeStandard.value.check_content || ''}`,
-    `规范要求：${formatMultiline(activeStandard.value.requirement) || ''}`,
-    `检查方法：${formatMultiline(activeStandard.value.check_method) || ''}`
+    `检查表：${activeInspectionTableName.value || ''}`,
+    `规范ID：${activeStandard.value.standard_id || ''}`,
+    `${formatMultiline(activeStandard.value.standard_detail_text) || ''}`
   ].join('\n')
 
   try {
@@ -242,8 +431,50 @@ const copyStandard = async () => {
   }
 }
 
-onMounted(() => {
-  fetchStandards()
+watch(
+  () => filters.value.inspectionTableId,
+  async (value) => {
+    copyMessage.value = ''
+    activeStandard.value = null
+    standards.value = []
+    dynamicFilters.value = {}
+
+    if (!value) {
+      inspectionTableFields.value = []
+      await fetchStandards()
+      return
+    }
+
+    try {
+      await fetchInspectionTableFields()
+      const nextDynamicFilters = {}
+      filterableFields.value.forEach((field) => {
+        nextDynamicFilters[field.field_key] = ''
+      })
+      dynamicFilters.value = nextDynamicFilters
+      await fetchStandards()
+    } catch (error) {
+      inspectionTableFields.value = []
+      standards.value = []
+    }
+  }
+)
+
+watch(
+  () => filters.value.keyword,
+  () => {
+    copyMessage.value = ''
+  }
+)
+
+onMounted(async () => {
+  try {
+    await fetchInspectionTables()
+    await fetchStandards()
+  } catch (error) {
+    inspectionTables.value = []
+    standards.value = []
+  }
 })
 </script>
 
@@ -324,6 +555,23 @@ onMounted(() => {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
 }
 
+.filter-item select {
+  height: 46px;
+  border: 1px solid #d7e0ea;
+  border-radius: 14px;
+  padding: 0 14px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #fff;
+  transition: all 0.18s ease;
+}
+
+.filter-item select:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.4);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
 .filter-actions {
   margin-top: 16px;
   display: flex;
@@ -353,6 +601,12 @@ onMounted(() => {
 .list-count {
   font-size: 14px;
   color: #64748b;
+  font-weight: 700;
+}
+
+.list-table-name {
+  font-size: 13px;
+  color: #2563eb;
   font-weight: 700;
 }
 
@@ -418,6 +672,30 @@ onMounted(() => {
   font-weight: 800;
   color: #0f172a;
   margin-bottom: 6px;
+}
+
+.standard-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.standard-meta-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.standard-meta-label {
+  flex-shrink: 0;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.standard-meta-value {
+  color: #334155;
 }
 
 .standard-check-content {
@@ -507,6 +785,34 @@ onMounted(() => {
   line-height: 1.9;
   white-space: pre-wrap;
 }
+
+.detail-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.detail-field-card {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid #e7edf4;
+  min-width: 0;
+}
+
+.detail-field-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.detail-field-value {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #334155;
+}
+
 .multiline-content {
   white-space: pre-line;
 }
@@ -610,6 +916,7 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+
   .filter-grid,
   .detail-meta-grid {
     grid-template-columns: 1fr;
@@ -625,6 +932,10 @@ onMounted(() => {
 
   .detail-header h3 {
     font-size: 22px;
+  }
+
+  .detail-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

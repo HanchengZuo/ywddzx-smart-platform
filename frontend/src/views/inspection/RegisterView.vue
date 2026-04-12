@@ -26,20 +26,11 @@
           <div class="form-item form-item-full">
             <label>站点名称</label>
             <div class="search-select" ref="stationSelectRef">
-              <input
-                v-model="stationSearch"
-                type="text"
-                placeholder="搜索并选择站点名称"
-                @focus="openStationDropdown"
-                @input="handleStationInput"
-              />
+              <input v-model="stationSearch" type="text" placeholder="搜索并选择站点名称" @focus="openStationDropdown"
+                @input="handleStationInput" />
               <div v-if="stationDropdownVisible" class="search-select-dropdown">
-                <div
-                  v-for="station in filteredStations"
-                  :key="station.id"
-                  class="search-select-option"
-                  @click="selectStation(station)"
-                >
+                <div v-for="station in filteredStations" :key="station.id" class="search-select-option"
+                  @click="selectStation(station)">
                   <div class="option-main">{{ station.station_name }}</div>
                   <div class="option-sub">{{ station.region || '未设置所属地' }}</div>
                 </div>
@@ -48,36 +39,32 @@
             </div>
           </div>
           <div class="form-item form-item-full">
-            <label>巡检大类</label>
-            <div class="search-select" ref="categorySelectRef">
-              <input
-                v-model="categorySearch"
-                type="text"
-                placeholder="搜索并选择巡检大类"
-                @focus="openCategoryDropdown"
-                @input="handleCategoryInput"
-              />
-              <div v-if="categoryDropdownVisible" class="search-select-dropdown">
-                <div
-                  v-for="category in filteredCategories"
-                  :key="category.id"
-                  class="search-select-option"
-                  @click="selectCategory(category)"
-                >
-                  <div class="option-main">{{ category.name }}</div>
-                </div>
-                <div v-if="filteredCategories.length === 0" class="search-select-empty">无匹配巡检大类</div>
-              </div>
+            <label>是否发现问题</label>
+            <div class="issue-toggle-group" role="radiogroup" aria-label="是否发现问题">
+              <button type="button" class="issue-toggle-btn" :class="{ active: normalizedHasIssue === 'yes' }"
+                @click="form.hasIssue = 'yes'">
+                发现问题
+              </button>
+              <button type="button" class="issue-toggle-btn" :class="{ active: normalizedHasIssue === 'no' }"
+                @click="form.hasIssue = 'no'">
+                未发现问题
+              </button>
             </div>
           </div>
-
           <div class="form-item form-item-full">
-            <label>是否发现问题</label>
-            <select v-model="form.hasIssue">
-              <option value="">请选择</option>
-              <option value="no">未发现问题</option>
-              <option value="yes">发现问题</option>
-            </select>
+            <label>检查表</label>
+            <div class="search-select" ref="tableSelectRef">
+              <input v-model="tableSearch" type="text" placeholder="搜索并选择检查表" @focus="openTableDropdown"
+                @input="handleTableInput" />
+              <div v-if="tableDropdownVisible" class="search-select-dropdown">
+                <div v-for="table in filteredInspectionTables" :key="table.id" class="search-select-option"
+                  @click="selectInspectionTable(table)">
+                  <div class="option-main">{{ table.table_name }}</div>
+                  <div class="option-sub">{{ table.description || '未设置说明' }}</div>
+                </div>
+                <div v-if="filteredInspectionTables.length === 0" class="search-select-empty">无匹配检查表</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -86,60 +73,34 @@
 
           <div class="form-grid">
             <div class="form-item form-item-full">
-              <label>规范引用</label>
+              <label>规范选择</label>
               <div class="search-select" ref="standardSelectRef">
-                <input
-                  v-model="standardSearch"
-                  type="text"
-                  placeholder="搜索并选择规范引用"
-                  @focus="openStandardDropdown"
-                  @input="handleStandardInput"
-                />
+                <input v-model="standardSearch" type="text" placeholder="搜索并选择规范" @focus="openStandardDropdown"
+                  @input="handleStandardInput" />
                 <div v-if="standardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
-                  <div
-                    v-for="standard in filteredStandards"
-                    :key="standard.id"
-                    class="search-select-option"
-                    @click="selectStandard(standard)"
-                  >
+                  <div v-for="standard in filteredStandards" :key="standard.standard_id" class="search-select-option"
+                    @click="selectStandard(standard)">
                     <div class="option-main">
-                      {{ standard.code }}｜{{ standard.business_process }}｜{{ standard.check_item }}
+                      {{ standard.standard_id }}｜{{ standard.check_content || standard.check_item ||
+                        standard.project_name || '未命名规范' }}
                     </div>
-                    <div class="option-sub">{{ standard.check_content }}</div>
+                    <div class="option-sub standard-detail-preview">{{
+                      normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
                   </div>
                   <div v-if="filteredStandards.length === 0" class="search-select-empty">无匹配规范</div>
                 </div>
               </div>
             </div>
 
-            <div class="form-item">
-              <label>规范编号</label>
-              <input :value="selectedStandard?.code || ''" type="text" readonly />
-            </div>
-
-            <div class="form-item">
-              <label>业务流程</label>
-              <input :value="selectedStandard?.business_process || ''" type="text" readonly />
-            </div>
-
-            <div class="form-item">
-              <label>检查项目</label>
-              <input :value="selectedStandard?.check_item || ''" type="text" readonly />
-            </div>
-
-            <div class="form-item">
-              <label>检查内容</label>
-              <input :value="selectedStandard?.check_content || ''" type="text" readonly />
+            <div class="form-item form-item-full">
+              <label>规范ID</label>
+              <input :value="selectedStandard?.standard_id || ''" type="text" readonly />
             </div>
 
             <div class="form-item form-item-full">
-              <label>规范要求</label>
-              <textarea :value="selectedStandard?.requirement || ''" rows="4" readonly></textarea>
-            </div>
-
-            <div class="form-item form-item-full">
-              <label>检查方法</label>
-              <textarea :value="selectedStandard?.check_method || ''" rows="4" readonly></textarea>
+              <label>规范详情</label>
+              <textarea :value="normalizeStandardDetailForRegister(selectedStandard?.standard_detail_text || '')"
+                rows="8" readonly></textarea>
             </div>
 
             <div class="form-item form-item-full">
@@ -150,13 +111,8 @@
             <div class="form-item form-item-full">
               <label>上传问题照片</label>
               <div class="upload-card">
-                <input
-                  id="issue-photo-upload"
-                  class="upload-input"
-                  type="file"
-                  accept="image/*"
-                  @change="handleFileChange"
-                />
+                <input id="issue-photo-upload" class="upload-input" type="file" accept="image/*"
+                  @change="handleFileChange" />
 
                 <label for="issue-photo-upload" class="upload-dropzone">
                   <div class="upload-icon">↑</div>
@@ -204,13 +160,13 @@ const currentRole = localStorage.getItem('user_role') || ''
 const hasPermission = currentRole === 'supervisor'
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
-const categorySelectRef = ref(null)
+const tableSelectRef = ref(null)
 const stationDropdownVisible = ref(false)
 const standardDropdownVisible = ref(false)
-const categoryDropdownVisible = ref(false)
+const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
-const categorySearch = ref('')
+const tableSearch = ref('')
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const submitMessage = ref('')
@@ -221,28 +177,84 @@ const MAX_UPLOAD_BYTES = 500 * 1024
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
 const stations = ref([])
 const standards = ref([])
-const categories = ref([])
+const inspectionTables = ref([])
 
 const form = ref({
   stationId: '',
-  categoryId: '',
-  hasIssue: '',
+  hasIssue: 'yes',
+  inspectionTableId: '',
   standardId: '',
   description: ''
 })
-const filteredCategories = computed(() => {
-  const keyword = categorySearch.value.trim().toLowerCase()
-  return categories.value.filter((item) => {
-    const text = `${item.name || ''}`.toLowerCase()
+
+const filteredInspectionTables = computed(() => {
+  const keyword = tableSearch.value.trim().toLowerCase()
+  return inspectionTables.value.filter((item) => {
+    const text = `${item.table_name || ''} ${item.description || ''}`.toLowerCase()
     return !keyword || text.includes(keyword)
   })
 })
 
 const selectedStandard = computed(() => {
-  return standards.value.find((item) => String(item.id) === String(form.value.standardId)) || null
+  return standards.value.find((item) => String(item.standard_id) === String(form.value.standardId)) || null
 })
 
-const showIssueFields = computed(() => form.value.hasIssue === 'yes')
+const normalizedHasIssue = computed(() => {
+  return String(form.value.hasIssue || 'yes').trim().toLowerCase()
+})
+
+const showIssueFields = computed(() => {
+  const hasIssueYes = String(form.value.hasIssue || 'yes').trim().toLowerCase() === 'yes'
+  const hasStation = Boolean(String(form.value.stationId || '').trim())
+  const hasInspectionTable = Boolean(String(form.value.inspectionTableId || '').trim())
+  return hasIssueYes && hasStation && hasInspectionTable
+})
+
+const normalizeStandardDetailForRegister = (value) => {
+  const topLevelLabels = new Set([
+    '序号',
+    '业务流程',
+    '检查项目',
+    '检查内容',
+    '规范要求',
+    '检查方法',
+    '问题编号',
+    '常见问题',
+    '检查路径',
+    '是否禁止项',
+    '项目',
+    '检查类别',
+    '检查评比标准',
+    '检查方式'
+  ])
+
+  const lines = String(value || '')
+    .replace(/\\n/g, '\n')
+    .split('\n')
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+
+  const result = []
+
+  lines.forEach((line) => {
+    const separatorIndex = line.indexOf('：')
+    const possibleLabel = separatorIndex > -1 ? line.slice(0, separatorIndex).trim() : ''
+
+    if (separatorIndex > -1 && topLevelLabels.has(possibleLabel)) {
+      result.push(line)
+      return
+    }
+
+    if (result.length === 0) {
+      result.push(line)
+      return
+    }
+
+    result[result.length - 1] = `${result[result.length - 1]} ${line}`.replace(/\s+/g, ' ').trim()
+  })
+
+  return result.join('\n')
+}
 
 const filteredStations = computed(() => {
   const keyword = stationSearch.value.trim().toLowerCase()
@@ -255,7 +267,7 @@ const filteredStations = computed(() => {
 const filteredStandards = computed(() => {
   const keyword = standardSearch.value.trim().toLowerCase()
   return standards.value.filter((item) => {
-    const text = `${item.code} ${item.business_process} ${item.check_item} ${item.check_content}`.toLowerCase()
+    const text = `${item.standard_id || ''} ${item.standard_detail_text || ''} ${item.check_content || ''} ${item.check_item || ''} ${item.project_name || ''}`.toLowerCase()
     return !keyword || text.includes(keyword)
   })
 })
@@ -350,13 +362,21 @@ const fetchStations = async () => {
   stations.value = response.data || []
 }
 
-const fetchCategories = async () => {
-  const response = await axios.get('/api/inspection-categories')
-  categories.value = response.data || []
+const fetchInspectionTables = async () => {
+  const response = await axios.get('/api/inspection-tables')
+  inspectionTables.value = response.data || []
 }
 
 const fetchStandards = async () => {
-  const response = await axios.get('/api/inspection-standards')
+  if (!form.value.inspectionTableId) {
+    standards.value = []
+    return
+  }
+  const response = await axios.get('/api/inspection-table-standards', {
+    params: {
+      table_id: form.value.inspectionTableId
+    }
+  })
   standards.value = response.data || []
 }
 
@@ -364,8 +384,8 @@ const openStationDropdown = () => {
   stationDropdownVisible.value = true
 }
 
-const openCategoryDropdown = () => {
-  categoryDropdownVisible.value = true
+const openTableDropdown = () => {
+  tableDropdownVisible.value = true
 }
 
 const openStandardDropdown = () => {
@@ -377,9 +397,12 @@ const handleStationInput = () => {
   stationDropdownVisible.value = true
 }
 
-const handleCategoryInput = () => {
-  form.value.categoryId = ''
-  categoryDropdownVisible.value = true
+const handleTableInput = () => {
+  form.value.inspectionTableId = ''
+  tableDropdownVisible.value = true
+  form.value.standardId = ''
+  standardSearch.value = ''
+  standards.value = []
 }
 
 const handleStandardInput = () => {
@@ -387,21 +410,47 @@ const handleStandardInput = () => {
   standardDropdownVisible.value = true
 }
 
+watch(
+  [normalizedHasIssue, () => form.value.inspectionTableId],
+  async ([hasIssueValue, inspectionTableId]) => {
+    if (hasIssueValue === 'no') {
+      form.value.standardId = ''
+      form.value.description = ''
+      standardSearch.value = ''
+      standardDropdownVisible.value = false
+      clearImage()
+      return
+    }
+
+    if (hasIssueValue === 'yes' && inspectionTableId) {
+      await fetchStandards()
+    }
+  }
+)
+
 const selectStation = (station) => {
   stationSearch.value = station.station_name
   form.value.stationId = station.id
   stationDropdownVisible.value = false
 }
 
-const selectCategory = (category) => {
-  categorySearch.value = category.name
-  form.value.categoryId = category.id
-  categoryDropdownVisible.value = false
+const selectInspectionTable = async (table) => {
+  tableSearch.value = table.table_name
+  form.value.inspectionTableId = String(table.id)
+  tableDropdownVisible.value = false
+  form.value.standardId = ''
+  standardSearch.value = ''
+
+  if (normalizedHasIssue.value === 'yes') {
+    await fetchStandards()
+  } else {
+    standards.value = []
+  }
 }
 
 const selectStandard = (standard) => {
-  standardSearch.value = `${standard.code}｜${standard.business_process}｜${standard.check_item}｜${standard.check_content}`
-  form.value.standardId = standard.id
+  standardSearch.value = `${standard.standard_id}｜${standard.check_content || standard.check_item || standard.project_name || '未命名规范'}`
+  form.value.standardId = standard.standard_id
   standardDropdownVisible.value = false
 }
 
@@ -457,16 +506,17 @@ const clearImage = () => {
 const resetForm = (preserveMessage = false) => {
   form.value = {
     stationId: '',
-    categoryId: '',
-    hasIssue: '',
+    hasIssue: 'yes',
+    inspectionTableId: '',
     standardId: '',
     description: ''
   }
+  standards.value = []
   stationSearch.value = ''
-  categorySearch.value = ''
+  tableSearch.value = ''
   standardSearch.value = ''
   stationDropdownVisible.value = false
-  categoryDropdownVisible.value = false
+  tableDropdownVisible.value = false
   standardDropdownVisible.value = false
   if (!preserveMessage) {
     submitMessage.value = ''
@@ -477,39 +527,36 @@ const resetForm = (preserveMessage = false) => {
 }
 
 const handleSubmit = async () => {
+  const hasIssueValue = normalizedHasIssue.value
+
   if (!form.value.stationId) {
     submitMessageType.value = 'error'
     submitMessage.value = '请选择站点名称。'
     return
   }
-  if (!form.value.categoryId) {
+
+  if (!form.value.inspectionTableId) {
     submitMessageType.value = 'error'
-    submitMessage.value = '请选择巡检大类。'
+    submitMessage.value = '请选择检查表。'
     return
   }
 
-  if (!form.value.hasIssue) {
+  if (hasIssueValue === 'yes' && !form.value.standardId) {
     submitMessageType.value = 'error'
-    submitMessage.value = '请选择是否发现问题。'
+    submitMessage.value = '请选择规范。'
     return
   }
 
-  if (form.value.hasIssue === 'yes') {
-    if (!form.value.standardId) {
-      submitMessageType.value = 'error'
-      submitMessage.value = '请选择规范引用。'
-      return
-    }
-    if (!form.value.description.trim()) {
-      submitMessageType.value = 'error'
-      submitMessage.value = '请填写实际问题描述。'
-      return
-    }
-    if (!imageFile.value) {
-      submitMessageType.value = 'error'
-      submitMessage.value = '请上传问题照片。'
-      return
-    }
+  if (hasIssueValue === 'yes' && !form.value.description.trim()) {
+    submitMessageType.value = 'error'
+    submitMessage.value = '请填写实际问题描述。'
+    return
+  }
+
+  if (hasIssueValue === 'yes' && !imageFile.value) {
+    submitMessageType.value = 'error'
+    submitMessage.value = '请上传问题照片。'
+    return
   }
 
   const inspectorId = localStorage.getItem('user_id') || ''
@@ -526,10 +573,10 @@ const handleSubmit = async () => {
     const formData = new FormData()
     formData.append('inspector_id', inspectorId)
     formData.append('station_id', String(form.value.stationId))
-    formData.append('category_id', String(form.value.categoryId))
-    formData.append('has_issue', form.value.hasIssue)
+    formData.append('inspection_table_id', String(form.value.inspectionTableId))
+    formData.append('has_issue', hasIssueValue)
 
-    if (form.value.hasIssue === 'yes') {
+    if (hasIssueValue === 'yes') {
       formData.append('standard_id', String(form.value.standardId))
       formData.append('description', form.value.description)
       formData.append('photo', imageFile.value)
@@ -551,29 +598,17 @@ const handleClickOutside = (event) => {
   if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
     stationDropdownVisible.value = false
   }
-  if (categorySelectRef.value && !categorySelectRef.value.contains(event.target)) {
-    categoryDropdownVisible.value = false
+  if (tableSelectRef.value && !tableSelectRef.value.contains(event.target)) {
+    tableDropdownVisible.value = false
   }
   if (standardSelectRef.value && !standardSelectRef.value.contains(event.target)) {
     standardDropdownVisible.value = false
   }
 }
 
-watch(
-  () => form.value.hasIssue,
-  (value) => {
-    if (value !== 'yes') {
-      form.value.standardId = ''
-      form.value.description = ''
-      standardSearch.value = ''
-      standardDropdownVisible.value = false
-      clearImage()
-    }
-  }
-)
 
 watch(
-  () => form.value.categoryId,
+  () => form.value.inspectionTableId,
   () => {
     if (submitMessageType.value !== 'success') {
       submitMessage.value = ''
@@ -586,9 +621,9 @@ onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
   try {
-    await Promise.all([fetchStations(), fetchCategories(), fetchStandards()])
+    await Promise.all([fetchStations(), fetchInspectionTables()])
   } catch (error) {
-    submitMessage.value = '初始化站点或规范数据失败，请检查后端服务。'
+    submitMessage.value = '初始化站点或检查表数据失败，请检查后端服务。'
   }
 })
 
@@ -691,6 +726,35 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 
+.issue-toggle-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.issue-toggle-btn {
+  height: 44px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #fff;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.issue-toggle-btn:hover {
+  background: #f8fafc;
+}
+
+.issue-toggle-btn.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.08);
+}
+
 .form-item input[readonly],
 .form-item textarea[readonly] {
   background: #f8fafc;
@@ -738,6 +802,10 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
+.standard-detail-preview {
+  white-space: pre-line;
+}
+
 
 .upload-card {
   display: flex;
@@ -781,7 +849,7 @@ onBeforeUnmount(() => {
   color: #2563eb;
   font-size: 24px;
   font-weight: 800;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .upload-title {
@@ -980,6 +1048,16 @@ onBeforeUnmount(() => {
     font-size: 15px;
   }
 
+  .issue-toggle-group {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .issue-toggle-btn {
+    height: 46px;
+    font-size: 15px;
+  }
+
   .search-select-dropdown {
     max-height: 240px;
   }
@@ -1038,10 +1116,9 @@ onBeforeUnmount(() => {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
-    position: sticky;
-    bottom: 0;
-    padding-top: 8px;
-    background: rgba(255, 255, 255, 0.96);
+    position: static;
+    padding-top: 0;
+    background: transparent;
   }
 
   .btn {

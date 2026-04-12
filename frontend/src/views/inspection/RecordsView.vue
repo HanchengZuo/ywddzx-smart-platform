@@ -15,11 +15,31 @@
         </div>
         <div class="filter-item">
           <label>站点</label>
-          <input v-model="filters.station" type="text" placeholder="搜索站点名称" />
+          <div class="search-select" ref="stationSelectRef">
+            <input v-model="filters.station" type="text" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
+              @input="openFilterDropdown('station')" />
+            <div v-if="dropdownVisible.station" class="search-select-dropdown">
+              <div v-for="option in filteredStationOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('station', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点</div>
+            </div>
+          </div>
         </div>
         <div class="filter-item">
-          <label>巡检大类</label>
-          <input v-model="filters.categories" type="text" placeholder="搜索巡检大类" />
+          <label>检查表</label>
+          <div class="search-select" ref="inspectionTableSelectRef">
+            <input v-model="filters.inspectionTableName" type="text" placeholder="搜索或选择检查表"
+              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
+            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
+              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspectionTableName', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+            </div>
+          </div>
         </div>
         <div class="filter-item">
           <label>结果</label>
@@ -42,28 +62,38 @@
     <div class="mobile-record-list">
       <div v-if="loading" class="mobile-empty card-surface">正在加载巡检记录...</div>
 
-      <div v-else-if="paginatedData.length === 0" class="mobile-empty card-surface">
+      <div v-else-if="paginatedBatches.length === 0" class="mobile-empty card-surface">
         当前没有巡检记录。
       </div>
 
       <div v-else class="mobile-record-cards">
-        <div v-for="item in paginatedData" :key="item.id" class="mobile-record-card card-surface">
+        <div v-for="batch in paginatedBatches" :key="batch.batchKey" class="mobile-record-card card-surface">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
-              <div class="mobile-card-station">{{ item.station }}</div>
-              <span :class="statusClass(item.result)">{{ item.result }}</span>
+              <div class="mobile-card-station">{{ batch.station }}</div>
+              <span :class="statusClass(batch.batchResult)">{{ batch.batchResult }}</span>
             </div>
-            <div class="mobile-card-date">巡检日期：{{ item.date }}</div>
+            <div class="mobile-card-date">巡检日期：{{ batch.date }}</div>
           </div>
 
           <div class="mobile-card-body">
-            <div class="mobile-card-row mobile-card-row-top">
-              <span>巡检大类</span>
-              <div class="mobile-card-text">{{ item.categories || '暂无' }}</div>
+            <div class="mobile-card-row">
+              <span>本批次检查表数</span>
+              <strong>{{ batch.rowspan }}</strong>
             </div>
             <div class="mobile-card-row">
-              <span>发现问题数</span>
-              <strong>{{ item.issue_count }}</strong>
+              <span>本批次问题总数</span>
+              <strong>{{ batch.batchIssueCount }}</strong>
+            </div>
+          </div>
+
+          <div class="mobile-batch-list">
+            <div v-for="record in batch.records" :key="record.id" class="mobile-batch-item">
+              <div class="mobile-batch-item-head">
+                <div class="mobile-batch-table-name">{{ record.inspection_table_name || '暂无' }}</div>
+                <span :class="statusClass(record.result)">{{ record.result }}</span>
+              </div>
+              <div class="mobile-batch-item-meta">发现问题数：{{ record.issue_count }}</div>
             </div>
           </div>
         </div>
@@ -78,22 +108,26 @@
               <tr>
                 <th>巡检日期</th>
                 <th>站点</th>
-                <th>巡检大类</th>
+                <th>检查表</th>
                 <th>结果</th>
                 <th>发现问题数</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in paginatedData" :key="item.id">
-                <td>{{ item.date }}</td>
-                <td>{{ item.station }}</td>
-                <td class="long-text">{{ item.categories || '暂无' }}</td>
-                <td>
-                  <span :class="statusClass(item.result)">{{ item.result }}</span>
-                </td>
-                <td>{{ item.issue_count }}</td>
-              </tr>
-              <tr v-if="!loading && paginatedData.length === 0">
+              <template v-for="batch in paginatedBatches" :key="batch.batchKey">
+                <tr v-for="(record, index) in batch.records" :key="record.id">
+                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-main-cell">{{
+                    batch.date }}</td>
+                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-main-cell">{{
+                    batch.station }}</td>
+                  <td class="long-text">{{ record.inspection_table_name || '暂无' }}</td>
+                  <td>
+                    <span :class="statusClass(record.result)">{{ record.result }}</span>
+                  </td>
+                  <td>{{ record.issue_count }}</td>
+                </tr>
+              </template>
+              <tr v-if="!loading && paginatedBatches.length === 0">
                 <td colspan="5" class="empty-row">当前没有巡检记录。</td>
               </tr>
               <tr v-if="loading">
@@ -105,7 +139,7 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
+        <div class="pagination-summary">共 {{ groupedBatches.length }} 个巡检批次</div>
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
@@ -123,14 +157,22 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 
 const filters = ref({
   date: '',
   station: '',
-  categories: '',
+  inspectionTableName: '',
   result: ''
+})
+
+const stationSelectRef = ref(null)
+const inspectionTableSelectRef = ref(null)
+
+const dropdownVisible = ref({
+  station: false,
+  inspectionTableName: false
 })
 
 const list = ref([])
@@ -138,24 +180,70 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 
+const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
+
+const uniqueSortedOptions = (values) => {
+  return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const filterOptionByKeyword = (options, keyword) => {
+  const normalized = normalizedKeyword(keyword)
+  return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
+}
+
 const filteredData = computed(() => {
   return list.value.filter((item) => {
     const matchedDate = !filters.value.date || item.date === filters.value.date
-    const matchedStation =
-      !filters.value.station || String(item.station || '').toLowerCase().includes(filters.value.station.trim().toLowerCase())
-    const matchedCategories =
-      !filters.value.categories || String(item.categories || '').toLowerCase().includes(filters.value.categories.trim().toLowerCase())
+    const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
+    const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
     const matchedResult = !filters.value.result || item.result === filters.value.result
 
-    return matchedDate && matchedStation && matchedCategories && matchedResult
+    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult
   })
 })
 
-const totalPage = computed(() => Math.max(1, Math.ceil(filteredData.value.length / pageSize.value)))
+const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
 
-const paginatedData = computed(() => {
+const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
+const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
+
+const groupedBatches = computed(() => {
+  const batchMap = new Map()
+
+  filteredData.value.forEach((item) => {
+    const batchKey = `${item.date || ''}__${item.station || ''}`
+    if (!batchMap.has(batchKey)) {
+      batchMap.set(batchKey, {
+        batchKey,
+        date: item.date,
+        station: item.station,
+        records: [],
+        batchIssueCount: 0,
+        batchResult: '正常',
+        rowspan: 0
+      })
+    }
+
+    const batch = batchMap.get(batchKey)
+    batch.records.push(item)
+    batch.batchIssueCount += Number(item.issue_count || 0)
+    if (item.result === '异常') {
+      batch.batchResult = '异常'
+    }
+  })
+
+  return Array.from(batchMap.values()).map((batch) => {
+    batch.rowspan = batch.records.length
+    return batch
+  })
+})
+
+const totalPage = computed(() => Math.max(1, Math.ceil(groupedBatches.value.length / pageSize.value)))
+
+const paginatedBatches = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  return filteredData.value.slice(start, start + pageSize.value)
+  return groupedBatches.value.slice(start, start + pageSize.value)
 })
 
 watch([filters, pageSize], () => {
@@ -184,9 +272,10 @@ const resetFilters = () => {
   filters.value = {
     date: '',
     station: '',
-    categories: '',
+    inspectionTableName: '',
     result: ''
   }
+  closeAllDropdowns()
 }
 
 const prevPage = () => {
@@ -201,6 +290,31 @@ const nextPage = () => {
   }
 }
 
+const openFilterDropdown = (key) => {
+  dropdownVisible.value[key] = true
+}
+
+const selectFilterOption = (key, value) => {
+  filters.value[key] = value
+  dropdownVisible.value[key] = false
+}
+
+const closeAllDropdowns = () => {
+  dropdownVisible.value = {
+    station: false,
+    inspectionTableName: false
+  }
+}
+
+const handleClickOutside = (event) => {
+  if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.station = false
+  }
+  if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspectionTableName = false
+  }
+}
+
 const statusClass = (value) => {
   if (value === '正常') return 'status-tag success'
   if (value === '异常') return 'status-tag danger'
@@ -208,7 +322,12 @@ const statusClass = (value) => {
 }
 
 onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
   fetchInspections()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
@@ -270,13 +389,63 @@ onMounted(() => {
   color: #374151;
 }
 
+.search-select {
+  position: relative;
+}
+
+.search-select input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
+  z-index: 200;
+}
+
+.search-select-option {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.search-select-option:last-child {
+  border-bottom: none;
+}
+
+.search-select-option:hover {
+  background: #f8fafc;
+}
+
+.search-select-empty {
+  padding: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.option-main {
+  font-size: 14px;
+  color: #0f172a;
+}
+
 .filter-item input,
 .filter-item select {
+  width: 100%;
   height: 42px;
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0 12px;
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 .filter-actions {
@@ -297,6 +466,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
 }
+
 .mobile-record-list {
   display: none;
 }
@@ -374,6 +544,42 @@ onMounted(() => {
   text-align: right;
 }
 
+.mobile-batch-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px dashed #dbe4ee;
+}
+
+.mobile-batch-item {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e7edf4;
+}
+
+.mobile-batch-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.mobile-batch-table-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.6;
+}
+
+.mobile-batch-item-meta {
+  font-size: 13px;
+  color: #64748b;
+}
+
 .mobile-empty {
   padding: 28px 16px;
   text-align: center;
@@ -427,6 +633,17 @@ onMounted(() => {
   min-width: 220px;
   white-space: normal;
   line-height: 1.7;
+}
+
+.batch-merged-cell {
+  background: #fcfdff;
+}
+
+.batch-main-cell {
+  font-weight: 700;
+  color: #0f172a;
+  vertical-align: middle;
+  text-align: center;
 }
 
 .empty-row {

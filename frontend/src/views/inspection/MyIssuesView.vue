@@ -9,6 +9,7 @@
 
     <div class="toolbar-card card-surface">
       <div class="toolbar-grid">
+
         <div class="toolbar-item">
           <label>当前账号类型</label>
           <input :value="currentRole === 'station_manager' ? '站点账号' : '督导组账号'" type="text" readonly />
@@ -26,17 +27,44 @@
 
         <div class="toolbar-item">
           <label>站点名称</label>
-          <input v-model="filters.station" type="text" placeholder="搜索站点名称" />
+          <div class="search-select" ref="stationSelectRef">
+            <input v-model="filters.station" type="text" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
+              @input="openFilterDropdown('station')" />
+            <div v-if="dropdownVisible.station" class="search-select-dropdown">
+              <div v-for="option in filteredStationOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('station', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点名称</div>
+            </div>
+          </div>
         </div>
 
         <div class="toolbar-item">
-          <label>巡检大类</label>
-          <input v-model="filters.categoryName" type="text" placeholder="搜索巡检大类" />
+          <label>检查表</label>
+          <div class="search-select" ref="inspectionTableSelectRef">
+            <input v-model="filters.inspectionTableName" type="text" placeholder="搜索或选择检查表"
+              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
+            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
+              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspectionTableName', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+            </div>
+          </div>
         </div>
+
         <div class="toolbar-item">
-          <label>问题编号</label>
-          <input v-model="filters.code" type="text" placeholder="搜索问题编号" />
+          <label>规范ID</label>
+          <input v-model="filters.standardId" type="text" placeholder="搜索规范ID" />
         </div>
+
+        <div class="toolbar-item toolbar-item-wide">
+          <label>规范详情</label>
+          <input v-model="filters.standardDetail" type="text" placeholder="搜索规范详情关键词" />
+        </div>
+
       </div>
 
       <div class="toolbar-actions">
@@ -76,20 +104,30 @@
         <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
-              <span class="mobile-card-category">{{ item.category_name || '暂无' }}</span>
+              <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
               <span :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
-            <div class="mobile-card-code">问题编号：{{ item.code }}</div>
+            <div class="mobile-card-code">规范ID：{{ item.standard_id || '暂无' }}</div>
           </div>
 
           <div class="mobile-card-body">
             <div class="mobile-card-row"><span>站点</span><strong>{{ item.station }}</strong></div>
-            <div class="mobile-card-row"><span>业务流程</span><strong>{{ item.business_process }}</strong></div>
-            <div class="mobile-card-row"><span>检查项目</span><strong>{{ item.check_item }}</strong></div>
+
+            <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
+            <div class="mobile-card-row"><span>规范ID</span><strong>{{ item.standard_id || '暂无' }}</strong></div>
+            <div class="mobile-card-row mobile-card-row-top">
+              <span>规范详情</span>
+              <div class="mobile-card-standard-box">
+                <div class="mobile-card-standard-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
+                }}</div>
+                <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
+              </div>
+            </div>
             <div class="mobile-card-row mobile-card-row-top">
               <span>问题描述</span>
               <div class="mobile-card-text">{{ item.description }}</div>
             </div>
+
             <div class="mobile-card-row mobile-card-row-top">
               <span>整改说明</span>
               <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
@@ -106,12 +144,8 @@
               <span>问题照片</span>
             </button>
 
-            <button
-              v-if="item.rectification_photo"
-              class="mobile-image-btn"
-              type="button"
-              @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')"
-            >
+            <button v-if="item.rectification_photo" class="mobile-image-btn" type="button"
+              @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="整改照片" />
               <span>整改照片</span>
             </button>
@@ -134,11 +168,12 @@
               <tr>
                 <th>ID</th>
                 <th>站点</th>
-                <th>巡检大类</th>
-                <th>问题编号</th>
-                <th>业务流程</th>
-                <th>检查项目</th>
+
+                <th>检查表</th>
+                <th>规范ID</th>
+                <th>规范详情</th>
                 <th>问题描述</th>
+
                 <th>问题照片</th>
                 <th>站经理整改结果</th>
                 <th>站点反馈整改说明</th>
@@ -153,10 +188,16 @@
               <tr v-for="item in paginatedData" :key="item.id">
                 <td>{{ item.id }}</td>
                 <td>{{ item.station }}</td>
-                <td>{{ item.category_name || '暂无' }}</td>
-                <td>{{ item.code }}</td>
-                <td>{{ item.business_process }}</td>
-                <td>{{ item.check_item }}</td>
+
+                <td>{{ item.inspection_table_name || '暂无' }}</td>
+                <td>{{ item.standard_id || '暂无' }}</td>
+                <td class="standard-detail-cell">
+                  <div class="standard-detail-box">
+                    <div class="standard-detail-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
+                    }}</div>
+                    <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
+                  </div>
+                </td>
                 <td class="long-text">{{ item.description }}</td>
                 <td>
                   <button class="image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
@@ -166,12 +207,8 @@
                 <td>{{ item.rectification_result || '暂无' }}</td>
                 <td class="long-text">{{ item.rectification_note || '暂无' }}</td>
                 <td>
-                  <button
-                    v-if="item.rectification_photo"
-                    class="image-btn"
-                    type="button"
-                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')"
-                  >
+                  <button v-if="item.rectification_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
                     <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
                   </button>
                   <span v-else>暂无</span>
@@ -188,12 +225,12 @@
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td colspan="15" class="empty-row">
+                <td colspan="14" class="empty-row">
                   {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
                 </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="15" class="empty-row">正在加载数据...</td>
+                <td colspan="14" class="empty-row">正在加载数据...</td>
               </tr>
             </tbody>
           </table>
@@ -221,7 +258,7 @@
         <div class="drawer-header">
           <div>
             <h3>{{ currentRole === 'station_manager' ? '提交整改' : '提交督导组复核' }}</h3>
-            <p>{{ actionDrawer.item?.station }}｜问题编号 {{ actionDrawer.item?.code }}</p>
+            <p>{{ actionDrawer.item?.station }}｜规范ID {{ actionDrawer.item?.standard_id || '暂无' }}</p>
           </div>
           <button class="drawer-close" type="button" @click="closeActionDrawer">×</button>
         </div>
@@ -251,13 +288,8 @@
             <div class="form-item">
               <label>整改照片</label>
               <div class="drawer-upload-card">
-                <input
-                  id="rectification-photo-upload"
-                  class="drawer-upload-input"
-                  type="file"
-                  accept="image/*"
-                  @change="handleRectificationFileChange"
-                />
+                <input id="rectification-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
+                  @change="handleRectificationFileChange" />
 
                 <label for="rectification-photo-upload" class="drawer-upload-dropzone">
                   <div class="drawer-upload-icon">↑</div>
@@ -274,14 +306,16 @@
                     <div class="drawer-preview-title">已选择整改照片</div>
                     <div class="drawer-preview-name">{{ actionForm.rectificationPhotoFile?.name || '已上传图片' }}</div>
                     <div class="drawer-preview-actions">
-                      <label for="rectification-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">重新选择</label>
-                      <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button" @click="clearRectificationFile">移除图片</button>
+                      <label for="rectification-photo-upload"
+                        class="btn btn-light btn-sm drawer-preview-btn">重新选择</label>
+                      <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
+                        @click="clearRectificationFile">移除图片</button>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-            
+
           </template>
 
           <template v-else>
@@ -305,7 +339,8 @@
             <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction">
               {{ submittingAction ? '提交中...' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
             </button>
-            <button class="btn btn-secondary" type="button" @click="closeActionDrawer" :disabled="submittingAction">取消</button>
+            <button class="btn btn-secondary" type="button" @click="closeActionDrawer"
+              :disabled="submittingAction">取消</button>
           </div>
 
           <div v-if="actionMessage" class="action-message">{{ actionMessage }}</div>
@@ -322,34 +357,66 @@
         <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
       </div>
     </div>
+    <div v-if="standardDetailState.visible" class="image-modal" @click.self="closeStandardDetail">
+      <div class="image-modal-content standard-detail-modal">
+        <div class="image-modal-header">
+          <span>{{ standardDetailState.title }}</span>
+          <button class="close-btn" type="button" @click="closeStandardDetail">×</button>
+        </div>
+        <div class="standard-detail-modal-body">
+          <div class="standard-detail-grid">
+            <div v-for="entry in standardDetailEntries" :key="`${standardDetailState.title}-${entry.label}`"
+              class="standard-detail-card">
+              <div class="standard-detail-card-label">{{ entry.label }}</div>
+              <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
+const stationSelectRef = ref(null)
+const inspectionTableSelectRef = ref(null)
+
+const dropdownVisible = ref({
+  station: false,
+  inspectionTableName: false
+})
 
 const filters = ref({
   status: '',
   station: '',
-  code: '',
-  categoryName: ''
+  inspectionTableName: '',
+  standardId: '',
+  standardDetail: ''
 })
 
 const filteredData = computed(() => {
   return issues.value.filter((item) => {
     const matchedStatus = !filters.value.status || item.status === filters.value.status
-    const matchedStation = !filters.value.station || item.station.toLowerCase().includes(filters.value.station.trim().toLowerCase())
-    const matchedCode = !filters.value.code || String(item.code).toLowerCase().includes(filters.value.code.trim().toLowerCase())
-    const matchedCategoryName = !filters.value.categoryName || String(item.category_name || '').toLowerCase().includes(filters.value.categoryName.trim().toLowerCase())
-    return matchedStatus && matchedStation && matchedCode && matchedCategoryName
+    const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
+    const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
+    const matchedStandardId = !filters.value.standardId || normalizedKeyword(item.standard_id).includes(normalizedKeyword(filters.value.standardId))
+    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(item.standard_detail_text).includes(normalizedKeyword(filters.value.standardDetail))
+    return matchedStatus && matchedStation && matchedInspectionTableName && matchedStandardId && matchedStandardDetail
   })
 })
+
+const stationOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.station)))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.inspection_table_name)))
+
+const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
+const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
 const page = ref(1)
 const pageSize = ref(20)
@@ -371,13 +438,28 @@ watch(totalPage, (value) => {
   }
 })
 
+const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
+
+const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
+
+const uniqueSortedOptions = (values) => {
+  return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const filterOptionByKeyword = (options, keyword) => {
+  const normalized = normalizedKeyword(keyword)
+  return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
+}
+
 const resetFilters = () => {
   filters.value = {
     status: '',
     station: '',
-    code: '',
-    categoryName: ''
+    inspectionTableName: '',
+    standardId: '',
+    standardDetail: ''
   }
+  closeAllDropdowns()
 }
 
 const prevPage = () => {
@@ -407,6 +489,109 @@ const closePreview = () => {
     visible: false,
     url: '',
     title: ''
+  }
+}
+
+const standardDetailState = ref({
+  visible: false,
+  title: '',
+  content: ''
+})
+
+const standardDetailEntries = computed(() => {
+  const content = formatMultiline(standardDetailState.value.content || '').trim()
+  if (!content) return []
+
+  const topLevelLabels = new Set([
+    '序号',
+    '业务流程',
+    '检查项目',
+    '检查内容',
+    '规范要求',
+    '检查方法',
+    '问题编号',
+    '常见问题',
+    '检查路径',
+    '是否禁止项',
+    '项目',
+    '检查类别',
+    '检查评比标准',
+    '检查方式',
+    '规范ID'
+  ])
+
+  const entries = []
+
+  content
+    .split('\n')
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+    .forEach((line, index) => {
+      const separatorIndex = line.indexOf('：')
+      const possibleLabel = separatorIndex > -1 ? line.slice(0, separatorIndex).trim() : ''
+
+      if (separatorIndex > -1 && topLevelLabels.has(possibleLabel)) {
+        entries.push({
+          label: possibleLabel,
+          value: formatMultiline(line.slice(separatorIndex + 1).trim()) || '暂无'
+        })
+        return
+      }
+
+      if (entries.length > 0) {
+        const lastEntry = entries[entries.length - 1]
+        lastEntry.value = `${lastEntry.value}\n${formatMultiline(line)}`.trim()
+        return
+      }
+
+      entries.push({
+        label: `详情 ${index + 1}`,
+        value: formatMultiline(line)
+      })
+    })
+
+  return entries
+})
+
+const openStandardDetail = (item) => {
+  standardDetailState.value = {
+    visible: true,
+    title: `规范详情｜${item.inspection_table_name || '未命名检查表'}｜${item.standard_id || '暂无'}`,
+    content: item.standard_detail_text || '暂无规范详情'
+  }
+}
+
+const closeStandardDetail = () => {
+  standardDetailState.value = {
+    visible: false,
+    title: '',
+    content: ''
+  }
+}
+
+
+const openFilterDropdown = (key) => {
+  dropdownVisible.value[key] = true
+}
+
+const selectFilterOption = (key, value) => {
+  filters.value[key] = value
+  dropdownVisible.value[key] = false
+}
+
+const closeAllDropdowns = () => {
+  dropdownVisible.value = {
+    station: false,
+    inspectionTableName: false
+  }
+}
+
+const handleClickOutside = (event) => {
+  if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.station = false
+  }
+  if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspectionTableName = false
   }
 }
 
@@ -669,7 +854,12 @@ const statusClass = (status) => {
 }
 
 onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
   fetchMyIssues()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
@@ -725,6 +915,57 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.toolbar-item-wide {
+  grid-column: span 2;
+}
+
+.search-select {
+  position: relative;
+}
+
+.search-select input {
+  width: 100%;
+}
+
+.search-select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
+  z-index: 200;
+}
+
+.search-select-option {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.search-select-option:last-child {
+  border-bottom: none;
+}
+
+.search-select-option:hover {
+  background: #f8fafc;
+}
+
+.search-select-empty {
+  padding: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.option-main {
+  font-size: 14px;
+  color: #0f172a;
 }
 
 .toolbar-item label,
@@ -892,6 +1133,19 @@ onMounted(() => {
   text-align: right;
 }
 
+.mobile-card-standard-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.mobile-card-standard-preview {
+  width: 100%;
+  text-align: left;
+}
+
 .mobile-card-images {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -980,6 +1234,38 @@ onMounted(() => {
   min-width: 240px;
   white-space: normal;
   line-height: 1.7;
+}
+
+.standard-detail-cell {
+  min-width: 300px;
+}
+
+.standard-detail-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.standard-detail-preview {
+  width: 100%;
+}
+
+.multiline-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.text-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .thumb {
@@ -1199,7 +1485,7 @@ onMounted(() => {
   color: #2563eb;
   font-size: 22px;
   font-weight: 800;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .drawer-upload-title {
@@ -1328,6 +1614,45 @@ onMounted(() => {
   background: #f8fafc;
 }
 
+.standard-detail-modal {
+  width: min(880px, 100%);
+}
+
+.standard-detail-modal-body {
+  padding: 20px;
+  max-height: 70vh;
+  overflow: auto;
+  line-height: 1.9;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.standard-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.standard-detail-card {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e7edf4;
+}
+
+.standard-detail-card-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.standard-detail-card-value {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #334155;
+}
+
 @media (max-width: 1200px) {
   .toolbar-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -1339,6 +1664,14 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
+  .toolbar-item-wide {
+    grid-column: span 1;
+  }
+
+  .standard-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .page-shell {
     gap: 14px;
   }
@@ -1364,6 +1697,10 @@ onMounted(() => {
   .toolbar-grid {
     grid-template-columns: 1fr;
     gap: 14px;
+  }
+
+  .toolbar-card {
+    display: none;
   }
 
   .toolbar-item label,
@@ -1427,12 +1764,13 @@ onMounted(() => {
   }
 
   .drawer-image-preview-panel {
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .drawer-preview-thumb {
     width: 100%;
-    max-width: 280px;
+    max-width: none;
     height: auto;
     aspect-ratio: 4 / 3;
   }
@@ -1440,6 +1778,13 @@ onMounted(() => {
   .drawer-preview-meta {
     min-width: 0;
     width: 100%;
+    align-items: stretch;
+  }
+
+  .drawer-preview-title,
+  .drawer-preview-name {
+    word-break: break-word;
+    text-align: left;
   }
 
   .drawer-preview-actions {

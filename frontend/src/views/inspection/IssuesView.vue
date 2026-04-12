@@ -18,10 +18,10 @@
         <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
-              <span class="mobile-card-category">{{ item.category_name || '暂无' }}</span>
+              <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
               <span :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
-            <div class="mobile-card-code">问题编号：{{ item.code }}</div>
+            <div class="mobile-card-code">规范ID：{{ item.standard_id || '暂无' }}</div>
             <div class="mobile-card-meta">{{ item.month }}｜{{ item.time }}</div>
           </div>
 
@@ -30,16 +30,16 @@
             <div class="mobile-card-row"><span>所属地</span><strong>{{ item.region }}</strong></div>
             <div class="mobile-card-row"><span>站点负责人</span><strong>{{ item.station_manager }}</strong></div>
             <div class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
-            <div class="mobile-card-row"><span>业务流程</span><strong>{{ item.business_process }}</strong></div>
-            <div class="mobile-card-row"><span>检查项目</span><strong>{{ item.check_item }}</strong></div>
+            <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
+            <div class="mobile-card-row"><span>规范ID</span><strong>{{ item.standard_id || '暂无' }}</strong></div>
 
             <div class="mobile-card-row mobile-card-row-top">
-              <span>规范要求</span>
-              <div class="mobile-card-text multiline-cell">{{ formatMultiline(item.requirement) }}</div>
-            </div>
-            <div class="mobile-card-row mobile-card-row-top">
-              <span>检查方法</span>
-              <div class="mobile-card-text multiline-cell">{{ formatMultiline(item.check_method) }}</div>
+              <span>规范详情</span>
+              <div class="mobile-card-standard-box">
+                <div class="mobile-card-standard-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
+                }}</div>
+                <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
+              </div>
             </div>
             <div class="mobile-card-row mobile-card-row-top">
               <span>问题描述</span>
@@ -61,12 +61,8 @@
               <span>问题照片</span>
             </button>
 
-            <button
-              v-if="item.rectification_photo"
-              class="mobile-image-btn"
-              type="button"
-              @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')"
-            >
+            <button v-if="item.rectification_photo" class="mobile-image-btn" type="button"
+              @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="站点反馈整改照片" />
               <span>整改照片</span>
             </button>
@@ -85,37 +81,89 @@
           <label>检查时间（按天）</label>
           <input v-model="filters.date" type="date" />
         </div>
+
         <div class="filter-item">
           <label>站点所属地</label>
-          <input v-model="filters.region" placeholder="搜索站点所属地" />
+          <div class="search-select" ref="regionSelectRef">
+            <input v-model="filters.region" placeholder="搜索或选择站点所属地" @focus="openFilterDropdown('region')"
+              @input="openFilterDropdown('region')" />
+            <div v-if="dropdownVisible.region" class="search-select-dropdown">
+              <div v-for="option in filteredRegionOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('region', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredRegionOptions.length === 0" class="search-select-empty">无匹配站点所属地</div>
+            </div>
+          </div>
         </div>
+
         <div class="filter-item">
           <label>站点名称</label>
-          <input v-model="filters.station" placeholder="搜索站点名称" />
+          <div class="search-select" ref="stationSelectRef">
+            <input v-model="filters.station" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
+              @input="openFilterDropdown('station')" />
+            <div v-if="dropdownVisible.station" class="search-select-dropdown">
+              <div v-for="option in filteredStationOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('station', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点名称</div>
+            </div>
+          </div>
         </div>
+
         <div class="filter-item">
           <label>站点负责人</label>
-          <input v-model="filters.stationManager" placeholder="搜索站点负责人" />
+          <div class="search-select" ref="stationManagerSelectRef">
+            <input v-model="filters.stationManager" placeholder="搜索或选择站点负责人"
+              @focus="openFilterDropdown('stationManager')" @input="openFilterDropdown('stationManager')" />
+            <div v-if="dropdownVisible.stationManager" class="search-select-dropdown">
+              <div v-for="option in filteredStationManagerOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('stationManager', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredStationManagerOptions.length === 0" class="search-select-empty">无匹配站点负责人</div>
+            </div>
+          </div>
         </div>
+
         <div class="filter-item">
           <label>检查人员</label>
-          <input v-model="filters.inspector" placeholder="搜索检查人员" />
+          <div class="search-select" ref="inspectorSelectRef">
+            <input v-model="filters.inspector" placeholder="搜索或选择检查人员" @focus="openFilterDropdown('inspector')"
+              @input="openFilterDropdown('inspector')" />
+            <div v-if="dropdownVisible.inspector" class="search-select-dropdown">
+              <div v-for="option in filteredInspectorOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspector', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人员</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-item">
+          <label>检查表</label>
+          <div class="search-select" ref="inspectionTableSelectRef">
+            <input v-model="filters.inspectionTableName" placeholder="搜索或选择检查表"
+              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
+            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
+              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspectionTableName', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-item">
+          <label>规范ID</label>
+          <input v-model="filters.standardId" placeholder="搜索规范ID" />
         </div>
         <div class="filter-item">
-          <label>巡检大类</label>
-          <input v-model="filters.categoryName" placeholder="搜索巡检大类" />
-        </div>
-        <div class="filter-item">
-          <label>问题编号</label>
-          <input v-model="filters.code" placeholder="搜索问题编号" />
-        </div>
-        <div class="filter-item">
-          <label>业务流程</label>
-          <input v-model="filters.businessProcess" placeholder="搜索业务流程" />
-        </div>
-        <div class="filter-item">
-          <label>检查项目</label>
-          <input v-model="filters.checkItem" placeholder="搜索检查项目" />
+          <label>规范详情</label>
+          <input v-model="filters.standardDetail" placeholder="搜索规范详情关键词" />
         </div>
         <div class="filter-item">
           <label>站经理整改结果</label>
@@ -168,12 +216,9 @@
                 <th class="nowrap">站点负责人手机号</th>
                 <th class="nowrap">检查人员</th>
                 <th class="nowrap">检查人员手机号</th>
-                <th class="nowrap">巡检大类</th>
-                <th class="nowrap">问题编号</th>
-                <th class="nowrap">业务流程</th>
-                <th class="nowrap">检查项目</th>
-                <th>规范要求</th>
-                <th>检查方法</th>
+                <th class="nowrap">检查表</th>
+                <th class="nowrap">规范ID</th>
+                <th>规范详情</th>
                 <th>问题描述</th>
                 <th class="nowrap">问题照片</th>
                 <th class="nowrap">站经理整改结果</th>
@@ -194,12 +239,15 @@
                 <td class="nowrap">{{ item.station_manager_phone }}</td>
                 <td class="nowrap">{{ item.inspector }}</td>
                 <td class="nowrap">{{ item.inspector_phone }}</td>
-                <td class="nowrap">{{ item.category_name || '暂无' }}</td>
-                <td class="nowrap">{{ item.code }}</td>
-                <td class="nowrap">{{ item.business_process }}</td>
-                <td class="nowrap">{{ item.check_item }}</td>
-                <td class="long-text multiline-cell">{{ formatMultiline(item.requirement) }}</td>
-                <td class="long-text multiline-cell">{{ formatMultiline(item.check_method) }}</td>
+                <td class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
+                <td class="nowrap">{{ item.standard_id || '暂无' }}</td>
+                <td class="standard-detail-cell">
+                  <div class="standard-detail-box">
+                    <div class="standard-detail-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
+                    }}</div>
+                    <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
+                  </div>
+                </td>
                 <td class="long-text">{{ item.description }}</td>
                 <td class="nowrap">
                   <button class="image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
@@ -209,12 +257,8 @@
                 <td class="nowrap">{{ item.rectification_result || '暂无' }}</td>
                 <td class="nowrap">{{ item.rectification_note || '暂无' }}</td>
                 <td class="nowrap">
-                  <button
-                    v-if="item.rectification_photo"
-                    class="image-btn"
-                    type="button"
-                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')"
-                  >
+                  <button v-if="item.rectification_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
                     <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
                   </button>
                   <span v-else>暂无</span>
@@ -226,11 +270,10 @@
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td colspan="22" class="empty-row">当前没有符合条件的问题记录。</td>
-                <td colspan="22" class="empty-row">正在加载问题列表...</td>
+                <td colspan="19" class="empty-row">当前没有符合条件的问题记录。</td>
               </tr>
               <tr v-if="loading">
-                <td colspan="21" class="empty-row">正在加载问题列表...</td>
+                <td colspan="19" class="empty-row">正在加载问题列表...</td>
               </tr>
             </tbody>
           </table>
@@ -262,11 +305,28 @@
         <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
       </div>
     </div>
+    <div v-if="standardDetailState.visible" class="image-modal" @click.self="closeStandardDetail">
+      <div class="image-modal-content standard-detail-modal">
+        <div class="image-modal-header">
+          <span>{{ standardDetailState.title }}</span>
+          <button class="close-btn" type="button" @click="closeStandardDetail">×</button>
+        </div>
+        <div class="standard-detail-modal-body">
+          <div class="standard-detail-grid">
+            <div v-for="entry in standardDetailEntries" :key="`${standardDetailState.title}-${entry.label}`"
+              class="standard-detail-card">
+              <div class="standard-detail-card-label">{{ entry.label }}</div>
+              <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 
 const filters = ref({
@@ -276,10 +336,9 @@ const filters = ref({
   station: '',
   stationManager: '',
   inspector: '',
-  code: '',
-  businessProcess: '',
-  categoryName: '',
-  checkItem: '',
+  inspectionTableName: '',
+  standardId: '',
+  standardDetail: '',
   rectificationResult: '',
   reviewResult: '',
   status: ''
@@ -287,12 +346,33 @@ const filters = ref({
 
 const list = ref([])
 const loading = ref(false)
+const regionSelectRef = ref(null)
+const stationSelectRef = ref(null)
+const stationManagerSelectRef = ref(null)
+const inspectorSelectRef = ref(null)
+const inspectionTableSelectRef = ref(null)
+
+const dropdownVisible = ref({
+  region: false,
+  station: false,
+  stationManager: false,
+  inspector: false,
+  inspectionTableName: false
+})
 
 const page = ref(1)
 const pageSize = ref(20)
 
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
+const uniqueSortedOptions = (values) => {
+  return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const filterOptionByKeyword = (options, keyword) => {
+  const normalized = normalizedKeyword(keyword)
+  return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
+}
 
 const filteredData = computed(() => {
   return list.value.filter((item) => {
@@ -302,10 +382,9 @@ const filteredData = computed(() => {
     const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
     const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
     const matchedInspector = !filters.value.inspector || normalizedKeyword(item.inspector).includes(normalizedKeyword(filters.value.inspector))
-    const matchedCode = !filters.value.code || normalizedKeyword(item.code).includes(normalizedKeyword(filters.value.code))
-    const matchedBusinessProcess = !filters.value.businessProcess || normalizedKeyword(item.business_process).includes(normalizedKeyword(filters.value.businessProcess))
-    const matchedCategoryName = !filters.value.categoryName || normalizedKeyword(item.category_name).includes(normalizedKeyword(filters.value.categoryName))
-    const matchedCheckItem = !filters.value.checkItem || normalizedKeyword(item.check_item).includes(normalizedKeyword(filters.value.checkItem))
+    const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
+    const matchedStandardId = !filters.value.standardId || normalizedKeyword(item.standard_id || item.code).includes(normalizedKeyword(filters.value.standardId))
+    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(item.standard_detail_text).includes(normalizedKeyword(filters.value.standardDetail))
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
@@ -317,16 +396,27 @@ const filteredData = computed(() => {
       matchedStation &&
       matchedStationManager &&
       matchedInspector &&
-      matchedCode &&
-      matchedBusinessProcess &&
-      matchedCategoryName &&
-      matchedCheckItem &&
+      matchedInspectionTableName &&
+      matchedStandardId &&
+      matchedStandardDetail &&
       matchedRectificationResult &&
       matchedReviewResult &&
       matchedStatus
     )
   })
 })
+
+const regionOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.region)))
+const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
+const stationManagerOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station_manager)))
+const inspectorOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspector)))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
+
+const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
+const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
+const filteredStationManagerOptions = computed(() => filterOptionByKeyword(stationManagerOptions.value, filters.value.stationManager))
+const filteredInspectorOptions = computed(() => filterOptionByKeyword(inspectorOptions.value, filters.value.inspector))
+const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
 const totalPage = computed(() => Math.max(1, Math.ceil(filteredData.value.length / pageSize.value)))
 
@@ -365,15 +455,16 @@ const resetFilters = () => {
     station: '',
     stationManager: '',
     inspector: '',
-    code: '',
-    businessProcess: '',
-    categoryName: '',
-    checkItem: '',
+    inspectionTableName: '',
+    standardId: '',
+    standardDetail: '',
     rectificationResult: '',
     reviewResult: '',
     status: ''
   }
+  closeAllDropdowns()
 }
+
 
 const nextPage = () => {
   if (page.value < totalPage.value) {
@@ -391,6 +482,12 @@ const previewState = ref({
   visible: false,
   url: '',
   title: ''
+})
+
+const standardDetailState = ref({
+  visible: false,
+  title: '',
+  content: ''
 })
 
 const resolveImage = (path) => {
@@ -416,6 +513,114 @@ const closePreview = () => {
   }
 }
 
+const openStandardDetail = (item) => {
+  standardDetailState.value = {
+    visible: true,
+    title: `规范详情｜${item.inspection_table_name || '未命名检查表'}｜${item.standard_id || '暂无'}`,
+    content: item.standard_detail_text || '暂无规范详情'
+  }
+}
+
+const closeStandardDetail = () => {
+  standardDetailState.value = {
+    visible: false,
+    title: '',
+    content: ''
+  }
+}
+
+const standardDetailEntries = computed(() => {
+  const content = formatMultiline(standardDetailState.value.content || '').trim()
+  if (!content) return []
+
+  const topLevelLabels = new Set([
+    '序号',
+    '业务流程',
+    '检查项目',
+    '检查内容',
+    '规范要求',
+    '检查方法',
+    '问题编号',
+    '常见问题',
+    '检查路径',
+    '是否禁止项',
+    '项目',
+    '检查类别',
+    '检查评比标准',
+    '检查方式',
+    '规范ID'
+  ])
+
+  const entries = []
+
+  content
+    .split('\n')
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+    .forEach((line, index) => {
+      const separatorIndex = line.indexOf('：')
+      const possibleLabel = separatorIndex > -1 ? line.slice(0, separatorIndex).trim() : ''
+
+      if (separatorIndex > -1 && topLevelLabels.has(possibleLabel)) {
+        entries.push({
+          label: possibleLabel,
+          value: formatMultiline(line.slice(separatorIndex + 1).trim()) || '暂无'
+        })
+        return
+      }
+
+      if (entries.length > 0) {
+        const lastEntry = entries[entries.length - 1]
+        lastEntry.value = `${lastEntry.value}\n${formatMultiline(line)}`.trim()
+        return
+      }
+
+      entries.push({
+        label: `详情 ${index + 1}`,
+        value: formatMultiline(line)
+      })
+    })
+
+  return entries
+})
+
+const openFilterDropdown = (key) => {
+  dropdownVisible.value[key] = true
+}
+
+const selectFilterOption = (key, value) => {
+  filters.value[key] = value
+  dropdownVisible.value[key] = false
+}
+
+const closeAllDropdowns = () => {
+  dropdownVisible.value = {
+    region: false,
+    station: false,
+    stationManager: false,
+    inspector: false,
+    inspectionTableName: false
+  }
+}
+
+const handleClickOutside = (event) => {
+  if (regionSelectRef.value && !regionSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.region = false
+  }
+  if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.station = false
+  }
+  if (stationManagerSelectRef.value && !stationManagerSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.stationManager = false
+  }
+  if (inspectorSelectRef.value && !inspectorSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspector = false
+  }
+  if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspectionTableName = false
+  }
+}
+
 const statusClass = (status) => {
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
@@ -424,38 +629,43 @@ const statusClass = (status) => {
 }
 
 onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
   fetchIssues()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
 <style scoped>
-  .page-shell {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-  }
+.page-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
-  .card-surface {
-    background: rgba(255, 255, 255, 0.96);
-    border: 1px solid #dbe4ee;
-    border-radius: 22px;
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
-  }
+.card-surface {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #dbe4ee;
+  border-radius: 22px;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+}
 
-  .page-header {
-    padding: 24px 28px;
-  }
+.page-header {
+  padding: 24px 28px;
+}
 
-  .page-kicker {
-    display: inline-flex;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: #eff6ff;
-    color: #1d4ed8;
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 14px;
-  }
+.page-kicker {
+  display: inline-flex;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
 
 .page-header h2 {
   margin: 0;
@@ -481,6 +691,57 @@ onMounted(() => {
   gap: 8px;
 }
 
+.filter-item-wide {
+  grid-column: span 2;
+}
+
+.search-select {
+  position: relative;
+}
+
+.search-select input {
+  width: 100%;
+}
+
+.search-select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
+  z-index: 200;
+}
+
+.search-select-option {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.search-select-option:last-child {
+  border-bottom: none;
+}
+
+.search-select-option:hover {
+  background: #f8fafc;
+}
+
+.search-select-empty {
+  padding: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.option-main {
+  font-size: 14px;
+  color: #0f172a;
+}
+
 .filter-item label {
   font-size: 14px;
   font-weight: 700;
@@ -489,11 +750,13 @@ onMounted(() => {
 
 .filter-item input,
 .filter-item select {
+  width: 100%;
   height: 42px;
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0 12px;
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 .filter-actions {
@@ -513,133 +776,147 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
 }
-  .mobile-issue-list {
-    display: none;
-  }
 
-  .mobile-issue-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+.mobile-issue-list {
+  display: none;
+}
 
-  .mobile-issue-card {
-    padding: 16px;
-  }
+.mobile-issue-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
-  .mobile-card-head {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 14px;
-  }
+.mobile-issue-card {
+  padding: 16px;
+}
 
-  .mobile-card-title-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-  }
+.mobile-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
 
-  .mobile-card-category {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 5px 10px;
-    border-radius: 999px;
-    background: #eff6ff;
-    color: #1d4ed8;
-    font-size: 12px;
-    font-weight: 800;
-  }
+.mobile-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 
-  .mobile-card-code {
-    font-size: 13px;
-    color: #334155;
-    font-weight: 700;
-  }
+.mobile-card-category {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
 
-  .mobile-card-meta {
-    font-size: 12px;
-    color: #64748b;
-  }
+.mobile-card-code {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 700;
+}
 
-  .mobile-card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
+.mobile-card-meta {
+  font-size: 12px;
+  color: #64748b;
+}
 
-  .mobile-card-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
+.mobile-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
-  .mobile-card-row span {
-    font-size: 12px;
-    color: #64748b;
-    flex-shrink: 0;
-  }
+.mobile-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-  .mobile-card-row strong {
-    font-size: 14px;
-    font-weight: 700;
-    color: #0f172a;
-    text-align: right;
-  }
+.mobile-card-row span {
+  font-size: 12px;
+  color: #64748b;
+  flex-shrink: 0;
+}
 
-  .mobile-card-row-top {
-    align-items: flex-start;
-  }
+.mobile-card-row strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  text-align: right;
+}
 
-  .mobile-card-text {
-    flex: 1;
-    font-size: 14px;
-    line-height: 1.7;
-    color: #334155;
-    text-align: right;
-  }
+.mobile-card-row-top {
+  align-items: flex-start;
+}
 
-  .mobile-card-images {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin-top: 14px;
-  }
+.mobile-card-text {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #334155;
+  text-align: right;
+}
 
-  .mobile-image-btn {
-    border: 1px solid #dbe4ee;
-    border-radius: 14px;
-    background: #fff;
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    cursor: pointer;
-  }
+.mobile-card-standard-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
 
-  .mobile-image-btn span {
-    font-size: 12px;
-    font-weight: 700;
-    color: #475569;
-  }
+.mobile-card-standard-preview {
+  width: 100%;
+  text-align: left;
+}
 
-  .mobile-thumb {
-    width: 100%;
-    aspect-ratio: 4 / 3;
-    object-fit: cover;
-    border-radius: 10px;
-    border: 1px solid #cbd5e1;
-  }
+.mobile-card-images {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
 
-  .mobile-empty {
-    padding: 28px 16px;
-    text-align: center;
-    color: #64748b;
-    font-size: 14px;
-  }
+.mobile-image-btn {
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.mobile-image-btn span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+
+.mobile-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+}
+
+.mobile-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+}
 
 .btn-secondary:hover {
   background: #f9fafb;
@@ -695,6 +972,39 @@ onMounted(() => {
   white-space: normal;
   line-height: 1.7;
 }
+
+.standard-detail-cell {
+  min-width: 300px;
+}
+
+.standard-detail-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.standard-detail-preview {
+  width: 100%;
+}
+
+.multiline-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.text-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .multiline-cell {
   white-space: pre-line;
 }
@@ -816,6 +1126,45 @@ onMounted(() => {
   background: #f8fafc;
 }
 
+.standard-detail-modal {
+  width: min(880px, 100%);
+}
+
+.standard-detail-modal-body {
+  padding: 20px;
+  max-height: 70vh;
+  overflow: auto;
+  line-height: 1.9;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.standard-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.standard-detail-card {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e7edf4;
+}
+
+.standard-detail-card-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.standard-detail-card-value {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #334155;
+}
+
 @media (max-width: 1200px) {
   .filter-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -860,6 +1209,10 @@ onMounted(() => {
     padding: 0 12px;
   }
 
+  .filter-item-wide {
+    grid-column: span 1;
+  }
+
   .filter-actions,
   .pagination-controls {
     flex-direction: column;
@@ -894,6 +1247,10 @@ onMounted(() => {
 
   .image-modal {
     padding: 12px;
+  }
+
+  .standard-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

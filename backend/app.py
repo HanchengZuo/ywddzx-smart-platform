@@ -2,9 +2,11 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import os
 import uuid
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -16,8 +18,25 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_ROOT = os.path.join(BASE_DIR, "storage")
 MAX_IMAGE_BYTES = 500 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+
 ISSUES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issues")
 RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+TABLE_CODE_TO_PHYSICAL_TABLE = {
+    "quality_check": "inspection_table_quality_check",
+    "service_hygiene_check": "inspection_table_service_hygiene_check",
+}
+
+
+def beijing_now():
+    return datetime.now(BEIJING_TZ)
+
+
+def beijing_today():
+    return beijing_now().date()
+
 
 os.makedirs(ISSUES_STORAGE_DIR, exist_ok=True)
 os.makedirs(RECTIFICATIONS_STORAGE_DIR, exist_ok=True)
@@ -31,6 +50,7 @@ def get_db_connection():
         user=os.environ.get("DB_USER", "postgres"),
         password=os.environ.get("DB_PASSWORD", "postgres"),
         cursor_factory=RealDictCursor,
+        options="-c timezone=Asia/Shanghai",
     )
 
 
@@ -42,7 +62,7 @@ def close_db_resources(cur=None, conn=None):
 
 
 def ensure_storage_subdir(base_dir):
-    now = datetime.now()
+    now = beijing_now()
     year_dir = os.path.join(base_dir, now.strftime("%Y"))
     month_dir = os.path.join(year_dir, now.strftime("%m"))
     os.makedirs(month_dir, exist_ok=True)
@@ -117,96 +137,88 @@ def save_uploaded_file(file_storage, category):
     return f"/{relative_dir}/{filename}"
 
 
-def get_or_create_inspection(cur, station_id, inspector_id):
-    today = date.today()
+def get_checklist_field_meta(cur, inspection_table_id):
+    cur.execute(
+        """
+        SELECT field_key, field_label
+        FROM inspection_table_fields
+        WHERE inspection_table_id = %s
+        ORDER BY sort_order ASC, id ASC;
+        """,
+        (inspection_table_id,),
+    )
+    rows = cur.fetchall()
+    return [(row["field_key"], row["field_label"]) for row in rows]
 
+
+def build_standard_detail_text(field_meta, row):
+    lines = []
+    for field_key, field_label in field_meta:
+        value = row.get(field_key)
+        if value is None:
+            continue
+        value_text = str(value).strip()
+        if not value_text:
+            continue
+        lines.append(f"{field_label}：{value_text}")
+    return "\n".join(lines)
+
+
+def get_physical_table_name_by_code(table_code):
+    return TABLE_CODE_TO_PHYSICAL_TABLE.get(str(table_code or "").strip())
+
+
+def get_inspection_table_record(cur, inspection_table_id):
+    cur.execute(
+        """
+        SELECT
+            id,
+            table_code,
+            table_name,
+            description,
+            is_active
+        FROM inspection_tables
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (inspection_table_id,),
+    )
+    return cur.fetchone()
+
+
+def fetch_standard_from_table(cur, physical_table_name, standard_id):
+    cur.execute(
+        sql.SQL("SELECT * FROM {} WHERE standard_id = %s LIMIT 1;").format(
+            sql.Identifier(physical_table_name)
+        ),
+        (standard_id,),
+    )
+    return cur.fetchone()
+
+
+def create_inspection_record(cur, station_id, inspector_id, inspection_table_id):
+    today = beijing_today()
     cur.execute(
         """
         INSERT INTO inspections (
             station_id,
             inspector_id,
+            inspection_table_id,
             inspection_date
-        )
-        VALUES (%s, %s, %s)
-        RETURNING id;
-        """,
-        (station_id, inspector_id, today),
-    )
-    new_row = cur.fetchone()
-    return new_row["id"]
-
-
-def get_category_record(cur, inspection_id, category_id):
-    cur.execute(
-        """
-        SELECT id, result, summary
-        FROM inspection_category_records
-        WHERE inspection_id = %s AND category_id = %s
-        LIMIT 1;
-        """,
-        (inspection_id, category_id),
-    )
-    return cur.fetchone()
-
-
-def create_or_update_category_record(cur, inspection_id, category_id, result, summary):
-    existing = get_category_record(cur, inspection_id, category_id)
-
-    if existing:
-        cur.execute(
-            """
-            UPDATE inspection_category_records
-            SET result = %s,
-                summary = %s
-            WHERE id = %s
-            RETURNING id;
-            """,
-            (result, summary, existing["id"]),
-        )
-        updated = cur.fetchone()
-        return updated["id"]
-
-    cur.execute(
-        """
-        INSERT INTO inspection_category_records (
-            inspection_id,
-            category_id,
-            result,
-            summary
         )
         VALUES (%s, %s, %s, %s)
         RETURNING id;
         """,
-        (inspection_id, category_id, result, summary),
+        (station_id, inspector_id, inspection_table_id, today),
     )
-    new_row = cur.fetchone()
-    return new_row["id"]
+    row = cur.fetchone()
+    return row["id"]
 
 
-@app.route("/api/inspection-categories")
-def get_inspection_categories():
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT
-                id,
-                name,
-                sort_order
-            FROM inspection_categories
-            ORDER BY sort_order ASC, id ASC;
-            """
-        )
-        rows = cur.fetchall()
-        return jsonify(rows)
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+def serialize_standard_row(field_meta, row):
+    item = dict(row)
+    item["standard_detail_text"] = build_standard_detail_text(field_meta, row)
+    return item
 
 
 @app.route("/")
@@ -350,6 +362,7 @@ def get_stations():
                 latitude,
                 station_manager_name,
                 station_manager_phone,
+                station_type,
                 asset_type,
                 status
             FROM stations
@@ -391,6 +404,7 @@ def get_station_map():
                 s.latitude,
                 s.station_manager_name,
                 s.station_manager_phone,
+                s.station_type,
                 s.asset_type,
                 s.status,
                 COALESCE(SUM(CASE WHEN i.status = '待整改' THEN 1 ELSE 0 END), 0) AS pending_rectification_count,
@@ -411,6 +425,7 @@ def get_station_map():
                 s.latitude,
                 s.station_manager_name,
                 s.station_manager_phone,
+                s.station_type,
                 s.asset_type,
                 s.status
             ORDER BY s.id;
@@ -434,48 +449,21 @@ def get_event_feed():
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT *
-            FROM (
-                SELECT
-                    CONCAT('issue-create-', i.id) AS id,
-                    s.station_name AS "stationName",
-                    CASE
-                        WHEN i.status = '待整改' THEN '新提交问题，当前状态：待整改。'
-                        WHEN i.status = '待复核' THEN '新提交问题，当前状态：待复核。'
-                        WHEN i.status = '已闭环' THEN '新提交问题，当前状态：已闭环。'
-                        ELSE '新提交巡检问题。'
-                    END AS text,
-                    TO_CHAR(COALESCE(i.created_at, NOW()), 'HH24:MI') AS time,
-                    CASE
-                        WHEN i.status = '待整改' THEN 'danger'
-                        WHEN i.status = '待复核' THEN 'warning'
-                        ELSE 'info'
-                    END AS level,
-                    COALESCE(i.created_at, NOW()) AS sort_time
-                FROM issues i
-                JOIN stations s ON s.id = i.station_id
-
-                UNION ALL
-
-                SELECT
-                    CONCAT('category-record-', icr.id) AS id,
-                    s.station_name AS "stationName",
-                    CASE
-                        WHEN icr.result = '正常' THEN CONCAT('完成', c.name, '检查：未发现问题。')
-                        ELSE CONCAT('完成', c.name, '检查：发现问题。')
-                    END AS text,
-                    TO_CHAR(icr.created_at, 'HH24:MI') AS time,
-                    CASE
-                        WHEN icr.result = '异常' THEN 'warning'
-                        ELSE 'info'
-                    END AS level,
-                    icr.created_at AS sort_time
-                FROM inspection_category_records icr
-                JOIN inspections ins ON icr.inspection_id = ins.id
-                JOIN stations s ON ins.station_id = s.id
-                JOIN inspection_categories c ON icr.category_id = c.id
-                WHERE icr.created_at IS NOT NULL
-            ) feed
+            SELECT
+                CONCAT('issue-create-', i.id) AS id,
+                s.id AS "stationId",
+                s.station_name AS "stationName",
+                CONCAT('【', t.table_name, '】新增问题，规范ID：', i.standard_id, '，当前状态：', i.status, '。') AS text,
+                TO_CHAR(COALESCE(i.created_at, NOW()), 'HH24:MI') AS time,
+                CASE
+                    WHEN i.status = '待整改' THEN 'danger'
+                    WHEN i.status = '待复核' THEN 'warning'
+                    ELSE 'info'
+                END AS level,
+                COALESCE(i.created_at, NOW()) AS sort_time
+            FROM issues i
+            JOIN stations s ON s.id = i.station_id
+            JOIN inspection_tables t ON t.id = i.inspection_table_id
             ORDER BY sort_time DESC
             LIMIT 5;
             """
@@ -528,8 +516,10 @@ def get_users():
         close_db_resources(cur, conn)
 
 
-@app.route("/api/inspection-standards")
-def get_inspection_standards():
+# 新增 inspection-tables API
+# 新增 inspection-tables API
+@app.route("/api/inspection-tables")
+def get_inspection_tables():
     conn = None
     cur = None
     try:
@@ -539,28 +529,125 @@ def get_inspection_standards():
             """
             SELECT
                 id,
-                code,
-                business_process,
-                check_item,
-                check_content,
-                requirement,
-                check_method
-            FROM inspection_standards
-            ORDER BY CAST(code AS INTEGER);
-        """
+                table_code,
+                table_name,
+                description,
+                is_active
+            FROM inspection_tables
+            WHERE is_active = TRUE
+            ORDER BY id;
+            """
         )
         rows = cur.fetchall()
         return jsonify(rows)
     except Exception as e:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": str(e),
-                }
-            ),
-            500,
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-table-fields")
+def get_inspection_table_fields():
+    table_id = str(request.args.get("table_id", "")).strip()
+
+    if not table_id:
+        return jsonify({"success": False, "error": "缺少检查表信息。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                f.id,
+                f.inspection_table_id,
+                f.field_key,
+                f.field_label,
+                f.is_filterable,
+                f.sort_order
+            FROM inspection_table_fields f
+            JOIN inspection_tables t ON f.inspection_table_id = t.id
+            WHERE f.inspection_table_id = %s
+              AND t.is_active = TRUE
+            ORDER BY f.sort_order ASC, f.id ASC;
+            """,
+            (table_id,),
         )
+        rows = cur.fetchall()
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+# 新增：获取检查表规范（标准）API
+@app.route("/api/inspection-table-standards")
+def get_inspection_table_standards():
+    table_id = str(request.args.get("table_id", "")).strip()
+    keyword = str(request.args.get("keyword", "")).strip().lower()
+
+    if not table_id:
+        return jsonify({"success": False, "error": "缺少检查表信息。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        inspection_table = get_inspection_table_record(cur, table_id)
+        if not inspection_table:
+            return jsonify({"success": False, "error": "检查表不存在。"}), 404
+
+        if not inspection_table["is_active"]:
+            return jsonify({"success": False, "error": "检查表未启用。"}), 400
+
+        physical_table_name = get_physical_table_name_by_code(
+            inspection_table["table_code"]
+        )
+        field_meta = get_checklist_field_meta(cur, inspection_table["id"])
+        if not physical_table_name:
+            return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
+
+        cur.execute(
+            sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
+                sql.Identifier(physical_table_name)
+            )
+        )
+        rows = cur.fetchall()
+
+        filters = {
+            key: str(value).strip().lower()
+            for key, value in request.args.items()
+            if key not in {"table_id", "keyword"} and str(value).strip()
+        }
+
+        result = []
+        for row in rows:
+            item = serialize_standard_row(field_meta, row)
+            haystack = "\n".join(
+                [str(v).strip() for v in item.values() if v is not None]
+            ).lower()
+            if keyword and keyword not in haystack:
+                continue
+
+            matched = True
+            for field_key, field_value in filters.items():
+                raw_value = row.get(field_key)
+                raw_text = "" if raw_value is None else str(raw_value).strip().lower()
+                if field_value not in raw_text:
+                    matched = False
+                    break
+
+            if matched:
+                result.append(item)
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -569,8 +656,8 @@ def get_inspection_standards():
 def inspection_register():
     inspector_id = str(request.form.get("inspector_id", "")).strip()
     station_id = str(request.form.get("station_id", "")).strip()
-    category_id = str(request.form.get("category_id", "")).strip()
-    has_issue = str(request.form.get("has_issue", "")).strip()
+    inspection_table_id = str(request.form.get("inspection_table_id", "")).strip()
+    has_issue = str(request.form.get("has_issue", "yes")).strip().lower()
     standard_id = str(request.form.get("standard_id", "")).strip()
     description = str(request.form.get("description", "")).strip()
     photo = request.files.get("photo")
@@ -581,11 +668,20 @@ def inspection_register():
     if not station_id:
         return jsonify({"success": False, "error": "请选择站点名称。"}), 400
 
-    if not category_id:
-        return jsonify({"success": False, "error": "请选择巡检大类。"}), 400
+    if not inspection_table_id:
+        return jsonify({"success": False, "error": "请选择检查表。"}), 400
 
-    if has_issue not in ["yes", "no"]:
-        return jsonify({"success": False, "error": "请选择是否发现问题。"}), 400
+    if has_issue not in {"yes", "no"}:
+        return jsonify({"success": False, "error": "是否发现问题参数不合法。"}), 400
+
+    if has_issue == "yes" and not standard_id:
+        return jsonify({"success": False, "error": "请选择规范。"}), 400
+
+    if has_issue == "yes" and not description:
+        return jsonify({"success": False, "error": "请填写实际问题描述。"}), 400
+
+    if has_issue == "yes" and (not photo or not photo.filename):
+        return jsonify({"success": False, "error": "请上传问题照片。"}), 400
 
     conn = None
     cur = None
@@ -630,97 +726,106 @@ def inspection_register():
         if not station:
             return jsonify({"success": False, "error": "站点不存在。"}), 404
 
+        inspection_table = get_inspection_table_record(cur, inspection_table_id)
+        if not inspection_table:
+            return jsonify({"success": False, "error": "检查表不存在。"}), 404
+
+        if not inspection_table["is_active"]:
+            return jsonify({"success": False, "error": "检查表未启用。"}), 400
+
+        physical_table_name = get_physical_table_name_by_code(
+            inspection_table["table_code"]
+        )
+        field_meta = get_checklist_field_meta(cur, inspection_table["id"])
+        if not physical_table_name:
+            return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
+
+        today = beijing_today()
+
         cur.execute(
             """
-            SELECT id, name
-            FROM inspection_categories
-            WHERE id = %s
-            LIMIT 1;
+            SELECT ins.id
+            FROM inspections ins
+            WHERE ins.station_id = %s
+              AND ins.inspection_table_id = %s
+              AND ins.inspection_date = %s
+            ORDER BY ins.id ASC;
             """,
-            (category_id,),
+            (station_id, inspection_table_id, today),
         )
-        category = cur.fetchone()
+        existing_inspections = cur.fetchall()
 
-        if not category:
-            return jsonify({"success": False, "error": "巡检大类不存在。"}), 404
+        existing_inspection_ids = [row["id"] for row in existing_inspections]
 
-        if has_issue == "no":
+        if existing_inspection_ids:
             cur.execute(
                 """
-                SELECT icr.id
-                FROM inspection_category_records icr
-                JOIN inspections ins ON icr.inspection_id = ins.id
-                WHERE ins.station_id = %s
-                  AND ins.inspection_date = %s
-                  AND icr.category_id = %s
-                  AND icr.result = '异常'
-                LIMIT 1;
+                SELECT COUNT(*) AS issue_count
+                FROM issues
+                WHERE inspection_id = ANY(%s);
                 """,
-                (station_id, date.today(), category_id),
+                (existing_inspection_ids,),
             )
-            existing_abnormal = cur.fetchone()
+            existing_issue_row = cur.fetchone()
+            existing_issue_count = int(existing_issue_row["issue_count"] or 0)
 
-            if existing_abnormal:
+            if has_issue == "no":
                 return (
                     jsonify(
                         {
                             "success": False,
-                            "error": "该站本日该巡检大类下已登记发现问题，不能再登记为未发现问题。",
+                            "error": "该站点当天该检查表已提交过巡检结果，不能重复提交“未发现问题”。",
                         }
                     ),
                     400,
                 )
 
-            inspection_id = get_or_create_inspection(cur, station_id, inspector_id)
-            category_record_id = create_or_update_category_record(
+            if has_issue == "yes" and existing_issue_count == 0:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "该站点当天该检查表已提交“未发现问题”，不能再提交“发现问题”。",
+                        }
+                    ),
+                    400,
+                )
+
+        if existing_inspection_ids:
+            inspection_id = existing_inspection_ids[0]
+        else:
+            inspection_id = create_inspection_record(
                 cur,
-                inspection_id,
-                category_id,
-                "正常",
-                f"本次{category['name']}检查未发现问题",
+                station_id,
+                inspector_id,
+                inspection_table_id,
             )
 
+        if has_issue == "no":
             conn.commit()
             return jsonify(
                 {
                     "success": True,
-                    "message": "未发现问题巡检登记成功。",
+                    "message": "巡检记录提交成功，未发现问题。",
                     "inspection_id": inspection_id,
-                    "category_record_id": category_record_id,
+                    "issue_id": None,
                 }
             )
 
-        if not standard_id:
-            return jsonify({"success": False, "error": "请选择规范引用。"}), 400
-
-        if not description:
-            return jsonify({"success": False, "error": "请填写实际问题描述。"}), 400
-
-        if not photo or not photo.filename:
-            return jsonify({"success": False, "error": "请上传问题照片。"}), 400
-
-        cur.execute(
-            """
-            SELECT id
-            FROM inspection_standards
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (standard_id,),
-        )
-        standard = cur.fetchone()
-
-        if not standard:
-            return jsonify({"success": False, "error": "规范引用不存在。"}), 404
-
-        inspection_id = get_or_create_inspection(cur, station_id, inspector_id)
-        category_record_id = create_or_update_category_record(
+        standard = fetch_standard_from_table(
             cur,
-            inspection_id,
-            category_id,
-            "异常",
-            f"本次{category['name']}检查发现问题",
+            physical_table_name,
+            standard_id,
         )
+        if not standard:
+            return jsonify({"success": False, "error": "所选规范不存在。"}), 404
+
+        standard_detail_text = build_standard_detail_text(
+            field_meta,
+            standard,
+        )
+        if not standard_detail_text:
+            return jsonify({"success": False, "error": "规范详情生成失败。"}), 400
 
         photo_path = save_uploaded_file(photo, "issues")
 
@@ -728,21 +833,23 @@ def inspection_register():
             """
             INSERT INTO issues (
                 inspection_id,
-                category_record_id,
                 station_id,
+                inspection_table_id,
                 standard_id,
+                standard_detail_text,
                 description,
                 photo_path,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id;
             """,
             (
                 inspection_id,
-                category_record_id,
                 station_id,
+                inspection_table_id,
                 standard_id,
+                standard_detail_text,
                 description,
                 photo_path,
                 "待整改",
@@ -754,9 +861,8 @@ def inspection_register():
         return jsonify(
             {
                 "success": True,
-                "message": "发现问题巡检登记成功。",
+                "message": "巡检问题登记成功。",
                 "inspection_id": inspection_id,
-                "category_record_id": category_record_id,
                 "issue_id": issue["id"],
             }
         )
@@ -808,10 +914,9 @@ def get_my_issues():
                 SELECT
                     i.id,
                     s.station_name AS station,
-                    std.code,
-                    std.business_process,
-                    c.name AS category_name,
-                    std.check_item,
+                    t.table_name AS inspection_table_name,
+                    i.standard_id,
+                    i.standard_detail_text,
                     i.description,
                     i.photo_path AS issue_photo,
                     i.rectification_result,
@@ -822,9 +927,7 @@ def get_my_issues():
                     i.status
                 FROM issues i
                 JOIN stations s ON i.station_id = s.id
-                JOIN inspection_standards std ON i.standard_id = std.id
-                JOIN inspection_category_records icr ON i.category_record_id = icr.id
-                JOIN inspection_categories c ON icr.category_id = c.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.station_id = %s
                   AND i.status = '待整改'
                 ORDER BY i.id DESC;
@@ -840,10 +943,9 @@ def get_my_issues():
                 SELECT
                     i.id,
                     s.station_name AS station,
-                    std.code,
-                    std.business_process,
-                    c.name AS category_name,
-                    std.check_item,
+                    t.table_name AS inspection_table_name,
+                    i.standard_id,
+                    i.standard_detail_text,
                     i.description,
                     i.photo_path AS issue_photo,
                     i.rectification_result,
@@ -854,9 +956,7 @@ def get_my_issues():
                     i.status
                 FROM issues i
                 JOIN stations s ON i.station_id = s.id
-                JOIN inspection_standards std ON i.standard_id = std.id
-                JOIN inspection_category_records icr ON i.category_record_id = icr.id
-                JOIN inspection_categories c ON icr.category_id = c.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.status = '待复核'
                 ORDER BY i.id DESC;
                 """
@@ -894,12 +994,9 @@ def get_issues():
                 s.station_manager_phone AS station_manager_phone,
                 inspector.real_name AS inspector,
                 inspector.phone AS inspector_phone,
-                std.code,
-                std.business_process,
-                c.name AS category_name,
-                std.check_item,
-                std.requirement,
-                std.check_method,
+                t.table_name AS inspection_table_name,
+                i.standard_id,
+                i.standard_detail_text,
                 i.description,
                 i.photo_path AS issue_photo,
                 i.rectification_result,
@@ -910,10 +1007,8 @@ def get_issues():
                 i.status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
-            JOIN inspection_category_records icr ON i.category_record_id = icr.id
-            JOIN inspection_categories c ON icr.category_id = c.id
             JOIN stations s ON i.station_id = s.id
-            JOIN inspection_standards std ON i.standard_id = std.id
+            JOIN inspection_tables t ON i.inspection_table_id = t.id
             JOIN users inspector ON ins.inspector_id = inspector.id
             ORDER BY i.id DESC;
             """
@@ -938,25 +1033,21 @@ def get_inspections():
         cur.execute(
             """
             SELECT
-                MIN(ins.id) AS id,
+                ins.id AS id,
                 TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
                 s.station_name AS station,
-                COALESCE(
-                    STRING_AGG(DISTINCT c.name, '、' ORDER BY c.name),
-                    '暂无'
-                ) AS categories,
+                t.table_name AS inspection_table_name,
                 CASE
-                    WHEN COUNT(DISTINCT CASE WHEN icr.result = '异常' THEN icr.id END) > 0 THEN '异常'
+                    WHEN COUNT(i.id) > 0 THEN '异常'
                     ELSE '正常'
                 END AS result,
-                COUNT(DISTINCT i.id) AS issue_count
+                COUNT(i.id) AS issue_count
             FROM inspections ins
             JOIN stations s ON ins.station_id = s.id
-            LEFT JOIN inspection_category_records icr ON ins.id = icr.inspection_id
-            LEFT JOIN inspection_categories c ON icr.category_id = c.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
             LEFT JOIN issues i ON ins.id = i.inspection_id
-            GROUP BY ins.inspection_date, s.id, s.station_name
-            ORDER BY ins.inspection_date DESC, MIN(ins.id) DESC;
+            GROUP BY ins.id, ins.inspection_date, s.station_name, t.table_name
+            ORDER BY ins.inspection_date DESC, ins.id DESC;
             """
         )
         rows = cur.fetchall()

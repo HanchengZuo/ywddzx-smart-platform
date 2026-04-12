@@ -84,19 +84,15 @@
               <div class="event-badge">最近 {{ displayedEventFeed.length }} 条</div>
             </div>
             <div class="event-feed-list">
-              <div
-                v-for="event in displayedEventFeed"
-                :key="event.id"
-                class="event-feed-item"
-                :class="event.level"
-              >
+              <button v-for="event in displayedEventFeed" :key="event.id" class="event-feed-item event-feed-button"
+                :class="event.level" type="button" @click="handleEventClick(event)">
                 <div class="event-feed-dot"></div>
                 <div class="event-feed-content">
                   <div class="event-feed-station">{{ event.stationName }}</div>
                   <div class="event-feed-text">{{ event.text }}</div>
                   <div class="event-feed-time">{{ event.time }}</div>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
         </div>
@@ -139,7 +135,6 @@ let markers = []
 let infoWindowInstance = null
 let autoRotateTimer = null
 let eventFeedRefreshTimer = null
-let activeMarker = null
 const prioritizedStations = computed(() => {
   return [...filteredStations.value]
     .filter((station) => !Number.isNaN(Number(station.longitude)) && !Number.isNaN(Number(station.latitude)))
@@ -152,10 +147,6 @@ const prioritizedStations = computed(() => {
 
 const displayedEventFeed = computed(() => eventFeed.value.slice(0, 5))
 
-
-const rotateEventFeed = () => {
-  return
-}
 
 const fetchEventFeed = async () => {
   try {
@@ -287,6 +278,7 @@ const fetchStations = async () => {
 
 const buildInfoHtml = (station) => {
   const latestInspection = station.latest_inspection_date || '暂无'
+  const stationType = station.station_type || '暂无'
   const address = station.address || '暂无'
   const managerName = station.station_manager_name || '暂无'
   const managerPhone = station.station_manager_phone || '暂无'
@@ -354,7 +346,7 @@ const buildInfoHtml = (station) => {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;position:relative;z-index:1;">
           <div>
             <div style="font-size:18px;font-weight:800;line-height:1.35;margin-bottom:4px;color:#f8fafc;">${station.station_name}</div>
-            <div style="font-size:12px;color:#94a3b8;line-height:1.6;">${station.region || '暂无区域'} · ${station.asset_type || '站点'}</div>
+            <div style="font-size:12px;color:#94a3b8;line-height:1.6;">${station.region || '暂无区域'} · ${stationType} · ${station.asset_type || '站点'}</div>
           </div>
           <div style="
             padding: 5px 10px;
@@ -385,6 +377,8 @@ const buildInfoHtml = (station) => {
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.75;color:#cbd5e1;position:relative;z-index:1;">
+          <div><span style="color:#94a3b8;">站点类型：</span>${stationType}</div>
+          <div><span style="color:#94a3b8;">资产类型：</span>${station.asset_type || '暂无'}</div>
           <div><span style="color:#94a3b8;">站点负责人：</span>${managerName}</div>
           <div><span style="color:#94a3b8;">联系电话：</span>${managerPhone}</div>
           <div><span style="color:#94a3b8;">站点地址：</span>${address}</div>
@@ -393,6 +387,17 @@ const buildInfoHtml = (station) => {
       </div>
     </div>
   `
+}
+const handleEventClick = (event) => {
+  const matchedStation = filteredStations.value.find((station) => {
+    return String(station.station_id || station.id || '').trim() === String(event.stationId || '').trim()
+  })
+
+  if (!matchedStation) return
+
+  autoRotateEnabled.value = false
+  stopAutoRotate()
+  focusStationOnMap(matchedStation, { zoom: 12.5 })
 }
 
 const getMarkerColor = (station) => {
@@ -552,7 +557,6 @@ const renderMarkers = async () => {
 
     mapInstance.add(marker)
     markers.push(marker)
-    if (!activeMarker) activeMarker = marker
   })
 
   if (positions.length === 1) {
@@ -868,7 +872,7 @@ onBeforeUnmount(() => {
   color: #dbeafe;
   font-size: 12px;
   font-weight: 800;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .overlay-chip.danger {
@@ -898,15 +902,18 @@ onBeforeUnmount(() => {
     transform: scale(0.92);
     opacity: 0.32;
   }
+
   70% {
     transform: scale(var(--pulse-scale, 2));
     opacity: 0;
   }
+
   100% {
     transform: scale(var(--pulse-scale, 2));
     opacity: 0;
   }
 }
+
 .map-overlay-bottom-right {
   right: 16px;
   bottom: 16px;
@@ -916,6 +923,7 @@ onBeforeUnmount(() => {
   left: 16px;
   bottom: 16px;
 }
+
 .event-panel {
   width: 320px;
 }
@@ -956,6 +964,19 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.32);
   border: 1px solid rgba(96, 165, 250, 0.10);
+}
+
+.event-feed-button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(96, 165, 250, 0.10);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.event-feed-button:hover {
+  background: rgba(30, 41, 59, 0.48);
 }
 
 .event-feed-item.danger {
@@ -1056,6 +1077,7 @@ onBeforeUnmount(() => {
   0% {
     left: -60%;
   }
+
   100% {
     left: 130%;
   }
@@ -1071,8 +1093,8 @@ onBeforeUnmount(() => {
     linear-gradient(rgba(96, 165, 250, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(96, 165, 250, 0.05) 1px, transparent 1px);
   background-size: 28px 28px;
-  mask-image: linear-gradient(180deg, rgba(255,255,255,0.42), rgba(255,255,255,0.12));
-  -webkit-mask-image: linear-gradient(180deg, rgba(255,255,255,0.42), rgba(255,255,255,0.12));
+  mask-image: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.12));
+  -webkit-mask-image: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.12));
   z-index: 1;
 }
 
@@ -1142,6 +1164,7 @@ onBeforeUnmount(() => {
   .glass-panel {
     width: 100%;
   }
+
   .event-panel {
     width: 100%;
   }
