@@ -1,5 +1,5 @@
 <template>
-  <div class="page-shell station-map-page">
+  <div v-if="hasPermission" class="page-shell station-map-page">
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
@@ -128,6 +128,24 @@ const stations = ref([])
 const autoRotateEnabled = ref(true)
 const autoRotateTarget = ref(null)
 const eventFeed = ref([])
+const currentRole = ref('')
+
+const resolveCurrentRole = () => {
+  const directRole = localStorage.getItem('role') || localStorage.getItem('user_role') || ''
+  if (directRole) return String(directRole).trim()
+
+  const rawUser = localStorage.getItem('user') || localStorage.getItem('currentUser') || ''
+  if (!rawUser) return ''
+
+  try {
+    const parsedUser = JSON.parse(rawUser)
+    return String(parsedUser?.role || '').trim()
+  } catch (error) {
+    return ''
+  }
+}
+
+const hasPermission = computed(() => currentRole.value === 'supervisor')
 
 let mapInstance = null
 let mapScriptPromise = null
@@ -632,6 +650,12 @@ watch(
 )
 
 onMounted(() => {
+  currentRole.value = resolveCurrentRole()
+
+  if (!hasPermission.value) {
+    return
+  }
+
   initMap().catch((error) => {
     console.error(error)
   })
@@ -641,6 +665,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (!hasPermission.value) {
+    return
+  }
+
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
   window.removeEventListener('focus', fetchEventFeed)
   document.removeEventListener('visibilitychange', fetchEventFeed)

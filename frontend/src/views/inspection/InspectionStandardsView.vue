@@ -49,18 +49,21 @@
     <div class="content-grid">
       <div class="list-card card-surface">
         <div class="list-toolbar">
-          <div class="list-count">共 {{ filteredList.length }} 条规范</div>
-          <div class="list-table-name">{{ activeInspectionTableName }}</div>
+          <div>
+            <div class="list-count">共 {{ filteredList.length }} 条规范</div>
+            <div class="list-table-name">{{ activeInspectionTableName }}</div>
+          </div>
+          <div class="list-page-info">第 {{ page }} / {{ totalPages }} 页</div>
         </div>
 
         <div class="list-wrap">
-          <button v-for="item in filteredList" :key="item.standard_id" class="standard-item"
+          <button v-for="item in paginatedList" :key="item.standard_id" class="standard-item"
             :class="{ active: activeStandard && activeStandard.standard_id === item.standard_id }" type="button"
             @click="selectStandard(item)">
             <div class="standard-item-top">
               <span class="standard-code">{{ item.standard_id }}</span>
               <span class="standard-process">{{ item.inspection_table_name || activeInspectionTableName || '未选择检查表'
-              }}</span>
+                }}</span>
             </div>
             <div class="standard-check-item">{{ getStandardPrimaryTitle(item) }}</div>
             <div class="standard-card-meta" v-if="getStandardSummaryFields(item).length">
@@ -79,6 +82,11 @@
           <div v-if="loading" class="empty-block">
             正在加载规范数据...
           </div>
+        </div>
+        <div v-if="filteredList.length > 0" class="list-pagination">
+          <button class="btn btn-secondary" type="button" @click="prevPage" :disabled="page <= 1">上一页</button>
+          <div class="list-pagination-summary">每页 {{ pageSize }} 条</div>
+          <button class="btn btn-secondary" type="button" @click="nextPage" :disabled="page >= totalPages">下一页</button>
         </div>
       </div>
 
@@ -100,7 +108,7 @@
             <div class="meta-item">
               <div class="meta-label">检查表</div>
               <div class="meta-value">{{ activeStandard?.inspection_table_name || activeInspectionTableName || '未选择检查表'
-              }}</div>
+                }}</div>
             </div>
             <div class="meta-item">
               <div class="meta-label">规范ID</div>
@@ -139,6 +147,8 @@ const inspectionTableFields = ref([])
 const standards = ref([])
 const activeStandard = ref(null)
 const copyMessage = ref('')
+const page = ref(1)
+const pageSize = 5
 
 const filters = ref({
   keyword: '',
@@ -297,9 +307,28 @@ const filteredList = computed(() => {
     .sort((a, b) => Number(a.standard_id || 0) - Number(b.standard_id || 0))
 })
 
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredList.value.length / pageSize)))
+
+const paginatedList = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filteredList.value.slice(start, start + pageSize)
+})
+
+const prevPage = () => {
+  if (page.value > 1) page.value -= 1
+}
+
+const nextPage = () => {
+  if (page.value < totalPages.value) page.value += 1
+}
+
 watch(
   filteredList,
   (list) => {
+    if (page.value > totalPages.value) {
+      page.value = totalPages.value
+    }
+
     if (!list.length) {
       activeStandard.value = null
       return
@@ -398,6 +427,7 @@ const resetFilters = async () => {
   standards.value = []
   activeStandard.value = null
   copyMessage.value = ''
+  page.value = 1
 }
 
 const selectStandard = (item) => {
@@ -435,6 +465,7 @@ watch(
   () => filters.value.inspectionTableId,
   async (value) => {
     copyMessage.value = ''
+    page.value = 1
     activeStandard.value = null
     standards.value = []
     dynamicFilters.value = {}
@@ -463,8 +494,18 @@ watch(
 watch(
   () => filters.value.keyword,
   () => {
+    page.value = 1
     copyMessage.value = ''
   }
+)
+
+watch(
+  dynamicFilters,
+  () => {
+    page.value = 1
+    copyMessage.value = ''
+  },
+  { deep: true }
 )
 
 onMounted(async () => {
@@ -598,6 +639,21 @@ onMounted(async () => {
   margin-bottom: 14px;
 }
 
+.list-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.list-page-info {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 700;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
 .list-count {
   font-size: 14px;
   color: #64748b;
@@ -616,6 +672,23 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.list-pagination {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e7edf4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.list-pagination-summary {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 700;
+  text-align: center;
 }
 
 .standard-item {
@@ -936,6 +1009,17 @@ onMounted(async () => {
 
   .detail-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .list-toolbar,
+  .list-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .list-page-info,
+  .list-pagination-summary {
+    text-align: center;
   }
 }
 </style>

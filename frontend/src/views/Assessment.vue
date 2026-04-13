@@ -166,7 +166,7 @@
     <div v-else class="permission-card card-surface">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权限访问</div>
-      <div class="permission-desc">当前账号无权访问考核结果页，请使用普通用户账号登录后查看个人结果。</div>
+      <div class="permission-desc">当前账号无权访问考核结果页，仅督导组账号可查看。</div>
     </div>
   </div>
 </template>
@@ -175,7 +175,7 @@
 import { computed } from 'vue'
 
 const currentRole = localStorage.getItem('user_role') || ''
-const hasPermission = computed(() => currentRole === 'station_manager' || currentRole === 'employee' || currentRole === 'user')
+const hasPermission = computed(() => currentRole === 'supervisor')
 
 const dimensionScores = [
   { name: '工作态度', score: 4.7, avg: 4.1, diff: 0.6 },

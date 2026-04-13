@@ -924,6 +924,7 @@ def get_my_issues():
                     i.rectification_photo_path AS rectification_photo,
                     i.review_result,
                     i.review_note,
+                    i.review_photo_path AS review_photo,
                     i.status
                 FROM issues i
                 JOIN stations s ON i.station_id = s.id
@@ -953,6 +954,7 @@ def get_my_issues():
                     i.rectification_photo_path AS rectification_photo,
                     i.review_result,
                     i.review_note,
+                    i.review_photo_path AS review_photo,
                     i.status
                 FROM issues i
                 JOIN stations s ON i.station_id = s.id
@@ -971,47 +973,74 @@ def get_my_issues():
         close_db_resources(cur, conn)
 
 
-# ===== 新增：巡检问题列表API =====
-
-
 @app.route("/api/issues")
 def get_issues():
+    user_id = str(request.args.get("user_id", "")).strip()
+
     conn = None
     cur = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+
+        user = None
+        where_clause = ""
+        params = []
+
+        if user_id:
+            cur.execute(
+                """
+                SELECT id, role, station_id
+                FROM users
+                WHERE id = %s
+                LIMIT 1;
+                """,
+                (user_id,),
+            )
+            user = cur.fetchone()
+
+        if user and user["role"] == "station_manager":
+            if not user["station_id"]:
+                return jsonify([])
+            where_clause = "WHERE i.station_id = %s"
+            params.append(user["station_id"])
+
         cur.execute(
-            """
-            SELECT
-                i.id,
-                TO_CHAR(i.created_at, 'YYYY-MM') AS month,
-                TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
-                s.region,
-                s.station_name AS station,
-                s.station_manager_name AS station_manager,
-                s.station_manager_phone AS station_manager_phone,
-                inspector.real_name AS inspector,
-                inspector.phone AS inspector_phone,
-                t.table_name AS inspection_table_name,
-                i.standard_id,
-                i.standard_detail_text,
-                i.description,
-                i.photo_path AS issue_photo,
-                i.rectification_result,
-                i.rectification_note,
-                i.rectification_photo_path AS rectification_photo,
-                i.review_result,
-                i.review_note,
-                i.status
-            FROM issues i
-            JOIN inspections ins ON i.inspection_id = ins.id
-            JOIN stations s ON i.station_id = s.id
-            JOIN inspection_tables t ON i.inspection_table_id = t.id
-            JOIN users inspector ON ins.inspector_id = inspector.id
-            ORDER BY i.id DESC;
-            """
+            sql.SQL(
+                """
+                SELECT
+                    i.id,
+                    TO_CHAR(i.created_at, 'YYYY-MM') AS month,
+                    TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
+                    s.region,
+                    s.station_name AS station,
+                    s.station_manager_name AS station_manager,
+                    s.station_manager_phone AS station_manager_phone,
+                    inspector.real_name AS inspector,
+                    inspector.phone AS inspector_phone,
+                    t.table_name AS inspection_table_name,
+                    i.standard_id,
+                    i.standard_detail_text,
+                    i.description,
+                    i.photo_path AS issue_photo,
+                    i.rectification_result,
+                    i.rectification_note,
+                    i.rectification_photo_path AS rectification_photo,
+                    i.review_result,
+                    i.review_note,
+                    i.review_photo_path AS review_photo,
+                    i.status
+                FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
+                JOIN stations s ON i.station_id = s.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
+                JOIN users inspector ON ins.inspector_id = inspector.id
+                {where_clause}
+                ORDER BY i.id DESC;
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            params,
         )
         rows = cur.fetchall()
         return jsonify(rows)
@@ -1024,31 +1053,60 @@ def get_issues():
 # 新增巡检记录接口
 @app.route("/api/inspections")
 def get_inspections():
+    user_id = str(request.args.get("user_id", "")).strip()
+
     conn = None
     cur = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+
+        user = None
+        where_clause = ""
+        params = []
+
+        if user_id:
+            cur.execute(
+                """
+                SELECT id, role, station_id
+                FROM users
+                WHERE id = %s
+                LIMIT 1;
+                """,
+                (user_id,),
+            )
+            user = cur.fetchone()
+
+        if user and user["role"] == "station_manager":
+            if not user["station_id"]:
+                return jsonify([])
+            where_clause = "WHERE ins.station_id = %s"
+            params.append(user["station_id"])
+
         cur.execute(
-            """
-            SELECT
-                ins.id AS id,
-                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
-                s.station_name AS station,
-                t.table_name AS inspection_table_name,
-                CASE
-                    WHEN COUNT(i.id) > 0 THEN '异常'
-                    ELSE '正常'
-                END AS result,
-                COUNT(i.id) AS issue_count
-            FROM inspections ins
-            JOIN stations s ON ins.station_id = s.id
-            JOIN inspection_tables t ON ins.inspection_table_id = t.id
-            LEFT JOIN issues i ON ins.id = i.inspection_id
-            GROUP BY ins.id, ins.inspection_date, s.station_name, t.table_name
-            ORDER BY ins.inspection_date DESC, ins.id DESC;
-            """
+            sql.SQL(
+                """
+                SELECT
+                    ins.id AS id,
+                    TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
+                    s.station_name AS station,
+                    t.table_name AS inspection_table_name,
+                    CASE
+                        WHEN COUNT(i.id) > 0 THEN '异常'
+                        ELSE '正常'
+                    END AS result,
+                    COUNT(i.id) AS issue_count
+                FROM inspections ins
+                JOIN stations s ON ins.station_id = s.id
+                JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                LEFT JOIN issues i ON ins.id = i.inspection_id
+                {where_clause}
+                GROUP BY ins.id, ins.inspection_date, s.station_name, t.table_name
+                ORDER BY ins.inspection_date DESC, ins.id DESC;
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            params,
         )
         rows = cur.fetchall()
         return jsonify(rows)
@@ -1175,12 +1233,19 @@ def submit_review(issue_id):
     user_id = str(request.form.get("user_id", "")).strip()
     review_result = str(request.form.get("review_result", "")).strip()
     review_note = str(request.form.get("review_note", "")).strip()
+    review_photo = request.files.get("review_photo")
 
     if not user_id:
         return jsonify({"success": False, "error": "缺少用户信息。"}), 400
 
     if not review_result:
         return jsonify({"success": False, "error": "请选择督导组复核结果。"}), 400
+
+    if not review_note:
+        return jsonify({"success": False, "error": "请填写复核说明。"}), 400
+
+    if not review_photo or not review_photo.filename:
+        return jsonify({"success": False, "error": "请上传复核照片。"}), 400
 
     conn = None
     cur = None
@@ -1224,18 +1289,21 @@ def submit_review(issue_id):
             return jsonify({"success": False, "error": "问题不存在。"}), 404
 
         new_status = "已闭环" if review_result == "已整改" else "待整改"
+        review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
         cur.execute(
             """
             UPDATE issues
             SET review_result = %s,
                 review_note = %s,
+                review_photo_path = %s,
                 status = %s
             WHERE id = %s;
             """,
             (
                 review_result,
                 review_note,
+                review_photo_path,
                 new_status,
                 issue_id,
             ),

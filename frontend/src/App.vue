@@ -54,26 +54,17 @@
           </div>
         </div>
 
-        <button
-          class="sidebar-toggle sidebar-toggle-inner"
-          type="button"
-          @click="toggleSidebar"
-          :title="sidebarCollapsed ? '展开边栏' : '收起边栏'"
-        >
+        <button class="sidebar-toggle sidebar-toggle-inner" type="button" @click="toggleSidebar"
+          :title="sidebarCollapsed ? '展开边栏' : '收起边栏'">
           {{ sidebarCollapsed ? '☰' : '‹' }}
         </button>
       </div>
 
-      <div class="menu-section">
+      <div v-if="currentRole !== 'station_manager'" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">地图中心</div>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/station-map')"
-          :title="sidebarCollapsed ? '站点地图' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/station-map')" :title="sidebarCollapsed ? '站点地图' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">站点地图</span>
         </button>
@@ -82,85 +73,52 @@
       <div class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">巡检系统</div>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/register'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/register')"
-          :title="sidebarCollapsed ? '巡检登记' : ''"
-        >
+        <button v-if="currentRole !== 'station_manager'" class="nav-item"
+          :class="{ active: isActive('/inspection/register'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/register')" :title="sidebarCollapsed ? '巡检登记' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检登记</span>
         </button>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/standards'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/standards')"
-          :title="sidebarCollapsed ? '巡检规范库' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/inspection/standards'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/standards')" :title="sidebarCollapsed ? '巡检规范库' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检规范库</span>
         </button>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/my-issues')"
-          :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/my-issues')"
+          :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</span>
         </button>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/issues'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/issues')"
-          :title="sidebarCollapsed ? '巡检问题列表' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/inspection/issues'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/issues')" :title="sidebarCollapsed ? '巡检问题列表' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检问题列表</span>
         </button>
 
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/inspection/records')"
-          :title="sidebarCollapsed ? '巡检记录' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
       </div>
 
-      <div class="menu-section">
+      <div v-if="currentRole !== 'station_manager'" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">考核系统</div>
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/assessment')"
-          :title="sidebarCollapsed ? '考核系统' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/assessment')" :title="sidebarCollapsed ? '考核系统' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">考核系统</span>
         </button>
       </div>
 
-      <div class="menu-section">
+      <div v-if="currentRole !== 'station_manager'" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">培训系统</div>
-        <button
-          class="nav-item"
-          :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }"
-          type="button"
-          @click="go('/training')"
-          :title="sidebarCollapsed ? '培训系统' : ''"
-        >
+        <button class="nav-item" :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/training')" :title="sidebarCollapsed ? '培训系统' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">培训系统</span>
         </button>
@@ -311,7 +269,7 @@ const handleLogin = async () => {
 
     syncAuthState()
     loginForm.password = ''
-    router.push('/inspection/station-map')
+    router.push(user.role === 'station_manager' ? '/inspection/my-issues' : '/inspection/station-map')
   } catch (error) {
     const message = error?.response?.data?.error || '登录失败，请稍后重试。'
     loginError.value = message
@@ -354,10 +312,30 @@ const handleLogout = () => {
   --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.06);
 }
 
-* { box-sizing: border-box; }
-html, body, #app { width: 100%; height: 100%; margin: 0; }
-body { font-family: Arial, 'Microsoft YaHei', sans-serif; background: var(--bg-app); color: var(--text-main); }
-button, input, select, textarea { font: inherit; }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: Arial, 'Microsoft YaHei', sans-serif;
+  background: var(--bg-app);
+  color: var(--text-main);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
 
 .login-page {
   min-height: 100vh;
@@ -371,6 +349,7 @@ button, input, select, textarea { font: inherit; }
     radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 26%),
     linear-gradient(180deg, #f7faff 0%, #edf3f8 100%);
 }
+
 .login-shell {
   width: 100%;
   max-width: 1120px;
@@ -379,13 +358,16 @@ button, input, select, textarea { font: inherit; }
   gap: 28px;
   align-items: stretch;
 }
-.login-hero, .login-card {
+
+.login-hero,
+.login-card {
   border: 1px solid rgba(217, 226, 236, 0.9);
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.84);
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-card);
 }
+
 .login-hero {
   padding: 40px;
   display: flex;
@@ -393,6 +375,7 @@ button, input, select, textarea { font: inherit; }
   justify-content: center;
   min-height: 520px;
 }
+
 .login-badge {
   display: inline-flex;
   align-items: center;
@@ -406,9 +389,30 @@ button, input, select, textarea { font: inherit; }
   font-weight: 700;
   margin-bottom: 18px;
 }
-.login-title { margin: 0 0 14px; font-size: 42px; font-weight: 800; line-height: 1.2; letter-spacing: 0.4px; }
-.login-subtitle { margin: 0; color: var(--text-sub); font-size: 16px; line-height: 1.8; max-width: 560px; }
-.login-points { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+
+.login-title {
+  margin: 0 0 14px;
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.4px;
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--text-sub);
+  font-size: 16px;
+  line-height: 1.8;
+  max-width: 560px;
+}
+
+.login-points {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+
 .login-points span {
   padding: 10px 14px;
   border-radius: 999px;
@@ -418,29 +422,94 @@ button, input, select, textarea { font: inherit; }
   font-size: 13px;
   font-weight: 700;
 }
-.login-card { padding: 32px; display: flex; flex-direction: column; justify-content: center; }
-.login-card-header { margin-bottom: 18px; }
-.login-card-header h2 { margin: 0 0 8px; font-size: 26px; }
-.login-card-header p { margin: 0; font-size: 14px; color: var(--text-sub); }
-.form-item { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
-.form-item label { font-size: 14px; font-weight: 700; color: #334155; }
-.form-item input, .form-item select {
-  width: 100%; height: 48px; border: 1px solid var(--line-color); border-radius: 14px; padding: 0 14px;
-  background: #fff; color: var(--text-main); transition: all 0.18s ease;
+
+.login-card {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
-.form-item input:focus, .form-item select:focus, textarea:focus {
-  outline: none; border-color: rgba(37, 99, 235, 0.42); box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+
+.login-card-header {
+  margin-bottom: 18px;
 }
-.login-tips, .login-error {
-  border-radius: 14px; padding: 12px 14px; font-size: 13px; line-height: 1.7; margin-bottom: 16px;
+
+.login-card-header h2 {
+  margin: 0 0 8px;
+  font-size: 26px;
 }
-.login-tips { background: #f8fafc; border: 1px solid var(--line-soft); color: #475569; }
-.login-error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
-.layout { display: flex; width: 100%; height: 100vh; }
+
+.login-card-header p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-sub);
+}
+
+.form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.form-item label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.form-item input,
+.form-item select {
+  width: 100%;
+  height: 48px;
+  border: 1px solid var(--line-color);
+  border-radius: 14px;
+  padding: 0 14px;
+  background: #fff;
+  color: var(--text-main);
+  transition: all 0.18s ease;
+}
+
+.form-item input:focus,
+.form-item select:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.login-tips,
+.login-error {
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+
+.login-tips {
+  background: #f8fafc;
+  border: 1px solid var(--line-soft);
+  color: #475569;
+}
+
+.login-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+}
+
+.layout {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+}
+
 .mobile-topbar,
 .mobile-sidebar-mask {
   display: none;
 }
+
 .sidebar {
   width: 272px;
   background: var(--sidebar-bg);
@@ -452,6 +521,7 @@ button, input, select, textarea { font: inherit; }
   overflow: auto;
   transition: width 0.2s ease, padding 0.2s ease;
 }
+
 .sidebar-top {
   display: flex;
   align-items: center;
@@ -461,19 +531,46 @@ button, input, select, textarea { font: inherit; }
   margin-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .logo-mark {
-  width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  color: #fff; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
   box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
 }
-.logo-title { font-size: 18px; font-weight: 800; color: #fff; }
-.logo-subtitle { margin-top: 2px; font-size: 12px; color: rgba(255, 255, 255, 0.58); }
+
+.logo-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.logo-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
 .menu-section {
   margin-top: 14px;
 }
+
 .menu-section-title {
-  padding: 0 8px; margin-bottom: 10px; font-size: 12px; letter-spacing: 0.8px; color: rgba(255, 255, 255, 0.5); font-weight: 700;
+  padding: 0 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  letter-spacing: 0.8px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 700;
 }
+
 .nav-item {
   width: 100%;
   border: none;
@@ -489,13 +586,28 @@ button, input, select, textarea { font: inherit; }
   text-align: left;
   transition: all 0.18s ease;
 }
-.nav-item:hover { background: rgba(255, 255, 255, 0.08); }
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .nav-item.active {
   background: linear-gradient(90deg, rgba(37, 99, 235, 0.28) 0%, rgba(37, 99, 235, 0.12) 100%);
-  color: #fff; box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
 }
-.nav-item-dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.45); flex-shrink: 0; }
-.nav-item.active .nav-item-dot { background: #60a5fa; }
+
+.nav-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  flex-shrink: 0;
+}
+
+.nav-item.active .nav-item-dot {
+  background: #60a5fa;
+}
 
 .sidebar.collapsed {
   width: 76px;
@@ -544,17 +656,50 @@ button, input, select, textarea { font: inherit; }
 .sidebar-collapsed-layout .sidebar {
   width: 76px;
 }
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-.header {
-  height: 76px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line-soft);
-  display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 28px; flex-shrink: 0;
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+
+.header {
+  height: 76px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 28px;
+  flex-shrink: 0;
+}
+
 .header-left {
   min-width: 0;
 }
-.header-title { font-size: 24px; font-weight: 800; color: var(--text-main); }
-.header-desc { margin-top: 4px; font-size: 13px; color: var(--text-sub); }
-.header-user-area { display: flex; align-items: center; gap: 12px; }
+
+.header-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.header-desc {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-sub);
+}
+
+.header-user-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .header-user-card {
   display: flex;
   align-items: center;
@@ -565,10 +710,19 @@ button, input, select, textarea { font: inherit; }
   border: 1px solid var(--line-soft);
   min-width: 0;
 }
+
 .header-user-avatar {
-  width: 36px; height: 36px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); color: #1d4ed8; font-weight: 800;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  color: #1d4ed8;
+  font-weight: 800;
 }
+
 .header-user-text {
   text-align: left;
   display: flex;
@@ -576,6 +730,7 @@ button, input, select, textarea { font: inherit; }
   gap: 3px;
   min-width: 0;
 }
+
 .header-user-meta {
   display: flex;
   align-items: center;
@@ -583,7 +738,12 @@ button, input, select, textarea { font: inherit; }
   min-width: 0;
   flex-wrap: nowrap;
 }
-.header-user-name { font-size: 14px; font-weight: 700; }
+
+.header-user-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .header-user-station {
   font-size: 12px;
   color: #475569;
@@ -592,31 +752,74 @@ button, input, select, textarea { font: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .header-user-role {
   font-size: 12px;
   color: var(--text-sub);
   white-space: nowrap;
   flex-shrink: 0;
 }
-.content { flex: 1; overflow: auto; padding: 24px; }
-.btn {
-  height: 40px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--line-color); background: #fff;
-  color: var(--text-main); cursor: pointer; transition: all 0.18s ease;
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
 }
-.btn-sm { height: 38px; padding: 0 14px; font-size: 13px; }
+
+.btn {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line-color);
+  background: #fff;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.btn-sm {
+  height: 38px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 .btn-primary {
-  background: linear-gradient(135deg, var(--brand) 0%, #3b82f6 100%); border-color: var(--brand); color: #fff;
+  background: linear-gradient(135deg, var(--brand) 0%, #3b82f6 100%);
+  border-color: var(--brand);
+  color: #fff;
   box-shadow: 0 12px 22px rgba(37, 99, 235, 0.18);
 }
-.btn-primary:hover { background: linear-gradient(135deg, var(--brand-hover) 0%, #2563eb 100%); }
-.btn-secondary:hover { background: #f8fafc; }
-.login-btn { width: 100%; height: 50px; border-radius: 14px; font-size: 15px; font-weight: 700; }
-@media (max-width: 1100px) {
-  .login-shell { grid-template-columns: 1fr; }
-  .login-hero { min-height: auto; }
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--brand-hover) 0%, #2563eb 100%);
 }
+
+.btn-secondary:hover {
+  background: #f8fafc;
+}
+
+.login-btn {
+  width: 100%;
+  height: 50px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .login-hero {
+    min-height: auto;
+  }
+}
+
 @media (max-width: 768px) {
-  html, body {
+
+  html,
+  body {
     overflow: auto;
   }
 
@@ -673,6 +876,7 @@ button, input, select, textarea { font: inherit; }
     height: 48px;
   }
 }
+
 @media (max-width: 900px) {
   .layout {
     position: relative;

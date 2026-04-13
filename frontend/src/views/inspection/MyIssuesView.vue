@@ -7,6 +7,24 @@
       </div>
     </div>
 
+    <div class="summary-grid">
+      <div class="summary-card summary-card-primary card-surface">
+        <div class="summary-label">当前待办</div>
+        <div class="summary-value">{{ filteredData.length }}</div>
+        <div class="summary-desc">{{ currentRole === 'station_manager' ? '待整改问题' : '待复核问题' }}</div>
+      </div>
+
+      <div class="summary-card card-surface">
+        <div class="summary-label">当前视角</div>
+        <div class="summary-value summary-value-small">
+          {{ currentRole === 'station_manager' ? '站点账号' : '督导组账号' }}
+        </div>
+        <div class="summary-desc">
+          {{ currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可提交督导组复核结果、复核说明并上传复核照片' }}
+        </div>
+      </div>
+    </div>
+
     <div class="toolbar-card card-surface">
       <div class="toolbar-grid">
 
@@ -75,23 +93,7 @@
       </div>
     </div>
 
-    <div class="summary-grid">
-      <div class="summary-card summary-card-primary card-surface">
-        <div class="summary-label">当前待办</div>
-        <div class="summary-value">{{ filteredData.length }}</div>
-        <div class="summary-desc">{{ currentRole === 'station_manager' ? '待整改问题' : '待复核问题' }}</div>
-      </div>
 
-      <div class="summary-card card-surface">
-        <div class="summary-label">当前视角</div>
-        <div class="summary-value summary-value-small">
-          {{ currentRole === 'station_manager' ? '站点账号' : '督导组账号' }}
-        </div>
-        <div class="summary-desc">
-          {{ currentRole === 'station_manager' ? '可填写整改结果与整改说明' : '可提交督导组复核结果与复核说明' }}
-        </div>
-      </div>
-    </div>
 
     <div class="mobile-issue-list">
       <div v-if="loading" class="mobile-empty card-surface">正在加载数据...</div>
@@ -128,14 +130,14 @@
               <div class="mobile-card-text">{{ item.description }}</div>
             </div>
 
-            <div class="mobile-card-row mobile-card-row-top">
-              <span>整改说明</span>
-              <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
-            </div>
-            <div class="mobile-card-row mobile-card-row-top">
-              <span>复核说明</span>
-              <div class="mobile-card-text">{{ item.review_note || '暂无' }}</div>
-            </div>
+            <template v-if="currentRole === 'supervisor'">
+              <div class="mobile-card-row"><span>整改结果</span><strong>{{ item.rectification_result || '暂无' }}</strong>
+              </div>
+              <div class="mobile-card-row mobile-card-row-top">
+                <span>整改说明</span>
+                <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
+              </div>
+            </template>
           </div>
 
           <div class="mobile-card-images">
@@ -144,10 +146,16 @@
               <span>问题照片</span>
             </button>
 
-            <button v-if="item.rectification_photo" class="mobile-image-btn" type="button"
-              @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
+            <button v-if="currentRole === 'supervisor' && item.rectification_photo" class="mobile-image-btn"
+              type="button" @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="整改照片" />
               <span>整改照片</span>
+            </button>
+
+            <button v-if="currentRole === 'supervisor' && item.review_photo" class="mobile-image-btn" type="button"
+              @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
+              <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
+              <span>复核照片</span>
             </button>
           </div>
 
@@ -175,11 +183,12 @@
                 <th>问题描述</th>
 
                 <th>问题照片</th>
-                <th>站经理整改结果</th>
-                <th>站点反馈整改说明</th>
-                <th>站点反馈整改照片</th>
-                <th>督导组复核结果</th>
-                <th>督导组复核说明</th>
+                <template v-if="currentRole === 'supervisor'">
+                  <th>站经理整改结果</th>
+                  <th>站点反馈整改说明</th>
+                  <th>站点反馈整改照片</th>
+                  <th>督导组复核照片</th>
+                </template>
                 <th class="nowrap-col">问题状态</th>
                 <th class="nowrap-col action-col">操作</th>
               </tr>
@@ -204,17 +213,24 @@
                     <img :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片" />
                   </button>
                 </td>
-                <td>{{ item.rectification_result || '暂无' }}</td>
-                <td class="long-text">{{ item.rectification_note || '暂无' }}</td>
-                <td>
-                  <button v-if="item.rectification_photo" class="image-btn" type="button"
-                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
-                    <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
-                  </button>
-                  <span v-else>暂无</span>
-                </td>
-                <td>{{ item.review_result || '暂无' }}</td>
-                <td class="long-text">{{ item.review_note || '暂无' }}</td>
+                <template v-if="currentRole === 'supervisor'">
+                  <td>{{ item.rectification_result || '暂无' }}</td>
+                  <td class="long-text">{{ item.rectification_note || '暂无' }}</td>
+                  <td>
+                    <button v-if="item.rectification_photo" class="image-btn" type="button"
+                      @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
+                      <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
+                    </button>
+                    <span v-else>暂无</span>
+                  </td>
+                  <td>
+                    <button v-if="item.review_photo" class="image-btn" type="button"
+                      @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
+                      <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
+                    </button>
+                    <span v-else>暂无</span>
+                  </td>
+                </template>
                 <td class="nowrap-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
@@ -225,12 +241,12 @@
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td colspan="14" class="empty-row">
+                <td :colspan="currentRole === 'supervisor' ? 12 : 8" class="empty-row">
                   {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
                 </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="14" class="empty-row">正在加载数据...</td>
+                <td :colspan="currentRole === 'supervisor' ? 12 : 8" class="empty-row">正在加载数据...</td>
               </tr>
             </tbody>
           </table>
@@ -331,7 +347,39 @@
 
             <div class="form-item">
               <label>督导组复核说明</label>
-              <textarea v-model="actionForm.reviewNote" rows="4" placeholder="可填写复核说明"></textarea>
+              <textarea v-model="actionForm.reviewNote" rows="4" placeholder="请填写复核说明"></textarea>
+            </div>
+
+            <div class="form-item">
+              <label>复核照片</label>
+              <div class="drawer-upload-card">
+                <input id="review-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
+                  @change="handleReviewFileChange" />
+
+                <label for="review-photo-upload" class="drawer-upload-dropzone">
+                  <div class="drawer-upload-icon">↑</div>
+                  <div class="drawer-upload-title">选择或更换复核照片</div>
+                  <div class="drawer-upload-desc">
+                    请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。
+                  </div>
+                  <div class="drawer-upload-trigger">选择文件</div>
+                </label>
+
+                <div v-if="actionForm.reviewPhotoPreview" class="drawer-image-preview-panel">
+                  <img :src="actionForm.reviewPhotoPreview" alt="复核照片预览" class="drawer-preview-thumb" />
+                  <div class="drawer-preview-meta">
+                    <div class="drawer-preview-title">已选择复核照片</div>
+                    <div class="drawer-preview-name">{{ actionForm.reviewPhotoFile?.name || '已上传图片' }}</div>
+                    <div class="drawer-preview-actions">
+                      <label for="review-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">重新选择</label>
+                      <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
+                        @click="clearReviewFile">
+                        移除图片
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
 
@@ -343,7 +391,9 @@
               :disabled="submittingAction">取消</button>
           </div>
 
-          <div v-if="actionMessage" class="action-message">{{ actionMessage }}</div>
+          <transition name="toast-fade">
+            <div v-if="actionMessage" class="submit-toast" :class="actionMessageType">{{ actionMessage }}</div>
+          </transition>
         </div>
       </div>
     </div>
@@ -380,6 +430,11 @@
 <script setup>
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
+import {
+  compressImageFile,
+  getAcceptedImageTypes,
+  validateImageType
+} from '@/utils/imageUpload'
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const loading = ref(false)
@@ -606,12 +661,15 @@ const actionForm = ref({
   rectificationPhotoFile: null,
   rectificationPhotoPreview: '',
   reviewResult: '',
-  reviewNote: ''
+  reviewNote: '',
+  reviewPhotoFile: null,
+  reviewPhotoPreview: ''
 })
 
 const actionMessage = ref('')
-const MAX_UPLOAD_BYTES = 500 * 1024
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
+const actionMessageType = ref('info')
+let actionMessageTimer = null
+const ACCEPTED_IMAGE_TYPES = getAcceptedImageTypes()
 
 const resolveImage = (path) => {
   if (!path) return ''
@@ -620,84 +678,12 @@ const resolveImage = (path) => {
   return `/storage/${normalizedPath}`
 }
 
-const loadImageFromFile = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const img = new Image()
-      img.onload = () => resolve(img)
-      img.onerror = () => reject(new Error('图片读取失败。'))
-      img.src = reader.result
-    }
-    reader.onerror = () => reject(new Error('图片读取失败。'))
-    reader.readAsDataURL(file)
-  })
-}
 
-const canvasToBlob = (canvas, quality = 0.82) => {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('图片压缩失败。'))
-        return
-      }
-      resolve(blob)
-    }, 'image/jpeg', quality)
-  })
-}
-
-const compressImageFile = async (file) => {
-  const img = await loadImageFromFile(file)
-  const maxWidth = 1600
-  let targetWidth = img.width
-  let targetHeight = img.height
-
-  if (img.width > maxWidth) {
-    const ratio = maxWidth / img.width
-    targetWidth = maxWidth
-    targetHeight = Math.max(1, Math.round(img.height * ratio))
-  }
-
-  let canvas = document.createElement('canvas')
-  canvas.width = targetWidth
-  canvas.height = targetHeight
-  let ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, targetWidth, targetHeight)
-  ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
-
-  let quality = 0.82
-  let blob = await canvasToBlob(canvas, quality)
-
-  while (blob.size > MAX_UPLOAD_BYTES && quality > 0.46) {
-    quality -= 0.08
-    blob = await canvasToBlob(canvas, quality)
-  }
-
-  while (blob.size > MAX_UPLOAD_BYTES && canvas.width > 960) {
-    const nextWidth = Math.max(960, Math.round(canvas.width * 0.9))
-    const nextHeight = Math.max(1, Math.round(canvas.height * 0.9))
-    const nextCanvas = document.createElement('canvas')
-    nextCanvas.width = nextWidth
-    nextCanvas.height = nextHeight
-    const nextCtx = nextCanvas.getContext('2d')
-    nextCtx.fillStyle = '#ffffff'
-    nextCtx.fillRect(0, 0, nextWidth, nextHeight)
-    nextCtx.drawImage(canvas, 0, 0, nextWidth, nextHeight)
-    canvas = nextCanvas
-    ctx = nextCtx
-    blob = await canvasToBlob(canvas, 0.7)
-  }
-
-  return new File([blob], `${(file.name || 'upload').replace(/\.[^.]+$/, '') || 'upload'}.jpg`, {
-    type: 'image/jpeg'
-  })
-}
 
 const fetchMyIssues = async () => {
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
-    actionMessage.value = '当前登录信息缺失，请重新登录。'
+    showActionToast('当前登录信息缺失，请重新登录。', 'error')
     return
   }
 
@@ -708,7 +694,7 @@ const fetchMyIssues = async () => {
     })
     issues.value = response.data || []
   } catch (error) {
-    actionMessage.value = error?.response?.data?.error || '获取待办问题失败。'
+    showActionToast(error?.response?.data?.error || '获取待办问题失败。', 'error')
   } finally {
     loading.value = false
   }
@@ -726,16 +712,26 @@ const openActionDrawer = (item) => {
     rectificationPhotoFile: null,
     rectificationPhotoPreview: item.rectification_photo ? resolveImage(item.rectification_photo) : '',
     reviewResult: item.review_result || '',
-    reviewNote: item.review_note || ''
+    reviewNote: item.review_note || '',
+    reviewPhotoFile: null,
+    reviewPhotoPreview: ''
   }
 }
 
 const closeActionDrawer = () => {
+  if (actionForm.value.rectificationPhotoPreview && actionForm.value.rectificationPhotoPreview.startsWith('blob:')) {
+    URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
+  }
+  if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
+    URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
+  }
+
   actionDrawer.value = {
     visible: false,
     item: null
   }
   actionMessage.value = ''
+  actionMessageType.value = 'info'
 }
 
 const handleRectificationFileChange = async (event) => {
@@ -746,8 +742,8 @@ const handleRectificationFileChange = async (event) => {
     return
   }
 
-  if (file.type && !ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-    actionMessage.value = '仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。'
+  if (!validateImageType(file)) {
+    showActionToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
     event.target.value = ''
     clearRectificationFile()
     return
@@ -757,13 +753,21 @@ const handleRectificationFileChange = async (event) => {
     const compressedFile = await compressImageFile(file)
     actionForm.value.rectificationPhotoFile = compressedFile
 
-    if (actionForm.value.rectificationPhotoPreview) {
+    if (
+      actionForm.value.rectificationPhotoPreview &&
+      actionForm.value.rectificationPhotoPreview.startsWith('blob:')
+    ) {
       URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
     }
     actionForm.value.rectificationPhotoPreview = URL.createObjectURL(compressedFile)
+    if (actionMessageTimer) {
+      clearTimeout(actionMessageTimer)
+      actionMessageTimer = null
+    }
     actionMessage.value = ''
+    actionMessageType.value = 'info'
   } catch (error) {
-    actionMessage.value = error?.message || '图片处理失败，请更换图片后重试。'
+    showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
     event.target.value = ''
     clearRectificationFile()
   }
@@ -781,26 +785,99 @@ const clearRectificationFile = () => {
   }
 }
 
+const handleReviewFileChange = async (event) => {
+  const file = event.target.files?.[0]
+
+  if (!file) {
+    clearReviewFile()
+    return
+  }
+
+  if (!validateImageType(file)) {
+    showActionToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
+    event.target.value = ''
+    clearReviewFile()
+    return
+  }
+
+  try {
+    const compressedFile = await compressImageFile(file)
+    actionForm.value.reviewPhotoFile = compressedFile
+
+    if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
+    }
+    actionForm.value.reviewPhotoPreview = URL.createObjectURL(compressedFile)
+
+    if (actionMessageTimer) {
+      clearTimeout(actionMessageTimer)
+      actionMessageTimer = null
+    }
+    actionMessage.value = ''
+    actionMessageType.value = 'info'
+  } catch (error) {
+    showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
+    event.target.value = ''
+    clearReviewFile()
+  }
+}
+
+const clearReviewFile = () => {
+  actionForm.value.reviewPhotoFile = null
+  if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
+    URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
+  }
+  actionForm.value.reviewPhotoPreview = ''
+  const input = document.getElementById('review-photo-upload')
+  if (input) {
+    input.value = ''
+  }
+}
+
+const showActionToast = (message, type = 'info') => {
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+    actionMessageTimer = null
+  }
+
+  actionMessageType.value = type
+  actionMessage.value = message
+
+  actionMessageTimer = setTimeout(() => {
+    actionMessage.value = ''
+    actionMessageTimer = null
+  }, 2200)
+}
+
 const submitAction = async () => {
   if (!actionDrawer.value.item) return
 
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
-    actionMessage.value = '当前登录信息缺失，请重新登录。'
+    showActionToast('当前登录信息缺失，请重新登录。', 'error')
     return
   }
 
   try {
     submittingAction.value = true
+    if (actionMessageTimer) {
+      clearTimeout(actionMessageTimer)
+      actionMessageTimer = null
+    }
     actionMessage.value = ''
+    actionMessageType.value = 'info'
 
     if (currentRole.value === 'station_manager') {
       if (!actionForm.value.rectificationResult) {
-        actionMessage.value = '请选择整改结果。'
+        showActionToast('请选择整改结果。', 'error')
         return
       }
       if (!actionForm.value.rectificationNote.trim()) {
-        actionMessage.value = '请填写整改说明。'
+        showActionToast('请填写整改说明。', 'error')
+        return
+      }
+      if (!actionForm.value.rectificationPhotoFile) {
+        showActionToast('请上传整改照片。', 'error')
         return
       }
 
@@ -816,14 +893,22 @@ const submitAction = async () => {
         `/api/issues/${actionDrawer.value.item.id}/rectification`,
         formData
       )
-      actionMessage.value = response.data.message || '整改提交成功。'
       await fetchMyIssues()
       closeActionDrawer()
+      showActionToast(response.data.message || '整改提交成功。', 'success')
       return
     }
 
     if (!actionForm.value.reviewResult) {
-      actionMessage.value = '请选择督导组复核结果。'
+      showActionToast('请选择督导组复核结果。', 'error')
+      return
+    }
+    if (!actionForm.value.reviewNote.trim()) {
+      showActionToast('请填写复核说明。', 'error')
+      return
+    }
+    if (!actionForm.value.reviewPhotoFile) {
+      showActionToast('请上传复核照片。', 'error')
       return
     }
 
@@ -831,16 +916,17 @@ const submitAction = async () => {
     formData.append('user_id', userId)
     formData.append('review_result', actionForm.value.reviewResult)
     formData.append('review_note', actionForm.value.reviewNote)
+    formData.append('review_photo', actionForm.value.reviewPhotoFile)
 
     const response = await axios.post(
       `/api/issues/${actionDrawer.value.item.id}/review`,
       formData
     )
-    actionMessage.value = response.data.message || '复核提交成功。'
     await fetchMyIssues()
     closeActionDrawer()
+    showActionToast(response.data.message || '复核提交成功。', 'success')
   } catch (error) {
-    actionMessage.value = error?.response?.data?.error || '提交失败，请稍后重试。'
+    showActionToast(error?.response?.data?.error || '提交失败，请稍后重试。', 'error')
   } finally {
     submittingAction.value = false
   }
@@ -860,6 +946,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+    actionMessageTimer = null
+  }
 })
 </script>
 
@@ -907,7 +997,7 @@ onBeforeUnmount(() => {
 
 .toolbar-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 16px;
 }
 
@@ -915,10 +1005,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .toolbar-item-wide {
   grid-column: span 2;
+  min-width: 0;
 }
 
 .search-select {
@@ -1202,14 +1294,14 @@ onBeforeUnmount(() => {
 
 .issues-table {
   width: 100%;
-  min-width: 2360px;
+  min-width: 1680px;
   border-collapse: collapse;
 }
 
 .issues-table th,
 .issues-table td {
   border: 1px solid #e5e7eb;
-  padding: 12px 14px;
+  padding: 10px 12px;
   text-align: left;
   vertical-align: top;
   font-size: 14px;
@@ -1231,13 +1323,17 @@ onBeforeUnmount(() => {
 }
 
 .long-text {
-  min-width: 240px;
+  min-width: 200px;
+  max-width: 260px;
   white-space: normal;
   line-height: 1.7;
+  word-break: break-word;
 }
 
 .standard-detail-cell {
-  min-width: 300px;
+  width: 360px;
+  min-width: 320px;
+  max-width: 360px;
 }
 
 .standard-detail-box {
@@ -1245,15 +1341,20 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+  width: 100%;
+  max-width: 336px;
 }
 
 .standard-detail-preview {
   width: 100%;
+  line-height: 1.75;
+  color: #334155;
+  word-break: break-word;
 }
 
 .multiline-clamp {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1274,6 +1375,32 @@ onBeforeUnmount(() => {
   object-fit: cover;
   border-radius: 10px;
   border: 1px solid #cbd5e1;
+}
+
+.issues-table th:nth-child(1),
+.issues-table td:nth-child(1) {
+  width: 64px;
+  min-width: 64px;
+  white-space: nowrap;
+}
+
+.issues-table th:nth-child(2),
+.issues-table td:nth-child(2) {
+  width: 116px;
+  min-width: 116px;
+}
+
+.issues-table th:nth-child(3),
+.issues-table td:nth-child(3) {
+  width: 126px;
+  min-width: 126px;
+}
+
+.issues-table th:nth-child(4),
+.issues-table td:nth-child(4) {
+  width: 92px;
+  min-width: 92px;
+  white-space: nowrap;
 }
 
 .image-btn {
@@ -1570,13 +1697,46 @@ onBeforeUnmount(() => {
   text-decoration: none;
 }
 
-.action-message {
+.submit-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 420px);
+  z-index: 1200;
   font-size: 14px;
+  line-height: 1.7;
   color: #2563eb;
-  background: #eff6ff;
+  background: rgba(239, 246, 255, 0.98);
   border: 1px solid #bfdbfe;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 12px 14px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(8px);
+  text-align: center;
+}
+
+.submit-toast.success {
+  color: #166534;
+  background: rgba(236, 253, 245, 0.98);
+  border-color: #bbf7d0;
+}
+
+.submit-toast.error {
+  color: #b91c1c;
+  background: rgba(254, 242, 242, 0.98);
+  border-color: #fecaca;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
 }
 
 .image-modal {
@@ -1656,6 +1816,10 @@ onBeforeUnmount(() => {
 @media (max-width: 1200px) {
   .toolbar-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+
+  .toolbar-item-wide {
+    grid-column: span 2;
   }
 
   .summary-grid {
@@ -1800,6 +1964,13 @@ onBeforeUnmount(() => {
 
   .image-modal {
     padding: 12px;
+  }
+
+  .submit-toast {
+    width: min(calc(100vw - 24px), 420px);
+    top: 50%;
+    font-size: 13px;
+    line-height: 1.7;
   }
 }
 </style>

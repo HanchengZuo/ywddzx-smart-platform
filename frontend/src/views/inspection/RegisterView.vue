@@ -157,6 +157,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
+import {
+  compressImageFile,
+  validateImageType
+} from '@/utils/imageUpload'
 
 const currentRole = localStorage.getItem('user_role') || ''
 const hasPermission = currentRole === 'supervisor'
@@ -190,8 +194,6 @@ const showSubmitToast = (message, type = 'info') => {
 }
 const createdTime = ref('')
 const submitting = ref(false)
-const MAX_UPLOAD_BYTES = 500 * 1024
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
 const stations = ref([])
 const standards = ref([])
 const inspectionTables = ref([])
@@ -300,79 +302,6 @@ const formatCurrentTime = () => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
-const loadImageFromFile = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const img = new Image()
-      img.onload = () => resolve(img)
-      img.onerror = () => reject(new Error('图片读取失败。'))
-      img.src = reader.result
-    }
-    reader.onerror = () => reject(new Error('图片读取失败。'))
-    reader.readAsDataURL(file)
-  })
-}
-
-const canvasToBlob = (canvas, quality = 0.82) => {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('图片压缩失败。'))
-        return
-      }
-      resolve(blob)
-    }, 'image/jpeg', quality)
-  })
-}
-
-const compressImageFile = async (file) => {
-  const img = await loadImageFromFile(file)
-  const maxWidth = 1600
-  let targetWidth = img.width
-  let targetHeight = img.height
-
-  if (img.width > maxWidth) {
-    const ratio = maxWidth / img.width
-    targetWidth = maxWidth
-    targetHeight = Math.max(1, Math.round(img.height * ratio))
-  }
-
-  let canvas = document.createElement('canvas')
-  canvas.width = targetWidth
-  canvas.height = targetHeight
-  let ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, targetWidth, targetHeight)
-  ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
-
-  let quality = 0.82
-  let blob = await canvasToBlob(canvas, quality)
-
-  while (blob.size > MAX_UPLOAD_BYTES && quality > 0.46) {
-    quality -= 0.08
-    blob = await canvasToBlob(canvas, quality)
-  }
-
-  while (blob.size > MAX_UPLOAD_BYTES && canvas.width > 960) {
-    const nextWidth = Math.max(960, Math.round(canvas.width * 0.9))
-    const nextHeight = Math.max(1, Math.round(canvas.height * 0.9))
-    const nextCanvas = document.createElement('canvas')
-    nextCanvas.width = nextWidth
-    nextCanvas.height = nextHeight
-    const nextCtx = nextCanvas.getContext('2d')
-    nextCtx.fillStyle = '#ffffff'
-    nextCtx.fillRect(0, 0, nextWidth, nextHeight)
-    nextCtx.drawImage(canvas, 0, 0, nextWidth, nextHeight)
-    canvas = nextCanvas
-    ctx = nextCtx
-    blob = await canvasToBlob(canvas, 0.7)
-  }
-
-  return new File([blob], `${(file.name || 'upload').replace(/\.[^.]+$/, '') || 'upload'}.jpg`, {
-    type: 'image/jpeg'
-  })
-}
 
 const fetchStations = async () => {
   const response = await axios.get('/api/stations')
@@ -479,7 +408,7 @@ const handleFileChange = async (event) => {
     return
   }
 
-  if (file.type && !ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+  if (!validateImageType(file)) {
     showSubmitToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
     event.target.value = ''
     clearImage()

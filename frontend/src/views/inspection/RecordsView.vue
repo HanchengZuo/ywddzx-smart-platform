@@ -259,7 +259,12 @@ watch(totalPage, (value) => {
 const fetchInspections = async () => {
   try {
     loading.value = true
-    const response = await axios.get('/api/inspections')
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.get('/api/inspections', {
+      params: {
+        user_id: userId
+      }
+    })
     list.value = response.data || []
   } catch (error) {
     list.value = []

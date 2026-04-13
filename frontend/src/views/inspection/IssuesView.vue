@@ -37,7 +37,7 @@
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
                 <div class="mobile-card-standard-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                }}</div>
+                  }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
             </div>
@@ -65,6 +65,11 @@
               @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="站点反馈整改照片" />
               <span>整改照片</span>
+            </button>
+            <button v-if="item.review_photo" class="mobile-image-btn" type="button"
+              @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
+              <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
+              <span>复核照片</span>
             </button>
           </div>
         </div>
@@ -226,6 +231,7 @@
                 <th class="nowrap">站点反馈整改照片</th>
                 <th class="nowrap">督导组复核结果</th>
                 <th class="nowrap">督导组复核说明</th>
+                <th class="nowrap">督导组复核照片</th>
                 <th class="nowrap-col status-col">问题状态</th>
               </tr>
             </thead>
@@ -244,7 +250,7 @@
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
                     <div class="standard-detail-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                    }}</div>
+                      }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
@@ -265,15 +271,22 @@
                 </td>
                 <td class="nowrap">{{ item.review_result || '暂无' }}</td>
                 <td class="nowrap">{{ item.review_note || '暂无' }}</td>
+                <td class="nowrap">
+                  <button v-if="item.review_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
+                    <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
+                  </button>
+                  <span v-else>暂无</span>
+                </td>
                 <td class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td colspan="19" class="empty-row">当前没有符合条件的问题记录。</td>
+                <td colspan="20" class="empty-row">当前没有符合条件的问题记录。</td>
               </tr>
               <tr v-if="loading">
-                <td colspan="19" class="empty-row">正在加载问题列表...</td>
+                <td colspan="20" class="empty-row">正在加载问题列表...</td>
               </tr>
             </tbody>
           </table>
@@ -438,7 +451,12 @@ watch(totalPage, (value) => {
 const fetchIssues = async () => {
   try {
     loading.value = true
-    const response = await axios.get('/api/issues')
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.get('/api/issues', {
+      params: {
+        user_id: userId
+      }
+    })
     list.value = response.data || []
   } catch (error) {
     list.value = []
