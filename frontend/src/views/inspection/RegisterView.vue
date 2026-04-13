@@ -146,7 +146,9 @@
           <button class="btn btn-secondary" type="button" @click="resetForm" :disabled="submitting">重置</button>
         </div>
 
-        <div v-if="submitMessage" class="submit-message" :class="submitMessageType">{{ submitMessage }}</div>
+        <transition name="toast-fade">
+          <div v-if="submitMessage" class="submit-toast" :class="submitMessageType">{{ submitMessage }}</div>
+        </transition>
       </form>
     </div>
   </div>
@@ -171,6 +173,21 @@ const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const submitMessage = ref('')
 const submitMessageType = ref('info')
+let submitMessageTimer = null
+const showSubmitToast = (message, type = 'info') => {
+  if (submitMessageTimer) {
+    clearTimeout(submitMessageTimer)
+    submitMessageTimer = null
+  }
+
+  submitMessageType.value = type
+  submitMessage.value = message
+
+  submitMessageTimer = setTimeout(() => {
+    submitMessage.value = ''
+    submitMessageTimer = null
+  }, 2200)
+}
 const createdTime = ref('')
 const submitting = ref(false)
 const MAX_UPLOAD_BYTES = 500 * 1024
@@ -463,8 +480,7 @@ const handleFileChange = async (event) => {
   }
 
   if (file.type && !ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。'
+    showSubmitToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
     event.target.value = ''
     clearImage()
     return
@@ -479,13 +495,14 @@ const handleFileChange = async (event) => {
     }
     imagePreviewUrl.value = URL.createObjectURL(compressedFile)
 
-    if (submitMessageType.value !== 'success') {
+    if (submitMessageType.value !== 'success' && submitMessageTimer) {
+      clearTimeout(submitMessageTimer)
+      submitMessageTimer = null
       submitMessage.value = ''
       submitMessageType.value = 'info'
     }
   } catch (error) {
-    submitMessageType.value = 'error'
-    submitMessage.value = error?.message || '图片处理失败，请更换图片后重试。'
+    showSubmitToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
     event.target.value = ''
     clearImage()
   }
@@ -530,44 +547,42 @@ const handleSubmit = async () => {
   const hasIssueValue = normalizedHasIssue.value
 
   if (!form.value.stationId) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '请选择站点名称。'
+    showSubmitToast('请选择站点名称。', 'error')
     return
   }
 
   if (!form.value.inspectionTableId) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '请选择检查表。'
+    showSubmitToast('请选择检查表。', 'error')
     return
   }
 
   if (hasIssueValue === 'yes' && !form.value.standardId) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '请选择规范。'
+    showSubmitToast('请选择规范。', 'error')
     return
   }
 
   if (hasIssueValue === 'yes' && !form.value.description.trim()) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '请填写实际问题描述。'
+    showSubmitToast('请填写实际问题描述。', 'error')
     return
   }
 
   if (hasIssueValue === 'yes' && !imageFile.value) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '请上传问题照片。'
+    showSubmitToast('请上传问题照片。', 'error')
     return
   }
 
   const inspectorId = localStorage.getItem('user_id') || ''
   if (!inspectorId) {
-    submitMessageType.value = 'error'
-    submitMessage.value = '当前登录信息缺失，请重新登录。'
+    showSubmitToast('当前登录信息缺失，请重新登录。', 'error')
     return
   }
 
   try {
     submitting.value = true
+    if (submitMessageTimer) {
+      clearTimeout(submitMessageTimer)
+      submitMessageTimer = null
+    }
     submitMessage.value = ''
 
     const formData = new FormData()
@@ -583,12 +598,10 @@ const handleSubmit = async () => {
     }
 
     const response = await axios.post('/api/inspection-register', formData)
-    submitMessageType.value = 'success'
     resetForm(true)
-    submitMessage.value = response.data.message || '提交成功。'
+    showSubmitToast(response.data.message || '提交成功。', 'success')
   } catch (error) {
-    submitMessageType.value = 'error'
-    submitMessage.value = error?.response?.data?.error || '提交失败，请稍后重试。'
+    showSubmitToast(error?.response?.data?.error || '提交失败，请稍后重试。', 'error')
   } finally {
     submitting.value = false
   }
@@ -623,12 +636,16 @@ onMounted(async () => {
   try {
     await Promise.all([fetchStations(), fetchInspectionTables()])
   } catch (error) {
-    submitMessage.value = '初始化站点或检查表数据失败，请检查后端服务。'
+    showSubmitToast('初始化站点或检查表数据失败，请检查后端服务。', 'error')
   }
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (submitMessageTimer) {
+    clearTimeout(submitMessageTimer)
+    submitMessageTimer = null
+  }
   if (imagePreviewUrl.value) {
     URL.revokeObjectURL(imagePreviewUrl.value)
   }
@@ -975,25 +992,46 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
-.submit-message {
+.submit-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 420px);
+  z-index: 1200;
   font-size: 14px;
+  line-height: 1.7;
   color: #2563eb;
-  background: #eff6ff;
+  background: rgba(239, 246, 255, 0.98);
   border: 1px solid #bfdbfe;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 12px 14px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(8px);
+  text-align: center;
 }
 
-.submit-message.success {
+.submit-toast.success {
   color: #166534;
-  background: #ecfdf5;
+  background: rgba(236, 253, 245, 0.98);
   border-color: #bbf7d0;
 }
 
-.submit-message.error {
+.submit-toast.error {
   color: #b91c1c;
-  background: #fef2f2;
+  background: rgba(254, 242, 242, 0.98);
   border-color: #fecaca;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
 }
 
 @media (max-width: 900px) {
@@ -1126,7 +1164,9 @@ onBeforeUnmount(() => {
     min-height: 46px;
   }
 
-  .submit-message {
+  .submit-toast {
+    width: min(calc(100vw - 24px), 420px);
+    top: 50%;
     font-size: 13px;
     line-height: 1.7;
   }
