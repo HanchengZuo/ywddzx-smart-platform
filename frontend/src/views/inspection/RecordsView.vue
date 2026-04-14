@@ -1068,7 +1068,7 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   padding: 12px 14px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
   font-size: 14px;
   color: #111827;
   word-break: break-word;
@@ -1100,7 +1100,7 @@ onBeforeUnmount(() => {
 .batch-action-cell,
 .batch-signature-cell {
   vertical-align: middle;
-  text-align: center;
+  text-align: left;
 }
 
 .batch-action-cell {
