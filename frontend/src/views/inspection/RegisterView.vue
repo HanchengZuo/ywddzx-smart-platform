@@ -845,7 +845,18 @@ onBeforeUnmount(() => {
 }
 
 .upload-trigger-secondary {
-  background: #0f172a;
+  background: #eef4ff;
+  color: #1d4ed8;
+  border: 1px solid #bfd3ff;
+}
+
+.upload-trigger:hover {
+  filter: brightness(0.98);
+}
+
+.upload-trigger-secondary:hover {
+  background: #e0edff;
+  border-color: #93c5fd;
 }
 
 .image-preview-panel {
@@ -1073,6 +1084,16 @@ onBeforeUnmount(() => {
 
   .upload-desc {
     font-size: 12px;
+  }
+
+  .upload-trigger-group {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .upload-trigger {
+    width: 100%;
   }
 
   .image-preview-panel {

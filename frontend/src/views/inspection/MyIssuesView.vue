@@ -1610,8 +1610,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 10px;
   text-align: center;
-  min-height: 156px;
-  padding: 20px 18px;
+  min-height: 168px;
+  padding: 22px 18px;
   border: 1px dashed #cbd5e1;
   border-radius: 18px;
   background: linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
@@ -1639,13 +1639,13 @@ onBeforeUnmount(() => {
 }
 
 .drawer-upload-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
   color: #0f172a;
 }
 
 .drawer-upload-desc {
-  max-width: 420px;
+  max-width: 520px;
   font-size: 13px;
   line-height: 1.8;
   color: #64748b;
@@ -1675,13 +1675,24 @@ onBeforeUnmount(() => {
 }
 
 .drawer-upload-trigger-secondary {
-  background: #0f172a;
+  background: #eef4ff;
+  color: #1d4ed8;
+  border: 1px solid #bfd3ff;
+}
+
+.drawer-upload-trigger:hover {
+  filter: brightness(0.98);
+}
+
+.drawer-upload-trigger-secondary:hover {
+  background: #e0edff;
+  border-color: #93c5fd;
 }
 
 .drawer-image-preview-panel {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   padding: 14px;
   border: 1px solid #dbe4ee;
   border-radius: 18px;
@@ -1690,8 +1701,8 @@ onBeforeUnmount(() => {
 }
 
 .drawer-preview-thumb {
-  width: 136px;
-  height: 102px;
+  width: 148px;
+  height: 108px;
   object-fit: cover;
   border-radius: 14px;
   border: 1px solid #cbd5e1;
@@ -1703,7 +1714,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 200px;
+  min-width: 220px;
   flex: 1;
 }
 
