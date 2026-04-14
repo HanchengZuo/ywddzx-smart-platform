@@ -85,6 +85,10 @@
               <span>本批次问题总数</span>
               <strong>{{ batch.batchIssueCount }}</strong>
             </div>
+            <div class="mobile-card-row">
+              <span>签名状态</span>
+              <strong>{{ batch.batchStatus === '已签名确认' ? '已签名确认' : '待签名确认' }}</strong>
+            </div>
           </div>
 
           <div class="mobile-batch-list">
@@ -95,6 +99,21 @@
               </div>
               <div class="mobile-batch-item-meta">发现问题数：{{ record.issue_count }}</div>
             </div>
+          </div>
+
+          <div class="mobile-batch-actions">
+            <button class="btn btn-secondary batch-action-btn" type="button"
+              @click="openBatchDetail(batch)">查看本批次问题</button>
+            <button v-if="currentRole === 'supervisor' && batch.batchStatus !== '已签名确认'"
+              class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(batch)">
+              结束本次检查并签名确认
+            </button>
+          </div>
+
+          <div v-if="batch.batchStatus === '已签名确认' && batch.signaturePath" class="mobile-signature-box">
+            <div class="mobile-signature-label">站经理已签名</div>
+            <img :src="resolveImage(batch.signaturePath)" class="signature-preview-image" alt="站经理签名" />
+            <div class="mobile-signature-time">{{ batch.signedAt || '已完成签名确认' }}</div>
           </div>
         </div>
       </div>
@@ -111,6 +130,8 @@
                 <th>检查表</th>
                 <th>结果</th>
                 <th>发现问题数</th>
+                <th>批次问题</th>
+                <th>站经理签字确认</th>
               </tr>
             </thead>
             <tbody>
@@ -125,13 +146,31 @@
                     <span :class="statusClass(record.result)">{{ record.result }}</span>
                   </td>
                   <td>{{ record.issue_count }}</td>
+                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-action-cell">
+                    <button class="btn btn-secondary batch-action-btn" type="button"
+                      @click="openBatchDetail(batch)">查看本批次问题</button>
+                  </td>
+                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-signature-cell">
+
+                    <div v-if="batch.batchStatus === '已签名确认' && batch.signaturePath" class="signature-preview-box">
+                      <div class="signature-status-badge success">已签名确认</div>
+                      <img :src="resolveImage(batch.signaturePath)" class="signature-preview-image" alt="站经理签名" />
+                      <div class="signature-preview-time">{{ batch.signedAt || '已完成签名确认' }}</div>
+                    </div>
+                    <button v-else-if="currentRole === 'supervisor'" class="btn btn-primary signature-action-btn"
+                      type="button" @click="openSignatureDialog(batch)">
+                      结束本次检查并签名确认
+                    </button>
+                    <span v-else class="signature-status-badge pending">待签名确认</span>
+
+                  </td>
                 </tr>
               </template>
               <tr v-if="!loading && paginatedBatches.length === 0">
-                <td colspan="5" class="empty-row">当前没有巡检记录。</td>
+                <td colspan="7" class="empty-row">当前没有巡检记录。</td>
               </tr>
               <tr v-if="loading">
-                <td colspan="5" class="empty-row">正在加载巡检记录...</td>
+                <td colspan="7" class="empty-row">正在加载巡检记录...</td>
               </tr>
             </tbody>
           </table>
@@ -153,11 +192,96 @@
         </div>
       </div>
     </div>
+    <div v-if="signatureDialog.visible" class="batch-detail-overlay" @click.self="closeSignatureDialog">
+      <div class="signature-dialog card-surface">
+        <div class="signature-dialog-header">
+          <div>
+            <div class="batch-detail-kicker">站经理签名确认</div>
+            <h3>{{ signatureDialog.batch?.station || '巡检批次签名' }}</h3>
+            <div class="batch-detail-meta">
+              <span>巡检日期：{{ signatureDialog.batch?.date || '-' }}</span>
+              <span>检查表数：{{ signatureDialog.batch?.rowspan || 0 }}</span>
+              <span>问题总数：{{ signatureDialog.batch?.batchIssueCount || 0 }}</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" type="button" @click="closeSignatureDialog">关闭</button>
+        </div>
+
+        <div class="signature-layout">
+          <div class="signature-side-card">
+            <div class="signature-side-title">确认提示</div>
+            <div class="signature-side-desc">请将手机交由站经理签字。提交后，本批次将锁定，不能继续登记巡检问题。</div>
+            <div class="signature-side-meta">
+              <span>站点：{{ signatureDialog.batch?.station || '-' }}</span>
+              <span>日期：{{ signatureDialog.batch?.date || '-' }}</span>
+              <span>问题总数：{{ signatureDialog.batch?.batchIssueCount || 0 }}</span>
+            </div>
+          </div>
+
+          <div class="signature-pad-card signature-pad-card-landscape">
+            <div class="signature-pad-head">
+              <div class="signature-pad-title">请站经理在右侧签名区手写签名</div>
+              <div class="signature-pad-desc">建议横向签写，签名会以透明 PNG 保存并展示在批次确认处。</div>
+            </div>
+            <div class="signature-pad-wrap signature-pad-wrap-landscape">
+              <canvas ref="signatureCanvasRef" class="signature-canvas signature-canvas-landscape"
+                @pointerdown="startSignature" @pointermove="moveSignature" @pointerup="endSignature"
+                @pointerleave="endSignature" @pointercancel="endSignature"></canvas>
+            </div>
+            <div class="signature-pad-actions">
+              <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
+              <button class="btn btn-primary" type="button" :disabled="signatureDialog.submitting"
+                @click="submitBatchSignature">
+                {{ signatureDialog.submitting ? '提交中...' : '提交签名确认' }}
+              </button>
+            </div>
+            <div v-if="signatureDialog.error" class="signature-error">{{ signatureDialog.error }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="batchDetail.visible" class="batch-detail-overlay" @click.self="closeBatchDetail">
+      <div class="batch-detail-dialog card-surface">
+        <div class="batch-detail-header">
+          <div>
+            <div class="batch-detail-kicker">巡检批次详情</div>
+            <h3>{{ batchDetail.batch?.station || '巡检批次' }}</h3>
+            <div class="batch-detail-meta">
+              <span>巡检日期：{{ batchDetail.batch?.date || '-' }}</span>
+              <span>检查表数：{{ batchDetail.batch?.rowspan || 0 }}</span>
+              <span>问题总数：{{ batchDetail.batch?.batchIssueCount || 0 }}</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" type="button" @click="closeBatchDetail">关闭</button>
+        </div>
+
+        <div v-if="batchDetail.loading" class="batch-detail-empty">正在加载批次问题...</div>
+        <div v-else-if="batchDetail.error" class="batch-detail-empty">{{ batchDetail.error }}</div>
+        <div v-else-if="batchDetail.issues.length === 0" class="batch-detail-empty">本批次暂无登记问题。</div>
+
+        <div v-else class="batch-issue-list">
+          <div v-for="issue in batchDetail.issues" :key="issue.id" class="batch-issue-card">
+            <div class="batch-issue-card-head">
+              <div class="batch-issue-title">{{ issue.inspection_table_name || '未命名检查表' }}</div>
+              <div class="batch-issue-id">问题 #{{ issue.id }}</div>
+            </div>
+            <div class="batch-issue-desc">{{ issue.description || '暂无问题描述' }}</div>
+            <div class="batch-issue-image-wrap">
+              <img v-if="issue.issue_photo" :src="resolveImage(issue.issue_photo)" class="batch-issue-image"
+                alt="问题照片" />
+              <div v-else class="batch-issue-image-empty">暂无问题照片</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
 
 const filters = ref({
@@ -176,6 +300,24 @@ const dropdownVisible = ref({
 })
 
 const list = ref([])
+const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
+const signatureCanvasRef = ref(null)
+
+const batchDetail = ref({
+  visible: false,
+  loading: false,
+  error: '',
+  batch: null,
+  issues: []
+})
+
+const signatureDialog = ref({
+  visible: false,
+  submitting: false,
+  error: '',
+  batch: null
+})
+
 const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
@@ -212,20 +354,40 @@ const groupedBatches = computed(() => {
   const batchMap = new Map()
 
   filteredData.value.forEach((item) => {
-    const batchKey = `${item.date || ''}__${item.station || ''}`
+    const batchKey = String(item.batch_id || `${item.date || ''}__${item.station || ''}`)
     if (!batchMap.has(batchKey)) {
       batchMap.set(batchKey, {
         batchKey,
+        batchId: item.batch_id,
         date: item.date,
         station: item.station,
         records: [],
         batchIssueCount: 0,
         batchResult: '正常',
+        batchStatus: item.batch_status || '进行中',
+        signedName: item.station_manager_signed_name || '',
+        signaturePath: item.station_manager_signature_path || '',
+        signedAt: item.station_manager_signed_at || '',
         rowspan: 0
       })
     }
 
     const batch = batchMap.get(batchKey)
+    if (!batch.batchId && item.batch_id) {
+      batch.batchId = item.batch_id
+    }
+    if (!batch.signaturePath && item.station_manager_signature_path) {
+      batch.signaturePath = item.station_manager_signature_path
+    }
+    if (!batch.signedAt && item.station_manager_signed_at) {
+      batch.signedAt = item.station_manager_signed_at
+    }
+    if (!batch.signedName && item.station_manager_signed_name) {
+      batch.signedName = item.station_manager_signed_name
+    }
+    if (item.batch_status === '已签名确认') {
+      batch.batchStatus = '已签名确认'
+    }
     batch.records.push(item)
     batch.batchIssueCount += Number(item.issue_count || 0)
     if (item.result === '异常') {
@@ -238,6 +400,229 @@ const groupedBatches = computed(() => {
     return batch
   })
 })
+const resolveImage = (path) => {
+  const value = String(path || '').trim()
+  if (!value) return ''
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('blob:') || value.startsWith('data:')) {
+    return value
+  }
+  if (value.startsWith('/storage/')) {
+    return value
+  }
+  if (value.startsWith('/')) {
+    return `/storage${value}`
+  }
+  return `/storage/${value}`
+}
+
+const openBatchDetail = async (batch) => {
+  if (!batch?.batchId) {
+    batchDetail.value = {
+      visible: true,
+      loading: false,
+      error: '当前批次缺少批次编号，无法查看详情。',
+      batch,
+      issues: []
+    }
+    return
+  }
+
+  batchDetail.value = {
+    visible: true,
+    loading: true,
+    error: '',
+    batch,
+    issues: []
+  }
+
+  try {
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.get(`/api/inspection-batches/${batch.batchId}/issues`, {
+      params: {
+        user_id: userId
+      }
+    })
+    batchDetail.value.loading = false
+    batchDetail.value.issues = response.data?.issues || []
+  } catch (error) {
+    batchDetail.value.loading = false
+    batchDetail.value.error = error?.response?.data?.error || '加载批次问题失败。'
+    batchDetail.value.issues = []
+  }
+}
+
+const closeBatchDetail = () => {
+  batchDetail.value = {
+    visible: false,
+    loading: false,
+    error: '',
+    batch: null,
+    issues: []
+  }
+}
+
+const getSignatureCanvas = () => signatureCanvasRef.value
+
+const resizeSignatureCanvas = () => {
+  const canvas = getSignatureCanvas()
+  if (!canvas) return
+
+  const ratio = window.devicePixelRatio || 1
+  const rect = canvas.getBoundingClientRect()
+  const width = Math.max(280, Math.round(rect.width || 0))
+  const height = Math.max(160, Math.round(rect.height || 0))
+
+  const previous = canvas.toDataURL('image/png')
+
+  canvas.width = Math.round(width * ratio)
+  canvas.height = Math.round(height * ratio)
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+  ctx.clearRect(0, 0, width, height)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = '#0f172a'
+  ctx.lineWidth = 2.4
+
+  if (previous && previous !== 'data:,') {
+    const image = new Image()
+    image.onload = () => {
+      ctx.drawImage(image, 0, 0, width, height)
+    }
+    image.src = previous
+  }
+}
+
+const openSignatureDialog = async (batch) => {
+  signatureDialog.value = {
+    visible: true,
+    submitting: false,
+    error: '',
+    batch
+  }
+
+  await nextTick()
+  resizeSignatureCanvas()
+  signatureHasStroke = false
+}
+
+const closeSignatureDialog = () => {
+  signatureDialog.value = {
+    visible: false,
+    submitting: false,
+    error: '',
+    batch: null
+  }
+  signatureHasStroke = false
+}
+
+const clearSignature = () => {
+  const canvas = getSignatureCanvas()
+  const ctx = canvas?.getContext('2d')
+  if (!canvas || !ctx) return
+
+  const width = canvas.width / (window.devicePixelRatio || 1)
+  const height = canvas.height / (window.devicePixelRatio || 1)
+  ctx.clearRect(0, 0, width, height)
+  signatureHasStroke = false
+}
+
+let signatureDrawing = false
+let signatureHasStroke = false
+
+const getCanvasPoint = (event) => {
+  const canvas = getSignatureCanvas()
+  if (!canvas) return null
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  }
+}
+
+const startSignature = (event) => {
+  const canvas = getSignatureCanvas()
+  const ctx = canvas?.getContext('2d')
+  const point = getCanvasPoint(event)
+  if (!canvas || !ctx || !point) return
+
+  signatureDrawing = true
+  signatureHasStroke = true
+  canvas.setPointerCapture?.(event.pointerId)
+  ctx.beginPath()
+  ctx.moveTo(point.x, point.y)
+}
+
+const moveSignature = (event) => {
+  if (!signatureDrawing) return
+  const canvas = getSignatureCanvas()
+  const ctx = canvas?.getContext('2d')
+  const point = getCanvasPoint(event)
+  if (!canvas || !ctx || !point) return
+
+  ctx.lineTo(point.x, point.y)
+  ctx.stroke()
+}
+
+const endSignature = (event) => {
+  const canvas = getSignatureCanvas()
+  if (signatureDrawing && canvas) {
+    canvas.releasePointerCapture?.(event.pointerId)
+  }
+  signatureDrawing = false
+}
+
+const canvasToBlob = (canvas) => {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('签名生成失败。'))
+        return
+      }
+      resolve(blob)
+    }, 'image/png')
+  })
+}
+
+const submitBatchSignature = async () => {
+  const batch = signatureDialog.value.batch
+  if (!batch?.batchId) {
+    signatureDialog.value.error = '当前批次缺少批次编号，无法提交签名。'
+    return
+  }
+
+
+  if (!signatureHasStroke) {
+    signatureDialog.value.error = '请先完成站经理签名。'
+    return
+  }
+
+  try {
+    signatureDialog.value.submitting = true
+    signatureDialog.value.error = ''
+
+    const userId = localStorage.getItem('user_id') || ''
+    const canvas = getSignatureCanvas()
+    const blob = await canvasToBlob(canvas)
+    const formData = new FormData()
+    formData.append('user_id', userId)
+    formData.append('signed_name', `${batch.station || '站点'}站经理`)
+    formData.append('signature', new File([blob], 'signature.png', { type: 'image/png' }))
+
+    await axios.post(`/api/inspection-batches/${batch.batchId}/sign`, formData)
+    closeSignatureDialog()
+    signatureHasStroke = false
+    await fetchInspections()
+  } catch (error) {
+    signatureDialog.value.error = error?.response?.data?.error || '提交签名失败。'
+  } finally {
+    signatureDialog.value.submitting = false
+  }
+}
+
 
 const totalPage = computed(() => Math.max(1, Math.ceil(groupedBatches.value.length / pageSize.value)))
 
@@ -328,11 +713,13 @@ const statusClass = (value) => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('resize', resizeSignatureCanvas)
   fetchInspections()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', resizeSignatureCanvas)
 })
 </script>
 
@@ -472,6 +859,35 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
+.btn-primary {
+  border-color: #1d4ed8;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.2);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+}
+
+.signature-action-btn {
+  width: 100%;
+  min-width: 220px;
+  min-height: 44px;
+  white-space: normal;
+  line-height: 1.5;
+  padding: 10px 14px;
+}
+
+.batch-action-btn {
+  width: 100%;
+  min-width: 96px;
+  white-space: normal;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+
 .mobile-record-list {
   display: none;
 }
@@ -585,6 +1001,35 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.mobile-batch-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.mobile-signature-box {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.mobile-signature-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  margin-bottom: 10px;
+}
+
+.mobile-signature-time {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
 .mobile-empty {
   padding: 28px 16px;
   text-align: center;
@@ -614,7 +1059,7 @@ onBeforeUnmount(() => {
 
 .records-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 1120px;
   border-collapse: collapse;
 }
 
@@ -626,6 +1071,7 @@ onBeforeUnmount(() => {
   vertical-align: top;
   font-size: 14px;
   color: #111827;
+  word-break: break-word;
 }
 
 .records-table th {
@@ -649,6 +1095,197 @@ onBeforeUnmount(() => {
   color: #0f172a;
   vertical-align: middle;
   text-align: center;
+}
+
+.batch-action-cell,
+.batch-signature-cell {
+  vertical-align: middle;
+  text-align: center;
+}
+
+.batch-action-cell {
+  min-width: 150px;
+}
+
+.batch-signature-cell {
+  min-width: 260px;
+}
+
+.signature-preview-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.signature-preview-image {
+  width: 220px;
+  max-width: 100%;
+  height: 88px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.signature-preview-time {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.signature-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.signature-status-badge.success {
+  background: #ecfdf5;
+  color: #15803d;
+}
+
+.signature-status-badge.pending {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.signature-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.signature-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.signature-side-card {
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.signature-side-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.signature-side-desc {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.signature-side-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+.signature-pad-card-landscape {
+  min-width: 0;
+}
+
+.signature-pad-wrap-landscape {
+  min-height: 0;
+}
+
+.signature-canvas-landscape {
+  height: 300px;
+}
+
+.signature-dialog {
+  width: min(860px, 100%);
+  max-height: min(88vh, 920px);
+  padding: 24px;
+  overflow: auto;
+}
+
+.signature-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.signature-pad-card {
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: #fff;
+  padding: 18px;
+}
+
+.signature-pad-head {
+  margin-bottom: 14px;
+}
+
+.signature-pad-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.signature-pad-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+.signature-pad-wrap {
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  overflow: hidden;
+}
+
+.signature-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.signature-pad-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.signature-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .empty-row {
@@ -703,6 +1340,159 @@ onBeforeUnmount(() => {
 .status-tag.danger {
   background: #fef2f2;
   color: #dc2626;
+}
+
+.batch-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.46);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1200;
+}
+
+.batch-detail-dialog {
+  width: min(1040px, 100%);
+  max-height: min(88vh, 920px);
+  padding: 28px;
+  overflow: auto;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.batch-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e5edf5;
+}
+
+.batch-detail-kicker {
+  display: inline-flex;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.batch-detail-header h3 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.batch-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 12px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.batch-detail-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #eef4ff;
+  border: 1px solid #dbe7ff;
+}
+
+.batch-detail-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.batch-issue-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.batch-issue-card {
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.batch-issue-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.batch-issue-id {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.batch-issue-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.6;
+}
+
+.batch-issue-desc {
+  font-size: 14px;
+  color: #334155;
+  line-height: 1.8;
+  white-space: normal;
+  word-break: break-word;
+  min-height: 78px;
+}
+
+.batch-issue-image-wrap {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.batch-issue-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 360px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.batch-issue-image-empty {
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 @media (max-width: 900px) {
@@ -770,6 +1560,70 @@ onBeforeUnmount(() => {
   .btn {
     width: 100%;
     min-height: 46px;
+  }
+
+  .signature-preview-image {
+    width: 100%;
+    height: 82px;
+  }
+
+  .batch-detail-overlay {
+    padding: 12px;
+  }
+
+  .batch-detail-dialog {
+    width: min(96vw, 960px);
+    padding: 16px;
+    max-height: 92vh;
+  }
+
+  .batch-detail-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .batch-issue-list {
+    grid-template-columns: 1fr;
+  }
+
+  .batch-detail-meta span {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .signature-dialog {
+    width: min(96vw, 960px);
+    padding: 14px;
+    max-height: 92vh;
+  }
+
+  .signature-dialog-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .signature-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .signature-side-card,
+  .signature-pad-card {
+    padding: 14px;
+  }
+
+  .signature-canvas,
+  .signature-canvas-landscape {
+    height: 190px;
+  }
+
+  .signature-pad-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .signature-action-btn {
+    min-width: 0;
   }
 }
 </style>
