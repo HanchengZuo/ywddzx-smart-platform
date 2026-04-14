@@ -121,7 +121,7 @@
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
                 <div class="mobile-card-standard-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                }}</div>
+                  }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
             </div>
@@ -203,7 +203,7 @@
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
                     <div class="standard-detail-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                    }}</div>
+                      }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
@@ -306,6 +306,8 @@
               <div class="drawer-upload-card">
                 <input id="rectification-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
                   @change="handleRectificationFileChange" />
+                <input id="rectification-photo-camera" class="drawer-upload-input" type="file" accept="image/*"
+                  capture="environment" @change="handleRectificationFileChange" />
 
                 <label for="rectification-photo-upload" class="drawer-upload-dropzone">
                   <div class="drawer-upload-icon">↑</div>
@@ -313,7 +315,11 @@
                   <div class="drawer-upload-desc">
                     请上传能够清晰反映整改完成情况的现场照片，建议画面完整、重点明确。
                   </div>
-                  <div class="drawer-upload-trigger">选择文件</div>
+                  <div class="drawer-upload-trigger-group">
+                    <label for="rectification-photo-camera"
+                      class="drawer-upload-trigger drawer-upload-trigger-secondary">拍照上传</label>
+                    <label for="rectification-photo-upload" class="drawer-upload-trigger">相册选择</label>
+                  </div>
                 </label>
 
                 <div v-if="actionForm.rectificationPhotoPreview" class="drawer-image-preview-panel">
@@ -322,8 +328,10 @@
                     <div class="drawer-preview-title">已选择整改照片</div>
                     <div class="drawer-preview-name">{{ actionForm.rectificationPhotoFile?.name || '已上传图片' }}</div>
                     <div class="drawer-preview-actions">
+                      <label for="rectification-photo-camera"
+                        class="btn btn-light btn-sm drawer-preview-btn">重新拍照</label>
                       <label for="rectification-photo-upload"
-                        class="btn btn-light btn-sm drawer-preview-btn">重新选择</label>
+                        class="btn btn-light btn-sm drawer-preview-btn">相册重选</label>
                       <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
                         @click="clearRectificationFile">移除图片</button>
                     </div>
@@ -355,6 +363,8 @@
               <div class="drawer-upload-card">
                 <input id="review-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
                   @change="handleReviewFileChange" />
+                <input id="review-photo-camera" class="drawer-upload-input" type="file" accept="image/*"
+                  capture="environment" @change="handleReviewFileChange" />
 
                 <label for="review-photo-upload" class="drawer-upload-dropzone">
                   <div class="drawer-upload-icon">↑</div>
@@ -362,7 +372,11 @@
                   <div class="drawer-upload-desc">
                     请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。
                   </div>
-                  <div class="drawer-upload-trigger">选择文件</div>
+                  <div class="drawer-upload-trigger-group">
+                    <label for="review-photo-camera"
+                      class="drawer-upload-trigger drawer-upload-trigger-secondary">拍照上传</label>
+                    <label for="review-photo-upload" class="drawer-upload-trigger">相册选择</label>
+                  </div>
                 </label>
 
                 <div v-if="actionForm.reviewPhotoPreview" class="drawer-image-preview-panel">
@@ -371,7 +385,8 @@
                     <div class="drawer-preview-title">已选择复核照片</div>
                     <div class="drawer-preview-name">{{ actionForm.reviewPhotoFile?.name || '已上传图片' }}</div>
                     <div class="drawer-preview-actions">
-                      <label for="review-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">重新选择</label>
+                      <label for="review-photo-camera" class="btn btn-light btn-sm drawer-preview-btn">重新拍照</label>
+                      <label for="review-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">相册重选</label>
                       <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
                         @click="clearReviewFile">
                         移除图片
@@ -779,9 +794,13 @@ const clearRectificationFile = () => {
     URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
   }
   actionForm.value.rectificationPhotoPreview = ''
-  const input = document.getElementById('rectification-photo-upload')
-  if (input) {
-    input.value = ''
+  const uploadInput = document.getElementById('rectification-photo-upload')
+  if (uploadInput) {
+    uploadInput.value = ''
+  }
+  const cameraInput = document.getElementById('rectification-photo-camera')
+  if (cameraInput) {
+    cameraInput.value = ''
   }
 }
 
@@ -828,9 +847,13 @@ const clearReviewFile = () => {
     URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
   }
   actionForm.value.reviewPhotoPreview = ''
-  const input = document.getElementById('review-photo-upload')
-  if (input) {
-    input.value = ''
+  const uploadInput = document.getElementById('review-photo-upload')
+  if (uploadInput) {
+    uploadInput.value = ''
+  }
+  const cameraInput = document.getElementById('review-photo-camera')
+  if (cameraInput) {
+    cameraInput.value = ''
   }
 }
 
@@ -1628,6 +1651,14 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.drawer-upload-trigger-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .drawer-upload-trigger {
   display: inline-flex;
   align-items: center;
@@ -1640,6 +1671,11 @@ onBeforeUnmount(() => {
   color: #fff;
   font-size: 13px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+.drawer-upload-trigger-secondary {
+  background: #0f172a;
 }
 
 .drawer-image-preview-panel {

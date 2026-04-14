@@ -113,6 +113,8 @@
               <div class="upload-card">
                 <input id="issue-photo-upload" class="upload-input" type="file" accept="image/*"
                   @change="handleFileChange" />
+                <input id="issue-photo-camera" class="upload-input" type="file" accept="image/*" capture="environment"
+                  @change="handleFileChange" />
 
                 <label for="issue-photo-upload" class="upload-dropzone">
                   <div class="upload-icon">↑</div>
@@ -120,7 +122,10 @@
                   <div class="upload-desc">
                     支持上传现场问题照片，建议使用清晰、完整、能准确反映问题的图片。
                   </div>
-                  <div class="upload-trigger">选择文件</div>
+                  <div class="upload-trigger-group">
+                    <label for="issue-photo-camera" class="upload-trigger upload-trigger-secondary">拍照上传</label>
+                    <label for="issue-photo-upload" class="upload-trigger">相册选择</label>
+                  </div>
                 </label>
 
                 <div v-if="imagePreviewUrl" class="image-preview-panel">
@@ -129,7 +134,8 @@
                     <div class="image-preview-title">已选择问题照片</div>
                     <div class="image-preview-name">{{ imageFile?.name || '已上传图片' }}</div>
                     <div class="image-preview-actions">
-                      <label for="issue-photo-upload" class="btn btn-light image-action-btn">重新选择</label>
+                      <label for="issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
+                      <label for="issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
                       <button class="btn btn-secondary image-action-btn" type="button" @click="clearImage">移除图片</button>
                     </div>
                   </div>
@@ -443,9 +449,13 @@ const clearImage = () => {
     URL.revokeObjectURL(imagePreviewUrl.value)
   }
   imagePreviewUrl.value = ''
-  const input = document.getElementById('issue-photo-upload')
-  if (input) {
-    input.value = ''
+  const uploadInput = document.getElementById('issue-photo-upload')
+  if (uploadInput) {
+    uploadInput.value = ''
+  }
+  const cameraInput = document.getElementById('issue-photo-camera')
+  if (cameraInput) {
+    cameraInput.value = ''
   }
 }
 
@@ -811,6 +821,14 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.upload-trigger-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .upload-trigger {
   display: inline-flex;
   align-items: center;
@@ -823,6 +841,11 @@ onBeforeUnmount(() => {
   color: #fff;
   font-size: 13px;
   font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-trigger-secondary {
+  background: #0f172a;
 }
 
 .image-preview-panel {
