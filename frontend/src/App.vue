@@ -40,17 +40,19 @@
 
     <header class="mobile-topbar">
       <button class="mobile-menu-btn" type="button" @click="toggleMobileMenu">☰</button>
-      <div class="mobile-topbar-title">业务督导中心</div>
+      <div class="mobile-topbar-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') :
+        '业务督导中心' }}</div>
       <button class="btn btn-secondary btn-sm mobile-logout-btn" type="button" @click="handleLogout">退出</button>
     </header>
 
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed, 'mobile-open': mobileMenuOpen }">
       <div class="sidebar-top">
         <div class="sidebar-brand" v-if="!sidebarCollapsed">
-          <div class="logo-mark">督</div>
+          <div class="logo-mark">{{ currentRole === 'station_manager' ? '站' : '督' }}</div>
           <div class="logo-texts">
-            <div class="logo-title">业务督导中心</div>
-            <div class="logo-subtitle">数智管理平台</div>
+            <div class="logo-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') : '业务督导中心'
+            }}</div>
+            <div class="logo-subtitle">{{ currentRole === 'station_manager' ? '站点账号' : '数智管理平台' }}</div>
           </div>
         </div>
 
