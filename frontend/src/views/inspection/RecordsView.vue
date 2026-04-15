@@ -192,8 +192,46 @@
         </div>
       </div>
     </div>
+
     <div v-if="signatureDialog.visible" class="batch-detail-overlay" @click.self="closeSignatureDialog">
-      <div class="signature-dialog card-surface">
+      <div v-if="isMobileView" class="mobile-signature-board card-surface">
+        <div v-if="!isLandscapeMobile" class="mobile-signature-orientation-overlay">
+          <div class="mobile-signature-orientation-overlay-inner">
+            <div class="mobile-signature-orientation-icon">↻</div>
+            <div class="mobile-signature-orientation-title">请横屏后签字</div>
+            <div class="mobile-signature-orientation-text">为了便于站经理手写签名，请将手机旋转为横屏后继续操作。</div>
+            <button class="btn btn-secondary mobile-signature-close" type="button"
+              @click="closeSignatureDialog">关闭</button>
+          </div>
+        </div>
+
+        <template v-else>
+          <div class="mobile-signature-board-top">
+            <div class="mobile-signature-board-title">请横屏签名确认</div>
+            <button class="btn btn-secondary mobile-signature-close" type="button"
+              @click="closeSignatureDialog">关闭</button>
+          </div>
+
+
+          <div class="mobile-signature-canvas-wrap">
+            <canvas ref="signatureCanvasRef" class="signature-canvas mobile-signature-canvas"
+              @pointerdown="startSignature" @pointermove="moveSignature" @pointerup="endSignature"
+              @pointerleave="endSignature" @pointercancel="endSignature"></canvas>
+          </div>
+
+          <div class="mobile-signature-actions">
+            <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
+            <button class="btn btn-primary" type="button" :disabled="signatureDialog.submitting"
+              @click="submitBatchSignature">
+              {{ signatureDialog.submitting ? '提交中...' : '确认签名' }}
+            </button>
+          </div>
+
+          <div v-if="signatureDialog.error" class="signature-error">{{ signatureDialog.error }}</div>
+        </template>
+      </div>
+
+      <div v-else class="signature-dialog card-surface">
         <div class="signature-dialog-header">
           <div>
             <div class="batch-detail-kicker">站经理签名确认</div>
@@ -301,6 +339,17 @@ const dropdownVisible = ref({
 
 const list = ref([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
+
+const detectMobileViewport = () => {
+  const ua = navigator.userAgent || ''
+  const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches
+  const narrowScreen = window.innerWidth <= 1024
+  return mobileUa || (coarsePointer && narrowScreen)
+}
+
+const isMobileView = ref(detectMobileViewport())
+const isLandscapeMobile = ref(window.innerWidth > window.innerHeight)
 const signatureCanvasRef = ref(null)
 
 const batchDetail = ref({
@@ -469,8 +518,8 @@ const resizeSignatureCanvas = () => {
 
   const ratio = window.devicePixelRatio || 1
   const rect = canvas.getBoundingClientRect()
-  const width = Math.max(280, Math.round(rect.width || 0))
-  const height = Math.max(160, Math.round(rect.height || 0))
+  const width = Math.max(isMobileView.value ? 360 : 280, Math.round(rect.width || 0))
+  const height = Math.max(isMobileView.value ? 260 : 160, Math.round(rect.height || 0))
 
   const previous = canvas.toDataURL('image/png')
 
@@ -495,6 +544,18 @@ const resizeSignatureCanvas = () => {
     image.src = previous
   }
 }
+const handleViewportResize = () => {
+  isMobileView.value = detectMobileViewport()
+  isLandscapeMobile.value = window.innerWidth > window.innerHeight
+
+  if (signatureDialog.value.visible) {
+    nextTick(() => {
+      if (!isMobileView.value || isLandscapeMobile.value) {
+        resizeSignatureCanvas()
+      }
+    })
+  }
+}
 
 const openSignatureDialog = async (batch) => {
   signatureDialog.value = {
@@ -505,7 +566,9 @@ const openSignatureDialog = async (batch) => {
   }
 
   await nextTick()
-  resizeSignatureCanvas()
+  if (!isMobileView.value || isLandscapeMobile.value) {
+    resizeSignatureCanvas()
+  }
   signatureHasStroke = false
 }
 
@@ -597,6 +660,11 @@ const submitBatchSignature = async () => {
 
   if (!signatureHasStroke) {
     signatureDialog.value.error = '请先完成站经理签名。'
+    return
+  }
+
+  if (isMobileView.value && !isLandscapeMobile.value) {
+    signatureDialog.value.error = '请先将手机横屏后再完成签名。'
     return
   }
 
@@ -713,14 +781,15 @@ const statusClass = (value) => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('resize', resizeSignatureCanvas)
+  window.addEventListener('resize', handleViewportResize)
   fetchInspections()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('resize', resizeSignatureCanvas)
+  window.removeEventListener('resize', handleViewportResize)
 })
+
 </script>
 
 <style scoped>
@@ -1495,6 +1564,117 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+/* Mobile signature board normalized styles */
+.mobile-signature-board {
+  width: min(98vw, 980px);
+  max-height: 94vh;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.mobile-signature-board-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-signature-board-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.mobile-signature-close {
+  width: auto;
+  min-width: 72px;
+}
+
+.mobile-signature-orientation-tip {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #475569;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 1px solid #dbe7ff;
+}
+
+.mobile-signature-canvas-wrap {
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.mobile-signature-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  max-height: none;
+  touch-action: none;
+}
+
+.mobile-signature-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.mobile-signature-orientation-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: 20px;
+}
+
+.mobile-signature-orientation-overlay-inner {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.mobile-signature-orientation-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: #eff6ff;
+  border: 1px solid #dbe7ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.mobile-signature-orientation-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.mobile-signature-orientation-text {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #475569;
+}
+
 @media (max-width: 900px) {
   .page-shell {
     gap: 14px;
@@ -1568,7 +1748,7 @@ onBeforeUnmount(() => {
   }
 
   .batch-detail-overlay {
-    padding: 12px;
+    padding: 0;
   }
 
   .batch-detail-dialog {
@@ -1597,33 +1777,45 @@ onBeforeUnmount(() => {
     max-height: 92vh;
   }
 
-  .signature-dialog-header {
-    flex-direction: column;
-    align-items: stretch;
+  .mobile-signature-board {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 12px 12px 16px;
+    gap: 12px;
   }
 
-  .signature-layout {
-    grid-template-columns: 1fr;
-    gap: 14px;
+  .mobile-signature-board-top {
+    align-items: flex-start;
   }
 
-  .signature-side-card,
-  .signature-pad-card {
-    padding: 14px;
+  .mobile-signature-actions {
+    grid-template-columns: 1fr 1fr;
   }
 
-  .signature-canvas,
-  .signature-canvas-landscape {
-    height: 190px;
+  .mobile-signature-orientation-overlay {
+    min-height: 0;
+    flex: 1;
+    padding: 16px;
   }
 
-  .signature-pad-actions {
-    flex-direction: column;
-    align-items: stretch;
+  .mobile-signature-canvas {
+    height: 100%;
+    min-height: 320px;
+    max-height: none;
   }
 
-  .signature-action-btn {
-    min-width: 0;
+  .mobile-signature-canvas-wrap {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .mobile-signature-close {
+    width: auto;
+    min-width: 64px;
+    min-height: 40px;
+    padding: 0 12px;
   }
 }
 </style>
