@@ -62,12 +62,12 @@
     <div class="mobile-record-list">
       <div v-if="loading" class="mobile-empty card-surface">正在加载巡检记录...</div>
 
-      <div v-else-if="paginatedBatches.length === 0" class="mobile-empty card-surface">
+      <div v-else-if="paginatedInspectionGroups.length === 0" class="mobile-empty card-surface">
         当前没有巡检记录。
       </div>
 
       <div v-else class="mobile-record-cards">
-        <div v-for="batch in paginatedBatches" :key="batch.batchKey" class="mobile-record-card card-surface">
+        <div v-for="batch in paginatedInspectionGroups" :key="batch.batchKey" class="mobile-record-card card-surface">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
               <div class="mobile-card-station">{{ batch.station }}</div>
@@ -78,16 +78,16 @@
 
           <div class="mobile-card-body">
             <div class="mobile-card-row">
-              <span>本批次检查表数</span>
+              <span>当日检查表数</span>
               <strong>{{ batch.rowspan }}</strong>
             </div>
             <div class="mobile-card-row">
-              <span>本批次问题总数</span>
+              <span>当日问题总数</span>
               <strong>{{ batch.batchIssueCount }}</strong>
             </div>
             <div class="mobile-card-row">
-              <span>签名状态</span>
-              <strong>{{ batch.batchStatus === '已签名确认' ? '已签名确认' : '待签名确认' }}</strong>
+              <span>检查表签名进度</span>
+              <strong>{{ batch.signedCount }}/{{ batch.rowspan }}</strong>
             </div>
           </div>
 
@@ -98,23 +98,29 @@
                 <span :class="statusClass(record.result)">{{ record.result }}</span>
               </div>
               <div class="mobile-batch-item-meta">发现问题数：{{ record.issue_count }}</div>
+              <div class="mobile-batch-item-meta">签名状态：{{ record.sign_status === '已签名确认' ? '已签名确认' : '待签名确认' }}</div>
+
+              <div class="mobile-batch-item-actions">
+                <button class="btn btn-secondary batch-action-btn" type="button" @click="openInspectionDetail(record)">
+                  查看本表录入问题
+                </button>
+
+                <button v-if="currentRole === 'supervisor' && record.sign_status !== '已签名确认'"
+                  class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(record)">
+                  结束本检查表并签名确认
+                </button>
+              </div>
+
+              <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
+                class="mobile-signature-box">
+                <div class="mobile-signature-label">本表已签名</div>
+                <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                  alt="站经理签名" />
+                <div class="mobile-signature-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+              </div>
             </div>
           </div>
 
-          <div class="mobile-batch-actions">
-            <button class="btn btn-secondary batch-action-btn" type="button"
-              @click="openBatchDetail(batch)">查看本批次问题</button>
-            <button v-if="currentRole === 'supervisor' && batch.batchStatus !== '已签名确认'"
-              class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(batch)">
-              结束本次检查并签名确认
-            </button>
-          </div>
-
-          <div v-if="batch.batchStatus === '已签名确认' && batch.signaturePath" class="mobile-signature-box">
-            <div class="mobile-signature-label">站经理已签名</div>
-            <img :src="resolveImage(batch.signaturePath)" class="signature-preview-image" alt="站经理签名" />
-            <div class="mobile-signature-time">{{ batch.signedAt || '已完成签名确认' }}</div>
-          </div>
         </div>
       </div>
     </div>
@@ -130,12 +136,12 @@
                 <th>检查表</th>
                 <th>结果</th>
                 <th>发现问题数</th>
-                <th>批次问题</th>
-                <th>站经理签字确认</th>
+                <th>本表问题</th>
+                <th>本表签字确认</th>
               </tr>
             </thead>
             <tbody>
-              <template v-for="batch in paginatedBatches" :key="batch.batchKey">
+              <template v-for="batch in paginatedInspectionGroups" :key="batch.batchKey">
                 <tr v-for="(record, index) in batch.records" :key="record.id">
                   <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-main-cell">{{
                     batch.date }}</td>
@@ -146,27 +152,34 @@
                     <span :class="statusClass(record.result)">{{ record.result }}</span>
                   </td>
                   <td>{{ record.issue_count }}</td>
-                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-action-cell">
+
+                  <td class="batch-action-cell">
                     <button class="btn btn-secondary batch-action-btn" type="button"
-                      @click="openBatchDetail(batch)">查看本批次问题</button>
-                  </td>
-                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-signature-cell">
-
-                    <div v-if="batch.batchStatus === '已签名确认' && batch.signaturePath" class="signature-preview-box">
-                      <div class="signature-status-badge success">已签名确认</div>
-                      <img :src="resolveImage(batch.signaturePath)" class="signature-preview-image" alt="站经理签名" />
-                      <div class="signature-preview-time">{{ batch.signedAt || '已完成签名确认' }}</div>
-                    </div>
-                    <button v-else-if="currentRole === 'supervisor'" class="btn btn-primary signature-action-btn"
-                      type="button" @click="openSignatureDialog(batch)">
-                      结束本次检查并签名确认
+                      @click="openInspectionDetail(record)">
+                      查看本表录入问题
                     </button>
-                    <span v-else class="signature-status-badge pending">待签名确认</span>
-
                   </td>
+
+                  <td class="batch-signature-cell">
+                    <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
+                      class="signature-preview-box">
+                      <div class="signature-status-badge success">已签名确认</div>
+                      <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                        alt="站经理签名" />
+                      <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+                    </div>
+
+                    <button v-else-if="currentRole === 'supervisor'" class="btn btn-primary signature-action-btn"
+                      type="button" @click="openSignatureDialog(record)">
+                      结束本检查表并签名确认
+                    </button>
+
+                    <span v-else class="signature-status-badge pending">待签名确认</span>
+                  </td>
+
                 </tr>
               </template>
-              <tr v-if="!loading && paginatedBatches.length === 0">
+              <tr v-if="!loading && paginatedInspectionGroups.length === 0">
                 <td colspan="7" class="empty-row">当前没有巡检记录。</td>
               </tr>
               <tr v-if="loading">
@@ -178,7 +191,7 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ groupedBatches.length }} 个巡检批次</div>
+        <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
@@ -222,7 +235,7 @@
           <div class="mobile-signature-actions">
             <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
             <button class="btn btn-primary" type="button" :disabled="signatureDialog.submitting"
-              @click="submitBatchSignature">
+              @click="submitInspectionSignature">
               {{ signatureDialog.submitting ? '提交中...' : '确认签名' }}
             </button>
           </div>
@@ -234,12 +247,12 @@
       <div v-else class="signature-dialog card-surface">
         <div class="signature-dialog-header">
           <div>
-            <div class="batch-detail-kicker">站经理签名确认</div>
-            <h3>{{ signatureDialog.batch?.station || '巡检批次签名' }}</h3>
+            <div class="batch-detail-kicker">检查表签名确认</div>
+            <h3>{{ signatureDialog.record?.inspection_table_name || '检查表签名确认' }}</h3>
             <div class="batch-detail-meta">
-              <span>巡检日期：{{ signatureDialog.batch?.date || '-' }}</span>
-              <span>检查表数：{{ signatureDialog.batch?.rowspan || 0 }}</span>
-              <span>问题总数：{{ signatureDialog.batch?.batchIssueCount || 0 }}</span>
+              <span>巡检日期：{{ signatureDialog.record?.date || '-' }}</span>
+              <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
+              <span>检查表：{{ signatureDialog.record?.inspection_table_name || '-' }}</span>
             </div>
           </div>
           <button class="btn btn-secondary" type="button" @click="closeSignatureDialog">关闭</button>
@@ -248,18 +261,18 @@
         <div class="signature-layout">
           <div class="signature-side-card">
             <div class="signature-side-title">确认提示</div>
-            <div class="signature-side-desc">请将手机交由站经理签字。提交后，本批次将锁定，不能继续登记巡检问题。</div>
+            <div class="signature-side-desc">请将手机交由站经理签字。提交后，本检查表将完成签名确认，不能继续登记同一天同站点的该检查表问题。</div>
             <div class="signature-side-meta">
-              <span>站点：{{ signatureDialog.batch?.station || '-' }}</span>
-              <span>日期：{{ signatureDialog.batch?.date || '-' }}</span>
-              <span>问题总数：{{ signatureDialog.batch?.batchIssueCount || 0 }}</span>
+              <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
+              <span>日期：{{ signatureDialog.record?.date || '-' }}</span>
+              <span>检查表：{{ signatureDialog.record?.inspection_table_name || '-' }}</span>
             </div>
           </div>
 
           <div class="signature-pad-card signature-pad-card-landscape">
             <div class="signature-pad-head">
               <div class="signature-pad-title">请站经理在右侧签名区手写签名</div>
-              <div class="signature-pad-desc">建议横向签写，签名会以透明 PNG 保存并展示在批次确认处。</div>
+              <div class="signature-pad-desc">建议横向签写，签名会以透明 PNG 保存并展示在本检查表确认处。</div>
             </div>
             <div class="signature-pad-wrap signature-pad-wrap-landscape">
               <canvas ref="signatureCanvasRef" class="signature-canvas signature-canvas-landscape"
@@ -269,7 +282,7 @@
             <div class="signature-pad-actions">
               <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
               <button class="btn btn-primary" type="button" :disabled="signatureDialog.submitting"
-                @click="submitBatchSignature">
+                @click="submitInspectionSignature">
                 {{ signatureDialog.submitting ? '提交中...' : '提交签名确认' }}
               </button>
             </div>
@@ -283,20 +296,22 @@
       <div class="batch-detail-dialog card-surface">
         <div class="batch-detail-header">
           <div>
-            <div class="batch-detail-kicker">巡检批次详情</div>
-            <h3>{{ batchDetail.batch?.station || '巡检批次' }}</h3>
+
+            <div class="batch-detail-kicker">检查表录入问题</div>
+            <h3>{{ batchDetail.inspection?.inspection_table_name || '检查表详情' }}</h3>
             <div class="batch-detail-meta">
-              <span>巡检日期：{{ batchDetail.batch?.date || '-' }}</span>
-              <span>检查表数：{{ batchDetail.batch?.rowspan || 0 }}</span>
-              <span>问题总数：{{ batchDetail.batch?.batchIssueCount || 0 }}</span>
+              <span>巡检日期：{{ batchDetail.inspection?.inspection_date || batchDetail.inspection?.date || '-' }}</span>
+              <span>站点：{{ batchDetail.inspection?.station_name || batchDetail.inspection?.station || '-' }}</span>
+              <span>问题数：{{ batchDetail.issues.length || 0 }}</span>
             </div>
+
           </div>
           <button class="btn btn-secondary" type="button" @click="closeBatchDetail">关闭</button>
         </div>
 
-        <div v-if="batchDetail.loading" class="batch-detail-empty">正在加载批次问题...</div>
+        <div v-if="batchDetail.loading" class="batch-detail-empty">正在加载本表问题...</div>
         <div v-else-if="batchDetail.error" class="batch-detail-empty">{{ batchDetail.error }}</div>
-        <div v-else-if="batchDetail.issues.length === 0" class="batch-detail-empty">本批次暂无登记问题。</div>
+        <div v-else-if="batchDetail.issues.length === 0" class="batch-detail-empty">本检查表暂无登记问题。</div>
 
         <div v-else class="batch-issue-list">
           <div v-for="issue in batchDetail.issues" :key="issue.id" class="batch-issue-card">
@@ -356,7 +371,7 @@ const batchDetail = ref({
   visible: false,
   loading: false,
   error: '',
-  batch: null,
+  inspection: null,
   issues: []
 })
 
@@ -364,7 +379,7 @@ const signatureDialog = ref({
   visible: false,
   submitting: false,
   error: '',
-  batch: null
+  record: null
 })
 
 const loading = ref(false)
@@ -399,7 +414,7 @@ const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
-const groupedBatches = computed(() => {
+const groupedInspectionGroups = computed(() => {
   const batchMap = new Map()
 
   filteredData.value.forEach((item) => {
@@ -413,31 +428,16 @@ const groupedBatches = computed(() => {
         records: [],
         batchIssueCount: 0,
         batchResult: '正常',
-        batchStatus: item.batch_status || '进行中',
-        signedName: item.station_manager_signed_name || '',
-        signaturePath: item.station_manager_signature_path || '',
-        signedAt: item.station_manager_signed_at || '',
+        signedCount: 0,
         rowspan: 0
       })
     }
 
     const batch = batchMap.get(batchKey)
-    if (!batch.batchId && item.batch_id) {
-      batch.batchId = item.batch_id
-    }
-    if (!batch.signaturePath && item.station_manager_signature_path) {
-      batch.signaturePath = item.station_manager_signature_path
-    }
-    if (!batch.signedAt && item.station_manager_signed_at) {
-      batch.signedAt = item.station_manager_signed_at
-    }
-    if (!batch.signedName && item.station_manager_signed_name) {
-      batch.signedName = item.station_manager_signed_name
-    }
-    if (item.batch_status === '已签名确认') {
-      batch.batchStatus = '已签名确认'
-    }
     batch.records.push(item)
+    if (item.sign_status === '已签名确认') {
+      batch.signedCount += 1
+    }
     batch.batchIssueCount += Number(item.issue_count || 0)
     if (item.result === '异常') {
       batch.batchResult = '异常'
@@ -464,13 +464,13 @@ const resolveImage = (path) => {
   return `/storage/${value}`
 }
 
-const openBatchDetail = async (batch) => {
-  if (!batch?.batchId) {
+const openInspectionDetail = async (record) => {
+  if (!record?.id) {
     batchDetail.value = {
       visible: true,
       loading: false,
-      error: '当前批次缺少批次编号，无法查看详情。',
-      batch,
+      error: '当前检查表缺少巡检记录编号，无法查看详情。',
+      inspection: record || null,
       issues: []
     }
     return
@@ -480,22 +480,21 @@ const openBatchDetail = async (batch) => {
     visible: true,
     loading: true,
     error: '',
-    batch,
+    inspection: record,
     issues: []
   }
 
   try {
     const userId = localStorage.getItem('user_id') || ''
-    const response = await axios.get(`/api/inspection-batches/${batch.batchId}/issues`, {
-      params: {
-        user_id: userId
-      }
+    const response = await axios.get(`/api/inspections/${record.id}/issues`, {
+      params: { user_id: userId }
     })
     batchDetail.value.loading = false
+    batchDetail.value.inspection = response.data?.inspection || record
     batchDetail.value.issues = response.data?.issues || []
   } catch (error) {
     batchDetail.value.loading = false
-    batchDetail.value.error = error?.response?.data?.error || '加载批次问题失败。'
+    batchDetail.value.error = error?.response?.data?.error || '加载本表问题失败。'
     batchDetail.value.issues = []
   }
 }
@@ -505,7 +504,7 @@ const closeBatchDetail = () => {
     visible: false,
     loading: false,
     error: '',
-    batch: null,
+    inspection: null,
     issues: []
   }
 }
@@ -557,12 +556,12 @@ const handleViewportResize = () => {
   }
 }
 
-const openSignatureDialog = async (batch) => {
+const openSignatureDialog = async (record) => {
   signatureDialog.value = {
     visible: true,
     submitting: false,
     error: '',
-    batch
+    record
   }
 
   await nextTick()
@@ -577,7 +576,7 @@ const closeSignatureDialog = () => {
     visible: false,
     submitting: false,
     error: '',
-    batch: null
+    record: null
   }
   signatureHasStroke = false
 }
@@ -650,13 +649,12 @@ const canvasToBlob = (canvas) => {
   })
 }
 
-const submitBatchSignature = async () => {
-  const batch = signatureDialog.value.batch
-  if (!batch?.batchId) {
-    signatureDialog.value.error = '当前批次缺少批次编号，无法提交签名。'
+const submitInspectionSignature = async () => {
+  const record = signatureDialog.value.record
+  if (!record?.id) {
+    signatureDialog.value.error = '当前检查表缺少巡检记录编号，无法提交签名。'
     return
   }
-
 
   if (!signatureHasStroke) {
     signatureDialog.value.error = '请先完成站经理签名。'
@@ -677,10 +675,10 @@ const submitBatchSignature = async () => {
     const blob = await canvasToBlob(canvas)
     const formData = new FormData()
     formData.append('user_id', userId)
-    formData.append('signed_name', `${batch.station || '站点'}站经理`)
+    formData.append('signed_name', `${record.station || '站点'}站经理`)
     formData.append('signature', new File([blob], 'signature.png', { type: 'image/png' }))
 
-    await axios.post(`/api/inspection-batches/${batch.batchId}/sign`, formData)
+    await axios.post(`/api/inspections/${record.id}/sign`, formData)
     closeSignatureDialog()
     signatureHasStroke = false
     await fetchInspections()
@@ -692,11 +690,11 @@ const submitBatchSignature = async () => {
 }
 
 
-const totalPage = computed(() => Math.max(1, Math.ceil(groupedBatches.value.length / pageSize.value)))
+const totalPage = computed(() => Math.max(1, Math.ceil(groupedInspectionGroups.value.length / pageSize.value)))
 
-const paginatedBatches = computed(() => {
+const paginatedInspectionGroups = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  return groupedBatches.value.slice(start, start + pageSize.value)
+  return groupedInspectionGroups.value.slice(start, start + pageSize.value)
 })
 
 watch([filters, pageSize], () => {
@@ -1070,13 +1068,6 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
-.mobile-batch-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
 .mobile-signature-box {
   margin-top: 14px;
   padding: 12px;
@@ -1163,7 +1154,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #0f172a;
   vertical-align: middle;
-  text-align: center;
+  text-align: left;
 }
 
 .batch-action-cell,

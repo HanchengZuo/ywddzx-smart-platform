@@ -116,6 +116,10 @@
             <div class="mobile-card-row"><span>站点</span><strong>{{ item.station }}</strong></div>
 
             <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
+            <div v-if="currentRole === 'station_manager'" class="mobile-card-row">
+              <span>检查表签名状态</span>
+              <strong>{{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}</strong>
+            </div>
             <div class="mobile-card-row"><span>规范ID</span><strong>{{ item.standard_id || '暂无' }}</strong></div>
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
@@ -160,9 +164,13 @@
           </div>
 
           <div class="mobile-card-actions">
-            <button class="btn btn-primary" type="button" @click="openActionDrawer(item)">
+            <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
+              :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
               {{ currentRole === 'station_manager' ? '提交整改' : '提交复核' }}
             </button>
+            <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="mobile-action-tip">
+              当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。
+            </div>
           </div>
         </div>
       </div>
@@ -178,6 +186,7 @@
                 <th>站点</th>
 
                 <th>检查表</th>
+                <th v-if="currentRole === 'station_manager'">检查表签名状态</th>
                 <th>规范ID</th>
                 <th>规范详情</th>
                 <th>问题描述</th>
@@ -199,6 +208,11 @@
                 <td>{{ item.station }}</td>
 
                 <td>{{ item.inspection_table_name || '暂无' }}</td>
+                <td v-if="currentRole === 'station_manager'">
+                  <span :class="isInspectionSigned(item) ? 'status-tag success' : 'status-tag warning'">
+                    {{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}
+                  </span>
+                </td>
                 <td>{{ item.standard_id || '暂无' }}</td>
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
@@ -235,18 +249,22 @@
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
                 <td class="nowrap-col action-col">
-                  <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)">
+                  <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
+                    :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
                     {{ currentRole === 'station_manager' ? '提交整改' : '提交复核' }}
                   </button>
+                  <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
+                    待检查表签名
+                  </div>
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td :colspan="currentRole === 'supervisor' ? 12 : 8" class="empty-row">
+                <td :colspan="currentRole === 'supervisor' ? 12 : 9" class="empty-row">
                   {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
                 </td>
               </tr>
               <tr v-if="loading">
-                <td :colspan="currentRole === 'supervisor' ? 12 : 8" class="empty-row">正在加载数据...</td>
+                <td :colspan="currentRole === 'supervisor' ? 12 : 9" class="empty-row">正在加载数据...</td>
               </tr>
             </tbody>
           </table>
@@ -450,6 +468,18 @@ import {
   getAcceptedImageTypes,
   validateImageType
 } from '@/utils/imageUpload'
+
+const isInspectionSigned = (item) => {
+  const status = String(
+    item?.inspection_sign_status ??
+    item?.sign_status ??
+    item?.inspection_status ??
+    item?.table_sign_status ??
+    ''
+  ).trim()
+  return status === '已签名确认'
+}
+
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const loading = ref(false)
@@ -716,6 +746,10 @@ const fetchMyIssues = async () => {
 }
 
 const openActionDrawer = (item) => {
+  if (currentRole.value === 'station_manager' && !isInspectionSigned(item)) {
+    showActionToast('当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。', 'error')
+    return
+  }
   actionDrawer.value = {
     visible: true,
     item
@@ -1297,6 +1331,13 @@ onBeforeUnmount(() => {
   margin-top: 14px;
 }
 
+.mobile-action-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #b45309;
+}
+
 .mobile-empty {
   padding: 28px 16px;
   text-align: center;
@@ -1343,6 +1384,13 @@ onBeforeUnmount(() => {
 
 .action-col {
   min-width: 110px;
+}
+
+.action-lock-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b45309;
 }
 
 .long-text {

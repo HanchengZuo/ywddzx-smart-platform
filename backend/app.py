@@ -263,11 +263,10 @@ def create_inspection_record(
 def get_or_create_inspection_batch(cur, station_id, inspector_id, batch_date):
     cur.execute(
         """
-        SELECT id, status
+        SELECT id
         FROM inspection_batches
         WHERE station_id = %s
           AND batch_date = %s
-          AND status = '进行中'
         ORDER BY id ASC
         LIMIT 1;
         """,
@@ -282,10 +281,9 @@ def get_or_create_inspection_batch(cur, station_id, inspector_id, batch_date):
         INSERT INTO inspection_batches (
             station_id,
             inspector_id,
-            batch_date,
-            status
+            batch_date
         )
-        VALUES (%s, %s, %s, '进行中')
+        VALUES (%s, %s, %s)
         RETURNING id;
         """,
         (station_id, inspector_id, batch_date),
@@ -423,9 +421,9 @@ def login():
         close_db_resources(cur, conn)
 
 
-# === 批次签名确认 API ===
-@app.route("/api/inspection-batches/<int:batch_id>/sign", methods=["POST"])
-def sign_inspection_batch(batch_id):
+# === 检查表级签名确认 API ===
+@app.route("/api/inspections/<int:inspection_id>/sign", methods=["POST"])
+def sign_inspection_record(inspection_id):
     user_id = str(request.form.get("user_id", "")).strip()
     signed_name = str(request.form.get("signed_name", "")).strip()
     signature_file = request.files.get("signature")
@@ -463,49 +461,55 @@ def sign_inspection_batch(batch_id):
         if user["role"] != "supervisor":
             return (
                 jsonify(
-                    {"success": False, "error": "只有督导组账号可以发起批次签名确认。"}
+                    {
+                        "success": False,
+                        "error": "只有督导组账号可以发起检查表签名确认。",
+                    }
                 ),
                 403,
             )
 
         cur.execute(
             """
-            SELECT id, station_id, batch_date, status
-            FROM inspection_batches
-            WHERE id = %s
+            SELECT
+                ins.id,
+                ins.station_id,
+                ins.inspection_date,
+                ins.sign_status,
+                s.station_name,
+                t.table_name
+            FROM inspections ins
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            WHERE ins.id = %s
             LIMIT 1;
             """,
-            (batch_id,),
+            (inspection_id,),
         )
-        batch = cur.fetchone()
+        inspection = cur.fetchone()
 
-        if not batch:
-            return jsonify({"success": False, "error": "巡检批次不存在。"}), 404
+        if not inspection:
+            return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
 
-        if batch["status"] == "已签名确认":
-            return (
-                jsonify({"success": False, "error": "该巡检批次已完成签名确认。"}),
-                400,
-            )
+        if inspection["sign_status"] == "已签名确认":
+            return jsonify({"success": False, "error": "该检查表已完成签名确认。"}), 400
 
         signature_path = save_signature_file(signature_file)
 
         cur.execute(
             """
-            UPDATE inspection_batches
-            SET status = '已签名确认',
+            UPDATE inspections
+            SET sign_status = '已签名确认',
                 station_manager_signed_name = %s,
                 station_manager_signature_path = %s,
-                station_manager_signed_at = %s,
-                updated_at = %s
+                station_manager_signed_at = %s
             WHERE id = %s;
             """,
             (
                 signed_name,
                 signature_path,
                 beijing_now(),
-                beijing_now(),
-                batch_id,
+                inspection_id,
             ),
         )
 
@@ -513,8 +517,8 @@ def sign_inspection_batch(batch_id):
         return jsonify(
             {
                 "success": True,
-                "message": "站经理签名确认成功。",
-                "batch_id": batch_id,
+                "message": "本检查表签名确认成功。",
+                "inspection_id": inspection_id,
                 "signature_path": signature_path,
             }
         )
@@ -924,35 +928,11 @@ def inspection_register():
 
         today = beijing_today()
 
-        cur.execute(
-            """
-            SELECT id
-            FROM inspection_batches
-            WHERE station_id = %s
-              AND batch_date = %s
-              AND status = '已签名确认'
-            ORDER BY id DESC
-            LIMIT 1;
-            """,
-            (station_id, today),
-        )
-        signed_batch = cur.fetchone()
-        if signed_batch:
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": "该站点今日巡检已签名确认，不能继续登记。",
-                    }
-                ),
-                400,
-            )
-
         batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
 
         cur.execute(
             """
-            SELECT ins.id
+            SELECT ins.id, ins.sign_status
             FROM inspections ins
             WHERE ins.station_id = %s
               AND ins.inspection_table_id = %s
@@ -965,6 +945,19 @@ def inspection_register():
         existing_inspections = cur.fetchall()
 
         existing_inspection_ids = [row["id"] for row in existing_inspections]
+
+        if existing_inspections and any(
+            row.get("sign_status") == "已签名确认" for row in existing_inspections
+        ):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该站点当天该检查表已完成签名确认，不能继续登记。",
+                    }
+                ),
+                400,
+            )
 
         if existing_inspection_ids:
             cur.execute(
@@ -1135,8 +1128,10 @@ def get_my_issues():
                     i.review_result,
                     i.review_note,
                     i.review_photo_path AS review_photo,
-                    i.status
+                    i.status,
+                    ins.sign_status AS inspection_sign_status
                 FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.station_id = %s
@@ -1165,8 +1160,10 @@ def get_my_issues():
                     i.review_result,
                     i.review_note,
                     i.review_photo_path AS review_photo,
-                    i.status
+                    i.status,
+                    ins.sign_status AS inspection_sign_status
                 FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.status = '待复核'
@@ -1308,15 +1305,14 @@ def get_inspections():
                         ELSE '正常'
                     END AS result,
                     COUNT(i.id) AS issue_count,
-                    b.status AS batch_status,
-                    b.station_manager_signed_name,
-                    b.station_manager_signature_path,
-                    TO_CHAR(b.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at
+                    ins.sign_status,
+                    ins.station_manager_signed_name,
+                    ins.station_manager_signature_path,
+                    TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at
                 FROM inspections ins
                 JOIN stations s ON ins.station_id = s.id
                 JOIN inspection_tables t ON ins.inspection_table_id = t.id
                 LEFT JOIN issues i ON ins.id = i.inspection_id
-                LEFT JOIN inspection_batches b ON ins.batch_id = b.id
                 {where_clause}
                 GROUP BY
                     ins.id,
@@ -1324,10 +1320,10 @@ def get_inspections():
                     ins.inspection_date,
                     s.station_name,
                     t.table_name,
-                    b.status,
-                    b.station_manager_signed_name,
-                    b.station_manager_signature_path,
-                    b.station_manager_signed_at
+                    ins.sign_status,
+                    ins.station_manager_signed_name,
+                    ins.station_manager_signature_path,
+                    ins.station_manager_signed_at
                 ORDER BY ins.inspection_date DESC, ins.id DESC;
                 """
             ).format(where_clause=sql.SQL(where_clause)),
@@ -1342,9 +1338,9 @@ def get_inspections():
         close_db_resources(cur, conn)
 
 
-# === 新增：批次问题简要信息 API ===
-@app.route("/api/inspection-batches/<int:batch_id>/issues")
-def get_inspection_batch_issues(batch_id):
+# === 新增：本检查表录入问题简要信息 API ===
+@app.route("/api/inspections/<int:inspection_id>/issues")
+def get_inspection_issues(inspection_id):
     user_id = str(request.args.get("user_id", "")).strip()
 
     conn = None
@@ -1369,26 +1365,36 @@ def get_inspection_batch_issues(batch_id):
 
         cur.execute(
             """
-            SELECT id, station_id, batch_date, status, station_manager_signed_name,
-                   station_manager_signature_path,
-                   TO_CHAR(station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at
-            FROM inspection_batches
-            WHERE id = %s
+            SELECT
+                ins.id,
+                ins.station_id,
+                ins.batch_id,
+                ins.inspection_date,
+                ins.sign_status,
+                ins.station_manager_signed_name,
+                ins.station_manager_signature_path,
+                TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+                s.station_name,
+                t.table_name AS inspection_table_name
+            FROM inspections ins
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            WHERE ins.id = %s
             LIMIT 1;
             """,
-            (batch_id,),
+            (inspection_id,),
         )
-        batch = cur.fetchone()
+        inspection = cur.fetchone()
 
-        if not batch:
-            return jsonify({"success": False, "error": "巡检批次不存在。"}), 404
+        if not inspection:
+            return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
 
         if (
             user
             and user["role"] == "station_manager"
-            and batch["station_id"] != user["station_id"]
+            and inspection["station_id"] != user["station_id"]
         ):
-            return jsonify({"success": False, "error": "无权查看该批次内容。"}), 403
+            return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
 
         cur.execute(
             """
@@ -1399,18 +1405,17 @@ def get_inspection_batch_issues(batch_id):
                 i.photo_path AS issue_photo
             FROM issues i
             JOIN inspection_tables t ON i.inspection_table_id = t.id
-            JOIN inspections ins ON i.inspection_id = ins.id
-            WHERE ins.batch_id = %s
+            WHERE i.inspection_id = %s
             ORDER BY i.id ASC;
             """,
-            (batch_id,),
+            (inspection_id,),
         )
         issues = cur.fetchall()
 
         return jsonify(
             {
                 "success": True,
-                "batch": batch,
+                "inspection": inspection,
                 "issues": issues,
             }
         )
@@ -1465,9 +1470,15 @@ def submit_rectification(issue_id):
 
         cur.execute(
             """
-            SELECT id, station_id, status
-            FROM issues
-            WHERE id = %s
+            SELECT
+                i.id,
+                i.station_id,
+                i.status,
+                i.inspection_id,
+                ins.sign_status AS inspection_sign_status
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            WHERE i.id = %s
             LIMIT 1;
             """,
             (issue_id,),
@@ -1481,6 +1492,28 @@ def submit_rectification(issue_id):
             return (
                 jsonify({"success": False, "error": "只能整改本账号所属站点的问题。"}),
                 403,
+            )
+
+        if issue["inspection_sign_status"] != "已签名确认":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。",
+                    }
+                ),
+                400,
+            )
+
+        if issue["status"] != "待整改":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "当前问题状态不是待整改，不能重复提交整改。",
+                    }
+                ),
+                400,
             )
 
         rectification_photo_path = None
@@ -1591,6 +1624,17 @@ def submit_review(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "问题不存在。"}), 404
+
+        if issue["status"] != "待复核":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "当前问题状态不是待复核，不能提交复核。",
+                    }
+                ),
+                400,
+            )
 
         new_status = "已闭环" if review_result == "已整改" else "待整改"
         review_photo_path = save_uploaded_file(review_photo, "rectifications")
