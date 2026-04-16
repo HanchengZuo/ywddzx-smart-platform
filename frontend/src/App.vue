@@ -106,6 +106,13 @@
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
+
+        <button v-if="currentRole !== 'station_manager'" class="nav-item"
+          :class="{ active: isActive('/inspection/plan'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/plan')" :title="sidebarCollapsed ? '巡检计划' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">巡检计划</span>
+        </button>
       </div>
 
       <div v-if="currentRole !== 'station_manager'" class="menu-section">
