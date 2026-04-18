@@ -57,6 +57,10 @@ const routes = [
   {
     path: '/inspection/certificates',
     component: () => import('../views/inspection/CertificatesView.vue')
+  },
+  {
+    path: '/feedback',
+    component: () => import('../views/Feedback.vue')
   }
 ]
 

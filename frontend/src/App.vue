@@ -51,7 +51,7 @@
           <div class="logo-mark">{{ currentRole === 'station_manager' ? '站' : '督' }}</div>
           <div class="logo-texts">
             <div class="logo-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') : '业务督导中心'
-              }}</div>
+            }}</div>
             <div class="logo-subtitle">{{ currentRole === 'station_manager' ? '站点账号' : '数智管理平台' }}</div>
           </div>
         </div>
@@ -146,6 +146,15 @@
           @click="go('/vehicle')" :title="sidebarCollapsed ? '车辆管理系统' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">车辆管理系统</span>
+        </button>
+      </div>
+
+      <div class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
+        <button class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/feedback')" :title="sidebarCollapsed ? '系统反馈' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">系统反馈</span>
         </button>
       </div>
     </aside>
