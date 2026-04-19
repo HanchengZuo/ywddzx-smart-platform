@@ -219,28 +219,30 @@
         </div>
 
         <template v-else>
-          <div class="mobile-signature-board-top">
-            <div class="mobile-signature-board-title">请横屏签名确认</div>
-            <button class="btn btn-secondary mobile-signature-close" type="button"
-              @click="closeSignatureDialog">关闭</button>
+          <div class="mobile-signature-layout">
+            <div class="mobile-signature-canvas-wrap">
+              <canvas ref="signatureCanvasRef" class="signature-canvas mobile-signature-canvas"></canvas>
+            </div>
+
+            <div class="mobile-signature-rail">
+              <button class="mobile-signature-icon-btn mobile-signature-confirm" type="button"
+                :disabled="signatureDialog.submitting" @click="submitInspectionSignature" aria-label="确认签名"
+                title="确认签名">
+                ✓
+              </button>
+              <button class="mobile-signature-icon-btn mobile-signature-reset" type="button" @click="clearSignature"
+                aria-label="重置签名" title="重置签名">
+                ↻
+              </button>
+              <button class="mobile-signature-icon-btn mobile-signature-close-btn" type="button"
+                @click="closeSignatureDialog" aria-label="退出签名" title="退出签名">
+                ✕
+              </button>
+            </div>
           </div>
 
-
-          <div class="mobile-signature-canvas-wrap">
-            <canvas ref="signatureCanvasRef" class="signature-canvas mobile-signature-canvas"
-              @pointerdown="startSignature" @pointermove="moveSignature" @pointerup="endSignature"
-              @pointerleave="endSignature" @pointercancel="endSignature"></canvas>
+          <div v-if="signatureDialog.error" class="signature-error mobile-signature-error">{{ signatureDialog.error }}
           </div>
-
-          <div class="mobile-signature-actions">
-            <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
-            <button class="btn btn-primary" type="button" :disabled="signatureDialog.submitting"
-              @click="submitInspectionSignature">
-              {{ signatureDialog.submitting ? '提交中...' : '确认签名' }}
-            </button>
-          </div>
-
-          <div v-if="signatureDialog.error" class="signature-error">{{ signatureDialog.error }}</div>
         </template>
       </div>
 
@@ -270,14 +272,9 @@
           </div>
 
           <div class="signature-pad-card signature-pad-card-landscape">
-            <div class="signature-pad-head">
-              <div class="signature-pad-title">请站经理在右侧签名区手写签名</div>
-              <div class="signature-pad-desc">建议横向签写，签名会以透明 PNG 保存并展示在本检查表确认处。</div>
-            </div>
+            <div class="signature-pad-head signature-pad-head-minimal"></div>
             <div class="signature-pad-wrap signature-pad-wrap-landscape">
-              <canvas ref="signatureCanvasRef" class="signature-canvas signature-canvas-landscape"
-                @pointerdown="startSignature" @pointermove="moveSignature" @pointerup="endSignature"
-                @pointerleave="endSignature" @pointercancel="endSignature"></canvas>
+              <canvas ref="signatureCanvasRef" class="signature-canvas signature-canvas-landscape"></canvas>
             </div>
             <div class="signature-pad-actions">
               <button class="btn btn-secondary" type="button" @click="clearSignature">清空签名</button>
@@ -336,6 +333,7 @@
 <script setup>
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
+import SignaturePad from 'signature_pad'
 
 const filters = ref({
   date: '',
@@ -366,6 +364,8 @@ const detectMobileViewport = () => {
 const isMobileView = ref(detectMobileViewport())
 const isLandscapeMobile = ref(window.innerWidth > window.innerHeight)
 const signatureCanvasRef = ref(null)
+const signaturePadInstance = ref(null)
+const visualViewportRef = ref(window.visualViewport || null)
 
 const batchDetail = ref({
   visible: false,
@@ -449,6 +449,7 @@ const groupedInspectionGroups = computed(() => {
     return batch
   })
 })
+
 const resolveImage = (path) => {
   const value = String(path || '').trim()
   if (!value) return ''
@@ -511,49 +512,53 @@ const closeBatchDetail = () => {
 
 const getSignatureCanvas = () => signatureCanvasRef.value
 
-const resizeSignatureCanvas = () => {
+const initSignaturePad = () => {
   const canvas = getSignatureCanvas()
   if (!canvas) return
 
-  const ratio = window.devicePixelRatio || 1
+  const existingInstance = signaturePadInstance.value
+  const existingData = existingInstance && !existingInstance.isEmpty()
+    ? existingInstance.toData()
+    : null
+
+  if (existingInstance) {
+    existingInstance.off()
+  }
+
+  const ratio = Math.max(window.devicePixelRatio || 1, 1)
   const rect = canvas.getBoundingClientRect()
-  const width = Math.max(isMobileView.value ? 360 : 280, Math.round(rect.width || 0))
-  const height = Math.max(isMobileView.value ? 260 : 160, Math.round(rect.height || 0))
+  const width = Math.max(Math.round(rect.width || 0), 1)
+  const height = Math.max(Math.round(rect.height || 0), 1)
 
-  const previous = canvas.toDataURL('image/png')
-
-  canvas.width = Math.round(width * ratio)
-  canvas.height = Math.round(height * ratio)
+  canvas.width = width * ratio
+  canvas.height = height * ratio
 
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+  ctx.scale(ratio, ratio)
 
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-  ctx.clearRect(0, 0, width, height)
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.strokeStyle = '#0f172a'
-  ctx.lineWidth = 2.4
+  signaturePadInstance.value = new SignaturePad(canvas, {
+    minWidth: 1.2,
+    maxWidth: 2.8,
+    penColor: '#0f172a',
+    backgroundColor: 'rgba(255,255,255,0)'
+  })
 
-  if (previous && previous !== 'data:,') {
-    const image = new Image()
-    image.onload = () => {
-      ctx.drawImage(image, 0, 0, width, height)
+  signaturePadInstance.value.onBegin = () => {
+    if (signatureDialog.value) {
+      signatureDialog.value.error = ''
     }
-    image.src = previous
+  }
+
+  if (existingData && existingData.length) {
+    signaturePadInstance.value.fromData(existingData)
   }
 }
+
+
 const handleViewportResize = () => {
   isMobileView.value = detectMobileViewport()
   isLandscapeMobile.value = window.innerWidth > window.innerHeight
-
-  if (signatureDialog.value.visible) {
-    nextTick(() => {
-      if (!isMobileView.value || isLandscapeMobile.value) {
-        resizeSignatureCanvas()
-      }
-    })
-  }
 }
 
 const openSignatureDialog = async (record) => {
@@ -565,88 +570,28 @@ const openSignatureDialog = async (record) => {
   }
 
   await nextTick()
-  if (!isMobileView.value || isLandscapeMobile.value) {
-    resizeSignatureCanvas()
-  }
-  signatureHasStroke = false
 }
 
 const closeSignatureDialog = () => {
+  if (signaturePadInstance.value) {
+    signaturePadInstance.value.off()
+  }
+  signaturePadInstance.value = null
   signatureDialog.value = {
     visible: false,
     submitting: false,
     error: '',
     record: null
   }
-  signatureHasStroke = false
 }
 
 const clearSignature = () => {
-  const canvas = getSignatureCanvas()
-  const ctx = canvas?.getContext('2d')
-  if (!canvas || !ctx) return
-
-  const width = canvas.width / (window.devicePixelRatio || 1)
-  const height = canvas.height / (window.devicePixelRatio || 1)
-  ctx.clearRect(0, 0, width, height)
-  signatureHasStroke = false
-}
-
-let signatureDrawing = false
-let signatureHasStroke = false
-
-const getCanvasPoint = (event) => {
-  const canvas = getSignatureCanvas()
-  if (!canvas) return null
-  const rect = canvas.getBoundingClientRect()
-  return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top
+  if (signaturePadInstance.value) {
+    signaturePadInstance.value.clear()
   }
-}
-
-const startSignature = (event) => {
-  const canvas = getSignatureCanvas()
-  const ctx = canvas?.getContext('2d')
-  const point = getCanvasPoint(event)
-  if (!canvas || !ctx || !point) return
-
-  signatureDrawing = true
-  signatureHasStroke = true
-  canvas.setPointerCapture?.(event.pointerId)
-  ctx.beginPath()
-  ctx.moveTo(point.x, point.y)
-}
-
-const moveSignature = (event) => {
-  if (!signatureDrawing) return
-  const canvas = getSignatureCanvas()
-  const ctx = canvas?.getContext('2d')
-  const point = getCanvasPoint(event)
-  if (!canvas || !ctx || !point) return
-
-  ctx.lineTo(point.x, point.y)
-  ctx.stroke()
-}
-
-const endSignature = (event) => {
-  const canvas = getSignatureCanvas()
-  if (signatureDrawing && canvas) {
-    canvas.releasePointerCapture?.(event.pointerId)
+  if (signatureDialog.value) {
+    signatureDialog.value.error = ''
   }
-  signatureDrawing = false
-}
-
-const canvasToBlob = (canvas) => {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('签名生成失败。'))
-        return
-      }
-      resolve(blob)
-    }, 'image/png')
-  })
 }
 
 const submitInspectionSignature = async () => {
@@ -656,7 +601,7 @@ const submitInspectionSignature = async () => {
     return
   }
 
-  if (!signatureHasStroke) {
+  if (!signaturePadInstance.value || signaturePadInstance.value.isEmpty()) {
     signatureDialog.value.error = '请先完成站经理签名。'
     return
   }
@@ -671,8 +616,8 @@ const submitInspectionSignature = async () => {
     signatureDialog.value.error = ''
 
     const userId = localStorage.getItem('user_id') || ''
-    const canvas = getSignatureCanvas()
-    const blob = await canvasToBlob(canvas)
+    const dataUrl = signaturePadInstance.value.toDataURL('image/png')
+    const blob = await fetch(dataUrl).then((res) => res.blob())
     const formData = new FormData()
     formData.append('user_id', userId)
     formData.append('signed_name', `${record.station || '站点'}站经理`)
@@ -680,7 +625,6 @@ const submitInspectionSignature = async () => {
 
     await axios.post(`/api/inspections/${record.id}/sign`, formData)
     closeSignatureDialog()
-    signatureHasStroke = false
     await fetchInspections()
   } catch (error) {
     signatureDialog.value.error = error?.response?.data?.error || '提交签名失败。'
@@ -688,7 +632,6 @@ const submitInspectionSignature = async () => {
     signatureDialog.value.submitting = false
   }
 }
-
 
 const totalPage = computed(() => Math.max(1, Math.ceil(groupedInspectionGroups.value.length / pageSize.value)))
 
@@ -706,6 +649,25 @@ watch(totalPage, (value) => {
     page.value = value
   }
 })
+
+watch(
+  () => [signatureDialog.value.visible, isLandscapeMobile.value, isMobileView.value],
+  async ([visible, landscape, mobile]) => {
+    if (!visible) return
+    await nextTick()
+    if (!mobile || landscape) {
+      initSignaturePad()
+    }
+  }
+)
+
+watch(
+  () => signatureDialog.value.visible,
+  (visible) => {
+    document.body.style.overflow = visible ? 'hidden' : ''
+    document.documentElement.style.overflow = visible ? 'hidden' : ''
+  }
+)
 
 const fetchInspections = async () => {
   try {
@@ -777,17 +739,28 @@ const statusClass = (value) => {
   return 'status-tag'
 }
 
+const handleVisualViewportChange = () => {
+  handleViewportResize()
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', handleViewportResize)
+  visualViewportRef.value?.addEventListener('resize', handleVisualViewportChange)
   fetchInspections()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', handleViewportResize)
+  visualViewportRef.value?.removeEventListener('resize', handleVisualViewportChange)
+  if (signaturePadInstance.value) {
+    signaturePadInstance.value.off()
+  }
+  signaturePadInstance.value = null
+  document.body.style.overflow = ''
+  document.documentElement.style.overflow = ''
 })
-
 </script>
 
 <style scoped>
@@ -1020,17 +993,6 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
-.mobile-card-row-top {
-  align-items: flex-start;
-}
-
-.mobile-card-text {
-  flex: 1;
-  font-size: 14px;
-  line-height: 1.7;
-  color: #334155;
-  text-align: right;
-}
 
 .mobile-batch-list {
   margin-top: 14px;
@@ -1283,12 +1245,6 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
-.signature-form-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-  margin-bottom: 18px;
-}
 
 .signature-pad-card {
   border: 1px solid #dbe4ee;
@@ -1301,18 +1257,6 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 }
 
-.signature-pad-title {
-  font-size: 15px;
-  font-weight: 800;
-  color: #0f172a;
-}
-
-.signature-pad-desc {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #64748b;
-  line-height: 1.7;
-}
 
 .signature-pad-wrap {
   border: 1px dashed #cbd5e1;
@@ -1557,66 +1501,127 @@ onBeforeUnmount(() => {
 
 /* Mobile signature board normalized styles */
 .mobile-signature-board {
-  width: min(98vw, 980px);
-  max-height: 94vh;
-  padding: 16px;
+  width: 100vw;
+  height: 100dvh;
+  height: 100svh;
+  max-height: 100dvh;
+  max-height: 100svh;
+  border-radius: 0;
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-right: max(10px, env(safe-area-inset-right));
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  padding-left: max(10px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  overflow: auto;
+  gap: 8px;
+  overflow: hidden;
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  overscroll-behavior: contain;
   box-sizing: border-box;
 }
 
 .mobile-signature-board-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: none;
 }
 
 .mobile-signature-board-title {
-  font-size: 20px;
-  font-weight: 800;
-  color: #0f172a;
+  display: none;
 }
 
 .mobile-signature-close {
-  width: auto;
-  min-width: 72px;
+  display: none;
 }
 
-.mobile-signature-orientation-tip {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #475569;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #eff6ff;
-  border: 1px solid #dbe7ff;
+.mobile-signature-orientation-overlay .mobile-signature-close {
+  display: inline-flex;
+  width: auto;
+  min-width: 88px;
 }
+
 
 .mobile-signature-canvas-wrap {
   border: 1px dashed #cbd5e1;
-  border-radius: 16px;
+  border-radius: 18px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   overflow: hidden;
-  flex: 1;
   min-height: 0;
+  height: 100%;
+  touch-action: none;
 }
 
 .mobile-signature-canvas {
   display: block;
   width: 100%;
   height: 100%;
-  min-height: 260px;
+  min-height: 0;
   max-height: none;
   touch-action: none;
 }
 
-.mobile-signature-actions {
+.mobile-signature-layout {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) 76px;
   gap: 10px;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.mobile-signature-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.mobile-signature-icon-btn {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 18px;
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.mobile-signature-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mobile-signature-confirm {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+}
+
+.mobile-signature-reset {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+}
+
+.mobile-signature-close-btn {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.mobile-signature-error {
+  margin-top: 0;
+}
+
+.mobile-signature-actions {
+  display: none;
+}
+
+.signature-pad-head-minimal {
+  display: none;
+  margin: 0;
+  padding: 0;
 }
 
 .mobile-signature-orientation-overlay {
@@ -1628,6 +1633,12 @@ onBeforeUnmount(() => {
   border-radius: 18px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   padding: 20px;
+  box-sizing: border-box;
+}
+
+.mobile-signature-orientation-overlay .btn {
+  width: auto;
+  min-width: 96px;
 }
 
 .mobile-signature-orientation-overlay-inner {
@@ -1638,6 +1649,10 @@ onBeforeUnmount(() => {
   align-items: center;
   text-align: center;
   gap: 12px;
+}
+
+.mobile-signature-orientation-overlay-inner .mobile-signature-close {
+  margin-top: 6px;
 }
 
 .mobile-signature-orientation-icon {
@@ -1770,43 +1785,37 @@ onBeforeUnmount(() => {
 
   .mobile-signature-board {
     width: 100vw;
-    height: 100vh;
-    max-height: 100vh;
+    height: 100dvh;
+    height: 100svh;
+    max-height: 100dvh;
+    max-height: 100svh;
     border-radius: 0;
-    padding: 12px 12px 16px;
-    gap: 12px;
-  }
-
-  .mobile-signature-board-top {
-    align-items: flex-start;
-  }
-
-  .mobile-signature-actions {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .mobile-signature-orientation-overlay {
-    min-height: 0;
-    flex: 1;
-    padding: 16px;
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-left: max(8px, env(safe-area-inset-left));
+    gap: 8px;
   }
 
   .mobile-signature-canvas {
     height: 100%;
-    min-height: 320px;
+    min-height: 0;
     max-height: none;
   }
 
   .mobile-signature-canvas-wrap {
-    flex: 1;
+    height: 100%;
     min-height: 0;
   }
 
-  .mobile-signature-close {
-    width: auto;
-    min-width: 64px;
-    min-height: 40px;
-    padding: 0 12px;
+  .mobile-signature-layout {
+    grid-template-columns: minmax(0, 1fr) 68px;
+    gap: 8px;
+  }
+
+  .mobile-signature-icon-btn {
+    border-radius: 16px;
+    font-size: 24px;
   }
 }
 </style>
