@@ -1,14 +1,65 @@
-
-
 -- 初始化测试账号
 -- 说明：
 -- 1. 督导组账号不绑定站点
--- 2. 站点账号通过 station_id 关联站点
--- 3. 当前阶段密码先使用明文，后续再改为哈希密码
+-- 2. 这里只为保留后的加油站生成账号，不为充电站生成账号
+-- 3. 当前阶段密码统一使用明文 123456，后续再改为哈希密码
+-- 4. 用户名按“manager + 站名拼音缩写/约定简称”方式显式维护
 
 INSERT INTO users (username, password, role, real_name, phone, station_id)
 VALUES
 ('supervisor1', '123456', 'supervisor', '督导组测试账号', '13800000000', NULL),
-('manager_hh', '123456', 'station_manager', '曹红', '13802663088', (SELECT id FROM stations WHERE station_name = '华辉加油站')),
-('manager_bydy', '123456', 'station_manager', '柳洪慧', '15802113010', (SELECT id FROM stations WHERE station_name = '宝杨第一加油站')),
-('manager_cdl', '123456', 'station_manager', '张猛', '13817024103', (SELECT id FROM stations WHERE station_name = '常德路加油站'));
+
+('managerspjn', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '沈浦泾南加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '沈浦泾南加油站'), (SELECT id FROM stations WHERE station_name = '沈浦泾南加油站')),
+('managerld', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '乐都加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '乐都加油站'), (SELECT id FROM stations WHERE station_name = '乐都加油站')),
+('manageraspn', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '爱使浦南加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '爱使浦南加油站'), (SELECT id FROM stations WHERE station_name = '爱使浦南加油站')),
+('managerdx', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '东新加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '东新加油站'), (SELECT id FROM stations WHERE station_name = '东新加油站')),
+('managerjs', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '嘉松加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '嘉松加油站'), (SELECT id FROM stations WHERE station_name = '嘉松加油站')),
+('managertsdy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '同盛第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '同盛第一加油站'), (SELECT id FROM stations WHERE station_name = '同盛第一加油站')),
+('managergf', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '共富加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '共富加油站'), (SELECT id FROM stations WHERE station_name = '共富加油站')),
+('managerjsngs', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '金山农工商加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '金山农工商加油站'), (SELECT id FROM stations WHERE station_name = '金山农工商加油站')),
+('managerad', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '安达加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '安达加油站'), (SELECT id FROM stations WHERE station_name = '安达加油站')),
+('managerA30', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = 'A30加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = 'A30加油站'), (SELECT id FROM stations WHERE station_name = 'A30加油站')),
+
+('managerhmnl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '虹梅南路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '虹梅南路加油站'), (SELECT id FROM stations WHERE station_name = '虹梅南路加油站')),
+('managerhxmx', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '虹莘梅莘加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '虹莘梅莘加油站'), (SELECT id FROM stations WHERE station_name = '虹莘梅莘加油站')),
+('managerhh', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '华辉加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '华辉加油站'), (SELECT id FROM stations WHERE station_name = '华辉加油站')),
+('managerhp', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '华浦加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '华浦加油站'), (SELECT id FROM stations WHERE station_name = '华浦加油站')),
+('managerjm', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '金迈加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '金迈加油站'), (SELECT id FROM stations WHERE station_name = '金迈加油站')),
+('managerjy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '泾阳加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '泾阳加油站'), (SELECT id FROM stations WHERE station_name = '泾阳加油站')),
+('managerky', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '凯燕加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '凯燕加油站'), (SELECT id FROM stations WHERE station_name = '凯燕加油站')),
+('managerlwl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '龙吴路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '龙吴路加油站'), (SELECT id FROM stations WHERE station_name = '龙吴路加油站')),
+('managermhdy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '闵行第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '闵行第一加油站'), (SELECT id FROM stations WHERE station_name = '闵行第一加油站')),
+('managerptdy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '普陀第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '普陀第一加油站'), (SELECT id FROM stations WHERE station_name = '普陀第一加油站')),
+('managerszjyz', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '上中加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '上中加油站'), (SELECT id FROM stations WHERE station_name = '上中加油站')),
+('managerxzgyq', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '莘庄工业区加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '莘庄工业区加油站'), (SELECT id FROM stations WHERE station_name = '莘庄工业区加油站')),
+('managerzc', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '中春加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '中春加油站'), (SELECT id FROM stations WHERE station_name = '中春加油站')),
+
+('managercmdb', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第八加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第八加油站'), (SELECT id FROM stations WHERE station_name = '崇明第八加油站')),
+('managercmde', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第二加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第二加油站'), (SELECT id FROM stations WHERE station_name = '崇明第二加油站')),
+('managercmdes', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第二十加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第二十加油站'), (SELECT id FROM stations WHERE station_name = '崇明第二十加油站')),
+('managercmdj', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第九加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第九加油站'), (SELECT id FROM stations WHERE station_name = '崇明第九加油站')),
+('managercmdq', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第七加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第七加油站'), (SELECT id FROM stations WHERE station_name = '崇明第七加油站')),
+('managercmds', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第三加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第三加油站'), (SELECT id FROM stations WHERE station_name = '崇明第三加油站')),
+('managercmdsb', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第十八加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第十八加油站'), (SELECT id FROM stations WHERE station_name = '崇明第十八加油站')),
+('managercmss', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第十三加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第十三加油站'), (SELECT id FROM stations WHERE station_name = '崇明第十三加油站')),
+('managercmssi', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第十四加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第十四加油站'), (SELECT id FROM stations WHERE station_name = '崇明第十四加油站')),
+('managercmsw', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第十五加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第十五加油站'), (SELECT id FROM stations WHERE station_name = '崇明第十五加油站')),
+('managercmsi', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第四加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第四加油站'), (SELECT id FROM stations WHERE station_name = '崇明第四加油站')),
+('managercmw', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '崇明第五加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '崇明第五加油站'), (SELECT id FROM stations WHERE station_name = '崇明第五加油站')),
+('managerffl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '丰福路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '丰福路加油站'), (SELECT id FROM stations WHERE station_name = '丰福路加油站')),
+('managernml', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '南门路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '南门路加油站'), (SELECT id FROM stations WHERE station_name = '南门路加油站')),
+('managerrjl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '仁建路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '仁建路加油站'), (SELECT id FROM stations WHERE station_name = '仁建路加油站')),
+
+('managerastsl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '爱使东方唐山路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '爱使东方唐山路加油站'), (SELECT id FROM stations WHERE station_name = '爱使东方唐山路加油站')),
+('managerbyde', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '宝杨第二加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '宝杨第二加油站'), (SELECT id FROM stations WHERE station_name = '宝杨第二加油站')),
+('managerbydy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '宝杨第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '宝杨第一加油站'), (SELECT id FROM stations WHERE station_name = '宝杨第一加油站')),
+('managercdl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '常德路加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '常德路加油站'), (SELECT id FROM stations WHERE station_name = '常德路加油站')),
+('managersl', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '晟隆加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '晟隆加油站'), (SELECT id FROM stations WHERE station_name = '晟隆加油站')),
+('managerjq2', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '锦秋加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '锦秋加油站'), (SELECT id FROM stations WHERE station_name = '锦秋加油站')),
+('managerlg', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '灵广加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '灵广加油站'), (SELECT id FROM stations WHERE station_name = '灵广加油站')),
+('managerlqde', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '凌桥第二加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '凌桥第二加油站'), (SELECT id FROM stations WHERE station_name = '凌桥第二加油站')),
+('managerlqdy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '凌桥第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '凌桥第一加油站'), (SELECT id FROM stations WHERE station_name = '凌桥第一加油站')),
+('managerth2', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '泰和加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '泰和加油站'), (SELECT id FROM stations WHERE station_name = '泰和加油站')),
+('managerwh2', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '维辉加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '维辉加油站'), (SELECT id FROM stations WHERE station_name = '维辉加油站')),
+('managerwlyq', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '物流园区加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '物流园区加油站'), (SELECT id FROM stations WHERE station_name = '物流园区加油站')),
+('managerzbdy', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '闸北第一加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '闸北第一加油站'), (SELECT id FROM stations WHERE station_name = '闸北第一加油站'));
