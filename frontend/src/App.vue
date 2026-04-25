@@ -10,6 +10,12 @@
           <span>问题追踪</span>
           <span>过程留痕</span>
         </div>
+        <div class="login-hero-footer">
+          <div class="login-version">
+            <span class="login-version-label">当前版本</span>
+            <span class="login-version-value">v{{ appVersion }}</span>
+          </div>
+        </div>
       </div>
 
       <form class="login-card" @submit.prevent="handleLogin">
@@ -51,7 +57,7 @@
           <div class="logo-mark">{{ currentRole === 'station_manager' ? '站' : '督' }}</div>
           <div class="logo-texts">
             <div class="logo-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') : '业务督导中心'
-            }}</div>
+              }}</div>
             <div class="logo-subtitle">{{ currentRole === 'station_manager' ? '站点账号' : '数智管理平台' }}</div>
           </div>
         </div>
@@ -194,6 +200,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
+import appPackage from '../package.json'
 
 const router = useRouter()
 const route = useRoute()
@@ -220,6 +227,7 @@ const authState = reactive({
 })
 
 const isLoginPage = computed(() => route.path === '/login')
+const appVersion = appPackage.version || '0.0.0'
 const currentRole = computed(() => authState.role)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
 const currentRoleLabel = computed(() => {
@@ -455,6 +463,15 @@ textarea {
   color: #334155;
   font-size: 13px;
   font-weight: 700;
+}
+
+.login-hero-footer {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(217, 226, 236, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 
 .login-card {
@@ -840,6 +857,31 @@ textarea:focus {
   font-weight: 700;
 }
 
+.login-version {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--text-sub);
+}
+
+.login-version-label {
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+
+.login-version-value {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid var(--line-soft);
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 @media (max-width: 1100px) {
   .login-shell {
     grid-template-columns: 1fr;
@@ -896,6 +938,11 @@ textarea:focus {
   .login-points span {
     padding: 8px 12px;
     font-size: 12px;
+  }
+
+  .login-hero-footer {
+    margin-top: 20px;
+    padding-top: 14px;
   }
 
   .login-card {
