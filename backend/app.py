@@ -30,6 +30,14 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
     "service_hygiene_check": "inspection_table_service_hygiene_check",
 }
 
+# === Inspection Plan Config constants ===
+PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor1"}
+COVERAGE_TYPE_LABELS = {
+    "monthly": "月度覆盖",
+    "quarterly": "季度覆盖",
+    "yearly": "年度覆盖",
+}
+
 
 def beijing_now():
     return datetime.now(BEIJING_TZ)
@@ -257,6 +265,625 @@ def create_inspection_record(
     )
     row = cur.fetchone()
     return row["id"]
+
+
+# === Inspection Plan Configs helpers ===
+def get_user_by_id(cur, user_id):
+    cur.execute(
+        """
+        SELECT id, username, role, real_name, station_id
+        FROM users
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+    return cur.fetchone()
+
+
+# 当前阶段先沿用前端约定：只有指定督导账号可以管理巡检计划
+# 后续建议改为 users 表中的独立权限字段（如 can_manage_plan）
+def can_manage_plan(user):
+    if not user:
+        return False
+    return (
+        user.get("role") == "supervisor"
+        and user.get("username") in PLAN_MANAGER_USERNAMES
+    )
+
+
+# === Helper functions for automatic inspection-plan completion writeback ===
+
+
+def get_plan_period_key_for_date(coverage_type, target_date):
+    if coverage_type == "monthly":
+        return f"{target_date.year}年{target_date.month}月"
+
+    if coverage_type == "quarterly":
+        quarter = ((target_date.month - 1) // 3) + 1
+        quarter_label_map = {
+            1: "第一季度",
+            2: "第二季度",
+            3: "第三季度",
+            4: "第四季度",
+        }
+        return (
+            f"{target_date.year}年{quarter_label_map.get(quarter, f'第{quarter}季度')}"
+        )
+
+    if coverage_type == "yearly":
+        return f"{target_date.year}年"
+
+    return None
+
+
+def get_period_date_range(coverage_type, period_key):
+    if coverage_type == "monthly":
+        try:
+            year_part, month_part = str(period_key).split("年", 1)
+            month_text = month_part.replace("月", "").strip()
+            year = int(year_part)
+            month = int(month_text)
+            start_date = datetime(year, month, 1).date()
+            if month == 12:
+                end_date = datetime(year + 1, 1, 1).date()
+            else:
+                end_date = datetime(year, month + 1, 1).date()
+            return start_date, end_date
+        except Exception:
+            return None, None
+
+    if coverage_type == "quarterly":
+        try:
+            year_part, quarter_part = str(period_key).split("年", 1)
+            year = int(year_part)
+            normalized_quarter_text = (
+                quarter_part.replace("季度", "").replace("第", "").strip()
+            )
+            quarter_map = {
+                "1": 1,
+                "2": 2,
+                "3": 3,
+                "4": 4,
+                "一": 1,
+                "二": 2,
+                "三": 3,
+                "四": 4,
+                "第一": 1,
+                "第二": 2,
+                "第三": 3,
+                "第四": 4,
+            }
+            quarter = quarter_map.get(normalized_quarter_text)
+            if quarter not in {1, 2, 3, 4}:
+                return None, None
+            start_month = (quarter - 1) * 3 + 1
+            start_date = datetime(year, start_month, 1).date()
+            if quarter == 4:
+                end_date = datetime(year + 1, 1, 1).date()
+            else:
+                end_date = datetime(year, start_month + 3, 1).date()
+            return start_date, end_date
+        except Exception:
+            return None, None
+
+    if coverage_type == "yearly":
+        try:
+            year_text = str(period_key).replace("年", "").strip()
+            year = int(year_text)
+            start_date = datetime(year, 1, 1).date()
+            end_date = datetime(year + 1, 1, 1).date()
+            return start_date, end_date
+        except Exception:
+            return None, None
+
+    return None, None
+
+
+def sync_plan_station_items_completion_by_history(cur, plan_config_id):
+    cur.execute(
+        """
+        SELECT id, inspection_table_id, coverage_type, period_key
+        FROM inspection_plan_configs
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (plan_config_id,),
+    )
+    plan_config = cur.fetchone()
+    if not plan_config:
+        return
+
+    start_date, end_date = get_period_date_range(
+        plan_config["coverage_type"], plan_config["period_key"]
+    )
+    if not start_date or not end_date:
+        return
+
+    cur.execute(
+        """
+        UPDATE inspection_plan_station_items psi
+        SET completion_status = CASE
+                WHEN matched.inspection_id IS NOT NULL THEN 'completed'
+                ELSE 'pending'
+            END,
+            completed_inspection_id = matched.inspection_id,
+            completed_at = CASE
+                WHEN matched.inspection_id IS NOT NULL THEN COALESCE(matched.inspection_created_at, CURRENT_TIMESTAMP)
+                ELSE NULL
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        FROM (
+            SELECT
+                psi_inner.id AS psi_id,
+                matched_ins.id AS inspection_id,
+                matched_ins.created_at AS inspection_created_at
+            FROM inspection_plan_station_items psi_inner
+            LEFT JOIN LATERAL (
+                SELECT ins.id, ins.created_at
+                FROM inspections ins
+                WHERE ins.station_id = psi_inner.station_id
+                  AND ins.inspection_table_id = %s
+                  AND ins.inspection_date >= %s
+                  AND ins.inspection_date < %s
+                ORDER BY ins.inspection_date DESC, ins.id DESC
+                LIMIT 1
+            ) AS matched_ins ON TRUE
+            WHERE psi_inner.plan_config_id = %s
+              AND psi_inner.is_included = TRUE
+        ) AS matched
+        WHERE psi.id = matched.psi_id;
+        """,
+        (
+            plan_config["inspection_table_id"],
+            start_date,
+            end_date,
+            plan_config_id,
+        ),
+    )
+
+    cur.execute(
+        """
+        UPDATE inspection_plan_station_items
+        SET completion_status = 'pending',
+            completed_inspection_id = NULL,
+            completed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE plan_config_id = %s
+          AND is_included = FALSE;
+        """,
+        (plan_config_id,),
+    )
+
+
+def mark_related_plan_items_completed(
+    cur,
+    station_id,
+    inspection_table_id,
+    inspection_id,
+    inspection_date,
+):
+    coverage_types = ["monthly", "quarterly", "yearly"]
+
+    for coverage_type in coverage_types:
+        period_key = get_plan_period_key_for_date(coverage_type, inspection_date)
+        if not period_key:
+            continue
+
+        cur.execute(
+            """
+            UPDATE inspection_plan_station_items psi
+            SET completion_status = 'completed',
+                completed_inspection_id = %s,
+                completed_at = %s,
+                updated_at = CURRENT_TIMESTAMP
+            FROM inspection_plan_configs pc
+            WHERE psi.plan_config_id = pc.id
+              AND pc.inspection_table_id = %s
+              AND pc.coverage_type = %s
+              AND pc.period_key = %s
+              AND pc.status IN ('draft', 'active')
+              AND psi.station_id = %s
+              AND psi.is_included = TRUE;
+            """,
+            (
+                inspection_id,
+                beijing_now(),
+                inspection_table_id,
+                coverage_type,
+                period_key,
+                station_id,
+            ),
+        )
+
+
+# === Inspection Plan Configs API ===
+
+
+@app.route("/api/inspection-plan-configs")
+def get_inspection_plan_configs():
+    user_id = str(request.args.get("user_id", "")).strip()
+    inspection_table_id = str(request.args.get("inspection_table_id", "")).strip()
+    coverage_type = str(request.args.get("coverage_type", "")).strip()
+    period_key = str(request.args.get("period_key", "")).strip()
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if user_id:
+            user = get_user_by_id(cur, user_id)
+            if not user:
+                return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        where_clauses = []
+        params = []
+
+        if inspection_table_id:
+            where_clauses.append("pc.inspection_table_id = %s")
+            params.append(inspection_table_id)
+
+        if coverage_type:
+            where_clauses.append("pc.coverage_type = %s")
+            params.append(coverage_type)
+
+        if period_key:
+            where_clauses.append("pc.period_key = %s")
+            params.append(period_key)
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    pc.id,
+                    pc.inspection_table_id,
+                    it.table_name AS inspection_table_name,
+                    pc.coverage_type,
+                    pc.period_key,
+                    pc.status,
+                    pc.remark,
+                    creator.username AS created_by_username,
+                    updater.username AS updated_by_username,
+                    COALESCE(SUM(CASE WHEN psi.is_included = TRUE THEN 1 ELSE 0 END), 0) AS included_station_count,
+                    COALESCE(SUM(CASE WHEN psi.is_included = TRUE AND psi.completion_status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_station_count,
+                    COALESCE(SUM(CASE WHEN psi.is_included = TRUE AND psi.completion_status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_station_count,
+                    pc.created_at,
+                    pc.updated_at
+                FROM inspection_plan_configs pc
+                JOIN inspection_tables it ON pc.inspection_table_id = it.id
+                JOIN users creator ON pc.created_by = creator.id
+                LEFT JOIN users updater ON pc.updated_by = updater.id
+                LEFT JOIN inspection_plan_station_items psi ON psi.plan_config_id = pc.id
+                {where_sql}
+                GROUP BY
+                    pc.id,
+                    pc.inspection_table_id,
+                    it.table_name,
+                    pc.coverage_type,
+                    pc.period_key,
+                    pc.status,
+                    pc.remark,
+                    creator.username,
+                    updater.username,
+                    pc.created_at,
+                    pc.updated_at
+                ORDER BY pc.id DESC;
+                """
+            ).format(where_sql=sql.SQL(where_sql)),
+            params,
+        )
+        rows = cur.fetchall()
+
+        result = []
+        for row in rows:
+            included_count = int(row["included_station_count"] or 0)
+            completed_count = int(row["completed_station_count"] or 0)
+            pending_count = int(row["pending_station_count"] or 0)
+            completion_rate = (
+                round((completed_count / included_count) * 100)
+                if included_count > 0
+                else 0
+            )
+            result.append(
+                {
+                    "id": row["id"],
+                    "inspection_table_id": row["inspection_table_id"],
+                    "inspection_table_name": row["inspection_table_name"],
+                    "coverage_type": row["coverage_type"],
+                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(
+                        row["coverage_type"], row["coverage_type"]
+                    ),
+                    "period_key": row["period_key"],
+                    "status": row["status"],
+                    "remark": row["remark"],
+                    "created_by_username": row["created_by_username"],
+                    "updated_by_username": row["updated_by_username"],
+                    "included_station_count": included_count,
+                    "completed_station_count": completed_count,
+                    "pending_station_count": pending_count,
+                    "completion_rate": completion_rate,
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+
+        return jsonify({"success": True, "items": result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-configs/<int:plan_config_id>")
+def get_inspection_plan_config_detail(plan_config_id):
+    user_id = str(request.args.get("user_id", "")).strip()
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if user_id:
+            user = get_user_by_id(cur, user_id)
+            if not user:
+                return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        cur.execute(
+            """
+            SELECT
+                pc.id,
+                pc.inspection_table_id,
+                it.table_name AS inspection_table_name,
+                pc.coverage_type,
+                pc.period_key,
+                pc.status,
+                pc.remark,
+                creator.username AS created_by_username,
+                updater.username AS updated_by_username,
+                pc.created_at,
+                pc.updated_at
+            FROM inspection_plan_configs pc
+            JOIN inspection_tables it ON pc.inspection_table_id = it.id
+            JOIN users creator ON pc.created_by = creator.id
+            LEFT JOIN users updater ON pc.updated_by = updater.id
+            WHERE pc.id = %s
+            LIMIT 1;
+            """,
+            (plan_config_id,),
+        )
+        config_row = cur.fetchone()
+
+        if not config_row:
+            return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+
+        cur.execute(
+            """
+            SELECT
+                psi.id,
+                psi.station_id,
+                s.station_name,
+                s.region,
+                s.address,
+                psi.is_included,
+                psi.completion_status,
+                psi.completed_inspection_id,
+                TO_CHAR(psi.completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+                psi.note
+            FROM inspection_plan_station_items psi
+            JOIN stations s ON psi.station_id = s.id
+            WHERE psi.plan_config_id = %s
+            ORDER BY s.id ASC;
+            """,
+            (plan_config_id,),
+        )
+        station_rows = cur.fetchall()
+
+        included_count = sum(1 for row in station_rows if row["is_included"])
+        completed_count = sum(
+            1
+            for row in station_rows
+            if row["is_included"] and row["completion_status"] == "completed"
+        )
+        pending_count = sum(
+            1
+            for row in station_rows
+            if row["is_included"] and row["completion_status"] == "pending"
+        )
+        completion_rate = (
+            round((completed_count / included_count) * 100) if included_count > 0 else 0
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "item": {
+                    "id": config_row["id"],
+                    "inspection_table_id": config_row["inspection_table_id"],
+                    "inspection_table_name": config_row["inspection_table_name"],
+                    "coverage_type": config_row["coverage_type"],
+                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(
+                        config_row["coverage_type"], config_row["coverage_type"]
+                    ),
+                    "period_key": config_row["period_key"],
+                    "status": config_row["status"],
+                    "remark": config_row["remark"],
+                    "created_by_username": config_row["created_by_username"],
+                    "updated_by_username": config_row["updated_by_username"],
+                    "included_station_count": included_count,
+                    "completed_station_count": completed_count,
+                    "pending_station_count": pending_count,
+                    "completion_rate": completion_rate,
+                    "created_at": config_row["created_at"],
+                    "updated_at": config_row["updated_at"],
+                    "stations": station_rows,
+                },
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route(
+    "/api/inspection-plan-configs/<int:plan_config_id>/stations", methods=["PUT"]
+)
+def save_inspection_plan_config_stations(plan_config_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    stations = data.get("stations") or []
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    if not isinstance(stations, list):
+        return jsonify({"success": False, "error": "stations 参数格式不正确。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_plan(user):
+            return (
+                jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
+                403,
+            )
+
+        cur.execute(
+            """
+            SELECT id, inspection_table_id
+            FROM inspection_plan_configs
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (plan_config_id,),
+        )
+        config_row = cur.fetchone()
+
+        if not config_row:
+            return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+
+        station_ids = []
+        normalized_items = []
+        for item in stations:
+            if not isinstance(item, dict):
+                return (
+                    jsonify({"success": False, "error": "stations 中存在非法项。"}),
+                    400,
+                )
+
+            station_id = item.get("station_id")
+            is_included = bool(item.get("is_included", True))
+            note = str(item.get("note", "")).strip() or None
+
+            if not station_id:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "stations 中存在缺少 station_id 的项。",
+                        }
+                    ),
+                    400,
+                )
+
+            station_ids.append(station_id)
+            normalized_items.append(
+                {
+                    "station_id": station_id,
+                    "is_included": is_included,
+                    "note": note,
+                }
+            )
+
+        if station_ids:
+            cur.execute(
+                """
+                SELECT id
+                FROM stations
+                WHERE id = ANY(%s);
+                """,
+                (station_ids,),
+            )
+            existing_station_rows = cur.fetchall()
+            existing_station_ids = {row["id"] for row in existing_station_rows}
+            missing_station_ids = [
+                sid for sid in station_ids if sid not in existing_station_ids
+            ]
+            if missing_station_ids:
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": f"以下站点不存在：{', '.join(str(x) for x in missing_station_ids)}",
+                        }
+                    ),
+                    400,
+                )
+
+        cur.execute(
+            "DELETE FROM inspection_plan_station_items WHERE plan_config_id = %s;",
+            (plan_config_id,),
+        )
+
+        for item in normalized_items:
+            cur.execute(
+                """
+                INSERT INTO inspection_plan_station_items (
+                    plan_config_id,
+                    station_id,
+                    is_included,
+                    completion_status,
+                    completed_inspection_id,
+                    completed_at,
+                    note,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, 'pending', NULL, NULL, %s, CURRENT_TIMESTAMP);
+                """,
+                (
+                    plan_config_id,
+                    item["station_id"],
+                    item["is_included"],
+                    item["note"],
+                ),
+            )
+
+        cur.execute(
+            """
+            UPDATE inspection_plan_configs
+            SET updated_by = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s;
+            """,
+            (user_id, plan_config_id),
+        )
+
+        sync_plan_station_items_completion_by_history(cur, plan_config_id)
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检计划站点明细保存成功。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
 
 
 # Inspection batch support
@@ -838,6 +1465,136 @@ def get_inspection_table_standards():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/inspection-plan-overview")
+def get_inspection_plan_overview():
+    user_id = str(request.args.get("user_id", "")).strip()
+    inspection_table_id = str(request.args.get("inspection_table_id", "")).strip()
+    coverage_type = str(request.args.get("coverage_type", "")).strip()
+    period_key = str(request.args.get("period_key", "")).strip()
+
+    if not inspection_table_id:
+        return jsonify({"success": False, "error": "缺少检查表信息。"}), 400
+
+    if coverage_type not in {"monthly", "quarterly", "yearly"}:
+        return jsonify({"success": False, "error": "覆盖要求参数不合法。"}), 400
+
+    if not period_key:
+        return jsonify({"success": False, "error": "缺少周期标识。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if user_id:
+            user = get_user_by_id(cur, user_id)
+            if not user:
+                return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        cur.execute(
+            """
+            SELECT
+                pc.id,
+                pc.inspection_table_id,
+                it.table_name AS inspection_table_name,
+                pc.coverage_type,
+                pc.period_key,
+                pc.status,
+                pc.remark,
+                creator.username AS created_by_username,
+                updater.username AS updated_by_username,
+                pc.created_at,
+                pc.updated_at
+            FROM inspection_plan_configs pc
+            JOIN inspection_tables it ON pc.inspection_table_id = it.id
+            JOIN users creator ON pc.created_by = creator.id
+            LEFT JOIN users updater ON pc.updated_by = updater.id
+            WHERE pc.inspection_table_id = %s
+              AND pc.coverage_type = %s
+              AND pc.period_key = %s
+            LIMIT 1;
+            """,
+            (inspection_table_id, coverage_type, period_key),
+        )
+        config_row = cur.fetchone()
+
+        if not config_row:
+            return (
+                jsonify({"success": False, "error": "未找到对应的巡检计划配置。"}),
+                404,
+            )
+
+        cur.execute(
+            """
+            SELECT
+                psi.id,
+                psi.station_id,
+                s.station_name,
+                s.region,
+                s.address,
+                psi.is_included,
+                psi.completion_status,
+                psi.completed_inspection_id,
+                TO_CHAR(psi.completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+                psi.note
+            FROM inspection_plan_station_items psi
+            JOIN stations s ON psi.station_id = s.id
+            WHERE psi.plan_config_id = %s
+            ORDER BY s.id ASC;
+            """,
+            (config_row["id"],),
+        )
+        station_rows = cur.fetchall()
+
+        included_count = sum(1 for row in station_rows if row["is_included"])
+        completed_count = sum(
+            1
+            for row in station_rows
+            if row["is_included"] and row["completion_status"] == "completed"
+        )
+        pending_count = sum(
+            1
+            for row in station_rows
+            if row["is_included"] and row["completion_status"] == "pending"
+        )
+        completion_rate = (
+            round((completed_count / included_count) * 100) if included_count > 0 else 0
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "item": {
+                    "id": config_row["id"],
+                    "inspection_table_id": config_row["inspection_table_id"],
+                    "inspection_table_name": config_row["inspection_table_name"],
+                    "coverage_type": config_row["coverage_type"],
+                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(
+                        config_row["coverage_type"], config_row["coverage_type"]
+                    ),
+                    "period_key": config_row["period_key"],
+                    "status": config_row["status"],
+                    "remark": config_row["remark"],
+                    "created_by_username": config_row["created_by_username"],
+                    "updated_by_username": config_row["updated_by_username"],
+                    "included_station_count": included_count,
+                    "completed_station_count": completed_count,
+                    "pending_station_count": pending_count,
+                    "completion_rate": completion_rate,
+                    "created_at": config_row["created_at"],
+                    "updated_at": config_row["updated_at"],
+                    "stations": station_rows,
+                },
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/inspection-register", methods=["POST"])
 def inspection_register():
     inspector_id = str(request.form.get("inspector_id", "")).strip()
@@ -1005,6 +1762,13 @@ def inspection_register():
             )
 
         if has_issue == "no":
+            mark_related_plan_items_completed(
+                cur,
+                station_id,
+                inspection_table_id,
+                inspection_id,
+                today,
+            )
             conn.commit()
             return jsonify(
                 {
@@ -1060,6 +1824,13 @@ def inspection_register():
         )
         issue = cur.fetchone()
 
+        mark_related_plan_items_completed(
+            cur,
+            station_id,
+            inspection_table_id,
+            inspection_id,
+            today,
+        )
         conn.commit()
         return jsonify(
             {
@@ -1252,6 +2023,256 @@ def get_issues():
         rows = cur.fetchall()
         return jsonify(rows)
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-configs", methods=["POST"])
+def create_inspection_plan_config():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    inspection_table_id = str(data.get("inspection_table_id", "")).strip()
+    coverage_type = str(data.get("coverage_type", "")).strip()
+    period_key = str(data.get("period_key", "")).strip()
+    remark = str(data.get("remark", "")).strip() or None
+    status = str(data.get("status", "draft")).strip() or "draft"
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    if not inspection_table_id:
+        return jsonify({"success": False, "error": "缺少检查表信息。"}), 400
+
+    if coverage_type not in {"monthly", "quarterly", "yearly"}:
+        return jsonify({"success": False, "error": "覆盖要求参数不合法。"}), 400
+
+    if not period_key:
+        return jsonify({"success": False, "error": "缺少周期标识。"}), 400
+
+    if status not in {"draft", "active", "archived"}:
+        return jsonify({"success": False, "error": "状态参数不合法。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_plan(user):
+            return (
+                jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
+                403,
+            )
+
+        cur.execute(
+            """
+            SELECT id, table_name, is_active
+            FROM inspection_tables
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (inspection_table_id,),
+        )
+        inspection_table = cur.fetchone()
+
+        if not inspection_table:
+            return jsonify({"success": False, "error": "检查表不存在。"}), 404
+
+        if not inspection_table["is_active"]:
+            return jsonify({"success": False, "error": "检查表未启用。"}), 400
+
+        cur.execute(
+            """
+            SELECT id
+            FROM inspection_plan_configs
+            WHERE inspection_table_id = %s
+              AND coverage_type = %s
+              AND period_key = %s
+            LIMIT 1;
+            """,
+            (inspection_table_id, coverage_type, period_key),
+        )
+        existing = cur.fetchone()
+
+        if existing:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该检查表在当前覆盖要求与周期下已存在计划配置。",
+                        "existing_id": existing["id"],
+                    }
+                ),
+                409,
+            )
+
+        cur.execute(
+            """
+            INSERT INTO inspection_plan_configs (
+                inspection_table_id,
+                coverage_type,
+                period_key,
+                created_by,
+                updated_by,
+                status,
+                remark,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            RETURNING id;
+            """,
+            (
+                inspection_table_id,
+                coverage_type,
+                period_key,
+                user_id,
+                user_id,
+                status,
+                remark,
+            ),
+        )
+        created_row = cur.fetchone()
+        sync_plan_station_items_completion_by_history(cur, created_row["id"])
+        conn.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "巡检计划配置创建成功。",
+                "plan_config_id": created_row["id"],
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-configs/<int:plan_config_id>", methods=["PUT"])
+def update_inspection_plan_config(plan_config_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    coverage_type = str(data.get("coverage_type", "")).strip()
+    period_key = str(data.get("period_key", "")).strip()
+    status = str(data.get("status", "")).strip()
+    remark = data.get("remark")
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_plan(user):
+            return (
+                jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
+                403,
+            )
+
+        cur.execute(
+            """
+            SELECT id, inspection_table_id, coverage_type, period_key, status, remark
+            FROM inspection_plan_configs
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (plan_config_id,),
+        )
+        current_row = cur.fetchone()
+
+        if not current_row:
+            return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+
+        new_coverage_type = coverage_type or current_row["coverage_type"]
+        new_period_key = period_key or current_row["period_key"]
+        new_status = status or current_row["status"]
+        new_remark = (
+            current_row["remark"] if remark is None else (str(remark).strip() or None)
+        )
+
+        if new_coverage_type not in {"monthly", "quarterly", "yearly"}:
+            return jsonify({"success": False, "error": "覆盖要求参数不合法。"}), 400
+
+        if not new_period_key:
+            return jsonify({"success": False, "error": "缺少周期标识。"}), 400
+
+        if new_status not in {"draft", "active", "archived"}:
+            return jsonify({"success": False, "error": "状态参数不合法。"}), 400
+
+        cur.execute(
+            """
+            SELECT id
+            FROM inspection_plan_configs
+            WHERE inspection_table_id = %s
+              AND coverage_type = %s
+              AND period_key = %s
+              AND id <> %s
+            LIMIT 1;
+            """,
+            (
+                current_row["inspection_table_id"],
+                new_coverage_type,
+                new_period_key,
+                plan_config_id,
+            ),
+        )
+        duplicate_row = cur.fetchone()
+
+        if duplicate_row:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "更新后会与现有计划配置重复。",
+                        "existing_id": duplicate_row["id"],
+                    }
+                ),
+                409,
+            )
+
+        cur.execute(
+            """
+            UPDATE inspection_plan_configs
+            SET coverage_type = %s,
+                period_key = %s,
+                status = %s,
+                remark = %s,
+                updated_by = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s;
+            """,
+            (
+                new_coverage_type,
+                new_period_key,
+                new_status,
+                new_remark,
+                user_id,
+                plan_config_id,
+            ),
+        )
+
+        sync_plan_station_items_completion_by_history(cur, plan_config_id)
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检计划配置更新成功。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
