@@ -100,7 +100,7 @@
                                 <div class="overview-field-head">
                                     <label class="field-label">选择检查表</label>
                                     <span class="overview-inline-tag info">{{ overviewSelectedTable?.name || '-'
-                                    }}</span>
+                                        }}</span>
                                 </div>
                                 <select class="month-picker-select planner-table-select"
                                     v-model="overviewSelectedTableName">
@@ -152,6 +152,10 @@
                                                 <button class="table-filter-mini-btn" type="button"
                                                     @click.stop="toggleOverviewFilterMenu('area', $event)"
                                                     aria-label="筛选片区">
+                                                    <span v-if="overviewAreaFilterBadgeCount > 0"
+                                                        class="table-filter-badge">
+                                                        {{ overviewAreaFilterBadgeCount }}
+                                                    </span>
                                                     <span class="table-filter-icon-line line-1"></span>
                                                     <span class="table-filter-icon-line line-2"></span>
                                                     <span class="table-filter-icon-line line-3"></span>
@@ -161,25 +165,38 @@
                                         <th>
                                             <div class="table-header-inline table-header-inline-filterable">
                                                 <span class="table-header-title">是否纳入该检查表计划</span>
+
                                                 <button class="table-filter-mini-btn" type="button"
                                                     @click.stop="toggleOverviewFilterMenu('planned', $event)"
                                                     aria-label="筛选是否纳入该检查表计划">
+                                                    <span v-if="overviewPlannedFilterBadgeCount > 0"
+                                                        class="table-filter-badge">
+                                                        {{ overviewPlannedFilterBadgeCount }}
+                                                    </span>
                                                     <span class="table-filter-icon-line line-1"></span>
                                                     <span class="table-filter-icon-line line-2"></span>
                                                     <span class="table-filter-icon-line line-3"></span>
                                                 </button>
+
                                             </div>
                                         </th>
                                         <th>
                                             <div class="table-header-inline table-header-inline-filterable">
                                                 <span class="table-header-title">{{ overviewTimeLabel }}完成情况</span>
+
                                                 <button class="table-filter-mini-btn" type="button"
                                                     @click.stop="toggleOverviewFilterMenu('done', $event)"
                                                     aria-label="筛选完成情况">
+
+                                                    <span v-if="overviewDoneFilterBadgeCount > 0"
+                                                        class="table-filter-badge">
+                                                        {{ overviewDoneFilterBadgeCount }}
+                                                    </span>
                                                     <span class="table-filter-icon-line line-1"></span>
                                                     <span class="table-filter-icon-line line-2"></span>
                                                     <span class="table-filter-icon-line line-3"></span>
                                                 </button>
+
                                             </div>
                                         </th>
                                         <th>
@@ -476,36 +493,54 @@
                                 <th>
                                     <div class="table-header-inline table-header-inline-filterable">
                                         <span class="table-header-title">片区</span>
+
                                         <button class="table-filter-mini-btn" type="button"
                                             @click.stop="toggleFilterMenu('area', $event)" aria-label="筛选片区">
+
+                                            <span v-if="detailAreaFilterBadgeCount > 0" class="table-filter-badge">
+                                                {{ detailAreaFilterBadgeCount }}
+                                            </span>
                                             <span class="table-filter-icon-line line-1"></span>
                                             <span class="table-filter-icon-line line-2"></span>
                                             <span class="table-filter-icon-line line-3"></span>
                                         </button>
+
                                     </div>
                                 </th>
 
                                 <th>
                                     <div class="table-header-inline table-header-inline-filterable">
                                         <span class="table-header-title">纳入计划</span>
+
                                         <button class="table-filter-mini-btn" type="button"
                                             @click.stop="toggleFilterMenu('planned', $event)" aria-label="筛选纳入计划">
+
+                                            <span v-if="detailPlannedFilterBadgeCount > 0" class="table-filter-badge">
+                                                {{ detailPlannedFilterBadgeCount }}
+                                            </span>
                                             <span class="table-filter-icon-line line-1"></span>
                                             <span class="table-filter-icon-line line-2"></span>
                                             <span class="table-filter-icon-line line-3"></span>
                                         </button>
+
                                     </div>
                                 </th>
 
                                 <th>
                                     <div class="table-header-inline table-header-inline-filterable">
                                         <span class="table-header-title">当前周期是否完成</span>
+
                                         <button class="table-filter-mini-btn" type="button"
                                             @click.stop="toggleFilterMenu('done', $event)" aria-label="筛选当前周期是否完成">
+
+                                            <span v-if="detailDoneFilterBadgeCount > 0" class="table-filter-badge">
+                                                {{ detailDoneFilterBadgeCount }}
+                                            </span>
                                             <span class="table-filter-icon-line line-1"></span>
                                             <span class="table-filter-icon-line line-2"></span>
                                             <span class="table-filter-icon-line line-3"></span>
                                         </button>
+
                                     </div>
                                 </th>
 
@@ -789,6 +824,7 @@ const overviewPlannedFilterSet = ref([])
 const overviewDoneFilterSet = ref([])
 const activeOverviewFilterMenu = ref(null)
 const overviewFilterPopoverStyle = ref({})
+const activeOverviewFilterAnchorEl = ref(null)
 
 const overviewRows = computed(() => {
     let rows = overviewRowsState.value || []
@@ -845,17 +881,14 @@ const overviewAreaOptions = computed(() => {
     return Array.from(new Set(rows.map((item) => item.area).filter(Boolean)))
 })
 
-const toggleOverviewFilterMenu = async (menuName, event) => {
-    if (activeOverviewFilterMenu.value === menuName) {
-        activeOverviewFilterMenu.value = null
-        overviewFilterPopoverStyle.value = {}
-        return
-    }
+const overviewAreaFilterBadgeCount = computed(() => overviewAreaFilterSet.value.length)
+const overviewPlannedFilterBadgeCount = computed(() => overviewPlannedFilterSet.value.length)
+const overviewDoneFilterBadgeCount = computed(() => overviewDoneFilterSet.value.length)
 
-    const buttonRect = event.currentTarget.getBoundingClientRect()
-    activeOverviewFilterMenu.value = menuName
-    await nextTick()
+const buildFilterPopoverStyle = (buttonEl) => {
+    if (!buttonEl) return {}
 
+    const buttonRect = buttonEl.getBoundingClientRect()
     const panelWidth = 240
     const viewportWidth = window.innerWidth
     const viewportHeight = window.innerHeight
@@ -872,11 +905,38 @@ const toggleOverviewFilterMenu = async (menuName, event) => {
         top = Math.max(12, buttonRect.top - estimatedHeight - 8)
     }
 
-    overviewFilterPopoverStyle.value = {
+    return {
         position: 'fixed',
         top: `${top}px`,
         left: `${left}px`
     }
+}
+
+const refreshActiveOverviewFilterPopoverPosition = async () => {
+    if (!activeOverviewFilterMenu.value || !activeOverviewFilterAnchorEl.value) return
+    await nextTick()
+    overviewFilterPopoverStyle.value = buildFilterPopoverStyle(activeOverviewFilterAnchorEl.value)
+}
+
+const refreshActiveDetailFilterPopoverPosition = async () => {
+    if (!activeFilterMenu.value || !activeDetailFilterAnchorEl.value) return
+    await nextTick()
+    filterPopoverStyle.value = buildFilterPopoverStyle(activeDetailFilterAnchorEl.value)
+}
+
+const toggleOverviewFilterMenu = async (menuName, event) => {
+    if (activeOverviewFilterMenu.value === menuName) {
+        activeOverviewFilterMenu.value = null
+        activeOverviewFilterAnchorEl.value = null
+        overviewFilterPopoverStyle.value = {}
+        return
+    }
+
+    const buttonEl = event.currentTarget
+    activeOverviewFilterMenu.value = menuName
+    activeOverviewFilterAnchorEl.value = buttonEl
+    await nextTick()
+    overviewFilterPopoverStyle.value = buildFilterPopoverStyle(buttonEl)
 }
 
 const setOverviewAreaFilterAll = () => {
@@ -1158,10 +1218,15 @@ const detailPlannedFilterSet = ref([])
 const detailDoneFilterSet = ref([])
 const activeFilterMenu = ref(null)
 const filterPopoverStyle = ref({})
+const activeDetailFilterAnchorEl = ref(null)
+
 const handleGlobalClickCloseFilterMenu = () => {
     activeFilterMenu.value = null
+    activeDetailFilterAnchorEl.value = null
     filterPopoverStyle.value = {}
+
     activeOverviewFilterMenu.value = null
+    activeOverviewFilterAnchorEl.value = null
     overviewFilterPopoverStyle.value = {}
 }
 
@@ -1209,38 +1274,23 @@ const detailAreaOptions = computed(() => {
     return Array.from(new Set(rows.map((item) => item.area).filter(Boolean)))
 })
 
+const detailAreaFilterBadgeCount = computed(() => detailAreaFilterSet.value.length)
+const detailPlannedFilterBadgeCount = computed(() => detailPlannedFilterSet.value.length)
+const detailDoneFilterBadgeCount = computed(() => detailDoneFilterSet.value.length)
+
 const toggleFilterMenu = async (menuName, event) => {
     if (activeFilterMenu.value === menuName) {
         activeFilterMenu.value = null
+        activeDetailFilterAnchorEl.value = null
         filterPopoverStyle.value = {}
         return
     }
 
-    const buttonRect = event.currentTarget.getBoundingClientRect()
+    const buttonEl = event.currentTarget
     activeFilterMenu.value = menuName
+    activeDetailFilterAnchorEl.value = buttonEl
     await nextTick()
-
-    const panelWidth = 240
-    const viewportWidth = window.innerWidth
-    const viewportHeight = window.innerHeight
-    const estimatedHeight = 260
-
-    let left = buttonRect.right - panelWidth
-    if (left < 12) left = 12
-    if (left + panelWidth > viewportWidth - 12) {
-        left = viewportWidth - panelWidth - 12
-    }
-
-    let top = buttonRect.bottom + 8
-    if (top + estimatedHeight > viewportHeight - 12) {
-        top = Math.max(12, buttonRect.top - estimatedHeight - 8)
-    }
-
-    filterPopoverStyle.value = {
-        position: 'fixed',
-        top: `${top}px`,
-        left: `${left}px`
-    }
+    filterPopoverStyle.value = buildFilterPopoverStyle(buttonEl)
 }
 
 const setAreaFilterAll = () => {
@@ -1544,7 +1594,9 @@ const loadOverviewData = async () => {
     }
 
     isLoadingOverview.value = true
+    overviewCurrentPage.value = 1
     activeOverviewFilterMenu.value = null
+    activeOverviewFilterAnchorEl.value = null
     overviewFilterPopoverStyle.value = {}
     overviewAreaFilter.value = 'all'
     overviewPlannedFilter.value = 'all'
@@ -1603,6 +1655,7 @@ const openPlanDetail = async (row) => {
     detailPlannedFilterSet.value = []
     detailDoneFilterSet.value = []
     activeFilterMenu.value = null
+    activeDetailFilterAnchorEl.value = null
     filterPopoverStyle.value = {}
     const dialogRow = {
         ...row,
@@ -1651,6 +1704,7 @@ const closePlanDetail = () => {
     detailPlannedFilterSet.value = []
     detailDoneFilterSet.value = []
     activeFilterMenu.value = null
+    activeDetailFilterAnchorEl.value = null
     filterPopoverStyle.value = {}
     detailDialog.value = {
         visible: false,
@@ -1761,8 +1815,26 @@ watch(filteredDetailRows, () => {
     detailCurrentPage.value = 1
 })
 
+watch(
+    () => [overviewRows.value.length, overviewCurrentPage.value, activeOverviewFilterMenu.value],
+    () => {
+        refreshActiveOverviewFilterPopoverPosition()
+    }
+)
+
+watch(
+    () => [filteredDetailRows.value.length, detailCurrentPage.value, activeFilterMenu.value],
+    () => {
+        refreshActiveDetailFilterPopoverPosition()
+    }
+)
+
 onMounted(async () => {
     document.addEventListener('click', handleGlobalClickCloseFilterMenu)
+    window.addEventListener('resize', refreshActiveOverviewFilterPopoverPosition)
+    window.addEventListener('resize', refreshActiveDetailFilterPopoverPosition)
+    document.addEventListener('scroll', refreshActiveOverviewFilterPopoverPosition, true)
+    document.addEventListener('scroll', refreshActiveDetailFilterPopoverPosition, true)
     try {
         await Promise.all([fetchInspectionTablesCatalog(), fetchAllStationsCatalog()])
         await fetchPlanConfigs()
@@ -1778,6 +1850,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     document.removeEventListener('click', handleGlobalClickCloseFilterMenu)
+    window.removeEventListener('resize', refreshActiveOverviewFilterPopoverPosition)
+    window.removeEventListener('resize', refreshActiveDetailFilterPopoverPosition)
+    document.removeEventListener('scroll', refreshActiveOverviewFilterPopoverPosition, true)
+    document.removeEventListener('scroll', refreshActiveDetailFilterPopoverPosition, true)
 })
 
 const openOverviewPlanDetail = () => {
@@ -2620,6 +2696,23 @@ const openOverviewPlanDetail = () => {
     gap: 2px;
     cursor: pointer;
     padding: 0;
+}
+
+.table-filter-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+    box-shadow: 0 0 0 2px #fff;
 }
 
 .table-filter-mini-btn:hover {
