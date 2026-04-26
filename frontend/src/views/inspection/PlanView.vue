@@ -34,7 +34,7 @@
                             </div>
                         </div>
 
-                        <div class="table-wrap">
+                        <div class="table-wrap task-board-table-wrap">
                             <table class="plan-table">
                                 <thead>
                                     <tr>
@@ -81,6 +81,47 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+
+                        <div class="mobile-plan-list">
+                            <div v-if="isLoadingTaskBoard" class="mobile-empty-state">任务总览加载中...</div>
+                            <div v-else-if="!planRows.length" class="mobile-empty-state">当前暂无检查表目录数据。</div>
+                            <div v-else class="mobile-plan-cards">
+                                <div v-for="item in planRows" :key="'mobile-plan-' + item.name"
+                                    class="mobile-plan-card">
+                                    <div class="mobile-card-head">
+                                        <div class="mobile-card-title-wrap">
+                                            <div class="mobile-card-kicker">{{ item.scope }}</div>
+                                            <div class="mobile-card-title">{{ item.name }}</div>
+                                            <div class="mobile-card-meta">{{ getCoverageConfigLabel(item) }}</div>
+                                        </div>
+                                        <span class="plan-status-chip neutral">
+                                            {{ coverageTypeLabelMap[item.coverageType] || '-' }}
+                                        </span>
+                                    </div>
+
+                                    <div class="mobile-progress-block">
+                                        <div class="mobile-progress-head">
+                                            <span>计划完成情况</span>
+                                            <strong>{{ item.done }}/{{ item.plan }}（{{ item.rate }}%）</strong>
+                                        </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" :style="{ width: item.rate + '%' }"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mobile-card-grid">
+                                        <div class="mobile-card-row">
+                                            <span>纳入站点</span>
+                                            <strong>{{ getIncludedStationCount(item) }}</strong>
+                                        </div>
+                                        <div class="mobile-card-row">
+                                            <span>未完成</span>
+                                            <strong>{{ item.remaining }} 个站点</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -154,7 +195,7 @@
                             <span class="plan-status-chip readonly">未完成计划：{{ historyPendingPlanCount }}</span>
                         </div>
 
-                        <div class="table-wrap">
+                        <div class="table-wrap history-table-wrap">
                             <table class="plan-table history-plan-table">
                                 <thead>
                                     <tr>
@@ -212,6 +253,63 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        <div class="mobile-history-list">
+                            <div v-if="isLoadingTaskBoard" class="mobile-empty-state">历史计划加载中...</div>
+                            <div v-else-if="!filteredHistoryPlanRows.length" class="mobile-empty-state">
+                                当前筛选条件下暂无历史计划。
+                            </div>
+                            <div v-else class="mobile-plan-cards">
+                                <div v-for="item in filteredHistoryPlanRows" :key="'mobile-history-' + item.id"
+                                    class="mobile-plan-card">
+                                    <div class="mobile-card-head">
+                                        <div class="mobile-card-title-wrap">
+                                            <div class="mobile-card-kicker">计划编号 #{{ item.id }}</div>
+                                            <div class="mobile-card-title">{{ item.inspection_table_name || '-' }}</div>
+                                            <div class="mobile-card-meta">
+                                                创建 {{ formatPlanDateTime(item.created_at) }}
+                                            </div>
+                                        </div>
+                                        <span :class="['status-chip', getHistoryPlanCompletionClass(item)]">
+                                            {{ getHistoryPlanCompletionLabel(item) }}
+                                        </span>
+                                    </div>
+
+                                    <div class="mobile-card-grid">
+                                        <div class="mobile-card-row">
+                                            <span>覆盖要求</span>
+                                            <strong>{{ coverageTypeLabelMap[item.coverage_type] || item.coverage_type ||
+                                                '-' }}</strong>
+                                        </div>
+                                        <div class="mobile-card-row">
+                                            <span>计划时间</span>
+                                            <strong>{{ item.period_key || '-' }}</strong>
+                                        </div>
+                                        <div class="mobile-card-row">
+                                            <span>更新时间</span>
+                                            <strong>{{ formatPlanDateTime(item.updated_at) }}</strong>
+                                        </div>
+                                        <div class="mobile-card-row">
+                                            <span>未完成</span>
+                                            <strong>{{ Number(item.pending_station_count || 0) }} 个站点</strong>
+                                        </div>
+                                    </div>
+
+                                    <div class="mobile-progress-block">
+                                        <div class="mobile-progress-head">
+                                            <span>历史完成情况</span>
+                                            <strong>{{ Number(item.completed_station_count || 0) }}/{{
+                                                Number(item.included_station_count || 0) }}（{{
+                                                    Number(item.completion_rate || 0) }}%）</strong>
+                                        </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill"
+                                                :style="{ width: `${Number(item.completion_rate || 0)}%` }"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card-surface section-card">
@@ -266,7 +364,7 @@
                                 overviewCompletionRate }}%</span>
                         </div>
 
-                        <div class="table-wrap">
+                        <div class="table-wrap station-overview-table-wrap">
                             <table class="plan-detail-table">
                                 <thead>
                                     <tr>
@@ -363,6 +461,61 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+
+                        <div class="mobile-filter-strip">
+                            <button class="mobile-filter-btn" type="button"
+                                @click.stop="toggleOverviewFilterMenu('area', $event)">
+                                片区
+                                <span v-if="overviewAreaFilterBadgeCount > 0">{{ overviewAreaFilterBadgeCount }}</span>
+                            </button>
+                            <button class="mobile-filter-btn" type="button"
+                                @click.stop="toggleOverviewFilterMenu('planned', $event)">
+                                纳入计划
+                                <span v-if="overviewPlannedFilterBadgeCount > 0">{{ overviewPlannedFilterBadgeCount
+                                }}</span>
+                            </button>
+                            <button class="mobile-filter-btn" type="button"
+                                @click.stop="toggleOverviewFilterMenu('done', $event)">
+                                完成情况
+                                <span v-if="overviewDoneFilterBadgeCount > 0">{{ overviewDoneFilterBadgeCount }}</span>
+                            </button>
+                        </div>
+
+                        <div class="mobile-overview-station-list">
+                            <div v-if="isLoadingOverview" class="mobile-empty-state">数据加载中...</div>
+                            <div v-else-if="!overviewRows.length" class="mobile-empty-state">
+                                当前时间范围下暂无计划明细数据。
+                            </div>
+                            <div v-else class="mobile-plan-cards">
+                                <div v-for="station in pagedOverviewRows"
+                                    :key="'mobile-overview-' + (station.station_id || station.name)"
+                                    class="mobile-plan-card">
+                                    <div class="mobile-card-head">
+                                        <div class="mobile-card-title-wrap">
+                                            <div class="mobile-card-kicker">{{ station.area || '未分配片区' }}</div>
+                                            <div class="mobile-card-title">{{ station.name }}</div>
+                                        </div>
+                                        <span :class="station.planned ? 'status-chip success' : 'status-chip neutral'">
+                                            {{ station.planned ? '已纳入' : '未纳入' }}
+                                        </span>
+                                    </div>
+
+                                    <div class="mobile-card-grid">
+                                        <div class="mobile-card-row">
+                                            <span>{{ overviewTimeLabel }}完成情况</span>
+                                            <strong>{{ station.done ? '已完成' : '未完成' }}</strong>
+                                        </div>
+                                        <div class="mobile-card-row mobile-card-row-full">
+                                            <span>状态说明</span>
+                                            <strong>
+                                                {{ station.done ? `${overviewTimeLabel}已完成该检查表` :
+                                                    `${overviewTimeLabel}尚未完成该检查表` }}
+                                            </strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div v-if="overviewTotalPages > 1" class="table-pagination-bar">
                             <div class="table-pagination-info">
@@ -641,7 +794,7 @@
                     <span class="plan-status-chip readonly">未完成：{{ managedPendingPlanCount }}</span>
                 </div>
 
-                <div class="table-wrap">
+                <div class="table-wrap manage-plan-table-wrap">
                     <table class="plan-table manage-plan-table">
                         <thead>
                             <tr>
@@ -703,6 +856,56 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+
+                <div class="mobile-manage-plan-list">
+                    <div v-if="isLoadingTaskBoard" class="mobile-empty-state">计划列表加载中...</div>
+                    <div v-else-if="!managedPlanRows.length" class="mobile-empty-state">当前暂无已创建的巡检计划。</div>
+                    <div v-else class="mobile-plan-cards">
+                        <div v-for="item in managedPlanRows" :key="'mobile-managed-' + item.id"
+                            class="mobile-plan-card">
+                            <div class="mobile-card-head">
+                                <div class="mobile-card-title-wrap">
+                                    <div class="mobile-card-kicker">创建 {{ formatPlanDateTime(item.created_at) }}</div>
+                                    <div class="mobile-card-title">{{ item.inspection_table_name || '-' }}</div>
+                                    <div class="mobile-card-meta">计划时间：{{ item.period_key || '-' }}</div>
+                                </div>
+                                <span :class="['status-chip', getHistoryPlanCompletionClass(item)]">
+                                    {{ getHistoryPlanCompletionLabel(item) }}
+                                </span>
+                            </div>
+
+                            <div class="mobile-card-grid">
+                                <div class="mobile-card-row">
+                                    <span>覆盖要求</span>
+                                    <strong>{{ coverageTypeLabelMap[item.coverage_type] || item.coverage_type || '-'
+                                    }}</strong>
+                                </div>
+                                <div class="mobile-card-row">
+                                    <span>完成情况</span>
+                                    <strong>{{ Number(item.completed_station_count || 0) }}/{{
+                                        Number(item.included_station_count || 0) }}</strong>
+                                </div>
+                            </div>
+
+                            <div class="mobile-progress-block">
+                                <div class="progress-bar">
+                                    <div class="progress-fill"
+                                        :style="{ width: `${Number(item.completion_rate || 0)}%` }"></div>
+                                </div>
+                            </div>
+
+                            <div class="mobile-card-actions">
+                                <button class="ghost-btn mini-action-btn" type="button" @click="openManagedPlanEdit(item)">
+                                    编辑
+                                </button>
+                                <button class="ghost-btn mini-action-btn danger" type="button"
+                                    @click="deleteManagedPlan(item)">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -789,7 +992,7 @@
                     </div>
                 </div>
 
-                <div class="table-wrap">
+                <div class="table-wrap detail-station-table-wrap">
                     <table class="plan-detail-table">
                         <thead>
 
@@ -887,6 +1090,57 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+
+                <div class="mobile-filter-strip">
+                    <button class="mobile-filter-btn" type="button" @click.stop="toggleFilterMenu('area', $event)">
+                        片区
+                        <span v-if="detailAreaFilterBadgeCount > 0">{{ detailAreaFilterBadgeCount }}</span>
+                    </button>
+                    <button class="mobile-filter-btn" type="button" @click.stop="toggleFilterMenu('planned', $event)">
+                        纳入计划
+                        <span v-if="detailPlannedFilterBadgeCount > 0">{{ detailPlannedFilterBadgeCount }}</span>
+                    </button>
+                    <button class="mobile-filter-btn" type="button" @click.stop="toggleFilterMenu('done', $event)">
+                        完成情况
+                        <span v-if="detailDoneFilterBadgeCount > 0">{{ detailDoneFilterBadgeCount }}</span>
+                    </button>
+                </div>
+
+                <div class="mobile-detail-station-list">
+                    <div v-if="!filteredDetailRows.length" class="mobile-empty-state">当前计划下暂无站点明细数据。</div>
+                    <div v-else class="mobile-plan-cards">
+                        <div v-for="station in pagedDetailRows"
+                            :key="'mobile-detail-' + (station.station_id || station.name)" class="mobile-plan-card">
+                            <div class="mobile-card-head">
+                                <div class="mobile-card-title-wrap">
+                                    <div class="mobile-card-kicker">{{ station.area || '未分配片区' }}</div>
+                                    <div class="mobile-card-title">{{ station.name }}</div>
+                                    <div class="mobile-card-meta">完成日期：{{ station.doneDate || '-' }}</div>
+                                </div>
+                                <span :class="station.done ? 'status-chip success' : 'status-chip warning'">
+                                    {{ station.done ? '已完成' : '未完成' }}
+                                </span>
+                            </div>
+
+                            <div class="mobile-card-grid">
+                                <div class="mobile-card-row">
+                                    <span>纳入计划</span>
+                                    <strong>{{ station.planned ? '已纳入' : '未纳入' }}</strong>
+                                </div>
+                            </div>
+
+                            <label v-if="isPlanManager" class="mobile-plan-toggle"
+                                :class="{ disabled: station.done }">
+                                <input type="checkbox" :checked="station.planned" :disabled="station.done"
+                                    @change="toggleStationPlan(station)" />
+                                <span>{{ station.done ? '已完成站点不可调整' : '调整是否纳入当前计划' }}</span>
+                            </label>
+                            <div v-else class="mobile-card-note">
+                                当前账号仅可查看计划详情。
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div v-if="detailTotalPages > 1" class="table-pagination-bar">
                     <div class="table-pagination-info">
@@ -3566,6 +3820,217 @@ onBeforeUnmount(() => {
     height: 7px;
 }
 
+.mobile-plan-list,
+.mobile-history-list,
+.mobile-overview-station-list,
+.mobile-manage-plan-list,
+.mobile-detail-station-list,
+.mobile-filter-strip {
+    display: none;
+}
+
+.mobile-plan-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.mobile-plan-card {
+    padding: 16px;
+    border: 1px solid #dbe4ee;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+}
+
+.mobile-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.mobile-card-title-wrap {
+    min-width: 0;
+}
+
+.mobile-card-kicker {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+
+.mobile-card-title {
+    margin-top: 6px;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.mobile-card-meta {
+    margin-top: 6px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.mobile-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.mobile-card-row {
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: rgba(248, 250, 252, 0.9);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.mobile-card-row-full {
+    grid-column: 1 / -1;
+}
+
+.mobile-card-row span {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.mobile-card-row strong {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.mobile-progress-block {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #f8fafc;
+}
+
+.mobile-progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.mobile-progress-head strong {
+    color: #0f172a;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.mobile-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.mobile-card-actions .ghost-btn {
+    width: 100%;
+}
+
+.mobile-plan-toggle {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid #bfdbfe;
+    border-radius: 14px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.mobile-plan-toggle.disabled {
+    border-color: #e2e8f0;
+    background: #f8fafc;
+    color: #94a3b8;
+}
+
+.mobile-plan-toggle input {
+    width: 17px;
+    height: 17px;
+}
+
+.mobile-card-note,
+.mobile-empty-state {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.8;
+}
+
+.mobile-card-note {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 14px;
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+}
+
+.mobile-empty-state {
+    padding: 16px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 16px;
+    background: #f8fafc;
+    text-align: center;
+}
+
+.mobile-filter-strip {
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 14px;
+}
+
+.mobile-filter-btn {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 96px;
+    height: 40px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.mobile-filter-btn span {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 11px;
+    line-height: 18px;
+}
+
 
 @media (max-width: 1200px) {
     .stats-grid {
@@ -3594,11 +4059,17 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+    .page-content,
+    .left-column,
+    .right-column {
+        gap: 16px;
+    }
 
     .page-header,
     .stat-card,
     .section-card {
-        padding: 20px;
+        padding: 18px;
+        border-radius: 22px;
     }
 
     .page-header {
@@ -3619,6 +4090,68 @@ onBeforeUnmount(() => {
         align-items: stretch;
     }
 
+    .header-actions .primary-btn,
+    .section-head>.ghost-btn,
+    .section-head>.primary-btn {
+        width: 100%;
+    }
+
+    .overview-summary-bar {
+        gap: 8px;
+    }
+
+    .overview-summary-bar .plan-status-chip {
+        flex: 1 1 calc(50% - 8px);
+        justify-content: flex-start;
+        border-radius: 14px;
+    }
+
+    .task-board-table-wrap,
+    .history-table-wrap,
+    .station-overview-table-wrap,
+    .manage-plan-table-wrap,
+    .detail-station-table-wrap {
+        display: none;
+    }
+
+    .mobile-plan-list,
+    .mobile-history-list,
+    .mobile-overview-station-list,
+    .mobile-manage-plan-list,
+    .mobile-detail-station-list {
+        display: block;
+    }
+
+    .mobile-filter-strip {
+        display: flex;
+    }
+
+    .mobile-card-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .mobile-card-head>.plan-status-chip,
+    .mobile-card-head>.status-chip {
+        align-self: flex-start;
+    }
+
+    .mobile-card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .mobile-card-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .mobile-progress-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .mobile-progress-head strong {
+        white-space: normal;
+    }
 
     .plan-config-panel {
         grid-template-columns: 1fr;
@@ -3645,21 +4178,93 @@ onBeforeUnmount(() => {
     .table-filter-select {
         width: 100%;
         min-width: 0;
+        min-height: 44px;
+        border-radius: 14px;
+    }
+
+    .route-summary-panel {
+        flex-direction: column;
+        padding: 14px;
+        border-radius: 18px;
+    }
+
+    .route-summary-title {
+        font-size: 17px;
+    }
+
+    .route-summary-badges {
+        width: 100%;
+        max-width: none;
+        justify-content: flex-start;
+    }
+
+    .route-origin-strip,
+    .route-control-card,
+    .route-suggest,
+    .route-batch-card,
+    .route-step,
+    .route-empty-state {
+        padding: 14px;
+        border-radius: 16px;
+    }
+
+    .route-suggest-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .route-suggest .pick-list {
+        max-height: 128px;
+    }
+
+    .route-step {
+        gap: 12px;
+    }
+
+    .route-index {
+        width: 30px;
+        height: 30px;
     }
 
     .plan-dialog-overlay {
-        padding: 12px;
+        align-items: flex-end;
+        padding: 0;
     }
 
     .plan-dialog {
-        padding: 16px;
+        width: 100%;
+        padding: 18px;
         max-height: 92vh;
+        border-radius: 24px 24px 0 0;
     }
 
     .plan-dialog-header,
     .plan-dialog-actions {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .plan-dialog-meta span {
+        width: 100%;
+        justify-content: flex-start;
+        border-radius: 14px;
+    }
+
+    .plan-dialog-body {
+        gap: 14px;
+    }
+
+    .manage-create-panel,
+    .plan-config-panel,
+    .plan-dialog-tip {
+        padding: 14px;
+        border-radius: 18px;
+    }
+
+    .plan-dialog-actions .ghost-btn,
+    .plan-dialog-actions .primary-btn {
+        width: 100%;
+        height: 44px;
     }
 
     .manage-plan-actions {

@@ -1,5 +1,5 @@
 <template>
-    <div v-if="hasPermission" class="page-shell">
+    <div v-if="hasPermission" class="page-shell" :class="{ 'edit-mode': canEdit }">
         <div class="page-header card-surface">
             <div>
                 <div class="page-kicker">证照管理</div>
@@ -17,7 +17,10 @@
         </div>
 
         <div v-if="pageError" class="message-card error-card">{{ pageError }}</div>
-        <div v-if="actionMessage" class="message-card success-card">{{ actionMessage }}</div>
+
+        <transition name="toast-fade">
+            <div v-if="actionMessage" class="submit-toast" :class="actionMessageType">{{ actionMessage }}</div>
+        </transition>
 
         <div class="stats-grid">
             <div v-for="card in statCards" :key="card.label" class="card-surface stat-card">
@@ -27,7 +30,7 @@
             </div>
         </div>
 
-        <div class="content-grid">
+        <div class="content-grid" :class="{ 'edit-first': canEdit }">
             <div class="left-column">
                 <div class="card-surface section-card">
                     <div class="section-head">
@@ -37,7 +40,9 @@
                         </div>
                         <div class="inline-tags">
                             <span class="tag neutral">共 {{ filteredCertificateRows.length }} 条</span>
-                            <span v-if="reminderRows.length" class="tag warning">提醒 {{ reminderRows.length }}</span>
+                            <span v-if="recommendedRows.length" class="tag recommended">推荐 {{ recommendedRows.length
+                                }}</span>
+                            <span v-if="legalRows.length" class="tag legal">法定 {{ legalRows.length }}</span>
                             <span v-if="expiredRows.length" class="tag danger">过期 {{ expiredRows.length }}</span>
                         </div>
                     </div>
@@ -65,10 +70,10 @@
                             <label>到期状态</label>
                             <select v-model="filters.status">
                                 <option value="all">全部状态</option>
-                                <option value="attention">提醒中</option>
-                                <option value="expired">已过期</option>
-                                <option value="expiring">即将到期</option>
                                 <option value="normal">正常</option>
+                                <option value="recommended">推荐提醒期</option>
+                                <option value="legal">法定提醒期</option>
+                                <option value="expired">已过期</option>
                             </select>
                         </div>
                         <div class="filter-field">
@@ -115,12 +120,16 @@
                                             <div class="table-sub">更新 {{ row.updated_at || '-' }}</div>
                                         </td>
                                         <td>
-                                            <span class="status-chip neutral">提前 {{ getReminderDays(row) }} 天</span>
+                                            <div class="rule-mini">推荐：{{ getRecommendedLabel(row) }}</div>
+                                            <div class="table-sub">法定：{{ getLegalLabel(row) }}</div>
                                         </td>
                                         <td>
-                                            <span :class="['status-chip', getStatusMeta(row).className]">
-                                                {{ getStatusMeta(row).label }}
-                                            </span>
+                                            <div class="status-cell">
+                                                <span :class="['status-chip', getStatusMeta(row).className]">
+                                                    {{ getStatusMeta(row).label }}
+                                                </span>
+                                                <div class="table-sub">{{ getStatusMeta(row).desc }}</div>
+                                            </div>
                                         </td>
                                         <td v-if="canEdit">
                                             <div class="row-actions">
@@ -139,6 +148,60 @@
                             </tbody>
                         </table>
                     </div>
+
+                    <div class="mobile-cert-list">
+                        <div v-if="loading" class="mobile-empty card-surface">证照台账加载中...</div>
+                        <div v-else-if="!filteredCertificateRows.length" class="mobile-empty card-surface">
+                            当前筛选条件下暂无证照记录。
+                        </div>
+                        <div v-else class="mobile-cert-cards">
+                            <div v-for="row in filteredCertificateRows" :key="row.id" class="mobile-cert-card card-surface">
+                                <div class="mobile-card-head">
+                                    <div>
+                                        <div class="mobile-card-category">{{ row.certificate_name }}</div>
+                                        <div class="mobile-card-code">{{ row.station_name || '-' }}</div>
+                                    </div>
+                                    <span :class="['status-chip', getStatusMeta(row).className]">
+                                        {{ getStatusMeta(row).label }}
+                                    </span>
+                                </div>
+
+                                <div class="mobile-card-body">
+                                    <div class="mobile-card-row">
+                                        <span>所属片区</span>
+                                        <strong>{{ row.region || '暂无片区' }}</strong>
+                                    </div>
+                                    <div class="mobile-card-row">
+                                        <span>起始日期</span>
+                                        <strong>{{ row.start_date || '未录入' }}</strong>
+                                    </div>
+                                    <div class="mobile-card-row">
+                                        <span>到期时间</span>
+                                        <strong>{{ row.expiry_date || '-' }}</strong>
+                                    </div>
+                                    <div class="mobile-card-row">
+                                        <span>推荐提醒</span>
+                                        <strong>{{ getRecommendedLabel(row) }}</strong>
+                                    </div>
+                                    <div class="mobile-card-row">
+                                        <span>法定提醒</span>
+                                        <strong>{{ getLegalLabel(row) }}</strong>
+                                    </div>
+                                    <div class="mobile-card-row mobile-card-row-top">
+                                        <span>状态说明</span>
+                                        <div class="mobile-card-text">{{ getStatusMeta(row).desc }}</div>
+                                    </div>
+                                </div>
+
+                                <div v-if="canEdit" class="mobile-card-actions">
+                                    <button class="ghost-btn" type="button" @click="editCertificate(row)">编辑</button>
+                                    <button class="ghost-btn danger-btn" type="button" @click="deleteCertificate(row)">
+                                        删除
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card-surface section-card">
@@ -155,16 +218,18 @@
                             <div class="summary-note">{{ item.note }}</div>
                             <div class="summary-meta">
                                 <span>已录入 {{ item.recorded }} 条</span>
+                                <span :class="{ recommended: item.recommended > 0 }">推荐 {{ item.recommended }}</span>
+                                <span :class="{ legal: item.legal > 0 }">法定 {{ item.legal }}</span>
                                 <span :class="{ danger: item.expired > 0 }">过期 {{ item.expired }}</span>
-                                <span :class="{ warning: item.expiring > 0 }">提醒 {{ item.expiring }}</span>
                             </div>
+                            <div class="summary-rule">{{ item.rule }}</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="right-column">
-                <div v-if="canEdit" class="card-surface section-card">
+                <div v-if="canEdit" class="card-surface section-card entry-card">
                     <div class="section-head compact">
                         <div>
                             <div class="section-kicker">维护证照</div>
@@ -238,7 +303,7 @@
                     </div>
 
                     <div v-if="!urgentReminderRows.length" class="empty-alert">
-                        当前没有进入提醒期或已过期的证照。
+                        当前没有进入推荐提醒期、法定提醒期或已过期的证照。
                     </div>
                     <div v-else class="alert-list">
                         <div v-for="row in urgentReminderRows" :key="row.id" class="alert-item"
@@ -249,7 +314,7 @@
                                     {{ row.station_name }} · {{ row.certificate_name }}
                                 </div>
                                 <div class="alert-desc">
-                                    有效期至 {{ row.expiry_date }}，{{ getStatusMeta(row).label }}。
+                                    有效期至 {{ row.expiry_date }}，{{ getStatusMeta(row).desc }}。
                                 </div>
                             </div>
                         </div>
@@ -260,18 +325,17 @@
                     <div class="section-kicker">提醒规则</div>
                     <h3>到期前自动进入提醒</h3>
                     <div class="rule-list">
-                        <div class="rule-item">
-                            <span class="rule-mark danger">90</span>
+                        <div v-for="type in certificateTypes" :key="type.code" class="rule-item">
+                            <span class="rule-mark"
+                                :class="type.code === 'dangerous_chemicals_permit' ? 'danger' : 'warning'">
+                                {{ getLegalDays(type) }}
+                            </span>
                             <div>
-                                <div class="rule-title">危险化学品经营许可证</div>
-                                <div class="rule-desc">提前三个月进入提醒期，便于预留换证办理时间。</div>
-                            </div>
-                        </div>
-                        <div class="rule-item">
-                            <span class="rule-mark warning">30</span>
-                            <div>
-                                <div class="rule-title">其他证照</div>
-                                <div class="rule-desc">默认提前 30 天提醒，已过期证照会置顶展示。</div>
+                                <div class="rule-title">{{ type.name }}</div>
+                                <div class="rule-desc">
+                                    推荐：{{ getRecommendedLabel(type) }}；法定：{{ getLegalLabel(type) }}。
+                                </div>
+                                <div class="rule-desc">{{ type.rule }}</div>
                             </div>
                         </div>
                     </div>
@@ -289,16 +353,69 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 const DEFAULT_CERTIFICATE_TYPES = [
-    { code: 'business_license', name: '工商营业执照', note: '站点主体基础证照', reminder_days: 30 },
-    { code: 'oil_retail_permit', name: '成品油零售经营许可证', note: '加油站核心经营许可', reminder_days: 30 },
-    { code: 'dangerous_chemicals_permit', name: '危险化学品经营许可证', note: '危化经营相关许可，提前三个月提醒', reminder_days: 90 },
-    { code: 'pollutant_discharge_permit', name: '排污许可证', note: '环保相关证照', reminder_days: 30 },
-    { code: 'lightning_protection_report', name: '防雷检测报告', note: '检测报告类材料', reminder_days: 30 },
-    { code: 'tax_registration_certificate', name: '税务登记证', note: '历史台账类证照', reminder_days: 30 },
-    { code: 'tobacco_monopoly_permit', name: '烟草专卖许可证', note: '便利店涉烟业务证件', reminder_days: 30 }
+    {
+        code: 'dangerous_chemicals_permit',
+        name: '危险化学品经营许可证',
+        note: '危化证继续经营应在有效期满90天前申请延期。',
+        recommended_reminder_days: 150,
+        legal_reminder_days: 90,
+        recommended_label: '到期前 150天',
+        legal_label: '到期前 90天',
+        rule: '150天进入推荐提醒；90天内进入法定提醒。危化证继续经营应在有效期满90天前申请延期。'
+    },
+    {
+        code: 'oil_retail_permit',
+        name: '成品油零售经营批准证书',
+        note: '成品油零售经营批准证书继续经营应在届满30日前申请延续。',
+        recommended_reminder_days: 90,
+        legal_reminder_days: 30,
+        recommended_label: '到期前 90天',
+        legal_label: '到期前 30天',
+        rule: '90天进入推荐提醒；30天内进入法定提醒。成品油零售经营批准证书继续经营应在届满30日前申请延续。'
+    },
+    {
+        code: 'pollutant_discharge_permit',
+        name: '排污许可证',
+        note: '排污许可证继续排污应在届满60日前申请延续。',
+        recommended_reminder_days: 120,
+        legal_reminder_days: 60,
+        recommended_label: '到期前 120天',
+        legal_label: '到期前 60天',
+        rule: '120天进入推荐提醒；60天内进入法定提醒。排污许可证继续排污应在届满60日前申请延续。'
+    },
+    {
+        code: 'lightning_protection_report',
+        name: '防雷检测报告',
+        note: '加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。',
+        recommended_reminder_days: 30,
+        legal_reminder_days: 7,
+        recommended_label: '到期前 30天',
+        legal_label: '到期前 7天',
+        rule: '30天进入推荐提醒；7天内进入法定提醒。加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。'
+    },
+    {
+        code: 'tobacco_monopoly_permit',
+        name: '烟草专卖零售许可证',
+        note: '烟草专卖许可证继续经营应在届满30日前申请延续。',
+        recommended_reminder_days: 60,
+        legal_reminder_days: 30,
+        recommended_label: '到期前 60天',
+        legal_label: '到期前 30天',
+        rule: '60天进入推荐提醒；30天内进入法定提醒。烟草专卖许可证继续经营应在届满30日前申请延续。'
+    },
+    {
+        code: 'business_license',
+        name: '工商营业执照',
+        note: '只有存在经营期限时才提醒。',
+        recommended_reminder_days: 90,
+        legal_reminder_days: 30,
+        recommended_label: '到期前 90天',
+        legal_label: '到期前 30天',
+        rule: '新版营业执照照面通常不再记载营业期限，但电子营业执照或企业信用公示系统可能仍显示经营期限；因此只有存在经营期限时才提醒。'
+    }
 ]
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
@@ -309,6 +426,8 @@ const loading = ref(false)
 const saving = ref(false)
 const pageError = ref('')
 const actionMessage = ref('')
+const actionMessageType = ref('info')
+let actionMessageTimer = null
 const certificateTypes = ref(DEFAULT_CERTIFICATE_TYPES)
 const stations = ref([])
 const certificateRows = ref([])
@@ -357,7 +476,7 @@ const typeMap = computed(() => {
 
 const selectedTypeNote = computed(() => {
     if (!certificateForm.certificate_type) return '到期时间必填，起始日期可按实际情况补充。'
-    return getTypeMeta(certificateForm.certificate_type).note
+    return getTypeMeta(certificateForm.certificate_type).rule
 })
 
 const getTypeMeta = (typeCode) => {
@@ -365,15 +484,44 @@ const getTypeMeta = (typeCode) => {
         code: typeCode,
         name: typeCode || '-',
         note: '自定义证照类型',
-        reminder_days: 30
+        recommended_reminder_days: 30,
+        legal_reminder_days: 7,
+        recommended_label: '到期前 30天',
+        legal_label: '到期前 7天',
+        rule: '未配置专门提醒规则，默认30天进入推荐提醒，7天内进入法定提醒。'
     }
 }
 
-const getReminderDays = (rowOrTypeCode) => {
+const getRecommendedDays = (rowOrTypeCode) => {
     if (typeof rowOrTypeCode === 'string') {
-        return Number(getTypeMeta(rowOrTypeCode).reminder_days || 30)
+        return Number(getTypeMeta(rowOrTypeCode).recommended_reminder_days || 30)
     }
-    return Number(rowOrTypeCode?.reminder_days || getTypeMeta(rowOrTypeCode?.certificate_type).reminder_days || 30)
+    return Number(rowOrTypeCode?.recommended_reminder_days ||
+        getTypeMeta(rowOrTypeCode?.certificate_type).recommended_reminder_days ||
+        30)
+}
+
+const getLegalDays = (rowOrTypeCode) => {
+    if (typeof rowOrTypeCode === 'string') {
+        return Number(getTypeMeta(rowOrTypeCode).legal_reminder_days || 7)
+    }
+    return Number(rowOrTypeCode?.legal_reminder_days ||
+        getTypeMeta(rowOrTypeCode?.certificate_type).legal_reminder_days ||
+        7)
+}
+
+const getRecommendedLabel = (rowOrTypeCode) => {
+    const meta = typeof rowOrTypeCode === 'string'
+        ? getTypeMeta(rowOrTypeCode)
+        : getTypeMeta(rowOrTypeCode?.certificate_type)
+    return rowOrTypeCode?.recommended_label || meta.recommended_label || `到期前 ${getRecommendedDays(rowOrTypeCode)}天`
+}
+
+const getLegalLabel = (rowOrTypeCode) => {
+    const meta = typeof rowOrTypeCode === 'string'
+        ? getTypeMeta(rowOrTypeCode)
+        : getTypeMeta(rowOrTypeCode?.certificate_type)
+    return rowOrTypeCode?.legal_label || meta.legal_label || `到期前 ${getLegalDays(rowOrTypeCode)}天`
 }
 
 const parseDate = (value) => {
@@ -403,30 +551,43 @@ const getStatusMeta = (row) => {
 
     if (daysLeft < 0) {
         return {
-            label: `已过期 ${Math.abs(daysLeft)} 天`,
+            label: '已过期',
+            desc: `已过期 ${Math.abs(daysLeft)} 天`,
             className: 'danger',
             tone: 'expired',
             daysLeft
         }
     }
 
-    if (daysLeft <= getReminderDays(row)) {
+    if (daysLeft <= getLegalDays(row)) {
         return {
-            label: daysLeft === 0 ? '今天到期' : `${daysLeft} 天后到期`,
-            className: 'warning',
-            tone: 'warning',
+            label: '法定提醒期',
+            desc: daysLeft === 0 ? '今天到期' : `${daysLeft} 天后到期，已进入法定提醒节点`,
+            className: 'legal',
+            tone: 'legal',
             daysLeft
         }
     }
 
-    return { label: '正常', className: 'success', tone: 'normal', daysLeft }
+    if (daysLeft <= getRecommendedDays(row)) {
+        return {
+            label: '推荐提醒期',
+            desc: `${daysLeft} 天后到期，建议提前启动办理`,
+            className: 'recommended',
+            tone: 'recommended',
+            daysLeft
+        }
+    }
+
+    return { label: '正常', desc: `${daysLeft} 天后到期`, className: 'success', tone: 'normal', daysLeft }
 }
 
 const statusRank = (row) => {
     const tone = getStatusMeta(row).tone
     if (tone === 'expired') return 0
-    if (tone === 'warning') return 1
-    if (tone === 'missing') return 2
+    if (tone === 'legal') return 1
+    if (tone === 'recommended') return 2
+    if (tone === 'missing') return 4
     return 3
 }
 
@@ -448,9 +609,9 @@ const filteredCertificateRows = computed(() => {
         const matchedStation = filters.stationId === 'all' || String(row.station_id) === filters.stationId
         const matchedType = filters.certificateType === 'all' || row.certificate_type === filters.certificateType
         const matchedStatus = filters.status === 'all' ||
-            (filters.status === 'attention' && ['expired', 'warning'].includes(statusTone)) ||
+            (filters.status === 'recommended' && statusTone === 'recommended') ||
+            (filters.status === 'legal' && statusTone === 'legal') ||
             (filters.status === 'expired' && statusTone === 'expired') ||
-            (filters.status === 'expiring' && statusTone === 'warning') ||
             (filters.status === 'normal' && statusTone === 'normal')
         const matchedKeyword = !keyword ||
             String(row.station_name || '').toLowerCase().includes(keyword) ||
@@ -461,30 +622,33 @@ const filteredCertificateRows = computed(() => {
 })
 
 const reminderRows = computed(() => {
-    return sortedCertificateRows.value.filter((row) => ['expired', 'warning'].includes(getStatusMeta(row).tone))
+    return sortedCertificateRows.value.filter((row) => ['expired', 'legal', 'recommended'].includes(getStatusMeta(row).tone))
 })
 
 const urgentReminderRows = computed(() => reminderRows.value.slice(0, 8))
 const expiredRows = computed(() => sortedCertificateRows.value.filter((row) => getStatusMeta(row).tone === 'expired'))
+const legalRows = computed(() => sortedCertificateRows.value.filter((row) => getStatusMeta(row).tone === 'legal'))
+const recommendedRows = computed(() => sortedCertificateRows.value.filter((row) => getStatusMeta(row).tone === 'recommended'))
+const normalRows = computed(() => sortedCertificateRows.value.filter((row) => getStatusMeta(row).tone === 'normal'))
 
 const statCards = computed(() => [
     {
-        label: canEdit.value ? '管理站点数' : '当前站点',
-        value: canEdit.value ? stations.value.length : (currentStationName.value || '本站'),
-        desc: canEdit.value ? '可维护证照台账的站点数量' : '本账号仅展示所属站点证照',
-        valueClass: canEdit.value ? '' : 'small'
-    },
-    {
-        label: '已录入证照',
-        value: certificateRows.value.length,
-        desc: '仅统计实际已录入的证照记录',
+        label: '正常',
+        value: normalRows.value.length,
+        desc: '未进入任何提醒节点',
         valueClass: ''
     },
     {
-        label: '提醒中',
-        value: reminderRows.value.length,
-        desc: '包含即将到期和已过期证照',
-        valueClass: reminderRows.value.length ? 'warning' : ''
+        label: '推荐提醒期',
+        value: recommendedRows.value.length,
+        desc: '建议提前启动换证办理',
+        valueClass: recommendedRows.value.length ? 'recommended' : ''
+    },
+    {
+        label: '法定提醒期',
+        value: legalRows.value.length,
+        desc: '已进入法规要求的办理节点',
+        valueClass: legalRows.value.length ? 'legal' : ''
     },
     {
         label: '已过期',
@@ -498,22 +662,32 @@ const certificateSummary = computed(() => {
     return certificateTypes.value.map((type) => {
         const rows = certificateRows.value.filter((row) => row.certificate_type === type.code)
         const expired = rows.filter((row) => getStatusMeta(row).tone === 'expired').length
-        const expiring = rows.filter((row) => getStatusMeta(row).tone === 'warning').length
+        const legal = rows.filter((row) => getStatusMeta(row).tone === 'legal').length
+        const recommended = rows.filter((row) => getStatusMeta(row).tone === 'recommended').length
         return {
             ...type,
             recorded: rows.length,
             expired,
-            expiring
+            legal,
+            recommended
         }
     })
 })
 
-const setActionMessage = (message) => {
+const setActionMessage = (message, type = 'info') => {
+    if (actionMessageTimer) {
+        window.clearTimeout(actionMessageTimer)
+        actionMessageTimer = null
+    }
+
+    actionMessageType.value = type
     actionMessage.value = message
     if (!message) return
-    window.setTimeout(() => {
+
+    actionMessageTimer = window.setTimeout(() => {
         actionMessage.value = ''
-    }, 2600)
+        actionMessageTimer = null
+    }, 2400)
 }
 
 const resetCertificateForm = () => {
@@ -533,6 +707,7 @@ const editCertificate = (row) => {
     certificateForm.expiry_date = row.expiry_date || ''
     certificateForm.remark = row.remark || ''
     setActionMessage('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 const fetchCertificateData = async () => {
@@ -561,6 +736,7 @@ const fetchCertificateData = async () => {
         }
     } catch (error) {
         pageError.value = error?.response?.data?.error || '证照台账加载失败，请稍后重试。'
+        setActionMessage(pageError.value, 'error')
     } finally {
         loading.value = false
     }
@@ -571,6 +747,7 @@ const saveCertificate = async () => {
 
     if (!certificateForm.station_id || !certificateForm.certificate_type || !certificateForm.expiry_date) {
         pageError.value = '请完整填写站点、证照类型和到期时间。'
+        setActionMessage(pageError.value, 'error')
         return
     }
 
@@ -585,11 +762,12 @@ const saveCertificate = async () => {
             expiry_date: certificateForm.expiry_date,
             remark: certificateForm.remark || ''
         })
-        setActionMessage('证照有效期已保存。')
+        setActionMessage('证照有效期已保存。', 'success')
         resetCertificateForm()
         await fetchCertificateData()
     } catch (error) {
         pageError.value = error?.response?.data?.error || '证照保存失败，请稍后重试。'
+        setActionMessage(pageError.value, 'error')
     } finally {
         saving.value = false
     }
@@ -605,16 +783,24 @@ const deleteCertificate = async (row) => {
         await axios.delete(`/api/station-certificates/${row.id}`, {
             data: { user_id: currentUserId.value }
         })
-        setActionMessage('证照记录已删除。')
+        setActionMessage('证照记录已删除。', 'success')
         if (certificateForm.id === row.id) resetCertificateForm()
         await fetchCertificateData()
     } catch (error) {
         pageError.value = error?.response?.data?.error || '证照删除失败，请稍后重试。'
+        setActionMessage(pageError.value, 'error')
     }
 }
 
 onMounted(() => {
     fetchCertificateData()
+})
+
+onBeforeUnmount(() => {
+    if (actionMessageTimer) {
+        window.clearTimeout(actionMessageTimer)
+        actionMessageTimer = null
+    }
 })
 </script>
 
@@ -754,6 +940,49 @@ onMounted(() => {
     border: 1px solid #bbf7d0;
 }
 
+.submit-toast {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    z-index: 1600;
+    width: min(calc(100vw - 32px), 420px);
+    transform: translate(-50%, -50%);
+    padding: 12px 14px;
+    border: 1px solid #bfdbfe;
+    border-radius: 14px;
+    background: rgba(239, 246, 255, 0.98);
+    color: #2563eb;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(8px);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.7;
+    text-align: center;
+}
+
+.submit-toast.success {
+    color: #166534;
+    background: rgba(236, 253, 245, 0.98);
+    border-color: #bbf7d0;
+}
+
+.submit-toast.error {
+    color: #b91c1c;
+    background: rgba(254, 242, 242, 0.98);
+    border-color: #fecaca;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 12px));
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -784,6 +1013,14 @@ onMounted(() => {
 }
 
 .stat-value.warning {
+    color: #c2410c;
+}
+
+.stat-value.recommended {
+    color: #b45309;
+}
+
+.stat-value.legal {
     color: #c2410c;
 }
 
@@ -851,6 +1088,18 @@ onMounted(() => {
 
 .tag.warning,
 .status-chip.warning {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.tag.recommended,
+.status-chip.recommended {
+    background: #fffbeb;
+    color: #b45309;
+}
+
+.tag.legal,
+.status-chip.legal {
     background: #fff7ed;
     color: #c2410c;
 }
@@ -1015,8 +1264,23 @@ onMounted(() => {
     color: #c2410c;
 }
 
+.summary-meta .recommended {
+    color: #b45309;
+}
+
+.summary-meta .legal {
+    color: #c2410c;
+}
+
 .summary-meta .danger {
     color: #dc2626;
+}
+
+.summary-rule {
+    margin-top: 10px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
 }
 
 .certificate-form {
@@ -1028,6 +1292,12 @@ onMounted(() => {
 .form-actions {
     justify-content: flex-end;
     padding-top: 4px;
+}
+
+.entry-card {
+    border-color: #bfdbfe;
+    background:
+        linear-gradient(135deg, rgba(239, 246, 255, 0.92) 0%, rgba(255, 255, 255, 0.98) 62%, rgba(255, 251, 235, 0.8) 100%);
 }
 
 .readonly-card {
@@ -1062,6 +1332,16 @@ onMounted(() => {
     background: #fffaf2;
 }
 
+.alert-item.legal {
+    border-color: #fed7aa;
+    background: #fffaf2;
+}
+
+.alert-item.recommended {
+    border-color: #fde68a;
+    background: #fffdf4;
+}
+
 .alert-dot {
     width: 10px;
     height: 10px;
@@ -1073,6 +1353,14 @@ onMounted(() => {
 
 .alert-item.expired .alert-dot {
     background: #ef4444;
+}
+
+.alert-item.legal .alert-dot {
+    background: #f97316;
+}
+
+.alert-item.recommended .alert-dot {
+    background: #f59e0b;
 }
 
 .empty-alert {
@@ -1109,6 +1397,133 @@ onMounted(() => {
 .rule-mark.warning {
     color: #c2410c;
     background: #fff7ed;
+}
+
+.rule-mini {
+    font-size: 13px;
+    font-weight: 800;
+    color: #0f172a;
+    white-space: nowrap;
+}
+
+.status-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.mobile-cert-list {
+    display: none;
+}
+
+.mobile-cert-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.mobile-cert-card {
+    padding: 16px;
+    border-radius: 18px;
+}
+
+.mobile-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.mobile-card-category {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.mobile-card-code {
+    margin-top: 8px;
+    color: #0f172a;
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.35;
+}
+
+.mobile-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 14px;
+}
+
+.mobile-card-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.mobile-card-row:last-child {
+    border-bottom: none;
+}
+
+.mobile-card-row span {
+    flex: 0 0 82px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.mobile-card-row strong {
+    flex: 1;
+    color: #0f172a;
+    font-size: 14px;
+    line-height: 1.6;
+    text-align: right;
+}
+
+.mobile-card-row-top {
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mobile-card-text {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.mobile-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.mobile-card-actions .ghost-btn {
+    width: 100%;
+    min-height: 40px;
+}
+
+.mobile-empty {
+    padding: 18px;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.8;
+    text-align: center;
 }
 
 .permission-card {
@@ -1148,6 +1563,7 @@ onMounted(() => {
 }
 
 @media (max-width: 1200px) {
+
     .stats-grid,
     .filter-grid,
     .content-grid {
@@ -1165,6 +1581,14 @@ onMounted(() => {
     .stat-card,
     .section-card {
         padding: 20px;
+    }
+
+    .page-shell.edit-mode .content-grid {
+        order: 1;
+    }
+
+    .page-shell.edit-mode .stats-grid {
+        order: 2;
     }
 
     .page-header {
@@ -1187,6 +1611,82 @@ onMounted(() => {
     .filter-grid,
     .summary-grid {
         grid-template-columns: 1fr;
+    }
+
+    .stats-grid {
+        gap: 12px;
+    }
+
+    .table-wrap {
+        display: none;
+    }
+
+    .mobile-cert-list {
+        display: block;
+    }
+
+    .mobile-cert-card {
+        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.07);
+    }
+
+    .mobile-card-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .mobile-card-head .status-chip {
+        align-self: flex-start;
+    }
+
+    .content-grid.edit-first .right-column {
+        order: -1;
+    }
+
+    .entry-card {
+        padding: 18px;
+        border-radius: 24px;
+        box-shadow: 0 18px 42px rgba(37, 99, 235, 0.12);
+    }
+
+    .entry-card .section-head {
+        margin-bottom: 12px;
+    }
+
+    .certificate-form {
+        gap: 12px;
+    }
+
+    .form-field select,
+    .form-field input {
+        height: 46px;
+        border-radius: 14px;
+        font-size: 15px;
+    }
+
+    .form-field textarea {
+        min-height: 88px;
+        border-radius: 14px;
+        font-size: 15px;
+    }
+
+    .form-actions {
+        position: static;
+        padding: 0;
+        border: none;
+        background: transparent;
+        backdrop-filter: none;
+        gap: 10px;
+    }
+
+    .form-actions .ghost-btn,
+    .form-actions .primary-btn {
+        width: 100%;
+        height: 44px;
+    }
+
+    .submit-toast {
+        width: min(calc(100vw - 24px), 420px);
+        font-size: 13px;
     }
 }
 </style>
