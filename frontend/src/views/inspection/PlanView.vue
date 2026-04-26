@@ -3,9 +3,13 @@
         <div class="page-header card-surface">
             <div>
                 <div class="page-kicker">巡检计划</div>
-                <h2>巡检计划样板页面</h2>
+                <h2>巡检计划</h2>
             </div>
-            <div class="header-actions"></div>
+            <div class="header-actions">
+                <button v-if="isPlanManager" class="primary-btn" type="button" @click="openManagePlansDialog">
+                    管理计划
+                </button>
+            </div>
         </div>
 
         <div v-if="hasPermission" class="page-content">
@@ -83,15 +87,140 @@
                     <div class="card-surface section-card">
                         <div class="section-head">
                             <div>
+                                <div class="section-kicker">历史计划</div>
+                                <h3>已创建巡检计划历史</h3>
+                            </div>
+                            <button class="ghost-btn" type="button" @click="resetHistoryFilters">
+                                重置筛选
+                            </button>
+                        </div>
+
+                        <div class="history-filter-grid">
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">检查表</label>
+                                    <span class="overview-inline-tag info">{{ historySelectedTableLabel }}</span>
+                                </div>
+                                <select class="month-picker-select planner-table-select"
+                                    v-model="historyFilters.tableName">
+                                    <option value="all">全部检查表</option>
+                                    <option v-for="tableName in historyTableOptions" :key="tableName"
+                                        :value="tableName">
+                                        {{ tableName }}
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">计划时间</label>
+                                    <span class="overview-inline-tag neutral">{{ historySelectedPeriodLabel }}</span>
+                                </div>
+                                <select class="month-picker-select planner-table-select"
+                                    v-model="historyFilters.periodKey">
+                                    <option value="all">全部时间</option>
+                                    <option v-for="period in historyPeriodOptions" :key="period" :value="period">
+                                        {{ period }}
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">创建月份</label>
+                                    <span class="overview-inline-tag neutral">{{ historySelectedCreatedMonthLabel
+                                        }}</span>
+                                </div>
+                                <input class="month-picker-select planner-table-select" type="month"
+                                    v-model="historyFilters.createdMonth" />
+                            </div>
+
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">排序</label>
+                                    <span class="overview-inline-tag neutral">创建时间</span>
+                                </div>
+                                <select class="month-picker-select planner-table-select"
+                                    v-model="historyFilters.sortOrder">
+                                    <option value="desc">从晚到早</option>
+                                    <option value="asc">从早到晚</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="overview-summary-bar">
+                            <span class="plan-status-chip neutral">历史计划：{{ filteredHistoryPlanRows.length }}</span>
+                            <span class="plan-status-chip editable">已完成计划：{{ historyFinishedPlanCount }}</span>
+                            <span class="plan-status-chip readonly">未完成计划：{{ historyPendingPlanCount }}</span>
+                        </div>
+
+                        <div class="table-wrap">
+                            <table class="plan-table history-plan-table">
+                                <thead>
+                                    <tr>
+                                        <th>创建时间</th>
+                                        <th>检查表</th>
+                                        <th>覆盖要求</th>
+                                        <th>计划时间</th>
+                                        <th>完成状态</th>
+                                        <th>历史完成情况</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-if="!filteredHistoryPlanRows.length && !isLoadingTaskBoard">
+                                        <td colspan="6" class="table-empty-cell">当前筛选条件下暂无历史计划。</td>
+                                    </tr>
+                                    <tr v-if="isLoadingTaskBoard">
+                                        <td colspan="6" class="table-empty-cell">历史计划加载中...</td>
+                                    </tr>
+                                    <tr v-for="item in filteredHistoryPlanRows" :key="item.id">
+                                        <td>
+                                            <div class="table-title">{{ formatPlanDateTime(item.created_at) }}</div>
+                                            <div class="table-sub">更新 {{ formatPlanDateTime(item.updated_at) }}</div>
+                                        </td>
+                                        <td>
+                                            <div class="table-title">{{ item.inspection_table_name || '-' }}</div>
+                                            <div class="table-sub">计划编号 #{{ item.id }}</div>
+                                        </td>
+                                        <td>
+                                            <span class="plan-status-chip neutral">
+                                                {{ coverageTypeLabelMap[item.coverage_type] || item.coverage_type || '-'
+                                                }}
+                                            </span>
+                                        </td>
+                                        <td>{{ item.period_key || '-' }}</td>
+                                        <td>
+                                            <span :class="['status-chip', getHistoryPlanCompletionClass(item)]">
+                                                {{ getHistoryPlanCompletionLabel(item) }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="progress-cell progress-cell-wide">
+                                                <div class="progress-bar">
+                                                    <div class="progress-fill"
+                                                        :style="{ width: `${Number(item.completion_rate || 0)}%` }">
+                                                    </div>
+                                                </div>
+                                                <span>{{ Number(item.completed_station_count || 0) }}/{{
+                                                    Number(item.included_station_count || 0) }}（{{
+                                                        Number(item.completion_rate || 0) }}%）</span>
+                                            </div>
+                                            <div class="table-sub">未完成 {{ Number(item.pending_station_count || 0) }}
+                                                个站点</div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card-surface section-card">
+                        <div class="section-head">
+                            <div>
                                 <div class="section-kicker">数据总览</div>
                                 <h3>检查表计划数据总览</h3>
                             </div>
 
-
-                            <button v-if="isPlanManager" class="primary-btn" type="button"
-                                @click="openOverviewPlanDetail">
-                                配置计划
-                            </button>
 
                         </div>
 
@@ -100,7 +229,7 @@
                                 <div class="overview-field-head">
                                     <label class="field-label">选择检查表</label>
                                     <span class="overview-inline-tag info">{{ overviewSelectedTable?.name || '-'
-                                        }}</span>
+                                    }}</span>
                                 </div>
                                 <select class="month-picker-select planner-table-select"
                                     v-model="overviewSelectedTableName">
@@ -318,11 +447,26 @@
                             <button class="ghost-btn" type="button" @click="regenerateRouteBatches">重新生成</button>
                         </div>
 
-                        <div class="route-desc">
-                            当前按照“{{ getCoverageConfigLabel(selectedTemplate) }} / {{ selectedTemplate?.name || '-'
-                            }}”生成今日出发建议。
-                            出发点固定为世纪大道1200号（经纬度 121.531347,
-                            31.225426），系统优先从该检查表当前配置周期内已纳入计划且尚未完成的站点中，组合出若干批最适合当天出发的顺路站点方案。
+                        <div class="route-summary-panel">
+                            <div class="route-summary-main">
+                                <div class="route-summary-label">当前计划</div>
+                                <div class="route-summary-title">{{ selectedTemplate?.name || '-' }}</div>
+                                <div class="route-summary-sub">{{ getCoverageConfigLabel(selectedTemplate) }}</div>
+                            </div>
+                            <div class="route-summary-badges">
+                                <span class="plan-status-chip neutral">待安排 {{ suggestedStops.length }}</span>
+                                <span class="plan-status-chip info">{{ routeStationCount }} 站/组</span>
+                            </div>
+                        </div>
+
+                        <div class="route-origin-strip">
+                            <div>
+                                <div class="route-summary-label">固定出发点</div>
+                                <div class="route-origin-name">业务督导中心</div>
+                            </div>
+                            <div class="route-origin-coord">
+                                {{ routeOrigin.address }} · {{ routeOrigin.lng }}, {{ routeOrigin.lat }}
+                            </div>
                         </div>
 
                         <div class="route-control-panel">
@@ -338,23 +482,24 @@
                             </div>
 
                             <div class="route-control-card">
-                                <div class="pick-title">固定出发点</div>
-                                <div class="route-origin-box">
-                                    <div class="route-origin-name">业务督导中心</div>
-                                    <div class="route-origin-coord">经纬度：121.531347, 31.225426</div>
+                                <div class="pick-title">生成范围</div>
+                                <div class="route-control-desc">
+                                    仅从当前检查表计划内尚未完成的站点生成路线建议。
                                 </div>
                             </div>
                         </div>
 
                         <div class="route-suggest">
-                            <div class="pick-title">当前检查表计划内未完成站点</div>
+                            <div class="route-suggest-head">
+                                <div class="pick-title">当前计划内未完成站点</div>
+                                <span class="route-count-pill">{{ suggestedStops.length }} 个</span>
+                            </div>
                             <div class="pick-list">
                                 <span v-for="item in suggestedStops" :key="item" class="tag warning">{{ item }}</span>
                                 <span v-if="suggestedStops.length === 0" class="tag success">当前计划内站点已全部完成</span>
                             </div>
                             <div class="route-helper-text">
-                                当前按“{{ routeStationCount }}
-                                个站点为一组”生成推荐方案；系统仅从该检查表当前配置周期内“已纳入计划且尚未完成”的站点中生成出发建议，不再补入“已纳入计划但已完成”或“未纳入计划”的站点。
+                                当前按“{{ routeStationCount }} 个站点为一组”生成推荐方案；已完成或未纳入计划的站点不会补入。
                             </div>
                             <div v-if="suggestedStops.length > 0 && suggestedStops.length < routeStationCount"
                                 class="route-helper-warning">
@@ -367,7 +512,7 @@
                             <div v-for="(batch, batchIndex) in routeBatches" :key="batchIndex" class="route-batch-card">
                                 <div class="route-batch-head">
                                     <div class="route-batch-title">推荐方案 {{ batchIndex + 1 }}</div>
-                                    <div class="route-batch-meta">共 {{ batch.stations.length }} 个站点 · 预计路线长度最优样板</div>
+                                    <div class="route-batch-meta">共 {{ batch.stations.length }} 个站点 · 按当前未完成站点生成</div>
                                 </div>
 
                                 <div class="route-line">
@@ -387,6 +532,7 @@
                             当前选中检查表暂无可展示的路线建议，请先配置当前检查表计划站点。
                         </div>
                     </div>
+
                 </div>
             </div>
         </div>
@@ -395,6 +541,170 @@
             <div class="permission-icon">!</div>
             <div class="permission-title">无权限访问</div>
             <div class="permission-desc">当前账号无权访问巡检计划页面，请使用督导组账号登录后操作。</div>
+        </div>
+    </div>
+
+    <div v-if="manageDialog.visible" class="plan-dialog-overlay" @click.self="closeManagePlansDialog">
+        <div class="card-surface plan-dialog manage-plan-dialog">
+            <div class="plan-dialog-header">
+                <div>
+                    <div class="section-kicker">管理计划</div>
+                    <h3>巡检计划管理</h3>
+                    <div class="plan-dialog-meta">
+                        <span>可新建、编辑、删除任一检查表计划</span>
+                        <span>计划创建后即发布，可随时调整</span>
+                    </div>
+                </div>
+                <button class="ghost-btn" type="button" @click="closeManagePlansDialog">关闭</button>
+            </div>
+
+            <div class="plan-dialog-body">
+                <div class="manage-create-panel">
+                    <div class="section-head compact">
+                        <div>
+                            <div class="section-kicker">新建计划</div>
+                            <h3>选择检查表与计划周期</h3>
+                        </div>
+                        <button class="primary-btn" type="button" :disabled="!manageDraftRow.inspectionTableId"
+                            @click="openManagedPlanCreate">
+                            新建计划
+                        </button>
+                    </div>
+
+                    <div class="manage-plan-form-grid">
+                        <div class="plan-config-field">
+                            <label class="field-label">检查表</label>
+                            <select class="month-picker-select planner-table-select"
+                                v-model="manageDraftRow.inspectionTableId">
+                                <option v-for="item in inspectionTablesCatalog" :key="item.id" :value="item.id">
+                                    {{ item.table_name }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <div class="plan-config-field">
+                            <label class="field-label">覆盖要求</label>
+                            <select class="coverage-select detail-coverage-select" v-model="manageDraftRow.coverageType"
+                                @change="handleCoverageTypeChange(manageDraftRow)">
+                                <option value="monthly">月度覆盖</option>
+                                <option value="quarterly">季度覆盖</option>
+                                <option value="yearly">年度覆盖</option>
+                            </select>
+                        </div>
+
+                        <div class="plan-config-field manage-period-field">
+                            <label class="field-label">时间配置</label>
+
+                            <div class="detail-period-flex" :class="{
+                                'two-columns': manageDraftRow.coverageType === 'monthly' || manageDraftRow.coverageType === 'quarterly',
+                                'one-column': manageDraftRow.coverageType === 'yearly'
+                            }">
+                                <select class="month-picker-select detail-period-select"
+                                    :value="getDetailPeriodYear(manageDraftRow)"
+                                    @change="setDetailPeriodYear(manageDraftRow, $event.target.value)">
+                                    <option v-for="year in detailPeriodYearOptions" :key="year" :value="year">
+                                        {{ year }}年
+                                    </option>
+                                </select>
+
+                                <select v-if="manageDraftRow.coverageType === 'monthly'"
+                                    class="month-picker-select detail-period-select"
+                                    :value="getDetailPeriodMonth(manageDraftRow)"
+                                    @change="setDetailPeriodMonth(manageDraftRow, $event.target.value)">
+                                    <option v-for="month in detailPeriodMonthOptions" :key="month" :value="month">
+                                        {{ month }}月
+                                    </option>
+                                </select>
+
+                                <select v-if="manageDraftRow.coverageType === 'quarterly'"
+                                    class="month-picker-select detail-period-select"
+                                    :value="getDetailPeriodQuarter(manageDraftRow)"
+                                    @change="setDetailPeriodQuarter(manageDraftRow, $event.target.value)">
+                                    <option v-for="quarter in detailPeriodQuarterOptions" :key="quarter.value"
+                                        :value="quarter.value">
+                                        {{ quarter.label }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="manageDraftCoverageConflictRows.length" class="manage-warning">
+                        当前检查表已有 {{ manageDraftCoverageConflictCoverageText }} 计划。继续新建
+                        {{ coverageTypeLabelMap[manageDraftRow.coverageType] }} 计划时，系统会删除此前不同覆盖要求的计划。
+                    </div>
+                </div>
+
+                <div class="overview-summary-bar">
+                    <span class="plan-status-chip neutral">全部计划：{{ managedPlanRows.length }}</span>
+                    <span class="plan-status-chip editable">已完成：{{ managedFinishedPlanCount }}</span>
+                    <span class="plan-status-chip readonly">未完成：{{ managedPendingPlanCount }}</span>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="plan-table manage-plan-table">
+                        <thead>
+                            <tr>
+                                <th>检查表</th>
+                                <th>覆盖要求</th>
+                                <th>计划时间</th>
+                                <th>完成状态</th>
+                                <th>完成情况</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="!managedPlanRows.length && !isLoadingTaskBoard">
+                                <td colspan="6" class="table-empty-cell">当前暂无已创建的巡检计划。</td>
+                            </tr>
+                            <tr v-if="isLoadingTaskBoard">
+                                <td colspan="6" class="table-empty-cell">计划列表加载中...</td>
+                            </tr>
+                            <tr v-for="item in managedPlanRows" :key="item.id">
+                                <td>
+                                    <div class="table-title">{{ item.inspection_table_name || '-' }}</div>
+                                    <div class="table-sub">创建 {{ formatPlanDateTime(item.created_at) }}</div>
+                                </td>
+                                <td>
+                                    <span class="plan-status-chip neutral">
+                                        {{ coverageTypeLabelMap[item.coverage_type] || item.coverage_type || '-' }}
+                                    </span>
+                                </td>
+                                <td>{{ item.period_key || '-' }}</td>
+                                <td>
+                                    <span :class="['status-chip', getHistoryPlanCompletionClass(item)]">
+                                        {{ getHistoryPlanCompletionLabel(item) }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="progress-cell progress-cell-wide">
+                                        <div class="progress-bar">
+                                            <div class="progress-fill"
+                                                :style="{ width: `${Number(item.completion_rate || 0)}%` }">
+                                            </div>
+                                        </div>
+                                        <span>{{ Number(item.completed_station_count || 0) }}/{{
+                                            Number(item.included_station_count || 0) }}（{{
+                                                Number(item.completion_rate || 0) }}%）</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="manage-plan-actions">
+                                        <button class="ghost-btn mini-action-btn" type="button"
+                                            @click="openManagedPlanEdit(item)">
+                                            编辑
+                                        </button>
+                                        <button class="ghost-btn mini-action-btn danger" type="button"
+                                            @click="deleteManagedPlan(item)">
+                                            删除
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -687,7 +997,7 @@ const inferScopeByName = (tableName) => {
 const createPlanRowFromTable = (table) => ({
     inspectionTableId: table?.id ?? null,
     planConfigId: null,
-    status: 'draft',
+    status: 'active',
     name: table?.table_name || table?.name || '未命名检查表',
     scope: inferScopeByName(table?.table_name || table?.name),
     coverageType: 'monthly',
@@ -705,6 +1015,136 @@ const overviewRowsState = ref([])
 const selectedTemplateStationsState = ref([])
 const isLoadingOverview = ref(false)
 const isLoadingTaskBoard = ref(false)
+const manageDialog = ref({
+    visible: false
+})
+const historyFilters = ref({
+    tableName: 'all',
+    periodKey: 'all',
+    createdMonth: '',
+    sortOrder: 'desc'
+})
+
+const parsePlanDate = (value) => {
+    if (!value) return null
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date
+}
+
+const padDatePart = (value) => String(value).padStart(2, '0')
+
+const formatPlanDateTime = (value) => {
+    const date = parsePlanDate(value)
+    if (!date) return value ? String(value) : '-'
+
+    const year = date.getFullYear()
+    const month = padDatePart(date.getMonth() + 1)
+    const day = padDatePart(date.getDate())
+    const hour = padDatePart(date.getHours())
+    const minute = padDatePart(date.getMinutes())
+    return `${year}-${month}-${day} ${hour}:${minute}`
+}
+
+const getPlanCreatedMonth = (value) => {
+    const date = parsePlanDate(value)
+    if (!date) return ''
+    return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}`
+}
+
+const isHistoryPlanFinished = (item) => {
+    const includedCount = Number(item?.included_station_count || 0)
+    const completedCount = Number(item?.completed_station_count || 0)
+    return includedCount > 0 && completedCount >= includedCount
+}
+
+const getHistoryPlanCompletionLabel = (item) => {
+    return isHistoryPlanFinished(item) ? '已完成' : '未完成'
+}
+
+const getHistoryPlanCompletionClass = (item) => {
+    return isHistoryPlanFinished(item) ? 'success' : 'warning'
+}
+
+const historyTableOptions = computed(() => {
+    const names = planConfigList.value
+        .map((item) => item.inspection_table_name)
+        .filter(Boolean)
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+})
+
+const historyPeriodOptions = computed(() => {
+    const sourceRows = historyFilters.value.tableName === 'all'
+        ? planConfigList.value
+        : planConfigList.value.filter((item) => item.inspection_table_name === historyFilters.value.tableName)
+    const periods = sourceRows
+        .map((item) => item.period_key)
+        .filter(Boolean)
+    return Array.from(new Set(periods))
+})
+
+const historySelectedTableLabel = computed(() => {
+    return historyFilters.value.tableName === 'all' ? '全部' : historyFilters.value.tableName
+})
+
+const historySelectedPeriodLabel = computed(() => {
+    return historyFilters.value.periodKey === 'all' ? '全部' : historyFilters.value.periodKey
+})
+
+const historySelectedCreatedMonthLabel = computed(() => {
+    return historyFilters.value.createdMonth || '不限'
+})
+
+const filteredHistoryPlanRows = computed(() => {
+    const rows = [...planConfigList.value]
+        .filter((item) => {
+            const matchedTable = historyFilters.value.tableName === 'all' ||
+                item.inspection_table_name === historyFilters.value.tableName
+            const matchedPeriod = historyFilters.value.periodKey === 'all' ||
+                item.period_key === historyFilters.value.periodKey
+            const matchedCreatedMonth = !historyFilters.value.createdMonth ||
+                getPlanCreatedMonth(item.created_at) === historyFilters.value.createdMonth
+            return matchedTable && matchedPeriod && matchedCreatedMonth
+        })
+
+    return rows.sort((a, b) => {
+        const aTime = parsePlanDate(a.created_at)?.getTime() || 0
+        const bTime = parsePlanDate(b.created_at)?.getTime() || 0
+        return historyFilters.value.sortOrder === 'asc' ? aTime - bTime : bTime - aTime
+    })
+})
+
+const historyFinishedPlanCount = computed(() => {
+    return filteredHistoryPlanRows.value.filter((item) => isHistoryPlanFinished(item)).length
+})
+
+const historyPendingPlanCount = computed(() => {
+    return filteredHistoryPlanRows.value.length - historyFinishedPlanCount.value
+})
+
+const resetHistoryFilters = () => {
+    historyFilters.value = {
+        tableName: 'all',
+        periodKey: 'all',
+        createdMonth: '',
+        sortOrder: 'desc'
+    }
+}
+
+const managedPlanRows = computed(() => {
+    return [...planConfigList.value].sort((a, b) => {
+        const aTime = parsePlanDate(a.created_at)?.getTime() || 0
+        const bTime = parsePlanDate(b.created_at)?.getTime() || 0
+        return bTime - aTime
+    })
+})
+
+const managedFinishedPlanCount = computed(() => {
+    return managedPlanRows.value.filter((item) => isHistoryPlanFinished(item)).length
+})
+
+const managedPendingPlanCount = computed(() => {
+    return managedPlanRows.value.length - managedFinishedPlanCount.value
+})
 
 const parsePeriodConfig = (coverageType, periodKey) => {
     if (coverageType === 'quarterly') {
@@ -756,6 +1196,85 @@ const getRealtimePeriodKey = (coverageType) => {
 
     return `${year}年${month}月`
 }
+
+const createDefaultPeriodConfig = () => ({
+    month: getRealtimePeriodKey('monthly'),
+    quarter: getRealtimePeriodKey('quarterly'),
+    year: getRealtimePeriodKey('yearly')
+})
+
+const createManageDraftRow = () => ({
+    inspectionTableId: inspectionTablesCatalog.value[0]?.id || '',
+    coverageType: 'monthly',
+    periodConfig: createDefaultPeriodConfig()
+})
+
+const manageDraftRow = ref(createManageDraftRow())
+
+const getInspectionTableById = (inspectionTableId) => {
+    return inspectionTablesCatalog.value.find((item) => String(item.id) === String(inspectionTableId)) || null
+}
+
+const manageDraftCoverageConflictRows = computed(() => {
+    return getCoverageConflictPlanRows(
+        manageDraftRow.value.inspectionTableId,
+        manageDraftRow.value.coverageType
+    )
+})
+
+const manageDraftCoverageConflictCoverageText = computed(() => {
+    return Array.from(
+        new Set(
+            manageDraftCoverageConflictRows.value
+                .map((item) => coverageTypeLabelMap[item.coverage_type] || item.coverage_type)
+                .filter(Boolean)
+        )
+    ).join('、')
+})
+
+const getCoverageConflictPlanRows = (inspectionTableId, coverageType, currentPlanConfigId = null) => {
+    return planConfigList.value.filter((item) => {
+        const sameTable = String(item.inspection_table_id) === String(inspectionTableId)
+        const differentCoverage = item.coverage_type !== coverageType
+        const differentPlan = !currentPlanConfigId || String(item.id) !== String(currentPlanConfigId)
+        return sameTable && differentCoverage && differentPlan
+    })
+}
+
+const buildCoverageReplacementMessage = (row, conflictRows) => {
+    const tableName = row?.name || getInspectionTableById(row?.inspectionTableId)?.table_name || '当前检查表'
+    const nextCoverageLabel = coverageTypeLabelMap[row?.coverageType] || '当前覆盖要求'
+    const existingCoverageText = Array.from(
+        new Set(conflictRows.map((item) => coverageTypeLabelMap[item.coverage_type] || item.coverage_type).filter(Boolean))
+    ).join('、')
+
+    return `【${tableName}】当前已存在${existingCoverageText || '其他覆盖要求'}计划。继续保存会删除该检查表此前的${existingCoverageText || '其他覆盖要求'}计划及其关联站点明细，并改为只保留${nextCoverageLabel}计划。是否继续？`
+}
+
+const confirmCoverageReplacementIfNeeded = (row) => {
+    const conflictRows = getCoverageConflictPlanRows(row?.inspectionTableId, row?.coverageType, row?.planConfigId)
+    if (conflictRows.length === 0 || row.coverageReplacementConfirmed) return true
+
+    const confirmed = window.confirm(buildCoverageReplacementMessage(row, conflictRows))
+    if (confirmed) {
+        row.coverageReplacementConfirmed = true
+    }
+    return confirmed
+}
+
+const mapPlanConfigToPlanRow = (item) => ({
+    inspectionTableId: item?.inspection_table_id ?? null,
+    planConfigId: item?.id ?? null,
+    status: 'active',
+    name: item?.inspection_table_name || '未命名检查表',
+    scope: inferScopeByName(item?.inspection_table_name),
+    coverageType: item?.coverage_type || 'monthly',
+    periodConfig: parsePeriodConfig(item?.coverage_type || 'monthly', item?.period_key),
+    plan: Number(item?.included_station_count || 0),
+    done: Number(item?.completed_station_count || 0),
+    remaining: Number(item?.pending_station_count || 0),
+    rate: Number(item?.completion_rate || 0)
+})
 
 const statCards = computed(() => {
     const rows = planRows.value
@@ -1158,6 +1677,8 @@ const selectedTemplateStations = computed(() => selectedTemplateStationsState.va
 
 const routeStationCount = ref(3)
 const routeOrigin = {
+    name: '业务督导中心',
+    address: '世纪大道1200号',
     lng: 121.531347,
     lat: 31.225426
 }
@@ -1176,7 +1697,7 @@ const buildRouteBatch = (stations, batchIndex) => {
     return {
         stations: stations.map((item, index) => ({
             ...item,
-            note: `方案 ${batchIndex + 1} · 第 ${index + 1} 站：从固定出发点（${routeOrigin.lng}, ${routeOrigin.lat}）出发后，优先安排该站，因其属于${getCoverageConfigLabel(selectedTemplate.value)}【${selectedTemplate.value.name}】计划内未完成站点。`
+            note: `第 ${index + 1} 站：${getCoverageConfigLabel(selectedTemplate.value)}计划内未完成站点，建议从${routeOrigin.name}出发后顺路安排。`
         }))
     }
 }
@@ -1459,6 +1980,9 @@ const fetchInspectionTablesCatalog = async () => {
         if (!selectedTemplateName.value && planRows.value.length > 0) {
             selectedTemplateName.value = planRows.value[0].name
         }
+        if (!manageDraftRow.value.inspectionTableId && inspectionTablesCatalog.value.length > 0) {
+            manageDraftRow.value.inspectionTableId = inspectionTablesCatalog.value[0].id
+        }
     } catch {
         inspectionTablesCatalog.value = []
         planRows.value = []
@@ -1646,6 +2170,74 @@ const loadSelectedTemplateStations = async () => {
     }
 }
 
+const refreshPlanViews = async () => {
+    await fetchPlanConfigs()
+    if (overviewSelectedTable.value) {
+        const options = overviewConfiguredPeriodOptions.value
+        if (!options.includes(overviewSelectedPeriod.value)) {
+            overviewSelectedPeriod.value = options[0] || getRealtimePeriodKey(overviewSelectedTable.value.coverageType)
+        }
+    }
+    await Promise.all([loadOverviewData(), loadSelectedTemplateStations()])
+}
+
+const openManagePlansDialog = () => {
+    if (!isPlanManager) return
+    if (!manageDraftRow.value.inspectionTableId && inspectionTablesCatalog.value.length > 0) {
+        manageDraftRow.value.inspectionTableId = inspectionTablesCatalog.value[0].id
+    }
+    manageDialog.value.visible = true
+}
+
+const closeManagePlansDialog = () => {
+    manageDialog.value.visible = false
+}
+
+const openManagedPlanCreate = () => {
+    if (!isPlanManager) return
+    const inspectionTable = getInspectionTableById(manageDraftRow.value.inspectionTableId)
+    if (!inspectionTable) {
+        window.alert('请先选择检查表。')
+        return
+    }
+
+    const row = createPlanRowFromTable(inspectionTable)
+    row.inspectionTableId = inspectionTable.id
+    row.name = inspectionTable.table_name
+    row.coverageType = manageDraftRow.value.coverageType
+    row.periodConfig = { ...(manageDraftRow.value.periodConfig || createDefaultPeriodConfig()) }
+    row.planConfigId = null
+    row.status = 'active'
+
+    if (!confirmCoverageReplacementIfNeeded(row)) return
+
+    openPlanDetail(row)
+}
+
+const openManagedPlanEdit = (item) => {
+    if (!isPlanManager) return
+    openPlanDetail(mapPlanConfigToPlanRow(item))
+}
+
+const deleteManagedPlan = async (item) => {
+    if (!isPlanManager || !item?.id) return
+
+    const confirmed = window.confirm(`确定删除【${item.inspection_table_name || '当前检查表'}】${item.period_key || ''}计划吗？`)
+    if (!confirmed) return
+
+    try {
+        await requestJson(`/api/inspection-plan-configs/${item.id}`, {
+            method: 'DELETE',
+            body: JSON.stringify({
+                user_id: currentUserId
+            })
+        })
+        await refreshPlanViews()
+    } catch (error) {
+        window.alert(error.message || '删除计划失败。')
+    }
+}
+
 const openPlanDetail = async (row) => {
     detailCurrentPage.value = 1
     detailAreaFilter.value = 'all'
@@ -1721,6 +2313,8 @@ const savePlanDetail = async () => {
         return
     }
 
+    if (!confirmCoverageReplacementIfNeeded(row)) return
+
     try {
         const periodKey = getPeriodKey(row)
         let planConfigId = row.planConfigId
@@ -1732,7 +2326,6 @@ const savePlanDetail = async () => {
                     user_id: currentUserId,
                     coverage_type: row.coverageType,
                     period_key: periodKey,
-                    status: row.status || 'draft',
                     remark: row.remark || ''
                 })
             })
@@ -1745,7 +2338,6 @@ const savePlanDetail = async () => {
                         inspection_table_id: row.inspectionTableId,
                         coverage_type: row.coverageType,
                         period_key: periodKey,
-                        status: row.status || 'draft',
                         remark: row.remark || ''
                     })
                 })
@@ -1754,6 +2346,15 @@ const savePlanDetail = async () => {
                 const existingId = error?.existing_id || error?.payload?.existing_id
                 if (existingId) {
                     planConfigId = existingId
+                    await requestJson(`/api/inspection-plan-configs/${planConfigId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                            user_id: currentUserId,
+                            coverage_type: row.coverageType,
+                            period_key: periodKey,
+                            remark: row.remark || ''
+                        })
+                    })
                 } else {
                     throw error
                 }
@@ -1855,34 +2456,6 @@ onBeforeUnmount(() => {
     document.removeEventListener('scroll', refreshActiveOverviewFilterPopoverPosition, true)
     document.removeEventListener('scroll', refreshActiveDetailFilterPopoverPosition, true)
 })
-
-const openOverviewPlanDetail = () => {
-    if (!overviewSelectedTable.value) return
-
-    const row = {
-        ...overviewSelectedTable.value,
-        periodConfig: parsePeriodConfig(
-            overviewSelectedTable.value.coverageType,
-            overviewSelectedPeriod.value
-        )
-    }
-
-    const matchedConfig = planConfigList.value.find(
-        (item) =>
-            item.inspection_table_id === row.inspectionTableId &&
-            item.coverage_type === row.coverageType &&
-            item.period_key === overviewSelectedPeriod.value
-    )
-
-    if (matchedConfig) {
-        row.planConfigId = matchedConfig.id
-        row.status = matchedConfig.status || row.status
-    } else {
-        row.planConfigId = null
-    }
-
-    openPlanDetail(row)
-}
 
 </script>
 
@@ -2134,7 +2707,6 @@ const openOverviewPlanDetail = () => {
 .rule-desc,
 .route-note,
 .planner-hint,
-.route-desc,
 .highlight-card p,
 .station-meta {
     margin-top: 6px;
@@ -2181,6 +2753,17 @@ const openOverviewPlanDetail = () => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 16px;
+}
+
+.history-filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.history-plan-table {
+    min-width: 980px;
 }
 
 .overview-field {
@@ -2289,6 +2872,11 @@ const openOverviewPlanDetail = () => {
     color: #475569;
 }
 
+.status-chip.neutral {
+    background: #f1f5f9;
+    color: #475569;
+}
+
 .tag.dark {
     background: #0f172a;
     color: #fff;
@@ -2317,28 +2905,95 @@ const openOverviewPlanDetail = () => {
     line-height: 1.2;
 }
 
+.route-summary-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    margin-bottom: 14px;
+    border: 1px solid #dbeafe;
+    border-radius: 18px;
+    background:
+        linear-gradient(135deg, rgba(239, 246, 255, 0.96) 0%, rgba(248, 250, 252, 0.98) 58%, rgba(255, 247, 237, 0.82) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.route-summary-main {
+    min-width: 0;
+}
+
+.route-summary-label {
+    font-size: 12px;
+    font-weight: 800;
+    color: #64748b;
+    letter-spacing: 0.04em;
+}
+
+.route-summary-title {
+    margin-top: 8px;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
+.route-summary-sub {
+    margin-top: 6px;
+    color: #2563eb;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.route-summary-badges {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    max-width: 160px;
+}
+
+.route-origin-strip {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 13px 16px;
+    margin-bottom: 14px;
+    border-radius: 16px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+}
+
 .route-control-panel {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
 }
 
 .route-control-card {
-    padding: 14px 16px;
+    min-width: 0;
+    padding: 15px 16px;
     border-radius: 16px;
     border: 1px solid #dbe4ee;
     background: #f8fafc;
+}
+
+.route-control-desc {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.8;
 }
 
 .route-count-select {
     width: 100%;
 }
 
-.route-origin-box {
-    margin-top: 10px;
-}
-
 .route-origin-name {
+    margin-top: 8px;
     font-size: 15px;
     font-weight: 800;
     color: #0f172a;
@@ -2351,21 +3006,62 @@ const openOverviewPlanDetail = () => {
     color: #64748b;
 }
 
+.route-suggest {
+    padding: 15px 16px;
+    margin-bottom: 16px;
+    border-radius: 18px;
+    border: 1px solid #dbe4ee;
+    background: #fff;
+}
+
+.route-suggest-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.route-suggest-head .pick-title {
+    margin-bottom: 0;
+}
+
+.route-count-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.route-suggest .pick-list {
+    align-items: flex-start;
+    max-height: 142px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
 .route-batch-list {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 16px;
 }
 
 .route-batch-card {
-    padding: 14px 16px;
-    border-radius: 16px;
+    padding: 16px;
+    border-radius: 18px;
     border: 1px solid #dbe4ee;
-    background: #f8fafc;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
 
 .route-batch-head {
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
 
 .route-batch-title {
@@ -2381,6 +3077,12 @@ const openOverviewPlanDetail = () => {
     color: #64748b;
 }
 
+.route-line {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
 .mini-btn {
     min-width: 90px;
     height: 34px;
@@ -2388,8 +3090,8 @@ const openOverviewPlanDetail = () => {
 }
 
 .route-index {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: 999px;
     display: flex;
     align-items: center;
@@ -2402,17 +3104,23 @@ const openOverviewPlanDetail = () => {
 }
 
 .route-step {
-    padding: 14px 16px;
+    position: relative;
+    padding: 15px 16px;
     border-radius: 16px;
     border: 1px solid #dbe4ee;
-    background: #f8fafc;
+    background: #fff;
     display: flex;
-    gap: 12px;
+    gap: 13px;
     align-items: flex-start;
 }
 
+.route-content {
+    min-width: 0;
+}
+
 .route-empty-state {
-    padding: 14px 16px;
+    margin-top: 16px;
+    padding: 15px 16px;
     border-radius: 16px;
     border: 1px dashed #cbd5e1;
     background: #f8fafc;
@@ -2510,6 +3218,65 @@ const openOverviewPlanDetail = () => {
     display: flex;
     flex-direction: column;
     gap: 18px;
+}
+
+.manage-plan-dialog {
+    width: min(1180px, 100%);
+}
+
+.manage-create-panel {
+    padding: 16px;
+    border-radius: 16px;
+    background: #f8fafc;
+    border: 1px solid #dbe4ee;
+}
+
+.manage-plan-form-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.72fr) minmax(260px, 1fr);
+    gap: 14px;
+    align-items: end;
+}
+
+.manage-period-field {
+    min-width: 0;
+}
+
+.manage-warning {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #c2410c;
+    font-size: 13px;
+    line-height: 1.8;
+}
+
+.manage-plan-table {
+    min-width: 980px;
+}
+
+.manage-plan-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+}
+
+.mini-action-btn {
+    height: 34px;
+    padding: 0 12px;
+}
+
+.mini-action-btn.danger {
+    border-color: #fecaca;
+    color: #dc2626;
+    background: #fff;
+}
+
+.mini-action-btn.danger:hover {
+    background: #fef2f2;
 }
 
 .plan-dialog-tip {
@@ -2816,6 +3583,14 @@ const openOverviewPlanDetail = () => {
     .overview-toolbar {
         grid-template-columns: 1fr;
     }
+
+    .history-filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .manage-plan-form-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 768px) {
@@ -2862,6 +3637,10 @@ const openOverviewPlanDetail = () => {
         gap: 6px;
     }
 
+    .history-filter-grid {
+        grid-template-columns: 1fr;
+    }
+
     .month-picker-select,
     .table-filter-select {
         width: 100%;
@@ -2881,6 +3660,10 @@ const openOverviewPlanDetail = () => {
     .plan-dialog-actions {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .manage-plan-actions {
+        flex-wrap: wrap;
     }
 
     .plan-detail-table th,

@@ -120,9 +120,8 @@
           <span v-if="!sidebarCollapsed">巡检计划</span>
         </button>
 
-        <button v-if="currentRole !== 'station_manager'" class="nav-item"
-          :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
+        <button class="nav-item" :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">证照管理</span>
         </button>

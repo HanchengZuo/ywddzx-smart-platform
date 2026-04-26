@@ -38,6 +38,53 @@ COVERAGE_TYPE_LABELS = {
     "yearly": "年度覆盖",
 }
 
+CERTIFICATE_TYPES = [
+    {
+        "code": "business_license",
+        "name": "工商营业执照",
+        "note": "站点主体基础证照",
+        "reminder_days": 30,
+    },
+    {
+        "code": "oil_retail_permit",
+        "name": "成品油零售经营许可证",
+        "note": "加油站核心经营许可",
+        "reminder_days": 30,
+    },
+    {
+        "code": "dangerous_chemicals_permit",
+        "name": "危险化学品经营许可证",
+        "note": "危化经营相关许可，提前三个月提醒",
+        "reminder_days": 90,
+    },
+    {
+        "code": "pollutant_discharge_permit",
+        "name": "排污许可证",
+        "note": "环保相关证照",
+        "reminder_days": 30,
+    },
+    {
+        "code": "lightning_protection_report",
+        "name": "防雷检测报告",
+        "note": "检测报告类材料",
+        "reminder_days": 30,
+    },
+    {
+        "code": "tax_registration_certificate",
+        "name": "税务登记证",
+        "note": "历史台账类证照",
+        "reminder_days": 30,
+    },
+    {
+        "code": "tobacco_monopoly_permit",
+        "name": "烟草专卖许可证",
+        "note": "便利店涉烟业务证件",
+        "reminder_days": 30,
+    },
+]
+
+CERTIFICATE_TYPE_BY_CODE = {item["code"]: item for item in CERTIFICATE_TYPES}
+
 
 def beijing_now():
     return datetime.now(BEIJING_TZ)
@@ -292,6 +339,65 @@ def can_manage_plan(user):
     )
 
 
+def can_manage_certificates(user):
+    return bool(user and user.get("role") == "supervisor")
+
+
+def ensure_station_certificates_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_certificates (
+            id SERIAL PRIMARY KEY,
+            station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+            certificate_type TEXT NOT NULL,
+            certificate_name TEXT NOT NULL,
+            start_date DATE,
+            expiry_date DATE NOT NULL,
+            remark TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (station_id, certificate_type)
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE station_certificates
+        ADD COLUMN IF NOT EXISTS remark TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE station_certificates
+        ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE station_certificates
+        ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_certificates_expiry_date
+        ON station_certificates (expiry_date);
+        """
+    )
+
+
+def normalize_optional_date(value):
+    value_text = str(value or "").strip()
+    if not value_text:
+        return None
+    try:
+        return datetime.strptime(value_text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("日期格式必须为 YYYY-MM-DD。") from exc
+
+
 # === Helper functions for automatic inspection-plan completion writeback ===
 
 
@@ -482,7 +588,6 @@ def mark_related_plan_items_completed(
               AND pc.inspection_table_id = %s
               AND pc.coverage_type = %s
               AND pc.period_key = %s
-              AND pc.status IN ('draft', 'active')
               AND psi.station_id = %s
               AND psi.is_included = TRUE;
             """,
@@ -1194,6 +1299,265 @@ def get_stations():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/station-certificates", methods=["GET"])
+def get_station_certificates():
+    user_id = str(request.args.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_certificates_table(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if user["role"] not in ("supervisor", "station_manager"):
+            return jsonify({"success": False, "error": "当前账号无权访问证照管理。"}), 403
+
+        station_params = []
+        station_where = ""
+        if user["role"] == "station_manager":
+            if not user["station_id"]:
+                return jsonify(
+                    {
+                        "success": True,
+                        "certificate_types": CERTIFICATE_TYPES,
+                        "stations": [],
+                        "records": [],
+                    }
+                )
+            station_where = "WHERE id = %s"
+            station_params.append(user["station_id"])
+
+        cur.execute(
+            f"""
+            SELECT
+                id,
+                station_name,
+                region,
+                address,
+                station_type,
+                asset_type,
+                status
+            FROM stations
+            {station_where}
+            ORDER BY region NULLS LAST, station_name ASC, id ASC;
+            """,
+            tuple(station_params),
+        )
+        stations = cur.fetchall()
+
+        record_params = []
+        record_where = ""
+        if user["role"] == "station_manager":
+            record_where = "WHERE sc.station_id = %s"
+            record_params.append(user["station_id"])
+
+        cur.execute(
+            f"""
+            SELECT
+                sc.id,
+                sc.station_id,
+                s.station_name,
+                s.region,
+                s.asset_type,
+                sc.certificate_type,
+                sc.certificate_name,
+                TO_CHAR(sc.start_date, 'YYYY-MM-DD') AS start_date,
+                TO_CHAR(sc.expiry_date, 'YYYY-MM-DD') AS expiry_date,
+                sc.remark,
+                TO_CHAR(sc.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(sc.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM station_certificates sc
+            JOIN stations s ON sc.station_id = s.id
+            {record_where}
+            ORDER BY sc.expiry_date ASC, s.station_name ASC, sc.certificate_name ASC;
+            """,
+            tuple(record_params),
+        )
+        records = cur.fetchall()
+
+        for record in records:
+            type_meta = CERTIFICATE_TYPE_BY_CODE.get(record["certificate_type"], {})
+            record["reminder_days"] = type_meta.get("reminder_days", 30)
+
+        return jsonify(
+            {
+                "success": True,
+                "certificate_types": CERTIFICATE_TYPES,
+                "stations": stations,
+                "records": records,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/station-certificates", methods=["POST"])
+def save_station_certificate():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    station_id = data.get("station_id")
+    certificate_type = str(data.get("certificate_type", "")).strip()
+    remark = str(data.get("remark", "")).strip() or None
+
+    if not station_id:
+        return jsonify({"success": False, "error": "请选择站点。"}), 400
+
+    if certificate_type not in CERTIFICATE_TYPE_BY_CODE:
+        return jsonify({"success": False, "error": "请选择有效的证照类型。"}), 400
+
+    try:
+        start_date = normalize_optional_date(data.get("start_date"))
+        expiry_date = normalize_optional_date(data.get("expiry_date"))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    if not expiry_date:
+        return jsonify({"success": False, "error": "到期时间必须录入。"}), 400
+
+    if start_date and start_date > expiry_date:
+        return jsonify({"success": False, "error": "起始日期不能晚于到期时间。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_certificates_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_certificates(user):
+            return jsonify({"success": False, "error": "只有督导组账号可以维护证照有效期。"}), 403
+
+        cur.execute(
+            """
+            SELECT id
+            FROM stations
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (station_id,),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        type_meta = CERTIFICATE_TYPE_BY_CODE[certificate_type]
+        cur.execute(
+            """
+            INSERT INTO station_certificates (
+                station_id,
+                certificate_type,
+                certificate_name,
+                start_date,
+                expiry_date,
+                remark,
+                created_by,
+                updated_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (station_id, certificate_type)
+            DO UPDATE SET
+                certificate_name = EXCLUDED.certificate_name,
+                start_date = EXCLUDED.start_date,
+                expiry_date = EXCLUDED.expiry_date,
+                remark = EXCLUDED.remark,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id;
+            """,
+            (
+                station_id,
+                certificate_type,
+                type_meta["name"],
+                start_date,
+                expiry_date,
+                remark,
+                user["id"],
+                user["id"],
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "证照有效期已保存。",
+                "id": row["id"],
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/station-certificates/<int:certificate_id>", methods=["DELETE"])
+def delete_station_certificate(certificate_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_certificates_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_certificates(user):
+            return jsonify({"success": False, "error": "只有督导组账号可以删除证照记录。"}), 403
+
+        cur.execute(
+            """
+            DELETE FROM station_certificates
+            WHERE id = %s
+            RETURNING id;
+            """,
+            (certificate_id,),
+        )
+        deleted = cur.fetchone()
+        if not deleted:
+            return jsonify({"success": False, "error": "证照记录不存在。"}), 404
+
+        conn.commit()
+        return jsonify({"success": True, "message": "证照记录已删除。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -2036,7 +2400,7 @@ def create_inspection_plan_config():
     coverage_type = str(data.get("coverage_type", "")).strip()
     period_key = str(data.get("period_key", "")).strip()
     remark = str(data.get("remark", "")).strip() or None
-    status = str(data.get("status", "draft")).strip() or "draft"
+    status = "active"
 
     if not user_id:
         return jsonify({"success": False, "error": "缺少用户信息。"}), 400
@@ -2049,9 +2413,6 @@ def create_inspection_plan_config():
 
     if not period_key:
         return jsonify({"success": False, "error": "缺少周期标识。"}), 400
-
-    if status not in {"draft", "active", "archived"}:
-        return jsonify({"success": False, "error": "状态参数不合法。"}), 400
 
     conn = None
     cur = None
@@ -2089,6 +2450,15 @@ def create_inspection_plan_config():
 
         cur.execute(
             """
+            DELETE FROM inspection_plan_configs
+            WHERE inspection_table_id = %s
+              AND coverage_type <> %s;
+            """,
+            (inspection_table_id, coverage_type),
+        )
+
+        cur.execute(
+            """
             SELECT id
             FROM inspection_plan_configs
             WHERE inspection_table_id = %s
@@ -2101,6 +2471,7 @@ def create_inspection_plan_config():
         existing = cur.fetchone()
 
         if existing:
+            conn.commit()
             return (
                 jsonify(
                     {
@@ -2162,7 +2533,6 @@ def update_inspection_plan_config(plan_config_id):
     user_id = str(data.get("user_id", "")).strip()
     coverage_type = str(data.get("coverage_type", "")).strip()
     period_key = str(data.get("period_key", "")).strip()
-    status = str(data.get("status", "")).strip()
     remark = data.get("remark")
 
     if not user_id:
@@ -2201,7 +2571,7 @@ def update_inspection_plan_config(plan_config_id):
 
         new_coverage_type = coverage_type or current_row["coverage_type"]
         new_period_key = period_key or current_row["period_key"]
-        new_status = status or current_row["status"]
+        new_status = "active"
         new_remark = (
             current_row["remark"] if remark is None else (str(remark).strip() or None)
         )
@@ -2211,9 +2581,6 @@ def update_inspection_plan_config(plan_config_id):
 
         if not new_period_key:
             return jsonify({"success": False, "error": "缺少周期标识。"}), 400
-
-        if new_status not in {"draft", "active", "archived"}:
-            return jsonify({"success": False, "error": "状态参数不合法。"}), 400
 
         cur.execute(
             """
@@ -2248,6 +2615,16 @@ def update_inspection_plan_config(plan_config_id):
 
         cur.execute(
             """
+            DELETE FROM inspection_plan_configs
+            WHERE inspection_table_id = %s
+              AND coverage_type <> %s
+              AND id <> %s;
+            """,
+            (current_row["inspection_table_id"], new_coverage_type, plan_config_id),
+        )
+
+        cur.execute(
+            """
             UPDATE inspection_plan_configs
             SET coverage_type = %s,
                 period_key = %s,
@@ -2270,6 +2647,60 @@ def update_inspection_plan_config(plan_config_id):
         sync_plan_station_items_completion_by_history(cur, plan_config_id)
         conn.commit()
         return jsonify({"success": True, "message": "巡检计划配置更新成功。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-configs/<int:plan_config_id>", methods=["DELETE"])
+def delete_inspection_plan_config(plan_config_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_plan(user):
+            return (
+                jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
+                403,
+            )
+
+        cur.execute(
+            """
+            SELECT id
+            FROM inspection_plan_configs
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (plan_config_id,),
+        )
+        current_row = cur.fetchone()
+
+        if not current_row:
+            return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+
+        cur.execute(
+            "DELETE FROM inspection_plan_configs WHERE id = %s;",
+            (plan_config_id,),
+        )
+
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检计划删除成功。"})
     except Exception as e:
         if conn:
             conn.rollback()
