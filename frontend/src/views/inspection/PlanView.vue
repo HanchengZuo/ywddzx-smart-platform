@@ -170,7 +170,7 @@
                                 <div class="overview-field-head">
                                     <label class="field-label">创建月份</label>
                                     <span class="overview-inline-tag neutral">{{ historySelectedCreatedMonthLabel
-                                        }}</span>
+                                    }}</span>
                                 </div>
                                 <input class="month-picker-select planner-table-select" type="month"
                                     v-model="historyFilters.createdMonth" />
@@ -327,7 +327,7 @@
                                 <div class="overview-field-head">
                                     <label class="field-label">选择检查表</label>
                                     <span class="overview-inline-tag info">{{ overviewSelectedTable?.name || '-'
-                                    }}</span>
+                                        }}</span>
                                 </div>
                                 <select class="month-picker-select planner-table-select"
                                     v-model="overviewSelectedTableName">
@@ -473,7 +473,7 @@
                                 @click.stop="toggleOverviewFilterMenu('planned', $event)">
                                 纳入计划
                                 <span v-if="overviewPlannedFilterBadgeCount > 0">{{ overviewPlannedFilterBadgeCount
-                                }}</span>
+                                    }}</span>
                             </button>
                             <button class="mobile-filter-btn" type="button"
                                 @click.stop="toggleOverviewFilterMenu('done', $event)">
@@ -879,7 +879,7 @@
                                 <div class="mobile-card-row">
                                     <span>覆盖要求</span>
                                     <strong>{{ coverageTypeLabelMap[item.coverage_type] || item.coverage_type || '-'
-                                    }}</strong>
+                                        }}</strong>
                                 </div>
                                 <div class="mobile-card-row">
                                     <span>完成情况</span>
@@ -891,12 +891,14 @@
                             <div class="mobile-progress-block">
                                 <div class="progress-bar">
                                     <div class="progress-fill"
-                                        :style="{ width: `${Number(item.completion_rate || 0)}%` }"></div>
+                                        :style="{ width: `${Number(item.completion_rate || 0)}%` }">
+                                    </div>
                                 </div>
                             </div>
 
                             <div class="mobile-card-actions">
-                                <button class="ghost-btn mini-action-btn" type="button" @click="openManagedPlanEdit(item)">
+                                <button class="ghost-btn mini-action-btn" type="button"
+                                    @click="openManagedPlanEdit(item)">
                                     编辑
                                 </button>
                                 <button class="ghost-btn mini-action-btn danger" type="button"
@@ -1130,8 +1132,7 @@
                                 </div>
                             </div>
 
-                            <label v-if="isPlanManager" class="mobile-plan-toggle"
-                                :class="{ disabled: station.done }">
+                            <label v-if="isPlanManager" class="mobile-plan-toggle" :class="{ disabled: station.done }">
                                 <input type="checkbox" :checked="station.planned" :disabled="station.done"
                                     @change="toggleStationPlan(station)" />
                                 <span>{{ station.done ? '已完成站点不可调整' : '调整是否纳入当前计划' }}</span>
@@ -1233,7 +1234,7 @@ const currentUsername = localStorage.getItem('username') || ''
 const currentUserId = localStorage.getItem('user_id') || ''
 
 const hasPermission = currentRole === 'supervisor'
-const isPlanManager = ['kongdechen', 'supervisor1'].includes(currentUsername)
+const isPlanManager = ['kongdechen', 'supervisor'].includes(currentUsername)
 
 const coverageTypeLabelMap = {
     monthly: '月度覆盖',
@@ -4059,6 +4060,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+
     .page-content,
     .left-column,
     .right-column {

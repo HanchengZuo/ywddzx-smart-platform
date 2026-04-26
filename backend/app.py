@@ -31,7 +31,7 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
 }
 
 # === Inspection Plan Config constants ===
-PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor1"}
+PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -1341,7 +1341,10 @@ def get_station_certificates():
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
         if user["role"] not in ("supervisor", "station_manager"):
-            return jsonify({"success": False, "error": "当前账号无权访问证照管理。"}), 403
+            return (
+                jsonify({"success": False, "error": "当前账号无权访问证照管理。"}),
+                403,
+            )
 
         station_params = []
         station_where = ""
@@ -1477,7 +1480,12 @@ def save_station_certificate():
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
         if not can_manage_certificates(user):
-            return jsonify({"success": False, "error": "只有督导组账号可以维护证照有效期。"}), 403
+            return (
+                jsonify(
+                    {"success": False, "error": "只有督导组账号可以维护证照有效期。"}
+                ),
+                403,
+            )
 
         cur.execute(
             """
@@ -1566,7 +1574,12 @@ def delete_station_certificate(certificate_id):
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
         if not can_manage_certificates(user):
-            return jsonify({"success": False, "error": "只有督导组账号可以删除证照记录。"}), 403
+            return (
+                jsonify(
+                    {"success": False, "error": "只有督导组账号可以删除证照记录。"}
+                ),
+                403,
+            )
 
         cur.execute(
             """

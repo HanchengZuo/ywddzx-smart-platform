@@ -7,7 +7,9 @@
 
 INSERT INTO users (username, password, role, real_name, phone, station_id)
 VALUES
-('supervisor1', '123456', 'supervisor', '督导组测试账号', '13800000000', NULL),
+('supervisor', '123456', 'supervisor', '督导组开发测试账号', '13800000000', NULL),
+('kongdechen', '123456', 'supervisor', '孔德辰', '13800000000', NULL),
+('yangquanyong', '123456', 'supervisor', '杨权涌', '13800000000', NULL),
 
 ('managerspjn', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '沈浦泾南加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '沈浦泾南加油站'), (SELECT id FROM stations WHERE station_name = '沈浦泾南加油站')),
 ('managerld', '123456', 'station_manager', (SELECT station_manager_name FROM stations WHERE station_name = '乐都加油站'), (SELECT station_manager_phone FROM stations WHERE station_name = '乐都加油站'), (SELECT id FROM stations WHERE station_name = '乐都加油站')),
