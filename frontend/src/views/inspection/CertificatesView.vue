@@ -355,69 +355,6 @@
 import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
-const DEFAULT_CERTIFICATE_TYPES = [
-    {
-        code: 'dangerous_chemicals_permit',
-        name: '危险化学品经营许可证',
-        note: '危化证继续经营应在有效期满90天前申请延期。',
-        recommended_reminder_days: 150,
-        legal_reminder_days: 90,
-        recommended_label: '到期前 150天',
-        legal_label: '到期前 90天',
-        rule: '150天进入推荐提醒；90天内进入法定提醒。危化证继续经营应在有效期满90天前申请延期。'
-    },
-    {
-        code: 'oil_retail_permit',
-        name: '成品油零售经营批准证书',
-        note: '成品油零售经营批准证书继续经营应在届满30日前申请延续。',
-        recommended_reminder_days: 90,
-        legal_reminder_days: 30,
-        recommended_label: '到期前 90天',
-        legal_label: '到期前 30天',
-        rule: '90天进入推荐提醒；30天内进入法定提醒。成品油零售经营批准证书继续经营应在届满30日前申请延续。'
-    },
-    {
-        code: 'pollutant_discharge_permit',
-        name: '排污许可证',
-        note: '排污许可证继续排污应在届满60日前申请延续。',
-        recommended_reminder_days: 120,
-        legal_reminder_days: 60,
-        recommended_label: '到期前 120天',
-        legal_label: '到期前 60天',
-        rule: '120天进入推荐提醒；60天内进入法定提醒。排污许可证继续排污应在届满60日前申请延续。'
-    },
-    {
-        code: 'lightning_protection_report',
-        name: '防雷检测报告',
-        note: '加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。',
-        recommended_reminder_days: 30,
-        legal_reminder_days: 7,
-        recommended_label: '到期前 30天',
-        legal_label: '到期前 7天',
-        rule: '30天进入推荐提醒；7天内进入法定提醒。加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。'
-    },
-    {
-        code: 'tobacco_monopoly_permit',
-        name: '烟草专卖零售许可证',
-        note: '烟草专卖许可证继续经营应在届满30日前申请延续。',
-        recommended_reminder_days: 60,
-        legal_reminder_days: 30,
-        recommended_label: '到期前 60天',
-        legal_label: '到期前 30天',
-        rule: '60天进入推荐提醒；30天内进入法定提醒。烟草专卖许可证继续经营应在届满30日前申请延续。'
-    },
-    {
-        code: 'business_license',
-        name: '工商营业执照',
-        note: '只有存在经营期限时才提醒。',
-        recommended_reminder_days: 90,
-        legal_reminder_days: 30,
-        recommended_label: '到期前 90天',
-        legal_label: '到期前 30天',
-        rule: '新版营业执照照面通常不再记载营业期限，但电子营业执照或企业信用公示系统可能仍显示经营期限；因此只有存在经营期限时才提醒。'
-    }
-]
-
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const currentStationName = ref(localStorage.getItem('station_name') || '')
@@ -428,7 +365,7 @@ const pageError = ref('')
 const actionMessage = ref('')
 const actionMessageType = ref('info')
 let actionMessageTimer = null
-const certificateTypes = ref(DEFAULT_CERTIFICATE_TYPES)
+const certificateTypes = ref([])
 const stations = ref([])
 const certificateRows = ref([])
 
@@ -725,9 +662,7 @@ const fetchCertificateData = async () => {
                 _ts: Date.now()
             }
         })
-        certificateTypes.value = response.data?.certificate_types?.length
-            ? response.data.certificate_types
-            : DEFAULT_CERTIFICATE_TYPES
+        certificateTypes.value = response.data?.certificate_types || []
         stations.value = response.data?.stations || []
         certificateRows.value = response.data?.records || []
 
