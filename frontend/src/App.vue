@@ -94,6 +94,13 @@
           <span v-if="!sidebarCollapsed">巡检规范库</span>
         </button>
 
+        <button class="nav-item"
+          :class="{ active: isActive('/inspection/checklist-originals'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/checklist-originals')" :title="sidebarCollapsed ? '检查表原件库' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">检查表原件库</span>
+        </button>
+
         <button class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/my-issues')"
           :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">

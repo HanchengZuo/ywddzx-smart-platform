@@ -17,11 +17,13 @@ CORS(app)
 BASE_DIR = os.path.dirname(__file__)
 STORAGE_ROOT = os.path.join(BASE_DIR, "storage")
 MAX_IMAGE_BYTES = 500 * 1024
+MAX_PDF_BYTES = 50 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 ISSUES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issues")
 RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
 SIGNATURES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "signatures")
+INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_originals")
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -32,6 +34,7 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
 
 # === Inspection Plan Config constants ===
 PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
+CHECKLIST_ORIGINAL_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -251,6 +254,64 @@ def save_signature_file(file_storage):
     return f"/{relative_dir}/{filename}"
 
 
+def normalize_upload_display_name(filename):
+    raw_name = str(filename or "").replace("\\", "/").split("/")[-1].strip()
+    return raw_name[:180] or "检查表原件.pdf"
+
+
+def save_inspection_original_pdf(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要上传的 PDF 文件。")
+
+    original_name = normalize_upload_display_name(file_storage.filename)
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext != ".pdf":
+        raise ValueError("仅支持上传 PDF 文件。")
+
+    pdf_bytes = file_storage.read()
+    if not pdf_bytes:
+        raise ValueError("上传 PDF 内容为空。")
+
+    if len(pdf_bytes) > MAX_PDF_BYTES:
+        raise ValueError("PDF 文件不能超过 50MB。")
+
+    if not pdf_bytes.startswith(b"%PDF"):
+        raise ValueError("上传文件不是有效的 PDF 文件。")
+
+    target_dir, now = ensure_storage_subdir(INSPECTION_ORIGINALS_STORAGE_DIR)
+    filename = f"checklist_original_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}.pdf"
+    save_path = os.path.join(target_dir, filename)
+
+    with open(save_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    relative_dir = os.path.relpath(target_dir, STORAGE_ROOT).replace("\\", "/")
+    return f"/{relative_dir}/{filename}", original_name, len(pdf_bytes)
+
+
+def resolve_storage_abs_path(relative_path):
+    value = str(relative_path or "").strip()
+    if value.startswith("/storage/"):
+        value = value[len("/storage/") :]
+    elif value.startswith("/"):
+        value = value[1:]
+
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    target_path = os.path.abspath(os.path.join(storage_root_abs, value))
+    if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
+        return None
+    return target_path
+
+
+def remove_storage_file(relative_path):
+    target_path = resolve_storage_abs_path(relative_path)
+    try:
+        if target_path and os.path.isfile(target_path):
+            os.remove(target_path)
+    except OSError:
+        pass
+
+
 def get_checklist_field_meta(cur, inspection_table_id):
     cur.execute(
         """
@@ -359,6 +420,52 @@ def can_manage_plan(user):
 
 def can_manage_certificates(user):
     return bool(user and user.get("role") == "supervisor")
+
+
+def can_manage_checklist_originals(user):
+    return bool(user and user.get("username") in CHECKLIST_ORIGINAL_MANAGER_USERNAMES)
+
+
+def ensure_inspection_table_original_files_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_table_original_files (
+            id SERIAL PRIMARY KEY,
+            inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id) ON DELETE CASCADE,
+            file_path TEXT NOT NULL,
+            original_filename TEXT,
+            file_size BIGINT,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (inspection_table_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_original_files
+        ADD COLUMN IF NOT EXISTS original_filename TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_original_files
+        ADD COLUMN IF NOT EXISTS file_size BIGINT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_original_files
+        ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspection_table_original_files_table_id
+        ON inspection_table_original_files (inspection_table_id);
+        """
+    )
 
 
 def ensure_station_certificates_table(cur):
@@ -1734,7 +1841,201 @@ def get_users():
         close_db_resources(cur, conn)
 
 
-# 新增 inspection-tables API
+@app.route("/api/inspection-table-originals", methods=["GET"])
+def get_inspection_table_originals():
+    user_id = str(request.args.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_table_original_files_table(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        cur.execute(
+            """
+            SELECT
+                it.id AS inspection_table_id,
+                it.table_code,
+                it.table_name,
+                it.description,
+                it.is_active,
+                doc.id AS document_id,
+                doc.file_path,
+                doc.original_filename,
+                doc.file_size,
+                TO_CHAR(doc.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(doc.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                uploader.username AS uploaded_by_username,
+                uploader.real_name AS uploaded_by_real_name
+            FROM inspection_tables it
+            LEFT JOIN inspection_table_original_files doc
+              ON doc.inspection_table_id = it.id
+            LEFT JOIN users uploader
+              ON uploader.id = doc.uploaded_by
+            WHERE it.is_active = TRUE
+            ORDER BY it.id ASC;
+            """
+        )
+        rows = cur.fetchall()
+
+        items = []
+        for row in rows:
+            file_path = row.get("file_path")
+            items.append(
+                {
+                    "inspection_table_id": row["inspection_table_id"],
+                    "table_code": row["table_code"],
+                    "table_name": row["table_name"],
+                    "description": row["description"],
+                    "is_active": row["is_active"],
+                    "document_id": row["document_id"],
+                    "has_pdf": bool(file_path),
+                    "file_path": file_path,
+                    "file_url": f"/storage{file_path}" if file_path else "",
+                    "original_filename": row["original_filename"],
+                    "file_size": row["file_size"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "uploaded_by_username": row["uploaded_by_username"],
+                    "uploaded_by_real_name": row["uploaded_by_real_name"],
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "can_manage": can_manage_checklist_originals(user),
+                "items": items,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route(
+    "/api/inspection-table-originals/<int:inspection_table_id>/pdf",
+    methods=["POST"],
+)
+def upload_inspection_table_original_pdf(inspection_table_id):
+    user_id = str(request.form.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    pdf_file = request.files.get("pdf") or request.files.get("file")
+    new_file_path = None
+    old_file_path = None
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_table_original_files_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_manage_checklist_originals(user):
+            return jsonify({"success": False, "error": "当前账号无权上传检查表原件。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, table_name
+            FROM inspection_tables
+            WHERE id = %s AND is_active = TRUE
+            LIMIT 1;
+            """,
+            (inspection_table_id,),
+        )
+        inspection_table = cur.fetchone()
+        if not inspection_table:
+            return jsonify({"success": False, "error": "检查表不存在或未启用。"}), 404
+
+        cur.execute(
+            """
+            SELECT file_path
+            FROM inspection_table_original_files
+            WHERE inspection_table_id = %s
+            LIMIT 1;
+            """,
+            (inspection_table_id,),
+        )
+        old_row = cur.fetchone()
+        old_file_path = old_row["file_path"] if old_row else None
+
+        new_file_path, original_filename, file_size = save_inspection_original_pdf(pdf_file)
+        cur.execute(
+            """
+            INSERT INTO inspection_table_original_files (
+                inspection_table_id,
+                file_path,
+                original_filename,
+                file_size,
+                uploaded_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (inspection_table_id)
+            DO UPDATE SET
+                file_path = EXCLUDED.file_path,
+                original_filename = EXCLUDED.original_filename,
+                file_size = EXCLUDED.file_size,
+                uploaded_by = EXCLUDED.uploaded_by,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id;
+            """,
+            (
+                inspection_table_id,
+                new_file_path,
+                original_filename,
+                file_size,
+                user["id"],
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+
+        if old_file_path and old_file_path != new_file_path:
+            remove_storage_file(old_file_path)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": f"【{inspection_table['table_name']}】原件 PDF 已更新。",
+                "document_id": row["id"],
+                "file_path": new_file_path,
+                "file_url": f"/storage{new_file_path}",
+            }
+        )
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 # 新增 inspection-tables API
 @app.route("/api/inspection-tables")
 def get_inspection_tables():

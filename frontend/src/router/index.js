@@ -27,6 +27,10 @@ const routes = [
     component: InspectionStandardsView
   },
   {
+    path: '/inspection/checklist-originals',
+    component: () => import('../views/inspection/ChecklistOriginalsView.vue')
+  },
+  {
     path: '/inspection/station-map',
     component: StationMapView
   },
