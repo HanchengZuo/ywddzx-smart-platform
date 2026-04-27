@@ -18,12 +18,15 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_ROOT = os.path.join(BASE_DIR, "storage")
 MAX_IMAGE_BYTES = 500 * 1024
 MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_VIDEO_BYTES = 500 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+ALLOWED_TRAINING_MATERIAL_EXTENSIONS = {".pdf", ".mp4", ".mov", ".m4v", ".webm"}
 
 ISSUES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issues")
 RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
 SIGNATURES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "signatures")
 INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_originals")
+TRAINING_MATERIALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "training_materials")
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -35,6 +38,7 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
 # === Inspection Plan Config constants ===
 PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
 CHECKLIST_ORIGINAL_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
+TRAINING_MATERIAL_ADMIN_USERNAMES = {"supervisor", "superviosr"}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -118,6 +122,8 @@ def beijing_today():
 os.makedirs(ISSUES_STORAGE_DIR, exist_ok=True)
 os.makedirs(RECTIFICATIONS_STORAGE_DIR, exist_ok=True)
 os.makedirs(SIGNATURES_STORAGE_DIR, exist_ok=True)
+os.makedirs(INSPECTION_ORIGINALS_STORAGE_DIR, exist_ok=True)
+os.makedirs(TRAINING_MATERIALS_STORAGE_DIR, exist_ok=True)
 
 
 def get_db_connection():
@@ -289,6 +295,46 @@ def save_inspection_original_pdf(file_storage):
     return f"/{relative_dir}/{filename}", original_name, len(pdf_bytes)
 
 
+def get_training_material_file_type(extension):
+    return "pdf" if extension == ".pdf" else "video"
+
+
+def save_training_material_file(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要上传的培训材料。")
+
+    original_name = normalize_upload_display_name(file_storage.filename)
+    ext = os.path.splitext(original_name)[1].lower()
+    if ext not in ALLOWED_TRAINING_MATERIAL_EXTENSIONS:
+        raise ValueError("仅支持上传 PDF 或 MP4、MOV、M4V、WEBM 视频文件。")
+
+    file_bytes = file_storage.read()
+    if not file_bytes:
+        raise ValueError("上传文件内容为空。")
+
+    file_type = get_training_material_file_type(ext)
+    max_size = MAX_PDF_BYTES if file_type == "pdf" else MAX_VIDEO_BYTES
+    if len(file_bytes) > max_size:
+        size_label = "50MB" if file_type == "pdf" else "500MB"
+        raise ValueError(f"{'PDF' if file_type == 'pdf' else '视频'}文件不能超过 {size_label}。")
+
+    if file_type == "pdf" and not file_bytes.startswith(b"%PDF"):
+        raise ValueError("上传文件不是有效的 PDF 文件。")
+
+    target_dir, now = ensure_storage_subdir(TRAINING_MATERIALS_STORAGE_DIR)
+    filename = (
+        f"training_material_{now.strftime('%Y%m%d_%H%M%S')}_"
+        f"{uuid.uuid4().hex}{ext}"
+    )
+    save_path = os.path.join(target_dir, filename)
+
+    with open(save_path, "wb") as f:
+        f.write(file_bytes)
+
+    relative_dir = os.path.relpath(target_dir, STORAGE_ROOT).replace("\\", "/")
+    return f"/{relative_dir}/{filename}", original_name, len(file_bytes), file_type
+
+
 def resolve_storage_abs_path(relative_path):
     value = str(relative_path or "").strip()
     if value.startswith("/storage/"):
@@ -424,6 +470,78 @@ def can_manage_certificates(user):
 
 def can_manage_checklist_originals(user):
     return bool(user and user.get("username") in CHECKLIST_ORIGINAL_MANAGER_USERNAMES)
+
+
+def can_upload_training_materials(user):
+    return bool(user and user.get("role") == "supervisor")
+
+
+def can_delete_any_training_material(user):
+    return bool(user and user.get("username") in TRAINING_MATERIAL_ADMIN_USERNAMES)
+
+
+def can_edit_training_material(user, material_row):
+    if not user or not material_row:
+        return False
+    return str(material_row.get("uploaded_by") or "") == str(user.get("id") or "")
+
+
+def can_delete_training_material(user, material_row):
+    return can_edit_training_material(user, material_row) or can_delete_any_training_material(user)
+
+
+def ensure_training_materials_table(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_materials (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            original_filename TEXT,
+            file_size BIGINT,
+            uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE training_materials
+        ADD COLUMN IF NOT EXISTS title TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE training_materials
+        ADD COLUMN IF NOT EXISTS file_type TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE training_materials
+        ADD COLUMN IF NOT EXISTS original_filename TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE training_materials
+        ADD COLUMN IF NOT EXISTS file_size BIGINT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE training_materials
+        ADD COLUMN IF NOT EXISTS uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_training_materials_updated_at
+        ON training_materials (updated_at DESC);
+        """
+    )
 
 
 def ensure_inspection_table_original_files_table(cur):
@@ -1837,6 +1955,298 @@ def get_users():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/training-materials", methods=["GET"])
+def get_training_materials():
+    user_id = str(request.args.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_training_materials_table(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if user["role"] != "supervisor":
+            return jsonify({"success": False, "error": "当前账号无权访问培训材料库。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                tm.id,
+                tm.title,
+                tm.file_type,
+                tm.file_path,
+                tm.original_filename,
+                tm.file_size,
+                tm.uploaded_by,
+                TO_CHAR(tm.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(tm.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                uploader.username AS uploaded_by_username,
+                uploader.real_name AS uploaded_by_real_name
+            FROM training_materials tm
+            LEFT JOIN users uploader ON uploader.id = tm.uploaded_by
+            ORDER BY tm.updated_at DESC, tm.id DESC;
+            """
+        )
+        rows = cur.fetchall()
+        items = []
+        for row in rows:
+            file_path = row.get("file_path")
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "file_type": row["file_type"],
+                    "file_path": file_path,
+                    "file_url": f"/storage{file_path}" if file_path else "",
+                    "original_filename": row["original_filename"],
+                    "file_size": row["file_size"],
+                    "uploaded_by": row["uploaded_by"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "uploaded_by_username": row["uploaded_by_username"],
+                    "uploaded_by_real_name": row["uploaded_by_real_name"],
+                    "can_edit": can_edit_training_material(user, row),
+                    "can_delete": can_delete_training_material(user, row),
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "can_upload": can_upload_training_materials(user),
+                "can_delete_any": can_delete_any_training_material(user),
+                "items": items,
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/training-materials", methods=["POST"])
+def create_training_material():
+    user_id = str(request.form.get("user_id", "")).strip()
+    title = str(request.form.get("title", "")).strip()
+    material_file = request.files.get("file")
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+    if not title:
+        return jsonify({"success": False, "error": "请填写培训材料标题。"}), 400
+    if len(title) > 120:
+        return jsonify({"success": False, "error": "标题不能超过 120 个字符。"}), 400
+
+    new_file_path = None
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_training_materials_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_upload_training_materials(user):
+            return jsonify({"success": False, "error": "只有督导组账号可以上传培训材料。"}), 403
+
+        new_file_path, original_filename, file_size, file_type = save_training_material_file(material_file)
+        cur.execute(
+            """
+            INSERT INTO training_materials (
+                title,
+                file_type,
+                file_path,
+                original_filename,
+                file_size,
+                uploaded_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id;
+            """,
+            (title, file_type, new_file_path, original_filename, file_size, user["id"]),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "培训材料已上传。",
+                "id": row["id"],
+            }
+        )
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/training-materials/<int:material_id>", methods=["PUT"])
+def update_training_material(material_id):
+    user_id = str(request.form.get("user_id", "")).strip()
+    title = str(request.form.get("title", "")).strip()
+    material_file = request.files.get("file")
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+    if not title:
+        return jsonify({"success": False, "error": "请填写培训材料标题。"}), 400
+    if len(title) > 120:
+        return jsonify({"success": False, "error": "标题不能超过 120 个字符。"}), 400
+
+    new_file_path = None
+    old_file_path = None
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_training_materials_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if user["role"] != "supervisor":
+            return jsonify({"success": False, "error": "当前账号无权维护培训材料。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, uploaded_by, file_path
+            FROM training_materials
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (material_id,),
+        )
+        material = cur.fetchone()
+        if not material:
+            return jsonify({"success": False, "error": "培训材料不存在。"}), 404
+        if not can_edit_training_material(user, material):
+            return jsonify({"success": False, "error": "只能编辑自己上传的培训材料。"}), 403
+
+        old_file_path = material["file_path"]
+        if material_file and material_file.filename:
+            new_file_path, original_filename, file_size, file_type = save_training_material_file(material_file)
+            cur.execute(
+                """
+                UPDATE training_materials
+                SET title = %s,
+                    file_type = %s,
+                    file_path = %s,
+                    original_filename = %s,
+                    file_size = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s;
+                """,
+                (title, file_type, new_file_path, original_filename, file_size, material_id),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE training_materials
+                SET title = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s;
+                """,
+                (title, material_id),
+            )
+
+        conn.commit()
+        if new_file_path and old_file_path and old_file_path != new_file_path:
+            remove_storage_file(old_file_path)
+
+        return jsonify({"success": True, "message": "培训材料已更新。"})
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if new_file_path:
+            remove_storage_file(new_file_path)
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/training-materials/<int:material_id>", methods=["DELETE"])
+def delete_training_material(material_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    old_file_path = None
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_training_materials_table(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if user["role"] != "supervisor":
+            return jsonify({"success": False, "error": "当前账号无权删除培训材料。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, uploaded_by, file_path
+            FROM training_materials
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (material_id,),
+        )
+        material = cur.fetchone()
+        if not material:
+            return jsonify({"success": False, "error": "培训材料不存在。"}), 404
+        if not can_delete_training_material(user, material):
+            return jsonify({"success": False, "error": "只能删除自己上传的培训材料。"}), 403
+
+        old_file_path = material["file_path"]
+        cur.execute("DELETE FROM training_materials WHERE id = %s;", (material_id,))
+        conn.commit()
+        remove_storage_file(old_file_path)
+        return jsonify({"success": True, "message": "培训材料已删除。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 

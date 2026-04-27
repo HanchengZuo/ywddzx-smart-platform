@@ -150,6 +150,11 @@
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">培训系统</span>
         </button>
+        <button class="nav-item" :class="{ active: isActive('/training/materials'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/training/materials')" :title="sidebarCollapsed ? '培训材料库' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">培训材料库</span>
+        </button>
       </div>
 
       <div v-if="currentRole !== 'station_manager'" class="menu-section">
