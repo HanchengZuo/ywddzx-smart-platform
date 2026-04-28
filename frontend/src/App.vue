@@ -174,6 +174,15 @@
           <span v-if="!sidebarCollapsed">系统反馈</span>
         </button>
       </div>
+
+      <div v-if="isManagementAdmin" class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">管理系统</div>
+        <button class="nav-item" :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">站点数据管理</span>
+        </button>
+      </div>
     </aside>
 
     <div class="main">
@@ -241,6 +250,7 @@ const isLoginPage = computed(() => route.path === '/login')
 const appVersion = appPackage.version || '0.0.0'
 const currentRole = computed(() => authState.role)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
+const isManagementAdmin = computed(() => authState.username === 'supervisor')
 const currentRoleLabel = computed(() => {
   return authState.role === 'supervisor' ? '督导组账号' : '站点账号'
 })

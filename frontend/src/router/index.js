@@ -63,6 +63,10 @@ const routes = [
     component: () => import('../views/VehicleManagement.vue')
   },
   {
+    path: '/management/stations',
+    component: () => import('../views/management/StationDataManagementView.vue')
+  },
+  {
     path: '/inspection/certificates',
     component: () => import('../views/inspection/CertificatesView.vue')
   },
@@ -79,7 +83,7 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('auth_token')
-  const role = localStorage.getItem('user_role')
+  const username = localStorage.getItem('username')
 
   if (to.meta.public) {
     if (to.path === '/login' && token) {
@@ -92,6 +96,11 @@ router.beforeEach((to, from, next) => {
 
   if (!token) {
     next('/login')
+    return
+  }
+
+  if (to.path.startsWith('/management') && username !== 'supervisor') {
+    next('/inspection/issues')
     return
   }
 

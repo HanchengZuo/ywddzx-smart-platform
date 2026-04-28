@@ -1,6 +1,8 @@
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+import json
 import os
+import re
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -39,6 +41,12 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
 PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
 CHECKLIST_ORIGINAL_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
 TRAINING_MATERIAL_ADMIN_USERNAMES = {"supervisor", "superviosr"}
+MANAGEMENT_SYSTEM_ADMIN_USERNAMES = {"supervisor"}
+STATION_TYPE_OPTIONS = {"加油站", "充电站"}
+STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
+STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
+STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
+STATION_STATUS_OPTIONS = {"营业中", "停业"}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -466,6 +474,241 @@ def can_manage_plan(user):
 
 def can_manage_certificates(user):
     return bool(user and user.get("role") == "supervisor")
+
+
+def can_manage_system(user):
+    return bool(user and user.get("username") in MANAGEMENT_SYSTEM_ADMIN_USERNAMES)
+
+
+def normalize_text(value, max_length=None):
+    text = str(value or "").strip()
+    if max_length and len(text) > max_length:
+        return text[:max_length]
+    return text
+
+
+def normalize_decimal_text(value):
+    text = normalize_text(value)
+    if text == "":
+        return None
+    return text
+
+
+def validate_option(value, options, field_label, default_value=None):
+    text = normalize_text(value)
+    if not text and default_value is not None:
+        text = default_value
+    if text not in options:
+        raise ValueError(f"{field_label}只能选择：{'、'.join(options)}。")
+    return text
+
+
+def normalize_asset_type_option(value):
+    text = normalize_text(value)
+    if any(keyword in text for keyword in ("股权", "控股", "参股")):
+        return "股权"
+    if "全资" in text:
+        return "全资"
+    return text
+
+
+def normalize_hos_station_code(value):
+    text = normalize_text(value, 40).upper()
+    if not text:
+        raise ValueError("请填写 HOS加油站编码。")
+    return text
+
+
+def normalize_operating_hours(value):
+    text = normalize_text(value, 40)
+    text = re.sub(r"\s+", "", text)
+    text = (
+        text.replace("－", "-")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("至", "-")
+        .replace("到", "-")
+    )
+    if not text or text in {"24小时", "全天", "全天营业"}:
+        return "24小时"
+
+    matched = re.fullmatch(r"(\d{1,2}):([0-5]\d)-(\d{1,2}):([0-5]\d)", text)
+    if not matched:
+        raise ValueError("营运时间只能选择 24小时 或 HH:MM-HH:MM 格式。")
+
+    start_hour = int(matched.group(1))
+    start_minute = matched.group(2)
+    end_hour = int(matched.group(3))
+    end_minute = matched.group(4)
+    if start_hour > 23 or end_hour > 23:
+        raise ValueError("营运时间小时必须在 00-23 之间。")
+
+    start_time = f"{start_hour:02d}:{start_minute}"
+    end_time = f"{end_hour:02d}:{end_minute}"
+    if start_time == end_time:
+        raise ValueError("营运时间的开始时间和结束时间不能相同。")
+
+    return f"{start_time}-{end_time}"
+
+
+def ensure_station_management_columns(cur):
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS is_consolidated TEXT DEFAULT '否';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS online_3_status TEXT DEFAULT '未上线';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS hos_station_code TEXT;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET hos_station_code = NULLIF(UPPER(BTRIM(hos_station_code)), '')
+        WHERE hos_station_code IS NOT NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_stations_hos_station_code_unique
+        ON stations (hos_station_code)
+        WHERE hos_station_code IS NOT NULL;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS landline_phone TEXT;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET asset_type = CASE
+            WHEN asset_type LIKE '%股权%' OR asset_type LIKE '%控股%' OR asset_type LIKE '%参股%' THEN '股权'
+            ELSE '全资'
+        END
+        WHERE asset_type IS NULL OR asset_type NOT IN ('全资', '股权');
+        """
+    )
+
+
+def require_management_user(cur, user_id):
+    if not user_id:
+        raise PermissionError("缺少用户信息。")
+
+    user = get_user_by_id(cur, user_id)
+    if not user:
+        raise LookupError("用户不存在。")
+
+    if not can_manage_system(user):
+        raise PermissionError("只有 supervisor 账号可以操作管理系统。")
+
+    return user
+
+
+def build_station_payload(data):
+    station_name = normalize_text(data.get("station_name"), 120)
+    if not station_name:
+        raise ValueError("请填写站点名称。")
+
+    station_type = validate_option(
+        data.get("station_type"),
+        STATION_TYPE_OPTIONS,
+        "站点类型",
+        "加油站",
+    )
+    asset_type = validate_option(
+        normalize_asset_type_option(data.get("asset_type")),
+        STATION_ASSET_TYPE_OPTIONS,
+        "资产类型",
+        "全资",
+    )
+    is_consolidated = validate_option(
+        data.get("is_consolidated"),
+        STATION_CONSOLIDATED_OPTIONS,
+        "是否并表",
+        "否",
+    )
+    online_3_status = validate_option(
+        data.get("online_3_status"),
+        STATION_ONLINE_3_STATUS_OPTIONS,
+        "是否上线3.0",
+        "未上线",
+    )
+    status = validate_option(
+        data.get("status"),
+        STATION_STATUS_OPTIONS,
+        "站点状态",
+        "营业中",
+    )
+
+    return {
+        "station_name": station_name,
+        "region": normalize_text(data.get("region"), 80) or None,
+        "address": normalize_text(data.get("address"), 220) or None,
+        "longitude": normalize_decimal_text(data.get("longitude")),
+        "latitude": normalize_decimal_text(data.get("latitude")),
+        "station_manager_name": normalize_text(data.get("station_manager_name"), 80) or None,
+        "station_manager_phone": normalize_text(data.get("station_manager_phone"), 40) or None,
+        "station_type": station_type,
+        "asset_type": asset_type,
+        "is_consolidated": is_consolidated,
+        "online_3_status": online_3_status,
+        "hos_station_code": normalize_hos_station_code(data.get("hos_station_code")),
+        "landline_phone": normalize_text(data.get("landline_phone"), 40) or None,
+        "status": status,
+        "operating_hours": normalize_operating_hours(data.get("operating_hours")),
+    }
+
+
+def parse_station_backup_json(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要导入的站点备份文件。")
+
+    filename = str(file_storage.filename or "").lower()
+    if not filename.endswith(".json"):
+        raise ValueError("仅支持导入 JSON 格式的站点备份文件。")
+
+    file_bytes = file_storage.read()
+    if not file_bytes:
+        raise ValueError("站点备份文件内容为空。")
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise ValueError("站点备份文件不能超过 5MB。")
+
+    try:
+        payload = json.loads(file_bytes.decode("utf-8-sig"))
+    except Exception as exc:
+        raise ValueError("站点备份文件不是有效的 JSON。") from exc
+
+    stations = payload.get("stations") if isinstance(payload, dict) else payload
+    if not isinstance(stations, list):
+        raise ValueError("站点备份文件缺少 stations 数据。")
+    if not stations:
+        raise ValueError("站点备份文件中没有可导入的站点。")
+
+    return stations
+
+
+def normalize_station_backup_id(value):
+    if value in (None, ""):
+        return None
+    try:
+        station_id = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("站点备份文件中存在无效的站点ID。") from exc
+    if station_id <= 0:
+        raise ValueError("站点备份文件中存在无效的站点ID。")
+    return station_id
 
 
 def can_manage_checklist_originals(user):
@@ -1512,6 +1755,8 @@ def get_stations():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        conn.commit()
         cur.execute(
             """
             SELECT
@@ -1524,8 +1769,16 @@ def get_stations():
                 station_manager_name,
                 station_manager_phone,
                 station_type,
-                asset_type,
-                status
+                CASE
+                    WHEN asset_type LIKE '%股权%' OR asset_type LIKE '%控股%' OR asset_type LIKE '%参股%' THEN '股权'
+                    ELSE '全资'
+                END AS asset_type,
+                is_consolidated,
+                online_3_status,
+                hos_station_code,
+                landline_phone,
+                status,
+                operating_hours
             FROM stations
             ORDER BY id;
         """
@@ -1542,6 +1795,532 @@ def get_stations():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations", methods=["GET"])
+def get_management_stations():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        conn.commit()
+        require_management_user(cur, user_id)
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                station_name,
+                region,
+                address,
+                longitude,
+                latitude,
+                station_manager_name,
+                station_manager_phone,
+                station_type,
+                CASE
+                    WHEN asset_type LIKE '%股权%' OR asset_type LIKE '%控股%' OR asset_type LIKE '%参股%' THEN '股权'
+                    ELSE '全资'
+                END AS asset_type,
+                COALESCE(is_consolidated, '否') AS is_consolidated,
+                COALESCE(online_3_status, '未上线') AS online_3_status,
+                hos_station_code,
+                landline_phone,
+                status,
+                operating_hours,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM stations
+            ORDER BY id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        return jsonify(
+            {
+                "success": True,
+                "stations": rows,
+                "options": {
+                    "station_types": ["加油站", "充电站"],
+                    "asset_types": ["全资", "股权"],
+                    "is_consolidated": ["是", "否"],
+                    "online_3_statuses": ["上线", "上线参股模式", "未上线"],
+                    "statuses": ["营业中", "停业"],
+                },
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations/export", methods=["GET"])
+def export_management_stations():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        conn.commit()
+        require_management_user(cur, user_id)
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                station_name,
+                region,
+                address,
+                longitude::TEXT AS longitude,
+                latitude::TEXT AS latitude,
+                station_manager_name,
+                station_manager_phone,
+                station_type,
+                CASE
+                    WHEN asset_type LIKE '%股权%' OR asset_type LIKE '%控股%' OR asset_type LIKE '%参股%' THEN '股权'
+                    ELSE '全资'
+                END AS asset_type,
+                COALESCE(is_consolidated, '否') AS is_consolidated,
+                COALESCE(online_3_status, '未上线') AS online_3_status,
+                hos_station_code,
+                landline_phone,
+                COALESCE(status, '营业中') AS status,
+                COALESCE(operating_hours, '24小时') AS operating_hours,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at
+            FROM stations
+            ORDER BY id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        now = beijing_now()
+        response = jsonify(
+            {
+                "backup_type": "ywddzx_stations",
+                "version": 1,
+                "exported_at": now.isoformat(),
+                "stations": rows,
+            }
+        )
+        filename = f"ywddzx_stations_backup_{now.strftime('%Y%m%d_%H%M%S')}.json"
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations/import", methods=["POST"])
+def import_management_stations():
+    user_id = str(request.form.get("user_id", "")).strip()
+    backup_file = request.files.get("file")
+    conn = None
+    cur = None
+
+    try:
+        raw_stations = parse_station_backup_json(backup_file)
+        station_payloads = []
+        for raw_station in raw_stations:
+            if not isinstance(raw_station, dict):
+                raise ValueError("站点备份文件中存在无效的站点记录。")
+            station_data = build_station_payload(raw_station)
+            station_data["station_id"] = normalize_station_backup_id(raw_station.get("id"))
+            station_data["created_at"] = normalize_text(raw_station.get("created_at")) or None
+            station_data["updated_at"] = normalize_text(raw_station.get("updated_at")) or None
+            station_payloads.append(station_data)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        require_management_user(cur, user_id)
+
+        imported_count = 0
+        for station_data in station_payloads:
+            if station_data["station_id"]:
+                cur.execute(
+                    """
+                    INSERT INTO stations (
+                        id,
+                        station_name,
+                        region,
+                        address,
+                        longitude,
+                        latitude,
+                        station_manager_name,
+                        station_manager_phone,
+                        station_type,
+                        asset_type,
+                        is_consolidated,
+                        online_3_status,
+                        hos_station_code,
+                        landline_phone,
+                        status,
+                        operating_hours,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %(station_id)s,
+                        %(station_name)s,
+                        %(region)s,
+                        %(address)s,
+                        %(longitude)s,
+                        %(latitude)s,
+                        %(station_manager_name)s,
+                        %(station_manager_phone)s,
+                        %(station_type)s,
+                        %(asset_type)s,
+                        %(is_consolidated)s,
+                        %(online_3_status)s,
+                        %(hos_station_code)s,
+                        %(landline_phone)s,
+                        %(status)s,
+                        %(operating_hours)s,
+                        COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
+                        COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                    )
+                    ON CONFLICT (id)
+                    DO UPDATE SET
+                        station_name = EXCLUDED.station_name,
+                        region = EXCLUDED.region,
+                        address = EXCLUDED.address,
+                        longitude = EXCLUDED.longitude,
+                        latitude = EXCLUDED.latitude,
+                        station_manager_name = EXCLUDED.station_manager_name,
+                        station_manager_phone = EXCLUDED.station_manager_phone,
+                        station_type = EXCLUDED.station_type,
+                        asset_type = EXCLUDED.asset_type,
+                        is_consolidated = EXCLUDED.is_consolidated,
+                        online_3_status = EXCLUDED.online_3_status,
+                        hos_station_code = EXCLUDED.hos_station_code,
+                        landline_phone = EXCLUDED.landline_phone,
+                        status = EXCLUDED.status,
+                        operating_hours = EXCLUDED.operating_hours,
+                        updated_at = EXCLUDED.updated_at;
+                    """,
+                    station_data,
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO stations (
+                        station_name,
+                        region,
+                        address,
+                        longitude,
+                        latitude,
+                        station_manager_name,
+                        station_manager_phone,
+                        station_type,
+                        asset_type,
+                        is_consolidated,
+                        online_3_status,
+                        hos_station_code,
+                        landline_phone,
+                        status,
+                        operating_hours,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        %(station_name)s,
+                        %(region)s,
+                        %(address)s,
+                        %(longitude)s,
+                        %(latitude)s,
+                        %(station_manager_name)s,
+                        %(station_manager_phone)s,
+                        %(station_type)s,
+                        %(asset_type)s,
+                        %(is_consolidated)s,
+                        %(online_3_status)s,
+                        %(hos_station_code)s,
+                        %(landline_phone)s,
+                        %(status)s,
+                        %(operating_hours)s,
+                        COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
+                        COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                    )
+                    ON CONFLICT (station_name)
+                    DO UPDATE SET
+                        region = EXCLUDED.region,
+                        address = EXCLUDED.address,
+                        longitude = EXCLUDED.longitude,
+                        latitude = EXCLUDED.latitude,
+                        station_manager_name = EXCLUDED.station_manager_name,
+                        station_manager_phone = EXCLUDED.station_manager_phone,
+                        station_type = EXCLUDED.station_type,
+                        asset_type = EXCLUDED.asset_type,
+                        is_consolidated = EXCLUDED.is_consolidated,
+                        online_3_status = EXCLUDED.online_3_status,
+                        hos_station_code = EXCLUDED.hos_station_code,
+                        landline_phone = EXCLUDED.landline_phone,
+                        status = EXCLUDED.status,
+                        operating_hours = EXCLUDED.operating_hours,
+                        updated_at = EXCLUDED.updated_at;
+                    """,
+                    station_data,
+                )
+            imported_count += 1
+
+        cur.execute(
+            """
+            SELECT setval(
+                pg_get_serial_sequence('stations', 'id'),
+                GREATEST(COALESCE((SELECT MAX(id) FROM stations), 1), 1),
+                TRUE
+            );
+            """
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"站点数据导入完成，共处理 {imported_count} 条记录。",
+                "count": imported_count,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "导入失败：备份文件中的站点名称或 HOS编码 与现有站点存在冲突。",
+                    }
+                ),
+                400,
+            )
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations", methods=["POST"])
+def create_management_station():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        station_data = build_station_payload(data)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        require_management_user(cur, user_id)
+
+        cur.execute(
+            """
+            INSERT INTO stations (
+                station_name,
+                region,
+                address,
+                longitude,
+                latitude,
+                station_manager_name,
+                station_manager_phone,
+                station_type,
+                asset_type,
+                is_consolidated,
+                online_3_status,
+                hos_station_code,
+                landline_phone,
+                status,
+                operating_hours,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                %(station_name)s,
+                %(region)s,
+                %(address)s,
+                %(longitude)s,
+                %(latitude)s,
+                %(station_manager_name)s,
+                %(station_manager_phone)s,
+                %(station_type)s,
+                %(asset_type)s,
+                %(is_consolidated)s,
+                %(online_3_status)s,
+                %(hos_station_code)s,
+                %(landline_phone)s,
+                %(status)s,
+                %(operating_hours)s,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+            RETURNING id;
+            """,
+            station_data,
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return jsonify({"success": True, "message": "站点已新增。", "id": row["id"]})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "站点名称或 HOS编码 已存在，请检查是否重复添加。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations/<int:station_id>", methods=["PUT"])
+def update_management_station(station_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        station_data = build_station_payload(data)
+        station_data["station_id"] = station_id
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        require_management_user(cur, user_id)
+
+        cur.execute(
+            """
+            UPDATE stations
+            SET station_name = %(station_name)s,
+                region = %(region)s,
+                address = %(address)s,
+                longitude = %(longitude)s,
+                latitude = %(latitude)s,
+                station_manager_name = %(station_manager_name)s,
+                station_manager_phone = %(station_manager_phone)s,
+                station_type = %(station_type)s,
+                asset_type = %(asset_type)s,
+                is_consolidated = %(is_consolidated)s,
+                online_3_status = %(online_3_status)s,
+                hos_station_code = %(hos_station_code)s,
+                landline_phone = %(landline_phone)s,
+                status = %(status)s,
+                operating_hours = %(operating_hours)s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %(station_id)s
+            RETURNING id;
+            """,
+            station_data,
+        )
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        conn.commit()
+        return jsonify({"success": True, "message": "站点已更新。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "站点名称或 HOS编码 已存在，请检查是否重复添加。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations/<int:station_id>", methods=["DELETE"])
+def delete_management_station(station_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        require_management_user(cur, user_id)
+
+        cur.execute("DELETE FROM stations WHERE id = %s RETURNING id;", (station_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        conn.commit()
+        return jsonify({"success": True, "message": "站点已删除。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23503":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该站点已有用户、巡检、问题或证照等业务数据引用，暂不能删除。",
+                    }
+                ),
+                400,
+            )
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 
