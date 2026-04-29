@@ -7,6 +7,10 @@
       </div>
     </div>
 
+    <transition name="toast-fade">
+      <div v-if="copyMessage" class="copy-toast" :class="copyMessageType">{{ copyMessage }}</div>
+    </transition>
+
     <div class="filter-card card-surface">
       <div class="filter-grid">
         <div class="filter-item filter-item-keyword">
@@ -123,8 +127,6 @@
               <div class="detail-field-value multiline-content">{{ formatMultiline(entry.value) || '暂无' }}</div>
             </div>
           </div>
-
-          <div v-if="copyMessage" class="copy-message">{{ copyMessage }}</div>
         </template>
 
         <div v-else class="empty-detail">
@@ -143,7 +145,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 
 const loading = ref(false)
@@ -160,6 +162,8 @@ const inspectionTableFields = ref([])
 const standards = ref([])
 const activeStandard = ref(null)
 const copyMessage = ref('')
+const copyMessageType = ref('info')
+let copyMessageTimer = null
 const page = ref(1)
 const pageSize = 5
 
@@ -448,13 +452,70 @@ const selectStandard = (item) => {
   copyMessage.value = ''
 }
 
+const showCopyToast = (message, type = 'info') => {
+  if (copyMessageTimer) {
+    clearTimeout(copyMessageTimer)
+    copyMessageTimer = null
+  }
+
+  copyMessageType.value = type
+  copyMessage.value = message
+  copyMessageTimer = setTimeout(() => {
+    copyMessage.value = ''
+    copyMessageTimer = null
+  }, 2200)
+}
+
+const fallbackCopyText = (text) => {
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.setAttribute('readonly', '')
+  textArea.style.position = 'fixed'
+  textArea.style.left = '-9999px'
+  textArea.style.top = '0'
+  textArea.style.opacity = '0'
+  textArea.style.fontSize = '16px'
+  document.body.appendChild(textArea)
+  textArea.focus()
+  textArea.select()
+  textArea.setSelectionRange(0, textArea.value.length)
+
+  let copied = false
+  try {
+    copied = document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textArea)
+  }
+
+  if (!copied) {
+    throw new Error('copy command failed')
+  }
+}
+
+const copyText = async (text) => {
+  const value = String(text || '')
+  if (!value) throw new Error('empty copy text')
+
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch (error) {
+      fallbackCopyText(value)
+      return
+    }
+  }
+
+  fallbackCopyText(value)
+}
+
 const copyCode = async () => {
   if (!activeStandard.value) return
   try {
-    await navigator.clipboard.writeText(String(activeStandard.value.standard_id || ''))
-    copyMessage.value = '规范ID已复制。'
+    await copyText(String(activeStandard.value.standard_id || ''))
+    showCopyToast('规范ID已复制。', 'success')
   } catch (error) {
-    copyMessage.value = '复制失败，请手动复制。'
+    showCopyToast('复制失败，请手动复制。', 'error')
   }
 }
 
@@ -467,10 +528,10 @@ const copyStandard = async () => {
   ].join('\n')
 
   try {
-    await navigator.clipboard.writeText(text)
-    copyMessage.value = '整条规范已复制。'
+    await copyText(text)
+    showCopyToast('整条规范已复制。', 'success')
   } catch (error) {
-    copyMessage.value = '复制失败，请手动复制。'
+    showCopyToast('复制失败，请手动复制。', 'error')
   }
 }
 
@@ -529,6 +590,13 @@ onMounted(async () => {
   } catch (error) {
     inspectionTables.value = []
     standards.value = []
+  }
+})
+
+onBeforeUnmount(() => {
+  if (copyMessageTimer) {
+    clearTimeout(copyMessageTimer)
+    copyMessageTimer = null
   }
 })
 </script>
@@ -904,14 +972,58 @@ onMounted(async () => {
   white-space: pre-line;
 }
 
-.copy-message {
-  margin-top: 8px;
+.copy-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 420px);
+  z-index: 1500;
   font-size: 14px;
+  line-height: 1.7;
   color: #1d4ed8;
-  background: #eff6ff;
+  background: rgba(239, 246, 255, 0.98);
   border: 1px solid #bfdbfe;
   border-radius: 14px;
   padding: 12px 14px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(8px);
+  text-align: center;
+  animation: copy-toast-pulse 1.2s ease-in-out infinite;
+}
+
+.copy-toast.success {
+  color: #166534;
+  background: rgba(236, 253, 245, 0.98);
+  border-color: #bbf7d0;
+}
+
+.copy-toast.error {
+  color: #b91c1c;
+  background: rgba(254, 242, 242, 0.98);
+  border-color: #fecaca;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
+}
+
+@keyframes copy-toast-pulse {
+  0%,
+  100% {
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+  }
+
+  50% {
+    box-shadow: 0 18px 36px rgba(37, 99, 235, 0.24);
+  }
 }
 
 .empty-block,
