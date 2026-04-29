@@ -195,6 +195,12 @@
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">站点数据管理</span>
         </button>
+        <button class="nav-item"
+          :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/backups')" :title="sidebarCollapsed ? '数据备份管理' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">数据备份管理</span>
+        </button>
       </div>
     </aside>
 

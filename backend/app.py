@@ -1,10 +1,16 @@
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
 import uuid
-from datetime import datetime
+import zipfile
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from io import BytesIO
 import psycopg2
@@ -29,6 +35,10 @@ RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
 SIGNATURES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "signatures")
 INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_originals")
 TRAINING_MATERIALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "training_materials")
+BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
+DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
+BACKUP_PREFIX = "ywddzx_full_backup"
+AUTO_BACKUP_FILENAME = f"{BACKUP_PREFIX}_auto.zip"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -266,15 +276,27 @@ os.makedirs(RECTIFICATIONS_STORAGE_DIR, exist_ok=True)
 os.makedirs(SIGNATURES_STORAGE_DIR, exist_ok=True)
 os.makedirs(INSPECTION_ORIGINALS_STORAGE_DIR, exist_ok=True)
 os.makedirs(TRAINING_MATERIALS_STORAGE_DIR, exist_ok=True)
+os.makedirs(DEFAULT_BACKUP_DIR, exist_ok=True)
+
+
+def get_db_config():
+    return {
+        "host": os.environ.get("DB_HOST", "db"),
+        "port": str(os.environ.get("DB_PORT", 5432)),
+        "dbname": os.environ.get("DB_NAME", "ywddzx"),
+        "user": os.environ.get("DB_USER", "postgres"),
+        "password": os.environ.get("DB_PASSWORD", "postgres"),
+    }
 
 
 def get_db_connection():
+    db_config = get_db_config()
     return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "db"),
-        port=os.environ.get("DB_PORT", 5432),
-        dbname=os.environ.get("DB_NAME", "ywddzx"),
-        user=os.environ.get("DB_USER", "postgres"),
-        password=os.environ.get("DB_PASSWORD", "postgres"),
+        host=db_config["host"],
+        port=db_config["port"],
+        dbname=db_config["dbname"],
+        user=db_config["user"],
+        password=db_config["password"],
         cursor_factory=RealDictCursor,
         options="-c timezone=Asia/Shanghai",
     )
@@ -498,6 +520,402 @@ def remove_storage_file(relative_path):
             os.remove(target_path)
     except OSError:
         pass
+
+
+BACKUP_FREQUENCY_INTERVALS = {
+    "off": None,
+    "hourly": timedelta(hours=1),
+    "daily": timedelta(days=1),
+    "weekly": timedelta(days=7),
+    "monthly": timedelta(days=30),
+}
+backup_scheduler_started = False
+backup_scheduler_lock = threading.Lock()
+backup_job_lock = threading.Lock()
+
+
+def isoformat_or_none(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(BEIJING_TZ).isoformat()
+    return str(value)
+
+
+def parse_backup_time(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def normalize_backup_destination_path(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return os.path.abspath(DEFAULT_BACKUP_DIR)
+    if os.path.isabs(raw_value):
+        return os.path.abspath(raw_value)
+    return os.path.abspath(os.path.join(DEFAULT_BACKUP_DIR, raw_value))
+
+
+def get_default_backup_config():
+    return {
+        "destination_path": os.path.abspath(DEFAULT_BACKUP_DIR),
+        "frequency": "off",
+        "last_auto_export_at": None,
+        "last_backup_path": None,
+        "last_backup_size": None,
+        "last_status": "idle",
+        "last_error": "",
+        "updated_at": None,
+    }
+
+
+def read_backup_config():
+    config = get_default_backup_config()
+    if os.path.isfile(BACKUP_CONFIG_PATH):
+        try:
+            with open(BACKUP_CONFIG_PATH, "r", encoding="utf-8") as f:
+                saved_config = json.load(f)
+            if isinstance(saved_config, dict):
+                config.update(saved_config)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    config["destination_path"] = normalize_backup_destination_path(
+        config.get("destination_path")
+    )
+    if config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
+        config["frequency"] = "off"
+    return config
+
+
+def write_backup_config(config):
+    next_config = get_default_backup_config()
+    next_config.update(config or {})
+    next_config["destination_path"] = normalize_backup_destination_path(
+        next_config.get("destination_path")
+    )
+    if next_config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
+        next_config["frequency"] = "off"
+    next_config["updated_at"] = beijing_now().isoformat()
+    os.makedirs(os.path.dirname(BACKUP_CONFIG_PATH), exist_ok=True)
+    with open(BACKUP_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(next_config, f, ensure_ascii=False, indent=2)
+    return next_config
+
+
+def get_backup_next_run_at(config):
+    interval = BACKUP_FREQUENCY_INTERVALS.get(config.get("frequency"))
+    if not interval:
+        return None
+    last_run = parse_backup_time(config.get("last_auto_export_at"))
+    if not last_run:
+        return beijing_now().isoformat()
+    return (last_run.astimezone(BEIJING_TZ) + interval).isoformat()
+
+
+def list_backup_files(destination_path):
+    backup_dir = normalize_backup_destination_path(destination_path)
+    if not os.path.isdir(backup_dir):
+        return []
+    rows = []
+    for filename in os.listdir(backup_dir):
+        if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
+            continue
+        file_path = os.path.join(backup_dir, filename)
+        if not os.path.isfile(file_path):
+            continue
+        stat = os.stat(file_path)
+        rows.append(
+            {
+                "filename": filename,
+                "path": file_path,
+                "size": stat.st_size,
+                "updated_at": datetime.fromtimestamp(stat.st_mtime, BEIJING_TZ).isoformat(),
+            }
+        )
+    return sorted(rows, key=lambda item: item["updated_at"], reverse=True)[:20]
+
+
+def build_pg_environment():
+    db_config = get_db_config()
+    env = os.environ.copy()
+    env["PGPASSWORD"] = db_config["password"]
+    return db_config, env
+
+
+def run_backup_subprocess(command, env):
+    try:
+        subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "数据库备份工具未安装，请确认后端环境已安装 postgresql-client。"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        error_text = (exc.stderr or exc.stdout or "").strip()
+        raise RuntimeError(error_text or "数据库备份工具执行失败。") from exc
+
+
+def should_skip_storage_backup_path(path, excluded_dirs):
+    abs_path = os.path.abspath(path)
+    for excluded_dir in excluded_dirs:
+        try:
+            if os.path.commonpath([excluded_dir, abs_path]) == excluded_dir:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def add_storage_to_backup(zip_file, destination_path):
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    excluded_dirs = [os.path.abspath(destination_path), os.path.abspath(DEFAULT_BACKUP_DIR)]
+    for root, dirs, files in os.walk(storage_root_abs):
+        dirs[:] = [
+            name
+            for name in dirs
+            if not should_skip_storage_backup_path(os.path.join(root, name), excluded_dirs)
+        ]
+        if should_skip_storage_backup_path(root, excluded_dirs):
+            continue
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            if file_path == os.path.abspath(BACKUP_CONFIG_PATH):
+                continue
+            if should_skip_storage_backup_path(file_path, excluded_dirs):
+                continue
+            relative_path = os.path.relpath(file_path, storage_root_abs).replace("\\", "/")
+            zip_file.write(file_path, f"storage/{relative_path}")
+
+
+def create_full_backup_archive(destination_path=None, reason="manual"):
+    backup_dir = normalize_backup_destination_path(destination_path)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    now = beijing_now()
+    filename = (
+        AUTO_BACKUP_FILENAME
+        if reason == "auto"
+        else f"{BACKUP_PREFIX}_{now.strftime('%Y%m%d_%H%M%S')}.zip"
+    )
+    final_path = os.path.join(backup_dir, filename)
+
+    db_config, env = build_pg_environment()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        database_dump_path = os.path.join(temp_dir, "database.dump")
+        pg_dump_command = [
+            "pg_dump",
+            "-h",
+            db_config["host"],
+            "-p",
+            db_config["port"],
+            "-U",
+            db_config["user"],
+            "-d",
+            db_config["dbname"],
+            "-Fc",
+            "--no-owner",
+            "--no-acl",
+            "-f",
+            database_dump_path,
+        ]
+        run_backup_subprocess(pg_dump_command, env)
+
+        manifest = {
+            "backup_type": "ywddzx_full_backup",
+            "version": 1,
+            "created_at": now.isoformat(),
+            "reason": reason,
+            "database": db_config["dbname"],
+            "storage_root": STORAGE_ROOT,
+        }
+
+        temp_zip_path = os.path.join(temp_dir, filename)
+        with zipfile.ZipFile(temp_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            zip_file.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            zip_file.write(database_dump_path, "database.dump")
+            add_storage_to_backup(zip_file, backup_dir)
+
+        if reason == "auto":
+            os.replace(temp_zip_path, final_path)
+        else:
+            shutil.copy2(temp_zip_path, final_path)
+
+    return {
+        "path": final_path,
+        "filename": filename,
+        "size": os.path.getsize(final_path),
+        "created_at": now.isoformat(),
+    }
+
+
+def validate_backup_archive(zip_path):
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zip_file:
+            names = set(zip_file.namelist())
+            if "manifest.json" not in names or "database.dump" not in names:
+                raise ValueError("备份文件缺少 manifest.json 或 database.dump。")
+            manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
+            if manifest.get("backup_type") != "ywddzx_full_backup":
+                raise ValueError("备份文件类型不正确。")
+            return manifest
+    except zipfile.BadZipFile as exc:
+        raise ValueError("备份文件不是有效的 ZIP 文件。") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("备份文件清单格式不正确。") from exc
+
+
+def restore_database_from_dump(database_dump_path):
+    db_config, env = build_pg_environment()
+    pg_restore_command = [
+        "pg_restore",
+        "-h",
+        db_config["host"],
+        "-p",
+        db_config["port"],
+        "-U",
+        db_config["user"],
+        "-d",
+        db_config["dbname"],
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--no-acl",
+        "--single-transaction",
+        database_dump_path,
+    ]
+    run_backup_subprocess(pg_restore_command, env)
+
+
+def clear_uploaded_storage_dirs():
+    for directory in (
+        ISSUES_STORAGE_DIR,
+        RECTIFICATIONS_STORAGE_DIR,
+        SIGNATURES_STORAGE_DIR,
+        INSPECTION_ORIGINALS_STORAGE_DIR,
+        TRAINING_MATERIALS_STORAGE_DIR,
+    ):
+        if os.path.isdir(directory):
+            shutil.rmtree(directory)
+        os.makedirs(directory, exist_ok=True)
+
+
+def restore_storage_from_backup(zip_path):
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    with zipfile.ZipFile(zip_path, "r") as zip_file:
+        for member in zip_file.infolist():
+            name = member.filename
+            if not name.startswith("storage/") or name.endswith("/"):
+                continue
+            relative_path = name[len("storage/") :]
+            target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
+            if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
+                raise ValueError("备份文件中存在非法 storage 路径。")
+
+        clear_uploaded_storage_dirs()
+        for member in zip_file.infolist():
+            name = member.filename
+            if not name.startswith("storage/") or name.endswith("/"):
+                continue
+            relative_path = name[len("storage/") :]
+            target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
+            if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
+                raise ValueError("备份文件中存在非法 storage 路径。")
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with zip_file.open(member) as source, open(target_path, "wb") as target:
+                shutil.copyfileobj(source, target)
+
+
+def restore_full_backup_archive(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要导入的完整备份文件。")
+    if not str(file_storage.filename).lower().endswith(".zip"):
+        raise ValueError("完整备份只支持导入 ZIP 文件。")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        backup_path = os.path.join(temp_dir, "backup.zip")
+        file_storage.save(backup_path)
+        manifest = validate_backup_archive(backup_path)
+        with zipfile.ZipFile(backup_path, "r") as zip_file:
+            database_dump_path = os.path.join(temp_dir, "database.dump")
+            zip_file.extract("database.dump", temp_dir)
+        restore_database_from_dump(database_dump_path)
+        restore_storage_from_backup(backup_path)
+        return manifest
+
+
+def mark_auto_backup_result(success, result=None, error=""):
+    config = read_backup_config()
+    if success:
+        config.update(
+            {
+                "last_auto_export_at": beijing_now().isoformat(),
+                "last_backup_path": result.get("path") if result else None,
+                "last_backup_size": result.get("size") if result else None,
+                "last_status": "success",
+                "last_error": "",
+            }
+        )
+    else:
+        config.update(
+            {
+                "last_status": "error",
+                "last_error": str(error or "自动备份失败。")[:500],
+            }
+        )
+    write_backup_config(config)
+
+
+def maybe_run_scheduled_backup():
+    config = read_backup_config()
+    interval = BACKUP_FREQUENCY_INTERVALS.get(config.get("frequency"))
+    if not interval:
+        return
+
+    last_run = parse_backup_time(config.get("last_auto_export_at"))
+    now = beijing_now()
+    if last_run and now < last_run.astimezone(BEIJING_TZ) + interval:
+        return
+
+    if not backup_job_lock.acquire(blocking=False):
+        return
+    try:
+        try:
+            result = create_full_backup_archive(config.get("destination_path"), reason="auto")
+            mark_auto_backup_result(True, result=result)
+        except Exception as exc:
+            mark_auto_backup_result(False, error=exc)
+    finally:
+        backup_job_lock.release()
+
+
+def backup_scheduler_loop():
+    while True:
+        try:
+            maybe_run_scheduled_backup()
+        except Exception:
+            pass
+        time.sleep(60)
+
+
+def start_backup_scheduler_once():
+    global backup_scheduler_started
+    if backup_scheduler_started:
+        return
+    with backup_scheduler_lock:
+        if backup_scheduler_started:
+            return
+        thread = threading.Thread(target=backup_scheduler_loop, daemon=True)
+        thread.start()
+        backup_scheduler_started = True
+
+
+@app.before_request
+def ensure_backup_scheduler_started():
+    start_backup_scheduler_once()
 
 
 def get_checklist_field_meta(cur, inspection_table_id):
@@ -2827,6 +3245,207 @@ def delete_management_user(target_user_id):
     except Exception as e:
         if conn:
             conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/backups", methods=["GET"])
+def get_management_backups():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_backups")
+        config = read_backup_config()
+        return jsonify(
+            {
+                "success": True,
+                "config": {
+                    **config,
+                    "next_run_at": get_backup_next_run_at(config),
+                },
+                "frequency_options": [
+                    {"value": "off", "label": "关闭自动备份"},
+                    {"value": "hourly", "label": "每小时"},
+                    {"value": "daily", "label": "每天"},
+                    {"value": "weekly", "label": "每周"},
+                    {"value": "monthly", "label": "每月"},
+                ],
+                "latest_backups": list_backup_files(config.get("destination_path")),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/backups/config", methods=["PUT"])
+def update_management_backup_config():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        frequency = str(data.get("frequency") or "off").strip()
+        if frequency not in BACKUP_FREQUENCY_INTERVALS:
+            raise ValueError("自动备份频率不正确。")
+
+        destination_path = normalize_backup_destination_path(data.get("destination_path"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_backups")
+
+        os.makedirs(destination_path, exist_ok=True)
+        test_path = os.path.join(destination_path, ".ywddzx_backup_write_test")
+        with open(test_path, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(test_path)
+
+        current_config = read_backup_config()
+        config = write_backup_config(
+            {
+                **current_config,
+                "destination_path": destination_path,
+                "frequency": frequency,
+                "last_status": current_config.get("last_status") or "idle",
+                "last_error": current_config.get("last_error") or "",
+            }
+        )
+        return jsonify(
+            {
+                "success": True,
+                "message": "备份设置已保存。",
+                "config": {
+                    **config,
+                    "next_run_at": get_backup_next_run_at(config),
+                },
+                "latest_backups": list_backup_files(config.get("destination_path")),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"success": False, "error": f"备份目录不可写：{exc}"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/backups/export", methods=["POST"])
+def export_management_full_backup():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_backups")
+        close_db_resources(cur, conn)
+        cur = None
+        conn = None
+
+        if not backup_job_lock.acquire(blocking=False):
+            return jsonify({"success": False, "error": "已有备份或恢复任务正在执行，请稍后再试。"}), 409
+        try:
+            config = read_backup_config()
+            result = create_full_backup_archive(config.get("destination_path"), reason="manual")
+            config.update(
+                {
+                    "last_backup_path": result["path"],
+                    "last_backup_size": result["size"],
+                    "last_status": "success",
+                    "last_error": "",
+                }
+            )
+            write_backup_config(config)
+        finally:
+            backup_job_lock.release()
+
+        response = send_file(
+            result["path"],
+            as_attachment=True,
+            download_name=result["filename"],
+            mimetype="application/zip",
+        )
+        response.headers["X-Backup-Path"] = result["path"]
+        response.headers["X-Backup-Size"] = str(result["size"])
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/backups/import", methods=["POST"])
+def import_management_full_backup():
+    user_id = str(request.form.get("user_id", "")).strip()
+    backup_file = request.files.get("file")
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_backups")
+        close_db_resources(cur, conn)
+        cur = None
+        conn = None
+
+        if not backup_job_lock.acquire(blocking=False):
+            return jsonify({"success": False, "error": "已有备份或恢复任务正在执行，请稍后再试。"}), 409
+        try:
+            manifest = restore_full_backup_archive(backup_file)
+        finally:
+            backup_job_lock.release()
+
+        config = read_backup_config()
+        config.update(
+            {
+                "last_status": "success",
+                "last_error": "",
+            }
+        )
+        write_backup_config(config)
+        return jsonify(
+            {
+                "success": True,
+                "message": "完整备份已导入，数据库与上传文件目录已恢复。",
+                "manifest": manifest,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
