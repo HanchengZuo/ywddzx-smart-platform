@@ -2661,6 +2661,7 @@ def get_management_users():
                 u.phone,
                 u.station_id,
                 s.station_name,
+                s.region AS station_region,
                 TO_CHAR(u.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
                 TO_CHAR(u.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
             FROM users u
@@ -2689,6 +2690,7 @@ def get_management_users():
                     "phone": row["phone"],
                     "station_id": row["station_id"],
                     "station_name": row["station_name"],
+                    "station_region": row["station_region"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "permission_overrides": overrides,
@@ -2698,9 +2700,9 @@ def get_management_users():
 
         cur.execute(
             """
-            SELECT id, station_name
+            SELECT id, station_name, region, hos_station_code
             FROM stations
-            ORDER BY station_name ASC, id ASC;
+            ORDER BY region ASC NULLS LAST, station_name ASC, id ASC;
             """
         )
         stations = cur.fetchall()

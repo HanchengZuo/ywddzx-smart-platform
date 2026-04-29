@@ -27,7 +27,9 @@
     </div>
 
     <template v-else>
-      <div v-if="message.text" :class="['message-card', message.type]">{{ message.text }}</div>
+      <transition name="toast-fade">
+        <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
+      </transition>
 
       <section class="card-surface editor-card">
         <div class="section-head">
@@ -67,15 +69,42 @@
               <input v-model.trim="form.phone" type="text" placeholder="请输入手机号" />
             </label>
 
-            <label v-if="form.role === 'station_manager'" class="form-field">
-              <span>所属站点</span>
-              <select v-model="form.station_id">
-                <option value="">请选择站点</option>
-                <option v-for="station in stations" :key="station.id" :value="station.id">
-                  {{ station.station_name }}
-                </option>
-              </select>
-            </label>
+            <div v-if="form.role === 'station_manager'" class="station-picker-card">
+              <div class="station-picker-head">
+                <div>
+                  <strong>绑定站点</strong>
+                  <p>为站点账号指定可访问的唯一站点数据范围。</p>
+                </div>
+                <span>{{ filteredStations.length }} 个可选站点</span>
+              </div>
+
+              <div class="station-picker-grid">
+                <label class="form-field">
+                  <span>所属片区/归属地</span>
+                  <select v-model="stationRegionFilter">
+                    <option value="">全部片区</option>
+                    <option v-for="region in stationRegionOptions" :key="region" :value="region">
+                      {{ region }}
+                    </option>
+                  </select>
+                </label>
+
+                <label class="form-field">
+                  <span>搜索站点</span>
+                  <input v-model.trim="stationKeyword" type="text" placeholder="输入站名、HOS编码或片区" />
+                </label>
+
+                <label class="form-field station-select-field">
+                  <span>所属站点</span>
+                  <select v-model="form.station_id">
+                    <option value="">请选择站点</option>
+                    <option v-for="station in filteredStations" :key="station.id" :value="station.id">
+                      {{ station.region || '未填写片区' }} · {{ station.station_name }}{{ station.hos_station_code ? ` · ${station.hos_station_code}` : '' }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div class="permission-panel">
@@ -152,7 +181,10 @@
                 <td>{{ roleLabel(user.role) }}</td>
                 <td>{{ user.real_name || '-' }}</td>
                 <td>{{ user.phone || '-' }}</td>
-                <td>{{ user.station_name || '-' }}</td>
+                <td>
+                  <div class="table-title">{{ user.station_name || '-' }}</div>
+                  <div v-if="user.station_region" class="table-sub">{{ user.station_region }}</div>
+                </td>
                 <td>
                   <div class="permission-summary">
                     <span v-if="user.role === 'root'" class="permission-chip strong">全部权限</span>
@@ -190,7 +222,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -204,6 +236,8 @@ const hasPermission = currentRole === 'root'
 
 const users = ref([])
 const stations = ref([])
+const stationRegionFilter = ref('')
+const stationKeyword = ref('')
 const roles = ref([])
 const permissions = ref([])
 const loading = ref(false)
@@ -216,6 +250,7 @@ const message = reactive({
   text: '',
   type: 'info'
 })
+let messageTimer = null
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'view_all_inspection_issues'],
@@ -256,6 +291,26 @@ const groupedPermissions = computed(() => {
   return groups
 })
 
+const stationRegionOptions = computed(() => {
+  return Array.from(
+    new Set(stations.value.map((station) => station.region || '未填写片区'))
+  ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+const filteredStations = computed(() => {
+  const keyword = stationKeyword.value.trim().toLowerCase()
+  return stations.value.filter((station) => {
+    const region = station.region || '未填写片区'
+    if (stationRegionFilter.value && region !== stationRegionFilter.value) return false
+    if (!keyword) return true
+    return [
+      region,
+      station.station_name,
+      station.hos_station_code
+    ].some((value) => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+
 const editableRoles = computed(() => {
   if (form.id && form.role === 'root') {
     return roles.value.filter((item) => item.value === 'root')
@@ -270,8 +325,19 @@ const roleLabel = (role) => {
 }
 
 const setMessage = (text, type = 'info') => {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+
   message.text = text
   message.type = type
+  if (!text) return
+
+  messageTimer = setTimeout(() => {
+    message.text = ''
+    messageTimer = null
+  }, 2400)
 }
 
 const defaultPermissionValue = (permission, role) => {
@@ -338,14 +404,20 @@ const handlePermissionChange = (permissionKey) => {
 
 const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
-  if (form.role !== 'station_manager') form.station_id = ''
+  if (form.role !== 'station_manager') {
+    form.station_id = ''
+    stationRegionFilter.value = ''
+    stationKeyword.value = ''
+  }
 }
 
-const resetForm = () => {
+const resetForm = (options = {}) => {
   Object.assign(form, createEmptyForm())
   form.permissions = buildDefaultPermissions(form.role)
+  stationRegionFilter.value = ''
+  stationKeyword.value = ''
   formError.value = ''
-  setMessage('')
+  if (!options.keepMessage) setMessage('')
 }
 
 const startEdit = (user) => {
@@ -359,6 +431,9 @@ const startEdit = (user) => {
     station_id: user.station_id || '',
     permissions: enforceExclusivePermissions(user.permissions || {}, user.role || 'supervisor')
   })
+  const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
+  stationRegionFilter.value = station?.region || ''
+  stationKeyword.value = ''
   formError.value = ''
   setMessage(`已进入【${user.username}】编辑状态。`, 'info')
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -450,7 +525,7 @@ const importUsers = async (event) => {
     formData.append('file', file)
     const response = await axios.post('/api/management/users/import', formData)
     setMessage(response.data?.message || '用户数据导入完成。', 'success')
-    resetForm()
+    resetForm({ keepMessage: true })
     await fetchUsers()
   } catch (error) {
     setMessage(error?.response?.data?.error || '用户数据导入失败。', 'error')
@@ -470,10 +545,14 @@ const validateForm = () => {
 
 const saveUser = async () => {
   formError.value = validateForm()
-  if (formError.value) return
+  if (formError.value) {
+    setMessage(formError.value, 'error')
+    return
+  }
 
   try {
     saving.value = true
+    const isCreating = !form.id
     const payload = {
       user_id: currentUserId,
       username: form.username,
@@ -490,12 +569,10 @@ const saveUser = async () => {
       : await axios.post('/api/management/users', payload)
     setMessage(response.data?.message || '用户已保存。', 'success')
     await fetchUsers()
-    if (!form.id && response.data?.id) {
-      const created = users.value.find((item) => String(item.id) === String(response.data.id))
-      if (created) startEdit(created)
-    }
+    if (isCreating) resetForm({ keepMessage: true })
   } catch (error) {
     formError.value = error?.response?.data?.error || '用户保存失败。'
+    setMessage(formError.value, 'error')
   } finally {
     saving.value = false
   }
@@ -513,7 +590,7 @@ const deleteUser = async (user) => {
       }
     })
     setMessage(response.data?.message || '用户已删除。', 'success')
-    if (form.id === user.id) resetForm()
+    if (form.id === user.id) resetForm({ keepMessage: true })
     await fetchUsers()
   } catch (error) {
     setMessage(error?.response?.data?.error || '用户删除失败。', 'error')
@@ -522,7 +599,26 @@ const deleteUser = async (user) => {
   }
 }
 
+watch(stationRegionFilter, () => {
+  if (!form.station_id || !stationRegionFilter.value) return
+  const stillVisible = filteredStations.value.some((station) => String(station.id) === String(form.station_id))
+  if (!stillVisible) form.station_id = ''
+})
+
+watch(stationKeyword, () => {
+  if (!form.station_id) return
+  const stillVisible = filteredStations.value.some((station) => String(station.id) === String(form.station_id))
+  if (!stillVisible) form.station_id = ''
+})
+
 onMounted(fetchUsers)
+
+onBeforeUnmount(() => {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+})
 </script>
 
 <style scoped>
@@ -622,6 +718,55 @@ onMounted(fetchUsers)
   background:
     linear-gradient(135deg, rgba(239, 246, 255, 0.94), rgba(248, 250, 252, 0.98)),
     #f8fafc;
+}
+
+.station-picker-card {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #bfdbfe;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(37, 99, 235, 0.14), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.92));
+}
+
+.station-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.station-picker-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.station-picker-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.station-picker-head > span {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.station-picker-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.85fr) minmax(220px, 1fr) minmax(320px, 1.4fr);
+  gap: 14px;
+  align-items: end;
 }
 
 .form-field {
@@ -867,8 +1012,65 @@ onMounted(fetchUsers)
   opacity: 0.6;
 }
 
-.form-error,
-.message-card {
+.message-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 440px);
+  z-index: 1500;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.7;
+  text-align: center;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(10px);
+  animation: toast-pulse 1.2s ease-in-out infinite;
+}
+
+.message-toast.error {
+  border: 1px solid #fecaca;
+  background: rgba(254, 242, 242, 0.98);
+  color: #b91c1c;
+}
+
+.message-toast.success {
+  border: 1px solid #bbf7d0;
+  background: rgba(236, 253, 245, 0.98);
+  color: #166534;
+}
+
+.message-toast.info {
+  border: 1px solid #bfdbfe;
+  background: rgba(239, 246, 255, 0.98);
+  color: #1d4ed8;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
+}
+
+@keyframes toast-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+  }
+
+  50% {
+    box-shadow: 0 22px 44px rgba(37, 99, 235, 0.22);
+  }
+}
+
+.form-error {
   padding: 12px 14px;
   border-radius: 14px;
   font-size: 14px;
@@ -876,23 +1078,10 @@ onMounted(fetchUsers)
   line-height: 1.7;
 }
 
-.form-error,
-.message-card.error {
+.form-error {
   border: 1px solid #fecaca;
   background: #fef2f2;
   color: #dc2626;
-}
-
-.message-card.success {
-  border: 1px solid #bbf7d0;
-  background: #ecfdf5;
-  color: #15803d;
-}
-
-.message-card.info {
-  border: 1px solid #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .form-error {
@@ -948,8 +1137,13 @@ onMounted(fetchUsers)
 
 @media (max-width: 980px) {
   .basic-form,
-  .permission-groups {
+  .permission-groups,
+  .station-picker-grid {
     grid-template-columns: 1fr;
+  }
+
+  .station-picker-head {
+    flex-direction: column;
   }
 }
 </style>
