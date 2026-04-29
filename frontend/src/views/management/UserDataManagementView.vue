@@ -147,8 +147,33 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">用户清单</div>
-            <h3>共 {{ users.length }} 个用户</h3>
+            <h3>共 {{ filteredUsers.length }} 个用户</h3>
           </div>
+        </div>
+
+        <div class="filter-bar">
+          <label class="filter-field keyword-field">
+            <span>关键词</span>
+            <input v-model.trim="filters.keyword" type="text" placeholder="用户名、姓名、手机号、站点、片区" />
+          </label>
+
+          <label class="filter-field">
+            <span>角色</span>
+            <select v-model="filters.role">
+              <option value="">全部角色</option>
+              <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.label }}</option>
+            </select>
+          </label>
+
+          <label class="filter-field">
+            <span>所属片区</span>
+            <select v-model="filters.station_region">
+              <option value="">全部片区</option>
+              <option v-for="region in userRegionOptions" :key="region" :value="region">{{ region }}</option>
+            </select>
+          </label>
+
+          <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
         </div>
 
         <div class="table-wrap">
@@ -170,10 +195,10 @@
               <tr v-if="loading">
                 <td colspan="9" class="empty-cell">正在加载用户数据...</td>
               </tr>
-              <tr v-else-if="!users.length">
-                <td colspan="9" class="empty-cell">暂无用户数据。</td>
+              <tr v-else-if="!filteredUsers.length">
+                <td colspan="9" class="empty-cell">暂无匹配的用户数据。</td>
               </tr>
-              <tr v-for="user in users" :key="user.id" :class="{ active: form.id === user.id }">
+              <tr v-for="user in pagedUsers" :key="user.id" :class="{ active: form.id === user.id }">
                 <td>
                   <div class="table-title">{{ user.username }}</div>
                   <div class="table-sub">ID: {{ user.id }}</div>
@@ -215,6 +240,29 @@
             </tbody>
           </table>
         </div>
+
+        <div v-if="filteredUsers.length" class="pagination-bar">
+          <div class="pagination-summary">显示第 {{ pageStart }}-{{ pageEnd }} 条，共 {{ filteredUsers.length }} 条</div>
+          <div class="pagination-actions">
+            <label class="page-size-field">
+              <span>每页</span>
+              <select v-model.number="pageSize">
+                <option :value="10">10</option>
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+              </select>
+            </label>
+            <button class="btn btn-secondary btn-sm" type="button" :disabled="currentPage === 1"
+              @click="currentPage -= 1">
+              上一页
+            </button>
+            <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
+            <button class="btn btn-secondary btn-sm" type="button" :disabled="currentPage === totalPages"
+              @click="currentPage += 1">
+              下一页
+            </button>
+          </div>
+        </div>
       </section>
     </template>
   </div>
@@ -245,12 +293,20 @@ const saving = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
 const deletingId = ref(null)
+const currentPage = ref(1)
+const pageSize = ref(10)
 const formError = ref('')
 const message = reactive({
   text: '',
   type: 'info'
 })
 let messageTimer = null
+
+const filters = reactive({
+  keyword: '',
+  role: '',
+  station_region: ''
+})
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'view_all_inspection_issues'],
@@ -310,6 +366,39 @@ const filteredStations = computed(() => {
     ].some((value) => String(value || '').toLowerCase().includes(keyword))
   })
 })
+
+const userRegionOptions = computed(() => {
+  return Array.from(
+    new Set(users.value.map((user) => user.station_region || '').filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+const normalizeSearchText = (value) => String(value || '').toLowerCase().replace(/\s+/g, '')
+
+const filteredUsers = computed(() => {
+  const keyword = normalizeSearchText(filters.keyword)
+  return users.value.filter((user) => {
+    const matchedKeyword = !keyword || [
+      user.username,
+      roleLabel(user.role),
+      user.real_name,
+      user.phone,
+      user.station_name,
+      user.station_region
+    ].some((value) => normalizeSearchText(value).includes(keyword))
+    const matchedRole = !filters.role || user.role === filters.role
+    const matchedRegion = !filters.station_region || user.station_region === filters.station_region
+    return matchedKeyword && matchedRole && matchedRegion
+  })
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredUsers.value.length / pageSize.value)))
+const pagedUsers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredUsers.value.slice(start, start + pageSize.value)
+})
+const pageStart = computed(() => (filteredUsers.value.length ? (currentPage.value - 1) * pageSize.value + 1 : 0))
+const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredUsers.value.length))
 
 const editableRoles = computed(() => {
   if (form.id && form.role === 'root') {
@@ -420,6 +509,14 @@ const resetForm = (options = {}) => {
   if (!options.keepMessage) setMessage('')
 }
 
+const resetFilters = () => {
+  Object.assign(filters, {
+    keyword: '',
+    role: '',
+    station_region: ''
+  })
+}
+
 const startEdit = (user) => {
   Object.assign(form, {
     id: user.id,
@@ -462,6 +559,7 @@ const fetchUsers = async () => {
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
     if (!form.id) form.permissions = buildDefaultPermissions(form.role)
+    if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   } catch (error) {
     setMessage(error?.response?.data?.error || '用户数据加载失败。', 'error')
   } finally {
@@ -611,6 +709,17 @@ watch(stationKeyword, () => {
   if (!stillVisible) form.station_id = ''
 })
 
+watch(
+  () => [filters.keyword, filters.role, filters.station_region, pageSize.value],
+  () => {
+    currentPage.value = 1
+  }
+)
+
+watch(totalPages, (value) => {
+  if (currentPage.value > value) currentPage.value = value
+})
+
 onMounted(fetchUsers)
 
 onBeforeUnmount(() => {
@@ -674,7 +783,8 @@ onBeforeUnmount(() => {
 
 .header-actions,
 .form-actions,
-.row-actions {
+.row-actions,
+.pagination-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -695,6 +805,45 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(150px, 0.7fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.filter-field,
+.page-size-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.filter-field span,
+.page-size-field span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filter-field input,
+.filter-field select,
+.page-size-field select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #d7e0ea;
+  border-radius: 11px;
+  padding: 0 11px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 13px;
 }
 
 .editor-layout {
@@ -947,6 +1096,30 @@ onBeforeUnmount(() => {
   padding: 22px 12px;
 }
 
+.pagination-bar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.pagination-summary,
+.page-indicator {
+  font-weight: 800;
+}
+
+.page-size-field {
+  flex-direction: row;
+  align-items: center;
+}
+
+.page-size-field select {
+  width: 76px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1133,17 +1306,38 @@ onBeforeUnmount(() => {
   .permission-groups {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .filter-bar {
+    grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(140px, 0.7fr));
+  }
+
+  .filter-bar .btn {
+    grid-column: 1 / -1;
+    justify-self: flex-end;
+  }
 }
 
 @media (max-width: 980px) {
   .basic-form,
   .permission-groups,
-  .station-picker-grid {
+  .station-picker-grid,
+  .filter-bar {
     grid-template-columns: 1fr;
   }
 
   .station-picker-head {
     flex-direction: column;
+  }
+
+  .filter-bar .btn {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .pagination-bar,
+  .pagination-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 </style>
