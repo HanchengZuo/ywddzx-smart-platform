@@ -145,7 +145,13 @@ const resolveCurrentRole = () => {
   }
 }
 
-const hasPermission = computed(() => currentRole.value === 'supervisor')
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_station_map))
 
 let mapInstance = null
 let mapScriptPromise = null
@@ -169,7 +175,10 @@ const displayedEventFeed = computed(() => eventFeed.value.slice(0, 5))
 const fetchEventFeed = async () => {
   try {
     const response = await axios.get('/api/event-feed', {
-      params: { _ts: Date.now() }
+      params: {
+        user_id: localStorage.getItem('user_id') || '',
+        _ts: Date.now()
+      }
     })
     eventFeed.value = response.data || []
   } catch (error) {
@@ -286,7 +295,12 @@ const loadAmapScript = () => {
 
 const fetchStations = async () => {
   try {
-    const response = await axios.get('/api/station-map')
+    const response = await axios.get('/api/station-map', {
+      params: {
+        user_id: localStorage.getItem('user_id') || '',
+        _ts: Date.now()
+      }
+    })
     stations.value = response.data || []
   } catch (error) {
     console.error(error)

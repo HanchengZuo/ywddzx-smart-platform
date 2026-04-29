@@ -105,7 +105,7 @@
                   查看本表录入问题
                 </button>
 
-                <button v-if="currentRole === 'supervisor' && record.sign_status !== '已签名确认'"
+                <button v-if="isSupervisorLike && record.sign_status !== '已签名确认'"
                   class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(record)">
                   结束本检查表并签名确认
                 </button>
@@ -169,7 +169,7 @@
                       <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
                     </div>
 
-                    <button v-else-if="currentRole === 'supervisor'" class="btn btn-primary signature-action-btn"
+                    <button v-else-if="isSupervisorLike" class="btn btn-primary signature-action-btn"
                       type="button" @click="openSignatureDialog(record)">
                       结束本检查表并签名确认
                     </button>
@@ -352,6 +352,7 @@ const dropdownVisible = ref({
 
 const list = ref([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
+const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 
 const detectMobileViewport = () => {
   const ua = navigator.userAgent || ''

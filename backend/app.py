@@ -37,11 +37,145 @@ TABLE_CODE_TO_PHYSICAL_TABLE = {
     "service_hygiene_check": "inspection_table_service_hygiene_check",
 }
 
-# === Inspection Plan Config constants ===
-PLAN_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
-CHECKLIST_ORIGINAL_MANAGER_USERNAMES = {"kongdechen", "supervisor"}
-TRAINING_MATERIAL_ADMIN_USERNAMES = {"supervisor", "superviosr"}
-MANAGEMENT_SYSTEM_ADMIN_USERNAMES = {"supervisor"}
+# === Permission constants ===
+ROLE_OPTIONS = {"root", "supervisor", "station_manager"}
+PERMISSION_CATALOG = [
+    {
+        "key": "view_station_map",
+        "name": "查看页面",
+        "category": "站点地图",
+        "description": "访问地图中心的站点地图页面。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "submit_inspections",
+        "name": "录入巡检问题",
+        "category": "巡检登记",
+        "description": "访问巡检登记页面，并提交巡检记录和问题。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_inspection_standards",
+        "name": "查看页面",
+        "category": "巡检规范库",
+        "description": "访问巡检规范库并查询检查表规范条目。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": True},
+    },
+    {
+        "key": "view_checklist_originals",
+        "name": "查看页面",
+        "category": "检查表原件库",
+        "description": "查看各检查表原始 PDF 文件。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": True},
+    },
+    {
+        "key": "manage_checklist_originals",
+        "name": "上传/更新 PDF",
+        "category": "检查表原件库",
+        "description": "上传检查表原始 PDF，或替换为新版 PDF。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
+        "key": "view_own_inspection_issues",
+        "name": "查看本站数据",
+        "category": "巡检问题列表",
+        "description": "只查看当前账号所属站点的巡检问题数据。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+    },
+    {
+        "key": "view_all_inspection_issues",
+        "name": "查看全部站点数据",
+        "category": "巡检问题列表",
+        "description": "查看所有站点的巡检问题数据。与“查看本站数据”二选一。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_own_inspection_records",
+        "name": "查看本站数据",
+        "category": "巡检记录",
+        "description": "只查看当前账号所属站点的巡检记录数据。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+    },
+    {
+        "key": "view_all_inspection_records",
+        "name": "查看全部站点数据",
+        "category": "巡检记录",
+        "description": "查看所有站点的巡检记录数据。与“查看本站数据”二选一。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_inspection_plans",
+        "name": "查看页面",
+        "category": "巡检计划",
+        "description": "访问巡检计划页面和计划完成情况。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "manage_inspection_plans",
+        "name": "管理巡检计划",
+        "category": "巡检计划",
+        "description": "新建、编辑、删除检查表巡检计划。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
+        "key": "view_own_certificates",
+        "name": "查看本站数据",
+        "category": "站点证照有效期管理",
+        "description": "查看当前账号所属站点的证照有效期和到期提醒。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+    },
+    {
+        "key": "edit_own_certificates",
+        "name": "编辑本站数据",
+        "category": "站点证照有效期管理",
+        "description": "录入、修改、删除当前账号所属站点的证照有效期。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+    },
+    {
+        "key": "view_all_certificates",
+        "name": "查看全部站点数据",
+        "category": "站点证照有效期管理",
+        "description": "查看所有站点的证照有效期和到期提醒。与“查看本站数据”二选一。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_assessment",
+        "name": "查看页面",
+        "category": "考核系统",
+        "description": "访问考核系统页面。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_training",
+        "name": "查看页面",
+        "category": "督导组内部培训系统",
+        "description": "访问督导组内部培训系统页面。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "view_training_materials",
+        "name": "查看页面",
+        "category": "培训材料库",
+        "description": "访问培训材料库并查看材料目录与预览。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+    {
+        "key": "upload_training_materials",
+        "name": "上传/更新自己的材料",
+        "category": "培训材料库",
+        "description": "上传培训材料，并编辑或删除自己上传的材料。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+    },
+]
+PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
+PERMISSION_EXCLUSIVE_GROUPS = [
+    ("view_own_inspection_issues", "view_all_inspection_issues"),
+    ("view_own_inspection_records", "view_all_inspection_records"),
+    ("view_own_certificates", "view_all_certificates"),
+]
+PERMISSION_DEPENDENCIES = {
+    "edit_own_certificates": "view_own_certificates",
+}
 STATION_TYPE_OPTIONS = {"加油站", "充电站"}
 STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
@@ -447,11 +581,11 @@ def create_inspection_record(
     return row["id"]
 
 
-# === Inspection Plan Configs helpers ===
+# === Permission helpers ===
 def get_user_by_id(cur, user_id):
     cur.execute(
         """
-        SELECT id, username, role, real_name, station_id
+        SELECT id, username, role, real_name, phone, station_id
         FROM users
         WHERE id = %s
         LIMIT 1;
@@ -461,23 +595,175 @@ def get_user_by_id(cur, user_id):
     return cur.fetchone()
 
 
-# 当前阶段先沿用前端约定：只有指定督导账号可以管理巡检计划
-# 后续建议改为 users 表中的独立权限字段（如 can_manage_plan）
-def can_manage_plan(user):
-    if not user:
-        return False
-    return (
-        user.get("role") == "supervisor"
-        and user.get("username") in PLAN_MANAGER_USERNAMES
+def ensure_user_security_schema(cur):
+    cur.execute(
+        """
+        INSERT INTO users (username, password, role, real_name, phone, station_id)
+        VALUES ('root', '123456', 'root', '系统管理员', '18801800773', NULL)
+        ON CONFLICT (username) DO NOTHING;
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_permissions (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission_key TEXT NOT NULL,
+            is_allowed BOOLEAN NOT NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, permission_key)
+        );
+        """
     )
 
 
-def can_manage_certificates(user):
-    return bool(user and user.get("role") == "supervisor")
+def is_root_user(user):
+    return bool(user and user.get("role") == "root")
 
 
-def can_manage_system(user):
-    return bool(user and user.get("username") in MANAGEMENT_SYSTEM_ADMIN_USERNAMES)
+def is_supervisor_like(user):
+    return bool(user and user.get("role") in ("root", "supervisor"))
+
+
+def is_station_manager(user):
+    return bool(user and user.get("role") == "station_manager")
+
+
+def role_default_permission(role, permission_key):
+    for item in PERMISSION_CATALOG:
+        if item["key"] == permission_key:
+            return bool(item.get("defaults", {}).get(role, False))
+    return False
+
+
+def enforce_exclusive_permissions(permission_map, role=None):
+    normalized = dict(permission_map or {})
+    for own_key, all_key in PERMISSION_EXCLUSIVE_GROUPS:
+        if not normalized.get(own_key) or not normalized.get(all_key):
+            continue
+
+        prefer_all = role_default_permission(role, all_key) and not role_default_permission(role, own_key)
+        if prefer_all:
+            normalized[own_key] = False
+        else:
+            normalized[all_key] = False
+
+    for child_key, parent_key in PERMISSION_DEPENDENCIES.items():
+        if normalized.get(child_key) and not normalized.get(parent_key):
+            normalized[child_key] = False
+
+    return normalized
+
+
+def get_permission_overrides(cur, user_id):
+    ensure_user_security_schema(cur)
+    cur.execute(
+        """
+        SELECT permission_key, is_allowed
+        FROM user_permissions
+        WHERE user_id = %s;
+        """,
+        (user_id,),
+    )
+    return {row["permission_key"]: bool(row["is_allowed"]) for row in cur.fetchall()}
+
+
+def get_effective_permissions(cur, user):
+    if not user:
+        return {}
+
+    if is_root_user(user):
+        return {item["key"]: True for item in PERMISSION_CATALOG}
+
+    overrides = get_permission_overrides(cur, user["id"])
+    role = user.get("role")
+    permissions = {
+        item["key"]: overrides.get(item["key"], role_default_permission(role, item["key"]))
+        for item in PERMISSION_CATALOG
+    }
+    return enforce_exclusive_permissions(permissions, role)
+
+
+def has_permission(cur, user, permission_key):
+    if permission_key not in PERMISSION_KEYS:
+        return False
+    if is_root_user(user):
+        return True
+    if not user:
+        return False
+
+    ensure_user_security_schema(cur)
+    cur.execute(
+        """
+        SELECT is_allowed
+        FROM user_permissions
+        WHERE user_id = %s AND permission_key = %s
+        LIMIT 1;
+        """,
+        (user["id"], permission_key),
+    )
+    override = cur.fetchone()
+    if override:
+        return bool(override["is_allowed"])
+    return role_default_permission(user.get("role"), permission_key)
+
+
+def can_manage_plan(cur, user):
+    return has_permission(cur, user, "manage_inspection_plans")
+
+
+def can_manage_system(cur, user, permission_key):
+    return is_root_user(user)
+
+
+def can_view_inspection_standards(cur, user):
+    return has_permission(cur, user, "view_inspection_standards")
+
+
+def can_view_checklist_originals(cur, user):
+    return has_permission(cur, user, "view_checklist_originals")
+
+
+def can_view_all_inspection_issues(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_all_inspection_issues"))
+
+
+def can_view_own_inspection_issues(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_own_inspection_issues"))
+
+
+def can_view_all_inspection_records(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_all_inspection_records"))
+
+
+def can_view_own_inspection_records(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_own_inspection_records"))
+
+
+def can_view_own_certificates(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_own_certificates"))
+
+
+def can_edit_own_certificates(cur, user):
+    return bool(get_effective_permissions(cur, user).get("edit_own_certificates"))
+
+
+def can_view_all_certificates(cur, user):
+    return bool(get_effective_permissions(cur, user).get("view_all_certificates"))
+
+
+def can_edit_all_certificates(user):
+    return is_root_user(user)
+
+
+def can_view_certificates(cur, user):
+    return (
+        can_edit_all_certificates(user)
+        or can_view_all_certificates(cur, user)
+        or can_view_own_certificates(cur, user)
+        or can_edit_own_certificates(cur, user)
+    )
 
 
 def normalize_text(value, max_length=None):
@@ -602,7 +888,7 @@ def ensure_station_management_columns(cur):
     )
 
 
-def require_management_user(cur, user_id):
+def require_management_user(cur, user_id, permission_key):
     if not user_id:
         raise PermissionError("缺少用户信息。")
 
@@ -610,8 +896,8 @@ def require_management_user(cur, user_id):
     if not user:
         raise LookupError("用户不存在。")
 
-    if not can_manage_system(user):
-        raise PermissionError("只有 supervisor 账号可以操作管理系统。")
+    if not can_manage_system(cur, user, permission_key):
+        raise PermissionError("当前账号无权操作管理系统。")
 
     return user
 
@@ -699,6 +985,34 @@ def parse_station_backup_json(file_storage):
     return stations
 
 
+def parse_user_backup_json(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要导入的用户备份文件。")
+
+    filename = str(file_storage.filename or "").lower()
+    if not filename.endswith(".json"):
+        raise ValueError("仅支持导入 JSON 格式的用户备份文件。")
+
+    file_bytes = file_storage.read()
+    if not file_bytes:
+        raise ValueError("用户备份文件内容为空。")
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise ValueError("用户备份文件不能超过 5MB。")
+
+    try:
+        payload = json.loads(file_bytes.decode("utf-8-sig"))
+    except Exception as exc:
+        raise ValueError("用户备份文件不是有效的 JSON。") from exc
+
+    users = payload.get("users") if isinstance(payload, dict) else payload
+    if not isinstance(users, list):
+        raise ValueError("用户备份文件缺少 users 数据。")
+    if not users:
+        raise ValueError("用户备份文件中没有可导入的用户。")
+
+    return users
+
+
 def normalize_station_backup_id(value):
     if value in (None, ""):
         return None
@@ -711,26 +1025,127 @@ def normalize_station_backup_id(value):
     return station_id
 
 
-def can_manage_checklist_originals(user):
-    return bool(user and user.get("username") in CHECKLIST_ORIGINAL_MANAGER_USERNAMES)
+def normalize_user_backup_id(value):
+    if value in (None, ""):
+        return None
+    try:
+        user_id = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("用户备份文件中存在无效的用户ID。") from exc
+    if user_id <= 0:
+        raise ValueError("用户备份文件中存在无效的用户ID。")
+    return user_id
 
 
-def can_upload_training_materials(user):
-    return bool(user and user.get("role") == "supervisor")
+def normalize_user_role(value):
+    role = normalize_text(value)
+    if role not in ROLE_OPTIONS:
+        raise ValueError("用户角色只能选择：root、supervisor、station_manager。")
+    return role
 
 
-def can_delete_any_training_material(user):
-    return bool(user and user.get("username") in TRAINING_MATERIAL_ADMIN_USERNAMES)
+def build_management_user_payload(data, is_create=False):
+    username = normalize_text(data.get("username"), 80)
+    if not username:
+        raise ValueError("请填写用户名。")
+
+    password = normalize_text(data.get("password"), 120)
+    if is_create and not password:
+        raise ValueError("请填写初始密码。")
+
+    role = normalize_user_role(data.get("role"))
+    real_name = normalize_text(data.get("real_name"), 80)
+    if not real_name:
+        raise ValueError("请填写用户姓名。")
+
+    station_id = data.get("station_id")
+    if station_id in (None, "", "null"):
+        station_id = None
+    elif role == "station_manager":
+        try:
+            station_id = int(station_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("请选择有效的所属站点。") from exc
+    else:
+        station_id = None
+
+    if role == "station_manager" and not station_id:
+        raise ValueError("站点账号必须选择所属站点。")
+
+    return {
+        "username": username,
+        "password": password,
+        "role": role,
+        "real_name": real_name,
+        "phone": normalize_text(data.get("phone"), 40) or None,
+        "station_id": station_id,
+    }
 
 
-def can_edit_training_material(user, material_row):
+def normalize_permission_updates(raw_permissions):
+    if raw_permissions in (None, ""):
+        return {}
+    if not isinstance(raw_permissions, dict):
+        raise ValueError("权限配置格式不正确。")
+
+    updates = {}
+    for key, value in raw_permissions.items():
+        if key not in PERMISSION_KEYS:
+            continue
+        updates[key] = bool(value)
+    return updates
+
+
+def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
+    if is_root_user(target_user):
+        cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user["id"],))
+        return
+
+    permissions = enforce_exclusive_permissions(permissions, target_user.get("role"))
+    for permission_key, is_allowed in permissions.items():
+        cur.execute(
+            """
+            INSERT INTO user_permissions (
+                user_id,
+                permission_key,
+                is_allowed,
+                updated_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, permission_key)
+            DO UPDATE SET
+                is_allowed = EXCLUDED.is_allowed,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = CURRENT_TIMESTAMP;
+            """,
+            (target_user["id"], permission_key, is_allowed, actor_user_id),
+        )
+
+
+def can_manage_checklist_originals(cur, user):
+    return has_permission(cur, user, "manage_checklist_originals")
+
+
+def can_upload_training_materials(cur, user):
+    return has_permission(cur, user, "upload_training_materials")
+
+
+def can_delete_any_training_material(cur, user):
+    return is_root_user(user)
+
+
+def can_edit_training_material(cur, user, material_row):
     if not user or not material_row:
         return False
+    if is_root_user(user):
+        return True
     return str(material_row.get("uploaded_by") or "") == str(user.get("id") or "")
 
 
-def can_delete_training_material(user, material_row):
-    return can_edit_training_material(user, material_row) or can_delete_any_training_material(user)
+def can_delete_training_material(cur, user, material_row):
+    return can_edit_training_material(cur, user, material_row) or can_delete_any_training_material(cur, user)
 
 
 def ensure_training_materials_table(cur):
@@ -1105,10 +1520,11 @@ def get_inspection_plan_configs():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        if user_id:
-            user = get_user_by_id(cur, user_id)
-            if not user:
-                return jsonify({"success": False, "error": "用户不存在。"}), 404
+        user = get_user_by_id(cur, user_id) if user_id else None
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_inspection_plans"):
+            return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
 
         where_clauses = []
         params = []
@@ -1223,10 +1639,11 @@ def get_inspection_plan_config_detail(plan_config_id):
         conn = get_db_connection()
         cur = conn.cursor()
 
-        if user_id:
-            user = get_user_by_id(cur, user_id)
-            if not user:
-                return jsonify({"success": False, "error": "用户不存在。"}), 404
+        user = get_user_by_id(cur, user_id) if user_id else None
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_inspection_plans"):
+            return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
 
         cur.execute(
             """
@@ -1350,7 +1767,7 @@ def save_inspection_plan_config_stations(plan_config_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_plan(user):
+        if not can_manage_plan(cur, user):
             return (
                 jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
                 403,
@@ -1577,6 +1994,8 @@ def login():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
         cur.execute(
             """
             SELECT
@@ -1609,6 +2028,7 @@ def login():
                 401,
             )
 
+        permissions = get_effective_permissions(cur, user)
         return jsonify(
             {
                 "success": True,
@@ -1622,6 +2042,7 @@ def login():
                     "station_name": user["station_name"],
                     "region": user["region"],
                     "address": user["address"],
+                    "permissions": permissions,
                 },
             }
         )
@@ -1676,7 +2097,7 @@ def sign_inspection_record(inspection_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if user["role"] != "supervisor":
+        if not is_supervisor_like(user):
             return (
                 jsonify(
                     {
@@ -1799,6 +2220,618 @@ def get_stations():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/management/users", methods=["GET"])
+def get_management_users():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            SELECT
+                u.id,
+                u.username,
+                u.role,
+                u.real_name,
+                u.phone,
+                u.station_id,
+                s.station_name,
+                TO_CHAR(u.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(u.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM users u
+            LEFT JOIN stations s ON u.station_id = s.id
+            ORDER BY
+                CASE u.role
+                    WHEN 'root' THEN 1
+                    WHEN 'supervisor' THEN 2
+                    ELSE 3
+                END,
+                u.id ASC;
+            """
+        )
+        rows = cur.fetchall()
+
+        users = []
+        for row in rows:
+            overrides = get_permission_overrides(cur, row["id"])
+            permissions = get_effective_permissions(cur, row)
+            users.append(
+                {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "role": row["role"],
+                    "real_name": row["real_name"],
+                    "phone": row["phone"],
+                    "station_id": row["station_id"],
+                    "station_name": row["station_name"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "permission_overrides": overrides,
+                    "permissions": permissions,
+                }
+            )
+
+        cur.execute(
+            """
+            SELECT id, station_name
+            FROM stations
+            ORDER BY station_name ASC, id ASC;
+            """
+        )
+        stations = cur.fetchall()
+
+        return jsonify(
+            {
+                "success": True,
+                "users": users,
+                "stations": stations,
+                "roles": [
+                    {"value": "root", "label": "系统管理员"},
+                    {"value": "supervisor", "label": "督导组账号"},
+                    {"value": "station_manager", "label": "站点账号"},
+                ],
+                "permissions": PERMISSION_CATALOG,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users/export", methods=["GET"])
+def export_management_users():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            SELECT
+                u.id,
+                u.username,
+                u.password,
+                u.role,
+                u.real_name,
+                u.phone,
+                u.station_id,
+                s.station_name,
+                s.hos_station_code,
+                TO_CHAR(u.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
+                TO_CHAR(u.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at
+            FROM users u
+            LEFT JOIN stations s ON u.station_id = s.id
+            WHERE u.role <> 'root'
+            ORDER BY
+                CASE u.role
+                    WHEN 'supervisor' THEN 1
+                    ELSE 2
+                END,
+                u.id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        users = []
+        for row in rows:
+            users.append(
+                {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "password": row["password"],
+                    "role": row["role"],
+                    "real_name": row["real_name"],
+                    "phone": row["phone"],
+                    "station_id": row["station_id"],
+                    "station_name": row["station_name"],
+                    "hos_station_code": row["hos_station_code"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "permission_overrides": get_permission_overrides(cur, row["id"]),
+                    "permissions": get_effective_permissions(cur, row),
+                }
+            )
+
+        now = beijing_now()
+        response = jsonify(
+            {
+                "backup_type": "ywddzx_users",
+                "version": 1,
+                "exported_at": now.isoformat(),
+                "excluded_builtin_accounts": ["root"],
+                "users": users,
+            }
+        )
+        filename = f"ywddzx_users_backup_{now.strftime('%Y%m%d_%H%M%S')}.json"
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users/import", methods=["POST"])
+def import_management_users():
+    user_id = str(request.form.get("user_id", "")).strip()
+    backup_file = request.files.get("file")
+    conn = None
+    cur = None
+
+    try:
+        raw_users = parse_user_backup_json(backup_file)
+        user_payloads = []
+        skipped_builtin_count = 0
+        for raw_user in raw_users:
+            if not isinstance(raw_user, dict):
+                raise ValueError("用户备份文件中存在无效的用户记录。")
+
+            raw_username = normalize_text(raw_user.get("username"), 80)
+            raw_role = normalize_text(raw_user.get("role"))
+            if raw_username == "root" or raw_role == "root":
+                skipped_builtin_count += 1
+                continue
+
+            user_data = build_management_user_payload(raw_user, is_create=True)
+            if user_data["role"] == "root":
+                skipped_builtin_count += 1
+                continue
+
+            raw_permissions = raw_user.get("permissions")
+            if raw_permissions in (None, ""):
+                raw_permissions = raw_user.get("permission_overrides")
+            user_data["user_id"] = normalize_user_backup_id(raw_user.get("id"))
+            user_data["permissions"] = normalize_permission_updates(raw_permissions)
+            user_data["created_at"] = normalize_text(raw_user.get("created_at")) or None
+            user_data["updated_at"] = normalize_text(raw_user.get("updated_at")) or None
+            user_payloads.append(user_data)
+
+        if not user_payloads:
+            raise ValueError("用户备份文件中没有可导入的非 root 用户。")
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+
+        imported_count = 0
+        for user_data in user_payloads:
+            if user_data["role"] == "station_manager":
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM stations
+                    WHERE id = %s
+                    LIMIT 1;
+                    """,
+                    (user_data["station_id"],),
+                )
+                if not cur.fetchone():
+                    raise ValueError("用户备份文件中的站点账号关联了不存在的站点ID，请先导入站点备份。")
+
+            cur.execute(
+                """
+                SELECT id, role
+                FROM users
+                WHERE username = %s
+                LIMIT 1;
+                """,
+                (user_data["username"],),
+            )
+            existing_by_username = cur.fetchone()
+
+            if existing_by_username and existing_by_username["role"] == "root":
+                skipped_builtin_count += 1
+                continue
+
+            target_user_id = None
+            if existing_by_username:
+                target_user_id = existing_by_username["id"]
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password = %(password)s,
+                        role = %(role)s,
+                        real_name = %(real_name)s,
+                        phone = %(phone)s,
+                        station_id = %(station_id)s,
+                        updated_at = COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                    WHERE id = %(target_user_id)s
+                    RETURNING id;
+                    """,
+                    {**user_data, "target_user_id": target_user_id},
+                )
+                target_user_id = cur.fetchone()["id"]
+            else:
+                backup_user_id = user_data["user_id"]
+                if backup_user_id:
+                    cur.execute(
+                        """
+                        SELECT id, role
+                        FROM users
+                        WHERE id = %s
+                        LIMIT 1;
+                        """,
+                        (backup_user_id,),
+                    )
+                    existing_by_id = cur.fetchone()
+                    if existing_by_id:
+                        backup_user_id = None
+
+                if backup_user_id:
+                    cur.execute(
+                        """
+                        INSERT INTO users (
+                            id,
+                            username,
+                            password,
+                            role,
+                            real_name,
+                            phone,
+                            station_id,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            %(user_id)s,
+                            %(username)s,
+                            %(password)s,
+                            %(role)s,
+                            %(real_name)s,
+                            %(phone)s,
+                            %(station_id)s,
+                            COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
+                            COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                        )
+                        RETURNING id;
+                        """,
+                        {**user_data, "user_id": backup_user_id},
+                    )
+                    target_user_id = cur.fetchone()["id"]
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO users (
+                            username,
+                            password,
+                            role,
+                            real_name,
+                            phone,
+                            station_id,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            %(username)s,
+                            %(password)s,
+                            %(role)s,
+                            %(real_name)s,
+                            %(phone)s,
+                            %(station_id)s,
+                            COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
+                            COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                        )
+                        RETURNING id;
+                        """,
+                        user_data,
+                    )
+                    target_user_id = cur.fetchone()["id"]
+
+            target_user = {
+                "id": target_user_id,
+                "role": user_data["role"],
+            }
+            cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
+            apply_user_permission_updates(cur, target_user, user_data["permissions"], actor["id"])
+            imported_count += 1
+
+        cur.execute(
+            """
+            SELECT setval(
+                pg_get_serial_sequence('users', 'id'),
+                GREATEST(COALESCE((SELECT MAX(id) FROM users), 1), 1),
+                TRUE
+            );
+            """
+        )
+        conn.commit()
+
+        skipped_text = f"，已跳过 {skipped_builtin_count} 条内置 root 记录" if skipped_builtin_count else ""
+        return jsonify(
+            {
+                "success": True,
+                "message": f"用户数据导入完成，共处理 {imported_count} 条记录{skipped_text}。",
+                "count": imported_count,
+                "skipped_builtin_count": skipped_builtin_count,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "导入失败：备份文件中的用户名与现有用户存在冲突。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users", methods=["POST"])
+def create_management_user():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        user_data = build_management_user_payload(data, is_create=True)
+        if user_data["role"] == "root":
+            return jsonify({"success": False, "error": "系统管理员账号为内置账号，不能通过页面新增。"}), 400
+        permissions = normalize_permission_updates(data.get("permissions"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            INSERT INTO users (
+                username,
+                password,
+                role,
+                real_name,
+                phone,
+                station_id,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id, username, role;
+            """,
+            (
+                user_data["username"],
+                user_data["password"],
+                user_data["role"],
+                user_data["real_name"],
+                user_data["phone"],
+                user_data["station_id"],
+            ),
+        )
+        created_user = cur.fetchone()
+        apply_user_permission_updates(cur, created_user, permissions, actor["id"])
+        conn.commit()
+        return jsonify({"success": True, "message": "用户已新增。", "id": created_user["id"]})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "用户名已存在。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users/<int:target_user_id>", methods=["PUT"])
+def update_management_user(target_user_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        user_data = build_management_user_payload(data, is_create=False)
+        permissions = normalize_permission_updates(data.get("permissions"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            SELECT id, username, role
+            FROM users
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (target_user_id,),
+        )
+        target_user = cur.fetchone()
+        if not target_user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if target_user["role"] == "root" and user_data["role"] != "root":
+            return jsonify({"success": False, "error": "root 系统管理员角色不可修改。"}), 400
+
+        if target_user["role"] != "root" and user_data["role"] == "root":
+            return jsonify({"success": False, "error": "不能将普通用户升级为 root 系统管理员。"}), 400
+
+        if user_data["password"]:
+            cur.execute(
+                """
+                UPDATE users
+                SET username = %s,
+                    password = %s,
+                    role = %s,
+                    real_name = %s,
+                    phone = %s,
+                    station_id = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, username, role;
+                """,
+                (
+                    user_data["username"],
+                    user_data["password"],
+                    user_data["role"],
+                    user_data["real_name"],
+                    user_data["phone"],
+                    user_data["station_id"],
+                    target_user_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE users
+                SET username = %s,
+                    role = %s,
+                    real_name = %s,
+                    phone = %s,
+                    station_id = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, username, role;
+                """,
+                (
+                    user_data["username"],
+                    user_data["role"],
+                    user_data["real_name"],
+                    user_data["phone"],
+                    user_data["station_id"],
+                    target_user_id,
+                ),
+            )
+        updated_user = cur.fetchone()
+        apply_user_permission_updates(cur, updated_user, permissions, actor["id"])
+        conn.commit()
+        return jsonify({"success": True, "message": "用户已更新。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "用户名已存在。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users/<int:target_user_id>", methods=["DELETE"])
+def delete_management_user(target_user_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+        if str(actor["id"]) == str(target_user_id):
+            return jsonify({"success": False, "error": "不能删除当前登录账号。"}), 400
+
+        cur.execute(
+            """
+            SELECT id, role
+            FROM users
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (target_user_id,),
+        )
+        target_user = cur.fetchone()
+        if not target_user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if target_user["role"] == "root":
+            return jsonify({"success": False, "error": "root 系统管理员账号不可删除。"}), 400
+
+        cur.execute("DELETE FROM users WHERE id = %s;", (target_user_id,))
+        conn.commit()
+        return jsonify({"success": True, "message": "用户已删除。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/stations", methods=["GET"])
 def get_management_stations():
     user_id = str(request.args.get("user_id", "")).strip()
@@ -1810,7 +2843,7 @@ def get_management_stations():
         cur = conn.cursor()
         ensure_station_management_columns(cur)
         conn.commit()
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         cur.execute(
             """
@@ -1875,7 +2908,7 @@ def export_management_stations():
         cur = conn.cursor()
         ensure_station_management_columns(cur)
         conn.commit()
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         cur.execute(
             """
@@ -1951,7 +2984,7 @@ def import_management_stations():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         imported_count = 0
         for station_data in station_payloads:
@@ -2141,7 +3174,7 @@ def create_management_station():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         cur.execute(
             """
@@ -2225,7 +3258,7 @@ def update_management_station(station_id):
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         cur.execute(
             """
@@ -2290,7 +3323,7 @@ def delete_management_station(station_id):
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
-        require_management_user(cur, user_id)
+        require_management_user(cur, user_id, "manage_stations")
 
         cur.execute("DELETE FROM stations WHERE id = %s RETURNING id;", (station_id,))
         row = cur.fetchone()
@@ -2344,15 +3377,16 @@ def get_station_certificates():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if user["role"] not in ("supervisor", "station_manager"):
+        if not can_view_certificates(cur, user):
             return (
                 jsonify({"success": False, "error": "当前账号无权访问证照管理。"}),
                 403,
             )
 
+        scope_all = can_edit_all_certificates(user) or can_view_all_certificates(cur, user)
         station_params = []
         station_where = ""
-        if user["role"] == "station_manager":
+        if not scope_all:
             if not user["station_id"]:
                 return jsonify(
                     {
@@ -2360,6 +3394,9 @@ def get_station_certificates():
                         "certificate_types": CERTIFICATE_TYPES,
                         "stations": [],
                         "records": [],
+                        "can_view_all": False,
+                        "can_edit_all": False,
+                        "can_edit_own": can_edit_own_certificates(cur, user),
                     }
                 )
             station_where = "WHERE id = %s"
@@ -2385,7 +3422,7 @@ def get_station_certificates():
 
         record_params = []
         record_where = ""
-        if user["role"] == "station_manager":
+        if not scope_all:
             record_where = "WHERE sc.station_id = %s"
             record_params.append(user["station_id"])
 
@@ -2433,6 +3470,9 @@ def get_station_certificates():
                 "certificate_types": CERTIFICATE_TYPES,
                 "stations": stations,
                 "records": records,
+                "can_view_all": scope_all,
+                "can_edit_all": can_edit_all_certificates(user),
+                "can_edit_own": can_edit_own_certificates(cur, user),
             }
         )
     except Exception as e:
@@ -2483,13 +3523,18 @@ def save_station_certificate():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_certificates(user):
+        can_edit_all = can_edit_all_certificates(user)
+        can_edit_own = can_edit_own_certificates(cur, user)
+        if not can_edit_all and not can_edit_own:
             return (
                 jsonify(
-                    {"success": False, "error": "只有督导组账号可以维护证照有效期。"}
+                    {"success": False, "error": "当前账号无权维护证照有效期。"}
                 ),
                 403,
             )
+
+        if not can_edit_all and str(station_id) != str(user.get("station_id") or ""):
+            return jsonify({"success": False, "error": "当前账号只能维护本站证照有效期。"}), 403
 
         cur.execute(
             """
@@ -2577,13 +3622,31 @@ def delete_station_certificate(certificate_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_certificates(user):
+        can_edit_all = can_edit_all_certificates(user)
+        can_edit_own = can_edit_own_certificates(cur, user)
+        if not can_edit_all and not can_edit_own:
             return (
                 jsonify(
-                    {"success": False, "error": "只有督导组账号可以删除证照记录。"}
+                    {"success": False, "error": "当前账号无权删除证照记录。"}
                 ),
                 403,
             )
+
+        cur.execute(
+            """
+            SELECT id, station_id
+            FROM station_certificates
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (certificate_id,),
+        )
+        certificate = cur.fetchone()
+        if not certificate:
+            return jsonify({"success": False, "error": "证照记录不存在。"}), 404
+
+        if not can_edit_all and str(certificate["station_id"]) != str(user.get("station_id") or ""):
+            return jsonify({"success": False, "error": "当前账号只能删除本站证照记录。"}), 403
 
         cur.execute(
             """
@@ -2593,9 +3656,6 @@ def delete_station_certificate(certificate_id):
             """,
             (certificate_id,),
         )
-        deleted = cur.fetchone()
-        if not deleted:
-            return jsonify({"success": False, "error": "证照记录不存在。"}), 404
 
         conn.commit()
         return jsonify({"success": True, "message": "证照记录已删除。"})
@@ -2609,12 +3669,23 @@ def delete_station_certificate(certificate_id):
 
 @app.route("/api/station-map")
 def get_station_map():
+    user_id = str(request.args.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
     conn = None
     cur = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_station_map"):
+            return jsonify({"success": False, "error": "当前账号无权查看站点地图。"}), 403
+
         cur.execute(
             """
             SELECT
@@ -2663,12 +3734,23 @@ def get_station_map():
 
 @app.route("/api/event-feed")
 def get_event_feed():
+    user_id = str(request.args.get("user_id", "")).strip()
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
     conn = None
     cur = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_station_map"):
+            return jsonify({"success": False, "error": "当前账号无权查看站点地图动态。"}), 403
+
         cur.execute(
             """
             SELECT
@@ -2757,7 +3839,7 @@ def get_training_materials():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if user["role"] != "supervisor":
+        if not has_permission(cur, user, "view_training_materials"):
             return jsonify({"success": False, "error": "当前账号无权访问培训材料库。"}), 403
 
         cur.execute(
@@ -2797,16 +3879,16 @@ def get_training_materials():
                     "updated_at": row["updated_at"],
                     "uploaded_by_username": row["uploaded_by_username"],
                     "uploaded_by_real_name": row["uploaded_by_real_name"],
-                    "can_edit": can_edit_training_material(user, row),
-                    "can_delete": can_delete_training_material(user, row),
+                    "can_edit": can_edit_training_material(cur, user, row),
+                    "can_delete": can_delete_training_material(cur, user, row),
                 }
             )
 
         return jsonify(
             {
                 "success": True,
-                "can_upload": can_upload_training_materials(user),
-                "can_delete_any": can_delete_any_training_material(user),
+                "can_upload": can_upload_training_materials(cur, user),
+                "can_delete_any": can_delete_any_training_material(cur, user),
                 "items": items,
             }
         )
@@ -2841,7 +3923,7 @@ def create_training_material():
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_upload_training_materials(user):
+        if not can_upload_training_materials(cur, user):
             return jsonify({"success": False, "error": "只有督导组账号可以上传培训材料。"}), 403
 
         new_file_path, original_filename, file_size, file_type = save_training_material_file(material_file)
@@ -2913,7 +3995,7 @@ def update_training_material(material_id):
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if user["role"] != "supervisor":
+        if not can_upload_training_materials(cur, user):
             return jsonify({"success": False, "error": "当前账号无权维护培训材料。"}), 403
 
         cur.execute(
@@ -2928,7 +4010,7 @@ def update_training_material(material_id):
         material = cur.fetchone()
         if not material:
             return jsonify({"success": False, "error": "培训材料不存在。"}), 404
-        if not can_edit_training_material(user, material):
+        if not can_edit_training_material(cur, user, material):
             return jsonify({"success": False, "error": "只能编辑自己上传的培训材料。"}), 403
 
         old_file_path = material["file_path"]
@@ -2999,7 +4081,7 @@ def delete_training_material(material_id):
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if user["role"] != "supervisor":
+        if not can_upload_training_materials(cur, user):
             return jsonify({"success": False, "error": "当前账号无权删除培训材料。"}), 403
 
         cur.execute(
@@ -3014,7 +4096,7 @@ def delete_training_material(material_id):
         material = cur.fetchone()
         if not material:
             return jsonify({"success": False, "error": "培训材料不存在。"}), 404
-        if not can_delete_training_material(user, material):
+        if not can_delete_training_material(cur, user, material):
             return jsonify({"success": False, "error": "只能删除自己上传的培训材料。"}), 403
 
         old_file_path = material["file_path"]
@@ -3048,6 +4130,9 @@ def get_inspection_table_originals():
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_view_checklist_originals(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看检查表原件库。"}), 403
 
         cur.execute(
             """
@@ -3102,7 +4187,7 @@ def get_inspection_table_originals():
         return jsonify(
             {
                 "success": True,
-                "can_manage": can_manage_checklist_originals(user),
+                "can_manage": can_manage_checklist_originals(cur, user),
                 "items": items,
             }
         )
@@ -3136,7 +4221,7 @@ def upload_inspection_table_original_pdf(inspection_table_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_checklist_originals(user):
+        if not can_manage_checklist_originals(cur, user):
             return jsonify({"success": False, "error": "当前账号无权上传检查表原件。"}), 403
 
         cur.execute(
@@ -3383,10 +4468,11 @@ def get_inspection_plan_overview():
         conn = get_db_connection()
         cur = conn.cursor()
 
-        if user_id:
-            user = get_user_by_id(cur, user_id)
-            if not user:
-                return jsonify({"success": False, "error": "用户不存在。"}), 404
+        user = get_user_by_id(cur, user_id) if user_id else None
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_inspection_plans"):
+            return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
 
         cur.execute(
             """
@@ -3542,7 +4628,7 @@ def inspection_register():
         if not inspector:
             return jsonify({"success": False, "error": "巡检人不存在。"}), 404
 
-        if inspector["role"] != "supervisor":
+        if not has_permission(cur, inspector, "submit_inspections"):
             return (
                 jsonify(
                     {"success": False, "error": "只有督导组账号可以提交巡检登记。"}
@@ -3774,7 +4860,7 @@ def get_my_issues():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if user["role"] == "station_manager":
+        if is_station_manager(user):
             if not user["station_id"]:
                 return jsonify([])
 
@@ -3809,7 +4895,7 @@ def get_my_issues():
             rows = cur.fetchall()
             return jsonify(rows)
 
-        if user["role"] == "supervisor":
+        if is_root_user(user) or user.get("role") == "supervisor":
             cur.execute(
                 """
                 SELECT
@@ -3873,11 +4959,20 @@ def get_issues():
             )
             user = cur.fetchone()
 
-        if user and user["role"] == "station_manager":
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if can_view_all:
+            pass
+        elif can_view_own:
             if not user["station_id"]:
                 return jsonify([])
             where_clause = "WHERE i.station_id = %s"
             params.append(user["station_id"])
+        else:
+            return jsonify({"success": False, "error": "当前账号无权查看巡检问题列表。"}), 403
 
         cur.execute(
             sql.SQL(
@@ -3956,7 +5051,7 @@ def create_inspection_plan_config():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_plan(user):
+        if not can_manage_plan(cur, user):
             return (
                 jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
                 403,
@@ -4080,7 +5175,7 @@ def update_inspection_plan_config(plan_config_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_plan(user):
+        if not can_manage_plan(cur, user):
             return (
                 jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
                 403,
@@ -4205,7 +5300,7 @@ def delete_inspection_plan_config(plan_config_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_manage_plan(user):
+        if not can_manage_plan(cur, user):
             return (
                 jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
                 403,
@@ -4268,11 +5363,20 @@ def get_inspections():
             )
             user = cur.fetchone()
 
-        if user and user["role"] == "station_manager":
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_own = can_view_own_inspection_records(cur, user)
+        if can_view_all:
+            pass
+        elif can_view_own:
             if not user["station_id"]:
                 return jsonify([])
             where_clause = "WHERE ins.station_id = %s"
             params.append(user["station_id"])
+        else:
+            return jsonify({"success": False, "error": "当前账号无权查看巡检记录。"}), 403
 
         cur.execute(
             sql.SQL(
@@ -4372,11 +5476,18 @@ def get_inspection_issues(inspection_id):
         if not inspection:
             return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
 
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_own = can_view_own_inspection_records(cur, user)
         if (
-            user
-            and user["role"] == "station_manager"
+            can_view_own
+            and not can_view_all
             and inspection["station_id"] != user["station_id"]
         ):
+            return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
+        if not can_view_all and not can_view_own:
             return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
 
         cur.execute(
@@ -4588,7 +5699,7 @@ def submit_review(issue_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if user["role"] != "supervisor":
+        if not (is_root_user(user) or user.get("role") == "supervisor"):
             return (
                 jsonify({"success": False, "error": "只有督导组账号可以提交复核。"}),
                 403,

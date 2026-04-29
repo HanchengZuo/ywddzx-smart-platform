@@ -164,7 +164,14 @@ const currentRole = ref(localStorage.getItem('user_role') || '')
 const loading = ref(false)
 const saving = ref(false)
 const deletingId = ref(null)
-const canUpload = ref(currentRole.value === 'supervisor')
+let localPermissions = {}
+try {
+    localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+    localPermissions = {}
+}
+const canUpload = ref(currentRole.value === 'root' || Boolean(localPermissions.upload_training_materials))
+const hasPermission = currentRole.value === 'root' || Boolean(localPermissions.view_training_materials)
 const materials = ref([])
 const activeMaterialId = ref('')
 const pageError = ref('')
@@ -238,6 +245,11 @@ const validateFile = (file) => {
 }
 
 const fetchMaterials = async () => {
+  if (!hasPermission) {
+    pageError.value = '当前账号无权访问培训材料库。'
+    return
+  }
+
   if (!currentUserId.value) {
     pageError.value = '缺少当前用户信息，请重新登录。'
     return

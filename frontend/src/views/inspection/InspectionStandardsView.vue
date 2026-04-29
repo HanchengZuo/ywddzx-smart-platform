@@ -1,5 +1,5 @@
 <template>
-  <div class="page-shell standards-page">
+  <div v-if="hasPermission" class="page-shell standards-page">
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
@@ -135,6 +135,11 @@
       </div>
     </div>
   </div>
+  <div v-else class="card-surface permission-card">
+    <div class="permission-icon">!</div>
+    <div class="permission-title">无权限访问</div>
+    <div class="permission-desc">当前账号无权访问巡检规范库。</div>
+  </div>
 </template>
 
 <script setup>
@@ -142,6 +147,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 
 const loading = ref(false)
+const currentRole = localStorage.getItem('user_role') || ''
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_inspection_standards)
 const inspectionTables = ref([])
 const inspectionTableFields = ref([])
 const standards = ref([])
@@ -509,6 +522,7 @@ watch(
 )
 
 onMounted(async () => {
+  if (!hasPermission) return
   try {
     await fetchInspectionTables()
     await fetchStandards()
@@ -967,6 +981,43 @@ onMounted(async () => {
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.permission-card {
+  min-height: 320px;
+  margin: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+}
+
+.permission-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 28px;
+  font-weight: 900;
+  margin-bottom: 14px;
+}
+
+.permission-title {
+  font-size: 22px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.permission-desc {
+  color: #64748b;
+  font-size: 14px;
 }
 
 @media (max-width: 1200px) {

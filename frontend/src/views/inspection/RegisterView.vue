@@ -169,7 +169,13 @@ import {
 } from '@/utils/imageUpload'
 
 const currentRole = localStorage.getItem('user_role') || ''
-const hasPermission = currentRole === 'supervisor'
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_inspections)
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
 const tableSelectRef = ref(null)

@@ -175,7 +175,13 @@
 import { computed } from 'vue'
 
 const currentRole = localStorage.getItem('user_role') || ''
-const hasPermission = computed(() => currentRole === 'supervisor')
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = computed(() => currentRole === 'root' || Boolean(localPermissions.view_assessment))
 
 const dimensionScores = [
   { name: '工作态度', score: 4.7, avg: 4.1, diff: 0.6 },

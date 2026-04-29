@@ -1,5 +1,5 @@
 <template>
-  <div class="page-shell originals-page">
+  <div v-if="hasPermission" class="page-shell originals-page">
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检规范库</div>
@@ -120,6 +120,11 @@
       </section>
     </div>
   </div>
+  <div v-else class="card-surface permission-card">
+    <div class="permission-icon">!</div>
+    <div class="permission-title">无权限访问</div>
+    <div class="permission-desc">当前账号无权访问检查表原件库。</div>
+  </div>
 </template>
 
 <script setup>
@@ -128,12 +133,20 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const currentUsername = ref(localStorage.getItem('username') || '')
+const currentRole = localStorage.getItem('user_role') || ''
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
 const loading = ref(false)
 const uploadingId = ref(null)
 const pageError = ref('')
 const actionMessage = ref('')
 const actionMessageType = ref('info')
-const canManage = ref(['kongdechen', 'supervisor'].includes(currentUsername.value))
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_checklist_originals)
+const canManage = ref(currentRole === 'root' || Boolean(localPermissions.manage_checklist_originals))
 const checklistItems = ref([])
 const activeTableId = ref('')
 let actionMessageTimer = null
@@ -174,6 +187,8 @@ const selectItem = (item) => {
 }
 
 const fetchOriginals = async () => {
+  if (!hasPermission) return
+
   if (!currentUserId.value) {
     pageError.value = '缺少当前用户信息，请重新登录。'
     return
@@ -595,6 +610,43 @@ onBeforeUnmount(() => {
 
 .upload-label input {
   display: none;
+}
+
+.permission-card {
+  min-height: 320px;
+  margin: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+}
+
+.permission-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 28px;
+  font-weight: 900;
+  margin-bottom: 14px;
+}
+
+.permission-title {
+  font-size: 22px;
+  font-weight: 900;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.permission-desc {
+  color: #64748b;
+  font-size: 14px;
 }
 
 @media (max-width: 1200px) {

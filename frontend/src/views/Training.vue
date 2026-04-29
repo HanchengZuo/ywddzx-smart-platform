@@ -138,7 +138,13 @@
 
 <script setup>
 const currentRole = localStorage.getItem('user_role') || ''
-const hasPermission = currentRole === 'supervisor'
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_training)
 
 const statCards = [
   { label: '培训模块数', value: '8', trend: '现场 + 远程巡检', trendClass: 'neutral' },

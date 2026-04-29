@@ -134,7 +134,7 @@
               <div class="mobile-card-text">{{ item.description }}</div>
             </div>
 
-            <template v-if="currentRole === 'supervisor'">
+            <template v-if="isSupervisorLike">
               <div class="mobile-card-row"><span>整改结果</span><strong>{{ item.rectification_result || '暂无' }}</strong>
               </div>
               <div class="mobile-card-row mobile-card-row-top">
@@ -150,13 +150,13 @@
               <span>问题照片</span>
             </button>
 
-            <button v-if="currentRole === 'supervisor' && item.rectification_photo" class="mobile-image-btn"
+            <button v-if="isSupervisorLike && item.rectification_photo" class="mobile-image-btn"
               type="button" @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
               <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="整改照片" />
               <span>整改照片</span>
             </button>
 
-            <button v-if="currentRole === 'supervisor' && item.review_photo" class="mobile-image-btn" type="button"
+            <button v-if="isSupervisorLike && item.review_photo" class="mobile-image-btn" type="button"
               @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
               <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
               <span>复核照片</span>
@@ -192,7 +192,7 @@
                 <th>问题描述</th>
 
                 <th>问题照片</th>
-                <template v-if="currentRole === 'supervisor'">
+                <template v-if="isSupervisorLike">
                   <th>站经理整改结果</th>
                   <th>站点反馈整改说明</th>
                   <th>站点反馈整改照片</th>
@@ -227,7 +227,7 @@
                     <img :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片" />
                   </button>
                 </td>
-                <template v-if="currentRole === 'supervisor'">
+                <template v-if="isSupervisorLike">
                   <td>{{ item.rectification_result || '暂无' }}</td>
                   <td class="long-text">{{ item.rectification_note || '暂无' }}</td>
                   <td>
@@ -259,12 +259,12 @@
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td :colspan="currentRole === 'supervisor' ? 12 : 9" class="empty-row">
+                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">
                   {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
                 </td>
               </tr>
               <tr v-if="loading">
-                <td :colspan="currentRole === 'supervisor' ? 12 : 9" class="empty-row">正在加载数据...</td>
+                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">正在加载数据...</td>
               </tr>
             </tbody>
           </table>
@@ -482,6 +482,7 @@ const isInspectionSigned = (item) => {
 
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
+const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])

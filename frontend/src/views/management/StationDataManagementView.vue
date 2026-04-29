@@ -23,7 +23,7 @@
     <div v-if="!hasPermission" class="card-surface permission-card">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权限访问</div>
-      <div class="permission-desc">当前页面仅 supervisor 账号可访问和操作。</div>
+      <div class="permission-desc">当前页面仅 root 系统管理员账号可访问和操作。</div>
     </div>
 
     <template v-else>
@@ -331,8 +331,14 @@ import axios from 'axios'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
-const currentUsername = localStorage.getItem('username') || ''
-const hasPermission = currentUsername === 'supervisor'
+const currentRole = localStorage.getItem('user_role') || ''
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = currentRole === 'root'
 
 const stations = ref([])
 const loading = ref(false)
@@ -1051,6 +1057,10 @@ onMounted(fetchStations)
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   min-height: 38px;
   padding: 0 14px;
   border-radius: 11px;
@@ -1059,6 +1069,8 @@ onMounted(fetchStations)
   color: #0f172a;
   font-size: 13px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1095,10 +1107,15 @@ label.btn {
 
 .file-action {
   position: relative;
+  height: 38px;
 }
 
 .file-action input {
   display: none;
+}
+
+.file-action span {
+  pointer-events: none;
 }
 
 .file-action.disabled {

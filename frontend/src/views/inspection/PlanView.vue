@@ -1232,9 +1232,15 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 const currentRole = localStorage.getItem('user_role') || ''
 const currentUsername = localStorage.getItem('username') || ''
 const currentUserId = localStorage.getItem('user_id') || ''
+let localPermissions = {}
+try {
+    localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+    localPermissions = {}
+}
 
-const hasPermission = currentRole === 'supervisor'
-const isPlanManager = ['kongdechen', 'supervisor'].includes(currentUsername)
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_inspection_plans)
+const isPlanManager = currentRole === 'root' || Boolean(localPermissions.manage_inspection_plans)
 
 const coverageTypeLabelMap = {
     monthly: '月度覆盖',

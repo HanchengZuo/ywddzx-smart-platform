@@ -68,7 +68,7 @@
         </button>
       </div>
 
-      <div v-if="currentRole !== 'station_manager'" class="menu-section">
+      <div v-if="canViewStationMap" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">地图中心</div>
 
         <button class="nav-item" :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
@@ -81,20 +81,21 @@
       <div class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">巡检系统</div>
 
-        <button v-if="currentRole !== 'station_manager'" class="nav-item"
+        <button v-if="canSubmitInspections" class="nav-item"
           :class="{ active: isActive('/inspection/register'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/register')" :title="sidebarCollapsed ? '巡检登记' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检登记</span>
         </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/standards'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/standards')" :title="sidebarCollapsed ? '巡检规范库' : ''">
+        <button v-if="canViewInspectionStandards" class="nav-item"
+          :class="{ active: isActive('/inspection/standards'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/standards')" :title="sidebarCollapsed ? '巡检规范库' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检规范库</span>
         </button>
 
-        <button class="nav-item"
+        <button v-if="canViewChecklistOriginals" class="nav-item"
           :class="{ active: isActive('/inspection/checklist-originals'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/checklist-originals')" :title="sidebarCollapsed ? '检查表原件库' : ''">
           <span class="nav-item-dot"></span>
@@ -108,33 +109,36 @@
           <span v-if="!sidebarCollapsed">{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</span>
         </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/issues'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/issues')" :title="sidebarCollapsed ? '巡检问题列表' : ''">
+        <button v-if="canViewIssues" class="nav-item"
+          :class="{ active: isActive('/inspection/issues'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/issues')" :title="sidebarCollapsed ? '巡检问题列表' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检问题列表</span>
         </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
+        <button v-if="canViewRecords" class="nav-item"
+          :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
 
-        <button v-if="currentRole !== 'station_manager'" class="nav-item"
+        <button v-if="canViewInspectionPlans" class="nav-item"
           :class="{ active: isActive('/inspection/plan'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/plan')" :title="sidebarCollapsed ? '巡检计划' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检计划</span>
         </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
+        <button v-if="canViewCertificates" class="nav-item"
+          :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">证照管理</span>
         </button>
       </div>
 
-      <div v-if="currentRole !== 'station_manager'" class="menu-section">
+      <div v-if="canViewAssessment" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">考核系统</div>
         <button class="nav-item" :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/assessment')" :title="sidebarCollapsed ? '考核系统' : ''">
@@ -143,15 +147,17 @@
         </button>
       </div>
 
-      <div v-if="currentRole !== 'station_manager'" class="menu-section">
+      <div v-if="canViewTrainingSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">培训系统</div>
-        <button class="nav-item" :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }" type="button"
+        <button v-if="canViewTrainingInternal" class="nav-item"
+          :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/training')" :title="sidebarCollapsed ? '培训系统' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">培训系统</span>
         </button>
-        <button class="nav-item" :class="{ active: isActive('/training/materials'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/training/materials')" :title="sidebarCollapsed ? '培训材料库' : ''">
+        <button v-if="canViewTrainingMaterials" class="nav-item"
+          :class="{ active: isActive('/training/materials'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/training/materials')" :title="sidebarCollapsed ? '培训材料库' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">培训材料库</span>
         </button>
@@ -177,8 +183,15 @@
 
       <div v-if="isManagementAdmin" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">管理系统</div>
-        <button class="nav-item" :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }"
-          type="button" @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
+        <button class="nav-item"
+          :class="{ active: isActive('/management/users'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/users')" :title="sidebarCollapsed ? '用户数据管理' : ''">
+          <span class="nav-item-dot"></span>
+          <span v-if="!sidebarCollapsed">用户数据管理</span>
+        </button>
+        <button class="nav-item"
+          :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">站点数据管理</span>
         </button>
@@ -233,6 +246,15 @@ const loginForm = reactive({
 const loginError = ref('')
 const sidebarCollapsed = ref(false)
 const mobileMenuOpen = ref(false)
+
+const parseStoredPermissions = () => {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch (error) {
+    return {}
+  }
+}
+
 const authState = reactive({
   token: localStorage.getItem('auth_token') || '',
   userId: localStorage.getItem('user_id') || '',
@@ -243,15 +265,47 @@ const authState = reactive({
   stationId: localStorage.getItem('station_id') || '',
   stationName: localStorage.getItem('station_name') || '',
   region: localStorage.getItem('region') || '',
-  address: localStorage.getItem('address') || ''
+  address: localStorage.getItem('address') || '',
+  permissions: parseStoredPermissions()
 })
 
 const isLoginPage = computed(() => route.path === '/login')
 const appVersion = appPackage.version || '0.0.0'
 const currentRole = computed(() => authState.role)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
-const isManagementAdmin = computed(() => authState.username === 'supervisor')
+const localPermissions = computed(() => authState.permissions || {})
+const isRoot = computed(() => authState.role === 'root')
+const isSupervisor = computed(() => authState.role === 'supervisor')
+const isStationManager = computed(() => authState.role === 'station_manager')
+const isManagementAdmin = computed(() => isRoot.value)
+const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
+const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
+const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections'))
+const canViewInspectionStandards = computed(() => hasPermissionKey('view_inspection_standards'))
+const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklist_originals'))
+const canViewIssues = computed(() => (
+  isRoot.value ||
+  Boolean(localPermissions.value.view_all_inspection_issues) ||
+  Boolean(localPermissions.value.view_own_inspection_issues)
+))
+const canViewRecords = computed(() => (
+  isRoot.value ||
+  Boolean(localPermissions.value.view_all_inspection_records) ||
+  Boolean(localPermissions.value.view_own_inspection_records)
+))
+const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans'))
+const canViewCertificates = computed(() => (
+  isRoot.value ||
+  Boolean(localPermissions.value.view_all_certificates) ||
+  Boolean(localPermissions.value.view_own_certificates) ||
+  Boolean(localPermissions.value.edit_own_certificates)
+))
+const canViewAssessment = computed(() => hasPermissionKey('view_assessment'))
+const canViewTrainingInternal = computed(() => hasPermissionKey('view_training'))
+const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials'))
+const canViewTrainingSection = computed(() => canViewTrainingInternal.value || canViewTrainingMaterials.value)
 const currentRoleLabel = computed(() => {
+  if (authState.role === 'root') return '系统管理员'
   return authState.role === 'supervisor' ? '督导组账号' : '站点账号'
 })
 
@@ -266,6 +320,7 @@ const syncAuthState = () => {
   authState.stationName = localStorage.getItem('station_name') || ''
   authState.region = localStorage.getItem('region') || ''
   authState.address = localStorage.getItem('address') || ''
+  authState.permissions = parseStoredPermissions()
 }
 
 watch(
@@ -277,6 +332,26 @@ watch(
 )
 
 const isActive = (path) => route.path === path
+
+const resolveHomePath = (user) => {
+  const role = user?.role || ''
+  const permissions = user?.permissions || {}
+  if (role === 'station_manager') return '/inspection/my-issues'
+  if (role === 'root' || permissions.view_station_map) return '/inspection/station-map'
+  if (permissions.submit_inspections) return '/inspection/register'
+  if (permissions.view_inspection_standards) return '/inspection/standards'
+  if (permissions.view_checklist_originals) return '/inspection/checklist-originals'
+  if (permissions.view_all_inspection_issues || permissions.view_own_inspection_issues) return '/inspection/issues'
+  if (permissions.view_all_inspection_records || permissions.view_own_inspection_records) return '/inspection/records'
+  if (permissions.view_inspection_plans) return '/inspection/plan'
+  if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
+    return '/inspection/certificates'
+  }
+  if (permissions.view_assessment) return '/assessment'
+  if (permissions.view_training) return '/training'
+  if (permissions.view_training_materials) return '/training/materials'
+  return '/feedback'
+}
 
 const go = (path) => {
   if (route.path !== path) {
@@ -329,10 +404,11 @@ const handleLogin = async () => {
     localStorage.setItem('station_name', user.station_name || '')
     localStorage.setItem('region', user.region || '')
     localStorage.setItem('address', user.address || '')
+    localStorage.setItem('permissions', JSON.stringify(user.permissions || {}))
 
     syncAuthState()
     loginForm.password = ''
-    router.push(user.role === 'station_manager' ? '/inspection/my-issues' : '/inspection/station-map')
+    router.push(resolveHomePath(user))
   } catch (error) {
     const message = error?.response?.data?.error || '登录失败，请稍后重试。'
     loginError.value = message
@@ -350,6 +426,7 @@ const handleLogout = () => {
   localStorage.removeItem('station_name')
   localStorage.removeItem('region')
   localStorage.removeItem('address')
+  localStorage.removeItem('permissions')
   syncAuthState()
   mobileMenuOpen.value = false
   loginForm.password = ''

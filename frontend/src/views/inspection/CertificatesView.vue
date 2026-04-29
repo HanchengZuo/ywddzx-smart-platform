@@ -8,7 +8,7 @@
             </div>
             <div class="header-actions">
                 <span :class="['role-chip', canEdit ? 'supervisor' : 'station']">
-                    {{ canEdit ? '督导维护视角' : '站点查看视角' }}
+                    {{ roleChipText }}
                 </span>
                 <button class="ghost-btn" type="button" @click="fetchCertificateData" :disabled="loading">
                     {{ loading ? '刷新中...' : '刷新数据' }}
@@ -36,7 +36,7 @@
                     <div class="section-head">
                         <div>
                             <div class="section-kicker">证照台账</div>
-                            <h3>{{ canEdit ? '全部站点证照有效期' : '本站证照有效期' }}</h3>
+                            <h3>{{ canViewAll ? '全部站点证照有效期' : '本站证照有效期' }}</h3>
                         </div>
                         <div class="inline-tags">
                             <span class="tag neutral">共 {{ filteredCertificateRows.length }} 条</span>
@@ -48,7 +48,7 @@
                     </div>
 
                     <div class="filter-grid">
-                        <div v-if="canEdit" class="filter-field">
+                        <div v-if="canViewAll" class="filter-field">
                             <label>站点</label>
                             <select v-model="filters.stationId">
                                 <option value="all">全部站点</option>
@@ -133,14 +133,15 @@
                                         </td>
                                         <td v-if="canEdit">
                                             <div class="row-actions">
-                                                <button class="ghost-btn mini-btn" type="button"
+                                                <button v-if="canEditRow(row)" class="ghost-btn mini-btn" type="button"
                                                     @click="editCertificate(row)">
                                                     编辑
                                                 </button>
-                                                <button class="ghost-btn mini-btn danger-btn" type="button"
+                                                <button v-if="canEditRow(row)" class="ghost-btn mini-btn danger-btn" type="button"
                                                     @click="deleteCertificate(row)">
                                                     删除
                                                 </button>
+                                                <span v-if="!canEditRow(row)" class="table-sub">仅查看</span>
                                             </div>
                                         </td>
                                     </tr>
@@ -193,7 +194,7 @@
                                     </div>
                                 </div>
 
-                                <div v-if="canEdit" class="mobile-card-actions">
+                                <div v-if="canEdit && canEditRow(row)" class="mobile-card-actions">
                                     <button class="ghost-btn" type="button" @click="editCertificate(row)">编辑</button>
                                     <button class="ghost-btn danger-btn" type="button" @click="deleteCertificate(row)">
                                         删除
@@ -240,7 +241,7 @@
                     <form class="certificate-form" @submit.prevent="saveCertificate">
                         <div class="form-field">
                             <label>站点</label>
-                            <select v-model.number="certificateForm.station_id" :disabled="isEditing" required>
+                            <select v-model.number="certificateForm.station_id" :disabled="isEditing || !canEditAll" required>
                                 <option disabled value="">请选择站点</option>
                                 <option v-for="station in stations" :key="station.id" :value="station.id">
                                     {{ station.station_name }}
@@ -288,9 +289,9 @@
 
                 <div v-else class="card-surface section-card readonly-card">
                     <div class="section-kicker">查看权限</div>
-                    <h3>站点账号仅可查看</h3>
+                    <h3>{{ readonlyTitle }}</h3>
                     <p>
-                        当前页面展示本账号所属站点已录入的证照有效期和到期提醒。如需调整有效期，请联系督导组账号维护。
+                        {{ readonlyDesc }}
                     </p>
                 </div>
 
@@ -298,7 +299,7 @@
                     <div class="section-head compact">
                         <div>
                             <div class="section-kicker">到期提醒</div>
-                            <h3>{{ canEdit ? '全部站点重点提醒' : '本站重点提醒' }}</h3>
+                            <h3>{{ canViewAll ? '全部站点重点提醒' : '本站重点提醒' }}</h3>
                         </div>
                     </div>
 
@@ -357,6 +358,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const currentUserId = ref(localStorage.getItem('user_id') || '')
+const currentStationId = ref(localStorage.getItem('station_id') || '')
 const currentStationName = ref(localStorage.getItem('station_name') || '')
 
 const loading = ref(false)
@@ -385,19 +387,58 @@ const certificateForm = reactive({
     remark: ''
 })
 
-const hasPermission = computed(() => ['supervisor', 'station_manager'].includes(currentRole.value))
-const canEdit = computed(() => currentRole.value === 'supervisor')
+let localPermissions = {}
+try {
+    localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+    localPermissions = {}
+}
+const canViewAll = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_all_certificates))
+const canEditAll = computed(() => currentRole.value === 'root')
+const canEditOwn = computed(() => currentRole.value === 'root' || Boolean(localPermissions.edit_own_certificates))
+const canViewOwn = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_own_certificates) || canEditOwn.value)
+const hasPermission = computed(() => canViewAll.value || canViewOwn.value)
+const canEdit = computed(() => canEditAll.value || canEditOwn.value)
 const isEditing = computed(() => Boolean(certificateForm.id))
+const canEditRow = (row) => {
+    if (canEditAll.value) return true
+    return canEditOwn.value && String(row?.station_id || '') === String(currentStationId.value || '')
+}
 
 const pageTitle = computed(() => {
-    return canEdit.value ? '站点证照有效期管理' : `${currentStationName.value || '本站'}证照有效期`
+    if (canViewAll.value) return '站点证照有效期管理'
+    return `${currentStationName.value || '本站'}证照有效期`
 })
 
 const pageDesc = computed(() => {
-    if (canEdit.value) {
-        return '督导组可维护任一站点实际拥有的证照有效期，并统一查看即将到期和已过期提醒。'
+    if (canEditAll.value) {
+        return '系统管理员可维护任一站点实际拥有的证照有效期，并统一查看即将到期和已过期提醒。'
     }
-    return '站点账号可查看本账号所属站点的证照有效期和到期提醒，证照有效期由督导组统一维护。'
+    if (canViewAll.value) {
+        return '可查看全部站点证照有效期和到期提醒；编辑权限由系统管理员控制。'
+    }
+    if (canEditOwn.value) {
+        return '可查看并维护本账号所属站点的证照有效期和到期提醒。'
+    }
+    return '可查看本账号所属站点的证照有效期和到期提醒。'
+})
+
+const roleChipText = computed(() => {
+    if (canEditAll.value) return '全站维护视角'
+    if (canViewAll.value) return '全站查看视角'
+    if (canEditOwn.value) return '本站维护视角'
+    return '本站查看视角'
+})
+
+const readonlyTitle = computed(() => {
+    return canViewAll.value ? '当前账号仅可查看全部站点证照' : '当前账号仅可查看本站证照'
+})
+
+const readonlyDesc = computed(() => {
+    if (canViewAll.value) {
+        return '当前页面展示所有站点已录入的证照有效期和到期提醒。如需调整有效期，请联系系统管理员维护。'
+    }
+    return '当前页面展示本账号所属站点已录入的证照有效期和到期提醒。'
 })
 
 const formTitle = computed(() => {
@@ -637,6 +678,7 @@ const resetCertificateForm = () => {
 }
 
 const editCertificate = (row) => {
+    if (!canEditRow(row)) return
     certificateForm.id = row.id
     certificateForm.station_id = row.station_id
     certificateForm.certificate_type = row.certificate_type
@@ -709,7 +751,7 @@ const saveCertificate = async () => {
 }
 
 const deleteCertificate = async (row) => {
-    if (!canEdit.value) return
+    if (!canEditRow(row)) return
     const confirmed = window.confirm(`确认删除“${row.station_name} · ${row.certificate_name}”这条证照记录吗？`)
     if (!confirmed) return
 
