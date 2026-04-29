@@ -9,11 +9,11 @@
 
     <div class="filter-card card-surface">
       <div class="filter-grid">
-        <div class="filter-item">
+        <div class="filter-item filter-item-date">
           <label>巡检日期</label>
           <input v-model="filters.date" type="date" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item filter-item-station">
           <label>站点</label>
           <div class="search-select" ref="stationSelectRef">
             <input v-model="filters.station" type="text" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
@@ -27,7 +27,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item">
+        <div class="filter-item filter-item-table">
           <label>检查表</label>
           <div class="search-select" ref="inspectionTableSelectRef">
             <input v-model="filters.inspectionTableName" type="text" placeholder="搜索或选择检查表"
@@ -41,7 +41,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item">
+        <div class="filter-item filter-item-result">
           <label>结果</label>
           <select v-model="filters.result">
             <option value="">全部</option>
@@ -877,8 +877,24 @@ onBeforeUnmount(() => {
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0 12px;
+  background: #fff;
+  color: #0f172a;
   font-size: 14px;
   box-sizing: border-box;
+  color-scheme: light;
+}
+
+.filter-item select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #64748b 50%),
+    linear-gradient(135deg, #64748b 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
 }
 
 .filter-actions {
@@ -1704,13 +1720,40 @@ onBeforeUnmount(() => {
     padding: 16px;
   }
 
+  .filter-card {
+    overflow: hidden;
+    border-radius: 20px;
+    background:
+      radial-gradient(circle at 92% 8%, rgba(37, 99, 235, 0.12), transparent 28%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+  }
+
   .filter-grid {
-    grid-template-columns: 1fr;
-    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .filter-item {
+    min-width: 0;
+    gap: 7px;
+  }
+
+  .filter-item-station,
+  .filter-item-table {
+    grid-column: 1 / -1;
   }
 
   .filter-item label {
-    font-size: 13px;
+    display: inline-flex;
+    width: fit-content;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 800;
   }
 
   .filter-item input,
@@ -1719,6 +1762,54 @@ onBeforeUnmount(() => {
     height: 46px;
     font-size: 15px;
     padding: 0 12px;
+  }
+
+  .filter-item-date input,
+  .filter-item-result select {
+    height: 48px;
+    max-width: 100%;
+    min-width: 0;
+    border-color: #bfdbfe;
+    border-radius: 16px;
+    background-color: #fff;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.06),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+    color: #0f172a;
+    font-weight: 800;
+  }
+
+  .filter-item-date input {
+    padding: 0 9px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .filter-item-date input::-webkit-date-and-time-value {
+    text-align: left;
+  }
+
+  .filter-item-date input::-webkit-calendar-picker-indicator {
+    opacity: 0.72;
+  }
+
+  .filter-item-result select {
+    padding-right: 30px;
+    background-position:
+      calc(100% - 16px) 50%,
+      calc(100% - 11px) 50%;
+  }
+
+  .filter-item-station input,
+  .filter-item-table input {
+    border-radius: 15px;
+    border-color: #dbe4ee;
+    background: #fff;
+  }
+
+  .search-select-dropdown {
+    max-height: 210px;
+    border-radius: 16px;
   }
 
   .filter-actions,
