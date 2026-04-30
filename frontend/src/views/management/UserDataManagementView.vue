@@ -509,6 +509,29 @@ const resetForm = (options = {}) => {
   if (!options.keepMessage) setMessage('')
 }
 
+const resetCreateTextFields = (options = {}) => {
+  const rememberedRole = form.role || 'supervisor'
+  const rememberedPermissions = enforceExclusivePermissions(
+    { ...(form.permissions || {}) },
+    rememberedRole
+  )
+  const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
+
+  Object.assign(form, {
+    id: null,
+    username: '',
+    password: '',
+    role: rememberedRole,
+    real_name: '',
+    phone: '',
+    station_id: rememberedStationId,
+    permissions: rememberedPermissions
+  })
+  stationKeyword.value = ''
+  formError.value = ''
+  if (!options.keepMessage) setMessage('')
+}
+
 const resetFilters = () => {
   Object.assign(filters, {
     keyword: '',
@@ -558,7 +581,9 @@ const fetchUsers = async () => {
     stations.value = response.data?.stations || []
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
-    if (!form.id) form.permissions = buildDefaultPermissions(form.role)
+    if (!form.id && !Object.keys(form.permissions || {}).length) {
+      form.permissions = buildDefaultPermissions(form.role)
+    }
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   } catch (error) {
     setMessage(error?.response?.data?.error || '用户数据加载失败。', 'error')
@@ -666,8 +691,8 @@ const saveUser = async () => {
       ? await axios.put(`/api/management/users/${form.id}`, payload)
       : await axios.post('/api/management/users', payload)
     setMessage(response.data?.message || '用户已保存。', 'success')
+    if (isCreating) resetCreateTextFields({ keepMessage: true })
     await fetchUsers()
-    if (isCreating) resetForm({ keepMessage: true })
   } catch (error) {
     formError.value = error?.response?.data?.error || '用户保存失败。'
     setMessage(formError.value, 'error')
