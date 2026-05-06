@@ -113,7 +113,7 @@
         <div class="warning-mark">!</div>
         <div>
           <div class="warning-title">导入恢复会覆盖当前系统数据</div>
-          <p>导入完整备份会用备份包中的 PostgreSQL 数据库和 storage 上传文件替换当前数据。建议先点击“立即导出完整备份”留一份当前状态。</p>
+          <p>导入完整备份会先清空当前系统业务数据库和 storage 上传文件，再用备份包中的数据完整重建。建议先点击“立即导出完整备份”留一份当前状态。</p>
         </div>
       </section>
 
@@ -353,7 +353,7 @@ const importBackup = async (event) => {
     return
   }
 
-  const confirmed = window.confirm('导入完整备份会覆盖当前 PostgreSQL 数据库和 storage 上传文件目录。建议确认已经导出当前备份后再继续，确定导入吗？')
+  const confirmed = window.confirm('导入完整备份会先清空当前系统业务数据库和 storage 上传文件目录，再用备份包数据完整重建。建议确认已经导出当前备份后再继续，确定导入吗？')
   if (!confirmed) return
 
   try {

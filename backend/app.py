@@ -663,6 +663,14 @@ def run_backup_subprocess(command, env):
         raise RuntimeError(error_text or "数据库备份工具执行失败。") from exc
 
 
+def get_database_backup_member_name(names):
+    if "database.dump" in names:
+        return "database.dump"
+    if "database.sql" in names:
+        return "database.sql"
+    raise ValueError("备份文件缺少 database.dump 或 database.sql。")
+
+
 def should_skip_storage_backup_path(path, excluded_dirs):
     abs_path = os.path.abspath(path)
     for excluded_dir in excluded_dirs:
@@ -674,9 +682,26 @@ def should_skip_storage_backup_path(path, excluded_dirs):
     return False
 
 
+def get_storage_backup_excluded_dirs(destination_path):
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    excluded_dirs = []
+    for candidate in (destination_path, DEFAULT_BACKUP_DIR):
+        candidate_abs = os.path.abspath(candidate)
+        try:
+            if (
+                candidate_abs != storage_root_abs
+                and os.path.commonpath([storage_root_abs, candidate_abs]) == storage_root_abs
+                and candidate_abs not in excluded_dirs
+            ):
+                excluded_dirs.append(candidate_abs)
+        except ValueError:
+            continue
+    return excluded_dirs
+
+
 def add_storage_to_backup(zip_file, destination_path):
     storage_root_abs = os.path.abspath(STORAGE_ROOT)
-    excluded_dirs = [os.path.abspath(destination_path), os.path.abspath(DEFAULT_BACKUP_DIR)]
+    excluded_dirs = get_storage_backup_excluded_dirs(destination_path)
     for root, dirs, files in os.walk(storage_root_abs):
         dirs[:] = [
             name
@@ -688,6 +713,12 @@ def add_storage_to_backup(zip_file, destination_path):
         for filename in files:
             file_path = os.path.join(root, filename)
             if file_path == os.path.abspath(BACKUP_CONFIG_PATH):
+                continue
+            if (
+                os.path.abspath(root) == storage_root_abs
+                and filename.startswith(BACKUP_PREFIX)
+                and filename.endswith(".zip")
+            ):
                 continue
             if should_skip_storage_backup_path(file_path, excluded_dirs):
                 continue
@@ -730,10 +761,13 @@ def create_full_backup_archive(destination_path=None, reason="manual"):
 
         manifest = {
             "backup_type": "ywddzx_full_backup",
-            "version": 1,
+            "version": 2,
             "created_at": now.isoformat(),
             "reason": reason,
             "database": db_config["dbname"],
+            "database_member": "database.dump",
+            "database_format": "custom",
+            "restore_strategy": "drop_user_schemas_then_restore_sql",
             "storage_root": STORAGE_ROOT,
         }
 
@@ -760,11 +794,13 @@ def validate_backup_archive(zip_path):
     try:
         with zipfile.ZipFile(zip_path, "r") as zip_file:
             names = set(zip_file.namelist())
-            if "manifest.json" not in names or "database.dump" not in names:
-                raise ValueError("备份文件缺少 manifest.json 或 database.dump。")
+            if "manifest.json" not in names:
+                raise ValueError("备份文件缺少 manifest.json。")
+            database_member_name = get_database_backup_member_name(names)
             manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
             if manifest.get("backup_type") != "ywddzx_full_backup":
                 raise ValueError("备份文件类型不正确。")
+            manifest["database_member"] = database_member_name
             return manifest
     except zipfile.BadZipFile as exc:
         raise ValueError("备份文件不是有效的 ZIP 文件。") from exc
@@ -772,10 +808,75 @@ def validate_backup_archive(zip_path):
         raise ValueError("备份文件清单格式不正确。") from exc
 
 
-def restore_database_from_dump(database_dump_path):
-    db_config, env = build_pg_environment()
+def should_skip_restore_sql_line(line):
+    normalized = line.strip().lower()
+    return (
+        normalized.startswith("set transaction_timeout ")
+        or normalized == "create schema public;"
+        or normalized == "create schema if not exists public;"
+    )
+
+
+def build_restore_sql_file(source_sql_path, restore_sql_path):
+    with open(source_sql_path, "r", encoding="utf-8", errors="replace") as source:
+        with open(restore_sql_path, "w", encoding="utf-8") as target:
+            target.write("BEGIN;\n")
+            target.write(
+                """
+DO $ywddzx_restore$
+DECLARE
+    schema_record RECORD;
+BEGIN
+    FOR schema_record IN
+        SELECT nspname
+        FROM pg_namespace
+        WHERE nspname NOT LIKE 'pg_%'
+          AND nspname <> 'information_schema'
+    LOOP
+        EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', schema_record.nspname);
+    END LOOP;
+END
+$ywddzx_restore$;
+CREATE SCHEMA IF NOT EXISTS public;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+"""
+            )
+            for line in source:
+                if should_skip_restore_sql_line(line):
+                    continue
+                target.write(line)
+            target.write("\nCOMMIT;\n")
+
+
+def convert_database_backup_to_sql(database_backup_path, database_member_name, temp_dir):
+    _db_config, env = build_pg_environment()
+    if database_member_name == "database.sql":
+        return database_backup_path
+
+    database_sql_path = os.path.join(temp_dir, "database.sql")
     pg_restore_command = [
         "pg_restore",
+        "--no-owner",
+        "--no-acl",
+        "-f",
+        database_sql_path,
+        database_backup_path,
+    ]
+    run_backup_subprocess(pg_restore_command, env)
+    return database_sql_path
+
+
+def restore_database_from_backup(database_backup_path, database_member_name, temp_dir):
+    db_config, env = build_pg_environment()
+    database_sql_path = convert_database_backup_to_sql(
+        database_backup_path,
+        database_member_name,
+        temp_dir,
+    )
+    restore_sql_path = os.path.join(temp_dir, "restore.sql")
+    build_restore_sql_file(database_sql_path, restore_sql_path)
+    psql_command = [
+        "psql",
         "-h",
         db_config["host"],
         "-p",
@@ -784,42 +885,64 @@ def restore_database_from_dump(database_dump_path):
         db_config["user"],
         "-d",
         db_config["dbname"],
-        "--clean",
-        "--if-exists",
-        "--no-owner",
-        "--no-acl",
-        "--single-transaction",
-        database_dump_path,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-q",
+        "-f",
+        restore_sql_path,
     ]
-    run_backup_subprocess(pg_restore_command, env)
+    run_backup_subprocess(psql_command, env)
 
 
-def clear_uploaded_storage_dirs():
-    for directory in (
+def get_required_storage_dirs():
+    return (
         ISSUES_STORAGE_DIR,
         RECTIFICATIONS_STORAGE_DIR,
         SIGNATURES_STORAGE_DIR,
         INSPECTION_ORIGINALS_STORAGE_DIR,
         TRAINING_MATERIALS_STORAGE_DIR,
-    ):
-        if os.path.isdir(directory):
-            shutil.rmtree(directory)
+        DEFAULT_BACKUP_DIR,
+    )
+
+
+def ensure_required_storage_dirs():
+    for directory in get_required_storage_dirs():
         os.makedirs(directory, exist_ok=True)
+
+
+def clear_storage_root_for_restore():
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    os.makedirs(storage_root_abs, exist_ok=True)
+    for name in os.listdir(storage_root_abs):
+        target_path = os.path.abspath(os.path.join(storage_root_abs, name))
+        if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
+            raise ValueError("storage 目录中存在非法路径，无法安全清空。")
+        if os.path.isdir(target_path) and not os.path.islink(target_path):
+            shutil.rmtree(target_path)
+        else:
+            os.remove(target_path)
+    ensure_required_storage_dirs()
+
+
+def validate_storage_backup_members(zip_file):
+    storage_root_abs = os.path.abspath(STORAGE_ROOT)
+    for member in zip_file.infolist():
+        name = member.filename
+        if not name.startswith("storage/") or name.endswith("/"):
+            continue
+        relative_path = name[len("storage/") :]
+        if not relative_path:
+            continue
+        target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
+        if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
+            raise ValueError("备份文件中存在非法 storage 路径。")
 
 
 def restore_storage_from_backup(zip_path):
     storage_root_abs = os.path.abspath(STORAGE_ROOT)
     with zipfile.ZipFile(zip_path, "r") as zip_file:
-        for member in zip_file.infolist():
-            name = member.filename
-            if not name.startswith("storage/") or name.endswith("/"):
-                continue
-            relative_path = name[len("storage/") :]
-            target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
-            if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
-                raise ValueError("备份文件中存在非法 storage 路径。")
-
-        clear_uploaded_storage_dirs()
+        validate_storage_backup_members(zip_file)
+        clear_storage_root_for_restore()
         for member in zip_file.infolist():
             name = member.filename
             if not name.startswith("storage/") or name.endswith("/"):
@@ -831,6 +954,7 @@ def restore_storage_from_backup(zip_path):
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             with zip_file.open(member) as source, open(target_path, "wb") as target:
                 shutil.copyfileobj(source, target)
+        ensure_required_storage_dirs()
 
 
 def restore_full_backup_archive(file_storage):
@@ -844,9 +968,14 @@ def restore_full_backup_archive(file_storage):
         file_storage.save(backup_path)
         manifest = validate_backup_archive(backup_path)
         with zipfile.ZipFile(backup_path, "r") as zip_file:
-            database_dump_path = os.path.join(temp_dir, "database.dump")
-            zip_file.extract("database.dump", temp_dir)
-        restore_database_from_dump(database_dump_path)
+            database_member_name = manifest.get("database_member") or get_database_backup_member_name(
+                set(zip_file.namelist())
+            )
+            database_backup_path = os.path.join(temp_dir, os.path.basename(database_member_name))
+            with zip_file.open(database_member_name) as source, open(database_backup_path, "wb") as target:
+                shutil.copyfileobj(source, target)
+            validate_storage_backup_members(zip_file)
+        restore_database_from_backup(database_backup_path, database_member_name, temp_dir)
         restore_storage_from_backup(backup_path)
         return manifest
 
