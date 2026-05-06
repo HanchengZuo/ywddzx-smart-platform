@@ -1342,14 +1342,61 @@ def normalize_checklist_standard_payload(data, fields):
 
 
 def get_next_checklist_standard_id(cur, physical_table_name):
-    cur.execute(sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE;").format(sql.Identifier(physical_table_name)))
-    cur.execute(
-        sql.SQL("SELECT COALESCE(MAX(standard_id), 0) + 1 AS next_standard_id FROM {};").format(
-            sql.Identifier(physical_table_name)
+    cur.execute("LOCK TABLE inspection_tables IN SHARE ROW EXCLUSIVE MODE;")
+    table_names = [physical_table_name]
+    cur.execute("SELECT table_code FROM inspection_tables ORDER BY id ASC;")
+    for row in cur.fetchall():
+        table_name = get_physical_table_name_by_code(row["table_code"])
+        if table_name and table_name not in table_names:
+            table_names.append(table_name)
+
+    max_standard_id = 0
+    for table_name in table_names:
+        if not checklist_physical_table_exists(cur, table_name):
+            continue
+        cur.execute(sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE;").format(sql.Identifier(table_name)))
+        cur.execute(
+            sql.SQL("SELECT COALESCE(MAX(standard_id), 0) AS max_standard_id FROM {};").format(
+                sql.Identifier(table_name)
+            )
         )
+        row = cur.fetchone()
+        max_standard_id = max(max_standard_id, int(row["max_standard_id"] or 0))
+    return max_standard_id + 1
+
+
+def get_checklist_standard_reference_counts(cur, inspection_table_id, standard_id):
+    cur.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM issues
+        WHERE inspection_table_id = %s
+          AND standard_id = %s;
+        """,
+        (inspection_table_id, standard_id),
     )
-    row = cur.fetchone()
-    return int(row["next_standard_id"] or 1)
+    issue_count = int(cur.fetchone()["total"] or 0)
+    return {"issue_count": issue_count}
+
+
+def format_checklist_standard_reference_message(counts):
+    parts = []
+    if counts.get("issue_count", 0) > 0:
+        parts.append(f"巡检问题 {counts['issue_count']} 条")
+    return "、".join(parts)
+
+
+def sync_referenced_standard_detail_text(cur, inspection_table_id, standard_id, detail_text):
+    cur.execute(
+        """
+        UPDATE issues
+        SET standard_detail_text = %s
+        WHERE inspection_table_id = %s
+          AND standard_id = %s;
+        """,
+        (detail_text, inspection_table_id, standard_id),
+    )
+    return cur.rowcount
 
 
 def get_management_checklist_standard_context(cur, inspection_table_id, require_fields=True):
@@ -5160,6 +5207,19 @@ def update_management_checklist_standard(inspection_table_id, standard_id):
         if not cur.fetchone():
             return jsonify({"success": False, "error": "规范数据不存在。"}), 404
 
+        standard_detail_text = build_standard_detail_text(
+            [(field["field_key"], field["field_label"]) for field in fields],
+            row,
+        )
+        if not standard_detail_text:
+            raise ValueError("规范详情生成失败，请至少保留一项规范内容。")
+        synced_count = sync_referenced_standard_detail_text(
+            cur,
+            inspection_table_id,
+            old_standard_id,
+            standard_detail_text,
+        )
+
         cur.execute(
             """
             UPDATE inspection_tables
@@ -5169,7 +5229,10 @@ def update_management_checklist_standard(inspection_table_id, standard_id):
             (inspection_table_id,),
         )
         conn.commit()
-        return jsonify({"success": True, "message": "规范数据已保存。"})
+        message = "规范数据已保存。"
+        if synced_count:
+            message = f"规范数据已保存，并同步更新 {synced_count} 条已引用问题。"
+        return jsonify({"success": True, "message": message, "synced_issue_count": synced_count})
     except PermissionError as exc:
         if conn:
             conn.rollback()
@@ -5207,6 +5270,19 @@ def delete_management_checklist_standard(inspection_table_id, standard_id):
             cur, inspection_table_id, require_fields=False
         )
         ensure_checklist_field_columns(cur, physical_table_name, fields)
+
+        reference_counts = get_checklist_standard_reference_counts(
+            cur,
+            inspection_table_id,
+            standard_id_value,
+        )
+        reference_message = format_checklist_standard_reference_message(reference_counts)
+        if reference_message:
+            raise ValueError(
+                f"无法删除：该规范已被{reference_message}引用。"
+                "可以编辑规范内容，系统会同步更新已引用该规范的业务数据，但不能删除已被使用的规范。"
+            )
+
         cur.execute(
             sql.SQL("DELETE FROM {} WHERE standard_id = %s RETURNING standard_id;").format(
                 sql.Identifier(physical_table_name)
