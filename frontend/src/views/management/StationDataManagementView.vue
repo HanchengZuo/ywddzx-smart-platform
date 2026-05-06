@@ -187,7 +187,9 @@
           <div v-if="formError" class="form-error">{{ formError }}</div>
 
           <div class="form-actions">
-            <button class="btn btn-secondary" type="button" @click="resetForm">清空</button>
+            <button class="btn btn-secondary" type="button" @click="resetForm">
+              {{ editingId ? '放弃修改' : '清空' }}
+            </button>
             <button class="btn btn-primary" type="button" :disabled="saving" @click="saveStation">
               {{ saving ? '保存中...' : editingId ? '保存修改' : '保存站点' }}
             </button>

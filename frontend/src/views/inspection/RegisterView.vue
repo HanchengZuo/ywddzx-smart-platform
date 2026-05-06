@@ -81,8 +81,7 @@
                   <div v-for="standard in filteredStandards" :key="standard.standard_id" class="search-select-option"
                     @click="selectStandard(standard)">
                     <div class="option-main">
-                      {{ standard.standard_id }}｜{{ standard.check_content || standard.check_item ||
-                        standard.project_name || '未命名规范' }}
+                      {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
                     </div>
                     <div class="option-sub standard-detail-preview">{{
                       normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
@@ -242,23 +241,6 @@ const showIssueFields = computed(() => {
 })
 
 const normalizeStandardDetailForRegister = (value) => {
-  const topLevelLabels = new Set([
-    '序号',
-    '业务流程',
-    '检查项目',
-    '检查内容',
-    '规范要求',
-    '检查方法',
-    '问题编号',
-    '常见问题',
-    '检查路径',
-    '是否禁止项',
-    '项目',
-    '检查类别',
-    '检查评比标准',
-    '检查方式'
-  ])
-
   const lines = String(value || '')
     .replace(/\\n/g, '\n')
     .split('\n')
@@ -271,7 +253,7 @@ const normalizeStandardDetailForRegister = (value) => {
     const separatorIndex = line.indexOf('：')
     const possibleLabel = separatorIndex > -1 ? line.slice(0, separatorIndex).trim() : ''
 
-    if (separatorIndex > -1 && topLevelLabels.has(possibleLabel)) {
+    if (separatorIndex > -1 && possibleLabel) {
       result.push(line)
       return
     }
@@ -302,6 +284,21 @@ const filteredStandards = computed(() => {
     return !keyword || text.includes(keyword)
   })
 })
+
+const getStandardFallbackTitle = (item) => {
+  const firstLine = String(item?.standard_detail_text || '')
+    .replace(/\\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+  if (!firstLine) return ''
+  const separatorIndex = firstLine.indexOf('：')
+  return separatorIndex > -1 ? firstLine.slice(separatorIndex + 1).trim() : firstLine
+}
+
+const getStandardTitle = (item) => {
+  return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名规范'
+}
 
 const formatCurrentTime = () => {
   const now = new Date()
@@ -407,7 +404,7 @@ const selectInspectionTable = async (table) => {
 }
 
 const selectStandard = (standard) => {
-  standardSearch.value = `${standard.standard_id}｜${standard.check_content || standard.check_item || standard.project_name || '未命名规范'}`
+  standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
   form.value.standardId = standard.standard_id
   standardDropdownVisible.value = false
 }

@@ -31,7 +31,6 @@
             @click="selectItem(item)">
             <div class="checklist-card-main">
               <div>
-                <div class="table-code">{{ item.table_code || `#${item.inspection_table_id}` }}</div>
                 <h4>{{ item.table_name }}</h4>
                 <p>{{ item.description || '暂无检查表说明。' }}</p>
               </div>

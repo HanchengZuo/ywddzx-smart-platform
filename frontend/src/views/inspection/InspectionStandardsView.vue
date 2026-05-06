@@ -43,8 +43,7 @@
 
       <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" type="button" @click="fetchStandards"
-          :disabled="loading || !filters.inspectionTableId">
+        <button class="btn btn-secondary" type="button" @click="fetchStandards" :disabled="loading">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
       </div>
@@ -55,14 +54,14 @@
         <div class="list-toolbar">
           <div>
             <div class="list-count">共 {{ filteredList.length }} 条规范</div>
-            <div class="list-table-name">{{ activeInspectionTableName }}</div>
+            <div class="list-table-name">{{ activeInspectionTableName || '全部检查表' }}</div>
           </div>
           <div class="list-page-info">第 {{ page }} / {{ totalPages }} 页</div>
         </div>
 
         <div class="list-wrap">
-          <button v-for="item in paginatedList" :key="item.standard_id" class="standard-item"
-            :class="{ active: activeStandard && activeStandard.standard_id === item.standard_id }" type="button"
+          <button v-for="item in paginatedList" :key="getStandardIdentity(item)" class="standard-item"
+            :class="{ active: isActiveStandard(item) }" type="button"
             @click="selectStandard(item)">
             <div class="standard-item-top">
               <span class="standard-code">{{ item.standard_id }}</span>
@@ -71,7 +70,7 @@
             </div>
             <div class="standard-check-item">{{ getStandardPrimaryTitle(item) }}</div>
             <div class="standard-card-meta" v-if="getStandardSummaryFields(item).length">
-              <div v-for="entry in getStandardSummaryFields(item)" :key="`${item.standard_id}-${entry.key}`"
+              <div v-for="entry in getStandardSummaryFields(item)" :key="`${getStandardIdentity(item)}-${entry.key}`"
                 class="standard-meta-line">
                 <span class="standard-meta-label">{{ entry.label }}</span>
                 <span class="standard-meta-value">{{ entry.value }}</span>
@@ -99,8 +98,7 @@
           <div class="detail-header">
             <div>
               <div class="detail-kicker">规范详情</div>
-              <h3>{{ activeStandard.standard_id }}｜{{ activeStandard.check_content || activeStandard.check_item ||
-                activeStandard.project_name || '未命名规范' }}</h3>
+              <h3>{{ activeStandardTitle }}</h3>
             </div>
             <div class="detail-actions">
               <button class="btn btn-secondary" type="button" @click="copyCode">复制规范ID</button>
@@ -111,8 +109,7 @@
           <div class="detail-meta-grid">
             <div class="meta-item">
               <div class="meta-label">检查表</div>
-              <div class="meta-value">{{ activeStandard?.inspection_table_name || activeInspectionTableName || '未选择检查表'
-                }}</div>
+              <div class="meta-value">{{ activeStandardTableName }}</div>
             </div>
             <div class="meta-item">
               <div class="meta-label">规范ID</div>
@@ -120,12 +117,16 @@
             </div>
           </div>
 
-          <div class="detail-detail-grid">
-            <div v-for="entry in activeStandardDetailEntries" :key="`${activeStandard.standard_id}-${entry.key}`"
+          <div v-if="activeStandardDetailEntries.length" class="detail-detail-grid">
+            <div v-for="entry in activeStandardDetailEntries" :key="`${activeStandardIdentity}-${entry.key}`"
               class="detail-field-card">
               <div class="detail-field-label">{{ entry.label }}</div>
               <div class="detail-field-value multiline-content">{{ formatMultiline(entry.value) || '暂无' }}</div>
             </div>
+          </div>
+          <div v-else class="empty-detail empty-detail-compact">
+            <div class="empty-detail-title">暂无字段内容</div>
+            <div class="empty-detail-desc">这条规范暂未维护可展示的字段内容。</div>
           </div>
         </template>
 
@@ -186,8 +187,21 @@ const SUMMARY_FIELD_CANDIDATES = [
   'is_forbidden'
 ]
 
+const FRIENDLY_FIELD_LABELS = {
+  serial_no: '序号',
+  business_process: '业务流程',
+  check_item: '检查项目',
+  check_content: '检查内容',
+  project_name: '项目名称',
+  check_category: '检查类别',
+  check_method: '检查方法',
+  issue_code: '问题代码',
+  is_forbidden: '是否禁令'
+}
+
 const DETAIL_HIDDEN_FIELDS = [
   'id',
+  'standard_id',
   'created_at',
   'standard_detail_text',
   'inspection_table_id',
@@ -196,30 +210,8 @@ const DETAIL_HIDDEN_FIELDS = [
 ]
 const SELECT_OPTION_THRESHOLD = 12
 const SELECT_MAX_OPTION_TEXT_LENGTH = 16
-
-const CHECKLIST_LABEL_MAP = {
-  quality_check: {
-    standard_id: '规范ID',
-    serial_no: '序号',
-    business_process: '业务流程',
-    check_item: '检查项目',
-    check_content: '检查内容',
-    requirement: '规范要求',
-    check_method: '检查方法',
-    issue_code: '问题编号',
-    common_issue: '常见问题',
-    inspection_path: '检查路径',
-    is_forbidden: '是否禁止项'
-  },
-  service_hygiene_check: {
-    standard_id: '规范ID',
-    project_name: '项目',
-    check_category: '检查类别',
-    check_content: '检查内容',
-    evaluation_standard: '检查评比标准',
-    check_method: '检查方式'
-  }
-}
+const INTERNAL_FIELD_KEY_PATTERN = /^(f_)?checklist_\d|^f_checklist_|^table_code$|^field_key$/
+const TITLE_EXCLUDED_LABELS = new Set(['序号', '编号', '规范ID', '标准ID'])
 
 const normalize = (value) => String(value || '').toLowerCase()
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
@@ -230,14 +222,19 @@ const activeInspectionTable = computed(() => {
 
 const activeInspectionTableName = computed(() => activeInspectionTable.value?.table_name || '')
 
-const getChecklistLabelMap = (item) => {
-  const inspectionTableCode = item?.inspection_table_code || ''
-  return CHECKLIST_LABEL_MAP[inspectionTableCode] || {}
-}
+const activeStandardIdentity = computed(() => getStandardIdentity(activeStandard.value))
+
+const activeStandardTitle = computed(() => {
+  return activeStandard.value ? getStandardPrimaryTitle(activeStandard.value) : ''
+})
+
+const activeStandardTableName = computed(() => {
+  return getStandardTableName(activeStandard.value)
+})
 
 const getFieldLabel = (item, fieldKey) => {
-  const tableLabelMap = getChecklistLabelMap(item)
-  return tableLabelMap[fieldKey] || fieldMap.value[fieldKey] || fieldKey
+  if (fieldKey === 'standard_id') return '规范ID'
+  return fieldMap.value[fieldKey] || FRIENDLY_FIELD_LABELS[fieldKey] || ''
 }
 
 const fieldMap = computed(() => {
@@ -262,13 +259,17 @@ const fieldOptionsMap = computed(() => {
 
 const activeStandardDetailEntries = computed(() => {
   if (!activeStandard.value) return []
-  return Object.entries(activeStandard.value)
+  const mappedEntries = Object.entries(activeStandard.value)
     .filter(([key, value]) => !DETAIL_HIDDEN_FIELDS.includes(key) && value !== null && String(value).trim())
+    .filter(([key]) => shouldShowDetailKey(key))
     .map(([key, value]) => ({
       key,
       label: getFieldLabel(activeStandard.value, key),
       value: String(value)
     }))
+    .filter((entry) => entry.label)
+  if (mappedEntries.length) return mappedEntries
+  return parseStandardDetailText(activeStandard.value.standard_detail_text)
 })
 
 const filterableFields = computed(() => {
@@ -283,18 +284,94 @@ const getFieldOptions = (fieldKey) => {
   return fieldOptionsMap.value[fieldKey] || []
 }
 
+const getStandardIdentity = (item) => {
+  if (!item) return ''
+  const tableId = item.inspection_table_id || filters.value.inspectionTableId || activeInspectionTable.value?.id || 'unknown'
+  return `${tableId}:${item.standard_id || ''}`
+}
+
+const isActiveStandard = (item) => {
+  return Boolean(activeStandard.value) && activeStandardIdentity.value === getStandardIdentity(item)
+}
+
+const getStandardTableName = (item) => {
+  return item?.inspection_table_name || activeInspectionTableName.value || '未选择检查表'
+}
+
+const getStandardFallbackTitle = (item) => {
+  const detailEntries = parseStandardDetailText(item?.standard_detail_text)
+  const preferredEntry = detailEntries.find((entry) => {
+    const label = String(entry.label || '').trim()
+    return label && !TITLE_EXCLUDED_LABELS.has(label) && String(entry.value || '').trim()
+  })
+  if (preferredEntry) return preferredEntry.value
+
+  const firstLine = String(item?.standard_detail_text || '')
+    .replace(/\\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+  if (!firstLine) return ''
+  const separatorIndex = firstLine.indexOf('：')
+  return separatorIndex > -1 ? firstLine.slice(separatorIndex + 1).trim() : firstLine
+}
+
 const getStandardPrimaryTitle = (item) => {
-  return item.check_content || item.check_item || item.project_name || '未命名规范'
+  return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名规范'
+}
+
+const shouldShowDetailKey = (key) => {
+  if (fieldMap.value[key]) return true
+  if (FRIENDLY_FIELD_LABELS[key]) return true
+  return !INTERNAL_FIELD_KEY_PATTERN.test(String(key || ''))
+}
+
+const parseStandardDetailText = (text) => {
+  return String(text || '')
+    .replace(/\\n/g, '\n')
+    .split('\n')
+    .map((line, index) => {
+      const trimmed = line.trim()
+      if (!trimmed) return null
+      const separatorIndex = trimmed.indexOf('：')
+      if (separatorIndex < 0) {
+        return {
+          key: `detail_${index}`,
+          label: '规范内容',
+          value: trimmed
+        }
+      }
+      return {
+        key: `detail_${index}`,
+        label: trimmed.slice(0, separatorIndex).trim() || '规范内容',
+        value: trimmed.slice(separatorIndex + 1).trim()
+      }
+    })
+    .filter((entry) => entry && entry.value)
 }
 
 const getStandardSummaryFields = (item) => {
-  return SUMMARY_FIELD_CANDIDATES
+  const preferredEntries = SUMMARY_FIELD_CANDIDATES
     .filter((key) => key in item)
     .map((key) => ({
       key,
       label: getFieldLabel(item, key),
       value: String(item[key] || '').trim()
     }))
+    .filter((entry) => entry.label && entry.value && !entry.value.includes('\n') && entry.value.length <= 40)
+    .slice(0, 3)
+  if (preferredEntries.length) return preferredEntries
+  const fieldEntries = inspectionTableFields.value
+    .filter((field) => field.field_key in item)
+    .map((field) => ({
+      key: field.field_key,
+      label: field.field_label,
+      value: String(item[field.field_key] || '').trim()
+    }))
+    .filter((entry) => entry.value && !entry.value.includes('\n') && entry.value.length <= 40)
+    .slice(0, 3)
+  if (fieldEntries.length) return fieldEntries
+  return parseStandardDetailText(item.standard_detail_text)
     .filter((entry) => entry.value && !entry.value.includes('\n') && entry.value.length <= 40)
     .slice(0, 3)
 }
@@ -321,7 +398,16 @@ const filteredList = computed(() => {
 
       return matchedKeyword && matchedDynamic
     })
-    .sort((a, b) => Number(a.standard_id || 0) - Number(b.standard_id || 0))
+    .sort((a, b) => {
+      if (!filters.value.inspectionTableId) {
+        const tableCompare = String(a.inspection_table_name || '').localeCompare(
+          String(b.inspection_table_name || ''),
+          'zh-Hans-CN'
+        )
+        if (tableCompare) return tableCompare
+      }
+      return Number(a.standard_id || 0) - Number(b.standard_id || 0)
+    })
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredList.value.length / pageSize)))
@@ -351,7 +437,7 @@ watch(
       return
     }
 
-    const stillExists = list.find((item) => activeStandard.value && item.standard_id === activeStandard.value.standard_id)
+    const stillExists = list.find((item) => isActiveStandard(item))
     if (!stillExists) {
       activeStandard.value = list[0]
     }
@@ -435,6 +521,7 @@ const fetchStandards = async () => {
 }
 
 const resetFilters = async () => {
+  const alreadyShowingAllTables = !filters.value.inspectionTableId
   filters.value = {
     keyword: '',
     inspectionTableId: ''
@@ -445,6 +532,9 @@ const resetFilters = async () => {
   activeStandard.value = null
   copyMessage.value = ''
   page.value = 1
+  if (alreadyShowingAllTables) {
+    await fetchStandards()
+  }
 }
 
 const selectStandard = (item) => {
@@ -521,10 +611,15 @@ const copyCode = async () => {
 
 const copyStandard = async () => {
   if (!activeStandard.value) return
+  const detailText = activeStandardDetailEntries.value.length
+    ? activeStandardDetailEntries.value
+      .map((entry) => `${entry.label}：${formatMultiline(entry.value)}`)
+      .join('\n')
+    : formatMultiline(activeStandard.value.standard_detail_text)
   const text = [
-    `检查表：${activeInspectionTableName.value || ''}`,
+    `检查表：${getStandardTableName(activeStandard.value)}`,
     `规范ID：${activeStandard.value.standard_id || ''}`,
-    `${formatMultiline(activeStandard.value.standard_detail_text) || ''}`
+    detailText || ''
   ].join('\n')
 
   try {
@@ -1036,6 +1131,14 @@ onBeforeUnmount(() => {
   text-align: center;
   color: #64748b;
   line-height: 1.8;
+}
+
+.empty-detail-compact {
+  min-height: 150px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: #f8fafc;
+  margin-top: 4px;
 }
 
 .empty-detail-icon {

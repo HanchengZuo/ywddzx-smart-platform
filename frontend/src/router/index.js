@@ -71,6 +71,10 @@ const routes = [
     component: () => import('../views/management/StationDataManagementView.vue')
   },
   {
+    path: '/management/checklists',
+    component: () => import('../views/management/ChecklistDataManagementView.vue')
+  },
+  {
     path: '/management/backups',
     component: () => import('../views/management/BackupManagementView.vue')
   },
