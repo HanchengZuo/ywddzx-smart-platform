@@ -73,7 +73,7 @@
 
         <button class="nav-item" :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/station-map')" :title="sidebarCollapsed ? '站点地图' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">图</span>
           <span v-if="!sidebarCollapsed">站点地图</span>
         </button>
       </div>
@@ -84,56 +84,56 @@
         <button v-if="canSubmitInspections" class="nav-item"
           :class="{ active: isActive('/inspection/register'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/register')" :title="sidebarCollapsed ? '巡检登记' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">登</span>
           <span v-if="!sidebarCollapsed">巡检登记</span>
         </button>
 
         <button v-if="canViewInspectionStandards" class="nav-item"
           :class="{ active: isActive('/inspection/standards'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/standards')" :title="sidebarCollapsed ? '巡检规范库' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">规</span>
           <span v-if="!sidebarCollapsed">巡检规范库</span>
         </button>
 
         <button v-if="canViewChecklistOriginals" class="nav-item"
           :class="{ active: isActive('/inspection/checklist-originals'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/checklist-originals')" :title="sidebarCollapsed ? '检查表原件库' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">件</span>
           <span v-if="!sidebarCollapsed">检查表原件库</span>
         </button>
 
         <button class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/my-issues')"
           :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">待</span>
           <span v-if="!sidebarCollapsed">{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</span>
         </button>
 
         <button v-if="canViewIssues" class="nav-item"
           :class="{ active: isActive('/inspection/issues'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/issues')" :title="sidebarCollapsed ? '巡检问题列表' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">问</span>
           <span v-if="!sidebarCollapsed">巡检问题列表</span>
         </button>
 
         <button v-if="canViewRecords" class="nav-item"
           :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">录</span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
 
         <button v-if="canViewInspectionPlans" class="nav-item"
           :class="{ active: isActive('/inspection/plan'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/plan')" :title="sidebarCollapsed ? '巡检计划' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">计</span>
           <span v-if="!sidebarCollapsed">巡检计划</span>
         </button>
 
         <button v-if="canViewCertificates" class="nav-item"
           :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">证</span>
           <span v-if="!sidebarCollapsed">证照管理</span>
         </button>
       </div>
@@ -142,7 +142,7 @@
         <div v-if="!sidebarCollapsed" class="menu-section-title">考核系统</div>
         <button class="nav-item" :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/assessment')" :title="sidebarCollapsed ? '考核系统' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">考</span>
           <span v-if="!sidebarCollapsed">考核系统</span>
         </button>
       </div>
@@ -152,13 +152,13 @@
         <button v-if="canViewTrainingInternal" class="nav-item"
           :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/training')" :title="sidebarCollapsed ? '培训系统' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">培</span>
           <span v-if="!sidebarCollapsed">培训系统</span>
         </button>
         <button v-if="canViewTrainingMaterials" class="nav-item"
           :class="{ active: isActive('/training/materials'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/training/materials')" :title="sidebarCollapsed ? '培训材料库' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">材</span>
           <span v-if="!sidebarCollapsed">培训材料库</span>
         </button>
       </div>
@@ -167,7 +167,7 @@
         <div v-if="!sidebarCollapsed" class="menu-section-title">车辆系统</div>
         <button class="nav-item" :class="{ active: isActive('/vehicle'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/vehicle')" :title="sidebarCollapsed ? '车辆管理系统' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">车</span>
           <span v-if="!sidebarCollapsed">车辆管理系统</span>
         </button>
       </div>
@@ -176,7 +176,7 @@
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
         <button class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/feedback')" :title="sidebarCollapsed ? '系统反馈' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">馈</span>
           <span v-if="!sidebarCollapsed">系统反馈</span>
         </button>
       </div>
@@ -186,25 +186,25 @@
         <button v-if="canManageUsers" class="nav-item"
           :class="{ active: isActive('/management/users'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/users')" :title="sidebarCollapsed ? '用户数据管理' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">用</span>
           <span v-if="!sidebarCollapsed">用户数据管理</span>
         </button>
         <button v-if="canManageStations" class="nav-item"
           :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">站</span>
           <span v-if="!sidebarCollapsed">站点数据管理</span>
         </button>
         <button v-if="canManageChecklists" class="nav-item"
           :class="{ active: isActive('/management/checklists'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/checklists')" :title="sidebarCollapsed ? '巡检表数据管理' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">表</span>
           <span v-if="!sidebarCollapsed">巡检表数据管理</span>
         </button>
         <button v-if="canManageBackups" class="nav-item"
           :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/backups')" :title="sidebarCollapsed ? '数据备份管理' : ''">
-          <span class="nav-item-dot"></span>
+          <span class="nav-item-icon">备</span>
           <span v-if="!sidebarCollapsed">数据备份管理</span>
         </button>
       </div>
@@ -388,7 +388,9 @@ const toggleSidebar = () => {
 }
 
 const toggleMobileMenu = () => {
-  mobileMenuOpen.value = !mobileMenuOpen.value
+  const nextOpen = !mobileMenuOpen.value
+  mobileMenuOpen.value = nextOpen
+  if (nextOpen) sidebarCollapsed.value = false
 }
 
 const closeMobileMenu = () => {
@@ -469,8 +471,12 @@ const handleLogout = () => {
   --text-soft: #94a3b8;
   --brand: #2563eb;
   --brand-hover: #1d4ed8;
-  --sidebar-bg: linear-gradient(180deg, #16233c 0%, #101a2c 100%);
-  --sidebar-text: rgba(255, 255, 255, 0.9);
+  --sidebar-bg:
+    radial-gradient(circle at 20% 0%, rgba(59, 130, 246, 0.24), transparent 30%),
+    linear-gradient(180deg, #0f1b32 0%, #0b1220 52%, #08111f 100%);
+  --sidebar-text: rgba(241, 245, 249, 0.9);
+  --sidebar-muted: rgba(203, 213, 225, 0.58);
+  --sidebar-panel: rgba(255, 255, 255, 0.055);
   --shadow-card: 0 18px 40px rgba(15, 23, 42, 0.08);
   --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.06);
 }
@@ -686,12 +692,25 @@ textarea:focus {
   width: 272px;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
-  padding: 14px 12px 18px;
+  padding: 16px 12px 18px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   overflow: auto;
-  transition: width 0.2s ease, padding 0.2s ease;
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+  transition: width 0.22s ease, padding 0.22s ease;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
 }
 
 .sidebar-top {
@@ -699,92 +718,179 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 6px 14px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.045)),
+    rgba(15, 23, 42, 0.18);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.16);
 }
 
 .logo-mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 28% 18%, rgba(255, 255, 255, 0.38), transparent 34%),
+    linear-gradient(135deg, #38bdf8 0%, #2563eb 58%, #1e40af 100%);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  font-weight: 800;
-  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.2);
+  font-weight: 900;
+  box-shadow: 0 14px 24px rgba(37, 99, 235, 0.28);
 }
 
 .logo-title {
-  font-size: 18px;
-  font-weight: 800;
+  max-width: 150px;
+  font-size: 17px;
+  font-weight: 900;
   color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logo-subtitle {
-  margin-top: 2px;
+  margin-top: 3px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.58);
+  color: var(--sidebar-muted);
 }
 
 .menu-section {
-  margin-top: 14px;
+  position: relative;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.menu-section::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.22), transparent);
+}
+
+.sidebar-top + .menu-section {
+  margin-top: 6px;
+}
+
+.sidebar-top + .menu-section::before {
+  display: none;
 }
 
 .menu-section-title {
-  padding: 0 8px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  letter-spacing: 0.8px;
-  color: rgba(255, 255, 255, 0.5);
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  margin-bottom: 9px;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  color: var(--sidebar-muted);
+  font-weight: 900;
+}
+
+.menu-section-title::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.18), transparent);
 }
 
 .nav-item {
+  position: relative;
   width: 100%;
   border: none;
   background: transparent;
   color: var(--sidebar-text);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 12px;
-  border-radius: 14px;
+  gap: 11px;
+  min-height: 42px;
+  padding: 8px 11px;
+  border-radius: 13px;
   cursor: pointer;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   text-align: left;
-  transition: all 0.18s ease;
+  font-size: 14px;
+  font-weight: 760;
+  letter-spacing: 0.1px;
+  overflow: hidden;
+  transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  transform: translateX(2px);
+  background: rgba(255, 255, 255, 0.075);
+  color: #fff;
 }
 
 .nav-item.active {
-  background: linear-gradient(90deg, rgba(37, 99, 235, 0.28) 0%, rgba(37, 99, 235, 0.12) 100%);
+  background:
+    linear-gradient(90deg, rgba(59, 130, 246, 0.32) 0%, rgba(14, 165, 233, 0.14) 100%),
+    var(--sidebar-panel);
   color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
+  box-shadow:
+    inset 0 0 0 1px rgba(125, 211, 252, 0.2),
+    0 10px 22px rgba(2, 6, 23, 0.18);
 }
 
-.nav-item-dot {
-  width: 8px;
-  height: 8px;
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.45);
-  flex-shrink: 0;
+  background: #38bdf8;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.72);
 }
 
-.nav-item.active .nav-item-dot {
-  background: #60a5fa;
+.nav-item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.13);
+  border: 1px solid rgba(203, 213, 225, 0.12);
+  color: rgba(226, 232, 240, 0.82);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 900;
+  transition: all 0.18s ease;
+}
+
+.nav-item:hover .nav-item-icon {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(203, 213, 225, 0.2);
+  color: #fff;
+}
+
+.nav-item.active .nav-item-icon {
+  background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%);
+  border-color: rgba(191, 219, 254, 0.36);
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.28);
 }
 
 .sidebar.collapsed {
-  width: 76px;
-  padding-left: 10px;
-  padding-right: 10px;
+  width: 82px;
+  padding: 14px 10px 18px;
+}
+
+.sidebar.collapsed .sidebar-top {
+  justify-content: center;
+  padding: 8px;
+  border-radius: 18px;
 }
 
 .sidebar-brand {
@@ -796,16 +902,32 @@ textarea:focus {
 
 .nav-item.collapsed {
   justify-content: center;
+  min-height: 44px;
   padding-left: 0;
   padding-right: 0;
+  border-radius: 16px;
+}
+
+.nav-item.collapsed:hover {
+  transform: translateY(-1px);
+}
+
+.nav-item.collapsed.active::before {
+  left: 4px;
+}
+
+.nav-item.collapsed .nav-item-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 12px;
 }
 
 .sidebar-toggle {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(255, 255, 255, 0.06);
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.075);
   color: #e2e8f0;
   display: inline-flex;
   align-items: center;
@@ -816,7 +938,9 @@ textarea:focus {
 }
 
 .sidebar-toggle:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  transform: translateY(-1px);
 }
 
 .header-left-block {
@@ -826,7 +950,7 @@ textarea:focus {
 }
 
 .sidebar-collapsed-layout .sidebar {
-  width: 76px;
+  width: 82px;
 }
 
 .main {
