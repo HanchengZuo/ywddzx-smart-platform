@@ -140,14 +140,16 @@
         <div v-if="formError" class="form-error">{{ formError }}</div>
 
         <div class="form-actions">
-          <button class="btn btn-secondary" type="button" @click="resetForm">清空</button>
+          <button class="btn btn-secondary" type="button" @click="resetForm({ scrollToEditor: true })">
+            {{ form.id ? '放弃修改' : '清空' }}
+          </button>
           <button class="btn btn-primary" type="button" :disabled="saving" @click="saveUser">
             {{ saving ? '保存中...' : form.id ? '保存修改' : '新增用户' }}
           </button>
         </div>
       </section>
 
-      <section class="card-surface table-card">
+      <section ref="tableCardRef" class="card-surface table-card">
         <div class="section-head">
           <div>
             <div class="section-kicker">用户清单</div>
@@ -312,6 +314,7 @@ const filters = reactive({
   station_region: ''
 })
 const editorCardRef = ref(null)
+const tableCardRef = ref(null)
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'view_all_inspection_issues'],
@@ -512,6 +515,14 @@ const resetForm = (options = {}) => {
   stationKeyword.value = ''
   formError.value = ''
   if (!options.keepMessage) setMessage('')
+  if (options.scrollToEditor) {
+    nextTick(() => {
+      editorCardRef.value?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      })
+    })
+  }
 }
 
 const resetCreateTextFields = (options = {}) => {
@@ -703,6 +714,14 @@ const saveUser = async () => {
     setMessage(response.data?.message || '用户已保存。', 'success')
     if (isCreating) resetCreateTextFields({ keepMessage: true })
     await fetchUsers()
+    if (!isCreating) {
+      nextTick(() => {
+        tableCardRef.value?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        })
+      })
+    }
   } catch (error) {
     formError.value = error?.response?.data?.error || '用户保存失败。'
     setMessage(formError.value, 'error')

@@ -27,7 +27,9 @@
     </div>
 
     <template v-else>
-      <div v-if="message.text" :class="['message-card', message.type]">{{ message.text }}</div>
+      <transition name="toast-fade">
+        <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
+      </transition>
 
       <div class="management-stack">
         <section ref="formCardRef" class="card-surface form-card" :class="{ editing: editingId }">
@@ -190,7 +192,7 @@
           <div v-if="formError" class="form-error">{{ formError }}</div>
 
           <div class="form-actions">
-            <button class="btn btn-secondary" type="button" @click="resetForm">
+            <button class="btn btn-secondary" type="button" @click="resetForm({ scrollToForm: true })">
               {{ editingId ? '放弃修改' : '清空' }}
             </button>
             <button class="btn btn-primary" type="button" :disabled="saving" @click="saveStation">
@@ -199,7 +201,7 @@
           </div>
         </section>
 
-        <section class="card-surface table-card">
+        <section ref="tableCardRef" class="card-surface table-card">
           <div class="section-head">
             <div>
               <div class="section-kicker">站点清单</div>
@@ -333,7 +335,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -356,6 +358,7 @@ const formError = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const formCardRef = ref(null)
+const tableCardRef = ref(null)
 const operatingMode = ref('24小时')
 const operatingStart = ref('06:00')
 const operatingEnd = ref('22:00')
@@ -363,6 +366,7 @@ const message = reactive({
   text: '',
   type: 'info'
 })
+let messageTimer = null
 const filters = reactive({
   keyword: '',
   region: '',
@@ -486,15 +490,35 @@ const pageStart = computed(() => (filteredStations.value.length ? (currentPage.v
 const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredStations.value.length))
 
 const setMessage = (text, type = 'info') => {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+
   message.text = text
   message.type = type
+  if (!text) return
+
+  messageTimer = setTimeout(() => {
+    message.text = ''
+    messageTimer = null
+  }, 2400)
 }
 
-const resetForm = () => {
+const resetForm = (options = {}) => {
   Object.assign(form, createEmptyForm())
   applyOperatingHoursToControls(form.operating_hours)
   editingId.value = null
   formError.value = ''
+  if (!options.keepMessage) setMessage('')
+  if (options.scrollToForm) {
+    nextTick(() => {
+      formCardRef.value?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      })
+    })
+  }
 }
 
 const resetFilters = () => {
@@ -530,7 +554,7 @@ const startEdit = (station) => {
   const normalizedStation = normalizeStationForForm(station)
   Object.assign(form, normalizedStation)
   applyOperatingHoursToControls(normalizedStation.operating_hours)
-  setMessage(`已进入【${station.station_name}】编辑状态，请在上方表单修改后保存。`, 'info')
+  setMessage(`已进入【${station.station_name}】编辑状态，请在维护站点主数据模块修改后保存。`, 'info')
   nextTick(() => {
     formCardRef.value?.scrollIntoView({
       behavior: 'smooth',
@@ -615,7 +639,7 @@ const importStations = async (event) => {
     formData.append('file', file)
     const response = await axios.post('/api/management/stations/import', formData)
     setMessage(response.data?.message || '站点数据导入完成。', 'success')
-    resetForm()
+    resetForm({ keepMessage: true })
     await fetchStations()
   } catch (error) {
     setMessage(error?.response?.data?.error || '站点数据导入失败。', 'error')
@@ -644,6 +668,7 @@ const saveStation = async () => {
 
   try {
     saving.value = true
+    const isEditing = Boolean(editingId.value)
     const payload = {
       ...form,
       user_id: currentUserId
@@ -655,11 +680,20 @@ const saveStation = async () => {
     setMessage(response.data?.message || '站点已保存。', 'success')
     const savedId = response.data?.id || editingId.value
     await fetchStations()
+    if (isEditing) {
+      nextTick(() => {
+        tableCardRef.value?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        })
+      })
+      return
+    }
     if (savedId) {
       const savedRow = stations.value.find((item) => String(item.id) === String(savedId))
       if (savedRow) startEdit(savedRow)
     } else {
-      resetForm()
+      resetForm({ keepMessage: true })
     }
   } catch (error) {
     formError.value = error?.response?.data?.error || '站点保存失败。'
@@ -680,7 +714,7 @@ const deleteStation = async (station) => {
       }
     })
     setMessage(response.data?.message || '站点已删除。', 'success')
-    if (editingId.value === station.id) resetForm()
+    if (editingId.value === station.id) resetForm({ keepMessage: true })
     await fetchStations()
   } catch (error) {
     setMessage(error?.response?.data?.error || '站点删除失败。', 'error')
@@ -705,6 +739,13 @@ watch(totalPages, (value) => {
 })
 
 onMounted(fetchStations)
+
+onBeforeUnmount(() => {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+})
 </script>
 
 <style scoped>
@@ -1045,8 +1086,65 @@ onMounted(fetchStations)
   font-weight: 900;
 }
 
-.form-error,
-.message-card {
+.message-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 440px);
+  z-index: 1500;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.7;
+  text-align: center;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(10px);
+  animation: toast-pulse 1.2s ease-in-out infinite;
+}
+
+.message-toast.error {
+  border: 1px solid #fecaca;
+  background: rgba(254, 242, 242, 0.98);
+  color: #b91c1c;
+}
+
+.message-toast.success {
+  border: 1px solid #bbf7d0;
+  background: rgba(236, 253, 245, 0.98);
+  color: #166534;
+}
+
+.message-toast.info {
+  border: 1px solid #bfdbfe;
+  background: rgba(239, 246, 255, 0.98);
+  color: #1d4ed8;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
+}
+
+@keyframes toast-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+  }
+
+  50% {
+    box-shadow: 0 22px 44px rgba(37, 99, 235, 0.22);
+  }
+}
+
+.form-error {
   padding: 12px 14px;
   border-radius: 14px;
   font-size: 14px;
@@ -1054,23 +1152,10 @@ onMounted(fetchStations)
   line-height: 1.7;
 }
 
-.form-error,
-.message-card.error {
+.form-error {
   border: 1px solid #fecaca;
   background: #fef2f2;
   color: #dc2626;
-}
-
-.message-card.success {
-  border: 1px solid #bbf7d0;
-  background: #ecfdf5;
-  color: #15803d;
-}
-
-.message-card.info {
-  border: 1px solid #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .form-error {
