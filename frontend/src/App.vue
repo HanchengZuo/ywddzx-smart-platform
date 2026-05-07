@@ -1260,7 +1260,7 @@ textarea:focus {
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.32);
-    z-index: 109;
+    z-index: 130;
   }
 
   .sidebar {
@@ -1270,7 +1270,7 @@ textarea:focus {
     bottom: 0;
     width: 256px;
     max-width: 82vw;
-    z-index: 110;
+    z-index: 140;
     transform: translateX(-100%);
     transition: transform 0.22s ease;
     padding-top: 12px;
