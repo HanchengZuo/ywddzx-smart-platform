@@ -10,7 +10,7 @@
               <span class="login-badge-dot"></span>
               业务督导中心
             </div>
-            <div class="login-release-note">巡检系统 v{{ appVersion }} 已上线</div>
+            <div class="login-release-note">巡检系统已上线</div>
           </div>
         </div>
 
@@ -30,6 +30,7 @@
         </div>
 
         <div class="login-release-row">
+          <span>当前版本 v{{ appVersion }}</span>
           <button class="login-version-history-btn" type="button" @click="loginVersionModalOpen = true">
             查看版本历史
           </button>
@@ -634,10 +635,10 @@ textarea {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 980px;
+  max-width: 1220px;
   height: min(660px, calc(100dvh - 28px));
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 390px;
   gap: 0;
   align-items: stretch;
   overflow: hidden;
@@ -760,12 +761,12 @@ textarea {
   position: relative;
   z-index: 1;
   display: inline-flex;
-  flex-direction: column;
-  align-items: center;
+  flex-direction: row;
+  align-items: baseline;
   width: fit-content;
   margin: 0;
-  max-width: 560px;
-  font-size: clamp(36px, 4.2vw, 52px);
+  max-width: none;
+  font-size: clamp(40px, 4vw, 56px);
   font-weight: 900;
   line-height: 1.02;
   letter-spacing: -1.8px;
@@ -821,10 +822,13 @@ textarea {
   z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  padding-top: 0;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(191, 219, 254, 0.24);
   color: #93c5fd;
   font-size: 13px;
   font-weight: 900;
@@ -1516,7 +1520,7 @@ textarea:focus {
 
 @media (max-width: 1100px) {
   .login-shell {
-    max-width: 940px;
+    max-width: 980px;
     grid-template-columns: minmax(0, 1fr) 360px;
   }
 
@@ -1525,7 +1529,7 @@ textarea:focus {
   }
 
   .login-title {
-    font-size: clamp(34px, 4vw, 48px);
+    font-size: clamp(34px, 3.8vw, 42px);
   }
 }
 
@@ -1601,6 +1605,8 @@ textarea:focus {
   }
 
   .login-title {
+    flex-direction: column;
+    align-items: center;
     font-size: 28px;
     line-height: 1.08;
     letter-spacing: -0.5px;
@@ -1619,7 +1625,8 @@ textarea:focus {
     justify-content: center;
     gap: 8px;
     font-size: 12px;
-    padding-top: 2px;
+    margin-top: 2px;
+    padding-top: 10px;
   }
 
   .login-version-history-btn {
