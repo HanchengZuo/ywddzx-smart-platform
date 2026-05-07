@@ -35,7 +35,10 @@
             <div>
               <div class="section-kicker">{{ editingId ? '编辑站点' : '新增站点' }}</div>
               <h3>{{ editingId ? '维护站点主数据' : '录入新站点' }}</h3>
-              <p v-if="editingId" class="editing-hint">正在编辑：{{ form.station_name }}</p>
+              <p v-if="editingId" class="editing-target">
+                <span>正在编辑</span>
+                <strong>{{ form.station_name }}</strong>
+              </p>
             </div>
           </div>
 
@@ -791,16 +794,37 @@ onMounted(fetchStations)
   margin-bottom: 18px;
 }
 
-.editing-hint {
-  margin: 8px 0 0;
-  color: #2563eb;
-  font-size: 13px;
-  font-weight: 800;
-}
-
 .form-card.editing {
   border-color: #bfdbfe;
   box-shadow: 0 18px 40px rgba(37, 99, 235, 0.12);
+}
+
+.editing-target {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.editing-target > span {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.editing-target > strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12);
+  font-size: 15px;
+  font-weight: 950;
 }
 
 .filter-bar {

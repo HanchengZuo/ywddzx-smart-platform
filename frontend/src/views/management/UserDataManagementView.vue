@@ -31,11 +31,15 @@
         <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
       </transition>
 
-      <section class="card-surface editor-card">
+      <section ref="editorCardRef" class="card-surface editor-card" :class="{ editing: form.id }">
         <div class="section-head">
           <div>
             <div class="section-kicker">{{ form.id ? '编辑用户' : '新增用户' }}</div>
-            <h3>{{ form.id ? `正在维护：${form.username}` : '创建系统账号' }}</h3>
+            <h3 v-if="form.id" class="editing-heading">
+              <span>正在维护</span>
+              <strong>{{ form.username }}</strong>
+            </h3>
+            <h3 v-else>创建系统账号</h3>
           </div>
         </div>
 
@@ -270,7 +274,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -307,6 +311,7 @@ const filters = reactive({
   role: '',
   station_region: ''
 })
+const editorCardRef = ref(null)
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'view_all_inspection_issues'],
@@ -556,7 +561,12 @@ const startEdit = (user) => {
   stationKeyword.value = ''
   formError.value = ''
   setMessage(`已进入【${user.username}】编辑状态。`, 'info')
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  nextTick(() => {
+    editorCardRef.value?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    })
+  })
 }
 
 const enabledPermissionLabels = (user) => {
@@ -830,6 +840,41 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.editing-heading,
+.editing-target {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.editing-heading > span,
+.editing-target > span {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.editing-heading > strong,
+.editing-target > strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.editor-card.editing {
+  border-color: #bfdbfe;
+  box-shadow: 0 18px 40px rgba(37, 99, 235, 0.12);
 }
 
 .filter-bar {
