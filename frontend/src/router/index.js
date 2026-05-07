@@ -97,6 +97,8 @@ const hasPermission = (role, permissions, key) => role === 'root' || Boolean(per
 
 const canAccessPath = (path, role, permissions) => {
   if (role === 'root') return true
+  if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
+  if (path === '/management/checklists') return hasPermission(role, permissions, 'manage_checklists')
   if (path.startsWith('/management')) return false
   if (path === '/inspection/station-map') return hasPermission(role, permissions, 'view_station_map')
   if (path === '/inspection/register') return hasPermission(role, permissions, 'submit_inspections')
@@ -139,8 +141,10 @@ const resolveFallbackPath = (role, permissions) => {
   }
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
-  if (role === 'supervisor') return '/inspection/my-issues'
   if (permissions.view_training_materials) return '/training/materials'
+  if (permissions.manage_stations) return '/management/stations'
+  if (permissions.manage_checklists) return '/management/checklists'
+  if (role === 'supervisor') return '/inspection/my-issues'
   return '/feedback'
 }
 

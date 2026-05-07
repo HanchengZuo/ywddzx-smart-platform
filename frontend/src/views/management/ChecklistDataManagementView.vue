@@ -25,7 +25,7 @@
     <div v-if="!hasPermission" class="card-surface permission-card">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权限访问</div>
-      <div class="permission-desc">当前页面仅 root 系统管理员账号可访问和操作。</div>
+      <div class="permission-desc">当前账号无权访问巡检表数据管理页面。</div>
     </div>
 
     <template v-else>
@@ -503,7 +503,13 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
-const hasPermission = currentRole === 'root'
+let localPermissions = {}
+try {
+  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  localPermissions = {}
+}
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_checklists)
 
 const loading = ref(false)
 const saving = ref(false)

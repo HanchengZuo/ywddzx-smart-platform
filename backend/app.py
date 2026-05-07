@@ -180,6 +180,20 @@ PERMISSION_CATALOG = [
         "description": "上传培训材料，并编辑或删除自己上传的材料。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False},
     },
+    {
+        "key": "manage_stations",
+        "name": "管理站点数据",
+        "category": "站点数据管理",
+        "description": "访问站点数据管理页面，并新增、编辑、删除、导入导出站点主数据。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
+        "key": "manage_checklists",
+        "name": "管理巡检表数据",
+        "category": "巡检表数据管理",
+        "description": "访问巡检表数据管理页面，并维护检查表、字段结构和规范数据。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
 ]
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
@@ -1848,7 +1862,7 @@ def can_manage_plan(cur, user):
 
 
 def can_manage_system(cur, user, permission_key):
-    return is_root_user(user)
+    return is_root_user(user) or has_permission(cur, user, permission_key)
 
 
 def can_view_inspection_standards(cur, user):

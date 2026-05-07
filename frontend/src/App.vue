@@ -181,27 +181,27 @@
         </button>
       </div>
 
-      <div v-if="isManagementAdmin" class="menu-section">
+      <div v-if="canViewManagementSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">管理系统</div>
-        <button class="nav-item"
+        <button v-if="canManageUsers" class="nav-item"
           :class="{ active: isActive('/management/users'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/users')" :title="sidebarCollapsed ? '用户数据管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">用户数据管理</span>
         </button>
-        <button class="nav-item"
+        <button v-if="canManageStations" class="nav-item"
           :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">站点数据管理</span>
         </button>
-        <button class="nav-item"
+        <button v-if="canManageChecklists" class="nav-item"
           :class="{ active: isActive('/management/checklists'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/checklists')" :title="sidebarCollapsed ? '巡检表数据管理' : ''">
           <span class="nav-item-dot"></span>
           <span v-if="!sidebarCollapsed">巡检表数据管理</span>
         </button>
-        <button class="nav-item"
+        <button v-if="canManageBackups" class="nav-item"
           :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/backups')" :title="sidebarCollapsed ? '数据备份管理' : ''">
           <span class="nav-item-dot"></span>
@@ -289,7 +289,6 @@ const localPermissions = computed(() => authState.permissions || {})
 const isRoot = computed(() => authState.role === 'root')
 const isSupervisor = computed(() => authState.role === 'supervisor')
 const isStationManager = computed(() => authState.role === 'station_manager')
-const isManagementAdmin = computed(() => isRoot.value)
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
 const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections'))
@@ -316,6 +315,16 @@ const canViewAssessment = computed(() => hasPermissionKey('view_assessment'))
 const canViewTrainingInternal = computed(() => hasPermissionKey('view_training'))
 const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials'))
 const canViewTrainingSection = computed(() => canViewTrainingInternal.value || canViewTrainingMaterials.value)
+const canManageUsers = computed(() => isRoot.value)
+const canManageStations = computed(() => hasPermissionKey('manage_stations'))
+const canManageChecklists = computed(() => hasPermissionKey('manage_checklists'))
+const canManageBackups = computed(() => isRoot.value)
+const canViewManagementSection = computed(() => (
+  canManageUsers.value ||
+  canManageStations.value ||
+  canManageChecklists.value ||
+  canManageBackups.value
+))
 const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
   return authState.role === 'supervisor' ? '督导组账号' : '站点账号'
@@ -362,6 +371,8 @@ const resolveHomePath = (user) => {
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
   if (permissions.view_training_materials) return '/training/materials'
+  if (permissions.manage_stations) return '/management/stations'
+  if (permissions.manage_checklists) return '/management/checklists'
   return '/feedback'
 }
 

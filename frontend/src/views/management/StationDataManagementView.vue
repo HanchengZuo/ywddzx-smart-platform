@@ -23,7 +23,7 @@
     <div v-if="!hasPermission" class="card-surface permission-card">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权限访问</div>
-      <div class="permission-desc">当前页面仅 root 系统管理员账号可访问和操作。</div>
+      <div class="permission-desc">当前账号无权访问站点数据管理页面。</div>
     </div>
 
     <template v-else>
@@ -340,7 +340,7 @@ try {
 } catch (error) {
   localPermissions = {}
 }
-const hasPermission = currentRole === 'root'
+const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_stations)
 
 const stations = ref([])
 const loading = ref(false)
