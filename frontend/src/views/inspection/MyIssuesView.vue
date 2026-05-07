@@ -96,10 +96,19 @@
 
 
     <div class="mobile-issue-list">
-      <div v-if="loading" class="mobile-empty card-surface">正在加载数据...</div>
+      <div v-if="loading" class="mobile-empty empty-state-card card-surface">
+        <div class="empty-state-orb loading"></div>
+        <div class="empty-state-kicker">同步中</div>
+        <h3>正在加载待办数据</h3>
+        <p>系统正在同步最新的问题处理状态，请稍候。</p>
+      </div>
 
-      <div v-else-if="paginatedData.length === 0" class="mobile-empty card-surface">
-        {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
+      <div v-else-if="paginatedData.length === 0" class="mobile-empty empty-state-card card-surface">
+        <div class="empty-state-orb"></div>
+        <div class="empty-state-kicker">{{ currentRole === 'station_manager' ? '暂无整改任务' : '暂无复核任务' }}</div>
+        <h3>{{ myIssuesEmptyTitle }}</h3>
+        <p>{{ myIssuesEmptyDescription }}</p>
+        <button class="btn btn-secondary empty-state-action" type="button" @click="resetFilters">重置筛选</button>
       </div>
 
       <div v-else class="mobile-issue-cards">
@@ -260,11 +269,24 @@
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
                 <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">
-                  {{ currentRole === 'station_manager' ? '当前没有待整改问题。' : '当前没有待复核问题。' }}
+                  <div class="empty-state-inline">
+                    <div class="empty-state-orb"></div>
+                    <div class="empty-state-kicker">{{ currentRole === 'station_manager' ? '暂无整改任务' : '暂无复核任务' }}</div>
+                    <h3>{{ myIssuesEmptyTitle }}</h3>
+                    <p>{{ myIssuesEmptyDescription }}</p>
+                    <button class="btn btn-secondary btn-sm empty-state-action" type="button" @click="resetFilters">重置筛选</button>
+                  </div>
                 </td>
               </tr>
               <tr v-if="loading">
-                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">正在加载数据...</td>
+                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">
+                  <div class="empty-state-inline">
+                    <div class="empty-state-orb loading"></div>
+                    <div class="empty-state-kicker">同步中</div>
+                    <h3>正在加载待办数据</h3>
+                    <p>系统正在同步最新的问题处理状态，请稍候。</p>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -483,6 +505,12 @@ const isInspectionSigned = (item) => {
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
+const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
+const myIssuesEmptyDescription = computed(() => (
+  currentRole.value === 'station_manager'
+    ? '目前没有需要你提交整改反馈的问题，后续新任务会在这里集中出现。'
+    : '目前没有需要督导组复核的问题，已提交整改反馈的事项会自动进入这里。'
+))
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
@@ -1340,10 +1368,91 @@ onBeforeUnmount(() => {
 }
 
 .mobile-empty {
-  padding: 28px 16px;
+  margin-top: 2px;
+}
+
+.empty-state-card,
+.empty-state-inline {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  gap: 8px;
+  padding: 34px 22px;
+  color: #475569;
+}
+
+.empty-state-card {
+  min-height: 260px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.12), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94));
+}
+
+.empty-state-inline {
+  min-height: 220px;
+  padding: 32px 20px;
+}
+
+.empty-state-orb {
+  width: 54px;
+  height: 54px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.9), transparent 28%),
+    linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%);
+  box-shadow:
+    0 16px 34px rgba(37, 99, 235, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.empty-state-orb.loading {
+  animation: emptyPulse 1.45s ease-in-out infinite;
+}
+
+.empty-state-kicker {
+  margin-top: 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.empty-state-card h3,
+.empty-state-inline h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.empty-state-card p,
+.empty-state-inline p {
+  max-width: 420px;
+  margin: 0;
   color: #64748b;
   font-size: 14px;
+  line-height: 1.8;
+}
+
+.empty-state-action {
+  margin-top: 8px;
+}
+
+@keyframes emptyPulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.82;
+  }
+
+  50% {
+    transform: translateY(-4px) scale(1.03);
+    opacity: 1;
+  }
 }
 
 .table-scroll-wrap {
@@ -1550,7 +1659,10 @@ onBeforeUnmount(() => {
 .empty-row {
   text-align: center;
   color: #6b7280;
-  padding: 40px 0 !important;
+  padding: 0 !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.08), transparent 32%),
+    #fff;
 }
 
 .status-tag {

@@ -44,6 +44,60 @@
         </div>
       </div>
 
+      <div class="mobile-map-brief">
+        <div class="mobile-map-brief-head">
+          <div>
+            <span class="mobile-map-kicker">移动端事件视图</span>
+            <h3>实时事件流</h3>
+          </div>
+          <span class="mobile-event-count">最近 {{ displayedEventFeed.length }} 条</span>
+        </div>
+
+        <p class="mobile-map-copy">
+          移动端优先呈现站点风险动态，地图分布图请在电脑端查看，便于获得更完整的空间定位体验。
+        </p>
+
+        <div class="mobile-map-stat-row">
+          <div class="mobile-map-stat">
+            <span>站点</span>
+            <strong>{{ filteredStations.length }}</strong>
+          </div>
+          <div class="mobile-map-stat danger">
+            <span>未整改</span>
+            <strong>{{ pendingRectificationStationCount }}</strong>
+          </div>
+          <div class="mobile-map-stat warning">
+            <span>待复核</span>
+            <strong>{{ pendingReviewStationCount }}</strong>
+          </div>
+        </div>
+
+        <div v-if="autoRotateTarget" class="mobile-selected-station">
+          <span>已选择事件站点</span>
+          <strong>{{ autoRotateTarget.station_name }}</strong>
+          <em>
+            {{ autoRotateTarget.region || '暂无区域' }}｜未整改 {{ autoRotateTarget.pending_rectification_count || 0 }}｜待复核
+            {{ autoRotateTarget.pending_review_count || 0 }}
+          </em>
+        </div>
+
+        <div class="mobile-event-timeline">
+          <button v-for="event in displayedEventFeed" :key="event.id" class="mobile-event-card"
+            :class="event.level" type="button" @click="handleEventClick(event)">
+            <span class="mobile-event-dot"></span>
+            <span class="mobile-event-body">
+              <strong>{{ event.stationName }}</strong>
+              <span>{{ event.text }}</span>
+              <em>{{ event.time }}</em>
+            </span>
+          </button>
+
+          <div v-if="displayedEventFeed.length === 0" class="mobile-event-empty">
+            当前暂无实时事件，系统会自动刷新新的站点动态。
+          </div>
+        </div>
+      </div>
+
       <div class="map-frame" :class="{ fullscreen: isFullscreen }" ref="mapFrameRef">
         <div ref="mapContainer" class="map-container"></div>
 
@@ -129,6 +183,8 @@ const autoRotateEnabled = ref(true)
 const autoRotateTarget = ref(null)
 const eventFeed = ref([])
 const currentRole = ref('')
+const isMobileMapMode = ref(false)
+const MOBILE_MAP_QUERY = '(max-width: 900px)'
 
 const resolveCurrentRole = () => {
   const directRole = localStorage.getItem('role') || localStorage.getItem('user_role') || ''
@@ -171,6 +227,35 @@ const prioritizedStations = computed(() => {
 
 const displayedEventFeed = computed(() => eventFeed.value.slice(0, 5))
 
+const syncMobileMapMode = () => {
+  if (typeof window === 'undefined' || !window.matchMedia) {
+    isMobileMapMode.value = false
+    return
+  }
+  isMobileMapMode.value = window.matchMedia(MOBILE_MAP_QUERY).matches
+}
+
+const handleViewportResize = () => {
+  const wasMobile = isMobileMapMode.value
+  syncMobileMapMode()
+
+  if (!wasMobile && isMobileMapMode.value) {
+    stopAutoRotate()
+    return
+  }
+
+  if (wasMobile && !isMobileMapMode.value && !mapInstance && hasPermission.value) {
+    initMap().catch((error) => {
+      console.error(error)
+    })
+    return
+  }
+
+  if (wasMobile && !isMobileMapMode.value && mapInstance && autoRotateEnabled.value) {
+    startAutoRotate()
+  }
+}
+
 
 const fetchEventFeed = async () => {
   try {
@@ -209,7 +294,7 @@ const startAutoRotate = () => {
     autoRotateTimer = null
   }
 
-  if (!autoRotateEnabled.value || prioritizedStations.value.length === 0) return
+  if (isMobileMapMode.value || !mapInstance || !autoRotateEnabled.value || prioritizedStations.value.length === 0) return
 
   let currentIndex = 0
   focusStationOnMap(prioritizedStations.value[currentIndex], { zoom: 12.5 })
@@ -427,6 +512,10 @@ const handleEventClick = (event) => {
 
   if (!matchedStation) return
 
+  autoRotateTarget.value = matchedStation
+
+  if (!mapInstance) return
+
   autoRotateEnabled.value = false
   stopAutoRotate()
   focusStationOnMap(matchedStation, { zoom: 12.5 })
@@ -617,6 +706,14 @@ const initMap = async () => {
   startEventFeedRefresh()
 }
 
+const initMobileEventView = async () => {
+  await Promise.all([
+    fetchStations(),
+    fetchEventFeed()
+  ])
+  startEventFeedRefresh()
+}
+
 const recenterMap = () => {
   if (!mapInstance) return
   autoRotateTarget.value = null
@@ -656,7 +753,7 @@ watch(
   filteredStations,
   async () => {
     await renderMarkers()
-    if (autoRotateEnabled.value) {
+    if (!isMobileMapMode.value && autoRotateEnabled.value) {
       startAutoRotate()
     }
   },
@@ -665,14 +762,23 @@ watch(
 
 onMounted(() => {
   currentRole.value = resolveCurrentRole()
+  syncMobileMapMode()
 
   if (!hasPermission.value) {
     return
   }
 
-  initMap().catch((error) => {
-    console.error(error)
-  })
+  if (isMobileMapMode.value) {
+    initMobileEventView().catch((error) => {
+      console.error(error)
+    })
+  } else {
+    initMap().catch((error) => {
+      console.error(error)
+    })
+  }
+
+  window.addEventListener('resize', handleViewportResize)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   window.addEventListener('focus', fetchEventFeed)
   document.addEventListener('visibilitychange', fetchEventFeed)
@@ -683,6 +789,7 @@ onBeforeUnmount(() => {
     return
   }
 
+  window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
   window.removeEventListener('focus', fetchEventFeed)
   document.removeEventListener('visibilitychange', fetchEventFeed)
@@ -794,6 +901,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.mobile-map-brief {
+  display: none;
 }
 
 .map-frame {
@@ -1072,6 +1183,228 @@ onBeforeUnmount(() => {
   color: #94a3b8;
 }
 
+.mobile-map-brief-head,
+.mobile-map-stat-row,
+.mobile-event-card {
+  position: relative;
+  z-index: 1;
+}
+
+.mobile-map-brief-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.mobile-map-kicker {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.09);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 9px;
+}
+
+.mobile-map-brief h3 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.mobile-event-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+}
+
+.mobile-map-copy {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 16px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.mobile-map-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mobile-map-stat {
+  padding: 12px 10px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.mobile-map-stat span {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mobile-map-stat strong {
+  display: block;
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.mobile-map-stat.danger strong {
+  color: #dc2626;
+}
+
+.mobile-map-stat.warning strong {
+  color: #d97706;
+}
+
+.mobile-selected-station {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 14px;
+  padding: 13px 14px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
+}
+
+.mobile-selected-station span {
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mobile-selected-station strong {
+  color: #f8fafc;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.mobile-selected-station em {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.6;
+}
+
+.mobile-event-timeline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-event-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  padding: 13px;
+  text-align: left;
+  border: 1px solid rgba(37, 99, 235, 0.1);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.86)),
+    #fff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+}
+
+.mobile-event-card.danger {
+  border-color: rgba(220, 38, 38, 0.16);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(254, 242, 242, 0.86)),
+    #fff;
+}
+
+.mobile-event-card.warning {
+  border-color: rgba(217, 119, 6, 0.18);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 237, 0.9)),
+    #fff;
+}
+
+.mobile-event-dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.08);
+}
+
+.mobile-event-card.danger .mobile-event-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.09);
+}
+
+.mobile-event-card.warning .mobile-event-dot {
+  background: #d97706;
+  box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.11);
+}
+
+.mobile-event-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.mobile-event-body strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.mobile-event-body span {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.mobile-event-body em {
+  color: #94a3b8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.mobile-event-empty {
+  padding: 22px 16px;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.86);
+  border: 1px dashed #cbd5e1;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.7;
+  text-align: center;
+}
+
 .focus-panel {
   min-width: 260px;
 }
@@ -1185,8 +1518,43 @@ onBeforeUnmount(() => {
     font-size: 30px;
   }
 
-  .map-container {
-    min-height: 500px;
+  .map-card {
+    padding: 14px;
+    overflow: hidden;
+  }
+
+  .map-toolbar {
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+
+  .map-toolbar-right {
+    display: none;
+  }
+
+  .mobile-map-brief {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    padding: 18px;
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at top right, rgba(59, 130, 246, 0.16), transparent 36%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.92));
+    border: 1px solid rgba(203, 213, 225, 0.9);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+
+  .mobile-map-brief::before {
+    content: '';
+    position: absolute;
+    right: -42px;
+    top: -52px;
+    width: 150px;
+    height: 150px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.1);
+    filter: blur(2px);
   }
 
   .map-overlay-left,
@@ -1197,10 +1565,7 @@ onBeforeUnmount(() => {
   }
 
   .map-frame {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 10px;
+    display: none;
   }
 
   .glass-panel {
