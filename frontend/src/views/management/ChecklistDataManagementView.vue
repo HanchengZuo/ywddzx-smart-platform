@@ -53,6 +53,9 @@
                 <span :class="['status-pill', item.is_active ? 'success' : 'neutral']">
                   {{ item.is_active ? '启用' : '停用' }}
                 </span>
+                <span :class="['status-pill', item.checklist_mode === 'offline' ? 'warning' : 'info']">
+                  {{ checklistModeLabel(item.checklist_mode) }}
+                </span>
                 <span>{{ item.fields?.length || 0 }} 个字段</span>
                 <span>{{ item.standard_count || 0 }} 条规范</span>
               </div>
@@ -87,6 +90,10 @@
               <div>
                 <span>检查表编码</span>
                 <strong>{{ selectedChecklist.table_code }}</strong>
+              </div>
+              <div>
+                <span>检查表模式</span>
+                <strong>{{ checklistModeLabel(selectedChecklist.checklist_mode) }}</strong>
               </div>
               <div>
                 <span>字段数量</span>
@@ -203,6 +210,16 @@
                 <small>用户无需填写；物理表名将自动生成为 inspection_table_编码。</small>
               </label>
 
+              <label class="form-field">
+                <span>检查表模式</span>
+                <select v-model="form.checklist_mode">
+                  <option v-for="option in checklistModeOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <small>预留属性，用于后续区分线上检查表和线下检查表。</small>
+              </label>
+
               <label class="form-field span-2">
                 <span>检查表说明</span>
                 <textarea v-model.trim="form.description" rows="3" placeholder="说明这张检查表的使用场景"></textarea>
@@ -289,6 +306,15 @@
                   <input v-model.trim="editDialog.table_code" type="text" disabled />
                   <strong>不可修改</strong>
                 </div>
+              </label>
+
+              <label class="form-field">
+                <span>检查表模式</span>
+                <select v-model="editDialog.checklist_mode">
+                  <option v-for="option in checklistModeOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
               </label>
 
               <label class="form-field span-2">
@@ -524,6 +550,20 @@ const message = reactive({
   type: 'info'
 })
 
+const checklistModeOptions = [
+  { value: 'online', label: '线上检查表' },
+  { value: 'offline', label: '线下检查表' }
+]
+
+const normalizeChecklistMode = (value) => (
+  checklistModeOptions.some((option) => option.value === value) ? value : 'online'
+)
+
+const checklistModeLabel = (value) => {
+  const normalized = normalizeChecklistMode(value)
+  return checklistModeOptions.find((option) => option.value === normalized)?.label || '线上检查表'
+}
+
 const selectedFields = computed(() => selectedChecklist.value?.fields || [])
 
 const normalizeKey = (value) => String(value || '')
@@ -574,6 +614,7 @@ const createEmptyForm = () => {
     id: null,
     table_code: tableCode,
     table_name: '',
+    checklist_mode: 'online',
     description: '',
     is_active: true,
     fields: defaultFields(tableCode)
@@ -611,6 +652,7 @@ const editDialog = reactive({
   id: null,
   table_code: '',
   table_name: '',
+  checklist_mode: 'online',
   description: '',
   is_active: true,
   fields: [],
@@ -688,6 +730,7 @@ const buildChecklistPayload = (source) => ({
   user_id: currentUserId,
   table_code: normalizeKey(source.table_code),
   table_name: source.table_name,
+  checklist_mode: normalizeChecklistMode(source.checklist_mode),
   description: source.description,
   is_active: source.is_active,
   fields: source.fields.map((field) => ({
@@ -804,6 +847,7 @@ const hydrateEditDialog = (item) => {
     id: item.id,
     table_code: item.table_code || '',
     table_name: item.table_name || '',
+    checklist_mode: normalizeChecklistMode(item.checklist_mode),
     description: item.description || '',
     is_active: Boolean(item.is_active),
     fields: (item.fields || []).map((field, index) => createField(field, index + 1, item.table_code)),
@@ -1309,9 +1353,19 @@ onMounted(fetchChecklists)
   color: #475569;
 }
 
+.status-pill.info {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.status-pill.warning {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }

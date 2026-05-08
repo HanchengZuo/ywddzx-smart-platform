@@ -1103,6 +1103,13 @@ def normalize_checklist_code(value):
     return text
 
 
+def normalize_checklist_mode(value):
+    text = str(value or "online").strip().lower()
+    if text not in {"online", "offline"}:
+        raise ValueError("检查表模式只能选择线上或线下。")
+    return text
+
+
 def normalize_checklist_field_key(value):
     text = str(value or "").strip().lower()
     text = re.sub(r"[^a-z0-9_]+", "_", text).strip("_")
@@ -1182,6 +1189,7 @@ def ensure_inspection_checklist_management_schema(cur):
             id SERIAL PRIMARY KEY,
             table_code TEXT UNIQUE NOT NULL,
             table_name TEXT UNIQUE NOT NULL,
+            checklist_mode TEXT NOT NULL DEFAULT 'online',
             description TEXT,
             is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1193,6 +1201,35 @@ def ensure_inspection_checklist_management_schema(cur):
         """
         ALTER TABLE inspection_tables
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_tables
+        ADD COLUMN IF NOT EXISTS checklist_mode TEXT NOT NULL DEFAULT 'online';
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspection_tables
+        SET checklist_mode = 'online'
+        WHERE checklist_mode IS NULL OR checklist_mode NOT IN ('online', 'offline');
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'inspection_tables_checklist_mode_check'
+            ) THEN
+                ALTER TABLE inspection_tables
+                ADD CONSTRAINT inspection_tables_checklist_mode_check
+                CHECK (checklist_mode IN ('online', 'offline'));
+            END IF;
+        END $$;
         """
     )
     cur.execute(
@@ -1360,6 +1397,7 @@ def serialize_management_checklist(cur, row):
         "id": row["id"],
         "table_code": row["table_code"],
         "table_name": row["table_name"],
+        "checklist_mode": normalize_checklist_mode(row.get("checklist_mode")),
         "description": row["description"],
         "is_active": row["is_active"],
         "created_at": row.get("created_at"),
@@ -1377,6 +1415,7 @@ def fetch_management_checklist(cur, inspection_table_id):
             id,
             table_code,
             table_name,
+            checklist_mode,
             description,
             is_active,
             TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
@@ -1609,6 +1648,7 @@ def normalize_checklist_backup_payload(payload):
             raise ValueError(f"第 {index} 张检查表数据格式不正确。")
         table_code = normalize_checklist_code(item.get("table_code"))
         table_name = normalize_text(item.get("table_name"), 120)
+        checklist_mode = normalize_checklist_mode(item.get("checklist_mode"))
         if not table_name:
             raise ValueError(f"第 {index} 张检查表缺少名称。")
         if table_code in seen_codes:
@@ -1628,6 +1668,7 @@ def normalize_checklist_backup_payload(payload):
             {
                 "table_code": table_code,
                 "table_name": table_name,
+                "checklist_mode": checklist_mode,
                 "description": normalize_text(item.get("description"), 300),
                 "is_active": bool(item.get("is_active", True)),
                 "fields": fields,
@@ -4734,6 +4775,7 @@ def get_management_checklists():
                 id,
                 table_code,
                 table_name,
+                checklist_mode,
                 description,
                 is_active,
                 TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
@@ -4771,6 +4813,7 @@ def create_management_checklist():
         table_name = normalize_text(data.get("table_name"), 120)
         if not table_name:
             raise ValueError("请填写检查表名称。")
+        checklist_mode = normalize_checklist_mode(data.get("checklist_mode"))
         description = normalize_text(data.get("description"), 300)
         fields = normalize_checklist_field_rows(data.get("fields"), table_code)
         physical_table_name = get_physical_table_name_by_code(table_code)
@@ -4798,15 +4841,16 @@ def create_management_checklist():
             INSERT INTO inspection_tables (
                 table_code,
                 table_name,
+                checklist_mode,
                 description,
                 is_active,
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING id;
             """,
-            (table_code, table_name, description),
+            (table_code, table_name, checklist_mode, description),
         )
         row = cur.fetchone()
         ensure_checklist_field_columns(cur, physical_table_name, fields)
@@ -4853,6 +4897,7 @@ def update_management_checklist(inspection_table_id):
         table_name = normalize_text(data.get("table_name"), 120)
         if not table_name:
             raise ValueError("请填写检查表名称。")
+        checklist_mode = normalize_checklist_mode(data.get("checklist_mode"))
         description = normalize_text(data.get("description"), 300)
         is_active = bool(data.get("is_active", True))
 
@@ -4873,13 +4918,14 @@ def update_management_checklist(inspection_table_id):
             """
             UPDATE inspection_tables
             SET table_name = %s,
+                checklist_mode = %s,
                 description = %s,
                 is_active = %s,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
             RETURNING id;
             """,
-            (table_name, description, is_active, inspection_table_id),
+            (table_name, checklist_mode, description, is_active, inspection_table_id),
         )
         conn.commit()
         return jsonify({"success": True, "message": "检查表信息和字段结构已保存。"})
@@ -4977,6 +5023,7 @@ def export_management_checklists():
                 id,
                 table_code,
                 table_name,
+                checklist_mode,
                 description,
                 is_active,
                 TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
@@ -4993,6 +5040,7 @@ def export_management_checklists():
                 {
                     "table_code": row["table_code"],
                     "table_name": row["table_name"],
+                    "checklist_mode": normalize_checklist_mode(row.get("checklist_mode")),
                     "description": row["description"],
                     "is_active": row["is_active"],
                     "physical_table_name": physical_table_name,
@@ -5075,6 +5123,7 @@ def import_management_checklists_backup():
                     """
                     UPDATE inspection_tables
                     SET table_name = %s,
+                        checklist_mode = %s,
                         description = %s,
                         is_active = %s,
                         updated_at = CURRENT_TIMESTAMP
@@ -5082,6 +5131,7 @@ def import_management_checklists_backup():
                     """,
                     (
                         item["table_name"],
+                        item["checklist_mode"],
                         item["description"],
                         item["is_active"],
                         inspection_table_id,
@@ -5093,17 +5143,19 @@ def import_management_checklists_backup():
                     INSERT INTO inspection_tables (
                         table_code,
                         table_name,
+                        checklist_mode,
                         description,
                         is_active,
                         created_at,
                         updated_at
                     )
-                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     RETURNING id;
                     """,
                     (
                         item["table_code"],
                         item["table_name"],
+                        item["checklist_mode"],
                         item["description"],
                         item["is_active"],
                     ),
@@ -6431,6 +6483,7 @@ def get_inspection_tables():
                 id,
                 table_code,
                 table_name,
+                checklist_mode,
                 description,
                 is_active
             FROM inspection_tables
