@@ -44,6 +44,7 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
 CHECKLIST_FIELD_KEY_MAX_LENGTH = 63
+CHECKLIST_STANDARD_ID_BLOCK_SIZE = 1000
 RESERVED_CHECKLIST_FIELD_KEYS = {
     "id",
     "standard_id",
@@ -1198,6 +1199,178 @@ def get_physical_table_name_by_code(table_code):
     return f"{CHECKLIST_PHYSICAL_TABLE_PREFIX}{table_code}"
 
 
+def get_default_checklist_standard_id_base(inspection_table_id):
+    table_id = int(inspection_table_id or 0)
+    if table_id <= 0:
+        raise ValueError("检查表编号异常，无法生成规范ID号段。")
+    return table_id * CHECKLIST_STANDARD_ID_BLOCK_SIZE
+
+
+def normalize_checklist_standard_id_base(value, fallback_table_id=None):
+    if value in (None, ""):
+        if fallback_table_id is None:
+            raise ValueError("检查表规范ID号段缺失。")
+        value = get_default_checklist_standard_id_base(fallback_table_id)
+    try:
+        standard_id_base = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("检查表规范ID号段必须是整数。")
+    if (
+        standard_id_base < CHECKLIST_STANDARD_ID_BLOCK_SIZE
+        or standard_id_base % CHECKLIST_STANDARD_ID_BLOCK_SIZE != 0
+    ):
+        raise ValueError("检查表规范ID号段必须从 1000、2000、3000 这样的整千数开始。")
+    return standard_id_base
+
+
+def get_checklist_standard_id_bounds(standard_id_base):
+    start = normalize_checklist_standard_id_base(standard_id_base)
+    return start, start + CHECKLIST_STANDARD_ID_BLOCK_SIZE - 1
+
+
+def is_standard_id_in_checklist_range(standard_id, standard_id_base):
+    start, end = get_checklist_standard_id_bounds(standard_id_base)
+    try:
+        value = int(standard_id)
+    except (TypeError, ValueError):
+        return False
+    return start <= value <= end
+
+
+def migrate_checklist_standard_ids_to_base(cur, checklist_row):
+    physical_table_name = get_physical_table_name_by_code(checklist_row["table_code"])
+    if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+        return
+
+    standard_id_base = normalize_checklist_standard_id_base(
+        checklist_row.get("standard_id_base"),
+        checklist_row["id"],
+    )
+    range_start, range_end = get_checklist_standard_id_bounds(standard_id_base)
+
+    cur.execute(
+        sql.SQL("SELECT id, standard_id FROM {} ORDER BY standard_id ASC, id ASC;").format(
+            sql.Identifier(physical_table_name)
+        )
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return
+    if len(rows) > CHECKLIST_STANDARD_ID_BLOCK_SIZE:
+        raise ValueError(
+            f"检查表【{checklist_row['table_name']}】规范数量超过 {CHECKLIST_STANDARD_ID_BLOCK_SIZE} 条，"
+            "无法按当前规范ID号段规则迁移。"
+        )
+
+    if all(range_start <= int(row["standard_id"]) <= range_end for row in rows):
+        return
+
+    mappings = []
+    for index, row in enumerate(rows):
+        new_standard_id = range_start + index
+        mappings.append(
+            {
+                "row_id": row["id"],
+                "old_standard_id": int(row["standard_id"]),
+                "new_standard_id": new_standard_id,
+                "temp_standard_id": -(range_start + index + 1000000000),
+            }
+        )
+
+    for item in mappings:
+        cur.execute(
+            sql.SQL("UPDATE {} SET standard_id = %s WHERE id = %s;").format(
+                sql.Identifier(physical_table_name)
+            ),
+            (item["temp_standard_id"], item["row_id"]),
+        )
+
+    cur.execute("SELECT to_regclass('public.issues') AS table_name;")
+    issues_table_exists = bool(cur.fetchone().get("table_name"))
+    if issues_table_exists:
+        for item in mappings:
+            cur.execute(
+                """
+                UPDATE issues
+                SET standard_id = %s
+                WHERE inspection_table_id = %s
+                  AND standard_id = %s;
+                """,
+                (item["temp_standard_id"], checklist_row["id"], item["old_standard_id"]),
+            )
+
+    for item in mappings:
+        cur.execute(
+            sql.SQL("UPDATE {} SET standard_id = %s WHERE id = %s;").format(
+                sql.Identifier(physical_table_name)
+            ),
+            (item["new_standard_id"], item["row_id"]),
+        )
+
+    if issues_table_exists:
+        for item in mappings:
+            cur.execute(
+                """
+                UPDATE issues
+                SET standard_id = %s
+                WHERE inspection_table_id = %s
+                  AND standard_id = %s;
+                """,
+                (item["new_standard_id"], checklist_row["id"], item["temp_standard_id"]),
+            )
+
+
+def ensure_checklist_standard_id_bases(cur):
+    cur.execute(
+        """
+        ALTER TABLE inspection_tables
+        ADD COLUMN IF NOT EXISTS standard_id_base INTEGER;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspection_tables
+        SET standard_id_base = id * %s
+        WHERE standard_id_base IS NULL;
+        """,
+        (CHECKLIST_STANDARD_ID_BLOCK_SIZE,),
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inspection_tables_standard_id_base_unique
+        ON inspection_tables (standard_id_base);
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'inspection_tables_standard_id_base_check'
+            ) THEN
+                ALTER TABLE inspection_tables
+                ADD CONSTRAINT inspection_tables_standard_id_base_check
+                CHECK (
+                    standard_id_base >= 1000
+                    AND standard_id_base % 1000 = 0
+                );
+            END IF;
+        END $$;
+        """
+    )
+    cur.execute(
+        """
+        SELECT id, table_code, table_name, standard_id_base
+        FROM inspection_tables
+        ORDER BY id ASC;
+        """
+    )
+    for row in cur.fetchall():
+        migrate_checklist_standard_ids_to_base(cur, row)
+
+
 def ensure_inspection_checklist_management_schema(cur):
     cur.execute(
         """
@@ -1206,6 +1379,7 @@ def ensure_inspection_checklist_management_schema(cur):
             table_code TEXT UNIQUE NOT NULL,
             table_name TEXT UNIQUE NOT NULL,
             checklist_mode TEXT NOT NULL DEFAULT 'online',
+            standard_id_base INTEGER UNIQUE,
             description TEXT,
             is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1225,6 +1399,7 @@ def ensure_inspection_checklist_management_schema(cur):
         ADD COLUMN IF NOT EXISTS checklist_mode TEXT NOT NULL DEFAULT 'online';
         """
     )
+    ensure_checklist_standard_id_bases(cur)
     cur.execute(
         """
         UPDATE inspection_tables
@@ -1414,6 +1589,10 @@ def serialize_management_checklist(cur, row):
         "table_code": row["table_code"],
         "table_name": row["table_name"],
         "checklist_mode": normalize_checklist_mode(row.get("checklist_mode")),
+        "standard_id_base": normalize_checklist_standard_id_base(
+            row.get("standard_id_base"),
+            row["id"],
+        ),
         "description": row["description"],
         "is_active": row["is_active"],
         "created_at": row.get("created_at"),
@@ -1432,6 +1611,7 @@ def fetch_management_checklist(cur, inspection_table_id):
             table_code,
             table_name,
             checklist_mode,
+            standard_id_base,
             description,
             is_active,
             TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
@@ -1463,18 +1643,34 @@ def get_import_value(row, field):
     return ""
 
 
-def normalize_checklist_import_rows(raw_rows, fields):
+def normalize_checklist_import_rows(raw_rows, fields, standard_id_base=None, allow_reassign=False):
     if not raw_rows:
         raise ValueError("导入文件没有可导入的数据行。")
+    range_start = range_end = None
+    if standard_id_base is not None:
+        range_start, range_end = get_checklist_standard_id_bounds(standard_id_base)
+    if len(raw_rows) > CHECKLIST_STANDARD_ID_BLOCK_SIZE:
+        raise ValueError(f"单张检查表最多导入 {CHECKLIST_STANDARD_ID_BLOCK_SIZE} 条规范。")
+
     normalized = []
     seen_ids = set()
-    for row in raw_rows:
-        standard_id = normalize_import_standard_id(
+    for index, row in enumerate(raw_rows):
+        raw_standard_id = (
             row.get("standard_id")
             or row.get("规范ID")
             or row.get("标准ID")
             or row.get("id")
         )
+        if raw_standard_id in (None, "") and standard_id_base is not None:
+            standard_id = range_start + index
+        else:
+            standard_id = normalize_import_standard_id(raw_standard_id)
+        if standard_id_base is not None and not (range_start <= standard_id <= range_end):
+            if not allow_reassign:
+                raise ValueError(
+                    f"规范ID【{standard_id}】不在当前检查表号段 {range_start}-{range_end} 内。"
+                )
+            standard_id = range_start + index
         if standard_id in seen_ids:
             raise ValueError(f"导入文件内规范ID【{standard_id}】重复。")
         seen_ids.add(standard_id)
@@ -1483,6 +1679,30 @@ def normalize_checklist_import_rows(raw_rows, fields):
             item[field["field_key"]] = str(get_import_value(row, field) or "").strip()
         normalized.append(item)
     return normalized
+
+
+def rebase_checklist_standard_rows(rows, source_base, target_base):
+    source_start, source_end = get_checklist_standard_id_bounds(source_base)
+    target_start, target_end = get_checklist_standard_id_bounds(target_base)
+    if source_start == target_start:
+        return [dict(row) for row in rows]
+
+    rebased_rows = []
+    for index, row in enumerate(sorted(rows, key=lambda item: int(item.get("standard_id") or 0))):
+        old_standard_id = int(row.get("standard_id") or 0)
+        if source_start <= old_standard_id <= source_end:
+            offset = old_standard_id - source_start
+        else:
+            offset = index
+        new_standard_id = target_start + offset
+        if new_standard_id > target_end:
+            raise ValueError(
+                f"检查表规范数量超过号段 {target_start}-{target_end} 可容纳范围，无法导入。"
+            )
+        item = dict(row)
+        item["standard_id"] = new_standard_id
+        rebased_rows.append(item)
+    return rebased_rows
 
 
 def fetch_checklist_standard_rows(cur, physical_table_name, fields):
@@ -1539,28 +1759,52 @@ def normalize_checklist_standard_payload(data, fields):
     return row
 
 
-def get_next_checklist_standard_id(cur, physical_table_name):
-    cur.execute("LOCK TABLE inspection_tables IN SHARE ROW EXCLUSIVE MODE;")
-    table_names = [physical_table_name]
-    cur.execute("SELECT table_code FROM inspection_tables ORDER BY id ASC;")
-    for row in cur.fetchall():
-        table_name = get_physical_table_name_by_code(row["table_code"])
-        if table_name and table_name not in table_names:
-            table_names.append(table_name)
+def get_next_checklist_standard_id(cur, checklist, physical_table_name):
+    cur.execute(
+        """
+        SELECT id, standard_id_base
+        FROM inspection_tables
+        WHERE id = %s
+        FOR UPDATE;
+        """,
+        (checklist["id"],),
+    )
+    locked_checklist = cur.fetchone()
+    if not locked_checklist:
+        raise LookupError("检查表不存在。")
 
-    max_standard_id = 0
-    for table_name in table_names:
-        if not checklist_physical_table_exists(cur, table_name):
-            continue
-        cur.execute(sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE;").format(sql.Identifier(table_name)))
-        cur.execute(
-            sql.SQL("SELECT COALESCE(MAX(standard_id), 0) AS max_standard_id FROM {};").format(
-                sql.Identifier(table_name)
-            )
+    standard_id_base = normalize_checklist_standard_id_base(
+        locked_checklist.get("standard_id_base"),
+        locked_checklist["id"],
+    )
+    range_start, range_end = get_checklist_standard_id_bounds(standard_id_base)
+
+    if not checklist_physical_table_exists(cur, physical_table_name):
+        return range_start
+
+    cur.execute(
+        sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE;").format(
+            sql.Identifier(physical_table_name)
         )
-        row = cur.fetchone()
-        max_standard_id = max(max_standard_id, int(row["max_standard_id"] or 0))
-    return max_standard_id + 1
+    )
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT COALESCE(MAX(standard_id), %s - 1) AS max_standard_id
+            FROM {}
+            WHERE standard_id BETWEEN %s AND %s;
+            """
+        ).format(sql.Identifier(physical_table_name)),
+        (range_start, range_start, range_end),
+    )
+    row = cur.fetchone()
+    next_standard_id = int(row["max_standard_id"] or (range_start - 1)) + 1
+    if next_standard_id > range_end:
+        raise ValueError(
+            f"该检查表规范ID号段 {range_start}-{range_end} 已用完，"
+            f"单张检查表最多维护 {CHECKLIST_STANDARD_ID_BLOCK_SIZE} 条规范。"
+        )
+    return next_standard_id
 
 
 def get_checklist_standard_reference_counts(cur, inspection_table_id, standard_id):
@@ -1659,32 +1903,50 @@ def normalize_checklist_backup_payload(payload):
     seen_codes = set()
     seen_names = set()
     seen_field_keys = set()
+    seen_standard_id_bases = set()
     for index, item in enumerate(checklists, start=1):
         if not isinstance(item, dict):
             raise ValueError(f"第 {index} 张检查表数据格式不正确。")
         table_code = normalize_checklist_code(item.get("table_code"))
         table_name = normalize_text(item.get("table_name"), 120)
         checklist_mode = normalize_checklist_mode(item.get("checklist_mode"))
+        standard_id_base = normalize_checklist_standard_id_base(
+            item.get("standard_id_base"),
+            index,
+        )
         if not table_name:
             raise ValueError(f"第 {index} 张检查表缺少名称。")
         if table_code in seen_codes:
             raise ValueError(f"备份文件内检查表编码 {table_code} 重复。")
         if table_name in seen_names:
             raise ValueError(f"备份文件内检查表名称【{table_name}】重复。")
+        if standard_id_base in seen_standard_id_bases:
+            raise ValueError(f"备份文件内规范ID号段【{standard_id_base}】重复。")
         seen_codes.add(table_code)
         seen_names.add(table_name)
+        seen_standard_id_bases.add(standard_id_base)
         fields = normalize_checklist_field_rows(item.get("fields"), table_code)
         for field in fields:
             field_key = field["field_key"]
             if field_key in seen_field_keys:
                 raise ValueError(f"备份文件内字段系统标识 {field_key} 重复。")
             seen_field_keys.add(field_key)
-        standards = normalize_checklist_import_rows(item.get("standards") or [], fields) if item.get("standards") else []
+        standards = (
+            normalize_checklist_import_rows(
+                item.get("standards") or [],
+                fields,
+                standard_id_base,
+                allow_reassign=True,
+            )
+            if item.get("standards")
+            else []
+        )
         normalized.append(
             {
                 "table_code": table_code,
                 "table_name": table_name,
                 "checklist_mode": checklist_mode,
+                "standard_id_base": standard_id_base,
                 "description": normalize_text(item.get("description"), 300),
                 "is_active": bool(item.get("is_active", True)),
                 "fields": fields,
@@ -1743,6 +2005,7 @@ def get_inspection_table_record(cur, inspection_table_id):
             id,
             table_code,
             table_name,
+            standard_id_base,
             description,
             is_active
         FROM inspection_tables
@@ -4809,6 +5072,7 @@ def get_management_checklists():
                 table_code,
                 table_name,
                 checklist_mode,
+                standard_id_base,
                 description,
                 is_active,
                 TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
@@ -4886,6 +5150,15 @@ def create_management_checklist():
             (table_code, table_name, checklist_mode, description),
         )
         row = cur.fetchone()
+        standard_id_base = get_default_checklist_standard_id_base(row["id"])
+        cur.execute(
+            """
+            UPDATE inspection_tables
+            SET standard_id_base = %s
+            WHERE id = %s;
+            """,
+            (standard_id_base, row["id"]),
+        )
         ensure_checklist_field_columns(cur, physical_table_name, fields)
         upsert_checklist_fields(cur, row["id"], fields)
         conn.commit()
@@ -4894,6 +5167,7 @@ def create_management_checklist():
                 "success": True,
                 "message": "检查表已创建，字段结构已生成。",
                 "id": row["id"],
+                "standard_id_base": standard_id_base,
                 "physical_table_name": physical_table_name,
             }
         )
@@ -5057,6 +5331,7 @@ def export_management_checklists():
                 table_code,
                 table_name,
                 checklist_mode,
+                standard_id_base,
                 description,
                 is_active,
                 TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
@@ -5074,6 +5349,10 @@ def export_management_checklists():
                     "table_code": row["table_code"],
                     "table_name": row["table_name"],
                     "checklist_mode": normalize_checklist_mode(row.get("checklist_mode")),
+                    "standard_id_base": normalize_checklist_standard_id_base(
+                        row.get("standard_id_base"),
+                        row["id"],
+                    ),
                     "description": row["description"],
                     "is_active": row["is_active"],
                     "physical_table_name": physical_table_name,
@@ -5124,7 +5403,7 @@ def import_management_checklists_backup():
 
         cur.execute(
             """
-            SELECT id, table_code
+            SELECT id, table_code, standard_id_base
             FROM inspection_tables
             ORDER BY id ASC;
             """
@@ -5152,6 +5431,10 @@ def import_management_checklists_backup():
             current_row = existing_by_code.get(item["table_code"])
             if current_row:
                 inspection_table_id = current_row["id"]
+                target_standard_id_base = normalize_checklist_standard_id_base(
+                    current_row.get("standard_id_base"),
+                    inspection_table_id,
+                )
                 cur.execute(
                     """
                     UPDATE inspection_tables
@@ -5194,16 +5477,30 @@ def import_management_checklists_backup():
                     ),
                 )
                 inspection_table_id = cur.fetchone()["id"]
+                target_standard_id_base = get_default_checklist_standard_id_base(inspection_table_id)
+                cur.execute(
+                    """
+                    UPDATE inspection_tables
+                    SET standard_id_base = %s
+                    WHERE id = %s;
+                    """,
+                    (target_standard_id_base, inspection_table_id),
+                )
 
             physical_table_name = get_physical_table_name_by_code(item["table_code"])
             cur.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(sql.Identifier(physical_table_name)))
             ensure_checklist_field_columns(cur, physical_table_name, item["fields"])
             upsert_checklist_fields(cur, inspection_table_id, item["fields"])
+            standards = rebase_checklist_standard_rows(
+                item["standards"],
+                item["standard_id_base"],
+                target_standard_id_base,
+            )
             insert_checklist_standard_rows(
                 cur,
                 physical_table_name,
                 item["fields"],
-                item["standards"],
+                standards,
             )
 
         conn.commit()
@@ -5329,11 +5626,11 @@ def create_management_checklist_standard(inspection_table_id):
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
-        _checklist, fields, physical_table_name = get_management_checklist_standard_context(
+        checklist, fields, physical_table_name = get_management_checklist_standard_context(
             cur, inspection_table_id
         )
         row = normalize_checklist_standard_payload(data, fields)
-        row["standard_id"] = get_next_checklist_standard_id(cur, physical_table_name)
+        row["standard_id"] = get_next_checklist_standard_id(cur, checklist, physical_table_name)
 
         columns = ["standard_id", *[field["field_key"] for field in fields]]
         cur.execute(
@@ -6510,6 +6807,8 @@ def get_inspection_tables():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
         cur.execute(
             """
             SELECT
@@ -6517,6 +6816,7 @@ def get_inspection_tables():
                 table_code,
                 table_name,
                 checklist_mode,
+                standard_id_base,
                 description,
                 is_active
             FROM inspection_tables
@@ -6583,6 +6883,8 @@ def get_inspection_table_standards():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
 
         inspection_table = get_inspection_table_record(cur, table_id)
         if not inspection_table:
@@ -6806,6 +7108,8 @@ def inspection_register():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
 
         cur.execute(
             """

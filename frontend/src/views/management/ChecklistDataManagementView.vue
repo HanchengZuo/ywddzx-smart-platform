@@ -96,6 +96,10 @@
                 <strong>{{ checklistModeLabel(selectedChecklist.checklist_mode) }}</strong>
               </div>
               <div>
+                <span>规范ID号段</span>
+                <strong>{{ standardIdRangeLabel(selectedChecklist) }}</strong>
+              </div>
+              <div>
                 <span>字段数量</span>
                 <strong>{{ selectedFields.length }} 个字段</strong>
               </div>
@@ -109,7 +113,7 @@
               <div class="standard-toolbar">
                 <div>
                   <strong>已维护规范</strong>
-                  <span>规范ID由系统自动生成；此处用于查看和快速检索。</span>
+                  <span>规范ID由系统按检查表号段自动生成；此处用于查看和快速检索。</span>
                 </div>
                 <div class="standard-toolbar-controls">
                   <label class="standard-search">
@@ -373,7 +377,7 @@
           <div>
             <div class="section-kicker">规范数据维护</div>
             <h3>{{ selectedChecklist.table_name }}</h3>
-            <p>规范ID由系统自动生成，新增和编辑时只需要维护字段内容。</p>
+            <p>规范ID由系统按检查表号段自动生成，新增和编辑时只需要维护字段内容。</p>
           </div>
           <button class="dialog-close" type="button" @click="closeStandardDialog">×</button>
         </div>
@@ -384,7 +388,7 @@
               <div class="standard-section-head">
                 <div>
                   <strong>新增规范</strong>
-                  <span>保存后系统会自动分配下一条规范ID。</span>
+                  <span>保存后系统会在本检查表号段内自动分配下一条规范ID。</span>
                 </div>
               </div>
 
@@ -562,6 +566,12 @@ const normalizeChecklistMode = (value) => (
 const checklistModeLabel = (value) => {
   const normalized = normalizeChecklistMode(value)
   return checklistModeOptions.find((option) => option.value === normalized)?.label || '线上检查表'
+}
+
+const standardIdRangeLabel = (checklist) => {
+  const base = Number(checklist?.standard_id_base || checklist?.id * 1000 || 0)
+  if (!base) return '-'
+  return `${base}-${base + 999}`
 }
 
 const selectedFields = computed(() => selectedChecklist.value?.fields || [])
