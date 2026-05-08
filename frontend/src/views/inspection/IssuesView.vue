@@ -1,5 +1,9 @@
 <template>
   <div class="page-shell issues-page">
+    <transition name="toast-fade">
+      <div v-if="actionMessage" class="message-toast" :class="actionMessageType">{{ actionMessage }}</div>
+    </transition>
+
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
@@ -79,6 +83,16 @@
               @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
               <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
               <span>复核照片</span>
+            </button>
+          </div>
+
+          <div v-if="canManageIssues" class="mobile-card-actions">
+            <button v-if="canEditIssues" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
+              编辑问题
+            </button>
+            <button v-if="canDeleteIssues" class="btn btn-danger" type="button" :disabled="deletingIssueId === item.id"
+              @click="deleteIssue(item)">
+              {{ deletingIssueId === item.id ? '删除中...' : '删除问题' }}
             </button>
           </div>
         </div>
@@ -242,6 +256,7 @@
                 <th class="nowrap">督导组复核说明</th>
                 <th class="nowrap">督导组复核照片</th>
                 <th class="nowrap-col status-col">问题状态</th>
+                <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -290,9 +305,21 @@
                 <td class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
+                <td v-if="canManageIssues" class="nowrap operation-col">
+                  <div class="table-actions">
+                    <button v-if="canEditIssues" class="btn btn-secondary btn-sm" type="button"
+                      @click="openEditDialog(item)">
+                      编辑
+                    </button>
+                    <button v-if="canDeleteIssues" class="btn btn-danger btn-sm" type="button"
+                      :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
+                      {{ deletingIssueId === item.id ? '删除中' : '删除' }}
+                    </button>
+                  </div>
+                </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td colspan="20" class="empty-row">
+                <td :colspan="issueTableColspan" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb"></div>
                     <div class="empty-state-kicker">暂无记录</div>
@@ -303,7 +330,7 @@
                 </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="20" class="empty-row">
+                <td :colspan="issueTableColspan" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb loading"></div>
                     <div class="empty-state-kicker">同步中</div>
@@ -330,6 +357,83 @@
           <span>{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
+      </div>
+    </div>
+
+    <div v-if="editDialog.visible" class="image-modal" @click.self="closeEditDialog">
+      <div class="image-modal-content issue-edit-modal">
+        <div class="image-modal-header">
+          <span>编辑巡检问题</span>
+          <button class="close-btn" type="button" :disabled="editDialog.saving" @click="closeEditDialog">×</button>
+        </div>
+        <form class="issue-edit-form" @submit.prevent="saveIssueEdit">
+          <div class="issue-edit-summary">
+            <div>
+              <span>站点</span>
+              <strong>{{ editDialog.issue?.station || '-' }}</strong>
+            </div>
+            <div>
+              <span>检查表</span>
+              <strong>{{ editDialog.issue?.inspection_table_name || '-' }}</strong>
+            </div>
+            <div>
+              <span>规范ID</span>
+              <strong>{{ editDialog.issue?.standard_id || '-' }}</strong>
+            </div>
+          </div>
+
+          <div class="issue-edit-grid">
+            <label class="issue-edit-field issue-edit-field-wide">
+              <span>问题描述</span>
+              <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
+            </label>
+            <label class="issue-edit-field">
+              <span>问题状态</span>
+              <select v-model="editDialog.form.status">
+                <option value="待整改">待整改</option>
+                <option value="待复核">待复核</option>
+                <option value="已闭环">已闭环</option>
+              </select>
+            </label>
+            <label class="issue-edit-field">
+              <span>站经理整改结果</span>
+              <select v-model="editDialog.form.rectification_result">
+                <option value="">暂无/清空</option>
+                <option value="未整改">未整改</option>
+                <option value="已整改">已整改</option>
+                <option value="站级无法完成整改">站级无法完成整改</option>
+              </select>
+            </label>
+            <label class="issue-edit-field issue-edit-field-wide">
+              <span>站点反馈整改说明</span>
+              <textarea v-model="editDialog.form.rectification_note" rows="3" placeholder="可补充或修正站点整改说明"></textarea>
+            </label>
+            <label class="issue-edit-field">
+              <span>督导组复核结果</span>
+              <select v-model="editDialog.form.review_result">
+                <option value="">暂无/清空</option>
+                <option value="未整改">未整改</option>
+                <option value="已整改">已整改</option>
+                <option value="站级无法完成整改">站级无法完成整改</option>
+              </select>
+            </label>
+            <label class="issue-edit-field issue-edit-field-wide">
+              <span>督导组复核说明</span>
+              <textarea v-model="editDialog.form.review_note" rows="3" placeholder="可补充或修正督导组复核说明"></textarea>
+            </label>
+          </div>
+
+          <div v-if="editDialog.error" class="form-error">{{ editDialog.error }}</div>
+
+          <div class="issue-edit-actions">
+            <button class="btn btn-secondary" type="button" :disabled="editDialog.saving" @click="closeEditDialog">
+              放弃修改
+            </button>
+            <button class="btn btn-primary" type="submit" :disabled="editDialog.saving">
+              {{ editDialog.saving ? '保存中...' : '保存修改' }}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -399,6 +503,34 @@ const dropdownVisible = ref({
 
 const page = ref(1)
 const pageSize = ref(20)
+const deletingIssueId = ref(null)
+const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
+let parsedPermissions = {}
+try {
+  parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  parsedPermissions = {}
+}
+
+const localPermissions = ref(parsedPermissions)
+const actionMessage = ref('')
+const actionMessageType = ref('info')
+let actionMessageTimer = null
+
+const editDialog = ref({
+  visible: false,
+  saving: false,
+  error: '',
+  issue: null,
+  form: {
+    description: '',
+    status: '待整改',
+    rectification_result: '',
+    rectification_note: '',
+    review_result: '',
+    review_note: ''
+  }
+})
 
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
@@ -462,6 +594,11 @@ const paginatedData = computed(() => {
   return filteredData.value.slice(start, start + pageSize.value)
 })
 
+const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
+const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
+const canManageIssues = computed(() => canEditIssues.value || canDeleteIssues.value)
+const issueTableColspan = computed(() => canManageIssues.value ? 21 : 20)
+
 watch([filters, pageSize], () => {
   page.value = 1
 }, { deep: true })
@@ -505,6 +642,101 @@ const resetFilters = () => {
     status: ''
   }
   closeAllDropdowns()
+}
+
+const showActionMessage = (text, type = 'info') => {
+  actionMessage.value = text
+  actionMessageType.value = type
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+  }
+  actionMessageTimer = window.setTimeout(() => {
+    actionMessage.value = ''
+  }, 2200)
+}
+
+const createIssueEditForm = (item = {}) => ({
+  description: item.description || '',
+  status: item.status || '待整改',
+  rectification_result: item.rectification_result || '',
+  rectification_note: item.rectification_note || '',
+  review_result: item.review_result || '',
+  review_note: item.review_note || ''
+})
+
+const openEditDialog = (item) => {
+  editDialog.value = {
+    visible: true,
+    saving: false,
+    error: '',
+    issue: item,
+    form: createIssueEditForm(item)
+  }
+}
+
+const closeEditDialog = () => {
+  if (editDialog.value.saving) return
+  editDialog.value = {
+    visible: false,
+    saving: false,
+    error: '',
+    issue: null,
+    form: createIssueEditForm()
+  }
+}
+
+const saveIssueEdit = async () => {
+  const issueId = editDialog.value.issue?.id
+  if (!issueId) {
+    editDialog.value.error = '当前问题缺少编号，无法保存。'
+    return
+  }
+
+  if (!editDialog.value.form.description.trim()) {
+    editDialog.value.error = '请填写问题描述。'
+    return
+  }
+
+  try {
+    editDialog.value.saving = true
+    editDialog.value.error = ''
+    const userId = localStorage.getItem('user_id') || ''
+    await axios.put(`/api/issues/${issueId}`, {
+      user_id: userId,
+      ...editDialog.value.form
+    })
+    editDialog.value.saving = false
+    closeEditDialog()
+    showActionMessage('巡检问题已保存。', 'success')
+    await fetchIssues()
+  } catch (error) {
+    editDialog.value.error = error?.response?.data?.error || '保存巡检问题失败。'
+  } finally {
+    if (editDialog.value.visible) {
+      editDialog.value.saving = false
+    }
+  }
+}
+
+const deleteIssue = async (item) => {
+  if (!item?.id) return
+
+  const confirmed = window.confirm(`确认删除问题 #${item.id} 吗？删除后巡检记录的问题数量会自动重新计算。`)
+  if (!confirmed) return
+
+  try {
+    deletingIssueId.value = item.id
+    const userId = localStorage.getItem('user_id') || ''
+    await axios.delete(`/api/issues/${item.id}`, {
+      data: { user_id: userId }
+    })
+    showActionMessage('巡检问题已删除。', 'success')
+    await fetchIssues()
+  } catch (error) {
+    showActionMessage(error?.response?.data?.error || '删除巡检问题失败。', 'error')
+  } finally {
+    deletingIssueId.value = null
+  }
 }
 
 
@@ -677,6 +909,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+  }
 })
 </script>
 
@@ -819,6 +1054,101 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
+.btn-sm {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.btn-primary {
+  border-color: #1d4ed8;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.2);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+}
+
+.btn-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-weight: 800;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.message-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100vw - 32px), 440px);
+  z-index: 1500;
+  padding: 14px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.7;
+  text-align: center;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(10px);
+  animation: toast-pulse 1.2s ease-in-out infinite;
+}
+
+.message-toast.error {
+  border: 1px solid #fecaca;
+  background: rgba(254, 242, 242, 0.98);
+  color: #b91c1c;
+}
+
+.message-toast.success {
+  border: 1px solid #bbf7d0;
+  background: rgba(236, 253, 245, 0.98);
+  color: #166534;
+}
+
+.message-toast.info {
+  border: 1px solid #bfdbfe;
+  background: rgba(239, 246, 255, 0.98);
+  color: #1d4ed8;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px));
+}
+
+@keyframes toast-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
+  }
+
+  50% {
+    box-shadow: 0 22px 44px rgba(37, 99, 235, 0.22);
+  }
+}
+
 .mobile-issue-list {
   display: none;
 }
@@ -953,6 +1283,15 @@ onBeforeUnmount(() => {
   border: 1px solid #cbd5e1;
 }
 
+.mobile-card-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #dbe4ee;
+}
+
 .mobile-empty {
   margin-top: 2px;
 }
@@ -1084,6 +1423,17 @@ onBeforeUnmount(() => {
 
 .status-col {
   min-width: 110px;
+}
+
+.operation-col {
+  min-width: 132px;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .nowrap {
@@ -1252,6 +1602,108 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
+.issue-edit-modal {
+  width: min(820px, 100%);
+  max-height: min(88vh, 900px);
+  overflow: auto;
+}
+
+.issue-edit-form {
+  padding: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.issue-edit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.issue-edit-summary div {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #dbe7ff;
+  background: #eff6ff;
+  min-width: 0;
+}
+
+.issue-edit-summary span,
+.issue-edit-field span {
+  display: block;
+  margin-bottom: 7px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.issue-edit-summary strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.issue-edit-field {
+  min-width: 0;
+}
+
+.issue-edit-field-wide {
+  grid-column: 1 / -1;
+}
+
+.issue-edit-field textarea,
+.issue-edit-field select {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.issue-edit-field textarea {
+  resize: vertical;
+  min-height: 92px;
+  padding: 12px;
+  line-height: 1.7;
+}
+
+.issue-edit-field select {
+  height: 42px;
+  padding: 0 12px;
+}
+
+.form-error {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.issue-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
 .standard-detail-modal {
   width: min(880px, 100%);
 }
@@ -1373,6 +1825,15 @@ onBeforeUnmount(() => {
 
   .image-modal {
     padding: 12px;
+  }
+
+  .issue-edit-summary,
+  .issue-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .issue-edit-actions {
+    flex-direction: column;
   }
 
   .standard-detail-grid {

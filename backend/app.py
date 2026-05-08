@@ -104,6 +104,20 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": True, "station_manager": False},
     },
     {
+        "key": "edit_inspection_issues",
+        "name": "编辑巡检问题",
+        "category": "巡检问题列表",
+        "description": "编辑已登记巡检问题的问题描述、状态、整改与复核信息。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
+        "key": "delete_inspection_issues",
+        "name": "删除巡检问题",
+        "category": "巡检问题列表",
+        "description": "删除已登记巡检问题。删除后巡检记录的问题数与结果会自动按剩余问题重新计算。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_own_inspection_records",
         "name": "查看本站数据",
         "category": "巡检记录",
@@ -209,6 +223,8 @@ STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
 STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
+ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环"}
+ISSUE_RESULT_OPTIONS = {"未整改", "已整改", "站级无法完成整改"}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -1920,6 +1936,23 @@ def can_view_all_inspection_issues(cur, user):
 
 def can_view_own_inspection_issues(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_own_inspection_issues"))
+
+
+def can_edit_inspection_issues(cur, user):
+    return has_permission(cur, user, "edit_inspection_issues")
+
+
+def can_delete_inspection_issues(cur, user):
+    return has_permission(cur, user, "delete_inspection_issues")
+
+
+def normalize_optional_issue_result(value, field_label):
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    if normalized not in ISSUE_RESULT_OPTIONS:
+        raise ValueError(f"{field_label}参数不合法。")
+    return normalized
 
 
 def can_view_all_inspection_records(cur, user):
@@ -7173,6 +7206,161 @@ def get_issues():
         rows = cur.fetchall()
         return jsonify(rows)
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/<int:issue_id>", methods=["PUT"])
+def update_issue(issue_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    description = str(data.get("description", "")).strip()
+    status = str(data.get("status", "")).strip()
+    rectification_note = str(data.get("rectification_note", "")).strip() or None
+    review_note = str(data.get("review_note", "")).strip() or None
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    if not description:
+        return jsonify({"success": False, "error": "请填写问题描述。"}), 400
+
+    if status not in ISSUE_STATUS_OPTIONS:
+        return jsonify({"success": False, "error": "问题状态参数不合法。"}), 400
+
+    try:
+        rectification_result = normalize_optional_issue_result(
+            data.get("rectification_result"), "站经理整改结果"
+        )
+        review_result = normalize_optional_issue_result(
+            data.get("review_result"), "督导组复核结果"
+        )
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_edit_inspection_issues(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权编辑巡检问题。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, station_id
+            FROM issues
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (issue_id,),
+        )
+        issue = cur.fetchone()
+
+        if not issue:
+            return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if not can_view_all and not (
+            can_view_own
+            and user.get("station_id")
+            and issue["station_id"] == user["station_id"]
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+
+        cur.execute(
+            """
+            UPDATE issues
+            SET description = %s,
+                status = %s,
+                rectification_result = %s,
+                rectification_note = %s,
+                review_result = %s,
+                review_note = %s
+            WHERE id = %s;
+            """,
+            (
+                description,
+                status,
+                rectification_result,
+                rectification_note,
+                review_result,
+                review_note,
+                issue_id,
+            ),
+        )
+
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检问题已保存。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/<int:issue_id>", methods=["DELETE"])
+def delete_issue(issue_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_delete_inspection_issues(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权删除巡检问题。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, inspection_id, station_id
+            FROM issues
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (issue_id,),
+        )
+        issue = cur.fetchone()
+
+        if not issue:
+            return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if not can_view_all and not (
+            can_view_own
+            and user.get("station_id")
+            and issue["station_id"] == user["station_id"]
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+
+        cur.execute("DELETE FROM issues WHERE id = %s;", (issue_id,))
+
+        # 巡检主记录和计划完成痕迹保留，记录结果由剩余问题数聚合自动体现。
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检问题已删除。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)

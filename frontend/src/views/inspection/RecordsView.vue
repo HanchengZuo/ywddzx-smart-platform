@@ -60,10 +60,19 @@
     </div>
 
     <div class="mobile-record-list">
-      <div v-if="loading" class="mobile-empty card-surface">正在加载巡检记录...</div>
+      <div v-if="loading" class="mobile-empty empty-state-card card-surface">
+        <div class="empty-state-orb loading"></div>
+        <div class="empty-state-kicker">同步中</div>
+        <h3>正在加载巡检记录</h3>
+        <p>系统正在同步最新巡检记录，请稍候。</p>
+      </div>
 
-      <div v-else-if="paginatedInspectionGroups.length === 0" class="mobile-empty card-surface">
-        当前没有巡检记录。
+      <div v-else-if="paginatedInspectionGroups.length === 0" class="mobile-empty empty-state-card card-surface">
+        <div class="empty-state-orb"></div>
+        <div class="empty-state-kicker">暂无记录</div>
+        <h3>当前没有符合条件的巡检记录</h3>
+        <p>可以调整筛选条件，或刷新后查看最新巡检情况。</p>
+        <button class="btn btn-secondary empty-state-action" type="button" @click="resetFilters">重置筛选</button>
       </div>
 
       <div v-else class="mobile-record-cards">
@@ -180,10 +189,25 @@
                 </tr>
               </template>
               <tr v-if="!loading && paginatedInspectionGroups.length === 0">
-                <td colspan="7" class="empty-row">当前没有巡检记录。</td>
+                <td colspan="7" class="empty-row">
+                  <div class="empty-state-inline">
+                    <div class="empty-state-orb"></div>
+                    <div class="empty-state-kicker">暂无记录</div>
+                    <h3>当前没有符合条件的巡检记录</h3>
+                    <p>可以调整筛选条件，或刷新后查看最新巡检情况。</p>
+                    <button class="btn btn-secondary btn-sm empty-state-action" type="button" @click="resetFilters">重置筛选</button>
+                  </div>
+                </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="7" class="empty-row">正在加载巡检记录...</td>
+                <td colspan="7" class="empty-row">
+                  <div class="empty-state-inline">
+                    <div class="empty-state-orb loading"></div>
+                    <div class="empty-state-kicker">同步中</div>
+                    <h3>正在加载巡检记录</h3>
+                    <p>系统正在同步最新巡检记录，请稍候。</p>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -916,6 +940,15 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
+.btn-sm {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .btn-primary {
   border-color: #1d4ed8;
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
@@ -1070,10 +1103,91 @@ onBeforeUnmount(() => {
 }
 
 .mobile-empty {
-  padding: 28px 16px;
+  margin-top: 2px;
+}
+
+.empty-state-card,
+.empty-state-inline {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  gap: 8px;
+  padding: 34px 22px;
+  color: #475569;
+}
+
+.empty-state-card {
+  min-height: 260px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.12), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94));
+}
+
+.empty-state-inline {
+  min-height: 220px;
+  padding: 32px 20px;
+}
+
+.empty-state-orb {
+  width: 54px;
+  height: 54px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.9), transparent 28%),
+    linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%);
+  box-shadow:
+    0 16px 34px rgba(37, 99, 235, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.empty-state-orb.loading {
+  animation: emptyPulse 1.45s ease-in-out infinite;
+}
+
+.empty-state-kicker {
+  margin-top: 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.empty-state-card h3,
+.empty-state-inline h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.empty-state-card p,
+.empty-state-inline p {
+  max-width: 420px;
+  margin: 0;
   color: #64748b;
   font-size: 14px;
+  line-height: 1.8;
+}
+
+.empty-state-action {
+  margin-top: 8px;
+}
+
+@keyframes emptyPulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.82;
+  }
+
+  50% {
+    transform: translateY(-4px) scale(1.03);
+    opacity: 1;
+  }
 }
 
 .btn:disabled {
@@ -1312,7 +1426,10 @@ onBeforeUnmount(() => {
 .empty-row {
   text-align: center;
   color: #6b7280;
-  padding: 40px 0 !important;
+  padding: 0 !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.08), transparent 32%),
+    #fff;
 }
 
 .pagination-bar {
