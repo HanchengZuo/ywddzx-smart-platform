@@ -448,7 +448,8 @@ const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklis
 const canViewIssues = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_inspection_issues) ||
-  Boolean(localPermissions.value.view_own_inspection_issues)
+  Boolean(localPermissions.value.view_own_inspection_issues) ||
+  Boolean(localPermissions.value.submit_inspections)
 ))
 const canViewRecords = computed(() => (
   isRoot.value ||

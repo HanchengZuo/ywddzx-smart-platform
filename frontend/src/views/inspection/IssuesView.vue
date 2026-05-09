@@ -90,6 +90,10 @@
             <button v-if="canEditIssueRow(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
               编辑问题
             </button>
+            <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary" type="button"
+              @click="openRectificationPhotoDialog(item)">
+              更新整改照片
+            </button>
             <button v-if="canDeleteIssueRow(item)" class="btn btn-danger" type="button"
               :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
               {{ deletingIssueId === item.id ? '删除中...' : '删除问题' }}
@@ -311,6 +315,10 @@
                       @click="openEditDialog(item)">
                       编辑
                     </button>
+                    <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary btn-sm" type="button"
+                      @click="openRectificationPhotoDialog(item)">
+                      更新整改照片
+                    </button>
                     <button v-if="canDeleteIssueRow(item)" class="btn btn-danger btn-sm" type="button"
                       :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
                       {{ deletingIssueId === item.id ? '删除中' : '删除' }}
@@ -388,7 +396,7 @@
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
-            <label class="issue-edit-field">
+            <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
               <span>问题状态</span>
               <select v-model="editDialog.form.status">
                 <option value="待整改">待整改</option>
@@ -397,7 +405,7 @@
                 <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
-            <label class="issue-edit-field">
+            <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
               <span>站经理整改结果</span>
               <select v-model="editDialog.form.rectification_result">
                 <option value="">暂无/清空</option>
@@ -405,11 +413,11 @@
                 <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
-            <label class="issue-edit-field issue-edit-field-wide">
+            <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
               <span>站点反馈整改说明</span>
               <textarea v-model="editDialog.form.rectification_note" rows="3" placeholder="可补充或修正站点整改说明"></textarea>
             </label>
-            <label class="issue-edit-field">
+            <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
               <span>督导组复核结果</span>
               <select v-model="editDialog.form.review_result">
                 <option value="">暂无/清空</option>
@@ -417,10 +425,13 @@
                 <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
-            <label class="issue-edit-field issue-edit-field-wide">
+            <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
               <span>督导组复核说明</span>
               <textarea v-model="editDialog.form.review_note" rows="3" placeholder="可补充或修正督导组复核说明"></textarea>
             </label>
+          </div>
+          <div v-if="!editDialog.issue?.can_edit_issue_workflow" class="issue-edit-hint">
+            你是该问题的上传人，可在站点提交整改前修改问题描述；流转状态、整改和复核信息仍由业务流程控制。
           </div>
 
           <div v-if="editDialog.error" class="form-error">{{ editDialog.error }}</div>
@@ -431,6 +442,69 @@
             </button>
             <button class="btn btn-primary" type="submit" :disabled="editDialog.saving">
               {{ editDialog.saving ? '保存中...' : '保存修改' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div v-if="rectificationPhotoDialog.visible" class="image-modal">
+      <div class="image-modal-content issue-edit-modal">
+        <div class="image-modal-header">
+          <span>更新整改照片</span>
+          <button class="close-btn" type="button" :disabled="rectificationPhotoDialog.saving"
+            @click="closeRectificationPhotoDialog">×</button>
+        </div>
+
+        <form class="issue-edit-form" @submit.prevent="saveRectificationPhoto">
+          <div class="issue-edit-summary">
+            <div>
+              <span>站点</span>
+              <strong>{{ rectificationPhotoDialog.issue?.station || '-' }}</strong>
+            </div>
+            <div>
+              <span>当前整改结果</span>
+              <strong>{{ rectificationPhotoDialog.issue?.rectification_result || '-' }}</strong>
+            </div>
+            <div>
+              <span>问题状态</span>
+              <strong>{{ rectificationPhotoDialog.issue?.status || '-' }}</strong>
+            </div>
+          </div>
+
+          <div class="rectification-photo-panel">
+            <div v-if="rectificationPhotoDialog.issue?.rectification_photo" class="rectification-photo-current">
+              <span>当前整改照片</span>
+              <button class="image-btn" type="button"
+                @click="preview(resolveImage(rectificationPhotoDialog.issue.rectification_photo), '当前整改照片')">
+                <img :src="resolveImage(rectificationPhotoDialog.issue.rectification_photo)" class="thumb"
+                  alt="当前整改照片" />
+              </button>
+            </div>
+
+            <label class="issue-edit-field issue-edit-field-wide">
+              <span>上传新的整改照片</span>
+              <input type="file" accept="image/*" @change="handleRectificationPhotoChange" />
+            </label>
+
+            <div v-if="rectificationPhotoDialog.preview" class="rectification-photo-preview">
+              <img :src="rectificationPhotoDialog.preview" alt="新的整改照片预览" />
+              <div>
+                <strong>已选择新照片</strong>
+                <span>{{ rectificationPhotoDialog.file?.name || '待上传图片' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="rectificationPhotoDialog.error" class="form-error">{{ rectificationPhotoDialog.error }}</div>
+
+          <div class="issue-edit-actions">
+            <button class="btn btn-secondary" type="button" :disabled="rectificationPhotoDialog.saving"
+              @click="closeRectificationPhotoDialog">
+              放弃修改
+            </button>
+            <button class="btn btn-primary" type="submit" :disabled="rectificationPhotoDialog.saving">
+              {{ rectificationPhotoDialog.saving ? '上传中...' : '保存新照片' }}
             </button>
           </div>
         </form>
@@ -532,6 +606,15 @@ const editDialog = ref({
   }
 })
 
+const rectificationPhotoDialog = ref({
+  visible: false,
+  saving: false,
+  error: '',
+  issue: null,
+  file: null,
+  preview: ''
+})
+
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
 const uniqueSortedOptions = (values) => {
@@ -596,12 +679,21 @@ const paginatedData = computed(() => {
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
-const canManageIssues = computed(() => canEditIssues.value || canDeleteIssues.value)
+const canManageIssues = computed(() => (
+  canEditIssues.value ||
+  canDeleteIssues.value ||
+  list.value.some((item) => (
+    item?.can_edit_issue ||
+    item?.can_delete_issue ||
+    item?.can_update_rectification_photo
+  ))
+))
 const issueTableColspan = computed(() => canManageIssues.value ? 21 : 20)
 
 const isClosedIssue = (item) => item?.status === '已闭环'
-const canEditIssueRow = (item) => canEditIssues.value && (currentRole === 'root' || !isClosedIssue(item))
-const canDeleteIssueRow = (item) => canDeleteIssues.value && (currentRole === 'root' || !isClosedIssue(item))
+const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
+const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
+const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
 
 watch([filters, pageSize], () => {
   page.value = 1
@@ -686,6 +778,80 @@ const closeEditDialog = () => {
     error: '',
     issue: null,
     form: createIssueEditForm()
+  }
+}
+
+const revokeRectificationPhotoPreview = () => {
+  if (rectificationPhotoDialog.value.preview?.startsWith('blob:')) {
+    URL.revokeObjectURL(rectificationPhotoDialog.value.preview)
+  }
+}
+
+const openRectificationPhotoDialog = (item) => {
+  revokeRectificationPhotoPreview()
+  rectificationPhotoDialog.value = {
+    visible: true,
+    saving: false,
+    error: '',
+    issue: item,
+    file: null,
+    preview: ''
+  }
+}
+
+const closeRectificationPhotoDialog = () => {
+  if (rectificationPhotoDialog.value.saving) return
+  revokeRectificationPhotoPreview()
+  rectificationPhotoDialog.value = {
+    visible: false,
+    saving: false,
+    error: '',
+    issue: null,
+    file: null,
+    preview: ''
+  }
+}
+
+const handleRectificationPhotoChange = (event) => {
+  const file = event.target.files?.[0]
+  revokeRectificationPhotoPreview()
+  if (!file) {
+    rectificationPhotoDialog.value.file = null
+    rectificationPhotoDialog.value.preview = ''
+    return
+  }
+  rectificationPhotoDialog.value.file = file
+  rectificationPhotoDialog.value.preview = URL.createObjectURL(file)
+  rectificationPhotoDialog.value.error = ''
+}
+
+const saveRectificationPhoto = async () => {
+  const issueId = rectificationPhotoDialog.value.issue?.id
+  if (!issueId) {
+    rectificationPhotoDialog.value.error = '当前问题缺少编号，无法保存整改照片。'
+    return
+  }
+  if (!rectificationPhotoDialog.value.file) {
+    rectificationPhotoDialog.value.error = '请先选择新的整改照片。'
+    return
+  }
+
+  try {
+    rectificationPhotoDialog.value.saving = true
+    rectificationPhotoDialog.value.error = ''
+    const formData = new FormData()
+    formData.append('user_id', localStorage.getItem('user_id') || '')
+    formData.append('rectification_photo', rectificationPhotoDialog.value.file)
+    await axios.post(`/api/issues/${issueId}/rectification-photo`, formData)
+    closeRectificationPhotoDialog()
+    showActionMessage('整改照片已更新。', 'success')
+    await fetchIssues()
+  } catch (error) {
+    rectificationPhotoDialog.value.error = error?.response?.data?.error || '整改照片更新失败。'
+  } finally {
+    if (rectificationPhotoDialog.value.visible) {
+      rectificationPhotoDialog.value.saving = false
+    }
   }
 }
 
@@ -914,6 +1080,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
   }
@@ -1685,7 +1852,8 @@ onBeforeUnmount(() => {
 }
 
 .issue-edit-field textarea,
-.issue-edit-field select {
+.issue-edit-field select,
+.issue-edit-field input[type="file"] {
   width: 100%;
   border: 1px solid #d1d5db;
   border-radius: 12px;
@@ -1705,6 +1873,81 @@ onBeforeUnmount(() => {
 .issue-edit-field select {
   height: 42px;
   padding: 0 12px;
+}
+
+.issue-edit-field input[type="file"] {
+  padding: 10px 12px;
+}
+
+.issue-edit-hint {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.rectification-photo-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.rectification-photo-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.rectification-photo-current span {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.rectification-photo-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+
+.rectification-photo-preview img {
+  width: 86px;
+  height: 86px;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid #86efac;
+  background: #fff;
+}
+
+.rectification-photo-preview strong,
+.rectification-photo-preview span {
+  display: block;
+}
+
+.rectification-photo-preview strong {
+  color: #166534;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.rectification-photo-preview span {
+  color: #15803d;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 .form-error {
@@ -1856,6 +2099,12 @@ onBeforeUnmount(() => {
   }
 
   .issue-edit-actions {
+    flex-direction: column;
+  }
+
+  .rectification-photo-current,
+  .rectification-photo-preview {
+    align-items: stretch;
     flex-direction: column;
   }
 

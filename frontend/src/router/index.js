@@ -105,7 +105,11 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/inspection/standards') return hasPermission(role, permissions, 'view_inspection_standards')
   if (path === '/inspection/checklist-originals') return hasPermission(role, permissions, 'view_checklist_originals')
   if (path === '/inspection/issues') {
-    return Boolean(permissions.view_all_inspection_issues || permissions.view_own_inspection_issues)
+    return Boolean(
+      permissions.view_all_inspection_issues ||
+      permissions.view_own_inspection_issues ||
+      permissions.submit_inspections
+    )
   }
   if (path === '/inspection/records') {
     return Boolean(permissions.view_all_inspection_records || permissions.view_own_inspection_records)

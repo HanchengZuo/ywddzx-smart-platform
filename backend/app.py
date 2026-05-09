@@ -2232,6 +2232,46 @@ def canonical_issue_result(value):
     return ISSUE_RESULT_ALIASES.get(normalized, normalized)
 
 
+def issue_created_by_user(user, issue):
+    if not user or not issue:
+        return False
+    return str(issue.get("inspector_id") or "") == str(user.get("id") or "")
+
+
+def issue_station_rectification_started(issue):
+    if not issue:
+        return False
+    return (
+        canonical_issue_status(issue.get("status")) != "待整改"
+        or normalize_issue_result_for_response(issue.get("rectification_result"))
+        is not None
+    )
+
+
+def can_user_use_creator_issue_controls(user, issue):
+    return issue_created_by_user(user, issue) and not issue_station_rectification_started(
+        issue
+    )
+
+
+def can_user_update_rectification_photo(user, issue, can_explicit_edit=False):
+    if not user or not issue:
+        return False
+    if not normalize_issue_result_for_response(issue.get("rectification_result")):
+        return False
+    if is_root_user(user):
+        return True
+    if is_closed_issue_status(issue.get("status")):
+        return False
+    if can_explicit_edit:
+        return True
+    return (
+        is_station_manager(user)
+        and str(user.get("station_id") or "") == str(issue.get("station_id") or "")
+        and canonical_issue_status(issue.get("status")) == "待复核"
+    )
+
+
 def normalize_issue_result_for_response(value):
     normalized = canonical_issue_result(value)
     if normalized == "未整改":
@@ -2239,13 +2279,31 @@ def normalize_issue_result_for_response(value):
     return normalized or None
 
 
-def normalize_issue_row_for_response(row):
+def normalize_issue_row_for_response(
+    row, user=None, can_explicit_edit=False, can_explicit_delete=False
+):
     data = dict(row)
     if "status" in data:
         data["status"] = canonical_issue_status(data.get("status"))
     for key in ("rectification_result", "review_result"):
         if key in data:
             data[key] = normalize_issue_result_for_response(data.get(key))
+    creator_can_modify = can_user_use_creator_issue_controls(user, data)
+    closed = is_closed_issue_status(data.get("status"))
+    data["can_edit_issue_workflow"] = bool(
+        is_root_user(user) or (can_explicit_edit and not closed)
+    )
+    data["can_edit_issue"] = bool(
+        is_root_user(user) or ((can_explicit_edit or creator_can_modify) and not closed)
+    )
+    data["can_delete_issue"] = bool(
+        is_root_user(user)
+        or ((can_explicit_delete or creator_can_modify) and not closed)
+    )
+    data["can_update_rectification_photo"] = can_user_update_rectification_photo(
+        user, data, can_explicit_edit
+    )
+    data.pop("inspector_id", None)
     return data
 
 
@@ -7514,6 +7572,8 @@ def get_my_issues():
                 """
                 SELECT
                     i.id,
+                    i.station_id,
+                    ins.inspector_id,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -7539,13 +7599,24 @@ def get_my_issues():
                 (user["station_id"],),
             )
             rows = cur.fetchall()
-            return jsonify([normalize_issue_row_for_response(row) for row in rows])
+            can_explicit_edit = can_edit_inspection_issues(cur, user)
+            can_explicit_delete = can_delete_inspection_issues(cur, user)
+            return jsonify(
+                [
+                    normalize_issue_row_for_response(
+                        row, user, can_explicit_edit, can_explicit_delete
+                    )
+                    for row in rows
+                ]
+            )
 
         if is_root_user(user) or user.get("role") == "supervisor":
             cur.execute(
                 """
                 SELECT
                     i.id,
+                    i.station_id,
+                    ins.inspector_id,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -7569,7 +7640,16 @@ def get_my_issues():
                 """
             )
             rows = cur.fetchall()
-            return jsonify([normalize_issue_row_for_response(row) for row in rows])
+            can_explicit_edit = can_edit_inspection_issues(cur, user)
+            can_explicit_delete = can_delete_inspection_issues(cur, user)
+            return jsonify(
+                [
+                    normalize_issue_row_for_response(
+                        row, user, can_explicit_edit, can_explicit_delete
+                    )
+                    for row in rows
+                ]
+            )
 
         return jsonify([])
     except Exception as e:
@@ -7614,17 +7694,25 @@ def get_issues():
             pass
         elif can_view_own:
             if not user["station_id"]:
-                return jsonify([])
-            where_clause = "WHERE i.station_id = %s"
-            params.append(user["station_id"])
+                where_clause = "WHERE ins.inspector_id = %s"
+                params.append(user["id"])
+            else:
+                where_clause = "WHERE i.station_id = %s OR ins.inspector_id = %s"
+                params.extend([user["station_id"], user["id"]])
         else:
-            return jsonify({"success": False, "error": "当前账号无权查看巡检问题列表。"}), 403
+            where_clause = "WHERE ins.inspector_id = %s"
+            params.append(user["id"])
+
+        can_explicit_edit = can_edit_inspection_issues(cur, user)
+        can_explicit_delete = can_delete_inspection_issues(cur, user)
 
         cur.execute(
             sql.SQL(
                 """
                 SELECT
                     i.id,
+                    i.station_id,
+                    ins.inspector_id,
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
                     TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
                     s.region,
@@ -7657,7 +7745,14 @@ def get_issues():
             params,
         )
         rows = cur.fetchall()
-        return jsonify([normalize_issue_row_for_response(row) for row in rows])
+        return jsonify(
+            [
+                normalize_issue_row_for_response(
+                    row, user, can_explicit_edit, can_explicit_delete
+                )
+                for row in rows
+            ]
+        )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
@@ -7703,14 +7798,17 @@ def update_issue(issue_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_edit_inspection_issues(cur, user):
-            return jsonify({"success": False, "error": "当前账号无权编辑巡检问题。"}), 403
-
         cur.execute(
             """
-            SELECT id, station_id, status
-            FROM issues
-            WHERE id = %s
+            SELECT
+                i.id,
+                i.station_id,
+                i.status,
+                i.rectification_result,
+                ins.inspector_id
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            WHERE i.id = %s
             LIMIT 1;
             """,
             (issue_id,),
@@ -7731,13 +7829,36 @@ def update_issue(issue_id):
                 403,
             )
 
+        can_explicit_edit = can_edit_inspection_issues(cur, user)
+        creator_can_modify = can_user_use_creator_issue_controls(user, issue)
+        if not can_explicit_edit and not creator_can_modify:
+            return jsonify({"success": False, "error": "当前账号无权编辑巡检问题。"}), 403
+
+        if creator_can_modify and not can_explicit_edit and not is_root_user(user):
+            if (
+                status != "待整改"
+                or rectification_result
+                or rectification_note
+                or review_result
+                or review_note
+            ):
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "error": "上传者只能在站点整改前修改问题描述，不能调整流转状态或整改复核信息。",
+                        }
+                    ),
+                    400,
+                )
+
         can_view_all = can_view_all_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
             and user.get("station_id")
             and issue["station_id"] == user["station_id"]
-        ):
+        ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
         cur.execute(
@@ -7791,14 +7912,18 @@ def delete_issue(issue_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not can_delete_inspection_issues(cur, user):
-            return jsonify({"success": False, "error": "当前账号无权删除巡检问题。"}), 403
-
         cur.execute(
             """
-            SELECT id, inspection_id, station_id, status
-            FROM issues
-            WHERE id = %s
+            SELECT
+                i.id,
+                i.inspection_id,
+                i.station_id,
+                i.status,
+                i.rectification_result,
+                ins.inspector_id
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            WHERE i.id = %s
             LIMIT 1;
             """,
             (issue_id,),
@@ -7819,13 +7944,18 @@ def delete_issue(issue_id):
                 403,
             )
 
+        can_explicit_delete = can_delete_inspection_issues(cur, user)
+        creator_can_modify = can_user_use_creator_issue_controls(user, issue)
+        if not can_explicit_delete and not creator_can_modify:
+            return jsonify({"success": False, "error": "当前账号无权删除巡检问题。"}), 403
+
         can_view_all = can_view_all_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
             and user.get("station_id")
             and issue["station_id"] == user["station_id"]
-        ):
+        ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
         cur.execute("DELETE FROM issues WHERE id = %s;", (issue_id,))
@@ -8487,6 +8617,86 @@ def submit_rectification(issue_id):
 
         conn.commit()
         return jsonify({"success": True, "message": "整改提交成功，已转入待复核。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/<int:issue_id>/rectification-photo", methods=["POST"])
+def update_rectification_photo(issue_id):
+    user_id = str(request.form.get("user_id", "")).strip()
+    rectification_photo = request.files.get("rectification_photo")
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    if not rectification_photo or not rectification_photo.filename:
+        return jsonify({"success": False, "error": "请上传新的整改照片。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                station_id,
+                status,
+                rectification_result
+            FROM issues
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (issue_id,),
+        )
+        issue = cur.fetchone()
+
+        if not issue:
+            return jsonify({"success": False, "error": "问题不存在。"}), 404
+
+        can_explicit_edit = can_edit_inspection_issues(cur, user)
+        if not can_user_update_rectification_photo(user, issue, can_explicit_edit):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "当前账号无权更新该问题的整改照片，或问题已不在可修改阶段。",
+                    }
+                ),
+                403,
+            )
+
+        rectification_photo_path = save_uploaded_file(
+            rectification_photo, "rectifications"
+        )
+        cur.execute(
+            """
+            UPDATE issues
+            SET rectification_photo_path = %s
+            WHERE id = %s;
+            """,
+            (rectification_photo_path, issue_id),
+        )
+        conn.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "整改照片已更新。",
+                "rectification_photo": rectification_photo_path,
+            }
+        )
     except Exception as e:
         if conn:
             conn.rollback()
