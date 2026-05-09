@@ -316,38 +316,117 @@
     <div v-if="batchDetail.visible" class="batch-detail-overlay" @click.self="closeBatchDetail">
       <div class="batch-detail-dialog card-surface">
         <div class="batch-detail-header">
-          <div>
-
+          <div class="batch-detail-header-main">
             <div class="batch-detail-kicker">检查表录入问题</div>
             <h3>{{ batchDetail.inspection?.inspection_table_name || '检查表详情' }}</h3>
             <div class="batch-detail-meta">
-              <span>巡检日期：{{ batchDetail.inspection?.inspection_date || batchDetail.inspection?.date || '-' }}</span>
-              <span>站点：{{ batchDetail.inspection?.station_name || batchDetail.inspection?.station || '-' }}</span>
+              <span>巡检日期：{{ getInspectionDate(batchDetail.inspection) }}</span>
+              <span>站点：{{ getInspectionStation(batchDetail.inspection) }}</span>
+              <span>检查人：{{ batchDetailInspectorLabel }}</span>
               <span>问题数：{{ batchDetail.issues.length || 0 }}</span>
             </div>
-
           </div>
-          <button class="btn btn-secondary" type="button" @click="closeBatchDetail">关闭</button>
+          <div class="batch-detail-actions">
+            <button class="btn btn-secondary" type="button" :disabled="!canExportBatchDetail || exportingBatchDetail"
+              @click="exportBatchDetail('word')">
+              {{ exportState.type === 'word' ? '导出中...' : '导出 Word' }}
+            </button>
+            <button class="btn btn-secondary" type="button" :disabled="!canExportBatchDetail || exportingBatchDetail"
+              @click="exportBatchDetail('pdf')">
+              {{ exportState.type === 'pdf' ? '生成中...' : '导出 PDF' }}
+            </button>
+            <button class="btn btn-secondary" type="button" @click="closeBatchDetail">关闭</button>
+          </div>
         </div>
 
         <div v-if="batchDetail.loading" class="batch-detail-empty">正在加载本表问题...</div>
         <div v-else-if="batchDetail.error" class="batch-detail-empty">{{ batchDetail.error }}</div>
-        <div v-else-if="batchDetail.issues.length === 0" class="batch-detail-empty">本检查表暂无登记问题。</div>
-
-        <div v-else class="batch-issue-list">
-          <div v-for="issue in batchDetail.issues" :key="issue.id" class="batch-issue-card">
-            <div class="batch-issue-card-head">
-              <div class="batch-issue-title">{{ issue.inspection_table_name || '未命名检查表' }}</div>
-              <div class="batch-issue-id">问题 #{{ issue.id }}</div>
+        <template v-else>
+          <div class="batch-detail-summary-grid">
+            <div>
+              <span>检查表</span>
+              <strong>{{ batchDetail.inspection?.inspection_table_name || '-' }}</strong>
             </div>
-            <div class="batch-issue-desc">{{ issue.description || '暂无问题描述' }}</div>
-            <div class="batch-issue-image-wrap">
-              <img v-if="issue.issue_photo" :src="resolveImage(issue.issue_photo)" class="batch-issue-image"
-                alt="问题照片" />
-              <div v-else class="batch-issue-image-empty">暂无问题照片</div>
+            <div>
+              <span>所属片区</span>
+              <strong>{{ batchDetail.inspection?.station_region || '-' }}</strong>
+            </div>
+            <div>
+              <span>站点负责人</span>
+              <strong>{{ batchDetail.inspection?.station_manager_name || '-' }}</strong>
+            </div>
+            <div>
+              <span>签名状态</span>
+              <strong>{{ batchDetail.inspection?.sign_status || '待签名确认' }}</strong>
             </div>
           </div>
-        </div>
+
+          <div v-if="batchDetail.issues.length === 0" class="batch-detail-empty">本检查表暂无登记问题。</div>
+
+          <div v-else class="batch-issue-list">
+            <div v-for="issue in batchDetail.issues" :key="issue.id" class="batch-issue-card">
+              <div class="batch-issue-card-head">
+                <div>
+                  <div class="batch-issue-title">{{ issue.inspection_table_name || '未命名检查表' }}</div>
+                  <div class="batch-issue-subtitle">{{ issue.created_at || '暂无登记时间' }}</div>
+                </div>
+                <div class="batch-issue-id">问题 #{{ issue.id }}</div>
+              </div>
+
+              <div class="batch-issue-meta-grid">
+                <div>
+                  <span>当前状态</span>
+                  <strong>{{ issue.status || '-' }}</strong>
+                </div>
+                <div>
+                  <span>规范ID</span>
+                  <strong>{{ issue.standard_id || '-' }}</strong>
+                </div>
+              </div>
+
+              <div class="batch-issue-section">
+                <span>引用规范</span>
+                <p>{{ issue.standard_detail_text || '暂无规范详情' }}</p>
+              </div>
+              <div class="batch-issue-section issue-section-warning">
+                <span>问题描述</span>
+                <p>{{ issue.description || '暂无问题描述' }}</p>
+              </div>
+
+              <div class="batch-issue-section">
+                <span>整改情况</span>
+                <p>{{ issue.rectification_result || '暂无整改结果' }}</p>
+                <p v-if="issue.rectification_note">{{ issue.rectification_note }}</p>
+              </div>
+              <div class="batch-issue-section">
+                <span>督导复核</span>
+                <p>{{ issue.review_result || '暂无复核结果' }}</p>
+                <p v-if="issue.review_note">{{ issue.review_note }}</p>
+              </div>
+
+              <div class="batch-issue-image-grid">
+                <div class="batch-issue-image-card">
+                  <span>问题照片</span>
+                  <img v-if="issue.issue_photo" :src="resolveImage(issue.issue_photo)" class="batch-issue-image"
+                    alt="问题照片" />
+                  <div v-else class="batch-issue-image-empty">暂无问题照片</div>
+                </div>
+                <div class="batch-issue-image-card">
+                  <span>整改照片</span>
+                  <img v-if="issue.rectification_photo" :src="resolveImage(issue.rectification_photo)"
+                    class="batch-issue-image" alt="整改照片" />
+                  <div v-else class="batch-issue-image-empty">暂无整改照片</div>
+                </div>
+                <div class="batch-issue-image-card">
+                  <span>复核照片</span>
+                  <img v-if="issue.review_photo" :src="resolveImage(issue.review_photo)" class="batch-issue-image"
+                    alt="复核照片" />
+                  <div v-else class="batch-issue-image-empty">暂无复核照片</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
 
       </div>
     </div>
@@ -398,6 +477,10 @@ const batchDetail = ref({
   error: '',
   inspection: null,
   issues: []
+})
+
+const exportState = ref({
+  type: ''
 })
 
 const signatureDialog = ref({
@@ -488,6 +571,410 @@ const resolveImage = (path) => {
     return `/storage${value}`
   }
   return `/storage/${value}`
+}
+
+const getInspectionDate = (inspection) => inspection?.inspection_date || inspection?.date || '-'
+
+const getInspectionStation = (inspection) => inspection?.station_name || inspection?.station || '-'
+
+const getInspectorLabel = (inspection) => {
+  if (!inspection) return '-'
+  const name = inspection.inspector_name || inspection.inspector_username || ''
+  const phone = inspection.inspector_phone || ''
+  if (name && phone) return `${name}（${phone}）`
+  return name || phone || '-'
+}
+
+const batchDetailInspectorLabel = computed(() => getInspectorLabel(batchDetail.value.inspection))
+
+const canExportBatchDetail = computed(() => {
+  return Boolean(batchDetail.value.inspection && !batchDetail.value.loading && !batchDetail.value.error)
+})
+
+const exportingBatchDetail = computed(() => Boolean(exportState.value.type))
+
+const normalizeExportText = (value, fallback = '暂无') => {
+  const text = String(value ?? '').trim()
+  return text || fallback
+}
+
+const escapeHtml = (value) => {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const htmlWithLineBreaks = (value, fallback = '暂无') => {
+  return escapeHtml(normalizeExportText(value, fallback)).replace(/\n/g, '<br>')
+}
+
+const absoluteFileUrl = (path) => {
+  const resolved = resolveImage(path)
+  if (!resolved) return ''
+  if (resolved.startsWith('data:') || resolved.startsWith('blob:')) return resolved
+  try {
+    return new URL(resolved, window.location.origin).href
+  } catch {
+    return resolved
+  }
+}
+
+const formatLocalDateTime = (date = new Date()) => {
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const sanitizeFilename = (value) => {
+  return normalizeExportText(value, '巡检记录')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 90)
+}
+
+const buildExportFilename = (extension) => {
+  const inspection = batchDetail.value.inspection || {}
+  const parts = [
+    getInspectionDate(inspection),
+    getInspectionStation(inspection),
+    inspection.inspection_table_name || '检查表问题备份'
+  ]
+  return `${sanitizeFilename(parts.filter(Boolean).join('_'))}.${extension}`
+}
+
+const exportInfoItem = (label, value) => {
+  return `<div class="info-item"><span>${escapeHtml(label)}</span><strong>${htmlWithLineBreaks(value, '-')}</strong></div>`
+}
+
+const readBlobAsDataUrl = (blob) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(String(reader.result || ''))
+    reader.onerror = () => resolve('')
+    reader.readAsDataURL(blob)
+  })
+}
+
+const buildExportImageUrl = async (path) => {
+  const url = absoluteFileUrl(path)
+  if (!url || url.startsWith('data:')) return url
+
+  try {
+    const response = await fetch(url, { credentials: 'include' })
+    if (!response.ok) return url
+    const blob = await response.blob()
+    return await readBlobAsDataUrl(blob) || url
+  } catch {
+    return url
+  }
+}
+
+const exportImageBlock = (label, url) => {
+  if (!url) {
+    return `<div class="photo-card"><span>${escapeHtml(label)}</span><div class="photo-empty">暂无图片</div></div>`
+  }
+  return `
+    <div class="photo-card">
+      <span>${escapeHtml(label)}</span>
+      <img src="${escapeHtml(url)}" alt="${escapeHtml(label)}" />
+      <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>
+    </div>
+  `
+}
+
+const buildBatchDetailExportHtml = async () => {
+  const inspection = batchDetail.value.inspection || {}
+  const issues = batchDetail.value.issues || []
+  const title = `${getInspectionStation(inspection)} - ${inspection.inspection_table_name || '检查表'}`
+  const exportIssues = await Promise.all(issues.map(async (issue) => ({
+    issue,
+    issuePhotoUrl: await buildExportImageUrl(issue.issue_photo),
+    rectificationPhotoUrl: await buildExportImageUrl(issue.rectification_photo),
+    reviewPhotoUrl: await buildExportImageUrl(issue.review_photo)
+  })))
+
+  const issueSections = exportIssues.length
+    ? exportIssues.map(({ issue, issuePhotoUrl, rectificationPhotoUrl, reviewPhotoUrl }, index) => `
+      <section class="issue-card">
+        <div class="issue-head">
+          <h2>问题 ${index + 1} / #${escapeHtml(issue.id || '-')}</h2>
+          <span>${escapeHtml(issue.status || '-')}</span>
+        </div>
+        <div class="info-grid compact">
+          ${exportInfoItem('登记时间', issue.created_at)}
+          ${exportInfoItem('规范ID', issue.standard_id)}
+          ${exportInfoItem('整改结果', issue.rectification_result)}
+          ${exportInfoItem('复核结果', issue.review_result)}
+        </div>
+        <div class="text-block">
+          <h3>引用规范</h3>
+          <p>${htmlWithLineBreaks(issue.standard_detail_text)}</p>
+        </div>
+        <div class="text-block warning">
+          <h3>问题描述</h3>
+          <p>${htmlWithLineBreaks(issue.description)}</p>
+        </div>
+        <div class="text-block">
+          <h3>整改说明</h3>
+          <p>${htmlWithLineBreaks(issue.rectification_note)}</p>
+        </div>
+        <div class="text-block">
+          <h3>督导复核说明</h3>
+          <p>${htmlWithLineBreaks(issue.review_note)}</p>
+        </div>
+        <div class="photo-grid">
+          ${exportImageBlock('问题照片', issuePhotoUrl)}
+          ${exportImageBlock('整改照片', rectificationPhotoUrl)}
+          ${exportImageBlock('复核照片', reviewPhotoUrl)}
+        </div>
+      </section>
+    `).join('')
+    : '<section class="issue-card empty">本检查表暂无登记问题。</section>'
+
+  return `
+    <!doctype html>
+    <html lang="zh-CN">
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHtml(title)} 巡检问题备份</title>
+        <style>
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            padding: 32px;
+            color: #0f172a;
+            font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+            background: #f8fafc;
+            line-height: 1.75;
+          }
+          .document {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 34px;
+            background: #ffffff;
+            border: 1px solid #dbe4ee;
+            border-radius: 22px;
+          }
+          .eyebrow {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eff6ff;
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 700;
+          }
+          h1 {
+            margin: 12px 0 8px;
+            font-size: 28px;
+            line-height: 1.35;
+          }
+          .subline {
+            color: #64748b;
+            font-size: 13px;
+            margin-bottom: 20px;
+          }
+          .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            margin: 18px 0;
+          }
+          .info-grid.compact {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+          }
+          .info-item {
+            padding: 12px 14px;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            background: #f8fafc;
+          }
+          .info-item span,
+          .photo-card span {
+            display: block;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 5px;
+          }
+          .info-item strong {
+            display: block;
+            color: #0f172a;
+            font-size: 14px;
+            word-break: break-word;
+          }
+          .issue-card {
+            break-inside: avoid;
+            margin-top: 22px;
+            padding: 20px;
+            border: 1px solid #dbe4ee;
+            border-radius: 18px;
+            background: #ffffff;
+          }
+          .issue-card.empty {
+            color: #64748b;
+            text-align: center;
+          }
+          .issue-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid #e5edf5;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
+          }
+          .issue-head h2 {
+            margin: 0;
+            font-size: 20px;
+          }
+          .issue-head span {
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #eef4ff;
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 700;
+          }
+          .text-block {
+            margin-top: 14px;
+            padding: 14px;
+            border-radius: 14px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+          }
+          .text-block.warning {
+            background: #fff7ed;
+            border-color: #fed7aa;
+          }
+          .text-block h3 {
+            margin: 0 0 6px;
+            font-size: 14px;
+            color: #334155;
+          }
+          .text-block p {
+            margin: 0;
+            white-space: normal;
+            word-break: break-word;
+          }
+          .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+          }
+          .photo-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            background: #f8fafc;
+            padding: 12px;
+          }
+          .photo-card img {
+            display: block;
+            max-width: 100%;
+            max-height: 280px;
+            margin: 0 auto 8px;
+            object-fit: contain;
+            background: #ffffff;
+          }
+          .photo-card a {
+            display: block;
+            color: #2563eb;
+            font-size: 11px;
+            word-break: break-all;
+          }
+          .photo-empty {
+            min-height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            background: #ffffff;
+            border-radius: 10px;
+          }
+          @media print {
+            body { background: #ffffff; padding: 0; }
+            .document { border: none; border-radius: 0; max-width: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="document">
+          <div class="eyebrow">巡检问题备份</div>
+          <h1>${escapeHtml(title)}</h1>
+          <div class="subline">导出时间：${escapeHtml(formatLocalDateTime())}</div>
+          <div class="info-grid">
+            ${exportInfoItem('巡检日期', getInspectionDate(inspection))}
+            ${exportInfoItem('检查人', getInspectorLabel(inspection))}
+            ${exportInfoItem('站点', getInspectionStation(inspection))}
+            ${exportInfoItem('所属片区', inspection.station_region)}
+            ${exportInfoItem('站点地址', inspection.station_address)}
+            ${exportInfoItem('站点负责人', inspection.station_manager_name)}
+            ${exportInfoItem('负责人手机号', inspection.station_manager_phone)}
+            ${exportInfoItem('检查表', inspection.inspection_table_name)}
+            ${exportInfoItem('问题数量', issues.length)}
+            ${exportInfoItem('签名状态', inspection.sign_status || '待签名确认')}
+            ${exportInfoItem('站经理签名人', inspection.station_manager_signed_name)}
+            ${exportInfoItem('签名时间', inspection.station_manager_signed_at)}
+          </div>
+          ${issueSections}
+        </main>
+      </body>
+    </html>
+  `
+}
+
+const exportBatchDetail = async (type) => {
+  if (!canExportBatchDetail.value || exportingBatchDetail.value) return
+  const printWindow = type === 'pdf' ? window.open('', '_blank') : null
+
+  if (type === 'pdf' && !printWindow) {
+    window.alert('浏览器阻止了导出窗口，请允许弹窗后再导出 PDF。')
+    return
+  }
+
+  try {
+    exportState.value.type = type
+    if (printWindow) {
+      printWindow.document.open()
+      printWindow.document.write('<!doctype html><meta charset="utf-8"><title>正在生成PDF</title><body style="font-family: sans-serif; padding: 32px;">正在生成巡检问题备份，请稍候...</body>')
+      printWindow.document.close()
+    }
+
+    const html = await buildBatchDetailExportHtml()
+
+    if (type === 'word') {
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = buildExportFilename('doc')
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      return
+    }
+
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
+    printWindow.focus()
+    printWindow.setTimeout(() => {
+      printWindow.print()
+    }, 500)
+  } catch {
+    if (printWindow && !printWindow.closed) {
+      printWindow.document.open()
+      printWindow.document.write('<!doctype html><meta charset="utf-8"><title>导出失败</title><body style="font-family: sans-serif; padding: 32px;">导出失败，请稍后重试。</body>')
+      printWindow.document.close()
+    }
+    window.alert('导出失败，请稍后重试。')
+  } finally {
+    exportState.value.type = ''
+  }
 }
 
 const openInspectionDetail = async (record) => {
@@ -1509,6 +1996,19 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #e5edf5;
 }
 
+.batch-detail-header-main {
+  min-width: 0;
+}
+
+.batch-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
 .batch-detail-kicker {
   display: inline-flex;
   padding: 5px 10px;
@@ -1546,6 +2046,42 @@ onBeforeUnmount(() => {
   border: 1px solid #dbe7ff;
 }
 
+.batch-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.batch-detail-summary-grid div,
+.batch-issue-meta-grid div {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #dbe4ee;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.batch-detail-summary-grid span,
+.batch-issue-meta-grid span,
+.batch-issue-section span,
+.batch-issue-image-card span {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.batch-detail-summary-grid strong,
+.batch-issue-meta-grid strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
 .batch-detail-empty {
   padding: 28px 12px;
   text-align: center;
@@ -1555,7 +2091,7 @@ onBeforeUnmount(() => {
 
 .batch-issue-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
   gap: 18px;
 }
 
@@ -1594,13 +2130,52 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.batch-issue-desc {
+.batch-issue-subtitle {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.batch-issue-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.batch-issue-section {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.batch-issue-section p {
+  margin: 0;
   font-size: 14px;
   color: #334155;
   line-height: 1.8;
-  white-space: normal;
+  white-space: pre-wrap;
   word-break: break-word;
-  min-height: 78px;
+}
+
+.issue-section-warning {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.batch-issue-image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.batch-issue-image-card {
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+  padding: 12px;
+  min-width: 0;
 }
 
 .batch-issue-image-wrap {
@@ -1619,13 +2194,14 @@ onBeforeUnmount(() => {
   width: auto;
   max-width: 100%;
   height: auto;
-  max-height: 360px;
+  max-height: 280px;
   object-fit: contain;
   background: #fff;
+  margin: 0 auto;
 }
 
 .batch-issue-image-empty {
-  height: 120px;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1975,6 +2551,22 @@ onBeforeUnmount(() => {
   .batch-detail-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .batch-detail-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .batch-detail-actions .btn:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .batch-detail-summary-grid,
+  .batch-issue-meta-grid,
+  .batch-issue-image-grid {
+    grid-template-columns: 1fr;
   }
 
   .batch-issue-list {

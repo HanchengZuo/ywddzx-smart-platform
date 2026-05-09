@@ -8409,16 +8409,26 @@ def get_inspection_issues(inspection_id):
                 ins.id,
                 ins.station_id,
                 ins.batch_id,
-                ins.inspection_date,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS inspection_date,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
+                ins.inspector_id,
                 ins.sign_status,
                 ins.station_manager_signed_name,
                 ins.station_manager_signature_path,
                 TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
                 s.station_name,
+                s.region AS station_region,
+                s.address AS station_address,
+                s.station_manager_name,
+                s.station_manager_phone,
+                inspector.username AS inspector_username,
+                inspector.real_name AS inspector_name,
+                inspector.phone AS inspector_phone,
                 t.table_name AS inspection_table_name
             FROM inspections ins
             JOIN stations s ON ins.station_id = s.id
             JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            JOIN users inspector ON ins.inspector_id = inspector.id
             WHERE ins.id = %s
             LIMIT 1;
             """,
@@ -8434,22 +8444,34 @@ def get_inspection_issues(inspection_id):
 
         can_view_all = can_view_all_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
+        is_inspector = str(inspection.get("inspector_id") or "") == str(user.get("id") or "")
         if (
             can_view_own
             and not can_view_all
             and inspection["station_id"] != user["station_id"]
+            and not is_inspector
         ):
             return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
-        if not can_view_all and not can_view_own:
+        if not can_view_all and not can_view_own and not is_inspector:
             return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
 
         cur.execute(
             """
             SELECT
                 i.id,
+                TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
                 t.table_name AS inspection_table_name,
+                i.standard_id,
+                i.standard_detail_text,
                 i.description,
-                i.photo_path AS issue_photo
+                i.photo_path AS issue_photo,
+                i.rectification_result,
+                i.rectification_note,
+                i.rectification_photo_path AS rectification_photo,
+                i.review_result,
+                i.review_note,
+                i.review_photo_path AS review_photo,
+                i.status
             FROM issues i
             JOIN inspection_tables t ON i.inspection_table_id = t.id
             WHERE i.inspection_id = %s
@@ -8457,7 +8479,7 @@ def get_inspection_issues(inspection_id):
             """,
             (inspection_id,),
         )
-        issues = cur.fetchall()
+        issues = [normalize_issue_row_for_response(row, user) for row in cur.fetchall()]
 
         return jsonify(
             {
