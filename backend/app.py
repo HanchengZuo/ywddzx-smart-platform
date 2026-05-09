@@ -786,6 +786,22 @@ def add_storage_to_backup(zip_file, destination_path):
             zip_file.write(file_path, f"storage/{relative_path}")
 
 
+def publish_backup_archive(temp_zip_path, final_path):
+    final_dir = os.path.dirname(final_path)
+    os.makedirs(final_dir, exist_ok=True)
+    staging_path = os.path.join(
+        final_dir,
+        f".{os.path.basename(final_path)}.{uuid.uuid4().hex}.tmp",
+    )
+
+    try:
+        shutil.copy2(temp_zip_path, staging_path)
+        os.replace(staging_path, final_path)
+    finally:
+        if os.path.exists(staging_path):
+            os.remove(staging_path)
+
+
 def create_full_backup_archive(destination_path=None, reason="manual"):
     backup_dir = normalize_backup_destination_path(destination_path)
     os.makedirs(backup_dir, exist_ok=True)
@@ -837,10 +853,7 @@ def create_full_backup_archive(destination_path=None, reason="manual"):
             zip_file.write(database_dump_path, "database.dump")
             add_storage_to_backup(zip_file, backup_dir)
 
-        if reason == "auto":
-            os.replace(temp_zip_path, final_path)
-        else:
-            shutil.copy2(temp_zip_path, final_path)
+        publish_backup_archive(temp_zip_path, final_path)
 
     return {
         "path": final_path,
