@@ -1656,14 +1656,20 @@ onBeforeUnmount(() => {
 }
 
 .operation-col {
-  min-width: 132px;
+  min-width: 280px;
 }
 
 .table-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.table-actions .btn {
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .locked-action {

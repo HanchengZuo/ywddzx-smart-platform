@@ -162,6 +162,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
+import { pinyin } from 'pinyin-pro'
 import {
   compressImageFile,
   validateImageType
@@ -217,11 +218,66 @@ const form = ref({
   description: ''
 })
 
+const normalizeSearchToken = (value) => {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '')
+}
+
+const toPinyinText = (value, options = {}) => {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  try {
+    return pinyin(text, {
+      toneType: 'none',
+      nonZh: 'consecutive',
+      ...options
+    })
+  } catch (error) {
+    return ''
+  }
+}
+
+const isSubsequenceMatch = (needle, haystack) => {
+  if (!needle) return true
+  let cursor = 0
+  for (const char of haystack) {
+    if (char === needle[cursor]) {
+      cursor += 1
+      if (cursor >= needle.length) return true
+    }
+  }
+  return false
+}
+
+const buildSearchVariants = (...values) => {
+  const source = values
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ')
+
+  const fullPinyin = toPinyinText(source)
+  const firstLetters = toPinyinText(source, { pattern: 'first' })
+
+  return [
+    source,
+    fullPinyin,
+    firstLetters
+  ].map(normalizeSearchToken).filter(Boolean)
+}
+
+const matchesSmartSearch = (values, keyword) => {
+  const needle = normalizeSearchToken(keyword)
+  if (!needle) return true
+
+  const variants = buildSearchVariants(...values)
+  return variants.some((variant) => variant.includes(needle) || isSubsequenceMatch(needle, variant))
+}
+
 const filteredInspectionTables = computed(() => {
-  const keyword = tableSearch.value.trim().toLowerCase()
   return inspectionTables.value.filter((item) => {
-    const text = `${item.table_name || ''} ${item.description || ''}`.toLowerCase()
-    return !keyword || text.includes(keyword)
+    return matchesSmartSearch([item.table_name, item.description], tableSearch.value)
   })
 })
 
@@ -270,18 +326,21 @@ const normalizeStandardDetailForRegister = (value) => {
 }
 
 const filteredStations = computed(() => {
-  const keyword = stationSearch.value.trim().toLowerCase()
   return stations.value.filter((item) => {
-    const text = `${item.station_name || ''} ${item.region || ''}`.toLowerCase()
-    return !keyword || text.includes(keyword)
+    return matchesSmartSearch([item.station_name, item.region], stationSearch.value)
   })
 })
 
 const filteredStandards = computed(() => {
-  const keyword = standardSearch.value.trim().toLowerCase()
   return standards.value.filter((item) => {
-    const text = `${item.standard_id || ''} ${item.standard_detail_text || ''} ${item.check_content || ''} ${item.check_item || ''} ${item.project_name || ''}`.toLowerCase()
-    return !keyword || text.includes(keyword)
+    return matchesSmartSearch([
+      item.standard_id,
+      item.standard_detail_text,
+      item.check_content,
+      item.check_item,
+      item.project_name,
+      getStandardTitle(item)
+    ], standardSearch.value)
   })
 })
 
