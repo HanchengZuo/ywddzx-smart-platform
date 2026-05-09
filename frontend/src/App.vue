@@ -286,6 +286,59 @@
         <router-view />
       </main>
     </div>
+
+    <div v-if="authState.mustChangePassword" class="force-password-overlay" role="dialog" aria-modal="true">
+      <form class="force-password-card" @submit.prevent="handlePasswordChange">
+        <div class="force-password-eyebrow">首次登录安全校验</div>
+        <h2>请先设置新密码</h2>
+        <p class="force-password-subtitle">
+          当前账号仍在使用初始密码。为了保护业务数据安全，完成密码更新后再进入系统。
+        </p>
+
+        <div class="force-password-user">
+          <span>当前账号</span>
+          <strong>{{ authState.realName || authState.username }}</strong>
+        </div>
+
+        <div class="force-password-fields">
+          <label>
+            <span>当前密码</span>
+            <input v-model="passwordChangeForm.currentPassword" type="password" autocomplete="current-password"
+              placeholder="请输入当前密码" />
+          </label>
+          <label>
+            <span>新密码</span>
+            <input v-model="passwordChangeForm.newPassword" type="password" autocomplete="new-password"
+              placeholder="8-32 位，包含字母和数字" />
+          </label>
+          <label>
+            <span>确认新密码</span>
+            <input v-model="passwordChangeForm.confirmPassword" type="password" autocomplete="new-password"
+              placeholder="请再次输入新密码" />
+          </label>
+        </div>
+
+        <div class="force-password-rules">
+          <span :class="{ passed: passwordRuleStatus.length }">8-32 位</span>
+          <span :class="{ passed: passwordRuleStatus.letterAndNumber }">包含字母和数字</span>
+          <span :class="{ passed: passwordRuleStatus.noWhitespace }">不含空格</span>
+          <span :class="{ passed: passwordRuleStatus.notDefaultOrUsername }">不使用初始密码或用户名</span>
+          <span :class="{ passed: passwordRuleStatus.confirmed }">两次输入一致</span>
+        </div>
+
+        <div v-if="passwordChangeError" class="force-password-message error">{{ passwordChangeError }}</div>
+        <div v-if="passwordChangeSuccess" class="force-password-message success">{{ passwordChangeSuccess }}</div>
+
+        <div class="force-password-actions">
+          <button class="btn btn-secondary" type="button" :disabled="passwordChangeSaving" @click="handleLogout">
+            退出登录
+          </button>
+          <button class="btn btn-primary" type="submit" :disabled="passwordChangeSaving">
+            {{ passwordChangeSaving ? '正在保存...' : '保存新密码' }}
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -303,10 +356,20 @@ const loginForm = reactive({
   password: ''
 })
 
+const passwordChangeForm = reactive({
+  currentPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
 const loginError = ref('')
+const passwordChangeError = ref('')
+const passwordChangeSuccess = ref('')
+const passwordChangeSaving = ref(false)
 const sidebarCollapsed = ref(false)
 const mobileMenuOpen = ref(false)
 const loginVersionModalOpen = ref(false)
+const defaultInitialPassword = '123456'
 
 const parseStoredPermissions = () => {
   try {
@@ -315,6 +378,8 @@ const parseStoredPermissions = () => {
     return {}
   }
 }
+
+const getStoredMustChangePassword = () => localStorage.getItem('must_change_password') === 'true'
 
 const authState = reactive({
   token: localStorage.getItem('auth_token') || '',
@@ -327,6 +392,7 @@ const authState = reactive({
   stationName: localStorage.getItem('station_name') || '',
   region: localStorage.getItem('region') || '',
   address: localStorage.getItem('address') || '',
+  mustChangePassword: getStoredMustChangePassword(),
   permissions: parseStoredPermissions()
 })
 
@@ -354,6 +420,23 @@ const versionHistory = [
 const currentRole = computed(() => authState.role)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
 const localPermissions = computed(() => authState.permissions || {})
+const passwordRuleStatus = computed(() => {
+  const password = passwordChangeForm.newPassword
+  const confirmPassword = passwordChangeForm.confirmPassword
+  const username = authState.username || ''
+
+  return {
+    length: password.length >= 8 && password.length <= 32,
+    letterAndNumber: /[A-Za-z]/.test(password) && /\d/.test(password),
+    noWhitespace: password.length > 0 && !/\s/.test(password),
+    notDefaultOrUsername: Boolean(
+      password &&
+      password !== defaultInitialPassword &&
+      (!username || password.toLowerCase() !== username.toLowerCase())
+    ),
+    confirmed: Boolean(confirmPassword && password === confirmPassword)
+  }
+})
 const isRoot = computed(() => authState.role === 'root')
 const isSupervisor = computed(() => authState.role === 'supervisor')
 const isStationManager = computed(() => authState.role === 'station_manager')
@@ -409,6 +492,7 @@ const syncAuthState = () => {
   authState.stationName = localStorage.getItem('station_name') || ''
   authState.region = localStorage.getItem('region') || ''
   authState.address = localStorage.getItem('address') || ''
+  authState.mustChangePassword = getStoredMustChangePassword()
   authState.permissions = parseStoredPermissions()
 }
 
@@ -465,6 +549,58 @@ const closeMobileMenu = () => {
   mobileMenuOpen.value = false
 }
 
+const resetPasswordChangeForm = () => {
+  passwordChangeForm.currentPassword = ''
+  passwordChangeForm.newPassword = ''
+  passwordChangeForm.confirmPassword = ''
+  passwordChangeError.value = ''
+  passwordChangeSuccess.value = ''
+  passwordChangeSaving.value = false
+}
+
+const getPasswordChangeClientError = () => {
+  if (!passwordChangeForm.currentPassword) return '请输入当前密码。'
+  if (!passwordChangeForm.newPassword) return '请填写新密码。'
+  if (!passwordRuleStatus.value.length) return '新密码长度需为 8-32 位。'
+  if (!passwordRuleStatus.value.noWhitespace) return '新密码不能包含空格。'
+  if (!passwordRuleStatus.value.letterAndNumber) return '新密码需同时包含字母和数字。'
+  if (!passwordRuleStatus.value.notDefaultOrUsername) return '新密码不能使用初始密码或用户名。'
+  if (!passwordRuleStatus.value.confirmed) return '两次输入的新密码不一致。'
+  if (passwordChangeForm.currentPassword === passwordChangeForm.newPassword) return '新密码不能与当前密码相同。'
+  return ''
+}
+
+const handlePasswordChange = async () => {
+  passwordChangeError.value = ''
+  passwordChangeSuccess.value = ''
+
+  const clientError = getPasswordChangeClientError()
+  if (clientError) {
+    passwordChangeError.value = clientError
+    return
+  }
+
+  try {
+    passwordChangeSaving.value = true
+    await axios.post('/api/users/change-password', {
+      user_id: authState.userId,
+      current_password: passwordChangeForm.currentPassword,
+      new_password: passwordChangeForm.newPassword,
+      confirm_password: passwordChangeForm.confirmPassword
+    })
+
+    passwordChangeSuccess.value = '新密码已保存，正在进入系统。'
+    window.setTimeout(() => {
+      localStorage.setItem('must_change_password', 'false')
+      syncAuthState()
+      resetPasswordChangeForm()
+    }, 650)
+  } catch (error) {
+    passwordChangeError.value = error?.response?.data?.error || '密码修改失败，请稍后重试。'
+    passwordChangeSaving.value = false
+  }
+}
+
 const handleLogin = async () => {
   if (!loginForm.username) {
     loginError.value = '请输入用户名。'
@@ -498,7 +634,9 @@ const handleLogin = async () => {
     localStorage.setItem('region', user.region || '')
     localStorage.setItem('address', user.address || '')
     localStorage.setItem('permissions', JSON.stringify(user.permissions || {}))
+    localStorage.setItem('must_change_password', user.must_change_password ? 'true' : 'false')
 
+    resetPasswordChangeForm()
     syncAuthState()
     loginForm.password = ''
     router.push(resolveHomePath(user))
@@ -520,6 +658,8 @@ const handleLogout = () => {
   localStorage.removeItem('region')
   localStorage.removeItem('address')
   localStorage.removeItem('permissions')
+  localStorage.removeItem('must_change_password')
+  resetPasswordChangeForm()
   syncAuthState()
   mobileMenuOpen.value = false
   loginForm.password = ''
@@ -1068,6 +1208,170 @@ textarea:focus {
   color: #dc2626;
 }
 
+.force-password-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 30% 18%, rgba(14, 165, 233, 0.18), transparent 32%),
+    rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.force-password-card {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  border: 1px solid rgba(203, 213, 225, 0.88);
+  border-radius: 30px;
+  padding: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.1), transparent 34%),
+    #fff;
+  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.36);
+}
+
+.force-password-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-bottom: 12px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid rgba(37, 99, 235, 0.13);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.force-password-card h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 28px;
+  letter-spacing: -0.7px;
+}
+
+.force-password-subtitle {
+  margin: 10px 0 18px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.force-password-user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.force-password-user span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.force-password-user strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.force-password-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.force-password-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.force-password-fields input {
+  width: 100%;
+  height: 48px;
+  border: 1px solid var(--line-color);
+  border-radius: 15px;
+  padding: 0 14px;
+  background: #fff;
+  color: var(--text-main);
+  transition: all 0.18s ease;
+}
+
+.force-password-fields input:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.force-password-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.force-password-rules span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.force-password-rules span.passed {
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+  color: #047857;
+}
+
+.force-password-message {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.force-password-message.error {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.force-password-message.success {
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+}
+
+.force-password-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .layout {
   display: flex;
   width: 100%;
@@ -1464,6 +1768,12 @@ textarea:focus {
   transition: all 0.18s ease;
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  transform: none;
+}
+
 .btn-sm {
   height: 38px;
   padding: 0 14px;
@@ -1689,6 +1999,36 @@ textarea:focus {
     grid-template-columns: 1fr;
     gap: 12px;
     padding: 16px;
+  }
+
+  .force-password-overlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .force-password-card {
+    align-self: center;
+    max-height: calc(100dvh - 24px);
+    border-radius: 24px;
+    padding: 22px 18px;
+  }
+
+  .force-password-card h2 {
+    font-size: 24px;
+  }
+
+  .force-password-user {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .force-password-actions {
+    flex-direction: column-reverse;
+  }
+
+  .force-password-actions .btn {
+    width: 100%;
   }
 }
 

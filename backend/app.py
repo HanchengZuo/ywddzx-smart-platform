@@ -40,6 +40,9 @@ DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
 AUTO_BACKUP_FILENAME = f"{BACKUP_PREFIX}_auto.zip"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_INITIAL_PASSWORD = "123456"
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 32
 
 
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
@@ -2067,9 +2070,10 @@ def ensure_user_security_schema(cur):
     cur.execute(
         """
         INSERT INTO users (username, password, role, real_name, phone, station_id)
-        VALUES ('root', '123456', 'root', '系统管理员', '18801800773', NULL)
+        VALUES ('root', %s, 'root', '系统管理员', '18801800773', NULL)
         ON CONFLICT (username) DO NOTHING;
-        """
+        """,
+        (DEFAULT_INITIAL_PASSWORD,),
     )
     cur.execute(
         """
@@ -2256,6 +2260,31 @@ def normalize_text(value, max_length=None):
     if max_length and len(text) > max_length:
         return text[:max_length]
     return text
+
+
+def validate_new_login_password(username, new_password, confirm_password):
+    password = normalize_text(new_password)
+    confirm = normalize_text(confirm_password)
+    username_text = normalize_text(username)
+
+    if not password:
+        raise ValueError("请填写新密码。")
+    if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
+        raise ValueError(
+            f"新密码长度需为 {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} 位。"
+        )
+    if re.search(r"\s", password):
+        raise ValueError("新密码不能包含空格。")
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise ValueError("新密码需同时包含字母和数字。")
+    if password == DEFAULT_INITIAL_PASSWORD:
+        raise ValueError("新密码不能继续使用初始密码 123456。")
+    if username_text and password.lower() == username_text.lower():
+        raise ValueError("新密码不能与用户名相同。")
+    if password != confirm:
+        raise ValueError("两次输入的新密码不一致。")
+
+    return password
 
 
 def normalize_decimal_text(value):
@@ -3492,6 +3521,7 @@ def login():
             SELECT
                 u.id,
                 u.username,
+                u.password,
                 u.role,
                 u.real_name,
                 u.phone,
@@ -3534,6 +3564,7 @@ def login():
                     "region": user["region"],
                     "address": user["address"],
                     "permissions": permissions,
+                    "must_change_password": user["password"] == DEFAULT_INITIAL_PASSWORD,
                 },
             }
         )
@@ -3547,6 +3578,77 @@ def login():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/users/change-password", methods=["POST"])
+def change_own_password():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        user_id = int(data.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+
+    current_password = normalize_text(data.get("current_password"), 120)
+    new_password = normalize_text(data.get("new_password"), 120)
+    confirm_password = normalize_text(data.get("confirm_password"), 120)
+
+    if user_id <= 0:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+    if not current_password:
+        return jsonify({"success": False, "error": "请填写当前密码。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
+
+        cur.execute(
+            """
+            SELECT id, username, password
+            FROM users
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (user_id,),
+        )
+        user = cur.fetchone()
+
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if user["password"] != current_password:
+            return jsonify({"success": False, "error": "当前密码不正确。"}), 400
+
+        validated_password = validate_new_login_password(
+            user["username"], new_password, confirm_password
+        )
+        if validated_password == current_password:
+            return jsonify({"success": False, "error": "新密码不能与当前密码相同。"}), 400
+
+        cur.execute(
+            """
+            UPDATE users
+            SET password = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s;
+            """,
+            (validated_password, user_id),
+        )
+        conn.commit()
+
+        return jsonify({"success": True, "must_change_password": False})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 
