@@ -150,6 +150,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": True, "station_manager": False},
     },
     {
+        "key": "delete_inspection_records",
+        "name": "删除巡检记录",
+        "category": "巡检记录",
+        "description": "删除巡检记录，并同步删除本记录下的巡检问题、回算关联巡检计划完成状态。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_inspection_plans",
         "name": "查看页面",
         "category": "巡检计划",
@@ -2541,6 +2548,10 @@ def can_view_all_inspection_records(cur, user):
 
 def can_view_own_inspection_records(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_own_inspection_records"))
+
+
+def can_delete_inspection_records(cur, user):
+    return has_permission(cur, user, "delete_inspection_records")
 
 
 def can_view_own_certificates(cur, user):
@@ -8583,6 +8594,7 @@ def get_inspections():
 
         can_view_all = can_view_all_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
+        can_delete_records = can_delete_inspection_records(cur, user)
         if can_view_all:
             pass
         elif can_view_own:
@@ -8632,10 +8644,173 @@ def get_inspections():
             params,
         )
         rows = cur.fetchall()
-        return jsonify(rows)
+        return jsonify(
+            [
+                {
+                    **dict(row),
+                    "can_delete_record": bool(can_delete_records),
+                }
+                for row in rows
+            ]
+        )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspections/<int:inspection_id>", methods=["DELETE"])
+def delete_inspection_record(inspection_id):
+    data = request.get_json(silent=True) or {}
+    user_id = get_authenticated_request_user_id(
+        data.get("user_id") or request.args.get("user_id", "")
+    )
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+    files_to_remove = set()
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not can_delete_inspection_records(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权删除巡检记录。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                ins.id,
+                ins.batch_id,
+                ins.station_id,
+                ins.inspection_table_id,
+                ins.inspection_date,
+                ins.station_manager_signature_path,
+                s.station_name,
+                t.table_name AS inspection_table_name
+            FROM inspections ins
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            WHERE ins.id = %s
+            LIMIT 1;
+            """,
+            (inspection_id,),
+        )
+        inspection = cur.fetchone()
+
+        if not inspection:
+            return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
+
+        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_own = can_view_own_inspection_records(cur, user)
+        if not can_view_all and not (
+            can_view_own
+            and user.get("station_id")
+            and inspection["station_id"] == user["station_id"]
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该巡检记录。"}), 403
+
+        if inspection.get("station_manager_signature_path"):
+            files_to_remove.add(inspection["station_manager_signature_path"])
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                photo_path,
+                rectification_photo_path,
+                review_photo_path
+            FROM issues
+            WHERE inspection_id = %s;
+            """,
+            (inspection_id,),
+        )
+        issue_rows = cur.fetchall()
+        for issue in issue_rows:
+            for key in (
+                "photo_path",
+                "rectification_photo_path",
+                "review_photo_path",
+            ):
+                if issue.get(key):
+                    files_to_remove.add(issue[key])
+
+        cur.execute(
+            """
+            SELECT DISTINCT plan_config_id
+            FROM inspection_plan_station_items
+            WHERE completed_inspection_id = %s;
+            """,
+            (inspection_id,),
+        )
+        affected_plan_config_ids = [row["plan_config_id"] for row in cur.fetchall()]
+
+        cur.execute(
+            """
+            UPDATE inspection_plan_station_items
+            SET completion_status = 'pending',
+                completed_inspection_id = NULL,
+                completed_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE completed_inspection_id = %s;
+            """,
+            (inspection_id,),
+        )
+        affected_plan_item_count = cur.rowcount
+
+        cur.execute("DELETE FROM issues WHERE inspection_id = %s;", (inspection_id,))
+        deleted_issue_count = cur.rowcount
+
+        cur.execute("DELETE FROM inspections WHERE id = %s;", (inspection_id,))
+        if cur.rowcount == 0:
+            raise ValueError("巡检记录删除失败，请刷新后重试。")
+
+        if inspection.get("batch_id"):
+            cur.execute(
+                """
+                DELETE FROM inspection_batches b
+                WHERE b.id = %s
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM inspections ins
+                    WHERE ins.batch_id = b.id
+                  );
+                """,
+                (inspection["batch_id"],),
+            )
+
+        for plan_config_id in affected_plan_config_ids:
+            sync_plan_station_items_completion_by_history(cur, plan_config_id)
+
+        conn.commit()
+
+        for path in files_to_remove:
+            remove_storage_file(path)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "巡检记录已删除，关联巡检问题和计划完成状态已同步更新。",
+                "deleted_issue_count": deleted_issue_count,
+                "affected_plan_item_count": affected_plan_item_count,
+            }
+        )
+    except ValueError as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 

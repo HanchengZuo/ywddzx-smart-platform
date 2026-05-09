@@ -7,6 +7,12 @@
       </div>
     </div>
 
+    <transition name="record-action-toast">
+      <div v-if="actionMessage.text" class="record-action-toast card-surface" :class="actionMessage.type">
+        {{ actionMessage.text }}
+      </div>
+    </transition>
+
     <div class="filter-card card-surface">
       <div class="filter-grid">
         <div class="filter-item filter-item-date">
@@ -118,6 +124,11 @@
                   class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(record)">
                   结束本检查表并签名确认
                 </button>
+
+                <button v-if="canDeleteInspectionRecord(record)" class="btn btn-danger batch-action-btn" type="button"
+                  :disabled="deletingInspectionId === record.id" @click="deleteInspectionRecord(record)">
+                  {{ deletingInspectionId === record.id ? '删除中...' : '删除记录' }}
+                </button>
               </div>
 
               <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
@@ -163,10 +174,17 @@
                   <td>{{ record.issue_count }}</td>
 
                   <td class="batch-action-cell">
-                    <button class="btn btn-secondary batch-action-btn" type="button"
-                      @click="openInspectionDetail(record)">
-                      查看本表录入问题
-                    </button>
+                    <div class="record-action-stack">
+                      <button class="btn btn-secondary batch-action-btn" type="button"
+                        @click="openInspectionDetail(record)">
+                        查看本表录入问题
+                      </button>
+                      <button v-if="canDeleteInspectionRecord(record)" class="btn btn-danger batch-action-btn"
+                        type="button" :disabled="deletingInspectionId === record.id"
+                        @click="deleteInspectionRecord(record)">
+                        {{ deletingInspectionId === record.id ? '删除中...' : '删除记录' }}
+                      </button>
+                    </div>
                   </td>
 
                   <td class="batch-signature-cell">
@@ -452,6 +470,12 @@ const dropdownVisible = ref({
 const list = ref([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
+const deletingInspectionId = ref(null)
+const actionMessage = ref({
+  text: '',
+  type: 'info'
+})
+let actionMessageTimer = null
 
 const detectMobileViewport = () => {
   const ua = navigator.userAgent || ''
@@ -588,6 +612,19 @@ const canExportBatchDetail = computed(() => {
 })
 
 const exportingBatchDetail = computed(() => Boolean(exportState.value.type))
+
+const showActionMessage = (text, type = 'info') => {
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+    actionMessageTimer = null
+  }
+  actionMessage.value = { text, type }
+  if (!text) return
+  actionMessageTimer = setTimeout(() => {
+    actionMessage.value = { text: '', type: 'info' }
+    actionMessageTimer = null
+  }, 2600)
+}
 
 const normalizeExportText = (value, fallback = '暂无') => {
   const text = String(value ?? '').trim()
@@ -979,6 +1016,35 @@ const closeBatchDetail = () => {
   }
 }
 
+const canDeleteInspectionRecord = (record) => Boolean(record?.can_delete_record)
+
+const deleteInspectionRecord = async (record) => {
+  if (!record?.id || deletingInspectionId.value) return
+
+  const confirmed = window.confirm(
+    `确定删除【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】这条巡检记录吗？\n\n删除后会同步删除本记录下的所有巡检问题，并重新计算关联巡检计划完成状态。此操作不可恢复。`
+  )
+  if (!confirmed) return
+
+  try {
+    deletingInspectionId.value = record.id
+    showActionMessage('')
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.delete(`/api/inspections/${record.id}`, {
+      data: { user_id: userId }
+    })
+    if (String(batchDetail.value.inspection?.id || '') === String(record.id)) {
+      closeBatchDetail()
+    }
+    await fetchInspections()
+    showActionMessage(response.data?.message || '巡检记录已删除。', 'success')
+  } catch (error) {
+    showActionMessage(error?.response?.data?.error || '巡检记录删除失败。', 'error')
+  } finally {
+    deletingInspectionId.value = null
+  }
+}
+
 const getSignatureCanvas = () => signatureCanvasRef.value
 
 const initSignaturePad = () => {
@@ -1223,6 +1289,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', handleViewportResize)
   visualViewportRef.value?.removeEventListener('resize', handleVisualViewportChange)
+  if (actionMessageTimer) {
+    clearTimeout(actionMessageTimer)
+    actionMessageTimer = null
+  }
   if (signaturePadInstance.value) {
     signaturePadInstance.value.off()
   }
@@ -1265,6 +1335,45 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 34px;
   color: #0f172a;
+}
+
+.record-action-toast {
+  position: fixed;
+  left: 50%;
+  top: 84px;
+  z-index: 3000;
+  transform: translateX(-50%);
+  min-width: min(420px, calc(100vw - 32px));
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  border-color: rgba(37, 99, 235, 0.22);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+}
+
+.record-action-toast.success {
+  color: #166534;
+  border-color: rgba(22, 163, 74, 0.28);
+  background: rgba(240, 253, 244, 0.98);
+}
+
+.record-action-toast.error {
+  color: #991b1b;
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(254, 242, 242, 0.98);
+}
+
+.record-action-toast-enter-active,
+.record-action-toast-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.record-action-toast-enter-from,
+.record-action-toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px) scale(0.98);
 }
 
 .filter-card,
@@ -1405,6 +1514,18 @@ onBeforeUnmount(() => {
   background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
 }
 
+.btn-danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-weight: 800;
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: #ffe4e6;
+}
+
 .signature-action-btn {
   width: 100%;
   min-width: 220px;
@@ -1420,6 +1541,12 @@ onBeforeUnmount(() => {
   white-space: normal;
   line-height: 1.5;
   padding: 10px 12px;
+}
+
+.record-action-stack {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .mobile-record-list {
@@ -1522,6 +1649,18 @@ onBeforeUnmount(() => {
 .mobile-batch-item-meta {
   font-size: 13px;
   color: #64748b;
+}
+
+.mobile-batch-item-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mobile-batch-item-actions .batch-action-btn,
+.mobile-batch-item-actions .signature-action-btn {
+  min-width: 0;
 }
 
 .mobile-signature-box {
