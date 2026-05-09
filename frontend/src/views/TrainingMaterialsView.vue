@@ -111,7 +111,7 @@
       </section>
     </div>
 
-    <div v-if="dialog.visible" class="dialog-overlay" @click.self="closeDialog">
+    <div v-if="dialog.visible" class="dialog-overlay">
       <div class="dialog-card card-surface">
         <div class="dialog-header">
           <div>

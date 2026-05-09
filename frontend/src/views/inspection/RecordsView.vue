@@ -230,7 +230,7 @@
       </div>
     </div>
 
-    <div v-if="signatureDialog.visible" class="batch-detail-overlay" @click.self="closeSignatureDialog">
+    <div v-if="signatureDialog.visible" class="batch-detail-overlay">
       <div v-if="isMobileView" class="mobile-signature-board card-surface">
         <div v-if="!isLandscapeMobile" class="mobile-signature-orientation-overlay">
           <div class="mobile-signature-orientation-overlay-inner">

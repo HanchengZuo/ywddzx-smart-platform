@@ -360,7 +360,7 @@
       </div>
     </div>
 
-    <div v-if="editDialog.visible" class="image-modal" @click.self="closeEditDialog">
+    <div v-if="editDialog.visible" class="image-modal">
       <div class="image-modal-content issue-edit-modal">
         <div class="image-modal-header">
           <span>编辑巡检问题</span>

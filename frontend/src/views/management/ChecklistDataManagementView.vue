@@ -182,7 +182,7 @@
       </div>
     </template>
 
-    <div v-if="createDialog.visible" class="dialog-backdrop" @click.self="closeCreateDialog">
+    <div v-if="createDialog.visible" class="dialog-backdrop">
       <section class="edit-dialog create-dialog card-surface">
         <div class="dialog-head">
           <div>
@@ -278,7 +278,7 @@
       </section>
     </div>
 
-    <div v-if="editDialog.visible" class="dialog-backdrop" @click.self="closeEditDialog">
+    <div v-if="editDialog.visible" class="dialog-backdrop">
       <section class="edit-dialog card-surface">
         <div class="dialog-head">
           <div>
@@ -371,7 +371,7 @@
       </section>
     </div>
 
-    <div v-if="standardDialog.visible && selectedChecklist" class="dialog-backdrop" @click.self="closeStandardDialog">
+    <div v-if="standardDialog.visible && selectedChecklist" class="dialog-backdrop">
       <section class="edit-dialog standard-dialog card-surface">
         <div class="dialog-head">
           <div>

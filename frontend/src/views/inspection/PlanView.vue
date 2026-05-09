@@ -697,7 +697,7 @@
         </div>
     </div>
 
-    <div v-if="manageDialog.visible" class="plan-dialog-overlay" @click.self="closeManagePlansDialog">
+    <div v-if="manageDialog.visible" class="plan-dialog-overlay">
         <div class="card-surface plan-dialog manage-plan-dialog">
             <div class="plan-dialog-header">
                 <div>
@@ -913,7 +913,7 @@
         </div>
     </div>
 
-    <div v-if="detailDialog.visible" class="plan-dialog-overlay" @click.self="closePlanDetail">
+    <div v-if="detailDialog.visible" class="plan-dialog-overlay">
         <div class="card-surface plan-dialog">
             <div class="plan-dialog-header">
                 <div>

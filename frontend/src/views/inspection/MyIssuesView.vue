@@ -309,7 +309,7 @@
       </div>
     </div>
 
-    <div v-if="actionDrawer.visible" class="drawer-mask" @click.self="closeActionDrawer">
+    <div v-if="actionDrawer.visible" class="drawer-mask">
       <div class="drawer-panel">
         <div class="drawer-header">
           <div>
