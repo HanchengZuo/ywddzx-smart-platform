@@ -411,7 +411,7 @@
               </div>
             </div>
 
-            <div v-if="standardState.editingDraft" class="standard-editor-card editing-panel">
+            <div v-if="standardState.editingDraft" ref="standardEditingPanelRef" class="standard-editor-card editing-panel">
               <div class="standard-section-head">
                 <div>
                   <strong>编辑规范</strong>
@@ -477,7 +477,8 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="item in standardState.items" :key="item.standard_id">
+                    <tr v-for="item in standardState.items" :key="item.standard_id"
+                      :class="{ editing: String(standardState.editingStandardId) === String(item.standard_id) }">
                       <td class="standard-id-cell">{{ item.standard_id }}</td>
                       <td v-for="field in selectedFields" :key="field.field_key">
                         {{ getStandardValue(item, field.field_key) || '-' }}
@@ -529,7 +530,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -672,6 +673,7 @@ const editDialog = reactive({
 })
 
 const standardState = reactive(createStandardState())
+const standardEditingPanelRef = ref(null)
 let messageTimer = null
 
 const setMessage = (text, type = 'info') => {
@@ -1081,7 +1083,7 @@ const createStandard = async (state, checklistId, fields = []) => {
   }
 }
 
-const startEditStandard = (state, item, fields = []) => {
+const startEditStandard = async (state, item, fields = []) => {
   state.editingStandardId = item?.standard_id
   state.editingDraft = {
     values: fields.reduce((result, field) => {
@@ -1089,6 +1091,11 @@ const startEditStandard = (state, item, fields = []) => {
       return result
     }, {})
   }
+  await nextTick()
+  standardEditingPanelRef.value?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  })
 }
 
 const cancelEditStandard = (state) => {
@@ -1667,6 +1674,15 @@ onMounted(fetchChecklists)
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.standard-table tr.editing td {
+  background: #eff6ff;
+  box-shadow: inset 0 1px 0 #bfdbfe, inset 0 -1px 0 #bfdbfe;
+}
+
+.standard-table tr.editing td:first-child {
+  border-left: 3px solid #2563eb;
 }
 
 .standard-table tbody tr:last-child td {
