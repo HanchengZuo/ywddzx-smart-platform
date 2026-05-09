@@ -1,5 +1,6 @@
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+import hashlib
 import json
 import os
 import re
@@ -16,10 +17,15 @@ from io import BytesIO
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 
 app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get(
+    "APP_SECRET_KEY",
+    os.environ.get("SECRET_KEY", "ywddzx-smart-platform-dev-secret"),
+)
 CORS(app)
 
 BASE_DIR = os.path.dirname(__file__)
@@ -43,6 +49,8 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 32
+AUTH_TOKEN_MAX_AGE_SECONDS = int(os.environ.get("AUTH_TOKEN_MAX_AGE_SECONDS", str(12 * 60 * 60)))
+AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 
 
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
@@ -1083,6 +1091,175 @@ def start_backup_scheduler_once():
         thread = threading.Thread(target=backup_scheduler_loop, daemon=True)
         thread.start()
         backup_scheduler_started = True
+
+
+def get_auth_serializer():
+    return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=AUTH_TOKEN_SALT)
+
+
+def get_password_fingerprint(password):
+    return hashlib.sha256(str(password or "").encode("utf-8")).hexdigest()[:24]
+
+
+def fetch_auth_user_by_id(cur, user_id):
+    cur.execute(
+        """
+        SELECT
+            u.id,
+            u.username,
+            u.password,
+            u.role,
+            u.real_name,
+            u.phone,
+            u.station_id,
+            s.station_name,
+            s.region,
+            s.address
+        FROM users u
+        LEFT JOIN stations s ON u.station_id = s.id
+        WHERE u.id = %s
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+    return cur.fetchone()
+
+
+def create_auth_token(user):
+    payload = {
+        "uid": int(user["id"]),
+        "username": user["username"],
+        "pwd": get_password_fingerprint(user.get("password")),
+    }
+    return get_auth_serializer().dumps(payload)
+
+
+def build_auth_user_payload(cur, user):
+    permissions = get_effective_permissions(cur, user)
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "role": user["role"],
+        "real_name": user["real_name"],
+        "phone": user["phone"],
+        "station_id": user["station_id"],
+        "station_name": user.get("station_name"),
+        "region": user.get("region"),
+        "address": user.get("address"),
+        "permissions": permissions,
+        "must_change_password": user.get("password") == DEFAULT_INITIAL_PASSWORD,
+    }
+
+
+def extract_bearer_token():
+    header = str(request.headers.get("Authorization", "")).strip()
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return ""
+
+
+def verify_auth_token(token):
+    try:
+        payload = get_auth_serializer().loads(
+            token,
+            max_age=AUTH_TOKEN_MAX_AGE_SECONDS,
+        )
+    except SignatureExpired as exc:
+        raise PermissionError("登录状态已过期，请重新登录。") from exc
+    except BadSignature as exc:
+        raise PermissionError("登录状态无效，请重新登录。") from exc
+
+    user_id = payload.get("uid")
+    if not user_id:
+        raise PermissionError("登录状态无效，请重新登录。")
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = fetch_auth_user_by_id(cur, user_id)
+    finally:
+        close_db_resources(cur, conn)
+
+    if not user:
+        raise PermissionError("账号不存在，请重新登录。")
+    if payload.get("username") != user["username"]:
+        raise PermissionError("登录状态无效，请重新登录。")
+    if payload.get("pwd") != get_password_fingerprint(user.get("password")):
+        raise PermissionError("账号密码已变更，请重新登录。")
+    return user
+
+
+def normalize_identity_for_compare(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        return text
+    return str(parsed) if parsed > 0 else text
+
+
+def iter_request_identity_values():
+    for key in ("user_id", "inspector_id"):
+        for value in request.args.getlist(key):
+            yield key, value
+        for value in request.form.getlist(key):
+            yield key, value
+
+    data = request.get_json(silent=True) if request.is_json else None
+    if isinstance(data, dict):
+        for key in ("user_id", "inspector_id"):
+            if key in data:
+                yield key, data.get(key)
+
+
+def is_public_api_path(path):
+    if not path.startswith("/api/"):
+        return True
+    return path in {
+        "/api/health",
+        "/api/db-test",
+        "/api/login",
+    }
+
+
+@app.before_request
+def require_signed_api_token():
+    if request.method == "OPTIONS":
+        return None
+    if not request.path.startswith("/api/"):
+        return None
+    if is_public_api_path(request.path):
+        return None
+
+    token = extract_bearer_token()
+    if not token:
+        return jsonify({"success": False, "error": "请先登录。"}), 401
+
+    try:
+        user = verify_auth_token(token)
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+
+    g.current_user = user
+    current_user_id = normalize_identity_for_compare(user["id"])
+    for key, value in iter_request_identity_values():
+        requested_user_id = normalize_identity_for_compare(value)
+        if requested_user_id and requested_user_id != current_user_id:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"请求中的{key}与当前登录账号不一致，已拒绝操作。",
+                    }
+                ),
+                403,
+            )
+
+    return None
 
 
 @app.before_request
@@ -3643,23 +3820,13 @@ def login():
                 401,
             )
 
-        permissions = get_effective_permissions(cur, user)
+        token = create_auth_token(user)
         return jsonify(
             {
                 "success": True,
-                "user": {
-                    "id": user["id"],
-                    "username": user["username"],
-                    "role": user["role"],
-                    "real_name": user["real_name"],
-                    "phone": user["phone"],
-                    "station_id": user["station_id"],
-                    "station_name": user["station_name"],
-                    "region": user["region"],
-                    "address": user["address"],
-                    "permissions": permissions,
-                    "must_change_password": user["password"] == DEFAULT_INITIAL_PASSWORD,
-                },
+                "token": token,
+                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "user": build_auth_user_payload(cur, user),
             }
         )
     except Exception as e:
@@ -3672,6 +3839,31 @@ def login():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def get_authenticated_user():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = fetch_auth_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        return jsonify(
+            {
+                "success": True,
+                "token": extract_bearer_token(),
+                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "user": build_auth_user_payload(cur, user),
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -3736,7 +3928,17 @@ def change_own_password():
         )
         conn.commit()
 
-        return jsonify({"success": True, "must_change_password": False})
+        updated_user = fetch_auth_user_by_id(cur, user_id)
+        token = create_auth_token(updated_user)
+        return jsonify(
+            {
+                "success": True,
+                "token": token,
+                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "must_change_password": False,
+                "user": build_auth_user_payload(cur, updated_user),
+            }
+        )
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:

@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import axios from 'axios'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
+import { clearAuthSession, isUsableAuthToken, storeAuthSession } from '../utils/authSession'
 
 const EmptyRouteView = { template: '<div></div>' }
 
@@ -93,6 +95,8 @@ const router = createRouter({
   routes
 })
 
+let verifiedAuthToken = ''
+
 const hasPermission = (role, permissions, key) => role === 'root' || Boolean(permissions[key])
 
 const canAccessPath = (path, role, permissions) => {
@@ -152,32 +156,64 @@ const resolveFallbackPath = (role, permissions) => {
   return '/feedback'
 }
 
-router.beforeEach((to, from, next) => {
+const verifyStoredAuthToken = async () => {
   const token = localStorage.getItem('auth_token')
-  const role = localStorage.getItem('user_role')
-  let permissions = {}
-  try {
-    permissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-  } catch (error) {
-    permissions = {}
+  if (!isUsableAuthToken(token)) {
+    clearAuthSession()
+    verifiedAuthToken = ''
+    return false
   }
 
+  if (verifiedAuthToken === token) {
+    return true
+  }
+
+  try {
+    const response = await axios.get('/api/auth/me')
+    storeAuthSession(response.data.user, response.data.token || token)
+    verifiedAuthToken = localStorage.getItem('auth_token') || token
+    return true
+  } catch (error) {
+    clearAuthSession()
+    verifiedAuthToken = ''
+    return false
+  }
+}
+
+router.beforeEach(async (to, from, next) => {
+  const token = localStorage.getItem('auth_token')
+
   if (to.meta.public) {
-    if (to.path === '/login' && token) {
-      next(resolveFallbackPath(role, permissions))
+    if (to.path === '/login' && token && (await verifyStoredAuthToken())) {
+      const verifiedRole = localStorage.getItem('user_role')
+      let verifiedPermissions = {}
+      try {
+        verifiedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+      } catch (error) {
+        verifiedPermissions = {}
+      }
+      next(resolveFallbackPath(verifiedRole, verifiedPermissions))
       return
     }
     next()
     return
   }
 
-  if (!token) {
+  if (!token || !(await verifyStoredAuthToken())) {
     next('/login')
     return
   }
 
-  if (!canAccessPath(to.path, role, permissions)) {
-    next(resolveFallbackPath(role, permissions))
+  const verifiedRole = localStorage.getItem('user_role')
+  let verifiedPermissions = {}
+  try {
+    verifiedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch (error) {
+    verifiedPermissions = {}
+  }
+
+  if (!canAccessPath(to.path, verifiedRole, verifiedPermissions)) {
+    next(resolveFallbackPath(verifiedRole, verifiedPermissions))
     return
   }
 

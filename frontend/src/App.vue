@@ -347,6 +347,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import appPackage from '../package.json'
+import { clearAuthSession, storeAuthSession, syncAxiosAuthHeader } from './utils/authSession'
 
 const router = useRouter()
 const route = useRoute()
@@ -395,6 +396,8 @@ const authState = reactive({
   mustChangePassword: getStoredMustChangePassword(),
   permissions: parseStoredPermissions()
 })
+
+syncAxiosAuthHeader()
 
 const isLoginPage = computed(() => route.path === '/login')
 const formatAppVersion = (value) => {
@@ -583,16 +586,22 @@ const handlePasswordChange = async () => {
 
   try {
     passwordChangeSaving.value = true
-    await axios.post('/api/users/change-password', {
+    const response = await axios.post('/api/users/change-password', {
       user_id: authState.userId,
       current_password: passwordChangeForm.currentPassword,
       new_password: passwordChangeForm.newPassword,
       confirm_password: passwordChangeForm.confirmPassword
     })
 
+    if (response.data?.token && response.data?.user) {
+      storeAuthSession(response.data.user, response.data.token)
+    } else {
+      localStorage.setItem('must_change_password', 'false')
+      syncAxiosAuthHeader()
+    }
+
     passwordChangeSuccess.value = '新密码已保存，正在进入系统。'
     window.setTimeout(() => {
-      localStorage.setItem('must_change_password', 'false')
       syncAuthState()
       resetPasswordChangeForm()
     }, 650)
@@ -622,20 +631,13 @@ const handleLogin = async () => {
     })
 
     const user = response.data.user
-    const fakeToken = `backend-login-${Date.now()}`
+    const token = response.data.token
+    if (!token) {
+      loginError.value = '登录响应缺少服务端令牌，请联系管理员。'
+      return
+    }
 
-    localStorage.setItem('auth_token', fakeToken)
-    localStorage.setItem('user_id', user.id ?? '')
-    localStorage.setItem('username', user.username || '')
-    localStorage.setItem('real_name', user.real_name || '')
-    localStorage.setItem('user_role', user.role || '')
-    localStorage.setItem('phone', user.phone || '')
-    localStorage.setItem('station_id', user.station_id ?? '')
-    localStorage.setItem('station_name', user.station_name || '')
-    localStorage.setItem('region', user.region || '')
-    localStorage.setItem('address', user.address || '')
-    localStorage.setItem('permissions', JSON.stringify(user.permissions || {}))
-    localStorage.setItem('must_change_password', user.must_change_password ? 'true' : 'false')
+    storeAuthSession(user, token)
 
     resetPasswordChangeForm()
     syncAuthState()
@@ -648,18 +650,7 @@ const handleLogin = async () => {
 }
 
 const handleLogout = () => {
-  localStorage.removeItem('auth_token')
-  localStorage.removeItem('user_id')
-  localStorage.removeItem('username')
-  localStorage.removeItem('real_name')
-  localStorage.removeItem('user_role')
-  localStorage.removeItem('phone')
-  localStorage.removeItem('station_id')
-  localStorage.removeItem('station_name')
-  localStorage.removeItem('region')
-  localStorage.removeItem('address')
-  localStorage.removeItem('permissions')
-  localStorage.removeItem('must_change_password')
+  clearAuthSession()
   resetPasswordChangeForm()
   syncAuthState()
   mobileMenuOpen.value = false
