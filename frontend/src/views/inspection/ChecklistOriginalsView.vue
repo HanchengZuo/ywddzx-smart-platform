@@ -9,7 +9,7 @@
       <div class="header-badges">
         <span class="status-pill info">检查表 {{ checklistItems.length }}</span>
         <span class="status-pill success">已上传 {{ uploadedCount }}</span>
-        <span v-if="canManage" class="status-pill manager">可维护原件</span>
+        <span v-if="canManage && !isMobileView" class="status-pill manager">可维护原件</span>
       </div>
     </div>
 
@@ -51,10 +51,10 @@
             </div>
 
             <div class="checklist-card-footer">
-              <button class="btn btn-secondary btn-compact" type="button" @click.stop="selectItem(item)">
+              <button class="btn btn-secondary btn-compact" type="button" @click.stop="handlePreviewClick(item)">
                 查看预览
               </button>
-              <label v-if="canManage" class="btn btn-primary btn-compact upload-label"
+              <label v-if="canManage && !isMobileView" class="btn btn-primary btn-compact upload-label"
                 :class="{ disabled: uploadingId === item.inspection_table_id }" @click.stop>
                 <input type="file" accept="application/pdf,.pdf" :disabled="uploadingId === item.inspection_table_id"
                   @change="handlePdfChange(item, $event)" />
@@ -70,7 +70,7 @@
         </div>
       </section>
 
-      <section class="preview-card card-surface">
+      <section v-if="!isMobileView" class="preview-card card-surface">
         <template v-if="activeItem">
           <div class="preview-header">
             <div>
@@ -150,6 +150,15 @@ const checklistItems = ref([])
 const activeTableId = ref('')
 let actionMessageTimer = null
 
+const detectMobileViewport = () => {
+  const ua = navigator.userAgent || ''
+  const mobileUa = /Android|iPhone|iPad|iPod|Mobile/i.test(ua)
+  const coarsePointer = window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false
+  return window.innerWidth <= 768 || (mobileUa && coarsePointer)
+}
+
+const isMobileView = ref(detectMobileViewport())
+
 const uploadedCount = computed(() => checklistItems.value.filter((item) => item.has_pdf).length)
 
 const activeItem = computed(() => {
@@ -183,6 +192,19 @@ const formatFileSize = (size) => {
 
 const selectItem = (item) => {
   activeTableId.value = String(item.inspection_table_id)
+}
+
+const handlePreviewClick = (item) => {
+  if (isMobileView.value) {
+    if (!item?.has_pdf || !item?.file_url) {
+      setActionMessage('当前检查表暂未上传 PDF 原件。', 'error')
+      return
+    }
+    window.open(item.file_url, '_blank', 'noopener')
+    return
+  }
+
+  selectItem(item)
 }
 
 const fetchOriginals = async () => {
@@ -256,9 +278,17 @@ const handlePdfChange = async (item, event) => {
   }
 }
 
-onMounted(fetchOriginals)
+const handleViewportResize = () => {
+  isMobileView.value = detectMobileViewport()
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleViewportResize)
+  fetchOriginals()
+})
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleViewportResize)
   if (actionMessageTimer) {
     window.clearTimeout(actionMessageTimer)
   }
