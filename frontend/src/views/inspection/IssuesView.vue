@@ -396,6 +396,31 @@
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
+            <div class="issue-edit-field issue-edit-field-wide">
+              <span>问题照片</span>
+              <div class="rectification-photo-panel">
+                <div v-if="editDialog.issue?.issue_photo" class="rectification-photo-current">
+                  <span>当前问题照片</span>
+                  <button class="image-btn" type="button"
+                    @click="preview(resolveImage(editDialog.issue.issue_photo), '当前问题照片')">
+                    <img :src="resolveImage(editDialog.issue.issue_photo)" class="thumb" alt="当前问题照片" />
+                  </button>
+                </div>
+
+                <label class="issue-edit-field issue-edit-field-wide">
+                  <span>上传新的问题照片</span>
+                  <input type="file" accept="image/*" @change="handleIssuePhotoChange" />
+                </label>
+
+                <div v-if="editDialog.issuePhotoPreview" class="rectification-photo-preview issue-photo-preview">
+                  <img :src="editDialog.issuePhotoPreview" alt="新的问题照片预览" />
+                  <div>
+                    <strong>已选择新问题照片</strong>
+                    <span>{{ editDialog.issuePhotoFile?.name || '待上传图片' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
               <span>问题状态</span>
               <select v-model="editDialog.form.status">
@@ -431,7 +456,7 @@
             </label>
           </div>
           <div v-if="!editDialog.issue?.can_edit_issue_workflow" class="issue-edit-hint">
-            你是该问题的上传人，可在站点提交整改前修改问题描述；流转状态、整改和复核信息仍由业务流程控制。
+            你是该问题的上传人，可在站点提交整改前修改问题描述和问题照片；流转状态、整改和复核信息仍由业务流程控制。
           </div>
 
           <div v-if="editDialog.error" class="form-error">{{ editDialog.error }}</div>
@@ -596,6 +621,8 @@ const editDialog = ref({
   saving: false,
   error: '',
   issue: null,
+  issuePhotoFile: null,
+  issuePhotoPreview: '',
   form: {
     description: '',
     status: '待整改',
@@ -760,25 +787,50 @@ const createIssueEditForm = (item = {}) => ({
   review_note: item.review_note || ''
 })
 
+const revokeIssuePhotoPreview = () => {
+  if (editDialog.value.issuePhotoPreview?.startsWith('blob:')) {
+    URL.revokeObjectURL(editDialog.value.issuePhotoPreview)
+  }
+}
+
 const openEditDialog = (item) => {
+  revokeIssuePhotoPreview()
   editDialog.value = {
     visible: true,
     saving: false,
     error: '',
     issue: item,
+    issuePhotoFile: null,
+    issuePhotoPreview: '',
     form: createIssueEditForm(item)
   }
 }
 
 const closeEditDialog = () => {
   if (editDialog.value.saving) return
+  revokeIssuePhotoPreview()
   editDialog.value = {
     visible: false,
     saving: false,
     error: '',
     issue: null,
+    issuePhotoFile: null,
+    issuePhotoPreview: '',
     form: createIssueEditForm()
   }
+}
+
+const handleIssuePhotoChange = (event) => {
+  const file = event.target.files?.[0]
+  revokeIssuePhotoPreview()
+  if (!file) {
+    editDialog.value.issuePhotoFile = null
+    editDialog.value.issuePhotoPreview = ''
+    return
+  }
+  editDialog.value.issuePhotoFile = file
+  editDialog.value.issuePhotoPreview = URL.createObjectURL(file)
+  editDialog.value.error = ''
 }
 
 const revokeRectificationPhotoPreview = () => {
@@ -871,10 +923,15 @@ const saveIssueEdit = async () => {
     editDialog.value.saving = true
     editDialog.value.error = ''
     const userId = localStorage.getItem('user_id') || ''
-    await axios.put(`/api/issues/${issueId}`, {
-      user_id: userId,
-      ...editDialog.value.form
+    const formData = new FormData()
+    formData.append('user_id', userId)
+    Object.entries(editDialog.value.form).forEach(([key, value]) => {
+      formData.append(key, value ?? '')
     })
+    if (editDialog.value.issuePhotoFile) {
+      formData.append('issue_photo', editDialog.value.issuePhotoFile)
+    }
+    await axios.put(`/api/issues/${issueId}`, formData)
     editDialog.value.saving = false
     closeEditDialog()
     showActionMessage('巡检问题已保存。', 'success')
@@ -1080,6 +1137,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  revokeIssuePhotoPreview()
   revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)

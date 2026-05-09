@@ -7761,12 +7761,13 @@ def get_issues():
 
 @app.route("/api/issues/<int:issue_id>", methods=["PUT"])
 def update_issue(issue_id):
-    data = request.get_json(silent=True) or {}
+    data = request.form if request.form else (request.get_json(silent=True) or {})
     user_id = str(data.get("user_id", "")).strip()
     description = str(data.get("description", "")).strip()
     status = canonical_issue_status(data.get("status"))
     rectification_note = str(data.get("rectification_note", "")).strip() or None
     review_note = str(data.get("review_note", "")).strip() or None
+    issue_photo = request.files.get("issue_photo")
 
     if not user_id:
         return jsonify({"success": False, "error": "缺少用户信息。"}), 400
@@ -7846,7 +7847,7 @@ def update_issue(issue_id):
                     jsonify(
                         {
                             "success": False,
-                            "error": "上传者只能在站点整改前修改问题描述，不能调整流转状态或整改复核信息。",
+                            "error": "上传者只能在站点整改前修改问题描述和问题照片，不能调整流转状态或整改复核信息。",
                         }
                     ),
                     400,
@@ -7869,7 +7870,8 @@ def update_issue(issue_id):
                 rectification_result = %s,
                 rectification_note = %s,
                 review_result = %s,
-                review_note = %s
+                review_note = %s,
+                photo_path = COALESCE(%s, photo_path)
             WHERE id = %s;
             """,
             (
@@ -7879,12 +7881,17 @@ def update_issue(issue_id):
                 rectification_note,
                 review_result,
                 review_note,
+                save_uploaded_file(issue_photo, "issues") if issue_photo and issue_photo.filename else None,
                 issue_id,
             ),
         )
 
         conn.commit()
         return jsonify({"success": True, "message": "巡检问题已保存。"})
+    except ValueError as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         if conn:
             conn.rollback()
