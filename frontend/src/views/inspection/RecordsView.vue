@@ -328,12 +328,8 @@
           </div>
           <div class="batch-detail-actions">
             <button class="btn btn-secondary" type="button" :disabled="!canExportBatchDetail || exportingBatchDetail"
-              @click="exportBatchDetail('word')">
-              {{ exportState.type === 'word' ? '导出中...' : '导出 Word' }}
-            </button>
-            <button class="btn btn-secondary" type="button" :disabled="!canExportBatchDetail || exportingBatchDetail"
-              @click="exportBatchDetail('pdf')">
-              {{ exportState.type === 'pdf' ? '生成中...' : '导出 PDF' }}
+              @click="exportBatchDetail">
+              {{ exportingBatchDetail ? '生成中...' : '导出 PDF' }}
             </button>
             <button class="btn btn-secondary" type="button" @click="closeBatchDetail">关闭</button>
           </div>
@@ -627,23 +623,6 @@ const formatLocalDateTime = (date = new Date()) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const sanitizeFilename = (value) => {
-  return normalizeExportText(value, '巡检记录')
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/\s+/g, '_')
-    .slice(0, 90)
-}
-
-const buildExportFilename = (extension) => {
-  const inspection = batchDetail.value.inspection || {}
-  const parts = [
-    getInspectionDate(inspection),
-    getInspectionStation(inspection),
-    inspection.inspection_table_name || '检查表问题备份'
-  ]
-  return `${sanitizeFilename(parts.filter(Boolean).join('_'))}.${extension}`
-}
-
 const exportInfoItem = (label, value) => {
   return `<div class="info-item"><span>${escapeHtml(label)}</span><strong>${htmlWithLineBreaks(value, '-')}</strong></div>`
 }
@@ -679,7 +658,6 @@ const exportImageBlock = (label, url) => {
     <div class="photo-card">
       <span>${escapeHtml(label)}</span>
       <img src="${escapeHtml(url)}" alt="${escapeHtml(label)}" />
-      <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>
     </div>
   `
 }
@@ -879,12 +857,6 @@ const buildBatchDetailExportHtml = async () => {
             object-fit: contain;
             background: #ffffff;
           }
-          .photo-card a {
-            display: block;
-            color: #2563eb;
-            font-size: 11px;
-            word-break: break-all;
-          }
           .photo-empty {
             min-height: 90px;
             display: flex;
@@ -926,37 +898,22 @@ const buildBatchDetailExportHtml = async () => {
   `
 }
 
-const exportBatchDetail = async (type) => {
+const exportBatchDetail = async () => {
   if (!canExportBatchDetail.value || exportingBatchDetail.value) return
-  const printWindow = type === 'pdf' ? window.open('', '_blank') : null
+  const printWindow = window.open('', '_blank')
 
-  if (type === 'pdf' && !printWindow) {
+  if (!printWindow) {
     window.alert('浏览器阻止了导出窗口，请允许弹窗后再导出 PDF。')
     return
   }
 
   try {
-    exportState.value.type = type
-    if (printWindow) {
-      printWindow.document.open()
-      printWindow.document.write('<!doctype html><meta charset="utf-8"><title>正在生成PDF</title><body style="font-family: sans-serif; padding: 32px;">正在生成巡检问题备份，请稍候...</body>')
-      printWindow.document.close()
-    }
+    exportState.value.type = 'pdf'
+    printWindow.document.open()
+    printWindow.document.write('<!doctype html><meta charset="utf-8"><title>正在生成PDF</title><body style="font-family: sans-serif; padding: 32px;">正在生成巡检问题备份，请稍候...</body>')
+    printWindow.document.close()
 
     const html = await buildBatchDetailExportHtml()
-
-    if (type === 'word') {
-      const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = buildExportFilename('doc')
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-      return
-    }
 
     printWindow.document.open()
     printWindow.document.write(html)
@@ -2557,10 +2514,6 @@ onBeforeUnmount(() => {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
-  }
-
-  .batch-detail-actions .btn:last-child {
-    grid-column: 1 / -1;
   }
 
   .batch-detail-summary-grid,
