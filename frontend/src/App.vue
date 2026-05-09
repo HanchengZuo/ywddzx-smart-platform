@@ -347,7 +347,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import appPackage from '../package.json'
-import { clearAuthSession, storeAuthSession, syncAxiosAuthHeader } from './utils/authSession'
+import { clearAuthSession, consumeAuthSessionMessage, storeAuthSession, syncAxiosAuthHeader } from './utils/authSession'
 
 const router = useRouter()
 const route = useRoute()
@@ -500,10 +500,19 @@ const syncAuthState = () => {
   authState.permissions = parseStoredPermissions()
 }
 
+const showAuthSessionMessageIfNeeded = () => {
+  if (route.path !== '/login') return
+  const message = consumeAuthSessionMessage()
+  if (message) {
+    loginError.value = message
+  }
+}
+
 watch(
   () => route.path,
   () => {
     syncAuthState()
+    showAuthSessionMessageIfNeeded()
   },
   { immediate: true }
 )
@@ -624,6 +633,7 @@ const handleLogin = async () => {
 
   try {
     loginError.value = ''
+    consumeAuthSessionMessage()
 
     const response = await axios.post('/api/login', {
       username: loginForm.username,

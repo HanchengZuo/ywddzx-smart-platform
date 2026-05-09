@@ -95,8 +95,6 @@ const router = createRouter({
   routes
 })
 
-let verifiedAuthToken = ''
-
 const hasPermission = (role, permissions, key) => role === 'root' || Boolean(permissions[key])
 
 const canAccessPath = (path, role, permissions) => {
@@ -159,23 +157,16 @@ const resolveFallbackPath = (role, permissions) => {
 const verifyStoredAuthToken = async () => {
   const token = localStorage.getItem('auth_token')
   if (!isUsableAuthToken(token)) {
-    clearAuthSession()
-    verifiedAuthToken = ''
+    clearAuthSession(token ? '登录已过期，请重新登录。' : '')
     return false
-  }
-
-  if (verifiedAuthToken === token) {
-    return true
   }
 
   try {
     const response = await axios.get('/api/auth/me')
     storeAuthSession(response.data.user, response.data.token || token)
-    verifiedAuthToken = localStorage.getItem('auth_token') || token
     return true
   } catch (error) {
-    clearAuthSession()
-    verifiedAuthToken = ''
+    clearAuthSession(error?.response?.data?.error || '登录已过期，请重新登录。')
     return false
   }
 }

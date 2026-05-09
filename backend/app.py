@@ -17,7 +17,7 @@ from io import BytesIO
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 
@@ -49,8 +49,14 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 32
-AUTH_TOKEN_MAX_AGE_SECONDS = int(os.environ.get("AUTH_TOKEN_MAX_AGE_SECONDS", str(12 * 60 * 60)))
+AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS = int(
+    os.environ.get("AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS", str(8 * 60 * 60))
+)
+AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
+    os.environ.get("AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS", str(4 * 60 * 60))
+)
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
+PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 
 
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
@@ -1101,6 +1107,16 @@ def get_password_fingerprint(password):
     return hashlib.sha256(str(password or "").encode("utf-8")).hexdigest()[:24]
 
 
+def get_auth_token_ttl_seconds(user):
+    if str(user.get("role") or "") in PRIVILEGED_AUTH_ROLES:
+        return AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS
+    return AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS
+
+
+def current_epoch_seconds():
+    return int(time.time())
+
+
 def fetch_auth_user_by_id(cur, user_id):
     cur.execute(
         """
@@ -1126,12 +1142,25 @@ def fetch_auth_user_by_id(cur, user_id):
 
 
 def create_auth_token(user):
+    issued_at = current_epoch_seconds()
+    expires_at = issued_at + get_auth_token_ttl_seconds(user)
     payload = {
         "uid": int(user["id"]),
         "username": user["username"],
+        "role": user["role"],
         "pwd": get_password_fingerprint(user.get("password")),
+        "iat": issued_at,
+        "exp": expires_at,
     }
     return get_auth_serializer().dumps(payload)
+
+
+def get_auth_payload_expires_in(payload):
+    try:
+        expires_at = int(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, expires_at - current_epoch_seconds())
 
 
 def build_auth_user_payload(cur, user):
@@ -1160,18 +1189,21 @@ def extract_bearer_token():
 
 def verify_auth_token(token):
     try:
-        payload = get_auth_serializer().loads(
-            token,
-            max_age=AUTH_TOKEN_MAX_AGE_SECONDS,
-        )
-    except SignatureExpired as exc:
-        raise PermissionError("登录状态已过期，请重新登录。") from exc
+        payload = get_auth_serializer().loads(token)
     except BadSignature as exc:
-        raise PermissionError("登录状态无效，请重新登录。") from exc
+        raise PermissionError("登录已过期，请重新登录。") from exc
 
     user_id = payload.get("uid")
     if not user_id:
-        raise PermissionError("登录状态无效，请重新登录。")
+        raise PermissionError("登录已过期，请重新登录。")
+
+    try:
+        expires_at = int(payload.get("exp") or 0)
+    except (TypeError, ValueError) as exc:
+        raise PermissionError("登录已过期，请重新登录。") from exc
+
+    if expires_at <= current_epoch_seconds():
+        raise PermissionError("登录已过期，请重新登录。")
 
     conn = None
     cur = None
@@ -1183,12 +1215,14 @@ def verify_auth_token(token):
         close_db_resources(cur, conn)
 
     if not user:
-        raise PermissionError("账号不存在，请重新登录。")
+        raise PermissionError("登录已过期，请重新登录。")
     if payload.get("username") != user["username"]:
-        raise PermissionError("登录状态无效，请重新登录。")
+        raise PermissionError("登录已过期，请重新登录。")
+    if payload.get("role") != user["role"]:
+        raise PermissionError("登录已过期，请重新登录。")
     if payload.get("pwd") != get_password_fingerprint(user.get("password")):
-        raise PermissionError("账号密码已变更，请重新登录。")
-    return user
+        raise PermissionError("登录已过期，请重新登录。")
+    return user, payload
 
 
 def normalize_identity_for_compare(value):
@@ -1200,6 +1234,13 @@ def normalize_identity_for_compare(value):
     except (TypeError, ValueError):
         return text
     return str(parsed) if parsed > 0 else text
+
+
+def get_authenticated_request_user_id(fallback=None):
+    current_user = getattr(g, "current_user", None)
+    if current_user:
+        return str(current_user["id"])
+    return str(fallback or "").strip()
 
 
 def iter_request_identity_values():
@@ -1240,11 +1281,12 @@ def require_signed_api_token():
         return jsonify({"success": False, "error": "请先登录。"}), 401
 
     try:
-        user = verify_auth_token(token)
+        user, payload = verify_auth_token(token)
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 401
 
     g.current_user = user
+    g.auth_payload = payload
     current_user_id = normalize_identity_for_compare(user["id"])
     for key, value in iter_request_identity_values():
         requested_user_id = normalize_identity_for_compare(value)
@@ -2674,6 +2716,7 @@ def ensure_station_management_columns(cur):
 
 
 def require_management_user(cur, user_id, permission_key):
+    user_id = get_authenticated_request_user_id(user_id)
     if not user_id:
         raise PermissionError("缺少用户信息。")
 
@@ -3825,7 +3868,7 @@ def login():
             {
                 "success": True,
                 "token": token,
-                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "expires_in": get_auth_token_ttl_seconds(user),
                 "user": build_auth_user_payload(cur, user),
             }
         )
@@ -3858,7 +3901,7 @@ def get_authenticated_user():
             {
                 "success": True,
                 "token": extract_bearer_token(),
-                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "expires_in": get_auth_payload_expires_in(getattr(g, "auth_payload", {})),
                 "user": build_auth_user_payload(cur, user),
             }
         )
@@ -3873,7 +3916,7 @@ def change_own_password():
     data = request.get_json(silent=True) or {}
 
     try:
-        user_id = int(data.get("user_id") or 0)
+        user_id = int(get_authenticated_request_user_id(data.get("user_id")) or 0)
     except (TypeError, ValueError):
         user_id = 0
 
@@ -3934,7 +3977,7 @@ def change_own_password():
             {
                 "success": True,
                 "token": token,
-                "expires_in": AUTH_TOKEN_MAX_AGE_SECONDS,
+                "expires_in": get_auth_token_ttl_seconds(updated_user),
                 "must_change_password": False,
                 "user": build_auth_user_payload(cur, updated_user),
             }
@@ -3952,7 +3995,7 @@ def change_own_password():
 # === 检查表级签名确认 API ===
 @app.route("/api/inspections/<int:inspection_id>/sign", methods=["POST"])
 def sign_inspection_record(inspection_id):
-    user_id = str(request.form.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(request.form.get("user_id"))
     signed_name = str(request.form.get("signed_name", "")).strip()
     signature_file = request.files.get("signature")
 
@@ -7482,7 +7525,7 @@ def get_inspection_plan_overview():
 
 @app.route("/api/inspection-register", methods=["POST"])
 def inspection_register():
-    inspector_id = str(request.form.get("inspector_id", "")).strip()
+    inspector_id = get_authenticated_request_user_id(request.form.get("inspector_id"))
     station_id = str(request.form.get("station_id", "")).strip()
     inspection_table_id = str(request.form.get("inspection_table_id", "")).strip()
     has_issue = str(request.form.get("has_issue", "yes")).strip().lower()

@@ -16,6 +16,9 @@ const AUTH_STORAGE_KEYS = [
   'must_change_password'
 ]
 
+const AUTH_MESSAGE_KEY = 'auth_session_message'
+const DEFAULT_EXPIRED_MESSAGE = '登录已过期，请重新登录。'
+
 export const getStoredAuthToken = () => localStorage.getItem('auth_token') || ''
 
 export const isUsableAuthToken = (token = getStoredAuthToken()) => {
@@ -32,8 +35,19 @@ export const syncAxiosAuthHeader = () => {
   delete axios.defaults.headers.common.Authorization
 }
 
-export const clearAuthSession = () => {
+export const getAuthSessionMessage = () => localStorage.getItem(AUTH_MESSAGE_KEY) || ''
+
+export const consumeAuthSessionMessage = () => {
+  const message = getAuthSessionMessage()
+  localStorage.removeItem(AUTH_MESSAGE_KEY)
+  return message
+}
+
+export const clearAuthSession = (message = '') => {
   AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key))
+  if (message) {
+    localStorage.setItem(AUTH_MESSAGE_KEY, message)
+  }
   syncAxiosAuthHeader()
 }
 
@@ -55,6 +69,7 @@ export const storeAuthSession = (user, token) => {
   localStorage.setItem('address', user?.address || '')
   localStorage.setItem('permissions', JSON.stringify(user?.permissions || {}))
   localStorage.setItem('must_change_password', user?.must_change_password ? 'true' : 'false')
+  localStorage.removeItem(AUTH_MESSAGE_KEY)
   syncAxiosAuthHeader()
 }
 
@@ -78,7 +93,7 @@ export const configureAxiosAuth = (router) => {
       const status = error?.response?.status
       const url = String(error?.config?.url || '')
       if (status === 401 && !url.includes('/api/login')) {
-        clearAuthSession()
+        clearAuthSession(error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE)
         if (router?.currentRoute?.value?.path !== '/login') {
           router?.push?.('/login')
         }
