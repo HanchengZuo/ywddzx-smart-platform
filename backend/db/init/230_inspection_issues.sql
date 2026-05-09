@@ -15,9 +15,10 @@
 -- - 规范详情统一落为 standard_detail_text，供问题列表/我的问题统一展示
 --
 -- status 说明：
--- - 待整改：问题刚录入，或督导组反馈仍未完成整改
+-- - 待整改：问题刚录入，尚未由站点提交整改反馈
 -- - 待复核：站点已提交整改，等待督导组复核
--- - 已闭环：督导组确认已整改，问题关闭
+-- - 已闭环：督导组确认问题已经整改，流程关闭
+-- - 站经无法整改：督导组确认该问题属于站经理无法整改事项
 
 CREATE TABLE issues (
     id SERIAL PRIMARY KEY,                                                    -- 问题ID，主键，自增
@@ -32,11 +33,11 @@ CREATE TABLE issues (
     status TEXT NOT NULL DEFAULT '待整改',                                     -- 问题当前状态
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                           -- 创建时间
 
-    rectification_result TEXT,                                                -- 站点整改结果：未整改 / 已整改 / 站级无法完成整改
+    rectification_result TEXT,                                                -- 站点整改结果：已整改 / 站经无法整改
     rectification_note TEXT,                                                  -- 站点整改说明
     rectification_photo_path TEXT,                                            -- 站点整改照片路径
 
-    review_result TEXT,                                                       -- 督导组复核结果：未整改 / 已整改 / 站级无法完成整改
+    review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改
     review_note TEXT,                                                         -- 督导组复核说明
     review_photo_path TEXT                                                    -- 督导组复核照片路径
 );

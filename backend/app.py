@@ -227,8 +227,13 @@ STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
 STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
-ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环"}
-ISSUE_RESULT_OPTIONS = {"未整改", "已整改", "站级无法完成整改"}
+ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
+ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
+ISSUE_STATUS_ALIASES = {"已整改": "已闭环"}
+ISSUE_RESULT_ALIASES = {
+    "站级无法完成整改": "站经无法整改",
+    "站经理无法整改": "站经无法整改",
+}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -2213,8 +2218,39 @@ def can_delete_inspection_issues(cur, user):
     return has_permission(cur, user, "delete_inspection_issues")
 
 
-def normalize_optional_issue_result(value, field_label):
+def canonical_issue_status(value):
     normalized = str(value or "").strip()
+    return ISSUE_STATUS_ALIASES.get(normalized, normalized)
+
+
+def is_closed_issue_status(value):
+    return canonical_issue_status(value) == "已闭环"
+
+
+def canonical_issue_result(value):
+    normalized = str(value or "").strip()
+    return ISSUE_RESULT_ALIASES.get(normalized, normalized)
+
+
+def normalize_issue_result_for_response(value):
+    normalized = canonical_issue_result(value)
+    if normalized == "未整改":
+        return None
+    return normalized or None
+
+
+def normalize_issue_row_for_response(row):
+    data = dict(row)
+    if "status" in data:
+        data["status"] = canonical_issue_status(data.get("status"))
+    for key in ("rectification_result", "review_result"):
+        if key in data:
+            data[key] = normalize_issue_result_for_response(data.get(key))
+    return data
+
+
+def normalize_optional_issue_result(value, field_label):
+    normalized = canonical_issue_result(value)
     if not normalized:
         return None
     if normalized not in ISSUE_RESULT_OPTIONS:
@@ -6293,7 +6329,7 @@ def get_station_map():
                 s.status,
                 COALESCE(SUM(CASE WHEN i.status = '待整改' THEN 1 ELSE 0 END), 0) AS pending_rectification_count,
                 COALESCE(SUM(CASE WHEN i.status = '待复核' THEN 1 ELSE 0 END), 0) AS pending_review_count,
-                COALESCE(SUM(CASE WHEN i.status = '已闭环' THEN 1 ELSE 0 END), 0) AS closed_count,
+                COALESCE(SUM(CASE WHEN i.status IN ('已闭环', '已整改') THEN 1 ELSE 0 END), 0) AS closed_count,
                 MAX(ins.inspection_date) AS latest_inspection_date
             FROM stations s
             LEFT JOIN issues i ON i.station_id = s.id
@@ -6348,7 +6384,18 @@ def get_event_feed():
                 CONCAT('issue-create-', i.id) AS id,
                 s.id AS "stationId",
                 s.station_name AS "stationName",
-                CONCAT('【', t.table_name, '】新增问题，规范ID：', i.standard_id, '，当前状态：', i.status, '。') AS text,
+                CONCAT(
+                    '【',
+                    t.table_name,
+                    '】新增问题，规范ID：',
+                    i.standard_id,
+                    '，当前状态：',
+                    CASE
+                        WHEN i.status IN ('已闭环', '已整改') THEN '已闭环'
+                        ELSE i.status
+                    END,
+                    '。'
+                ) AS text,
                 TO_CHAR(COALESCE(i.created_at, NOW()), 'HH24:MI') AS time,
                 CASE
                     WHEN i.status = '待整改' THEN 'danger'
@@ -7492,7 +7539,7 @@ def get_my_issues():
                 (user["station_id"],),
             )
             rows = cur.fetchall()
-            return jsonify(rows)
+            return jsonify([normalize_issue_row_for_response(row) for row in rows])
 
         if is_root_user(user) or user.get("role") == "supervisor":
             cur.execute(
@@ -7522,7 +7569,7 @@ def get_my_issues():
                 """
             )
             rows = cur.fetchall()
-            return jsonify(rows)
+            return jsonify([normalize_issue_row_for_response(row) for row in rows])
 
         return jsonify([])
     except Exception as e:
@@ -7610,7 +7657,7 @@ def get_issues():
             params,
         )
         rows = cur.fetchall()
-        return jsonify(rows)
+        return jsonify([normalize_issue_row_for_response(row) for row in rows])
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
@@ -7622,7 +7669,7 @@ def update_issue(issue_id):
     data = request.get_json(silent=True) or {}
     user_id = str(data.get("user_id", "")).strip()
     description = str(data.get("description", "")).strip()
-    status = str(data.get("status", "")).strip()
+    status = canonical_issue_status(data.get("status"))
     rectification_note = str(data.get("rectification_note", "")).strip() or None
     review_note = str(data.get("review_note", "")).strip() or None
 
@@ -7661,7 +7708,7 @@ def update_issue(issue_id):
 
         cur.execute(
             """
-            SELECT id, station_id
+            SELECT id, station_id, status
             FROM issues
             WHERE id = %s
             LIMIT 1;
@@ -7672,6 +7719,17 @@ def update_issue(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if is_closed_issue_status(issue["status"]) and not is_root_user(user):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该问题已闭环，只有 root 账号可以编辑。",
+                    }
+                ),
+                403,
+            )
 
         can_view_all = can_view_all_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
@@ -7738,7 +7796,7 @@ def delete_issue(issue_id):
 
         cur.execute(
             """
-            SELECT id, inspection_id, station_id
+            SELECT id, inspection_id, station_id, status
             FROM issues
             WHERE id = %s
             LIMIT 1;
@@ -7749,6 +7807,17 @@ def delete_issue(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if is_closed_issue_status(issue["status"]) and not is_root_user(user):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该问题已闭环，只有 root 账号可以删除。",
+                    }
+                ),
+                403,
+            )
 
         can_view_all = can_view_all_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
@@ -8276,7 +8345,9 @@ def get_inspection_issues(inspection_id):
 @app.route("/api/issues/<int:issue_id>/rectification", methods=["POST"])
 def submit_rectification(issue_id):
     user_id = str(request.form.get("user_id", "")).strip()
-    rectification_result = str(request.form.get("rectification_result", "")).strip()
+    rectification_result = canonical_issue_result(
+        request.form.get("rectification_result", "")
+    )
     rectification_note = str(request.form.get("rectification_note", "")).strip()
     rectification_photo = request.files.get("rectification_photo")
 
@@ -8285,6 +8356,17 @@ def submit_rectification(issue_id):
 
     if not rectification_result:
         return jsonify({"success": False, "error": "请选择整改结果。"}), 400
+
+    if rectification_result not in ISSUE_RESULT_OPTIONS:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "整改结果只能选择已整改或站经无法整改。",
+                }
+            ),
+            400,
+        )
 
     if not rectification_note:
         return jsonify({"success": False, "error": "请填写整改说明。"}), 400
@@ -8416,7 +8498,7 @@ def submit_rectification(issue_id):
 @app.route("/api/issues/<int:issue_id>/review", methods=["POST"])
 def submit_review(issue_id):
     user_id = str(request.form.get("user_id", "")).strip()
-    review_result = str(request.form.get("review_result", "")).strip()
+    review_result = canonical_issue_result(request.form.get("review_result", ""))
     review_note = str(request.form.get("review_note", "")).strip()
     review_photo = request.files.get("review_photo")
 
@@ -8425,6 +8507,17 @@ def submit_review(issue_id):
 
     if not review_result:
         return jsonify({"success": False, "error": "请选择督导组复核结果。"}), 400
+
+    if review_result not in ISSUE_RESULT_OPTIONS:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "督导组复核结果只能选择已整改或站经无法整改。",
+                }
+            ),
+            400,
+        )
 
     if not review_note:
         return jsonify({"success": False, "error": "请填写复核说明。"}), 400
@@ -8484,7 +8577,7 @@ def submit_review(issue_id):
                 400,
             )
 
-        new_status = "已闭环" if review_result == "已整改" else "待整改"
+        new_status = "已闭环" if review_result == "已整改" else "站经无法整改"
         review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
         cur.execute(
@@ -8506,7 +8599,12 @@ def submit_review(issue_id):
         )
 
         conn.commit()
-        return jsonify({"success": True, "message": "督导组复核提交成功。"})
+        return jsonify(
+            {
+                "success": True,
+                "message": f"督导组复核提交成功，问题状态已更新为{new_status}。",
+            }
+        )
     except Exception as e:
         if conn:
             conn.rollback()

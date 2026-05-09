@@ -40,6 +40,7 @@
             <option value="待整改">待整改</option>
             <option value="待复核">待复核</option>
             <option value="已闭环">已闭环</option>
+            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
 
@@ -330,9 +331,8 @@
               <label>整改结果</label>
               <select v-model="actionForm.rectificationResult">
                 <option value="">请选择</option>
-                <option value="未整改">未整改</option>
                 <option value="已整改">已整改</option>
-                <option value="站级无法完成整改">站级无法完成整改</option>
+                <option value="站经无法整改">站经无法整改</option>
               </select>
             </div>
 
@@ -387,9 +387,8 @@
               <label>督导组复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
-                <option value="未整改">未整改</option>
                 <option value="已整改">已整改</option>
-                <option value="站级无法完成整改">站级无法完成整改</option>
+                <option value="站经无法整改">站经无法整改</option>
               </select>
             </div>
 
@@ -1022,6 +1021,7 @@ const statusClass = (status) => {
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
+  if (status === '站经无法整改') return 'status-tag neutral'
   return 'status-tag'
 }
 
@@ -1688,6 +1688,11 @@ onBeforeUnmount(() => {
 .status-tag.success {
   background: #f0fdf4;
   color: #16a34a;
+}
+
+.status-tag.neutral {
+  background: #f8fafc;
+  color: #475569;
 }
 
 .drawer-mask {

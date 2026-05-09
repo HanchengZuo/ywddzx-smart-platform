@@ -87,13 +87,14 @@
           </div>
 
           <div v-if="canManageIssues" class="mobile-card-actions">
-            <button v-if="canEditIssues" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
+            <button v-if="canEditIssueRow(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
               编辑问题
             </button>
-            <button v-if="canDeleteIssues" class="btn btn-danger" type="button" :disabled="deletingIssueId === item.id"
-              @click="deleteIssue(item)">
+            <button v-if="canDeleteIssueRow(item)" class="btn btn-danger" type="button"
+              :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
               {{ deletingIssueId === item.id ? '删除中...' : '删除问题' }}
             </button>
+            <span v-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
           </div>
         </div>
       </div>
@@ -197,18 +198,16 @@
           <label>站经理整改结果</label>
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
-            <option value="未整改">未整改</option>
             <option value="已整改">已整改</option>
-            <option value="站级无法完成整改">站级无法完成整改</option>
+            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
         <div class="filter-item">
           <label>督导组复核结果</label>
           <select v-model="filters.reviewResult">
             <option value="">全部</option>
-            <option value="未整改">未整改</option>
             <option value="已整改">已整改</option>
-            <option value="站级无法完成整改">站级无法完成整改</option>
+            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
         <div class="filter-item">
@@ -218,6 +217,7 @@
             <option value="待整改">待整改</option>
             <option value="待复核">待复核</option>
             <option value="已闭环">已闭环</option>
+            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
       </div>
@@ -307,14 +307,15 @@
                 </td>
                 <td v-if="canManageIssues" class="nowrap operation-col">
                   <div class="table-actions">
-                    <button v-if="canEditIssues" class="btn btn-secondary btn-sm" type="button"
+                    <button v-if="canEditIssueRow(item)" class="btn btn-secondary btn-sm" type="button"
                       @click="openEditDialog(item)">
                       编辑
                     </button>
-                    <button v-if="canDeleteIssues" class="btn btn-danger btn-sm" type="button"
+                    <button v-if="canDeleteIssueRow(item)" class="btn btn-danger btn-sm" type="button"
                       :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
                       {{ deletingIssueId === item.id ? '删除中' : '删除' }}
                     </button>
+                    <span v-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
                   </div>
                 </td>
               </tr>
@@ -393,15 +394,15 @@
                 <option value="待整改">待整改</option>
                 <option value="待复核">待复核</option>
                 <option value="已闭环">已闭环</option>
+                <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
             <label class="issue-edit-field">
               <span>站经理整改结果</span>
               <select v-model="editDialog.form.rectification_result">
                 <option value="">暂无/清空</option>
-                <option value="未整改">未整改</option>
                 <option value="已整改">已整改</option>
-                <option value="站级无法完成整改">站级无法完成整改</option>
+                <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
             <label class="issue-edit-field issue-edit-field-wide">
@@ -412,9 +413,8 @@
               <span>督导组复核结果</span>
               <select v-model="editDialog.form.review_result">
                 <option value="">暂无/清空</option>
-                <option value="未整改">未整改</option>
                 <option value="已整改">已整改</option>
-                <option value="站级无法完成整改">站级无法完成整改</option>
+                <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
             <label class="issue-edit-field issue-edit-field-wide">
@@ -598,6 +598,10 @@ const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPerm
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
 const canManageIssues = computed(() => canEditIssues.value || canDeleteIssues.value)
 const issueTableColspan = computed(() => canManageIssues.value ? 21 : 20)
+
+const isClosedIssue = (item) => item?.status === '已闭环'
+const canEditIssueRow = (item) => canEditIssues.value && (currentRole === 'root' || !isClosedIssue(item))
+const canDeleteIssueRow = (item) => canDeleteIssues.value && (currentRole === 'root' || !isClosedIssue(item))
 
 watch([filters, pageSize], () => {
   page.value = 1
@@ -899,6 +903,7 @@ const statusClass = (status) => {
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
+  if (status === '站经无法整改') return 'status-tag neutral'
   return 'status-tag'
 }
 
@@ -1436,6 +1441,19 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+.locked-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .nowrap {
   white-space: nowrap;
 }
@@ -1557,6 +1575,11 @@ onBeforeUnmount(() => {
 .status-tag.success {
   background: #f0fdf4;
   color: #16a34a;
+}
+
+.status-tag.neutral {
+  background: #f8fafc;
+  color: #475569;
 }
 
 .image-modal {
