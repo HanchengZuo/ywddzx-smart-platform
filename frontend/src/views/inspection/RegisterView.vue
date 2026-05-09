@@ -239,23 +239,9 @@ const toPinyinText = (value, options = {}) => {
   }
 }
 
-const isSubsequenceMatch = (needle, haystack) => {
-  if (!needle) return true
-  let cursor = 0
-  for (const char of haystack) {
-    if (char === needle[cursor]) {
-      cursor += 1
-      if (cursor >= needle.length) return true
-    }
-  }
-  return false
-}
-
-const buildSearchVariants = (...values) => {
-  const source = values
-    .map((value) => String(value || '').trim())
-    .filter(Boolean)
-    .join(' ')
+const buildSearchVariants = (value) => {
+  const source = String(value || '').trim()
+  if (!source) return []
 
   const fullPinyin = toPinyinText(source)
   const firstLetters = toPinyinText(source, { pattern: 'first' })
@@ -271,8 +257,24 @@ const matchesSmartSearch = (values, keyword) => {
   const needle = normalizeSearchToken(keyword)
   if (!needle) return true
 
-  const variants = buildSearchVariants(...values)
-  return variants.some((variant) => variant.includes(needle) || isSubsequenceMatch(needle, variant))
+  return values.some((value) => {
+    const variants = buildSearchVariants(value)
+    return variants.some((variant) => variant.includes(needle))
+  })
+}
+
+const STANDARD_SEARCH_EXCLUDED_KEYS = new Set([
+  'id',
+  'inspection_table_id',
+  'created_at',
+  'updated_at',
+  'standard_detail_text'
+])
+
+const getStandardSearchValues = (item = {}) => {
+  return Object.entries(item)
+    .filter(([key, value]) => !STANDARD_SEARCH_EXCLUDED_KEYS.has(key) && value !== null && value !== undefined)
+    .map(([, value]) => value)
 }
 
 const filteredInspectionTables = computed(() => {
@@ -327,20 +329,13 @@ const normalizeStandardDetailForRegister = (value) => {
 
 const filteredStations = computed(() => {
   return stations.value.filter((item) => {
-    return matchesSmartSearch([item.station_name, item.region], stationSearch.value)
+    return matchesSmartSearch([item.station_name, item.region, item.station_usernames], stationSearch.value)
   })
 })
 
 const filteredStandards = computed(() => {
   return standards.value.filter((item) => {
-    return matchesSmartSearch([
-      item.standard_id,
-      item.standard_detail_text,
-      item.check_content,
-      item.check_item,
-      item.project_name,
-      getStandardTitle(item)
-    ], standardSearch.value)
+    return matchesSmartSearch(getStandardSearchValues(item), standardSearch.value)
   })
 })
 
