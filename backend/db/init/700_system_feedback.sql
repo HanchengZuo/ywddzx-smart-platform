@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS system_feedbacks (
     author_name TEXT,
     author_phone TEXT,
     author_role TEXT,
+    accepted_at TIMESTAMP,
+    accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -38,6 +40,9 @@ CREATE TABLE IF NOT EXISTS system_feedback_comments (
 
 CREATE INDEX IF NOT EXISTS idx_system_feedbacks_created_at
     ON system_feedbacks(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_system_feedbacks_accepted_at
+    ON system_feedbacks(accepted_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_system_feedback_screenshots_feedback_id
     ON system_feedback_screenshots(feedback_id);

@@ -2926,8 +2926,17 @@ def ensure_feedback_schema(cur):
             author_name TEXT,
             author_phone TEXT,
             author_role TEXT,
+            accepted_at TIMESTAMP,
+            accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE system_feedbacks
+            ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
         """
     )
     cur.execute(
@@ -2959,6 +2968,12 @@ def ensure_feedback_schema(cur):
         """
         CREATE INDEX IF NOT EXISTS idx_system_feedbacks_created_at
         ON system_feedbacks(created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_feedbacks_accepted_at
+        ON system_feedbacks(accepted_at DESC);
         """
     )
     cur.execute(
@@ -3024,6 +3039,8 @@ def serialize_feedback_row(row, screenshots=None, comments=None, can_delete=Fals
     item["screenshots"] = screenshots or []
     item["comments"] = comments or []
     item["can_delete"] = bool(can_delete)
+    item["can_accept"] = bool(can_delete)
+    item["is_accepted"] = bool(item.get("accepted_at"))
     return item
 
 
@@ -5294,6 +5311,8 @@ def get_system_feedbacks():
                 author_name,
                 author_phone,
                 author_role,
+                accepted_by,
+                TO_CHAR(accepted_at, 'YYYY-MM-DD HH24:MI') AS accepted_at,
                 TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at
             FROM system_feedbacks
             ORDER BY id DESC
@@ -5526,6 +5545,61 @@ def create_system_feedback_comment(feedback_id):
                 "success": True,
                 "message": "讨论已发布。",
                 "comment": serialize_feedback_comment(comment, is_root_user(current_user)),
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks/<int:feedback_id>/acceptance", methods=["PATCH"])
+def update_system_feedback_acceptance(feedback_id):
+    current_user = get_current_request_user()
+    if not is_root_user(current_user):
+        return jsonify({"success": False, "error": "只有 root 账号可以设置反馈采纳状态。"}), 403
+
+    data = request.get_json(silent=True) or {}
+    accepted = bool(data.get("accepted"))
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+
+        cur.execute(
+            """
+            UPDATE system_feedbacks
+            SET accepted_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
+                accepted_by = CASE WHEN %s THEN %s ELSE NULL END
+            WHERE id = %s
+            RETURNING
+                id,
+                accepted_by,
+                TO_CHAR(accepted_at, 'YYYY-MM-DD HH24:MI') AS accepted_at;
+            """,
+            (accepted, accepted, current_user["id"], feedback_id),
+        )
+        feedback = cur.fetchone()
+        if not feedback:
+            conn.rollback()
+            return jsonify({"success": False, "error": "反馈不存在。"}), 404
+
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "反馈已标记为已采纳。" if accepted else "反馈已取消采纳。",
+                "feedback": {
+                    "id": feedback["id"],
+                    "accepted_by": feedback["accepted_by"],
+                    "accepted_at": feedback["accepted_at"],
+                    "is_accepted": bool(feedback["accepted_at"]),
+                },
             }
         )
     except Exception as e:

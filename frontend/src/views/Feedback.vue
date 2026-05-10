@@ -100,7 +100,7 @@
         <div class="card-surface stat-card">
           <span>公开反馈</span>
           <strong>{{ feedbacks.length }}</strong>
-          <small>所有用户均可查看与讨论</small>
+          <small>其中 {{ acceptedCount }} 条已采纳</small>
         </div>
         <div class="card-surface stat-card">
           <span>讨论总数</span>
@@ -138,18 +138,26 @@
       </div>
 
       <div v-else class="feedback-list">
-        <article v-for="item in filteredFeedbacks" :key="item.id" class="feedback-thread">
+        <article v-for="item in filteredFeedbacks" :key="item.id" class="feedback-thread"
+          :class="{ accepted: item.is_accepted }">
           <div class="thread-head">
             <div>
               <div class="thread-tags">
+                <span v-if="item.is_accepted" class="accepted-tag">已采纳</span>
                 <span>{{ item.feedback_type }}</span>
                 <span>{{ item.module }}</span>
               </div>
               <h3>{{ item.title }}</h3>
             </div>
-            <button v-if="item.can_delete" class="danger-btn" type="button" @click="deleteFeedback(item)">
-              删除
-            </button>
+            <div v-if="item.can_accept || item.can_delete" class="thread-actions">
+              <button v-if="item.can_accept" class="accept-btn" :class="{ active: item.is_accepted }" type="button"
+                :disabled="acceptingId === item.id" @click="toggleFeedbackAccepted(item)">
+                {{ acceptingId === item.id ? '处理中' : item.is_accepted ? '取消采纳' : '标记采纳' }}
+              </button>
+              <button v-if="item.can_delete" class="danger-btn" type="button" @click="deleteFeedback(item)">
+                删除
+              </button>
+            </div>
           </div>
 
           <div class="thread-author">
@@ -157,6 +165,11 @@
             <span>{{ item.author_phone || '未填写手机号' }}</span>
             <span>{{ roleLabel(item.author_role) }}</span>
             <span>{{ item.created_at }}</span>
+          </div>
+
+          <div v-if="item.is_accepted" class="accepted-banner">
+            <strong>该反馈已被采纳</strong>
+            <span>{{ item.accepted_at ? `采纳时间：${item.accepted_at}` : '已进入后续优化跟进范围' }}</span>
           </div>
 
           <p class="thread-desc">{{ item.description }}</p>
@@ -244,6 +257,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const screenshotProcessing = ref(false)
 const commentSubmittingId = ref(null)
+const acceptingId = ref(null)
 const screenshotFiles = ref([])
 const screenshotPreviews = ref([])
 const commentDrafts = reactive({})
@@ -267,6 +281,7 @@ const preview = reactive({
 let messageTimer = null
 
 const totalComments = computed(() => feedbacks.value.reduce((sum, item) => sum + (item.comments?.length || 0), 0))
+const acceptedCount = computed(() => feedbacks.value.filter((item) => item.is_accepted).length)
 const filteredFeedbacks = computed(() => {
   return feedbacks.value.filter((item) => {
     const typeMatched = !filters.feedback_type || item.feedback_type === filters.feedback_type
@@ -462,6 +477,25 @@ const submitComment = async (item) => {
     setMessage(error?.response?.data?.error || '讨论发布失败。', 'error')
   } finally {
     commentSubmittingId.value = null
+  }
+}
+
+const toggleFeedbackAccepted = async (item) => {
+  const nextAccepted = !item.is_accepted
+  try {
+    acceptingId.value = item.id
+    const response = await axios.patch(`/api/feedbacks/${item.id}/acceptance`, {
+      accepted: nextAccepted
+    })
+    const updated = response.data?.feedback || {}
+    item.is_accepted = Boolean(updated.is_accepted)
+    item.accepted_at = updated.accepted_at || ''
+    item.accepted_by = updated.accepted_by || null
+    setMessage(response.data?.message || (nextAccepted ? '反馈已标记为已采纳。' : '反馈已取消采纳。'), 'success')
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '反馈采纳状态更新失败。', 'error')
+  } finally {
+    acceptingId.value = null
   }
 }
 
@@ -901,7 +935,8 @@ onBeforeUnmount(() => {
 
 .primary-btn,
 .ghost-btn,
-.danger-btn {
+.danger-btn,
+.accept-btn {
   height: 42px;
   padding: 0 16px;
   border-radius: 12px;
@@ -928,8 +963,23 @@ onBeforeUnmount(() => {
   color: #b91c1c;
 }
 
+.accept-btn {
+  height: 36px;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.accept-btn.active {
+  border-color: #86efac;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(22, 163, 74, 0.16);
+}
+
 .primary-btn:disabled,
-.ghost-btn:disabled {
+.ghost-btn:disabled,
+.accept-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -1007,6 +1057,14 @@ onBeforeUnmount(() => {
     #ffffff;
 }
 
+.feedback-thread.accepted {
+  border-color: #86efac;
+  background:
+    linear-gradient(135deg, rgba(240, 253, 244, 0.92), rgba(255, 255, 255, 0.98) 44%),
+    radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.18), transparent 28%);
+  box-shadow: 0 18px 38px rgba(22, 163, 74, 0.1);
+}
+
 .thread-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1019,10 +1077,24 @@ onBeforeUnmount(() => {
   color: #1d4ed8;
 }
 
+.thread-tags .accepted-tag {
+  border: 1px solid #86efac;
+  background: #dcfce7;
+  color: #047857;
+}
+
 .thread-head h3 {
   margin: 0;
   color: #0f172a;
   font-size: 20px;
+}
+
+.thread-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .thread-author {
@@ -1036,6 +1108,30 @@ onBeforeUnmount(() => {
 
 .thread-author strong {
   color: #334155;
+}
+
+.accepted-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid #bbf7d0;
+  border-radius: 16px;
+  background: rgba(240, 253, 244, 0.88);
+  color: #166534;
+}
+
+.accepted-banner strong {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.accepted-banner span {
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .thread-desc {
@@ -1204,8 +1300,19 @@ onBeforeUnmount(() => {
 
   .primary-btn,
   .ghost-btn,
-  .danger-btn {
+  .danger-btn,
+  .accept-btn {
     width: 100%;
+  }
+
+  .thread-actions,
+  .accepted-banner {
+    width: 100%;
+  }
+
+  .accepted-banner {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .feedback-form-card,
