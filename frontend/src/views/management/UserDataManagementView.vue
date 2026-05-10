@@ -277,6 +277,7 @@
 <script setup>
 import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { clearAuthSession } from '@/utils/authSession'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -639,7 +640,7 @@ const exportUsers = async () => {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(blobUrl)
-    setMessage('用户数据备份文件已生成。', 'success')
+    setMessage('用户数据备份文件已生成，已包含数据库当前密码，请妥善保管。', 'success')
   } catch (error) {
     setMessage('用户数据导出失败，请稍后重试。', 'error')
   } finally {
@@ -658,7 +659,7 @@ const importUsers = async (event) => {
     return
   }
 
-  const confirmed = window.confirm('导入后会新增或更新备份中的非 root 用户及权限，不会覆盖内置 root。确定继续吗？')
+  const confirmed = window.confirm('导入后会按备份文件新增或更新用户、权限和当前密码；如果备份包含 root 且密码不同，导入完成后需要使用备份中的 root 密码重新登录。确定继续吗？')
   if (!confirmed) return
 
   try {
@@ -668,6 +669,13 @@ const importUsers = async (event) => {
     formData.append('user_id', currentUserId)
     formData.append('file', file)
     const response = await axios.post('/api/management/users/import', formData)
+    if (response.data?.auth_invalidated) {
+      const notice = response.data?.message || '用户数据导入完成。'
+      window.alert(`${notice}\n\nroot 密码已按备份恢复，请使用备份文件中的 root 密码重新登录。`)
+      clearAuthSession('用户备份已恢复 root 密码，请重新登录。')
+      window.location.href = '/login'
+      return
+    }
     setMessage(response.data?.message || '用户数据导入完成。', 'success')
     resetForm({ keepMessage: true })
     await fetchUsers()

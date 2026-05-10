@@ -289,10 +289,10 @@
 
     <div v-if="authState.mustChangePassword" class="force-password-overlay" role="dialog" aria-modal="true">
       <form class="force-password-card" @submit.prevent="handlePasswordChange">
-        <div class="force-password-eyebrow">首次登录安全校验</div>
+        <div class="force-password-eyebrow">初始/重置密码安全校验</div>
         <h2>请先设置新密码</h2>
         <p class="force-password-subtitle">
-          当前账号仍在使用初始密码。为了保护业务数据安全，完成密码更新后再进入系统。
+          当前账号仍在使用初始密码或管理员重置密码。为了保护业务数据安全，完成密码更新后再进入系统。
         </p>
 
         <div class="force-password-user">

@@ -4448,11 +4448,11 @@ def export_management_users():
                 TO_CHAR(u.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at
             FROM users u
             LEFT JOIN stations s ON u.station_id = s.id
-            WHERE u.role <> 'root'
             ORDER BY
                 CASE u.role
-                    WHEN 'supervisor' THEN 1
-                    ELSE 2
+                    WHEN 'root' THEN 1
+                    WHEN 'supervisor' THEN 2
+                    ELSE 3
                 END,
                 u.id ASC;
             """
@@ -4473,6 +4473,7 @@ def export_management_users():
                     "hos_station_code": row["hos_station_code"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
+                    "must_change_password": row["password"] == DEFAULT_INITIAL_PASSWORD,
                     "permission_overrides": get_permission_overrides(cur, row["id"]),
                     "permissions": get_effective_permissions(cur, row),
                 }
@@ -4484,7 +4485,9 @@ def export_management_users():
                 "backup_type": "ywddzx_users",
                 "version": 1,
                 "exported_at": now.isoformat(),
-                "excluded_builtin_accounts": ["root"],
+                "includes_passwords": True,
+                "password_backup_mode": "database_current_value",
+                "default_password_policy": "password == 123456 triggers forced password change on next login",
                 "users": users,
             }
         )
@@ -4519,14 +4522,10 @@ def import_management_users():
 
             raw_username = normalize_text(raw_user.get("username"), 80)
             raw_role = normalize_text(raw_user.get("role"))
-            if raw_username == "root" or raw_role == "root":
-                skipped_builtin_count += 1
-                continue
+            if (raw_username == "root") != (raw_role == "root"):
+                raise ValueError("root 账号备份记录必须同时使用用户名 root 和角色 root。")
 
             user_data = build_management_user_payload(raw_user, is_create=True)
-            if user_data["role"] == "root":
-                skipped_builtin_count += 1
-                continue
 
             raw_permissions = raw_user.get("permissions")
             if raw_permissions in (None, ""):
@@ -4546,7 +4545,48 @@ def import_management_users():
         actor = require_management_user(cur, user_id, "manage_users")
 
         imported_count = 0
+        restored_root_count = 0
+        auth_invalidated = False
         for user_data in user_payloads:
+            if user_data["role"] == "root":
+                if user_data["username"] != "root":
+                    raise ValueError("root 账号备份记录的用户名必须为 root。")
+
+                cur.execute(
+                    """
+                    SELECT id, password
+                    FROM users
+                    WHERE username = 'root'
+                    LIMIT 1;
+                    """
+                )
+                root_user = cur.fetchone()
+                if not root_user:
+                    raise ValueError("系统内置 root 账号不存在，请先检查用户表初始化状态。")
+
+                if root_user["id"] == actor["id"] and root_user["password"] != user_data["password"]:
+                    auth_invalidated = True
+
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password = %(password)s,
+                        role = 'root',
+                        real_name = %(real_name)s,
+                        phone = %(phone)s,
+                        station_id = NULL,
+                        updated_at = COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
+                    WHERE id = %(root_user_id)s
+                    RETURNING id;
+                    """,
+                    {**user_data, "root_user_id": root_user["id"]},
+                )
+                target_user_id = cur.fetchone()["id"]
+                cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
+                imported_count += 1
+                restored_root_count += 1
+                continue
+
             if user_data["role"] == "station_manager":
                 cur.execute(
                     """
@@ -4694,6 +4734,8 @@ def import_management_users():
                 "message": f"用户数据导入完成，共处理 {imported_count} 条记录{skipped_text}。",
                 "count": imported_count,
                 "skipped_builtin_count": skipped_builtin_count,
+                "restored_root_count": restored_root_count,
+                "auth_invalidated": auth_invalidated,
             }
         )
     except PermissionError as exc:
