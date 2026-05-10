@@ -19,6 +19,24 @@
       </div>
     </transition>
 
+    <transition name="ai-submit-fade">
+      <div v-if="submitting" class="ai-submit-overlay">
+        <div class="ai-submit-card card-surface">
+          <div class="ai-submit-orb">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="section-kicker">AI 标题生成中</div>
+          <h3>正在发布反馈</h3>
+          <p>DeepSeek 正在根据详细说明生成反馈标题，请稍候，系统会自动完成提交。</p>
+          <div class="ai-submit-progress">
+            <div></div>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <div class="layout-grid">
       <section class="card-surface feedback-form-card">
         <div class="section-head">
@@ -90,7 +108,7 @@
         </div>
         <div class="card-surface rule-card">
           <h3>反馈建议</h3>
-          <p>标题尽量简短，说明里写清楚页面、步骤和期望效果。截图越具体，后续处理越快。</p>
+          <p>请把页面位置、操作步骤、实际现象和期望效果写清楚。标题会由 AI 自动生成，截图越具体，后续定位越快。</p>
         </div>
       </aside>
     </div>
@@ -557,10 +575,130 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -8px);
 }
 
+.ai-submit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(37, 99, 235, 0.22), transparent 32%),
+    rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ai-submit-card {
+  width: min(440px, calc(100vw - 36px));
+  padding: 30px 28px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.12), transparent 34%),
+    rgba(255, 255, 255, 0.98);
+}
+
+.ai-submit-orb {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  margin: 0 auto 18px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.94), transparent 26%),
+    linear-gradient(135deg, #dbeafe 0%, #2563eb 100%);
+  box-shadow: 0 22px 42px rgba(37, 99, 235, 0.28);
+}
+
+.ai-submit-orb span {
+  position: absolute;
+  inset: 10px;
+  border-radius: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  animation: aiPulse 1.8s ease-in-out infinite;
+}
+
+.ai-submit-orb span:nth-child(2) {
+  inset: 18px;
+  animation-delay: 0.2s;
+}
+
+.ai-submit-orb span:nth-child(3) {
+  inset: 27px;
+  animation-delay: 0.4s;
+}
+
+.ai-submit-card h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 22px;
+}
+
+.ai-submit-card p {
+  margin: 10px 0 20px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.ai-submit-progress {
+  overflow: hidden;
+  height: 9px;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.ai-submit-progress div {
+  width: 46%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #93c5fd 0%, #2563eb 52%, #0f766e 100%);
+  animation: aiProgress 1.35s ease-in-out infinite;
+}
+
+.ai-submit-fade-enter-active,
+.ai-submit-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.ai-submit-fade-enter-from,
+.ai-submit-fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes aiPulse {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.52;
+  }
+
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes aiProgress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  55% {
+    transform: translateX(60%);
+  }
+
+  100% {
+    transform: translateX(230%);
+  }
+}
+
 .layout-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 20px;
+  align-items: stretch;
 }
 
 .feedback-form-card,
@@ -753,9 +891,30 @@ onBeforeUnmount(() => {
 }
 
 .side-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: 14px;
+  min-height: 100%;
+}
+
+.stat-card,
+.rule-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+}
+
+.stat-card {
+  justify-content: center;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.1), transparent 28%),
+    rgba(255, 255, 255, 0.96);
+}
+
+.rule-card {
+  justify-content: center;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
 }
 
 .stat-card span,
@@ -959,6 +1118,8 @@ onBeforeUnmount(() => {
   .side-panel {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto;
+    min-height: auto;
   }
 }
 
@@ -986,6 +1147,7 @@ onBeforeUnmount(() => {
   .form-grid,
   .side-panel {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
 
   .board-filters,
