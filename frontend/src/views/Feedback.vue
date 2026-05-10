@@ -29,7 +29,7 @@
           </div>
           <div class="section-kicker">AI 标题生成中</div>
           <h3>正在发布反馈</h3>
-          <p>DeepSeek 正在根据详细说明生成反馈标题，请稍候，系统会自动完成提交。</p>
+          <p>系统正在上传截图并调用 DeepSeek 生成反馈标题，请稍候，完成后会自动刷新反馈列表。</p>
           <div class="ai-submit-progress">
             <div></div>
           </div>
@@ -72,9 +72,10 @@
             <div class="field-block full-width">
               <span>上传截图</span>
               <label class="upload-zone" for="feedback-screenshots">
-                <input id="feedback-screenshots" type="file" accept="image/*" multiple @change="handleScreenshotChange" />
-                <strong>选择截图</strong>
-                <small>支持多张图片，最多 6 张。截图会公开展示在该条反馈下。</small>
+                <input id="feedback-screenshots" type="file" accept="image/*" multiple
+                  :disabled="submitting || screenshotProcessing" @change="handleScreenshotChange" />
+                <strong>{{ screenshotProcessing ? '正在处理截图...' : '选择截图' }}</strong>
+                <small>支持多张图片，最多 6 张。系统会先压缩截图，再随反馈一起提交。</small>
               </label>
 
               <div v-if="screenshotPreviews.length" class="screenshot-preview-grid">
@@ -87,9 +88,9 @@
           </div>
 
           <div class="form-actions">
-            <button class="ghost-btn" type="button" :disabled="submitting" @click="resetForm">清空</button>
-            <button class="primary-btn" type="submit" :disabled="submitting">
-              {{ submitting ? '提交中...' : '发布反馈' }}
+            <button class="ghost-btn" type="button" :disabled="submitting || screenshotProcessing" @click="resetForm">清空</button>
+            <button class="primary-btn" type="submit" :disabled="submitting || screenshotProcessing">
+              {{ submitting ? '提交中...' : screenshotProcessing ? '处理截图中...' : '发布反馈' }}
             </button>
           </div>
         </form>
@@ -203,6 +204,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
+import {
+  prepareImagePreviewList,
+  revokeObjectUrl,
+  revokePreviewList
+} from '@/utils/imageUpload'
 
 const defaultFeedbackTypes = ['Bug反馈', '功能建议', '界面优化', '流程建议', '其他']
 const defaultModules = [
@@ -236,6 +242,7 @@ const feedbackTypes = ref(defaultFeedbackTypes)
 const moduleOptions = ref(defaultModules)
 const loading = ref(false)
 const submitting = ref(false)
+const screenshotProcessing = ref(false)
 const commentSubmittingId = ref(null)
 const screenshotFiles = ref([])
 const screenshotPreviews = ref([])
@@ -303,33 +310,57 @@ const resolveStorageUrl = (path) => {
 }
 
 const releasePreviews = () => {
-  screenshotPreviews.value.forEach((item) => URL.revokeObjectURL(item.url))
+  revokePreviewList(screenshotPreviews.value)
   screenshotPreviews.value = []
 }
 
-const handleScreenshotChange = (event) => {
-  const files = Array.from(event.target.files || [])
+const handleScreenshotChange = async (event) => {
+  const selectedFiles = Array.from(event.target.files || [])
   event.target.value = ''
-  const nextFiles = [...screenshotFiles.value, ...files].slice(0, 6)
-  if (screenshotFiles.value.length + files.length > 6) {
+  if (!selectedFiles.length) return
+
+  const remainingCount = Math.max(0, 6 - screenshotFiles.value.length)
+  if (remainingCount <= 0) {
+    setMessage('最多上传 6 张截图，请先移除已有截图后再添加。', 'error')
+    return
+  }
+
+  const filesToProcess = selectedFiles.slice(0, remainingCount)
+  if (selectedFiles.length > remainingCount) {
     setMessage('最多上传 6 张截图，已自动保留前 6 张。', 'error')
   }
-  releasePreviews()
-  screenshotFiles.value = nextFiles
-  screenshotPreviews.value = screenshotFiles.value.map((file) => ({
-    file,
-    url: URL.createObjectURL(file)
-  }))
+
+  screenshotProcessing.value = true
+
+  try {
+    const result = await prepareImagePreviewList(filesToProcess, {
+      limit: 6,
+      existingCount: screenshotFiles.value.length,
+      maxUploadBytes: 500 * 1024,
+      maxWidth: 1600
+    })
+
+    if (result.files.length) {
+      screenshotFiles.value = [...screenshotFiles.value, ...result.files].slice(0, 6)
+      screenshotPreviews.value = [...screenshotPreviews.value, ...result.previews].slice(0, 6)
+    }
+
+    if (result.failedCount) {
+      setMessage('部分截图无法读取或格式不支持，请尽量上传 JPG、PNG、WEBP 截图。', 'error')
+    } else if (result.files.length) {
+      setMessage('截图已压缩处理，可以发布反馈。', 'success')
+    }
+  } finally {
+    screenshotProcessing.value = false
+  }
 }
 
 const removeScreenshot = (index) => {
+  revokeObjectUrl(screenshotPreviews.value[index]?.url)
   const nextFiles = screenshotFiles.value.filter((_, fileIndex) => fileIndex !== index)
-  releasePreviews()
+  const nextPreviews = screenshotPreviews.value.filter((_, previewIndex) => previewIndex !== index)
   screenshotFiles.value = nextFiles
-  screenshotPreviews.value = screenshotFiles.value.map((file) => ({
-    file,
-    url: URL.createObjectURL(file)
-  }))
+  screenshotPreviews.value = nextPreviews
 }
 
 const resetForm = () => {
@@ -366,6 +397,11 @@ const validateForm = () => {
 }
 
 const submitFeedback = async () => {
+  if (screenshotProcessing.value) {
+    setMessage('截图仍在处理，请稍候再发布。', 'error')
+    return
+  }
+
   const error = validateForm()
   if (error) {
     setMessage(error, 'error')
@@ -381,7 +417,9 @@ const submitFeedback = async () => {
     screenshotFiles.value.forEach((file) => {
       payload.append('screenshots', file)
     })
-    const response = await axios.post('/api/feedbacks', payload)
+    const response = await axios.post('/api/feedbacks', payload, {
+      timeout: 120000
+    })
     if (response.data?.ai_title_generated === false) {
       setMessage('反馈已提交，AI标题生成失败，已使用默认标题。', 'success')
     } else {
@@ -390,7 +428,13 @@ const submitFeedback = async () => {
     resetForm()
     await fetchFeedbacks()
   } catch (error) {
-    setMessage(error?.response?.data?.error || '反馈提交失败。', 'error')
+    const isTimeout = error?.code === 'ECONNABORTED'
+    setMessage(
+      isTimeout
+        ? '反馈提交超时，请检查截图大小或稍后重试。'
+        : error?.response?.data?.error || '反馈提交失败。',
+      'error'
+    )
   } finally {
     submitting.value = false
   }

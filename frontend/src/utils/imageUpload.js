@@ -8,6 +8,17 @@ const ACCEPTED_IMAGE_TYPES = [
     'image/heif'
 ]
 
+export const IMAGE_UPLOAD_TYPE_ERROR_MESSAGE = '仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。'
+export const IMAGE_UPLOAD_PROCESS_ERROR_MESSAGE = '图片处理失败，请更换图片后重试。'
+
+export class ImageUploadError extends Error {
+    constructor(message, code = 'IMAGE_UPLOAD_ERROR') {
+        super(message)
+        this.name = 'ImageUploadError'
+        this.code = code
+    }
+}
+
 export const getAcceptedImageTypes = () => [...ACCEPTED_IMAGE_TYPES]
 
 export const loadImageFromFile = (file) => {
@@ -107,4 +118,103 @@ export const validateImageType = (file) => {
     if (!file) return false
     if (!file.type) return true
     return ACCEPTED_IMAGE_TYPES.includes(file.type)
+}
+
+export const clearFileInput = (target) => {
+    const input = target?.target || target
+    if (input && typeof input.value !== 'undefined') {
+        input.value = ''
+    }
+}
+
+export const clearFileInputsById = (ids = []) => {
+    ids.forEach((id) => {
+        const input = document.getElementById(id)
+        clearFileInput(input)
+    })
+}
+
+export const revokeObjectUrl = (url) => {
+    if (typeof url === 'string' && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url)
+    }
+}
+
+export const revokePreviewList = (previews = [], urlKey = 'url') => {
+    previews.forEach((item) => {
+        const url = typeof item === 'string' ? item : item?.[urlKey]
+        revokeObjectUrl(url)
+    })
+}
+
+export const prepareImageFile = async (file, options = {}) => {
+    if (!file) {
+        throw new ImageUploadError('未选择图片。', 'EMPTY_FILE')
+    }
+    if (!validateImageType(file)) {
+        throw new ImageUploadError(IMAGE_UPLOAD_TYPE_ERROR_MESSAGE, 'UNSUPPORTED_TYPE')
+    }
+
+    try {
+        return await compressImageFile(file, options)
+    } catch (error) {
+        if (error instanceof ImageUploadError) {
+            throw error
+        }
+        throw new ImageUploadError(error?.message || IMAGE_UPLOAD_PROCESS_ERROR_MESSAGE, 'PROCESS_FAILED')
+    }
+}
+
+export const prepareImagePreview = async (file, options = {}) => {
+    const preparedFile = await prepareImageFile(file, options)
+    return {
+        file: preparedFile,
+        previewUrl: URL.createObjectURL(preparedFile)
+    }
+}
+
+export const prepareImagePreviewList = async (files = [], options = {}) => {
+    const list = Array.from(files || [])
+    const limit = Number.isFinite(options.limit) ? options.limit : list.length
+    const existingCount = Number.isFinite(options.existingCount) ? options.existingCount : 0
+    const remainingCount = Math.max(0, limit - existingCount)
+    const filesToProcess = list.slice(0, remainingCount)
+    const preparedFiles = []
+    const previews = []
+    const errors = []
+
+    if (remainingCount <= 0) {
+        return {
+            files: preparedFiles,
+            previews,
+            errors,
+            failedCount: 0,
+            truncated: list.length > 0,
+            remainingCount,
+            processedCount: 0
+        }
+    }
+
+    for (const file of filesToProcess) {
+        try {
+            const prepared = await prepareImagePreview(file, options)
+            preparedFiles.push(prepared.file)
+            previews.push({
+                file: prepared.file,
+                url: prepared.previewUrl
+            })
+        } catch (error) {
+            errors.push(error)
+        }
+    }
+
+    return {
+        files: preparedFiles,
+        previews,
+        errors,
+        failedCount: errors.length,
+        truncated: list.length > remainingCount,
+        remainingCount,
+        processedCount: filesToProcess.length
+    }
 }

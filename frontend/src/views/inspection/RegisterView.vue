@@ -164,8 +164,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import {
-  compressImageFile,
-  validateImageType
+  clearFileInputsById,
+  prepareImagePreview,
+  revokeObjectUrl
 } from '@/utils/imageUpload'
 
 const currentRole = localStorage.getItem('user_role') || ''
@@ -471,21 +472,11 @@ const handleFileChange = async (event) => {
     return
   }
 
-  if (!validateImageType(file)) {
-    showSubmitToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
-    event.target.value = ''
-    clearImage()
-    return
-  }
-
   try {
-    const compressedFile = await compressImageFile(file)
-    imageFile.value = compressedFile
-
-    if (imagePreviewUrl.value) {
-      URL.revokeObjectURL(imagePreviewUrl.value)
-    }
-    imagePreviewUrl.value = URL.createObjectURL(compressedFile)
+    const prepared = await prepareImagePreview(file)
+    imageFile.value = prepared.file
+    revokeObjectUrl(imagePreviewUrl.value)
+    imagePreviewUrl.value = prepared.previewUrl
 
     if (submitMessageType.value !== 'success' && submitMessageTimer) {
       clearTimeout(submitMessageTimer)
@@ -495,25 +486,15 @@ const handleFileChange = async (event) => {
     }
   } catch (error) {
     showSubmitToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
-    event.target.value = ''
     clearImage()
   }
 }
 
 const clearImage = () => {
   imageFile.value = null
-  if (imagePreviewUrl.value) {
-    URL.revokeObjectURL(imagePreviewUrl.value)
-  }
+  revokeObjectUrl(imagePreviewUrl.value)
   imagePreviewUrl.value = ''
-  const uploadInput = document.getElementById('issue-photo-upload')
-  if (uploadInput) {
-    uploadInput.value = ''
-  }
-  const cameraInput = document.getElementById('issue-photo-camera')
-  if (cameraInput) {
-    cameraInput.value = ''
-  }
+  clearFileInputsById(['issue-photo-upload', 'issue-photo-camera'])
 }
 
 const resetForm = (preserveMessage = false) => {
@@ -642,9 +623,7 @@ onBeforeUnmount(() => {
     clearTimeout(submitMessageTimer)
     submitMessageTimer = null
   }
-  if (imagePreviewUrl.value) {
-    URL.revokeObjectURL(imagePreviewUrl.value)
-  }
+  revokeObjectUrl(imagePreviewUrl.value)
 })
 </script>
 

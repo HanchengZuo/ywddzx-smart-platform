@@ -5222,6 +5222,11 @@ def delete_system_feedback(feedback_id):
         cur = conn.cursor()
         ensure_feedback_schema(cur)
 
+        cur.execute("SELECT id FROM system_feedbacks WHERE id = %s LIMIT 1;", (feedback_id,))
+        if not cur.fetchone():
+            conn.rollback()
+            return jsonify({"success": False, "error": "反馈不存在。"}), 404
+
         cur.execute(
             """
             SELECT file_path
@@ -5232,9 +5237,9 @@ def delete_system_feedback(feedback_id):
         )
         files_to_remove = [row["file_path"] for row in cur.fetchall() if row.get("file_path")]
 
+        cur.execute("DELETE FROM system_feedback_comments WHERE feedback_id = %s;", (feedback_id,))
+        cur.execute("DELETE FROM system_feedback_screenshots WHERE feedback_id = %s;", (feedback_id,))
         cur.execute("DELETE FROM system_feedbacks WHERE id = %s;", (feedback_id,))
-        if cur.rowcount == 0:
-            return jsonify({"success": False, "error": "反馈不存在。"}), 404
 
         conn.commit()
         for file_path in files_to_remove:

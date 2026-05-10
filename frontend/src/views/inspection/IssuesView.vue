@@ -568,6 +568,11 @@
 <script setup>
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
+import {
+  clearFileInput,
+  prepareImagePreview,
+  revokeObjectUrl
+} from '@/utils/imageUpload'
 
 const filters = ref({
   month: '',
@@ -788,9 +793,7 @@ const createIssueEditForm = (item = {}) => ({
 })
 
 const revokeIssuePhotoPreview = () => {
-  if (editDialog.value.issuePhotoPreview?.startsWith('blob:')) {
-    URL.revokeObjectURL(editDialog.value.issuePhotoPreview)
-  }
+  revokeObjectUrl(editDialog.value.issuePhotoPreview)
 }
 
 const openEditDialog = (item) => {
@@ -820,7 +823,7 @@ const closeEditDialog = () => {
   }
 }
 
-const handleIssuePhotoChange = (event) => {
+const handleIssuePhotoChange = async (event) => {
   const file = event.target.files?.[0]
   revokeIssuePhotoPreview()
   if (!file) {
@@ -828,15 +831,22 @@ const handleIssuePhotoChange = (event) => {
     editDialog.value.issuePhotoPreview = ''
     return
   }
-  editDialog.value.issuePhotoFile = file
-  editDialog.value.issuePhotoPreview = URL.createObjectURL(file)
-  editDialog.value.error = ''
+
+  try {
+    const prepared = await prepareImagePreview(file)
+    editDialog.value.issuePhotoFile = prepared.file
+    editDialog.value.issuePhotoPreview = prepared.previewUrl
+    editDialog.value.error = ''
+  } catch (error) {
+    clearFileInput(event)
+    editDialog.value.issuePhotoFile = null
+    editDialog.value.issuePhotoPreview = ''
+    editDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
+  }
 }
 
 const revokeRectificationPhotoPreview = () => {
-  if (rectificationPhotoDialog.value.preview?.startsWith('blob:')) {
-    URL.revokeObjectURL(rectificationPhotoDialog.value.preview)
-  }
+  revokeObjectUrl(rectificationPhotoDialog.value.preview)
 }
 
 const openRectificationPhotoDialog = (item) => {
@@ -864,7 +874,7 @@ const closeRectificationPhotoDialog = () => {
   }
 }
 
-const handleRectificationPhotoChange = (event) => {
+const handleRectificationPhotoChange = async (event) => {
   const file = event.target.files?.[0]
   revokeRectificationPhotoPreview()
   if (!file) {
@@ -872,9 +882,18 @@ const handleRectificationPhotoChange = (event) => {
     rectificationPhotoDialog.value.preview = ''
     return
   }
-  rectificationPhotoDialog.value.file = file
-  rectificationPhotoDialog.value.preview = URL.createObjectURL(file)
-  rectificationPhotoDialog.value.error = ''
+
+  try {
+    const prepared = await prepareImagePreview(file)
+    rectificationPhotoDialog.value.file = prepared.file
+    rectificationPhotoDialog.value.preview = prepared.previewUrl
+    rectificationPhotoDialog.value.error = ''
+  } catch (error) {
+    clearFileInput(event)
+    rectificationPhotoDialog.value.file = null
+    rectificationPhotoDialog.value.preview = ''
+    rectificationPhotoDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
+  }
 }
 
 const saveRectificationPhoto = async () => {

@@ -485,9 +485,9 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
-  compressImageFile,
-  getAcceptedImageTypes,
-  validateImageType
+  clearFileInputsById,
+  prepareImagePreview,
+  revokeObjectUrl
 } from '@/utils/imageUpload'
 
 const isInspectionSigned = (item) => {
@@ -742,7 +742,6 @@ const actionForm = ref({
 const actionMessage = ref('')
 const actionMessageType = ref('info')
 let actionMessageTimer = null
-const ACCEPTED_IMAGE_TYPES = getAcceptedImageTypes()
 
 const resolveImage = (path) => {
   if (!path) return ''
@@ -796,12 +795,8 @@ const openActionDrawer = (item) => {
 }
 
 const closeActionDrawer = () => {
-  if (actionForm.value.rectificationPhotoPreview && actionForm.value.rectificationPhotoPreview.startsWith('blob:')) {
-    URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
-  }
-  if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
-    URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
-  }
+  revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
+  revokeObjectUrl(actionForm.value.reviewPhotoPreview)
 
   actionDrawer.value = {
     visible: false,
@@ -819,24 +814,11 @@ const handleRectificationFileChange = async (event) => {
     return
   }
 
-  if (!validateImageType(file)) {
-    showActionToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
-    event.target.value = ''
-    clearRectificationFile()
-    return
-  }
-
   try {
-    const compressedFile = await compressImageFile(file)
-    actionForm.value.rectificationPhotoFile = compressedFile
-
-    if (
-      actionForm.value.rectificationPhotoPreview &&
-      actionForm.value.rectificationPhotoPreview.startsWith('blob:')
-    ) {
-      URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
-    }
-    actionForm.value.rectificationPhotoPreview = URL.createObjectURL(compressedFile)
+    const prepared = await prepareImagePreview(file)
+    actionForm.value.rectificationPhotoFile = prepared.file
+    revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
+    actionForm.value.rectificationPhotoPreview = prepared.previewUrl
     if (actionMessageTimer) {
       clearTimeout(actionMessageTimer)
       actionMessageTimer = null
@@ -845,25 +827,15 @@ const handleRectificationFileChange = async (event) => {
     actionMessageType.value = 'info'
   } catch (error) {
     showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
-    event.target.value = ''
     clearRectificationFile()
   }
 }
 
 const clearRectificationFile = () => {
   actionForm.value.rectificationPhotoFile = null
-  if (actionForm.value.rectificationPhotoPreview && actionForm.value.rectificationPhotoPreview.startsWith('blob:')) {
-    URL.revokeObjectURL(actionForm.value.rectificationPhotoPreview)
-  }
+  revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
   actionForm.value.rectificationPhotoPreview = ''
-  const uploadInput = document.getElementById('rectification-photo-upload')
-  if (uploadInput) {
-    uploadInput.value = ''
-  }
-  const cameraInput = document.getElementById('rectification-photo-camera')
-  if (cameraInput) {
-    cameraInput.value = ''
-  }
+  clearFileInputsById(['rectification-photo-upload', 'rectification-photo-camera'])
 }
 
 const handleReviewFileChange = async (event) => {
@@ -874,21 +846,11 @@ const handleReviewFileChange = async (event) => {
     return
   }
 
-  if (!validateImageType(file)) {
-    showActionToast('仅支持上传 JPG、JPEG、PNG、WEBP、HEIC、HEIF 格式图片。', 'error')
-    event.target.value = ''
-    clearReviewFile()
-    return
-  }
-
   try {
-    const compressedFile = await compressImageFile(file)
-    actionForm.value.reviewPhotoFile = compressedFile
-
-    if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
-      URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
-    }
-    actionForm.value.reviewPhotoPreview = URL.createObjectURL(compressedFile)
+    const prepared = await prepareImagePreview(file)
+    actionForm.value.reviewPhotoFile = prepared.file
+    revokeObjectUrl(actionForm.value.reviewPhotoPreview)
+    actionForm.value.reviewPhotoPreview = prepared.previewUrl
 
     if (actionMessageTimer) {
       clearTimeout(actionMessageTimer)
@@ -898,25 +860,15 @@ const handleReviewFileChange = async (event) => {
     actionMessageType.value = 'info'
   } catch (error) {
     showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
-    event.target.value = ''
     clearReviewFile()
   }
 }
 
 const clearReviewFile = () => {
   actionForm.value.reviewPhotoFile = null
-  if (actionForm.value.reviewPhotoPreview && actionForm.value.reviewPhotoPreview.startsWith('blob:')) {
-    URL.revokeObjectURL(actionForm.value.reviewPhotoPreview)
-  }
+  revokeObjectUrl(actionForm.value.reviewPhotoPreview)
   actionForm.value.reviewPhotoPreview = ''
-  const uploadInput = document.getElementById('review-photo-upload')
-  if (uploadInput) {
-    uploadInput.value = ''
-  }
-  const cameraInput = document.getElementById('review-photo-camera')
-  if (cameraInput) {
-    cameraInput.value = ''
-  }
+  clearFileInputsById(['review-photo-upload', 'review-photo-camera'])
 }
 
 const showActionToast = (message, type = 'info') => {
@@ -1036,6 +988,8 @@ onBeforeUnmount(() => {
     clearTimeout(actionMessageTimer)
     actionMessageTimer = null
   }
+  revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
+  revokeObjectUrl(actionForm.value.reviewPhotoPreview)
 })
 </script>
 
