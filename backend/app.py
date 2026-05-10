@@ -134,16 +134,16 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "edit_inspection_issues",
-        "name": "编辑巡检问题",
+        "name": "编辑所选范围内问题",
         "category": "巡检问题列表",
-        "description": "编辑已登记巡检问题的问题描述、状态、整改与复核信息。",
+        "description": "在已选择的本站/全部站点范围内，编辑巡检问题；已闭环问题仍只有 root 可改。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
         "key": "delete_inspection_issues",
-        "name": "删除巡检问题",
+        "name": "删除所选范围内问题",
         "category": "巡检问题列表",
-        "description": "删除已登记巡检问题。删除后巡检记录的问题数与结果会自动按剩余问题重新计算。",
+        "description": "在已选择的本站/全部站点范围内删除巡检问题，并自动回算关联记录与计划状态。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
@@ -162,9 +162,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "delete_inspection_records",
-        "name": "删除巡检记录",
+        "name": "删除所选范围内记录",
         "category": "巡检记录",
-        "description": "删除巡检记录，并同步删除本记录下的巡检问题、回算关联巡检计划完成状态。",
+        "description": "在已选择的本站/全部站点范围内删除巡检记录，并同步删除本记录下的问题。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
@@ -190,9 +190,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "edit_own_certificates",
-        "name": "编辑本站数据",
+        "name": "编辑本站证照",
         "category": "站点证照有效期管理",
-        "description": "录入、修改、删除当前账号所属站点的证照有效期。",
+        "description": "仅在选择“查看本站数据”时可用，用于录入、修改、删除当前账号所属站点证照。",
         "defaults": {"root": True, "supervisor": False, "station_manager": True},
     },
     {
@@ -253,6 +253,20 @@ PERMISSION_EXCLUSIVE_GROUPS = [
 ]
 PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
+}
+PERMISSION_ANY_DEPENDENCIES = {
+    "edit_inspection_issues": (
+        "view_own_inspection_issues",
+        "view_all_inspection_issues",
+    ),
+    "delete_inspection_issues": (
+        "view_own_inspection_issues",
+        "view_all_inspection_issues",
+    ),
+    "delete_inspection_records": (
+        "view_own_inspection_records",
+        "view_all_inspection_records",
+    ),
 }
 STATION_TYPE_OPTIONS = {"加油站", "充电站"}
 STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
@@ -2679,6 +2693,10 @@ def enforce_exclusive_permissions(permission_map, role=None):
         if normalized.get(child_key) and not normalized.get(parent_key):
             normalized[child_key] = False
 
+    for child_key, parent_keys in PERMISSION_ANY_DEPENDENCIES.items():
+        if normalized.get(child_key) and not any(normalized.get(parent_key) for parent_key in parent_keys):
+            normalized[child_key] = False
+
     return normalized
 
 
@@ -2718,21 +2736,7 @@ def has_permission(cur, user, permission_key):
         return True
     if not user:
         return False
-
-    ensure_user_security_schema(cur)
-    cur.execute(
-        """
-        SELECT is_allowed
-        FROM user_permissions
-        WHERE user_id = %s AND permission_key = %s
-        LIMIT 1;
-        """,
-        (user["id"], permission_key),
-    )
-    override = cur.fetchone()
-    if override:
-        return bool(override["is_allowed"])
-    return role_default_permission(user.get("role"), permission_key)
+    return bool(get_effective_permissions(cur, user).get(permission_key))
 
 
 def can_manage_plan(cur, user):

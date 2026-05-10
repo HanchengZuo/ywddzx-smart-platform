@@ -115,23 +115,72 @@
             <div class="permission-panel-head">
               <div>
                 <strong>页面权限开关</strong>
-                <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '按页面能力勾选，该用户即可获得对应查看或操作范围。' }}</p>
+                <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '涉及站点范围的页面先选择数据范围，再配置该范围内的查看、编辑或删除能力。' }}</p>
               </div>
             </div>
 
             <div class="permission-groups">
               <div v-for="group in groupedPermissions" :key="group.category" class="permission-group">
-                <div class="permission-group-title">{{ group.category }}</div>
-                <label v-for="permission in group.items" :key="permission.key" class="permission-item"
-                  :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
-                  <input v-model="form.permissions[permission.key]" type="checkbox"
-                    :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
-                    @change="handlePermissionChange(permission.key)" />
-                  <span>
-                    <strong>{{ permission.name }}</strong>
-                    <small>{{ permission.description }}</small>
-                  </span>
-                </label>
+                <div class="permission-group-title">
+                  <span>{{ group.category }}</span>
+                  <em v-if="group.hasScopedLayout">先定范围</em>
+                </div>
+
+                <div v-if="group.readonlyItems.length" class="permission-section readonly-section">
+                  <div class="permission-section-label">通用规则</div>
+                  <label v-for="permission in group.readonlyItems" :key="permission.key"
+                    class="permission-item permission-item-readonly disabled">
+                    <input type="checkbox" checked disabled />
+                    <span>
+                      <strong>{{ permission.name }}<em>只读展示</em></strong>
+                      <small>{{ permission.description }}</small>
+                    </span>
+                  </label>
+                </div>
+
+                <div v-if="group.scopeItems.length" class="permission-section">
+                  <div class="permission-section-label">1 数据范围</div>
+                  <label v-for="permission in group.scopeItems" :key="permission.key"
+                    class="permission-item permission-item-scope"
+                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
+                    <input v-model="form.permissions[permission.key]" type="checkbox"
+                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
+                      @change="handlePermissionChange(permission.key)" />
+                    <span>
+                      <strong>{{ permission.name }}</strong>
+                      <small>{{ permission.description }}</small>
+                    </span>
+                  </label>
+                </div>
+
+                <div v-if="group.actionItems.length" class="permission-section">
+                  <div class="permission-section-label">2 范围内操作</div>
+                  <label v-for="permission in group.actionItems" :key="permission.key"
+                    class="permission-item permission-item-action"
+                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
+                    <input v-model="form.permissions[permission.key]" type="checkbox"
+                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
+                      @change="handlePermissionChange(permission.key)" />
+                    <span>
+                      <strong>{{ permission.name }}</strong>
+                      <small>{{ permission.description }}</small>
+                    </span>
+                  </label>
+                </div>
+
+                <div v-if="group.regularItems.length" class="permission-section">
+                  <div v-if="group.hasScopedLayout" class="permission-section-label">其他权限</div>
+                  <label v-for="permission in group.regularItems" :key="permission.key" class="permission-item"
+                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
+                    <input v-model="form.permissions[permission.key]" type="checkbox"
+                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
+                      @change="handlePermissionChange(permission.key)" />
+                    <span>
+                      <strong>{{ permission.name }}</strong>
+                      <small>{{ permission.description }}</small>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
@@ -327,6 +376,34 @@ const dependentPermissionMap = {
   edit_own_certificates: 'view_own_certificates'
 }
 
+const anyDependentPermissionMap = {
+  edit_inspection_issues: ['view_own_inspection_issues', 'view_all_inspection_issues'],
+  delete_inspection_issues: ['view_own_inspection_issues', 'view_all_inspection_issues'],
+  delete_inspection_records: ['view_own_inspection_records', 'view_all_inspection_records']
+}
+
+const scopedPermissionLayouts = {
+  '巡检问题列表': {
+    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues'],
+    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues'],
+    readonlyItems: [
+      {
+        key: 'creator_issue_controls',
+        name: '编辑/删除自己提交的问题',
+        description: '通用规则：督导组成员提交的问题，在站点尚未整改反馈前，可自动维护自己的问题描述和照片。'
+      }
+    ]
+  },
+  '巡检记录': {
+    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records'],
+    actionKeys: ['delete_inspection_records']
+  },
+  '站点证照有效期管理': {
+    scopeKeys: ['view_own_certificates', 'view_all_certificates'],
+    actionKeys: ['edit_own_certificates']
+  }
+}
+
 const createEmptyForm = () => ({
   id: null,
   username: '',
@@ -353,7 +430,32 @@ const groupedPermissions = computed(() => {
     }
     group.items.push(permission)
   })
-  return groups
+
+  return groups.map((group) => {
+    const layout = scopedPermissionLayouts[group.category]
+    if (!layout) {
+      return {
+        ...group,
+        hasScopedLayout: false,
+        readonlyItems: [],
+        scopeItems: [],
+        actionItems: [],
+        regularItems: group.items
+      }
+    }
+
+    const scopeKeys = new Set(layout.scopeKeys || [])
+    const actionKeys = new Set(layout.actionKeys || [])
+    const readonlyItems = form.role === 'supervisor' ? (layout.readonlyItems || []) : []
+    return {
+      ...group,
+      hasScopedLayout: true,
+      readonlyItems,
+      scopeItems: group.items.filter((item) => scopeKeys.has(item.key)),
+      actionItems: group.items.filter((item) => actionKeys.has(item.key)),
+      regularItems: group.items.filter((item) => !scopeKeys.has(item.key) && !actionKeys.has(item.key))
+    }
+  })
 })
 
 const stationRegionOptions = computed(() => {
@@ -453,6 +555,8 @@ const buildDefaultPermissions = (role) => {
 
 const enforceExclusivePermissions = (permissionMap, role = form.role) => {
   const nextPermissions = { ...(permissionMap || {}) }
+  if (role === 'root') return nextPermissions
+
   exclusivePermissionGroups.forEach(([ownKey, allKey]) => {
     if (!nextPermissions[ownKey] || !nextPermissions[allKey]) return
     const allPermission = permissions.value.find((item) => item.key === allKey)
@@ -469,12 +573,19 @@ const enforceExclusivePermissions = (permissionMap, role = form.role) => {
       nextPermissions[childKey] = false
     }
   })
+  Object.entries(anyDependentPermissionMap).forEach(([childKey, parentKeys]) => {
+    if (nextPermissions[childKey] && !parentKeys.some((parentKey) => nextPermissions[parentKey])) {
+      nextPermissions[childKey] = false
+    }
+  })
   return nextPermissions
 }
 
 const isPermissionDisabled = (permissionKey) => {
   const parentKey = dependentPermissionMap[permissionKey]
-  return Boolean(parentKey && !form.permissions[parentKey])
+  if (parentKey && !form.permissions[parentKey]) return true
+  const parentKeys = anyDependentPermissionMap[permissionKey]
+  return Boolean(parentKeys && !parentKeys.some((key) => form.permissions[key]))
 }
 
 const handlePermissionChange = (permissionKey) => {
@@ -494,6 +605,14 @@ const handlePermissionChange = (permissionKey) => {
       form.permissions[childKey] = false
     }
     if (permissionKey === childKey && form.permissions[childKey] && !form.permissions[parentKey]) {
+      form.permissions[childKey] = false
+    }
+  })
+  Object.entries(anyDependentPermissionMap).forEach(([childKey, parentKeys]) => {
+    if (parentKeys.includes(permissionKey) && !parentKeys.some((key) => form.permissions[key])) {
+      form.permissions[childKey] = false
+    }
+    if (permissionKey === childKey && form.permissions[childKey] && !parentKeys.some((key) => form.permissions[key])) {
       form.permissions[childKey] = false
     }
   })
@@ -1073,13 +1192,42 @@ onBeforeUnmount(() => {
   padding: 14px;
   border: 1px solid #e2e8f0;
   border-radius: 16px;
-  background: #fff;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
 }
 
 .permission-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
   color: #1d4ed8;
   font-size: 13px;
+  font-weight: 900;
+}
+
+.permission-group-title em {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.permission-section + .permission-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #dbe6f2;
+}
+
+.permission-section-label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 4px;
+  color: #475569;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -1092,7 +1240,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid #eef2f7;
 }
 
-.permission-item:first-of-type {
+.permission-section .permission-item:first-of-type {
   border-top: 0;
 }
 
@@ -1100,10 +1248,43 @@ onBeforeUnmount(() => {
   margin-top: 3px;
 }
 
+.permission-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.permission-item-scope {
+  border-radius: 12px;
+}
+
+.permission-item-action {
+  padding-left: 8px;
+  border-left: 3px solid #dbeafe;
+}
+
+.permission-item-readonly {
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
 .permission-item strong {
   display: block;
   color: #0f172a;
   font-size: 13px;
+}
+
+.permission-item strong em {
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .permission-item small {
