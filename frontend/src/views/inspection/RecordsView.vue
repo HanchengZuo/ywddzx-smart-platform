@@ -112,21 +112,30 @@
                 <div class="mobile-batch-table-name">{{ record.inspection_table_name || '暂无' }}</div>
                 <span :class="statusClass(record.result)">{{ record.result }}</span>
               </div>
-              <div class="mobile-batch-item-meta">发现问题数：{{ record.issue_count }}</div>
-              <div class="mobile-batch-item-meta">签名状态：{{ record.sign_status === '已签名确认' ? '已签名确认' : '待签名确认' }}</div>
+              <div class="mobile-batch-item-meta-row">
+                <span class="mobile-meta-pill">问题 {{ record.issue_count }}</span>
+                <span class="mobile-meta-pill"
+                  :class="{ signed: record.sign_status === '已签名确认' }">
+                  {{ record.sign_status === '已签名确认' ? '已签名' : '待签名' }}
+                </span>
+              </div>
 
               <div class="mobile-batch-item-actions">
-                <button class="btn btn-secondary batch-action-btn" type="button" @click="openInspectionDetail(record)">
-                  查看本表录入问题
+                <button class="btn btn-secondary batch-action-btn mobile-action-btn mobile-action-view" type="button"
+                  aria-label="查看本表录入问题" @click="openInspectionDetail(record)">
+                  查看问题
                 </button>
 
                 <button v-if="isSupervisorLike && record.sign_status !== '已签名确认'"
-                  class="btn btn-primary signature-action-btn" type="button" @click="openSignatureDialog(record)">
-                  结束本检查表并签名确认
+                  class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
+                  aria-label="结束检查签名确认" @click="openSignatureDialog(record)">
+                  签名确认
                 </button>
 
-                <button v-if="canDeleteInspectionRecord(record)" class="btn btn-danger batch-action-btn" type="button"
-                  :disabled="deletingInspectionId === record.id" @click="deleteInspectionRecord(record)">
+                <button v-if="canDeleteInspectionRecord(record)"
+                  class="btn btn-danger batch-action-btn mobile-action-btn mobile-action-delete" type="button"
+                  :disabled="deletingInspectionId === record.id" aria-label="删除巡检记录"
+                  @click="deleteInspectionRecord(record)">
                   {{ deletingInspectionId === record.id ? '删除中...' : '删除记录' }}
                 </button>
               </div>
@@ -1560,7 +1569,11 @@ onBeforeUnmount(() => {
 }
 
 .mobile-record-card {
-  padding: 16px;
+  padding: 15px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 95% 0%, rgba(37, 99, 235, 0.1), transparent 30%),
+    rgba(255, 255, 255, 0.98);
 }
 
 .mobile-card-head {
@@ -1589,29 +1602,35 @@ onBeforeUnmount(() => {
 }
 
 .mobile-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .mobile-card-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e7edf4;
+  border-radius: 14px;
+  background: #f8fafc;
 }
 
 .mobile-card-row span {
   font-size: 12px;
   color: #64748b;
   flex-shrink: 0;
+  line-height: 1.3;
 }
 
 .mobile-card-row strong {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   color: #0f172a;
-  text-align: right;
+  text-align: left;
 }
 
 
@@ -1625,9 +1644,9 @@ onBeforeUnmount(() => {
 }
 
 .mobile-batch-item {
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #f8fafc;
+  padding: 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 1px solid #e7edf4;
 }
 
@@ -1640,27 +1659,65 @@ onBeforeUnmount(() => {
 }
 
 .mobile-batch-table-name {
+  min-width: 0;
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.6;
 }
 
-.mobile-batch-item-meta {
-  font-size: 13px;
-  color: #64748b;
+.mobile-batch-item-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.mobile-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mobile-meta-pill.signed {
+  background: #ecfdf5;
+  color: #047857;
 }
 
 .mobile-batch-item-actions {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
 
-.mobile-batch-item-actions .batch-action-btn,
-.mobile-batch-item-actions .signature-action-btn {
+.mobile-action-btn {
   min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mobile-action-btn:only-child {
+  grid-column: 1 / -1;
+}
+
+.mobile-action-delete:nth-child(3) {
+  grid-column: 1 / -1;
 }
 
 .mobile-signature-box {
@@ -2629,6 +2686,15 @@ onBeforeUnmount(() => {
     min-height: 46px;
   }
 
+  .mobile-action-btn {
+    min-height: 40px;
+    height: 40px;
+    padding: 0 8px;
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
   .signature-preview-image {
     width: 100%;
     height: 82px;
@@ -2709,6 +2775,84 @@ onBeforeUnmount(() => {
   .mobile-signature-icon-btn {
     border-radius: 16px;
     font-size: 24px;
+  }
+}
+
+@media (max-width: 430px) {
+  .records-page {
+    padding-inline: 0;
+  }
+
+  .page-shell {
+    gap: 12px;
+  }
+
+  .page-header,
+  .filter-card,
+  .mobile-record-card {
+    border-radius: 18px;
+  }
+
+  .page-header {
+    padding: 16px 14px;
+  }
+
+  .filter-card {
+    padding: 14px;
+  }
+
+  .mobile-record-card {
+    padding: 13px;
+  }
+
+  .mobile-card-body {
+    gap: 7px;
+  }
+
+  .mobile-card-row {
+    padding: 9px 8px;
+    border-radius: 13px;
+  }
+
+  .mobile-card-row span {
+    font-size: 11px;
+  }
+
+  .mobile-card-row strong {
+    font-size: 15px;
+  }
+
+  .mobile-batch-list {
+    margin-top: 12px;
+    padding-top: 12px;
+    gap: 9px;
+  }
+
+  .mobile-batch-item {
+    padding: 11px;
+  }
+
+  .mobile-batch-table-name {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .mobile-batch-item-actions {
+    gap: 7px;
+  }
+
+  .mobile-action-btn {
+    min-height: 38px;
+    height: 38px;
+    border-radius: 11px;
+    font-size: 13px;
+    letter-spacing: 0;
+  }
+
+  .status-tag {
+    padding: 4px 8px;
+    font-size: 12px;
+    white-space: nowrap;
   }
 }
 </style>

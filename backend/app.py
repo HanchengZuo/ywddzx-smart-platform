@@ -20,6 +20,7 @@ from psycopg2.extras import RealDictCursor
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
+from ai_utils import generate_feedback_title
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get(
@@ -41,6 +42,7 @@ RECTIFICATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "rectifications")
 SIGNATURES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "signatures")
 INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_originals")
 TRAINING_MATERIALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "training_materials")
+FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screenshots")
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
@@ -255,6 +257,26 @@ ISSUE_RESULT_ALIASES = {
     "站级无法完成整改": "站经无法整改",
     "站经理无法整改": "站经无法整改",
 }
+FEEDBACK_TYPE_OPTIONS = {"功能建议", "Bug反馈", "界面优化", "流程建议", "其他"}
+FEEDBACK_MODULE_OPTIONS = {
+    "巡检系统",
+    "巡检规范库",
+    "检查表原件库",
+    "巡检计划",
+    "考核系统",
+    "培训系统",
+    "培训材料库",
+    "证照管理",
+    "车辆管理系统",
+    "数据备份管理",
+    "用户数据管理",
+    "站点数据管理",
+    "巡检表数据管理",
+    "管理系统",
+    "公共功能",
+    "登录与账号",
+    "其他",
+}
 COVERAGE_TYPE_LABELS = {
     "monthly": "月度覆盖",
     "quarterly": "季度覆盖",
@@ -340,6 +362,7 @@ os.makedirs(RECTIFICATIONS_STORAGE_DIR, exist_ok=True)
 os.makedirs(SIGNATURES_STORAGE_DIR, exist_ok=True)
 os.makedirs(INSPECTION_ORIGINALS_STORAGE_DIR, exist_ok=True)
 os.makedirs(TRAINING_MATERIALS_STORAGE_DIR, exist_ok=True)
+os.makedirs(FEEDBACK_SCREENSHOTS_STORAGE_DIR, exist_ok=True)
 os.makedirs(DEFAULT_BACKUP_DIR, exist_ok=True)
 
 
@@ -391,6 +414,9 @@ def save_uploaded_file(file_storage, category):
     elif category == "rectifications":
         base_dir = RECTIFICATIONS_STORAGE_DIR
         prefix = "rectification"
+    elif category == "feedback_screenshots":
+        base_dir = FEEDBACK_SCREENSHOTS_STORAGE_DIR
+        prefix = "feedback"
     else:
         raise ValueError("不支持的上传分类。")
 
@@ -974,6 +1000,7 @@ def get_required_storage_dirs():
         SIGNATURES_STORAGE_DIR,
         INSPECTION_ORIGINALS_STORAGE_DIR,
         TRAINING_MATERIALS_STORAGE_DIR,
+        FEEDBACK_SCREENSHOTS_STORAGE_DIR,
         DEFAULT_BACKUP_DIR,
     )
 
@@ -2597,6 +2624,120 @@ def normalize_text(value, max_length=None):
     if max_length and len(text) > max_length:
         return text[:max_length]
     return text
+
+
+def ensure_feedback_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_feedbacks (
+            id SERIAL PRIMARY KEY,
+            feedback_type TEXT NOT NULL,
+            module TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_name TEXT,
+            author_phone TEXT,
+            author_role TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_feedback_screenshots (
+            id SERIAL PRIMARY KEY,
+            feedback_id INTEGER NOT NULL REFERENCES system_feedbacks(id) ON DELETE CASCADE,
+            file_path TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_feedback_comments (
+            id SERIAL PRIMARY KEY,
+            feedback_id INTEGER NOT NULL REFERENCES system_feedbacks(id) ON DELETE CASCADE,
+            comment_text TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            author_name TEXT,
+            author_phone TEXT,
+            author_role TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_feedbacks_created_at
+        ON system_feedbacks(created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_feedback_screenshots_feedback_id
+        ON system_feedback_screenshots(feedback_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_feedback_id
+        ON system_feedback_comments(feedback_id);
+        """
+    )
+
+
+def get_current_request_user():
+    user = getattr(g, "current_user", None)
+    if not user:
+        raise PermissionError("请先登录。")
+    return user
+
+
+def build_feedback_author_snapshot(user):
+    return {
+        "author_name": normalize_text(
+            user.get("real_name") or user.get("username") or "未命名用户", 80
+        ),
+        "author_phone": normalize_text(user.get("phone"), 40),
+        "author_role": normalize_text(user.get("role"), 40),
+    }
+
+
+def normalize_feedback_type(value):
+    feedback_type = normalize_text(value, 40)
+    if feedback_type not in FEEDBACK_TYPE_OPTIONS:
+        raise ValueError("反馈类型不正确。")
+    return feedback_type
+
+
+def normalize_feedback_module(value):
+    module = normalize_text(value, 40)
+    if module not in FEEDBACK_MODULE_OPTIONS:
+        raise ValueError("问题模块不正确。")
+    return module
+
+
+def collect_feedback_files(request_files):
+    files = []
+    for key in ("screenshots", "screenshots[]", "screenshot"):
+        files.extend(request_files.getlist(key))
+    return [file for file in files if file and file.filename]
+
+
+def serialize_feedback_comment(row, can_delete=False):
+    item = dict(row)
+    item["can_delete"] = bool(can_delete)
+    return item
+
+
+def serialize_feedback_row(row, screenshots=None, comments=None, can_delete=False):
+    item = dict(row)
+    item["screenshots"] = screenshots or []
+    item["comments"] = comments or []
+    item["can_delete"] = bool(can_delete)
+    return item
 
 
 def validate_new_login_password(username, new_password, confirm_password):
@@ -4792,6 +4933,339 @@ def delete_management_user(target_user_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks", methods=["GET"])
+def get_system_feedbacks():
+    current_user = get_current_request_user()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        conn.commit()
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                feedback_type,
+                module,
+                title,
+                description,
+                created_by,
+                author_name,
+                author_phone,
+                author_role,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at
+            FROM system_feedbacks
+            ORDER BY id DESC
+            LIMIT 200;
+            """
+        )
+        feedback_rows = cur.fetchall()
+        feedback_ids = [row["id"] for row in feedback_rows]
+
+        screenshots_by_feedback = {feedback_id: [] for feedback_id in feedback_ids}
+        comments_by_feedback = {feedback_id: [] for feedback_id in feedback_ids}
+
+        if feedback_ids:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    feedback_id,
+                    file_path,
+                    sort_order
+                FROM system_feedback_screenshots
+                WHERE feedback_id = ANY(%s)
+                ORDER BY feedback_id ASC, sort_order ASC, id ASC;
+                """,
+                (feedback_ids,),
+            )
+            for row in cur.fetchall():
+                screenshots_by_feedback.setdefault(row["feedback_id"], []).append(dict(row))
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    feedback_id,
+                    comment_text,
+                    created_by,
+                    author_name,
+                    author_phone,
+                    author_role,
+                    TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at
+                FROM system_feedback_comments
+                WHERE feedback_id = ANY(%s)
+                ORDER BY feedback_id ASC, id ASC;
+                """,
+                (feedback_ids,),
+            )
+            for row in cur.fetchall():
+                comments_by_feedback.setdefault(row["feedback_id"], []).append(
+                    serialize_feedback_comment(row, is_root_user(current_user))
+                )
+
+        return jsonify(
+            {
+                "success": True,
+                "items": [
+                    serialize_feedback_row(
+                        row,
+                        screenshots_by_feedback.get(row["id"], []),
+                        comments_by_feedback.get(row["id"], []),
+                        is_root_user(current_user),
+                    )
+                    for row in feedback_rows
+                ],
+                "options": {
+                    "feedback_types": sorted(FEEDBACK_TYPE_OPTIONS),
+                    "modules": sorted(FEEDBACK_MODULE_OPTIONS),
+                },
+                "can_delete": is_root_user(current_user),
+            }
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks", methods=["POST"])
+def create_system_feedback():
+    current_user = get_current_request_user()
+    saved_files = []
+    conn = None
+    cur = None
+
+    try:
+        feedback_type = normalize_feedback_type(request.form.get("feedback_type"))
+        module = normalize_feedback_module(request.form.get("module"))
+        description = normalize_text(request.form.get("description"), 3000)
+        screenshot_files = collect_feedback_files(request.files)
+
+        if not description:
+            return jsonify({"success": False, "error": "请填写详细说明。"}), 400
+        if len(screenshot_files) > 6:
+            return jsonify({"success": False, "error": "最多上传 6 张截图。"}), 400
+
+        title_result = generate_feedback_title(feedback_type, module, description)
+        title = normalize_text(title_result.get("title"), 120) or "系统反馈事项"
+
+        for file_storage in screenshot_files:
+            saved_files.append(save_uploaded_file(file_storage, "feedback_screenshots"))
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        author = build_feedback_author_snapshot(current_user)
+
+        cur.execute(
+            """
+            INSERT INTO system_feedbacks (
+                feedback_type,
+                module,
+                title,
+                description,
+                created_by,
+                author_name,
+                author_phone,
+                author_role
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+            """,
+            (
+                feedback_type,
+                module,
+                title,
+                description,
+                current_user["id"],
+                author["author_name"],
+                author["author_phone"],
+                author["author_role"],
+            ),
+        )
+        feedback = cur.fetchone()
+        feedback_id = feedback["id"]
+
+        for index, file_path in enumerate(saved_files, start=1):
+            cur.execute(
+                """
+                INSERT INTO system_feedback_screenshots (
+                    feedback_id,
+                    file_path,
+                    sort_order
+                )
+                VALUES (%s, %s, %s);
+                """,
+                (feedback_id, file_path, index),
+            )
+
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "反馈已发布，所有用户均可查看并参与讨论。",
+                "id": feedback_id,
+                "title": title,
+                "ai_title_generated": bool(title_result.get("generated")),
+                "ai_title_message": title_result.get("message") or "",
+            }
+        )
+    except ValueError as e:
+        if conn:
+            conn.rollback()
+        for file_path in saved_files:
+            remove_storage_file(file_path)
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        for file_path in saved_files:
+            remove_storage_file(file_path)
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks/<int:feedback_id>/comments", methods=["POST"])
+def create_system_feedback_comment(feedback_id):
+    current_user = get_current_request_user()
+    data = request.get_json(silent=True) or {}
+    comment_text = normalize_text(data.get("comment_text"), 1200)
+    conn = None
+    cur = None
+
+    if not comment_text:
+        return jsonify({"success": False, "error": "请填写讨论内容。"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+
+        cur.execute("SELECT id FROM system_feedbacks WHERE id = %s LIMIT 1;", (feedback_id,))
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "反馈不存在。"}), 404
+
+        author = build_feedback_author_snapshot(current_user)
+        cur.execute(
+            """
+            INSERT INTO system_feedback_comments (
+                feedback_id,
+                comment_text,
+                created_by,
+                author_name,
+                author_phone,
+                author_role
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING
+                id,
+                feedback_id,
+                comment_text,
+                created_by,
+                author_name,
+                author_phone,
+                author_role,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at;
+            """,
+            (
+                feedback_id,
+                comment_text,
+                current_user["id"],
+                author["author_name"],
+                author["author_phone"],
+                author["author_role"],
+            ),
+        )
+        comment = cur.fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "讨论已发布。",
+                "comment": serialize_feedback_comment(comment, is_root_user(current_user)),
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks/<int:feedback_id>", methods=["DELETE"])
+def delete_system_feedback(feedback_id):
+    current_user = get_current_request_user()
+    if not is_root_user(current_user):
+        return jsonify({"success": False, "error": "只有 root 账号可以删除反馈。"}), 403
+
+    conn = None
+    cur = None
+    files_to_remove = []
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+
+        cur.execute(
+            """
+            SELECT file_path
+            FROM system_feedback_screenshots
+            WHERE feedback_id = %s;
+            """,
+            (feedback_id,),
+        )
+        files_to_remove = [row["file_path"] for row in cur.fetchall() if row.get("file_path")]
+
+        cur.execute("DELETE FROM system_feedbacks WHERE id = %s;", (feedback_id,))
+        if cur.rowcount == 0:
+            return jsonify({"success": False, "error": "反馈不存在。"}), 404
+
+        conn.commit()
+        for file_path in files_to_remove:
+            remove_storage_file(file_path)
+        return jsonify({"success": True, "message": "反馈已删除。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedback-comments/<int:comment_id>", methods=["DELETE"])
+def delete_system_feedback_comment(comment_id):
+    current_user = get_current_request_user()
+    if not is_root_user(current_user):
+        return jsonify({"success": False, "error": "只有 root 账号可以删除讨论。"}), 403
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        cur.execute("DELETE FROM system_feedback_comments WHERE id = %s;", (comment_id,))
+        if cur.rowcount == 0:
+            return jsonify({"success": False, "error": "讨论不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": "讨论已删除。"})
     except Exception as e:
         if conn:
             conn.rollback()

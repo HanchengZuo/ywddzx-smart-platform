@@ -409,6 +409,16 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.1',
+    date: '2026-05-10',
+    title: '系统反馈功能准备',
+    summary: '新增公共反馈入口，支持问题反馈公开展示与讨论。',
+    items: [
+      '上线系统反馈提交、截图上传和评论讨论能力。',
+      '反馈内容面向所有登录用户公开，便于集中收集和跟进。'
+    ]
+  },
+  {
     version: 'v1.0',
     date: '2026-05-07',
     title: '巡检系统上线发布',

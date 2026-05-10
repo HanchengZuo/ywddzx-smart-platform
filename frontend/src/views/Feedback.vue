@@ -1,593 +1,1012 @@
 <template>
-    <div class="page-shell">
-        <div class="page-header card-surface">
-            <div>
-                <div class="page-kicker">系统反馈</div>
-                <h2>平台建议与问题反馈中心</h2>
-                <p class="page-desc">
-                    用于收集各类系统使用反馈，包括功能建议、界面体验、流程问题、异常报错及优化需求。当前页面为前端样板展示，未接入真实提交与工单流转。
-                </p>
-            </div>
-            <div class="header-actions">
-                <button class="ghost-btn" type="button">查看反馈记录</button>
-                <button class="primary-btn" type="button">提交反馈</button>
-            </div>
-        </div>
-
-        <div class="page-content">
-            <div class="stats-grid">
-                <div v-for="card in statCards" :key="card.label" class="card-surface stat-card">
-                    <div class="stat-label">{{ card.label }}</div>
-                    <div class="stat-value">{{ card.value }}</div>
-                    <div class="stat-desc" :class="card.descClass">{{ card.desc }}</div>
-                </div>
-            </div>
-
-            <div class="content-grid">
-                <div class="left-column">
-                    <div class="card-surface section-card">
-                        <div class="section-head">
-                            <div>
-                                <div class="section-kicker">提交反馈</div>
-                                <h3>反馈表单示例</h3>
-                            </div>
-                            <span class="tag info">所有角色可见</span>
-                        </div>
-
-                        <div class="form-grid">
-                            <div class="field-block">
-                                <label class="field-label">反馈类型</label>
-                                <div class="fake-input">请选择：功能建议 / Bug反馈 / 界面优化 / 其他</div>
-                            </div>
-
-                            <div class="field-block">
-                                <label class="field-label">问题模块</label>
-                                <div class="fake-input">请选择：巡检系统 / 考核系统 / 培训系统 / 车辆系统 / 公共功能</div>
-                            </div>
-
-                            <div class="field-block">
-                                <label class="field-label">问题标题</label>
-                                <div class="fake-input">例如：巡检记录页面移动端显示错位</div>
-                            </div>
-
-                            <div class="field-block">
-                                <label class="field-label">联系方式</label>
-                                <div class="fake-input">手机号 / 邮箱 / 内部联系方式</div>
-                            </div>
-
-                            <div class="field-block full-width">
-                                <label class="field-label">详细说明</label>
-                                <div class="fake-textarea">
-                                    请描述问题现象、出现步骤、期望效果或改进建议。若为 Bug，可补充发生时间、页面位置和操作过程。
-                                </div>
-                            </div>
-
-                            <div class="field-block full-width">
-                                <label class="field-label">截图或附件</label>
-                                <div class="upload-box">
-                                    <div class="upload-icon">↑</div>
-                                    <div class="upload-title">上传截图 / 错误图片 / 说明附件</div>
-                                    <div class="upload-desc">样板示例：支持拖拽或点击上传，便于快速反馈问题。</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-actions">
-                            <button class="ghost-btn" type="button">保存草稿</button>
-                            <button class="primary-btn" type="button">提交反馈</button>
-                        </div>
-                    </div>
-
-                    <div class="card-surface section-card">
-                        <div class="section-head">
-                            <div>
-                                <div class="section-kicker">反馈分类</div>
-                                <h3>常见反馈方向</h3>
-                            </div>
-                        </div>
-
-                        <div class="category-grid">
-                            <div v-for="item in feedbackTypes" :key="item.title" class="category-card">
-                                <div class="category-icon">{{ item.icon }}</div>
-                                <div class="category-title">{{ item.title }}</div>
-                                <div class="category-desc">{{ item.desc }}</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="right-column">
-                    <div class="card-surface section-card">
-                        <div class="section-head compact">
-                            <div>
-                                <div class="section-kicker">最近反馈</div>
-                                <h3>反馈记录示例</h3>
-                            </div>
-                        </div>
-
-                        <div class="feedback-list">
-                            <div v-for="item in feedbackRecords" :key="item.title" class="feedback-item">
-                                <div class="feedback-top">
-                                    <div>
-                                        <div class="feedback-title">{{ item.title }}</div>
-                                        <div class="feedback-meta">{{ item.user }} · {{ item.module }} · {{ item.time }}
-                                        </div>
-                                    </div>
-                                    <span :class="['status-chip', item.statusClass]">{{ item.status }}</span>
-                                </div>
-                                <div class="feedback-desc">{{ item.desc }}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card-surface section-card">
-                        <div class="section-head compact">
-                            <div>
-                                <div class="section-kicker">处理流程</div>
-                                <h3>反馈流转示例</h3>
-                            </div>
-                        </div>
-
-                        <div class="flow-list">
-                            <div v-for="(step, index) in flowSteps" :key="step.title" class="flow-step">
-                                <div class="flow-index">{{ index + 1 }}</div>
-                                <div class="flow-content">
-                                    <div class="flow-title">{{ step.title }}</div>
-                                    <div class="flow-desc">{{ step.desc }}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card-surface section-card highlight-card">
-                        <div class="section-kicker highlight-kicker">页面定位</div>
-                        <h3>公共反馈入口样板</h3>
-                        <p>
-                            本页面面向所有系统使用人员开放，后续可继续扩展接入真实反馈提交、状态流转、管理员回复、附件上传、处理留痕与反馈统计分析等功能。
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <div class="page-shell feedback-page">
+    <div class="page-header card-surface">
+      <div>
+        <div class="page-kicker">公共功能</div>
+        <h2>系统反馈</h2>
+        <p class="page-desc">所有反馈公开可见，任何登录用户都可以提交问题、补充截图，并在反馈下方参与讨论。</p>
+      </div>
+      <div class="user-card">
+        <span>当前反馈人</span>
+        <strong>{{ currentUser.name }}</strong>
+        <small>{{ currentUser.phone || '未填写手机号' }}</small>
+      </div>
     </div>
+
+    <transition name="toast-fade">
+      <div v-if="message.text" class="feedback-toast card-surface" :class="message.type">
+        {{ message.text }}
+      </div>
+    </transition>
+
+    <div class="layout-grid">
+      <section class="card-surface feedback-form-card">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">提交反馈</div>
+            <h3>把问题说清楚，大家一起跟进</h3>
+          </div>
+          <span class="open-chip">公开</span>
+        </div>
+
+        <form class="feedback-form" @submit.prevent="submitFeedback">
+          <div class="form-grid">
+            <label class="field-block">
+              <span>反馈类型</span>
+              <select v-model="form.feedback_type">
+                <option v-for="item in feedbackTypes" :key="item" :value="item">{{ item }}</option>
+              </select>
+            </label>
+
+            <label class="field-block">
+              <span>问题模块</span>
+              <select v-model="form.module">
+                <option v-for="item in moduleOptions" :key="item" :value="item">{{ item }}</option>
+              </select>
+            </label>
+
+            <label class="field-block full-width">
+              <span>详细说明</span>
+              <textarea v-model.trim="form.description" rows="6" maxlength="3000"
+                placeholder="请描述出现位置、操作步骤、实际现象和你期望的效果。系统会根据说明自动生成反馈标题。"></textarea>
+            </label>
+
+            <div class="field-block full-width">
+              <span>上传截图</span>
+              <label class="upload-zone" for="feedback-screenshots">
+                <input id="feedback-screenshots" type="file" accept="image/*" multiple @change="handleScreenshotChange" />
+                <strong>选择截图</strong>
+                <small>支持多张图片，最多 6 张。截图会公开展示在该条反馈下。</small>
+              </label>
+
+              <div v-if="screenshotPreviews.length" class="screenshot-preview-grid">
+                <div v-for="(item, index) in screenshotPreviews" :key="item.url" class="screenshot-preview">
+                  <img :src="item.url" alt="反馈截图预览" />
+                  <button type="button" @click="removeScreenshot(index)">移除</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="ghost-btn" type="button" :disabled="submitting" @click="resetForm">清空</button>
+            <button class="primary-btn" type="submit" :disabled="submitting">
+              {{ submitting ? '提交中...' : '发布反馈' }}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="side-panel">
+        <div class="card-surface stat-card">
+          <span>公开反馈</span>
+          <strong>{{ feedbacks.length }}</strong>
+          <small>所有用户均可查看与讨论</small>
+        </div>
+        <div class="card-surface stat-card">
+          <span>讨论总数</span>
+          <strong>{{ totalComments }}</strong>
+          <small>持续补充上下文更容易定位问题</small>
+        </div>
+        <div class="card-surface rule-card">
+          <h3>反馈建议</h3>
+          <p>标题尽量简短，说明里写清楚页面、步骤和期望效果。截图越具体，后续处理越快。</p>
+        </div>
+      </aside>
+    </div>
+
+    <section class="card-surface feedback-board">
+      <div class="board-head">
+        <div>
+          <div class="section-kicker">反馈广场</div>
+          <h3>公开反馈与讨论</h3>
+        </div>
+        <div class="board-filters">
+          <select v-model="filters.feedback_type">
+            <option value="">全部类型</option>
+            <option v-for="item in feedbackTypes" :key="item" :value="item">{{ item }}</option>
+          </select>
+          <select v-model="filters.module">
+            <option value="">全部模块</option>
+            <option v-for="item in moduleOptions" :key="item" :value="item">{{ item }}</option>
+          </select>
+        </div>
+      </div>
+
+      <div v-if="loading" class="empty-card">正在加载反馈...</div>
+      <div v-else-if="filteredFeedbacks.length === 0" class="empty-card">
+        当前没有符合条件的反馈。可以先发布第一条，把问题留在这里。
+      </div>
+
+      <div v-else class="feedback-list">
+        <article v-for="item in filteredFeedbacks" :key="item.id" class="feedback-thread">
+          <div class="thread-head">
+            <div>
+              <div class="thread-tags">
+                <span>{{ item.feedback_type }}</span>
+                <span>{{ item.module }}</span>
+              </div>
+              <h3>{{ item.title }}</h3>
+            </div>
+            <button v-if="item.can_delete" class="danger-btn" type="button" @click="deleteFeedback(item)">
+              删除
+            </button>
+          </div>
+
+          <div class="thread-author">
+            <strong>{{ item.author_name || '未知用户' }}</strong>
+            <span>{{ item.author_phone || '未填写手机号' }}</span>
+            <span>{{ roleLabel(item.author_role) }}</span>
+            <span>{{ item.created_at }}</span>
+          </div>
+
+          <p class="thread-desc">{{ item.description }}</p>
+
+          <div v-if="item.screenshots?.length" class="thread-screenshots">
+            <button v-for="shot in item.screenshots" :key="shot.id" type="button" @click="previewImage(shot.file_path)">
+              <img :src="resolveStorageUrl(shot.file_path)" alt="反馈截图" />
+            </button>
+          </div>
+
+          <div class="comment-panel">
+            <div class="comment-title">讨论 {{ item.comments?.length || 0 }}</div>
+            <div v-if="item.comments?.length" class="comment-list">
+              <div v-for="comment in item.comments" :key="comment.id" class="comment-item">
+                <div class="comment-meta">
+                  <strong>{{ comment.author_name || '未知用户' }}</strong>
+                  <span>{{ comment.author_phone || '未填写手机号' }}</span>
+                  <span>{{ comment.created_at }}</span>
+                  <button v-if="comment.can_delete" type="button" @click="deleteComment(comment)">删除</button>
+                </div>
+                <p>{{ comment.comment_text }}</p>
+              </div>
+            </div>
+
+            <form class="comment-form" @submit.prevent="submitComment(item)">
+              <input v-model.trim="commentDrafts[item.id]" maxlength="1200" placeholder="参与讨论，补充现象、原因或处理建议" />
+              <button class="ghost-btn" type="submit" :disabled="commentSubmittingId === item.id">
+                {{ commentSubmittingId === item.id ? '发布中' : '回复' }}
+              </button>
+            </form>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div v-if="preview.visible" class="image-preview-overlay" @click.self="closePreview">
+      <div class="image-preview-dialog">
+        <button type="button" @click="closePreview">关闭</button>
+        <img :src="preview.url" alt="反馈截图预览" />
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
-const statCards = [
-    { label: '本月反馈数', value: '18', desc: '包含建议、Bug 与优化意见', descClass: '' },
-    { label: '待处理', value: '5', desc: '建议尽快查看并分派', descClass: 'warning-text' },
-    { label: '处理中', value: '7', desc: '已有责任人跟进', descClass: '' },
-    { label: '已解决', value: '6', desc: '可回访确认效果', descClass: 'success-text' }
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import axios from 'axios'
+
+const defaultFeedbackTypes = ['Bug反馈', '功能建议', '界面优化', '流程建议', '其他']
+const defaultModules = [
+  '巡检系统',
+  '巡检规范库',
+  '检查表原件库',
+  '巡检计划',
+  '证照管理',
+  '考核系统',
+  '培训系统',
+  '培训材料库',
+  '车辆管理系统',
+  '数据备份管理',
+  '用户数据管理',
+  '站点数据管理',
+  '巡检表数据管理',
+  '管理系统',
+  '公共功能',
+  '登录与账号',
+  '其他'
 ]
 
-const feedbackTypes = [
-    { icon: '功', title: '功能建议', desc: '对新功能、现有功能增强提出建议。' },
-    { icon: '错', title: 'Bug反馈', desc: '反馈报错、页面异常、按钮失效等问题。' },
-    { icon: '界', title: '界面优化', desc: '反馈布局、显示、移动端适配等体验问题。' },
-    { icon: '流', title: '流程建议', desc: '反馈业务流转、权限设计、审批逻辑优化。' }
-]
+const currentUser = computed(() => ({
+  name: localStorage.getItem('real_name') || localStorage.getItem('username') || '未命名用户',
+  phone: localStorage.getItem('phone') || '',
+  role: localStorage.getItem('user_role') || ''
+}))
 
-const feedbackRecords = [
-    {
-        title: '巡检记录页面移动端表格显示过窄',
-        user: '站点账号',
-        module: '巡检系统',
-        time: '2026-04-20 09:12',
-        status: '处理中',
-        statusClass: 'warning',
-        desc: '在小屏手机上查看巡检记录时，部分字段显示拥挤，建议优化移动端布局。'
-    },
-    {
-        title: '车辆管理系统建议增加归还确认提醒',
-        user: '督导组测试账号',
-        module: '车辆系统',
-        time: '2026-04-19 17:48',
-        status: '待处理',
-        statusClass: 'neutral',
-        desc: '建议对出车后未归还的记录增加到期提醒或高亮提示。'
-    },
-    {
-        title: '培训系统建议增加历史培训档案导出',
-        user: '督导组成员',
-        module: '培训系统',
-        time: '2026-04-18 14:20',
-        status: '已解决',
-        statusClass: 'success',
-        desc: '希望支持按人员导出培训档案，便于后续归档与检查。'
+const feedbacks = ref([])
+const feedbackTypes = ref(defaultFeedbackTypes)
+const moduleOptions = ref(defaultModules)
+const loading = ref(false)
+const submitting = ref(false)
+const commentSubmittingId = ref(null)
+const screenshotFiles = ref([])
+const screenshotPreviews = ref([])
+const commentDrafts = reactive({})
+const filters = reactive({
+  feedback_type: '',
+  module: ''
+})
+const form = reactive({
+  feedback_type: 'Bug反馈',
+  module: '巡检系统',
+  description: ''
+})
+const message = reactive({
+  text: '',
+  type: 'info'
+})
+const preview = reactive({
+  visible: false,
+  url: ''
+})
+let messageTimer = null
+
+const totalComments = computed(() => feedbacks.value.reduce((sum, item) => sum + (item.comments?.length || 0), 0))
+const filteredFeedbacks = computed(() => {
+  return feedbacks.value.filter((item) => {
+    const typeMatched = !filters.feedback_type || item.feedback_type === filters.feedback_type
+    const moduleMatched = !filters.module || item.module === filters.module
+    return typeMatched && moduleMatched
+  })
+})
+
+const setMessage = (text, type = 'info') => {
+  if (messageTimer) {
+    clearTimeout(messageTimer)
+    messageTimer = null
+  }
+  message.text = text
+  message.type = type
+  if (!text) return
+  messageTimer = setTimeout(() => {
+    message.text = ''
+    messageTimer = null
+  }, 2600)
+}
+
+const roleLabel = (role) => {
+  const map = {
+    root: '系统管理员',
+    supervisor: '督导组',
+    station_manager: '站点账号'
+  }
+  return map[role] || role || '未知角色'
+}
+
+const resolveStorageUrl = (path) => {
+  const value = String(path || '').trim()
+  if (!value) return ''
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('data:') || value.startsWith('blob:')) {
+    return value
+  }
+  if (value.startsWith('/storage/')) return value
+  if (value.startsWith('/')) return `/storage${value}`
+  return `/storage/${value}`
+}
+
+const releasePreviews = () => {
+  screenshotPreviews.value.forEach((item) => URL.revokeObjectURL(item.url))
+  screenshotPreviews.value = []
+}
+
+const handleScreenshotChange = (event) => {
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  const nextFiles = [...screenshotFiles.value, ...files].slice(0, 6)
+  if (screenshotFiles.value.length + files.length > 6) {
+    setMessage('最多上传 6 张截图，已自动保留前 6 张。', 'error')
+  }
+  releasePreviews()
+  screenshotFiles.value = nextFiles
+  screenshotPreviews.value = screenshotFiles.value.map((file) => ({
+    file,
+    url: URL.createObjectURL(file)
+  }))
+}
+
+const removeScreenshot = (index) => {
+  const nextFiles = screenshotFiles.value.filter((_, fileIndex) => fileIndex !== index)
+  releasePreviews()
+  screenshotFiles.value = nextFiles
+  screenshotPreviews.value = screenshotFiles.value.map((file) => ({
+    file,
+    url: URL.createObjectURL(file)
+  }))
+}
+
+const resetForm = () => {
+  form.feedback_type = feedbackTypes.value[0] || 'Bug反馈'
+  form.module = moduleOptions.value[0] || '巡检系统'
+  form.description = ''
+  screenshotFiles.value = []
+  releasePreviews()
+}
+
+const fetchFeedbacks = async () => {
+  try {
+    loading.value = true
+    const response = await axios.get('/api/feedbacks', {
+      params: { _ts: Date.now() }
+    })
+    feedbacks.value = response.data?.items || []
+    feedbackTypes.value = response.data?.options?.feedback_types || defaultFeedbackTypes
+    moduleOptions.value = response.data?.options?.modules || defaultModules
+    if (!feedbackTypes.value.includes(form.feedback_type)) form.feedback_type = feedbackTypes.value[0] || 'Bug反馈'
+    if (!moduleOptions.value.includes(form.module)) form.module = moduleOptions.value[0] || '巡检系统'
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '反馈数据加载失败。', 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+const validateForm = () => {
+  if (!form.feedback_type) return '请选择反馈类型。'
+  if (!form.module) return '请选择问题模块。'
+  if (!form.description) return '请填写详细说明。'
+  return ''
+}
+
+const submitFeedback = async () => {
+  const error = validateForm()
+  if (error) {
+    setMessage(error, 'error')
+    return
+  }
+
+  try {
+    submitting.value = true
+    const payload = new FormData()
+    payload.append('feedback_type', form.feedback_type)
+    payload.append('module', form.module)
+    payload.append('description', form.description)
+    screenshotFiles.value.forEach((file) => {
+      payload.append('screenshots', file)
+    })
+    const response = await axios.post('/api/feedbacks', payload)
+    if (response.data?.ai_title_generated === false) {
+      setMessage('反馈已提交，AI标题生成失败，已使用默认标题。', 'success')
+    } else {
+      setMessage(response.data?.message || '反馈已发布。', 'success')
     }
-]
+    resetForm()
+    await fetchFeedbacks()
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '反馈提交失败。', 'error')
+  } finally {
+    submitting.value = false
+  }
+}
 
-const flowSteps = [
-    { title: '用户提交反馈', desc: '填写问题类型、模块、说明及附件信息。' },
-    { title: '管理员查看分派', desc: '对反馈内容进行分类并安排处理人。' },
-    { title: '处理中/回复', desc: '针对反馈进行修复、优化或答复说明。' },
-    { title: '关闭归档', desc: '问题解决后关闭反馈，并保留处理记录。' }
-]
+const submitComment = async (item) => {
+  const text = String(commentDrafts[item.id] || '').trim()
+  if (!text) {
+    setMessage('请填写讨论内容。', 'error')
+    return
+  }
+  try {
+    commentSubmittingId.value = item.id
+    const response = await axios.post(`/api/feedbacks/${item.id}/comments`, {
+      comment_text: text
+    })
+    commentDrafts[item.id] = ''
+    const comment = response.data?.comment
+    if (comment) {
+      item.comments = [...(item.comments || []), comment]
+    } else {
+      await fetchFeedbacks()
+    }
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '讨论发布失败。', 'error')
+  } finally {
+    commentSubmittingId.value = null
+  }
+}
+
+const deleteFeedback = async (item) => {
+  if (!window.confirm(`确定删除反馈【${item.title}】吗？删除后讨论和截图都会同步删除。`)) return
+  try {
+    await axios.delete(`/api/feedbacks/${item.id}`)
+    setMessage('反馈已删除。', 'success')
+    await fetchFeedbacks()
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '反馈删除失败。', 'error')
+  }
+}
+
+const deleteComment = async (comment) => {
+  if (!window.confirm('确定删除这条讨论吗？')) return
+  try {
+    await axios.delete(`/api/feedback-comments/${comment.id}`)
+    setMessage('讨论已删除。', 'success')
+    await fetchFeedbacks()
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '讨论删除失败。', 'error')
+  }
+}
+
+const previewImage = (path) => {
+  preview.url = resolveStorageUrl(path)
+  preview.visible = true
+}
+
+const closePreview = () => {
+  preview.visible = false
+  preview.url = ''
+}
+
+onMounted(fetchFeedbacks)
+
+onBeforeUnmount(() => {
+  if (messageTimer) clearTimeout(messageTimer)
+  releasePreviews()
+})
 </script>
 
 <style scoped>
 .page-shell {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .card-surface {
-    background: rgba(255, 255, 255, 0.96);
-    border: 1px solid #dbe4ee;
-    border-radius: 22px;
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #dbe4ee;
+  border-radius: 24px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.07);
 }
 
 .page-header {
-    padding: 24px 28px;
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 26px 28px;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(37, 99, 235, 0.14), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
 }
 
 .page-kicker,
 .section-kicker {
-    display: inline-flex;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: #eff6ff;
-    color: #1d4ed8;
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 12px;
+  display: inline-flex;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 12px;
 }
 
 .page-header h2,
 .section-head h3,
-.highlight-card h3 {
-    margin: 0;
-    color: #0f172a;
+.board-head h3 {
+  margin: 0;
+  color: #0f172a;
 }
 
 .page-header h2 {
-    font-size: 34px;
+  font-size: 34px;
 }
 
-.page-desc,
-.category-desc,
-.feedback-desc,
-.flow-desc {
-    margin-top: 8px;
-    font-size: 14px;
-    line-height: 1.8;
-    color: #64748b;
+.page-desc {
+  max-width: 720px;
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.8;
 }
 
-.header-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
+.user-card {
+  min-width: 180px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid #e2e8f0;
 }
 
-.ghost-btn,
-.primary-btn {
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 700;
-    border: 1px solid #cbd5e1;
-    cursor: pointer;
+.user-card span,
+.user-card small {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
 }
 
-.ghost-btn {
-    height: 38px;
-    padding: 0 14px;
-    background: #fff;
-    color: #334155;
+.user-card strong {
+  display: block;
+  margin: 5px 0;
+  color: #0f172a;
+  font-size: 18px;
 }
 
-.primary-btn {
-    height: 40px;
-    padding: 0 16px;
-    background: #2563eb;
-    border-color: #2563eb;
-    color: #fff;
+.feedback-toast {
+  position: fixed;
+  left: 50%;
+  top: 84px;
+  z-index: 3000;
+  transform: translateX(-50%);
+  min-width: min(420px, calc(100vw - 32px));
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
 }
 
-.page-content {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+.feedback-toast.success {
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
 }
 
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 18px;
+.feedback-toast.error {
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
+.layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+}
+
+.feedback-form-card,
+.feedback-board,
 .stat-card,
-.section-card {
-    padding: 24px;
+.rule-card {
+  padding: 22px;
 }
 
-.stat-label {
-    font-size: 13px;
-    color: #64748b;
-    margin-bottom: 10px;
+.section-head,
+.board-head,
+.thread-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.stat-value {
-    font-size: 34px;
-    font-weight: 800;
-    color: #0f172a;
-    line-height: 1.1;
+.open-chip,
+.thread-tags span {
+  display: inline-flex;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.stat-desc {
-    margin-top: 10px;
-    font-size: 13px;
-    line-height: 1.7;
-    color: #64748b;
-}
-
-.warning-text {
-    color: #c2410c;
-}
-
-.success-text {
-    color: #15803d;
-}
-
-.content-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
-    gap: 20px;
-}
-
-.left-column,
-.right-column {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-.section-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 18px;
-}
-
-.section-head.compact {
-    margin-bottom: 16px;
+.feedback-form {
+  margin-top: 18px;
 }
 
 .form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
-.field-block.full-width {
-    grid-column: 1 / -1;
+.field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.field-label {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 13px;
-    font-weight: 700;
-    color: #475569;
+.full-width {
+  grid-column: 1 / -1;
 }
 
-.fake-input,
-.fake-textarea {
-    border: 1px solid #cbd5e1;
-    border-radius: 14px;
-    background: #fff;
-    color: #64748b;
-    font-size: 14px;
-    line-height: 1.7;
-    padding: 14px 16px;
+.field-block span {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
 }
 
-.fake-textarea {
-    min-height: 110px;
+.field-block input,
+.field-block select,
+.field-block textarea,
+.board-filters select,
+.comment-form input {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+  box-sizing: border-box;
 }
 
-.upload-box {
-    border: 1px dashed #93c5fd;
-    border-radius: 18px;
-    background: #f8fbff;
-    padding: 24px;
-    text-align: center;
+.field-block input,
+.field-block select,
+.board-filters select,
+.comment-form input {
+  height: 44px;
+  padding: 0 12px;
 }
 
-.upload-icon {
-    font-size: 28px;
-    font-weight: 800;
-    color: #2563eb;
-    margin-bottom: 8px;
+.field-block textarea {
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.7;
 }
 
-.upload-title {
-    font-size: 15px;
-    font-weight: 800;
-    color: #0f172a;
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border: 1px dashed #93c5fd;
+  border-radius: 18px;
+  background: #f8fbff;
+  cursor: pointer;
 }
 
-.upload-desc {
-    margin-top: 8px;
-    font-size: 13px;
-    line-height: 1.8;
-    color: #64748b;
+.upload-zone input {
+  display: none;
+}
+
+.upload-zone strong {
+  color: #1d4ed8;
+  font-size: 15px;
+}
+
+.upload-zone small {
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.screenshot-preview-grid,
+.thread-screenshots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.screenshot-preview,
+.thread-screenshots button {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dbe4ee;
+  border-radius: 16px;
+  background: #f8fafc;
+  aspect-ratio: 4 / 3;
+}
+
+.screenshot-preview img,
+.thread-screenshots img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.screenshot-preview button {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.74);
+  color: #fff;
+  cursor: pointer;
+}
+
+.thread-screenshots button {
+  padding: 0;
+  cursor: pointer;
 }
 
 .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 18px;
 }
 
-.tag,
-.status-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 28px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
+.primary-btn,
+.ghost-btn,
+.danger-btn {
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  font-weight: 800;
+  cursor: pointer;
 }
 
-.tag.info {
-    background: #eff6ff;
-    color: #1d4ed8;
+.primary-btn {
+  border-color: #1d4ed8;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #fff;
 }
 
-.tag.neutral,
-.status-chip.neutral {
-    background: #f1f5f9;
-    color: #475569;
+.ghost-btn {
+  background: #fff;
+  color: #0f172a;
 }
 
-.status-chip.warning {
-    background: #fff7ed;
-    color: #c2410c;
+.danger-btn {
+  height: 36px;
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
 }
 
-.status-chip.success {
-    background: #ecfdf5;
-    color: #15803d;
+.primary-btn:disabled,
+.ghost-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
-.category-grid,
-.quick-grid {
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stat-card span,
+.stat-card small {
+  display: block;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.stat-card strong {
+  display: block;
+  margin: 8px 0;
+  color: #0f172a;
+  font-size: 34px;
+}
+
+.rule-card h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+}
+
+.rule-card p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.8;
+}
+
+.board-filters {
+  display: flex;
+  gap: 10px;
+}
+
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.feedback-thread {
+  padding: 18px;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.08), transparent 24%),
+    #ffffff;
+}
+
+.thread-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.thread-tags span:last-child {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.thread-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.thread-author {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.thread-author strong {
+  color: #334155;
+}
+
+.thread-desc {
+  margin: 14px 0 0;
+  color: #334155;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
+.comment-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #cbd5e1;
+}
+
+.comment-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.comment-item {
+  padding: 12px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e7edf4;
+}
+
+.comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.comment-meta strong {
+  color: #0f172a;
+}
+
+.comment-meta button {
+  border: none;
+  background: transparent;
+  color: #b91c1c;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.comment-item p {
+  margin: 8px 0 0;
+  color: #334155;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.comment-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.empty-card {
+  margin-top: 18px;
+  padding: 30px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 18px;
+  color: #64748b;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.image-preview-dialog {
+  position: relative;
+  max-width: min(960px, 96vw);
+  max-height: 92vh;
+}
+
+.image-preview-dialog button {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 2;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.image-preview-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: 92vh;
+  border-radius: 18px;
+  background: #fff;
+}
+
+@media (max-width: 1024px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
-.category-card,
-.quick-entry {
-    padding: 18px 16px;
-    border: 1px solid #dbe4ee;
-    border-radius: 18px;
-    background: #f8fafc;
-}
-
-.category-icon,
-.quick-icon,
-.flow-index {
-    width: 42px;
-    height: 42px;
-    border-radius: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #eff6ff;
-    color: #2563eb;
-    font-size: 18px;
-    font-weight: 800;
-    margin-bottom: 12px;
-}
-
-.category-title,
-.quick-title,
-.feedback-title,
-.flow-title {
-    font-size: 15px;
-    font-weight: 800;
-    color: #0f172a;
-}
-
-.feedback-list,
-.flow-list {
-    display: flex;
+@media (max-width: 720px) {
+  .page-header,
+  .section-head,
+  .board-head,
+  .thread-head {
     flex-direction: column;
-    gap: 14px;
-}
+  }
 
-.feedback-item,
-.flow-step {
-    padding: 16px;
-    border-radius: 18px;
-    background: #f8fafc;
-    border: 1px solid #dbe4ee;
-}
+  .page-header {
+    padding: 20px;
+  }
 
-.feedback-top {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    align-items: flex-start;
-}
+  .page-header h2 {
+    font-size: 28px;
+  }
 
-.feedback-meta {
-    margin-top: 6px;
-    font-size: 13px;
-    color: #64748b;
-}
+  .user-card {
+    width: 100%;
+    box-sizing: border-box;
+  }
 
-.flow-step {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-}
+  .form-grid,
+  .side-panel {
+    grid-template-columns: 1fr;
+  }
 
-.flow-index {
-    margin-bottom: 0;
-    flex-shrink: 0;
-}
+  .board-filters,
+  .form-actions,
+  .comment-form {
+    width: 100%;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
 
-.highlight-card {
-    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
-}
+  .primary-btn,
+  .ghost-btn,
+  .danger-btn {
+    width: 100%;
+  }
 
-.highlight-kicker {
-    background: #dbeafe;
-}
-
-@media (max-width: 1200px) {
-    .stats-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .content-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 768px) {
-
-    .page-header,
-    .stat-card,
-    .section-card {
-        padding: 20px;
-    }
-
-    .page-header {
-        flex-direction: column;
-    }
-
-    .page-header h2 {
-        font-size: 28px;
-    }
-
-    .stats-grid,
-    .form-grid,
-    .category-grid,
-    .quick-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .section-head,
-    .header-actions,
-    .feedback-top,
-    .form-actions {
-        flex-direction: column;
-        align-items: stretch;
-    }
+  .feedback-form-card,
+  .feedback-board,
+  .stat-card,
+  .rule-card {
+    padding: 18px;
+  }
 }
 </style>

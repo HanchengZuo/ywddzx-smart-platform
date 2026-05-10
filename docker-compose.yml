@@ -20,6 +20,7 @@ services:
     container_name: ywddzx-backend
     restart: always
     environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ywddzx
