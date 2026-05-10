@@ -4,10 +4,11 @@
       <div class="hero-content">
         <div class="page-kicker">管理系统</div>
         <h2>数据备份管理</h2>
-        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录，支持手动下载、导入恢复和自动定时导出。</p>
+        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录。本地永远只保留 1 份最新备份，腾讯云 COS 自动保留最近 3 份。</p>
         <div v-if="hasPermission" class="hero-meta">
           <span>自动备份：{{ frequencyLabel(config.frequency) }}</span>
-          <span>保存位置：{{ config.destination_path || '默认目录' }}</span>
+          <span>本地位置：{{ config.destination_path || '默认目录' }}</span>
+          <span>COS：{{ cosStatus.configured ? `${cosStatus.bucket} · ${cosStatus.region}` : '未配置' }}</span>
         </div>
       </div>
       <div v-if="hasPermission" class="header-actions action-panel">
@@ -39,8 +40,8 @@
           <div class="section-head">
             <div>
               <div class="section-kicker">自动备份设置</div>
-              <h3>设置备份频率和服务端保存位置</h3>
-              <p>保存位置是后端服务器可访问的路径；Docker 部署时建议放在已挂载到宿主机的目录里。</p>
+              <h3>设置备份频率和本地保存位置</h3>
+              <p>本地保存位置是后端服务器可访问路径；每次备份都会覆盖同一份本地文件，并同步上传到腾讯云 COS。</p>
             </div>
           </div>
 
@@ -68,7 +69,7 @@
             </div>
           </div>
           <div class="auto-note">
-            自动备份只保留一个固定文件：<strong>ywddzx_full_backup_auto.zip</strong>，每次执行都会覆盖上一份自动备份。
+            本地备份只保留一个固定文件：<strong>ywddzx_full_backup_latest.zip</strong>。COS 会上传带时间戳的备份对象，并自动只保留最近 3 个。
           </div>
         </section>
 
@@ -101,9 +102,21 @@
               <span>最近备份大小</span>
               <strong>{{ formatSize(config.last_backup_size) }}</strong>
             </div>
+            <div class="status-item" :class="{ error: cosStatus.status === 'error' }">
+              <span>COS 对象存储</span>
+              <strong>{{ cosStatus.message || '-' }}</strong>
+            </div>
+            <div class="status-item">
+              <span>最近 COS 上传</span>
+              <strong>{{ formatDate(config.last_cos_uploaded_at) }}</strong>
+            </div>
+            <div class="status-item">
+              <span>最近 COS 对象</span>
+              <strong>{{ config.last_cos_key || '-' }}</strong>
+            </div>
             <div class="status-item" :class="{ error: config.last_status === 'error' }">
               <span>最近任务状态</span>
-              <strong>{{ config.last_status === 'error' ? (config.last_error || '执行失败') : '正常' }}</strong>
+              <strong>{{ statusText }}</strong>
             </div>
           </div>
         </section>
@@ -120,8 +133,9 @@
       <section class="card-surface table-card">
         <div class="section-head">
           <div>
-            <div class="section-kicker">备份文件</div>
-            <h3>最近 {{ latestBackups.length }} 个服务端备份</h3>
+            <div class="section-kicker">本地备份</div>
+            <h3>本地当前保留 {{ latestBackups.length }} 个备份</h3>
+            <p>本地只保留最新一份，用于快速下载和导入恢复。</p>
           </div>
         </div>
 
@@ -149,10 +163,57 @@
                 </td>
                 <td>
                   <span :class="['backup-type', backup.filename.includes('_auto') ? 'auto' : 'manual']">
-                    {{ backup.filename.includes('_auto') ? '自动覆盖' : '手动导出' }}
+                    {{ backup.filename.includes('_latest') ? '本地最新' : backup.filename.includes('_auto') ? '自动覆盖' : '手动导出' }}
                   </span>
                 </td>
                 <td>{{ backup.path }}</td>
+                <td>{{ formatSize(backup.size) }}</td>
+                <td>{{ formatDate(backup.updated_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card-surface table-card cos-table-card">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">腾讯云 COS</div>
+            <h3>云端最近 {{ latestCosBackups.length }} / {{ cosStatus.retention_count || 3 }} 个备份</h3>
+            <p>云端对象来自环境变量配置的 COS 存储桶，系统会自动删除第 4 个及更早备份。</p>
+          </div>
+        </div>
+
+        <div v-if="!cosStatus.configured" class="cos-empty">
+          未检测到完整 COS 环境变量，当前仅执行本地备份。
+        </div>
+        <div v-else-if="cosStatus.status === 'error'" class="cos-empty error">
+          {{ cosStatus.message || 'COS 状态异常，请检查后端日志。' }}
+        </div>
+        <div v-else class="table-wrap">
+          <table class="backup-table">
+            <thead>
+              <tr>
+                <th>对象名</th>
+                <th>存储桶</th>
+                <th>对象 Key</th>
+                <th>文件大小</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading">
+                <td colspan="5" class="empty-cell">正在读取 COS 备份列表...</td>
+              </tr>
+              <tr v-else-if="!latestCosBackups.length">
+                <td colspan="5" class="empty-cell">COS 中暂无完整备份对象。</td>
+              </tr>
+              <tr v-for="backup in latestCosBackups" :key="backup.key">
+                <td>
+                  <div class="table-title">{{ backup.filename }}</div>
+                </td>
+                <td>{{ cosStatus.bucket }}</td>
+                <td>{{ backup.key }}</td>
                 <td>{{ formatSize(backup.size) }}</td>
                 <td>{{ formatDate(backup.updated_at) }}</td>
               </tr>
@@ -166,7 +227,7 @@
 
 <script setup>
 import axios from 'axios'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -179,6 +240,7 @@ const importing = ref(false)
 const backupFileInputRef = ref(null)
 const frequencyOptions = ref([])
 const latestBackups = ref([])
+const latestCosBackups = ref([])
 const message = reactive({
   text: '',
   type: 'info'
@@ -191,8 +253,29 @@ const config = reactive({
   last_auto_export_at: '',
   last_backup_path: '',
   last_backup_size: null,
+  last_cos_uploaded_at: '',
+  last_cos_key: '',
+  last_cos_status: 'not_configured',
+  last_cos_error: '',
+  last_cos_retained_count: 0,
   last_status: 'idle',
   last_error: ''
+})
+
+const cosStatus = reactive({
+  status: 'not_configured',
+  message: '',
+  configured: false,
+  sdk_available: false,
+  bucket: '',
+  region: '',
+  prefix: '',
+  retention_count: 3,
+  last_cos_status: '',
+  last_cos_key: '',
+  last_cos_uploaded_at: '',
+  last_cos_error: '',
+  last_cos_retained_count: 0
 })
 
 const form = reactive({
@@ -213,12 +296,28 @@ const syncConfig = (nextConfig = {}) => {
     last_auto_export_at: nextConfig.last_auto_export_at || '',
     last_backup_path: nextConfig.last_backup_path || '',
     last_backup_size: nextConfig.last_backup_size ?? null,
+    last_cos_uploaded_at: nextConfig.last_cos_uploaded_at || '',
+    last_cos_key: nextConfig.last_cos_key || '',
+    last_cos_status: nextConfig.last_cos_status || 'not_configured',
+    last_cos_error: nextConfig.last_cos_error || '',
+    last_cos_retained_count: nextConfig.last_cos_retained_count || 0,
     last_status: nextConfig.last_status || 'idle',
     last_error: nextConfig.last_error || ''
+  })
+  Object.assign(cosStatus, {
+    ...cosStatus,
+    ...(nextConfig.cos || {}),
+    retention_count: nextConfig.cos?.retention_count || 3
   })
   form.destination_path = config.destination_path
   form.frequency = config.frequency
 }
+
+const statusText = computed(() => {
+  if (config.last_status === 'error') return config.last_error || '执行失败'
+  if (config.last_status === 'warning') return config.last_error || '本地备份成功，云端上传异常'
+  return '正常'
+})
 
 const frequencyLabel = (value) => {
   return frequencyOptions.value.find((item) => item.value === value)?.label || '关闭自动备份'
@@ -259,6 +358,7 @@ const fetchBackups = async () => {
     syncConfig(response.data?.config || {})
     frequencyOptions.value = response.data?.frequency_options || []
     latestBackups.value = response.data?.latest_backups || []
+    latestCosBackups.value = response.data?.latest_cos_backups || []
   } catch (error) {
     setMessage(error?.response?.data?.error || '备份状态加载失败。', 'error')
   } finally {
@@ -282,6 +382,7 @@ const saveConfig = async () => {
     })
     syncConfig(response.data?.config || {})
     latestBackups.value = response.data?.latest_backups || []
+    latestCosBackups.value = response.data?.latest_cos_backups || []
     setMessage(response.data?.message || '备份设置已保存。', 'success')
   } catch (error) {
     setMessage(error?.response?.data?.error || '备份设置保存失败。', 'error')
@@ -333,7 +434,7 @@ const exportBackup = async () => {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(blobUrl)
-    setMessage('完整备份已生成并开始下载，服务端也已保存在当前备份目录。', 'success')
+    setMessage('完整备份已生成并开始下载，本地已覆盖为最新备份；如 COS 可用，也已同步上传并保留最近 3 份。', 'success')
     await fetchBackups()
   } catch (error) {
     setMessage(await readBlobError(error, '完整备份导出失败。'), 'error')
@@ -692,6 +793,10 @@ onMounted(fetchBackups)
   grid-column: span 2;
 }
 
+.status-item:nth-child(8) {
+  grid-column: span 2;
+}
+
 .status-item.error {
   background: #fef2f2;
   border-color: #fecaca;
@@ -773,6 +878,28 @@ onMounted(fetchBackups)
   color: #1d4ed8;
 }
 
+.cos-table-card {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(14, 165, 233, 0.12), transparent 28%),
+    rgba(255, 255, 255, 0.97);
+}
+
+.cos-empty {
+  padding: 22px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  color: #475569;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.cos-empty.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
 .table-title {
   font-size: 14px;
   font-weight: 900;
@@ -838,6 +965,10 @@ onMounted(fetchBackups)
   }
 
   .status-item:nth-child(4) {
+    grid-column: span 1;
+  }
+
+  .status-item:nth-child(8) {
     grid-column: span 1;
   }
 }

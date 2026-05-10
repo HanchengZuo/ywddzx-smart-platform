@@ -22,6 +22,12 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import generate_feedback_title
 
+try:
+    from qcloud_cos import CosConfig, CosS3Client
+except Exception:
+    CosConfig = None
+    CosS3Client = None
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get(
     "APP_SECRET_KEY",
@@ -46,7 +52,10 @@ FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screensh
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
-AUTO_BACKUP_FILENAME = f"{BACKUP_PREFIX}_auto.zip"
+LOCAL_BACKUP_FILENAME = f"{BACKUP_PREFIX}_latest.zip"
+AUTO_BACKUP_FILENAME = LOCAL_BACKUP_FILENAME
+COS_BACKUP_PREFIX = os.environ.get("COS_BACKUP_PREFIX", "ywddzx-full-backups/").strip().strip("/")
+COS_BACKUP_RETENTION_COUNT = 3
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
 PASSWORD_MIN_LENGTH = 8
@@ -657,6 +666,11 @@ def get_default_backup_config():
         "last_auto_export_at": None,
         "last_backup_path": None,
         "last_backup_size": None,
+        "last_cos_status": "not_configured",
+        "last_cos_key": None,
+        "last_cos_uploaded_at": None,
+        "last_cos_retained_count": 0,
+        "last_cos_error": "",
         "last_status": "idle",
         "last_error": "",
         "updated_at": None,
@@ -728,6 +742,181 @@ def list_backup_files(destination_path):
             }
         )
     return sorted(rows, key=lambda item: item["updated_at"], reverse=True)[:20]
+
+
+def get_cos_env_config():
+    secret_id = os.environ.get("COS_SECRET_ID", "").strip()
+    secret_key = os.environ.get("COS_SECRET_KEY", "").strip()
+    region = os.environ.get("COS_REGION", "").strip()
+    bucket = os.environ.get("COS_BUCKET", "").strip()
+    prefix = f"{COS_BACKUP_PREFIX}/" if COS_BACKUP_PREFIX else ""
+    configured = all((secret_id, secret_key, region, bucket))
+    return {
+        "secret_id": secret_id,
+        "secret_key": secret_key,
+        "region": region,
+        "bucket": bucket,
+        "prefix": prefix,
+        "configured": configured,
+        "sdk_available": bool(CosConfig and CosS3Client),
+        "retention_count": COS_BACKUP_RETENTION_COUNT,
+    }
+
+
+def get_cos_public_status(config=None, error=""):
+    cos_config = get_cos_env_config()
+    if not cos_config["configured"]:
+        status = "not_configured"
+        message = "未配置 COS 环境变量，当前仅保留本地备份。"
+    elif not cos_config["sdk_available"]:
+        status = "error"
+        message = "后端缺少腾讯云 COS Python SDK，请重新安装依赖。"
+    elif error:
+        status = "error"
+        message = error
+    else:
+        status = "ready"
+        message = "COS 环境变量已配置，备份会自动上传对象存储。"
+
+    return {
+        "status": status,
+        "message": message,
+        "configured": cos_config["configured"],
+        "sdk_available": cos_config["sdk_available"],
+        "bucket": cos_config["bucket"] if cos_config["configured"] else "",
+        "region": cos_config["region"] if cos_config["configured"] else "",
+        "prefix": cos_config["prefix"],
+        "retention_count": cos_config["retention_count"],
+        "last_cos_status": (config or {}).get("last_cos_status"),
+        "last_cos_key": (config or {}).get("last_cos_key"),
+        "last_cos_uploaded_at": (config or {}).get("last_cos_uploaded_at"),
+        "last_cos_error": (config or {}).get("last_cos_error") or "",
+        "last_cos_retained_count": (config or {}).get("last_cos_retained_count") or 0,
+    }
+
+
+def get_cos_client():
+    cos_config = get_cos_env_config()
+    if not cos_config["configured"]:
+        raise RuntimeError("未配置 COS_SECRET_ID、COS_SECRET_KEY、COS_REGION 或 COS_BUCKET。")
+    if not cos_config["sdk_available"]:
+        raise RuntimeError("后端缺少腾讯云 COS Python SDK，请重新安装依赖。")
+    config = CosConfig(
+        Region=cos_config["region"],
+        SecretId=cos_config["secret_id"],
+        SecretKey=cos_config["secret_key"],
+        Scheme="https",
+    )
+    return CosS3Client(config), cos_config
+
+
+def parse_cos_last_modified(value):
+    text = str(value or "").strip()
+    if not text:
+        return datetime.min.replace(tzinfo=BEIJING_TZ)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(BEIJING_TZ)
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=ZoneInfo("UTC")).astimezone(BEIJING_TZ)
+        except ValueError:
+            return datetime.min.replace(tzinfo=BEIJING_TZ)
+
+
+def list_cos_backup_objects():
+    client, cos_config = get_cos_client()
+    rows = []
+    marker = ""
+    while True:
+        response = client.list_objects(
+            Bucket=cos_config["bucket"],
+            Prefix=cos_config["prefix"],
+            Marker=marker,
+            MaxKeys=1000,
+        )
+        contents = response.get("Contents") or []
+        if isinstance(contents, dict):
+            contents = [contents]
+        for item in contents:
+            key = item.get("Key") or ""
+            filename = os.path.basename(key)
+            if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
+                continue
+            last_modified = item.get("LastModified") or ""
+            rows.append(
+                {
+                    "key": key,
+                    "filename": filename,
+                    "size": int(item.get("Size") or 0),
+                    "updated_at": parse_cos_last_modified(last_modified).isoformat(),
+                    "etag": str(item.get("ETag") or "").strip('"'),
+                }
+            )
+        if str(response.get("IsTruncated", "")).lower() not in {"true", "1"}:
+            break
+        marker = response.get("NextMarker") or response.get("Marker") or ""
+        if not marker:
+            break
+    return sorted(rows, key=lambda item: item["updated_at"], reverse=True)
+
+
+def prune_cos_backup_objects(objects=None):
+    client, cos_config = get_cos_client()
+    rows = objects if objects is not None else list_cos_backup_objects()
+    stale_objects = rows[COS_BACKUP_RETENTION_COUNT:]
+    for item in stale_objects:
+        client.delete_object(Bucket=cos_config["bucket"], Key=item["key"])
+    return rows[:COS_BACKUP_RETENTION_COUNT], stale_objects
+
+
+def upload_backup_archive_to_cos(local_path, object_filename):
+    cos_config = get_cos_env_config()
+    if not cos_config["configured"]:
+        return {
+            "status": "not_configured",
+            "message": "未配置 COS 环境变量，已跳过云端上传。",
+        }
+    if not cos_config["sdk_available"]:
+        return {
+            "status": "error",
+            "message": "后端缺少腾讯云 COS Python SDK，请重新安装依赖。",
+        }
+
+    try:
+        client, cos_config = get_cos_client()
+        object_key = f"{cos_config['prefix']}{object_filename}"
+        client.put_object_from_local_file(
+            Bucket=cos_config["bucket"],
+            Key=object_key,
+            LocalFilePath=local_path,
+        )
+        retained, removed = prune_cos_backup_objects()
+        return {
+            "status": "success",
+            "message": f"COS 上传成功，云端已保留最近 {len(retained)} 个备份。",
+            "key": object_key,
+            "bucket": cos_config["bucket"],
+            "region": cos_config["region"],
+            "uploaded_at": beijing_now().isoformat(),
+            "retained_count": len(retained),
+            "removed_count": len(removed),
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"COS 上传失败：{str(exc)}",
+        }
+
+
+def get_cos_backup_overview(config=None):
+    status = get_cos_public_status(config)
+    backups = []
+    if status["configured"] and status["sdk_available"]:
+        try:
+            backups = list_cos_backup_objects()[:COS_BACKUP_RETENTION_COUNT]
+        except Exception as exc:
+            status = get_cos_public_status(config, f"COS 备份列表读取失败：{str(exc)}")
+    return status, backups
 
 
 def build_pg_environment():
@@ -828,16 +1017,33 @@ def publish_backup_archive(temp_zip_path, final_path):
             os.remove(staging_path)
 
 
+def cleanup_local_backup_files(backup_dir, keep_path=None):
+    backup_dir = normalize_backup_destination_path(backup_dir)
+    keep_abs = os.path.abspath(keep_path) if keep_path else ""
+    if not os.path.isdir(backup_dir):
+        return
+    for filename in os.listdir(backup_dir):
+        if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
+            continue
+        file_path = os.path.abspath(os.path.join(backup_dir, filename))
+        try:
+            if os.path.commonpath([backup_dir, file_path]) != backup_dir:
+                continue
+        except ValueError:
+            continue
+        if keep_abs and file_path == keep_abs:
+            continue
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+
 def create_full_backup_archive(destination_path=None, reason="manual"):
     backup_dir = normalize_backup_destination_path(destination_path)
     os.makedirs(backup_dir, exist_ok=True)
 
     now = beijing_now()
-    filename = (
-        AUTO_BACKUP_FILENAME
-        if reason == "auto"
-        else f"{BACKUP_PREFIX}_{now.strftime('%Y%m%d_%H%M%S')}.zip"
-    )
+    filename = LOCAL_BACKUP_FILENAME
+    download_filename = f"{BACKUP_PREFIX}_{reason}_{now.strftime('%Y%m%d_%H%M%S')}.zip"
     final_path = os.path.join(backup_dir, filename)
 
     db_config, env = build_pg_environment()
@@ -880,12 +1086,18 @@ def create_full_backup_archive(destination_path=None, reason="manual"):
             add_storage_to_backup(zip_file, backup_dir)
 
         publish_backup_archive(temp_zip_path, final_path)
+        cleanup_local_backup_files(backup_dir, keep_path=final_path)
+        if os.path.abspath(DEFAULT_BACKUP_DIR) != os.path.abspath(backup_dir):
+            cleanup_local_backup_files(DEFAULT_BACKUP_DIR)
 
+    cos_result = upload_backup_archive_to_cos(final_path, download_filename)
     return {
         "path": final_path,
         "filename": filename,
+        "download_filename": download_filename,
         "size": os.path.getsize(final_path),
         "created_at": now.isoformat(),
+        "cos": cos_result,
     }
 
 
@@ -1083,13 +1295,20 @@ def restore_full_backup_archive(file_storage):
 def mark_auto_backup_result(success, result=None, error=""):
     config = read_backup_config()
     if success:
+        cos_result = (result or {}).get("cos") or {}
+        cos_status = cos_result.get("status") or "not_configured"
         config.update(
             {
                 "last_auto_export_at": beijing_now().isoformat(),
                 "last_backup_path": result.get("path") if result else None,
                 "last_backup_size": result.get("size") if result else None,
-                "last_status": "success",
-                "last_error": "",
+                "last_cos_status": cos_status,
+                "last_cos_key": cos_result.get("key"),
+                "last_cos_uploaded_at": cos_result.get("uploaded_at"),
+                "last_cos_retained_count": cos_result.get("retained_count") or 0,
+                "last_cos_error": cos_result.get("message") if cos_status == "error" else "",
+                "last_status": "warning" if cos_status == "error" else "success",
+                "last_error": cos_result.get("message") if cos_status == "error" else "",
             }
         )
     else:
@@ -5332,12 +5551,14 @@ def get_management_backups():
         cur = conn.cursor()
         require_management_user(cur, user_id, "manage_backups")
         config = read_backup_config()
+        cos_status, latest_cos_backups = get_cos_backup_overview(config)
         return jsonify(
             {
                 "success": True,
                 "config": {
                     **config,
                     "next_run_at": get_backup_next_run_at(config),
+                    "cos": cos_status,
                 },
                 "frequency_options": [
                     {"value": "off", "label": "关闭自动备份"},
@@ -5347,6 +5568,7 @@ def get_management_backups():
                     {"value": "monthly", "label": "每月"},
                 ],
                 "latest_backups": list_backup_files(config.get("destination_path")),
+                "latest_cos_backups": latest_cos_backups,
             }
         )
     except PermissionError as exc:
@@ -5383,6 +5605,7 @@ def update_management_backup_config():
         os.remove(test_path)
 
         current_config = read_backup_config()
+        previous_destination_path = current_config.get("destination_path")
         config = write_backup_config(
             {
                 **current_config,
@@ -5392,6 +5615,12 @@ def update_management_backup_config():
                 "last_error": current_config.get("last_error") or "",
             }
         )
+        if (
+            previous_destination_path
+            and os.path.abspath(previous_destination_path) != os.path.abspath(destination_path)
+        ):
+            cleanup_local_backup_files(previous_destination_path)
+        cos_status, latest_cos_backups = get_cos_backup_overview(config)
         return jsonify(
             {
                 "success": True,
@@ -5399,8 +5628,10 @@ def update_management_backup_config():
                 "config": {
                     **config,
                     "next_run_at": get_backup_next_run_at(config),
+                    "cos": cos_status,
                 },
                 "latest_backups": list_backup_files(config.get("destination_path")),
+                "latest_cos_backups": latest_cos_backups,
             }
         )
     except PermissionError as exc:
@@ -5437,12 +5668,19 @@ def export_management_full_backup():
         try:
             config = read_backup_config()
             result = create_full_backup_archive(config.get("destination_path"), reason="manual")
+            cos_result = result.get("cos") or {}
+            cos_status = cos_result.get("status") or "not_configured"
             config.update(
                 {
                     "last_backup_path": result["path"],
                     "last_backup_size": result["size"],
-                    "last_status": "success",
-                    "last_error": "",
+                    "last_cos_status": cos_status,
+                    "last_cos_key": cos_result.get("key"),
+                    "last_cos_uploaded_at": cos_result.get("uploaded_at"),
+                    "last_cos_retained_count": cos_result.get("retained_count") or 0,
+                    "last_cos_error": cos_result.get("message") if cos_status == "error" else "",
+                    "last_status": "warning" if cos_status == "error" else "success",
+                    "last_error": cos_result.get("message") if cos_status == "error" else "",
                 }
             )
             write_backup_config(config)
@@ -5452,11 +5690,13 @@ def export_management_full_backup():
         response = send_file(
             result["path"],
             as_attachment=True,
-            download_name=result["filename"],
+            download_name=result["download_filename"],
             mimetype="application/zip",
         )
         response.headers["X-Backup-Path"] = result["path"]
         response.headers["X-Backup-Size"] = str(result["size"])
+        response.headers["X-COS-Backup-Status"] = cos_status
+        response.headers["X-COS-Backup-Key"] = cos_result.get("key") or ""
         response.headers["Cache-Control"] = "no-store"
         return response
     except PermissionError as exc:
