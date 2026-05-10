@@ -650,6 +650,25 @@ def parse_backup_time(value):
         return None
 
 
+def normalize_backup_scheduled_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return "02:00"
+    matched = re.fullmatch(r"(\d{1,2}):([0-5]\d)", text)
+    if not matched:
+        raise ValueError("自动备份执行时间必须是 HH:MM 格式。")
+    hour = int(matched.group(1))
+    if hour > 23:
+        raise ValueError("自动备份执行时间小时必须在 00-23 之间。")
+    return f"{hour:02d}:{matched.group(2)}"
+
+
+def parse_backup_scheduled_time(value):
+    scheduled_time = normalize_backup_scheduled_time(value)
+    hour, minute = scheduled_time.split(":")
+    return int(hour), int(minute)
+
+
 def normalize_backup_destination_path(value):
     raw_value = str(value or "").strip()
     if not raw_value:
@@ -663,6 +682,8 @@ def get_default_backup_config():
     return {
         "destination_path": os.path.abspath(DEFAULT_BACKUP_DIR),
         "frequency": "off",
+        "scheduled_time": "02:00",
+        "next_auto_run_at": None,
         "last_auto_export_at": None,
         "last_backup_path": None,
         "last_backup_size": None,
@@ -693,6 +714,9 @@ def read_backup_config():
     )
     if config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
         config["frequency"] = "off"
+    config["scheduled_time"] = normalize_backup_scheduled_time(config.get("scheduled_time"))
+    if config.get("frequency") == "off":
+        config["next_auto_run_at"] = None
     return config
 
 
@@ -704,6 +728,9 @@ def write_backup_config(config):
     )
     if next_config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
         next_config["frequency"] = "off"
+    next_config["scheduled_time"] = normalize_backup_scheduled_time(next_config.get("scheduled_time"))
+    if next_config.get("frequency") == "off":
+        next_config["next_auto_run_at"] = None
     next_config["updated_at"] = beijing_now().isoformat()
     os.makedirs(os.path.dirname(BACKUP_CONFIG_PATH), exist_ok=True)
     with open(BACKUP_CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -711,14 +738,43 @@ def write_backup_config(config):
     return next_config
 
 
-def get_backup_next_run_at(config):
-    interval = BACKUP_FREQUENCY_INTERVALS.get(config.get("frequency"))
+def calculate_next_auto_run_at(config, from_time=None):
+    frequency = config.get("frequency")
+    interval = BACKUP_FREQUENCY_INTERVALS.get(frequency)
     if not interval:
         return None
-    last_run = parse_backup_time(config.get("last_auto_export_at"))
-    if not last_run:
-        return beijing_now().isoformat()
-    return (last_run.astimezone(BEIJING_TZ) + interval).isoformat()
+    now = (from_time or beijing_now()).astimezone(BEIJING_TZ)
+
+    if frequency == "hourly":
+        return (now + interval).replace(second=0, microsecond=0).isoformat()
+
+    hour, minute = parse_backup_scheduled_time(config.get("scheduled_time"))
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if frequency == "daily":
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.isoformat()
+
+    if frequency == "weekly":
+        while candidate <= now:
+            candidate += timedelta(days=7)
+        return candidate.isoformat()
+
+    if frequency == "monthly":
+        while candidate <= now:
+            candidate += timedelta(days=30)
+        return candidate.isoformat()
+
+    return None
+
+
+def get_backup_next_run_at(config):
+    if config.get("frequency") == "off":
+        return None
+    saved_next_run = parse_backup_time(config.get("next_auto_run_at"))
+    if saved_next_run:
+        return saved_next_run.astimezone(BEIJING_TZ).isoformat()
+    return calculate_next_auto_run_at(config)
 
 
 def list_backup_files(destination_path):
@@ -1294,12 +1350,14 @@ def restore_full_backup_archive(file_storage):
 
 def mark_auto_backup_result(success, result=None, error=""):
     config = read_backup_config()
+    next_auto_run_at = calculate_next_auto_run_at(config)
     if success:
         cos_result = (result or {}).get("cos") or {}
         cos_status = cos_result.get("status") or "not_configured"
         config.update(
             {
                 "last_auto_export_at": beijing_now().isoformat(),
+                "next_auto_run_at": next_auto_run_at,
                 "last_backup_path": result.get("path") if result else None,
                 "last_backup_size": result.get("size") if result else None,
                 "last_cos_status": cos_status,
@@ -1314,6 +1372,7 @@ def mark_auto_backup_result(success, result=None, error=""):
     else:
         config.update(
             {
+                "next_auto_run_at": next_auto_run_at,
                 "last_status": "error",
                 "last_error": str(error or "自动备份失败。")[:500],
             }
@@ -1323,13 +1382,18 @@ def mark_auto_backup_result(success, result=None, error=""):
 
 def maybe_run_scheduled_backup():
     config = read_backup_config()
-    interval = BACKUP_FREQUENCY_INTERVALS.get(config.get("frequency"))
+    frequency = config.get("frequency")
+    interval = BACKUP_FREQUENCY_INTERVALS.get(frequency)
     if not interval:
         return
 
-    last_run = parse_backup_time(config.get("last_auto_export_at"))
-    now = beijing_now()
-    if last_run and now < last_run.astimezone(BEIJING_TZ) + interval:
+    next_run_at = parse_backup_time(config.get("next_auto_run_at"))
+    if not next_run_at:
+        config["next_auto_run_at"] = calculate_next_auto_run_at(config)
+        write_backup_config(config)
+        return
+
+    if beijing_now() < next_run_at.astimezone(BEIJING_TZ):
         return
 
     if not backup_job_lock.acquire(blocking=False):
@@ -5593,6 +5657,7 @@ def update_management_backup_config():
         if frequency not in BACKUP_FREQUENCY_INTERVALS:
             raise ValueError("自动备份频率不正确。")
 
+        scheduled_time = normalize_backup_scheduled_time(data.get("scheduled_time"))
         destination_path = normalize_backup_destination_path(data.get("destination_path"))
         conn = get_db_connection()
         cur = conn.cursor()
@@ -5611,6 +5676,14 @@ def update_management_backup_config():
                 **current_config,
                 "destination_path": destination_path,
                 "frequency": frequency,
+                "scheduled_time": scheduled_time,
+                "next_auto_run_at": calculate_next_auto_run_at(
+                    {
+                        **current_config,
+                        "frequency": frequency,
+                        "scheduled_time": scheduled_time,
+                    }
+                ),
                 "last_status": current_config.get("last_status") or "idle",
                 "last_error": current_config.get("last_error") or "",
             }

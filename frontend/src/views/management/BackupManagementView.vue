@@ -46,7 +46,7 @@
           </div>
 
           <div class="config-form">
-            <label class="form-field span-2">
+            <label class="form-field path-field">
               <span>备份保存位置</span>
               <input v-model.trim="form.destination_path" type="text" placeholder="/app/storage/backups" />
               <small>可填写绝对路径；相对路径会保存到默认备份目录下。</small>
@@ -61,7 +61,18 @@
               </select>
             </label>
 
-            <div class="form-actions span-2">
+            <label class="form-field">
+              <span>固定执行时间</span>
+              <input v-model="form.scheduled_time" type="time" :disabled="form.frequency === 'off' || form.frequency === 'hourly'" />
+              <small>{{ form.frequency === 'hourly' ? '每小时模式按间隔执行。' : '按北京时间执行，例如 02:00。' }}</small>
+            </label>
+
+            <div class="config-summary">
+              <strong>当前策略</strong>
+              <span>{{ scheduleSummary }}</span>
+            </div>
+
+            <div class="form-actions">
               <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchBackups">取消修改</button>
               <button class="btn btn-primary" type="button" :disabled="savingConfig" @click="saveConfig">
                 {{ savingConfig ? '保存中...' : '保存备份设置' }}
@@ -84,7 +95,7 @@
           <div class="status-list">
             <div class="status-item">
               <span>当前频率</span>
-              <strong>{{ frequencyLabel(config.frequency) }}</strong>
+              <strong>{{ frequencyLabel(config.frequency) }}{{ config.frequency !== 'off' && config.frequency !== 'hourly' ? ` · ${config.scheduled_time}` : '' }}</strong>
             </div>
             <div class="status-item">
               <span>下次自动备份</span>
@@ -249,6 +260,8 @@ const message = reactive({
 const config = reactive({
   destination_path: '',
   frequency: 'off',
+  scheduled_time: '02:00',
+  next_auto_run_at: '',
   next_run_at: '',
   last_auto_export_at: '',
   last_backup_path: '',
@@ -280,7 +293,8 @@ const cosStatus = reactive({
 
 const form = reactive({
   destination_path: '',
-  frequency: 'off'
+  frequency: 'off',
+  scheduled_time: '02:00'
 })
 
 const setMessage = (text, type = 'info') => {
@@ -292,6 +306,8 @@ const syncConfig = (nextConfig = {}) => {
   Object.assign(config, {
     destination_path: nextConfig.destination_path || '',
     frequency: nextConfig.frequency || 'off',
+    scheduled_time: nextConfig.scheduled_time || '02:00',
+    next_auto_run_at: nextConfig.next_auto_run_at || '',
     next_run_at: nextConfig.next_run_at || '',
     last_auto_export_at: nextConfig.last_auto_export_at || '',
     last_backup_path: nextConfig.last_backup_path || '',
@@ -311,12 +327,22 @@ const syncConfig = (nextConfig = {}) => {
   })
   form.destination_path = config.destination_path
   form.frequency = config.frequency
+  form.scheduled_time = config.scheduled_time
 }
 
 const statusText = computed(() => {
   if (config.last_status === 'error') return config.last_error || '执行失败'
   if (config.last_status === 'warning') return config.last_error || '本地备份成功，云端上传异常'
   return '正常'
+})
+
+const scheduleSummary = computed(() => {
+  if (form.frequency === 'off') return '自动备份已关闭，仅保留手动备份能力。'
+  if (form.frequency === 'hourly') return '系统每小时自动生成一次完整备份，并上传 COS。'
+  if (form.frequency === 'daily') return `系统每天 ${form.scheduled_time || '02:00'} 自动备份。`
+  if (form.frequency === 'weekly') return `系统每周按上次执行日期推进，并在 ${form.scheduled_time || '02:00'} 自动备份。`
+  if (form.frequency === 'monthly') return `系统每 30 天推进一次，并在 ${form.scheduled_time || '02:00'} 自动备份。`
+  return '请设置自动备份策略。'
 })
 
 const frequencyLabel = (value) => {
@@ -378,7 +404,8 @@ const saveConfig = async () => {
     const response = await axios.put('/api/management/backups/config', {
       user_id: currentUserId,
       destination_path: form.destination_path,
-      frequency: form.frequency
+      frequency: form.frequency,
+      scheduled_time: form.scheduled_time || '02:00'
     })
     syncConfig(response.data?.config || {})
     latestBackups.value = response.data?.latest_backups || []
@@ -679,8 +706,9 @@ onMounted(fetchBackups)
 
 .backup-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(380px, 0.8fr);
+  grid-template-columns: minmax(0, 1.12fr) minmax(390px, 0.88fr);
   gap: 20px;
+  align-items: start;
 }
 
 .config-card,
@@ -693,6 +721,7 @@ onMounted(fetchBackups)
 
 .config-card {
   background:
+    radial-gradient(circle at 92% 0%, rgba(20, 184, 166, 0.16), transparent 28%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(240, 253, 250, 0.9) 100%);
 }
 
@@ -710,13 +739,13 @@ onMounted(fetchBackups)
 
 .config-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
-  gap: 14px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) 190px 180px;
+  gap: 16px;
+  align-items: stretch;
 }
 
-.span-2 {
-  grid-column: span 2;
+.path-field {
+  grid-column: span 3;
 }
 
 .form-field {
@@ -734,7 +763,7 @@ onMounted(fetchBackups)
 .form-field input,
 .form-field select {
   width: 100%;
-  height: 42px;
+  min-height: 44px;
   border: 1px solid #d7e0ea;
   border-radius: 12px;
   padding: 0 12px;
@@ -746,6 +775,36 @@ onMounted(fetchBackups)
 .form-field small {
   color: #64748b;
   font-size: 12px;
+}
+
+.config-summary {
+  grid-column: span 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  color: #0f766e;
+}
+
+.config-summary strong {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.config-summary span {
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: right;
+}
+
+.config-form .form-actions {
+  grid-column: span 3;
+  justify-content: flex-end;
 }
 
 .auto-note {
@@ -956,8 +1015,19 @@ onMounted(fetchBackups)
     grid-template-columns: 1fr;
   }
 
-  .span-2 {
+  .path-field,
+  .config-summary,
+  .config-form .form-actions {
     grid-column: span 1;
+  }
+
+  .config-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .config-summary span {
+    text-align: left;
   }
 
   .status-list {
