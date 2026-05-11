@@ -409,6 +409,15 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.3',
+    date: '2026-05-11',
+    title: '移动端分页优化',
+    summary: '移动端列表增加分页，提升大数据量浏览性能。',
+    items: [
+      '巡检问题、待办问题和巡检记录移动端统一支持分页。'
+    ]
+  },
+  {
     version: 'v1.2',
     date: '2026-05-11',
     title: '巡检登记搜索优化',

@@ -152,6 +152,21 @@
 
         </div>
       </div>
+
+      <div v-if="!loading && groupedInspectionGroups.length" class="pagination-bar mobile-pagination-bar card-surface">
+        <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
+        <div class="pagination-controls">
+          <label>每页显示</label>
+          <select v-model.number="pageSize">
+            <option :value="20">20</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+          </select>
+          <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
+          <span>{{ page }} / {{ totalPage }}</span>
+          <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+        </div>
+      </div>
     </div>
 
     <div class="table-card card-surface">
@@ -1562,6 +1577,10 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+.mobile-pagination-bar {
+  display: none;
+}
+
 .mobile-record-cards {
   display: flex;
   flex-direction: column;
@@ -2679,6 +2698,11 @@ onBeforeUnmount(() => {
 
   .mobile-record-list {
     display: block;
+  }
+
+  .mobile-pagination-bar {
+    display: flex;
+    padding: 14px;
   }
 
   .btn {
