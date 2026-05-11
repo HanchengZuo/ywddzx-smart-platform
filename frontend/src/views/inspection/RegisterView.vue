@@ -209,6 +209,7 @@ const createdTime = ref('')
 const submitting = ref(false)
 const stations = ref([])
 const standards = ref([])
+const standardFields = ref([])
 const inspectionTables = ref([])
 
 const form = ref({
@@ -278,6 +279,30 @@ const getStandardSearchValues = (item = {}) => {
     .map(([, value]) => value)
 }
 
+const normalizeExactNumericText = (value) => {
+  return String(value ?? '').normalize('NFKC').trim()
+}
+
+const isNumericStandardKeyword = (value) => {
+  return /^\d+$/.test(normalizeExactNumericText(value))
+}
+
+const standardSequenceFieldKeys = computed(() => {
+  return standardFields.value
+    .filter((field) => String(field?.field_label || '').trim().includes('序号'))
+    .map((field) => field.field_key)
+    .filter(Boolean)
+})
+
+const matchesNumericStandardSearch = (item, keyword) => {
+  const needle = normalizeExactNumericText(keyword)
+  if (!needle) return true
+  if (normalizeExactNumericText(item?.standard_id) === needle) return true
+  return standardSequenceFieldKeys.value.some((fieldKey) => {
+    return normalizeExactNumericText(item?.[fieldKey]) === needle
+  })
+}
+
 const filteredInspectionTables = computed(() => {
   return inspectionTables.value.filter((item) => {
     return matchesSmartSearch([item.table_name, item.description], tableSearch.value)
@@ -335,6 +360,12 @@ const filteredStations = computed(() => {
 })
 
 const filteredStandards = computed(() => {
+  if (isNumericStandardKeyword(standardSearch.value)) {
+    return standards.value.filter((item) => {
+      return matchesNumericStandardSearch(item, standardSearch.value)
+    })
+  }
+
   return standards.value.filter((item) => {
     return matchesSmartSearch(getStandardSearchValues(item), standardSearch.value)
   })
@@ -380,14 +411,18 @@ const fetchInspectionTables = async () => {
 const fetchStandards = async () => {
   if (!form.value.inspectionTableId) {
     standards.value = []
+    standardFields.value = []
     return
   }
-  const response = await axios.get('/api/inspection-table-standards', {
-    params: {
-      table_id: form.value.inspectionTableId
-    }
-  })
-  standards.value = response.data || []
+  const params = {
+    table_id: form.value.inspectionTableId
+  }
+  const [standardsResponse, fieldsResponse] = await Promise.all([
+    axios.get('/api/inspection-table-standards', { params }),
+    axios.get('/api/inspection-table-fields', { params })
+  ])
+  standards.value = standardsResponse.data || []
+  standardFields.value = fieldsResponse.data || []
 }
 
 const openStationDropdown = () => {
@@ -413,6 +448,7 @@ const handleTableInput = () => {
   form.value.standardId = ''
   standardSearch.value = ''
   standards.value = []
+  standardFields.value = []
 }
 
 const handleStandardInput = () => {
@@ -428,6 +464,7 @@ watch(
       form.value.description = ''
       standardSearch.value = ''
       standardDropdownVisible.value = false
+      standardFields.value = []
       clearImage()
       return
     }
@@ -455,6 +492,7 @@ const selectInspectionTable = async (table) => {
     await fetchStandards()
   } else {
     standards.value = []
+    standardFields.value = []
   }
 }
 
@@ -506,6 +544,7 @@ const resetForm = (preserveMessage = false) => {
     description: ''
   }
   standards.value = []
+  standardFields.value = []
   stationSearch.value = ''
   tableSearch.value = ''
   standardSearch.value = ''
