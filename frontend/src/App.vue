@@ -409,6 +409,15 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.2',
+    date: '2026-05-11',
+    title: '巡检登记搜索优化',
+    summary: '优化规范数字搜索，减少误匹配。',
+    items: [
+      '规范数字搜索改为精准匹配规范ID和检查表内部序号。'
+    ]
+  },
+  {
     version: 'v1.1',
     date: '2026-05-10',
     title: '系统反馈功能准备',
