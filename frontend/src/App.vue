@@ -413,6 +413,16 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.6',
+    date: '2026-05-13',
+    title: '巡检登记规范索引升级',
+    summary: '巡检登记改为直接按规范ID索引，并自动带出所属检查表。',
+    items: [
+      '取消手动选择检查表流程，减少登记步骤。',
+      '选择规范后自动显示规范ID、检查表名称和规范详情。'
+    ]
+  },
+  {
     version: 'v1.5.1',
     date: '2026-05-13',
     title: '巡检规范导出优化',

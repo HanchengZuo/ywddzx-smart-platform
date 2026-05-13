@@ -52,19 +52,39 @@
             </div>
           </div>
           <div class="form-item form-item-full">
-            <label>检查表</label>
-            <div class="search-select" ref="tableSelectRef">
-              <input v-model="tableSearch" type="text" placeholder="搜索并选择检查表" @focus="openTableDropdown"
-                @input="handleTableInput" />
-              <div v-if="tableDropdownVisible" class="search-select-dropdown">
-                <div v-for="table in filteredInspectionTables" :key="table.id" class="search-select-option"
-                  @click="selectInspectionTable(table)">
-                  <div class="option-main">{{ table.table_name }}</div>
-                  <div class="option-sub">{{ table.description || '未设置说明' }}</div>
+            <label>搜索并选择规范ID</label>
+            <div class="search-select" ref="standardSelectRef">
+              <input v-model="standardSearch" type="text" placeholder="输入规范ID搜索" @focus="openStandardDropdown"
+                @input="handleStandardInput" />
+              <div v-if="standardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
+                <div v-for="standard in filteredStandards" :key="getStandardIdentity(standard)"
+                  class="search-select-option" @click="selectStandard(standard)">
+                  <div class="option-main">
+                    {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
+                  </div>
+                  <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未命名检查表' }}</div>
+                  <div class="option-sub standard-detail-preview">{{
+                    normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
                 </div>
-                <div v-if="filteredInspectionTables.length === 0" class="search-select-empty">无匹配检查表</div>
+                <div v-if="filteredStandards.length === 0" class="search-select-empty">无匹配规范</div>
               </div>
             </div>
+          </div>
+
+          <div class="form-item form-item-full">
+            <label>规范ID</label>
+            <input :value="selectedStandard?.standard_id || ''" type="text" readonly />
+          </div>
+
+          <div class="form-item form-item-full">
+            <label>检查表名称</label>
+            <input :value="selectedStandard?.inspection_table_name || ''" type="text" readonly />
+          </div>
+
+          <div class="form-item form-item-full">
+            <label>规范详情</label>
+            <textarea :value="normalizeStandardDetailForRegister(selectedStandard?.standard_detail_text || '')" rows="8"
+              readonly></textarea>
           </div>
         </div>
 
@@ -72,36 +92,6 @@
           <div class="section-title issue-section-title">问题信息</div>
 
           <div class="form-grid">
-            <div class="form-item form-item-full">
-              <label>规范选择</label>
-              <div class="search-select" ref="standardSelectRef">
-                <input v-model="standardSearch" type="text" placeholder="搜索并选择规范" @focus="openStandardDropdown"
-                  @input="handleStandardInput" />
-                <div v-if="standardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
-                  <div v-for="standard in filteredStandards" :key="standard.standard_id" class="search-select-option"
-                    @click="selectStandard(standard)">
-                    <div class="option-main">
-                      {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
-                    </div>
-                    <div class="option-sub standard-detail-preview">{{
-                      normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
-                  </div>
-                  <div v-if="filteredStandards.length === 0" class="search-select-empty">无匹配规范</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="form-item form-item-full">
-              <label>规范ID</label>
-              <input :value="selectedStandard?.standard_id || ''" type="text" readonly />
-            </div>
-
-            <div class="form-item form-item-full">
-              <label>规范详情</label>
-              <textarea :value="normalizeStandardDetailForRegister(selectedStandard?.standard_detail_text || '')"
-                rows="8" readonly></textarea>
-            </div>
-
             <div class="form-item form-item-full">
               <label>实际问题描述</label>
               <textarea v-model="form.description" rows="4" placeholder="请填写现场实际问题描述"></textarea>
@@ -179,13 +169,10 @@ try {
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_inspections)
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
-const tableSelectRef = ref(null)
 const stationDropdownVisible = ref(false)
 const standardDropdownVisible = ref(false)
-const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
-const tableSearch = ref('')
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const submitMessage = ref('')
@@ -211,6 +198,7 @@ const stations = ref([])
 const standards = ref([])
 const standardFields = ref([])
 const inspectionTables = ref([])
+const STANDARD_SEARCH_RESULT_LIMIT = 80
 
 const form = ref({
   stationId: '',
@@ -303,12 +291,6 @@ const matchesNumericStandardSearch = (item, keyword) => {
   })
 }
 
-const filteredInspectionTables = computed(() => {
-  return inspectionTables.value.filter((item) => {
-    return matchesSmartSearch([item.table_name, item.description], tableSearch.value)
-  })
-})
-
 const selectedStandard = computed(() => {
   return standards.value.find((item) => String(item.standard_id) === String(form.value.standardId)) || null
 })
@@ -320,8 +302,8 @@ const normalizedHasIssue = computed(() => {
 const showIssueFields = computed(() => {
   const hasIssueYes = String(form.value.hasIssue || 'yes').trim().toLowerCase() === 'yes'
   const hasStation = Boolean(String(form.value.stationId || '').trim())
-  const hasInspectionTable = Boolean(String(form.value.inspectionTableId || '').trim())
-  return hasIssueYes && hasStation && hasInspectionTable
+  const hasStandard = Boolean(String(form.value.standardId || '').trim())
+  return hasIssueYes && hasStation && hasStandard
 })
 
 const normalizeStandardDetailForRegister = (value) => {
@@ -363,12 +345,12 @@ const filteredStandards = computed(() => {
   if (isNumericStandardKeyword(standardSearch.value)) {
     return standards.value.filter((item) => {
       return matchesNumericStandardSearch(item, standardSearch.value)
-    })
+    }).slice(0, STANDARD_SEARCH_RESULT_LIMIT)
   }
 
   return standards.value.filter((item) => {
     return matchesSmartSearch(getStandardSearchValues(item), standardSearch.value)
-  })
+  }).slice(0, STANDARD_SEARCH_RESULT_LIMIT)
 })
 
 const getStandardFallbackTitle = (item) => {
@@ -384,6 +366,10 @@ const getStandardFallbackTitle = (item) => {
 
 const getStandardTitle = (item) => {
   return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名规范'
+}
+
+const getStandardIdentity = (item) => {
+  return `${item?.inspection_table_id || 'unknown'}:${item?.standard_id || ''}`
 }
 
 const formatCurrentTime = () => {
@@ -409,28 +395,43 @@ const fetchInspectionTables = async () => {
 }
 
 const fetchStandards = async () => {
-  if (!form.value.inspectionTableId) {
+  if (!inspectionTables.value.length) {
     standards.value = []
     standardFields.value = []
     return
   }
-  const params = {
-    table_id: form.value.inspectionTableId
-  }
-  const [standardsResponse, fieldsResponse] = await Promise.all([
-    axios.get('/api/inspection-table-standards', { params }),
-    axios.get('/api/inspection-table-fields', { params })
+
+  const [standardsResponses, fieldsResponses] = await Promise.all([
+    Promise.all(inspectionTables.value.map((table) => {
+      return axios.get('/api/inspection-table-standards', { params: { table_id: table.id } })
+    })),
+    Promise.all(inspectionTables.value.map((table) => {
+      return axios.get('/api/inspection-table-fields', { params: { table_id: table.id } })
+    }))
   ])
-  standards.value = standardsResponse.data || []
-  standardFields.value = fieldsResponse.data || []
+
+  standards.value = standardsResponses.flatMap((response, index) => {
+    const table = inspectionTables.value[index] || {}
+    return (response.data || []).map((standard) => ({
+      ...standard,
+      inspection_table_id: table.id,
+      inspection_table_name: table.table_name,
+      inspection_table_code: table.table_code
+    }))
+  })
+
+  standardFields.value = fieldsResponses.flatMap((response, index) => {
+    const table = inspectionTables.value[index] || {}
+    return (response.data || []).map((field) => ({
+      ...field,
+      inspection_table_id: table.id,
+      inspection_table_name: table.table_name
+    }))
+  })
 }
 
 const openStationDropdown = () => {
   stationDropdownVisible.value = true
-}
-
-const openTableDropdown = () => {
-  tableDropdownVisible.value = true
 }
 
 const openStandardDropdown = () => {
@@ -442,35 +443,18 @@ const handleStationInput = () => {
   stationDropdownVisible.value = true
 }
 
-const handleTableInput = () => {
-  form.value.inspectionTableId = ''
-  tableDropdownVisible.value = true
-  form.value.standardId = ''
-  standardSearch.value = ''
-  standards.value = []
-  standardFields.value = []
-}
-
 const handleStandardInput = () => {
+  form.value.inspectionTableId = ''
   form.value.standardId = ''
   standardDropdownVisible.value = true
 }
 
 watch(
-  [normalizedHasIssue, () => form.value.inspectionTableId],
-  async ([hasIssueValue, inspectionTableId]) => {
+  normalizedHasIssue,
+  (hasIssueValue) => {
     if (hasIssueValue === 'no') {
-      form.value.standardId = ''
       form.value.description = ''
-      standardSearch.value = ''
-      standardDropdownVisible.value = false
-      standardFields.value = []
       clearImage()
-      return
-    }
-
-    if (hasIssueValue === 'yes' && inspectionTableId) {
-      await fetchStandards()
     }
   }
 )
@@ -481,24 +465,10 @@ const selectStation = (station) => {
   stationDropdownVisible.value = false
 }
 
-const selectInspectionTable = async (table) => {
-  tableSearch.value = table.table_name
-  form.value.inspectionTableId = String(table.id)
-  tableDropdownVisible.value = false
-  form.value.standardId = ''
-  standardSearch.value = ''
-
-  if (normalizedHasIssue.value === 'yes') {
-    await fetchStandards()
-  } else {
-    standards.value = []
-    standardFields.value = []
-  }
-}
-
 const selectStandard = (standard) => {
   standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
   form.value.standardId = standard.standard_id
+  form.value.inspectionTableId = String(standard.inspection_table_id || '')
   standardDropdownVisible.value = false
 }
 
@@ -543,13 +513,9 @@ const resetForm = (preserveMessage = false) => {
     standardId: '',
     description: ''
   }
-  standards.value = []
-  standardFields.value = []
   stationSearch.value = ''
-  tableSearch.value = ''
   standardSearch.value = ''
   stationDropdownVisible.value = false
-  tableDropdownVisible.value = false
   standardDropdownVisible.value = false
   if (!preserveMessage) {
     submitMessage.value = ''
@@ -567,13 +533,8 @@ const handleSubmit = async () => {
     return
   }
 
-  if (!form.value.inspectionTableId) {
-    showSubmitToast('请选择检查表。', 'error')
-    return
-  }
-
-  if (hasIssueValue === 'yes' && !form.value.standardId) {
-    showSubmitToast('请选择规范。', 'error')
+  if (!form.value.standardId || !form.value.inspectionTableId) {
+    showSubmitToast('请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
     return
   }
 
@@ -627,9 +588,6 @@ const handleClickOutside = (event) => {
   if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
     stationDropdownVisible.value = false
   }
-  if (tableSelectRef.value && !tableSelectRef.value.contains(event.target)) {
-    tableDropdownVisible.value = false
-  }
   if (standardSelectRef.value && !standardSelectRef.value.contains(event.target)) {
     standardDropdownVisible.value = false
   }
@@ -637,7 +595,7 @@ const handleClickOutside = (event) => {
 
 
 watch(
-  () => form.value.inspectionTableId,
+  () => form.value.standardId,
   () => {
     if (submitMessageType.value !== 'success') {
       submitMessage.value = ''
@@ -651,8 +609,9 @@ onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
   try {
     await Promise.all([fetchStations(), fetchInspectionTables()])
+    await fetchStandards()
   } catch (error) {
-    showSubmitToast('初始化站点或检查表数据失败，请检查后端服务。', 'error')
+    showSubmitToast('初始化站点或规范数据失败，请检查后端服务。', 'error')
   }
 })
 
@@ -831,6 +790,11 @@ onBeforeUnmount(() => {
   padding: 12px;
   color: #6b7280;
   font-size: 14px;
+}
+
+.option-table-name {
+  color: #2563eb;
+  font-weight: 700;
 }
 
 .standard-detail-preview {
