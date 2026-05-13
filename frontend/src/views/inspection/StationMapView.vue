@@ -63,12 +63,12 @@
             <strong>{{ filteredStations.length }}</strong>
           </div>
           <div class="mobile-map-stat danger">
-            <span>未整改</span>
-            <strong>{{ pendingRectificationStationCount }}</strong>
+            <span>未整改问题</span>
+            <strong>{{ pendingRectificationIssueCount }}</strong>
           </div>
           <div class="mobile-map-stat warning">
-            <span>待复核</span>
-            <strong>{{ pendingReviewStationCount }}</strong>
+            <span>待复核问题</span>
+            <strong>{{ pendingReviewIssueCount }}</strong>
           </div>
         </div>
 
@@ -125,8 +125,8 @@
           <div class="map-overlay-card glass-panel compact">
             <div class="overlay-chip-row">
               <span class="overlay-chip">站点 {{ filteredStations.length }}</span>
-              <span class="overlay-chip danger">未整改 {{ pendingRectificationStationCount }}</span>
-              <span class="overlay-chip warning">待复核 {{ pendingReviewStationCount }}</span>
+              <span class="overlay-chip danger">未整改问题 {{ pendingRectificationIssueCount }}</span>
+              <span class="overlay-chip warning">待复核问题 {{ pendingReviewIssueCount }}</span>
             </div>
           </div>
         </div>
@@ -370,6 +370,17 @@ const pendingReviewStationCount = computed(() => {
   return filteredStations.value.filter((station) => Number(station.pending_review_count || 0) > 0).length
 })
 
+const sumPendingIssueCount = (field) => {
+  return filteredStations.value.reduce((total, station) => {
+    const count = Number(station[field] || 0)
+    return total + (Number.isFinite(count) ? count : 0)
+  }, 0)
+}
+
+const pendingRectificationIssueCount = computed(() => sumPendingIssueCount('pending_rectification_count'))
+
+const pendingReviewIssueCount = computed(() => sumPendingIssueCount('pending_review_count'))
+
 const loadAmapScript = () => {
   if (window.AMap) {
     return Promise.resolve(window.AMap)
@@ -514,15 +525,15 @@ const buildInfoHtml = (station) => {
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:14px;position:relative;z-index:1;">
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">未整改</div>
-            <div style="font-size:18px;font-weight:800;color:#fca5a5;">${pendingRectification}</div>
+            <div style="font-size:18px;font-weight:800;color:#fecaca;text-shadow:0 0 16px rgba(239,68,68,0.55);">${pendingRectification}</div>
           </div>
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">待复核</div>
-            <div style="font-size:18px;font-weight:800;color:#fdba74;">${pendingReview}</div>
+            <div style="font-size:18px;font-weight:800;color:#fed7aa;text-shadow:0 0 16px rgba(245,158,11,0.55);">${pendingReview}</div>
           </div>
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">已闭环</div>
-            <div style="font-size:18px;font-weight:800;color:#86efac;">${closedCount}</div>
+            <div style="font-size:18px;font-weight:800;color:#bbf7d0;text-shadow:0 0 16px rgba(34,197,94,0.5);">${closedCount}</div>
           </div>
         </div>
 
@@ -555,9 +566,9 @@ const handleEventClick = (event) => {
 }
 
 const getMarkerColor = (station) => {
-  if (Number(station.pending_rectification_count || 0) > 0) return '#dc2626'
-  if (Number(station.pending_review_count || 0) > 0) return '#d97706'
-  return '#16a34a'
+  if (Number(station.pending_rectification_count || 0) > 0) return '#ef4444'
+  if (Number(station.pending_review_count || 0) > 0) return '#f59e0b'
+  return '#22c55e'
 }
 
 const clearMarkers = () => {
@@ -906,11 +917,13 @@ onBeforeUnmount(() => {
 }
 
 .summary-value.danger {
-  color: #dc2626;
+  color: #ef4444;
+  text-shadow: 0 8px 22px rgba(239, 68, 68, 0.2);
 }
 
 .summary-value.warning {
-  color: #d97706;
+  color: #f59e0b;
+  text-shadow: 0 8px 22px rgba(245, 158, 11, 0.2);
 }
 
 .summary-desc {
@@ -1027,26 +1040,26 @@ onBeforeUnmount(() => {
 }
 
 .overlay-dot {
-  width: 9px;
-  height: 9px;
+  width: 11px;
+  height: 11px;
   border-radius: 999px;
   display: inline-block;
   flex-shrink: 0;
 }
 
 .overlay-dot.danger {
-  background: #dc2626;
-  box-shadow: 0 0 10px rgba(220, 38, 38, 0.35);
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18), 0 0 18px rgba(239, 68, 68, 0.62);
 }
 
 .overlay-dot.warning {
-  background: #d97706;
-  box-shadow: 0 0 10px rgba(217, 119, 6, 0.35);
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18), 0 0 18px rgba(245, 158, 11, 0.58);
 }
 
 .overlay-dot.success {
-  background: #16a34a;
-  box-shadow: 0 0 10px rgba(22, 163, 74, 0.35);
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18), 0 0 18px rgba(34, 197, 94, 0.54);
 }
 
 .overlay-chip-row {
@@ -1071,11 +1084,17 @@ onBeforeUnmount(() => {
 }
 
 .overlay-chip.danger {
-  color: #fca5a5;
+  color: #fee2e2;
+  background: rgba(127, 29, 29, 0.58);
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .overlay-chip.warning {
-  color: #fdba74;
+  color: #ffedd5;
+  background: rgba(120, 53, 15, 0.58);
+  border-color: rgba(251, 191, 36, 0.48);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .map-container {
@@ -1314,11 +1333,21 @@ onBeforeUnmount(() => {
 }
 
 .mobile-map-stat.danger strong {
-  color: #dc2626;
+  color: #ef4444;
 }
 
 .mobile-map-stat.warning strong {
-  color: #d97706;
+  color: #f59e0b;
+}
+
+.mobile-map-stat.danger {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(254, 226, 226, 0.88));
+  border-color: rgba(248, 113, 113, 0.34);
+}
+
+.mobile-map-stat.warning {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 237, 213, 0.9));
+  border-color: rgba(251, 191, 36, 0.38);
 }
 
 .mobile-selected-station {
@@ -1379,14 +1408,14 @@ onBeforeUnmount(() => {
 }
 
 .mobile-event-card.danger {
-  border-color: rgba(220, 38, 38, 0.16);
+  border-color: rgba(239, 68, 68, 0.28);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(254, 242, 242, 0.86)),
     #fff;
 }
 
 .mobile-event-card.warning {
-  border-color: rgba(217, 119, 6, 0.18);
+  border-color: rgba(245, 158, 11, 0.3);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 237, 0.9)),
     #fff;
@@ -1402,13 +1431,13 @@ onBeforeUnmount(() => {
 }
 
 .mobile-event-card.danger .mobile-event-dot {
-  background: #dc2626;
-  box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.09);
+  background: #ef4444;
+  box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.14), 0 0 16px rgba(239, 68, 68, 0.42);
 }
 
 .mobile-event-card.warning .mobile-event-dot {
-  background: #d97706;
-  box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.11);
+  background: #f59e0b;
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.15), 0 0 16px rgba(245, 158, 11, 0.42);
 }
 
 .mobile-event-body {
@@ -1483,11 +1512,15 @@ onBeforeUnmount(() => {
 }
 
 .focus-chip.danger {
-  color: #fca5a5;
+  color: #fee2e2;
+  background: rgba(127, 29, 29, 0.54);
+  border-color: rgba(248, 113, 113, 0.38);
 }
 
 .focus-chip.warning {
-  color: #fdba74;
+  color: #ffedd5;
+  background: rgba(120, 53, 15, 0.54);
+  border-color: rgba(251, 191, 36, 0.42);
 }
 
 @keyframes labelScan {

@@ -7977,9 +7977,9 @@ def get_station_map():
             WITH issue_counts AS (
                 SELECT
                     station_id,
-                    COUNT(*) FILTER (WHERE status = '待整改') AS pending_rectification_count,
-                    COUNT(*) FILTER (WHERE status = '待复核') AS pending_review_count,
-                    COUNT(*) FILTER (WHERE status IN ('已闭环', '已整改')) AS closed_count
+                    COUNT(*) FILTER (WHERE TRIM(COALESCE(status, '')) IN ('待整改', '未整改', '站经无法整改')) AS pending_rectification_count,
+                    COUNT(*) FILTER (WHERE TRIM(COALESCE(status, '')) = '待复核') AS pending_review_count,
+                    COUNT(*) FILTER (WHERE TRIM(COALESCE(status, '')) IN ('已闭环', '已整改')) AS closed_count
                 FROM issues
                 GROUP BY station_id
             ),
@@ -8056,15 +8056,16 @@ def get_event_feed():
                     i.standard_id,
                     '，当前状态：',
                     CASE
-                        WHEN i.status IN ('已闭环', '已整改') THEN '已闭环'
+                        WHEN TRIM(COALESCE(i.status, '')) IN ('已闭环', '已整改') THEN '已闭环'
+                        WHEN TRIM(COALESCE(i.status, '')) = '未整改' THEN '待整改'
                         ELSE i.status
                     END,
                     '。'
                 ) AS text,
                 TO_CHAR(COALESCE(i.created_at, NOW()), 'HH24:MI') AS time,
                 CASE
-                    WHEN i.status = '待整改' THEN 'danger'
-                    WHEN i.status = '待复核' THEN 'warning'
+                    WHEN TRIM(COALESCE(i.status, '')) IN ('待整改', '未整改', '站经无法整改') THEN 'danger'
+                    WHEN TRIM(COALESCE(i.status, '')) = '待复核' THEN 'warning'
                     ELSE 'info'
                 END AS level,
                 COALESCE(i.created_at, NOW()) AS sort_time
