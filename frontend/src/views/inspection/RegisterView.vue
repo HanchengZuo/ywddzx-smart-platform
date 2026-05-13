@@ -51,7 +51,7 @@
               </button>
             </div>
           </div>
-          <div class="form-item form-item-full">
+          <div v-if="normalizedHasIssue === 'yes'" class="form-item form-item-full">
             <label>搜索并选择规范ID</label>
             <div class="search-select" ref="standardSelectRef">
               <input v-model="standardSearch" type="text" placeholder="输入规范ID搜索" @focus="openStandardDropdown"
@@ -71,7 +71,23 @@
             </div>
           </div>
 
-          <template v-if="selectedStandard">
+          <div v-else class="form-item form-item-full">
+            <label>检查表</label>
+            <div class="search-select" ref="tableSelectRef">
+              <input v-model="tableSearch" type="text" placeholder="搜索并选择检查表" @focus="openTableDropdown"
+                @input="handleTableInput" />
+              <div v-if="tableDropdownVisible" class="search-select-dropdown">
+                <div v-for="table in filteredInspectionTables" :key="table.id" class="search-select-option"
+                  @click="selectInspectionTable(table)">
+                  <div class="option-main">{{ table.table_name }}</div>
+                  <div class="option-sub">{{ table.description || '未设置说明' }}</div>
+                </div>
+                <div v-if="filteredInspectionTables.length === 0" class="search-select-empty">无匹配检查表</div>
+              </div>
+            </div>
+          </div>
+
+          <template v-if="normalizedHasIssue === 'yes' && selectedStandard">
             <div class="form-item form-item-full selected-standard-field selected-standard-first"
               ref="selectedStandardStartRef">
               <label>规范ID</label>
@@ -172,11 +188,14 @@ try {
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_inspections)
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
+const tableSelectRef = ref(null)
 const selectedStandardStartRef = ref(null)
 const stationDropdownVisible = ref(false)
 const standardDropdownVisible = ref(false)
+const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
+const tableSearch = ref('')
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const submitMessage = ref('')
@@ -203,6 +222,7 @@ const standards = ref([])
 const standardFields = ref([])
 const inspectionTables = ref([])
 const STANDARD_SEARCH_RESULT_LIMIT = 80
+const LAST_REGISTER_STATION_KEY = 'inspection_register_last_station'
 
 const form = ref({
   stationId: '',
@@ -345,6 +365,12 @@ const filteredStations = computed(() => {
   })
 })
 
+const filteredInspectionTables = computed(() => {
+  return inspectionTables.value.filter((item) => {
+    return matchesSmartSearch([item.table_name, item.description], tableSearch.value)
+  })
+})
+
 const filteredStandards = computed(() => {
   if (isNumericStandardKeyword(standardSearch.value)) {
     return standards.value.filter((item) => {
@@ -442,6 +468,10 @@ const openStandardDropdown = () => {
   standardDropdownVisible.value = true
 }
 
+const openTableDropdown = () => {
+  tableDropdownVisible.value = true
+}
+
 const handleStationInput = () => {
   form.value.stationId = ''
   stationDropdownVisible.value = true
@@ -453,13 +483,26 @@ const handleStandardInput = () => {
   standardDropdownVisible.value = true
 }
 
+const handleTableInput = () => {
+  form.value.inspectionTableId = ''
+  tableDropdownVisible.value = true
+}
+
 watch(
   normalizedHasIssue,
   (hasIssueValue) => {
+    form.value.inspectionTableId = ''
     if (hasIssueValue === 'no') {
+      form.value.standardId = ''
       form.value.description = ''
+      standardSearch.value = ''
+      standardDropdownVisible.value = false
       clearImage()
+      return
     }
+
+    tableSearch.value = ''
+    tableDropdownVisible.value = false
   }
 )
 
@@ -467,6 +510,27 @@ const selectStation = (station) => {
   stationSearch.value = station.station_name
   form.value.stationId = station.id
   stationDropdownVisible.value = false
+  localStorage.setItem(
+    LAST_REGISTER_STATION_KEY,
+    JSON.stringify({
+      id: station.id,
+      station_name: station.station_name
+    })
+  )
+}
+
+const findScrollableParent = (element) => {
+  let parent = element?.parentElement || null
+  while (parent && parent !== document.body) {
+    const style = window.getComputedStyle(parent)
+    const overflowY = style.overflowY
+    const canScroll = parent.scrollHeight > parent.clientHeight
+    if (canScroll && ['auto', 'scroll', 'overlay'].includes(overflowY)) {
+      return parent
+    }
+    parent = parent.parentElement
+  }
+  return window
 }
 
 const scrollToSelectedStandard = async () => {
@@ -475,11 +539,25 @@ const scrollToSelectedStandard = async () => {
   if (!target || typeof window === 'undefined') return
 
   const isMobile = window.matchMedia?.('(max-width: 900px)').matches
-  const topOffset = isMobile ? 12 : 24
-  const targetTop = target.getBoundingClientRect().top + window.scrollY - topOffset
-  window.scrollTo({
-    top: Math.max(targetTop, 0),
-    behavior: 'smooth'
+  const topOffset = isMobile ? 8 : 24
+  const scrollParent = findScrollableParent(target)
+  requestAnimationFrame(() => {
+    if (scrollParent === window) {
+      const targetTop = target.getBoundingClientRect().top + window.scrollY - topOffset
+      window.scrollTo({
+        top: Math.max(targetTop, 0),
+        behavior: 'smooth'
+      })
+      return
+    }
+
+    const parentRect = scrollParent.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const targetTop = scrollParent.scrollTop + targetRect.top - parentRect.top - topOffset
+    scrollParent.scrollTo({
+      top: Math.max(targetTop, 0),
+      behavior: 'smooth'
+    })
   })
 }
 
@@ -489,6 +567,33 @@ const selectStandard = async (standard) => {
   form.value.inspectionTableId = String(standard.inspection_table_id || '')
   standardDropdownVisible.value = false
   await scrollToSelectedStandard()
+}
+
+const selectInspectionTable = (table) => {
+  tableSearch.value = table.table_name
+  form.value.inspectionTableId = String(table.id)
+  tableDropdownVisible.value = false
+}
+
+const applyRememberedStation = () => {
+  const raw = localStorage.getItem(LAST_REGISTER_STATION_KEY)
+  if (!raw) return
+
+  try {
+    const remembered = JSON.parse(raw)
+    const station = stations.value.find((item) => {
+      return String(item.id) === String(remembered?.id || '')
+    })
+    if (!station) {
+      localStorage.removeItem(LAST_REGISTER_STATION_KEY)
+      return
+    }
+
+    form.value.stationId = station.id
+    stationSearch.value = station.station_name
+  } catch (error) {
+    localStorage.removeItem(LAST_REGISTER_STATION_KEY)
+  }
 }
 
 const handleFileChange = async (event) => {
@@ -534,13 +639,16 @@ const resetForm = (preserveMessage = false) => {
   }
   stationSearch.value = ''
   standardSearch.value = ''
+  tableSearch.value = ''
   stationDropdownVisible.value = false
   standardDropdownVisible.value = false
+  tableDropdownVisible.value = false
   if (!preserveMessage) {
     submitMessage.value = ''
     submitMessageType.value = 'info'
   }
   clearImage()
+  applyRememberedStation()
   createdTime.value = formatCurrentTime()
 }
 
@@ -552,8 +660,13 @@ const handleSubmit = async () => {
     return
   }
 
-  if (!form.value.standardId || !form.value.inspectionTableId) {
+  if (hasIssueValue === 'yes' && (!form.value.standardId || !form.value.inspectionTableId)) {
     showSubmitToast('请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
+    return
+  }
+
+  if (hasIssueValue === 'no' && !form.value.inspectionTableId) {
+    showSubmitToast('请选择检查表。', 'error')
     return
   }
 
@@ -610,11 +723,14 @@ const handleClickOutside = (event) => {
   if (standardSelectRef.value && !standardSelectRef.value.contains(event.target)) {
     standardDropdownVisible.value = false
   }
+  if (tableSelectRef.value && !tableSelectRef.value.contains(event.target)) {
+    tableDropdownVisible.value = false
+  }
 }
 
 
 watch(
-  () => form.value.standardId,
+  [() => form.value.standardId, () => form.value.inspectionTableId],
   () => {
     if (submitMessageType.value !== 'success') {
       submitMessage.value = ''
@@ -628,6 +744,7 @@ onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
   try {
     await Promise.all([fetchStations(), fetchInspectionTables()])
+    applyRememberedStation()
     await fetchStandards()
   } catch (error) {
     showSubmitToast('初始化站点或规范数据失败，请检查后端服务。', 'error')

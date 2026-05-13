@@ -156,15 +156,38 @@
       <div v-if="!loading && groupedInspectionGroups.length" class="pagination-bar mobile-pagination-bar card-surface">
         <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
         <div class="pagination-controls">
-          <label>每页显示</label>
-          <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
-          </select>
-          <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
-          <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+          <div class="pagination-size-control">
+            <label>每页显示</label>
+            <select v-model.number="pageSize">
+              <option :value="5">5</option>
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="goToPage(1)">首页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="prevPage">上一页</button>
+          </div>
+          <div class="pagination-page-list" aria-label="巡检记录页码">
+            <template v-for="item in visiblePageItems" :key="item.key">
+              <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis">...</span>
+              <button v-else class="pagination-page-btn" :class="{ active: item.value === page }" type="button"
+                @click="goToPage(item.value)">
+                {{ item.value }}
+              </button>
+            </template>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="goToPage(totalPage)">末页</button>
+          </div>
+          <div class="pagination-jump">
+            <span>跳至</span>
+            <input v-model="pageJumpInput" type="number" min="1" :max="totalPage" :placeholder="`1-${totalPage}`"
+              @keyup.enter="jumpToInputPage" />
+            <button class="btn btn-primary pagination-jump-btn" type="button" @click="jumpToInputPage">跳转</button>
+          </div>
         </div>
       </div>
     </div>
@@ -259,15 +282,38 @@
       <div class="pagination-bar">
         <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
         <div class="pagination-controls">
-          <label>每页显示</label>
-          <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
-          </select>
-          <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
-          <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+          <div class="pagination-size-control">
+            <label>每页显示</label>
+            <select v-model.number="pageSize">
+              <option :value="5">5</option>
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="goToPage(1)">首页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="prevPage">上一页</button>
+          </div>
+          <div class="pagination-page-list" aria-label="巡检记录页码">
+            <template v-for="item in visiblePageItems" :key="item.key">
+              <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis">...</span>
+              <button v-else class="pagination-page-btn" :class="{ active: item.value === page }" type="button"
+                @click="goToPage(item.value)">
+                {{ item.value }}
+              </button>
+            </template>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="goToPage(totalPage)">末页</button>
+          </div>
+          <div class="pagination-jump">
+            <span>跳至</span>
+            <input v-model="pageJumpInput" type="number" min="1" :max="totalPage" :placeholder="`1-${totalPage}`"
+              @keyup.enter="jumpToInputPage" />
+            <button class="btn btn-primary pagination-jump-btn" type="button" @click="jumpToInputPage">跳转</button>
+          </div>
         </div>
       </div>
     </div>
@@ -479,6 +525,7 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
 import SignaturePad from 'signature_pad'
+import { pinyin } from 'pinyin-pro'
 
 const filters = ref({
   date: '',
@@ -540,9 +587,52 @@ const signatureDialog = ref({
 
 const loading = ref(false)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(5)
+const pageJumpInput = ref('')
 
 const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
+
+const normalizeSearchToken = (value) => {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '')
+}
+
+const toPinyinText = (value, options = {}) => {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  try {
+    return pinyin(text, {
+      toneType: 'none',
+      nonZh: 'consecutive',
+      ...options
+    })
+  } catch {
+    return ''
+  }
+}
+
+const buildSearchVariants = (value) => {
+  const source = String(value || '').trim()
+  if (!source) return []
+
+  return [
+    source,
+    toPinyinText(source),
+    toPinyinText(source, { pattern: 'first' })
+  ].map(normalizeSearchToken).filter(Boolean)
+}
+
+const matchesSmartSearch = (values, keyword) => {
+  const needle = normalizeSearchToken(keyword)
+  if (!needle) return true
+
+  return values.some((value) => {
+    const variants = buildSearchVariants(value)
+    return variants.some((variant) => variant.includes(needle))
+  })
+}
 
 const uniqueSortedOptions = (values) => {
   return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
@@ -553,10 +643,14 @@ const filterOptionByKeyword = (options, keyword) => {
   return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
 }
 
+const filterStationOptionByKeyword = (options, keyword) => {
+  return options.filter((item) => matchesSmartSearch([item], keyword))
+}
+
 const filteredData = computed(() => {
   return list.value.filter((item) => {
     const matchedDate = !filters.value.date || item.date === filters.value.date
-    const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
+    const matchedStation = !filters.value.station || matchesSmartSearch([item.station], filters.value.station)
     const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
     const matchedResult = !filters.value.result || item.result === filters.value.result
 
@@ -567,7 +661,7 @@ const filteredData = computed(() => {
 const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
 const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
 
-const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
+const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
 const groupedInspectionGroups = computed(() => {
@@ -1212,6 +1306,45 @@ const submitInspectionSignature = async () => {
 
 const totalPage = computed(() => Math.max(1, Math.ceil(groupedInspectionGroups.value.length / pageSize.value)))
 
+const visiblePageItems = computed(() => {
+  const total = totalPage.value
+  const current = page.value
+
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => {
+      const value = index + 1
+      return { type: 'page', value, key: `page-${value}` }
+    })
+  }
+
+  const pages = new Set([1, total, current, current - 1, current + 1])
+  if (current <= 3) {
+    pages.add(2)
+    pages.add(3)
+    pages.add(4)
+  }
+  if (current >= total - 2) {
+    pages.add(total - 1)
+    pages.add(total - 2)
+    pages.add(total - 3)
+  }
+
+  const sortedPages = [...pages]
+    .filter((value) => value >= 1 && value <= total)
+    .sort((a, b) => a - b)
+
+  const result = []
+  sortedPages.forEach((value, index) => {
+    const previous = sortedPages[index - 1]
+    if (index > 0 && value - previous > 1) {
+      result.push({ type: 'ellipsis', key: `ellipsis-${previous}-${value}` })
+    }
+    result.push({ type: 'page', value, key: `page-${value}` })
+  })
+
+  return result
+})
+
 const paginatedInspectionGroups = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return groupedInspectionGroups.value.slice(start, start + pageSize.value)
@@ -1273,16 +1406,23 @@ const resetFilters = () => {
   closeAllDropdowns()
 }
 
+const goToPage = (targetPage) => {
+  const normalizedPage = Number.parseInt(targetPage, 10)
+  if (!Number.isFinite(normalizedPage)) return
+  page.value = Math.min(Math.max(normalizedPage, 1), totalPage.value)
+}
+
 const prevPage = () => {
-  if (page.value > 1) {
-    page.value -= 1
-  }
+  goToPage(page.value - 1)
 }
 
 const nextPage = () => {
-  if (page.value < totalPage.value) {
-    page.value += 1
-  }
+  goToPage(page.value + 1)
+}
+
+const jumpToInputPage = () => {
+  goToPage(pageJumpInput.value)
+  pageJumpInput.value = ''
 }
 
 const openFilterDropdown = (key) => {
@@ -2130,11 +2270,84 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.pagination-controls select {
+.pagination-size-control,
+.pagination-nav-row,
+.pagination-page-list,
+.pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-size-control label,
+.pagination-jump span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pagination-controls select,
+.pagination-jump input {
   height: 40px;
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0 10px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.pagination-jump input {
+  width: 78px;
+  text-align: center;
+}
+
+.pagination-btn {
+  min-width: 72px;
+}
+
+.pagination-page-list {
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.pagination-page-btn {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.pagination-page-btn:hover {
+  background: #e0edff;
+  color: #1d4ed8;
+}
+
+.pagination-page-btn.active {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22);
+}
+
+.pagination-ellipsis {
+  min-width: 28px;
+  text-align: center;
+  color: #94a3b8;
+  font-weight: 900;
+  line-height: 34px;
+}
+
+.pagination-jump-btn {
+  min-width: 72px;
 }
 
 .status-tag {
@@ -2641,7 +2854,8 @@ onBeforeUnmount(() => {
 
   .filter-item input,
   .filter-item select,
-  .pagination-controls select {
+  .pagination-controls select,
+  .pagination-jump input {
     height: 46px;
     font-size: 15px;
     padding: 0 12px;
@@ -2710,6 +2924,47 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
+  .pagination-size-control,
+  .pagination-nav-row,
+  .pagination-jump {
+    width: 100%;
+  }
+
+  .pagination-size-control {
+    justify-content: space-between;
+  }
+
+  .pagination-size-control select {
+    width: 128px;
+  }
+
+  .pagination-nav-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pagination-page-list {
+    width: 100%;
+    justify-content: center;
+    overflow-x: auto;
+    padding: 5px;
+  }
+
+  .pagination-page-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+  }
+
+  .pagination-jump {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 82px;
+  }
+
+  .pagination-jump input {
+    width: 100%;
+  }
+
   .table-card {
     display: none;
   }
@@ -2726,6 +2981,12 @@ onBeforeUnmount(() => {
   .btn {
     width: 100%;
     min-height: 46px;
+  }
+
+  .pagination-btn,
+  .pagination-jump-btn {
+    width: 100%;
+    min-width: 0;
   }
 
   .mobile-action-btn {
