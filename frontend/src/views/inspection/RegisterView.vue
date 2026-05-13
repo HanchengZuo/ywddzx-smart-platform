@@ -52,6 +52,22 @@
             </div>
           </div>
           <div v-if="normalizedHasIssue === 'yes'" class="form-item form-item-full">
+            <label>规范引用方式</label>
+            <div class="reference-mode-panel" role="radiogroup" aria-label="规范引用方式">
+              <button type="button" class="reference-mode-btn" :class="{ active: referenceMode === 'manual' }"
+                @click="setReferenceMode('manual')">
+                <strong>人工引用规范</strong>
+                <span>手动输入规范ID，按现有流程选择规范。</span>
+              </button>
+              <button type="button" class="reference-mode-btn reference-mode-btn-ai"
+                :class="{ active: referenceMode === 'ai' }" @click="setReferenceMode('ai')">
+                <strong>AI引用规范</strong>
+                <span>先填写实际问题描述，由AI推荐候选规范。</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="normalizedHasIssue === 'yes' && referenceMode === 'manual'" class="form-item form-item-full">
             <label>搜索并选择规范ID</label>
             <div class="search-select" ref="standardSelectRef">
               <input v-model="standardSearch" type="text" placeholder="输入规范ID搜索" @focus="openStandardDropdown"
@@ -71,7 +87,67 @@
             </div>
           </div>
 
-          <div v-else class="form-item form-item-full">
+          <div v-if="normalizedHasIssue === 'yes' && referenceMode === 'ai'" class="form-item form-item-full">
+            <label>AI引用规范</label>
+            <div class="ai-reference-card">
+              <div class="ai-reference-header">
+                <div>
+                  <div class="ai-reference-kicker">DEEPSEEK ASSISTED MATCH</div>
+                  <h3>根据实际问题描述推荐规范</h3>
+                  <p>AI会读取当前巡检规范库资料并给出候选项，最终仍由你确认引用哪一条规范。</p>
+                </div>
+              </div>
+
+              <div class="ai-description-field">
+                <label>实际问题描述</label>
+                <textarea v-model="form.description" rows="5" placeholder="请先描述现场发现的问题，例如设备位置、异常现象、现场影响等。"></textarea>
+              </div>
+
+              <div class="ai-reference-actions">
+                <button class="btn btn-primary" type="button" :disabled="aiMatching || !form.description.trim()"
+                  @click="runAiStandardMatch">
+                  {{ aiMatching ? 'AI匹配中...' : 'AI匹配规范' }}
+                </button>
+                <button class="btn btn-secondary" type="button" :disabled="aiMatching" @click="setReferenceMode('manual')">
+                  改用人工引用
+                </button>
+              </div>
+
+              <div v-if="aiMatching" class="ai-matching-panel">
+                <div class="ai-matching-title">正在匹配巡检规范库</div>
+                <div class="ai-matching-desc">系统正在分析问题描述和规范条目，请稍候。</div>
+                <div class="ai-progress-bar"><span></span></div>
+              </div>
+
+              <div v-else-if="aiReferenceMessage" class="ai-reference-message" :class="aiReferenceMessageType">
+                {{ aiReferenceMessage }}
+              </div>
+
+              <div v-if="aiRecommendations.length" class="ai-recommendation-list">
+                <button v-for="candidate in aiRecommendations" :key="getStandardIdentity(candidate)" type="button"
+                  class="ai-recommendation-card"
+                  :class="{ selected: String(candidate.standard_id) === String(form.standardId) }"
+                  @click="selectRecommendedStandard(candidate)">
+                  <div class="ai-recommendation-top">
+                    <span class="ai-recommendation-code">{{ candidate.standard_id }}</span>
+                    <span class="ai-confidence" :class="`level-${candidate.confidence || '中'}`">
+                      {{ candidate.confidence || '中' }}相关
+                    </span>
+                  </div>
+                  <div class="ai-recommendation-title">{{ getStandardTitle(candidate) }}</div>
+                  <div class="ai-recommendation-table">{{ candidate.inspection_table_name || '未命名检查表' }}</div>
+                  <div class="ai-recommendation-reason">{{ candidate.reason || 'AI认为该规范与问题描述相关。' }}</div>
+                </button>
+              </div>
+
+              <div v-if="aiNoRelated" class="ai-no-related">
+                <strong>未找到明确相关规范</strong>
+                <span>可以补充更具体的问题描述后重新匹配，也可以切换到人工引用规范。</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="normalizedHasIssue !== 'yes'" class="form-item form-item-full">
             <label>检查表</label>
             <div class="search-select" ref="tableSelectRef">
               <input v-model="tableSearch" type="text" placeholder="搜索并选择检查表" @focus="openTableDropdown"
@@ -108,10 +184,10 @@
         </div>
 
         <template v-if="showIssueFields">
-          <div class="section-title issue-section-title">问题信息</div>
+          <div class="section-title issue-section-title">{{ referenceMode === 'ai' ? '问题照片' : '问题信息' }}</div>
 
           <div class="form-grid">
-            <div class="form-item form-item-full">
+            <div v-if="referenceMode === 'manual'" class="form-item form-item-full">
               <label>实际问题描述</label>
               <textarea v-model="form.description" rows="4" placeholder="请填写现场实际问题描述"></textarea>
             </div>
@@ -196,6 +272,13 @@ const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
 const tableSearch = ref('')
+const referenceMode = ref('manual')
+const aiMatching = ref(false)
+const aiRecommendations = ref([])
+const aiReferenceMessage = ref('')
+const aiReferenceMessageType = ref('info')
+const aiNoRelated = ref(false)
+const aiSelectedStandard = ref(null)
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const submitMessage = ref('')
@@ -316,7 +399,12 @@ const matchesNumericStandardSearch = (item, keyword) => {
 }
 
 const selectedStandard = computed(() => {
-  return standards.value.find((item) => String(item.standard_id) === String(form.value.standardId)) || null
+  const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
+  if (standard) return standard
+  if (String(aiSelectedStandard.value?.standard_id || '') === String(form.value.standardId || '')) {
+    return aiSelectedStandard.value
+  }
+  return null
 })
 
 const normalizedHasIssue = computed(() => {
@@ -480,6 +568,7 @@ const handleStationInput = () => {
 const handleStandardInput = () => {
   form.value.inspectionTableId = ''
   form.value.standardId = ''
+  aiSelectedStandard.value = null
   standardDropdownVisible.value = true
 }
 
@@ -488,15 +577,37 @@ const handleTableInput = () => {
   tableDropdownVisible.value = true
 }
 
+const clearAiReferenceState = () => {
+  aiRecommendations.value = []
+  aiReferenceMessage.value = ''
+  aiReferenceMessageType.value = 'info'
+  aiNoRelated.value = false
+}
+
+const clearSelectedStandard = () => {
+  form.value.inspectionTableId = ''
+  form.value.standardId = ''
+  standardSearch.value = ''
+  standardDropdownVisible.value = false
+  aiSelectedStandard.value = null
+}
+
+const setReferenceMode = (mode) => {
+  const nextMode = mode === 'ai' ? 'ai' : 'manual'
+  if (referenceMode.value === nextMode) return
+  referenceMode.value = nextMode
+  clearSelectedStandard()
+  clearAiReferenceState()
+}
+
 watch(
   normalizedHasIssue,
   (hasIssueValue) => {
-    form.value.inspectionTableId = ''
+    clearSelectedStandard()
+    clearAiReferenceState()
     if (hasIssueValue === 'no') {
-      form.value.standardId = ''
+      referenceMode.value = 'manual'
       form.value.description = ''
-      standardSearch.value = ''
-      standardDropdownVisible.value = false
       clearImage()
       return
     }
@@ -565,14 +676,67 @@ const selectStandard = async (standard) => {
   standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
   form.value.standardId = standard.standard_id
   form.value.inspectionTableId = String(standard.inspection_table_id || '')
+  aiSelectedStandard.value = { ...standard }
   standardDropdownVisible.value = false
   await scrollToSelectedStandard()
+}
+
+const selectRecommendedStandard = async (candidate) => {
+  const standard = standards.value.find((item) => {
+    return String(item.standard_id) === String(candidate.standard_id)
+  }) || candidate
+  await selectStandard({
+    ...standard,
+    confidence: candidate.confidence,
+    reason: candidate.reason
+  })
+  aiReferenceMessage.value = `已引用规范 ${candidate.standard_id}，请继续上传问题照片后提交。`
+  aiReferenceMessageType.value = 'success'
 }
 
 const selectInspectionTable = (table) => {
   tableSearch.value = table.table_name
   form.value.inspectionTableId = String(table.id)
   tableDropdownVisible.value = false
+}
+
+const runAiStandardMatch = async () => {
+  const description = String(form.value.description || '').trim()
+  if (description.length < 4) {
+    aiReferenceMessage.value = '请先填写更具体的实际问题描述。'
+    aiReferenceMessageType.value = 'error'
+    return
+  }
+
+  clearSelectedStandard()
+  clearAiReferenceState()
+
+  try {
+    aiMatching.value = true
+    const response = await axios.post('/api/inspection-standards/ai-recommend', {
+      description
+    })
+    aiRecommendations.value = response.data?.items || []
+    aiNoRelated.value = Boolean(response.data?.no_related)
+
+    if (aiNoRelated.value) {
+      aiReferenceMessage.value = response.data?.summary || 'AI未找到明确相关规范。'
+      aiReferenceMessageType.value = response.data?.ai_generated ? 'warning' : 'error'
+      return
+    }
+
+    aiReferenceMessage.value = response.data?.ai_generated
+      ? 'AI已生成候选规范，请选择最符合现场问题的一条。'
+      : `${response.data?.message || 'AI暂不可用，已使用本地规则匹配。'}请人工确认候选规范。`
+    aiReferenceMessageType.value = response.data?.ai_generated ? 'success' : 'warning'
+  } catch (error) {
+    aiRecommendations.value = []
+    aiNoRelated.value = true
+    aiReferenceMessage.value = error?.response?.data?.error || 'AI匹配失败，请稍后重试或改用人工引用。'
+    aiReferenceMessageType.value = 'error'
+  } finally {
+    aiMatching.value = false
+  }
 }
 
 const applyRememberedStation = () => {
@@ -640,9 +804,12 @@ const resetForm = (preserveMessage = false) => {
   stationSearch.value = ''
   standardSearch.value = ''
   tableSearch.value = ''
+  referenceMode.value = 'manual'
   stationDropdownVisible.value = false
   standardDropdownVisible.value = false
   tableDropdownVisible.value = false
+  clearAiReferenceState()
+  aiSelectedStandard.value = null
   if (!preserveMessage) {
     submitMessage.value = ''
     submitMessageType.value = 'info'
@@ -661,7 +828,9 @@ const handleSubmit = async () => {
   }
 
   if (hasIssueValue === 'yes' && (!form.value.standardId || !form.value.inspectionTableId)) {
-    showSubmitToast('请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
+    showSubmitToast(referenceMode.value === 'ai'
+      ? '请先通过AI匹配并确认一条规范，或改用人工引用规范。'
+      : '请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
     return
   }
 
@@ -736,6 +905,16 @@ watch(
       submitMessage.value = ''
       submitMessageType.value = 'info'
     }
+  }
+)
+
+watch(
+  () => form.value.description,
+  () => {
+    if (referenceMode.value !== 'ai') return
+    if (!aiRecommendations.value.length && !aiNoRelated.value && !form.value.standardId) return
+    clearSelectedStandard()
+    clearAiReferenceState()
   }
 )
 
@@ -879,6 +1058,302 @@ onBeforeUnmount(() => {
   border-color: #93c5fd;
   color: #1d4ed8;
   box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.08);
+}
+
+.reference-mode-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reference-mode-btn {
+  min-height: 84px;
+  padding: 14px 16px;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.reference-mode-btn strong,
+.reference-mode-btn span {
+  display: block;
+}
+
+.reference-mode-btn strong {
+  font-size: 15px;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.reference-mode-btn span {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #64748b;
+}
+
+.reference-mode-btn:hover {
+  border-color: #bfdbfe;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.reference-mode-btn.active {
+  border-color: #2563eb;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 38%),
+    linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12), 0 14px 28px rgba(37, 99, 235, 0.12);
+}
+
+.reference-mode-btn-ai.active {
+  border-color: #0f766e;
+  background:
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.14), transparent 38%),
+    linear-gradient(180deg, #f0fdfa 0%, #ffffff 100%);
+  box-shadow: inset 0 0 0 1px rgba(20, 184, 166, 0.12), 0 14px 28px rgba(15, 118, 110, 0.12);
+}
+
+.ai-reference-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #cdece6;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 36%),
+    linear-gradient(180deg, #f8fffd 0%, #ffffff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+}
+
+.ai-reference-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ai-reference-kicker {
+  width: fit-content;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+
+.ai-reference-header h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.ai-reference-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.ai-description-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-description-field label {
+  color: #0f766e;
+}
+
+.ai-reference-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ai-matching-panel {
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 18px;
+  background: rgba(239, 246, 255, 0.84);
+}
+
+.ai-matching-title {
+  color: #1d4ed8;
+  font-size: 14px;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.ai-matching-desc {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+
+.ai-progress-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.ai-progress-bar span {
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #14b8a6);
+  animation: ai-progress-slide 1.18s ease-in-out infinite;
+}
+
+.ai-reference-message {
+  padding: 11px 13px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  font-weight: 700;
+}
+
+.ai-reference-message.success {
+  color: #166534;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+}
+
+.ai-reference-message.warning {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.ai-reference-message.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.ai-recommendation-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-recommendation-card {
+  padding: 14px;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.ai-recommendation-card:hover {
+  border-color: #5eead4;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(15, 118, 110, 0.12);
+}
+
+.ai-recommendation-card.selected {
+  border-color: #0f766e;
+  background: #f0fdfa;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.14);
+}
+
+.ai-recommendation-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ai-recommendation-code {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-confidence {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-confidence.level-高 {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.ai-confidence.level-中 {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.ai-confidence.level-低 {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.ai-recommendation-title {
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+
+.ai-recommendation-table {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.ai-recommendation-reason {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.ai-no-related {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.ai-no-related strong {
+  color: #0f172a;
+}
+
+.ai-no-related span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .form-item input[readonly],
@@ -1224,6 +1699,20 @@ onBeforeUnmount(() => {
   transform: translate(-50%, calc(-50% + 12px));
 }
 
+@keyframes ai-progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  50% {
+    transform: translateX(80%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 @media (max-width: 900px) {
   .page-shell {
     gap: 14px;
@@ -1285,6 +1774,30 @@ onBeforeUnmount(() => {
   .issue-toggle-btn {
     height: 46px;
     font-size: 15px;
+  }
+
+  .reference-mode-panel,
+  .ai-recommendation-list {
+    grid-template-columns: 1fr;
+  }
+
+  .reference-mode-btn {
+    min-height: auto;
+    padding: 13px 14px;
+  }
+
+  .ai-reference-card {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .ai-reference-header h3 {
+    font-size: 18px;
+  }
+
+  .ai-reference-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .search-select-dropdown {

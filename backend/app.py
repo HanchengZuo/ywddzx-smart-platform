@@ -20,7 +20,7 @@ from psycopg2.extras import RealDictCursor
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
-from ai_utils import generate_feedback_title
+from ai_utils import generate_feedback_title, generate_standard_recommendations
 
 try:
     from qcloud_cos import CosConfig, CosS3Client
@@ -4521,6 +4521,74 @@ def serialize_standard_row(field_meta, row):
     return item
 
 
+def build_inspection_standard_ai_catalog(cur):
+    cur.execute(
+        """
+        SELECT
+            id,
+            table_code,
+            table_name,
+            checklist_mode,
+            description,
+            is_active
+        FROM inspection_tables
+        WHERE is_active = TRUE
+        ORDER BY id ASC;
+        """
+    )
+    inspection_tables = cur.fetchall()
+    ai_catalog = []
+    full_standards = []
+
+    for inspection_table in inspection_tables:
+        physical_table_name = get_physical_table_name_by_code(
+            inspection_table["table_code"]
+        )
+        if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+            continue
+
+        fields = [
+            dict(field)
+            for field in get_management_checklist_fields(
+                cur,
+                inspection_table["id"],
+                include_public=True,
+            )
+        ]
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
+        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+
+        cur.execute(
+            sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
+                sql.Identifier(physical_table_name)
+            )
+        )
+
+        for row in cur.fetchall():
+            standard = serialize_standard_row(field_meta, row)
+            detail_text = str(standard.get("standard_detail_text") or "").strip()
+            if not standard.get("standard_id") or not detail_text:
+                continue
+
+            enriched_standard = {
+                **standard,
+                "inspection_table_id": inspection_table["id"],
+                "inspection_table_name": inspection_table["table_name"],
+                "inspection_table_code": inspection_table["table_code"],
+                "checklist_mode": inspection_table.get("checklist_mode"),
+            }
+            full_standards.append(enriched_standard)
+            ai_catalog.append(
+                {
+                    "standard_id": str(standard["standard_id"]),
+                    "inspection_table_name": inspection_table["table_name"],
+                    "detail_text": detail_text,
+                }
+            )
+
+    return ai_catalog, full_standards
+
+
 @app.route("/")
 def home():
     return jsonify({"message": "业务督导中心数智管理平台后端运行中"})
@@ -8938,6 +9006,72 @@ def get_inspection_plan_overview():
             }
         )
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-standards/ai-recommend", methods=["POST"])
+def recommend_inspection_standard_by_ai():
+    data = request.get_json(silent=True) or {}
+    description = str(data.get("description") or "").strip()
+
+    if len(description) < 4:
+        return jsonify({"success": False, "error": "请先填写更具体的实际问题描述。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+
+        if not has_permission(cur, current_user, "submit_inspections"):
+            return jsonify({"success": False, "error": "当前账号无权使用巡检登记功能。"}), 403
+
+        ai_catalog, full_standards = build_inspection_standard_ai_catalog(cur)
+        conn.commit()
+
+        recommendation_result = generate_standard_recommendations(
+            description,
+            ai_catalog,
+        )
+        standard_map = {
+            str(item.get("standard_id")): item
+            for item in full_standards
+            if item.get("standard_id") is not None
+        }
+        items = []
+        for recommendation in recommendation_result.get("recommendations") or []:
+            standard = standard_map.get(str(recommendation.get("standard_id") or ""))
+            if not standard:
+                continue
+            items.append(
+                {
+                    **standard,
+                    "confidence": recommendation.get("confidence") or "中",
+                    "reason": recommendation.get("reason") or "",
+                }
+            )
+
+        no_related = bool(recommendation_result.get("no_related")) or not items
+        return jsonify(
+            {
+                "success": True,
+                "ai_generated": bool(recommendation_result.get("generated")),
+                "message": recommendation_result.get("message") or "",
+                "summary": recommendation_result.get("summary") or "",
+                "no_related": no_related,
+                "items": [] if no_related else items,
+                "catalog_count": len(ai_catalog),
+            }
+        )
+    except PermissionError as e:
+        return jsonify({"success": False, "error": str(e)}), 401
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)

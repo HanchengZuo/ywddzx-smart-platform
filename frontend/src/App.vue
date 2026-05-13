@@ -413,6 +413,16 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.7',
+    date: '2026-05-14',
+    title: 'AI引用巡检规范',
+    summary: '巡检登记支持人工引用和AI辅助引用规范。',
+    items: [
+      '发现问题时可选择人工引用规范或AI引用规范。',
+      'AI可根据实际问题描述推荐候选规范，由用户确认引用。'
+    ]
+  },
+  {
     version: 'v1.6.3',
     date: '2026-05-14',
     title: '巡检规范库体验优化',

@@ -1,6 +1,12 @@
 import logging
+import json
 import os
 import re
+
+from ai_prompts import (
+    INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT,
+    build_inspection_standard_recommendation_prompt,
+)
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -14,6 +20,16 @@ AI_ERROR_MESSAGES = {
     429: "AI 服务请求过于频繁，已使用默认标题。",
     500: "AI 服务暂时不可用，已使用默认标题。",
     503: "AI 服务繁忙，已使用默认标题。",
+}
+
+STANDARD_RECOMMENDATION_AI_ERROR_MESSAGES = {
+    400: "AI 规范匹配请求格式异常，已使用本地规则匹配。",
+    401: "AI 服务认证失败，已使用本地规则匹配。",
+    402: "AI 服务余额不足，已使用本地规则匹配。",
+    422: "AI 服务参数异常，已使用本地规则匹配。",
+    429: "AI 服务请求过于频繁，已使用本地规则匹配。",
+    500: "AI 服务暂时不可用，已使用本地规则匹配。",
+    503: "AI 服务繁忙，已使用本地规则匹配。",
 }
 
 FEEDBACK_MODULE_FALLBACK_TITLES = {
@@ -100,6 +116,254 @@ def get_ai_error_message(error):
         status_code,
         "AI 标题生成失败，已使用默认标题。",
     )
+
+
+def get_standard_recommendation_ai_error_message(error):
+    status_code = get_ai_error_status_code(error)
+    return STANDARD_RECOMMENDATION_AI_ERROR_MESSAGES.get(
+        status_code,
+        "AI 规范匹配失败，已使用本地规则匹配。",
+    )
+
+
+def normalize_standard_id(value):
+    return str(value or "").strip()
+
+
+def extract_json_from_ai_text(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    object_match = re.search(r"\{[\s\S]*\}", text)
+    if object_match:
+        try:
+            return json.loads(object_match.group(0))
+        except Exception:
+            return None
+    return None
+
+
+def normalize_standard_recommendation_payload(payload, standard_map, limit=8):
+    if not isinstance(payload, dict):
+        return {
+            "no_related": True,
+            "summary": "AI 返回内容无法识别。",
+            "recommendations": [],
+        }
+
+    recommendations = []
+    seen_standard_ids = set()
+    raw_recommendations = payload.get("recommendations")
+    if not isinstance(raw_recommendations, list):
+        raw_recommendations = []
+
+    for raw_item in raw_recommendations:
+        if not isinstance(raw_item, dict):
+            continue
+        standard_id = normalize_standard_id(raw_item.get("standard_id"))
+        if not standard_id or standard_id in seen_standard_ids:
+            continue
+        standard = standard_map.get(standard_id)
+        if not standard:
+            continue
+        seen_standard_ids.add(standard_id)
+        recommendations.append(
+            {
+                "standard_id": standard_id,
+                "confidence": str(raw_item.get("confidence") or "中").strip()[:8] or "中",
+                "reason": str(raw_item.get("reason") or "").strip()[:80],
+            }
+        )
+        if len(recommendations) >= limit:
+            break
+
+    no_related = bool(payload.get("no_related")) or not recommendations
+    return {
+        "no_related": no_related,
+        "summary": str(payload.get("summary") or "").strip()[:120]
+        or ("未找到相关规范。" if no_related else "已找到相关规范。"),
+        "recommendations": recommendations,
+    }
+
+
+def build_local_standard_recommendations(issue_description, standards, limit=6):
+    description = str(issue_description or "").lower()
+    if not description.strip():
+        return []
+
+    raw_tokens = [
+        token.strip()
+        for token in re.split(r"[^\w\u4e00-\u9fff]+", description)
+        if len(token.strip()) >= 2
+    ]
+    token_set = set(raw_tokens)
+    for token in raw_tokens:
+        chinese_text = "".join(re.findall(r"[\u4e00-\u9fff]", token))
+        if len(chinese_text) < 4:
+            continue
+        for size in (2, 3, 4):
+            for index in range(0, len(chinese_text) - size + 1):
+                token_set.add(chinese_text[index : index + size])
+
+    tokens = sorted(token_set, key=lambda item: (-len(item), item))
+    if not tokens:
+        return []
+
+    scored = []
+    for standard in standards:
+        haystack = " ".join(
+            [
+                str(standard.get("standard_id") or ""),
+                str(standard.get("inspection_table_name") or ""),
+                str(standard.get("detail_text") or ""),
+            ]
+        ).lower()
+        score = 0
+        for token in tokens:
+            if token in haystack:
+                score += max(2, len(token))
+        if score:
+            scored.append((score, standard))
+
+    scored.sort(key=lambda item: (-item[0], str(item[1].get("standard_id") or "")))
+    return [
+        {
+            "standard_id": normalize_standard_id(standard.get("standard_id")),
+            "confidence": "低",
+            "reason": "根据问题描述关键词本地匹配。",
+        }
+        for _score, standard in scored[:limit]
+        if normalize_standard_id(standard.get("standard_id"))
+    ]
+
+
+def build_standard_recommendation_result(
+    issue_description,
+    standards,
+    generated,
+    message,
+    payload=None,
+):
+    standard_map = {
+        normalize_standard_id(item.get("standard_id")): item
+        for item in standards
+        if normalize_standard_id(item.get("standard_id"))
+    }
+
+    if payload is None:
+        recommendations = build_local_standard_recommendations(issue_description, standards)
+        return {
+            "generated": generated,
+            "message": message,
+            "summary": "已使用本地规则匹配。" if recommendations else "未找到相关规范。",
+            "no_related": not recommendations,
+            "recommendations": recommendations,
+        }
+
+    normalized = normalize_standard_recommendation_payload(payload, standard_map)
+    return {
+        "generated": generated,
+        "message": message,
+        **normalized,
+    }
+
+
+def generate_standard_recommendations(issue_description, standards):
+    normalized_description = str(issue_description or "").strip()
+    normalized_standards = [
+        item
+        for item in standards
+        if normalize_standard_id(item.get("standard_id"))
+    ]
+
+    if not normalized_standards:
+        return {
+            "generated": False,
+            "message": "巡检规范库暂无可匹配数据。",
+            "summary": "巡检规范库暂无可匹配数据。",
+            "no_related": True,
+            "recommendations": [],
+        }
+
+    try:
+        client = get_deepseek_client()
+    except Exception as exc:
+        logging.exception("DeepSeek client initialization failed for standard recommendation: %s", exc)
+        return build_standard_recommendation_result(
+            normalized_description,
+            normalized_standards,
+            False,
+            "AI 服务初始化失败，已使用本地规则匹配。",
+        )
+
+    if not client:
+        return build_standard_recommendation_result(
+            normalized_description,
+            normalized_standards,
+            False,
+            "未配置 AI 服务，已使用本地规则匹配。",
+        )
+
+    prompt = build_inspection_standard_recommendation_prompt(
+        normalized_description,
+        normalized_standards,
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        raw_content = response.choices[0].message.content
+        payload = extract_json_from_ai_text(raw_content)
+        if payload is None:
+            logging.warning(
+                "DeepSeek returned an unusable standard recommendation payload: %r",
+                raw_content,
+            )
+            return build_standard_recommendation_result(
+                normalized_description,
+                normalized_standards,
+                False,
+                "AI 返回内容无法识别，已使用本地规则匹配。",
+            )
+
+        return build_standard_recommendation_result(
+            normalized_description,
+            normalized_standards,
+            True,
+            "AI 规范匹配完成。",
+            payload,
+        )
+    except Exception as exc:
+        status_code = get_ai_error_status_code(exc)
+        logging.exception(
+            "DeepSeek standard recommendation failed. status=%s error=%s",
+            status_code,
+            exc,
+        )
+        return build_standard_recommendation_result(
+            normalized_description,
+            normalized_standards,
+            False,
+            get_standard_recommendation_ai_error_message(exc),
+        )
 
 
 def generate_feedback_title(feedback_type, module_name, detail_text):
