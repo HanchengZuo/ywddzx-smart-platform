@@ -72,70 +72,72 @@
       </div>
     </div>
 
-    <div v-if="exportTemplateDialog.visible" class="template-modal">
-      <div class="template-modal-card card-surface">
-        <div class="template-modal-header">
-          <div>
-            <div class="template-kicker">EXPORT TEMPLATE</div>
-            <h3>导出规范模板设定</h3>
-            <p>这是全系统共享模板。任何账号保存后，所有用户导出规范都会按这套字段口径生成A4文件。</p>
-          </div>
-          <button class="template-close-btn" type="button" @click="closeExportTemplateDialog">×</button>
-        </div>
-
-        <div class="template-modal-toolbar">
-          <div class="template-stat">
-            已选择 <strong>{{ exportTemplateSelectedTotal }}</strong> / {{ exportTemplateTotalFieldCount }} 个字段
-          </div>
-          <div class="template-toolbar-actions">
-            <button class="btn btn-secondary" type="button" @click="selectAllExportFields">全选全部</button>
-            <button class="btn btn-secondary" type="button" @click="clearAllExportFields">清空全部</button>
-            <button class="btn btn-secondary" type="button" @click="resetExportTemplateDraft">恢复默认</button>
-          </div>
-        </div>
-
-        <div v-if="exportTemplateDialog.loading" class="template-loading">
-          正在读取所有检查表字段...
-        </div>
-
-        <div v-else class="template-table-list">
-          <section v-for="group in exportTemplateTableGroups" :key="group.table_id" class="template-table-card">
-            <div class="template-table-head">
-              <div>
-                <h4>{{ group.table_name }}</h4>
-                <span>{{ getExportTemplateSelectedCount(group.table_id) }} / {{ group.fields.length }} 个字段</span>
-              </div>
-              <div class="template-table-actions">
-                <button class="mini-btn" type="button" @click="selectAllExportFields(group.table_id)">全选</button>
-                <button class="mini-btn" type="button" @click="clearExportFields(group.table_id)">清空</button>
-              </div>
+    <Teleport to="body">
+      <div v-if="exportTemplateDialog.visible" class="template-modal">
+        <div class="template-modal-card card-surface">
+          <div class="template-modal-header">
+            <div>
+              <div class="template-kicker">EXPORT TEMPLATE</div>
+              <h3>导出规范模板设定</h3>
+              <p>这是全系统共享模板。任何账号保存后，所有用户导出规范都会按这套字段口径生成A4文件。</p>
             </div>
+            <button class="template-close-btn" type="button" @click="closeExportTemplateDialog">×</button>
+          </div>
 
-            <div v-if="group.fields.length" class="template-field-grid">
-              <label v-for="field in group.fields" :key="`${group.table_id}-${field.field_key}`"
-                class="template-field-option">
-                <input type="checkbox" :checked="isExportFieldSelected(group.table_id, field.field_key)"
-                  @change="toggleExportField(group.table_id, field.field_key, $event.target.checked)" />
-                <span>
-                  <strong>{{ field.field_label }}</strong>
-                  <em v-if="field.is_public">公共字段</em>
-                </span>
-              </label>
+          <div class="template-modal-toolbar">
+            <div class="template-stat">
+              已选择 <strong>{{ exportTemplateSelectedTotal }}</strong> / {{ exportTemplateTotalFieldCount }} 个字段
             </div>
+            <div class="template-toolbar-actions">
+              <button class="btn btn-secondary" type="button" @click="selectAllExportFields()">全选全部</button>
+              <button class="btn btn-secondary" type="button" @click="clearAllExportFields">清空全部</button>
+              <button class="btn btn-secondary" type="button" @click="resetExportTemplateDraft">恢复默认</button>
+            </div>
+          </div>
 
-            <div v-else class="template-empty-fields">这张检查表暂未配置字段。</div>
-          </section>
-        </div>
+          <div v-if="exportTemplateDialog.loading" class="template-loading">
+            正在读取所有检查表字段...
+          </div>
 
-        <div class="template-modal-footer">
-          <button class="btn btn-secondary" type="button" @click="closeExportTemplateDialog">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="exportTemplateDialog.loading"
-            @click="saveExportTemplateDialog">
-            保存模板
-          </button>
+          <div v-else class="template-table-list">
+            <section v-for="group in exportTemplateTableGroups" :key="group.table_id" class="template-table-card">
+              <div class="template-table-head">
+                <div>
+                  <h4>{{ group.table_name }}</h4>
+                  <span>{{ getExportTemplateSelectedCount(group.table_id) }} / {{ group.fields.length }} 个字段</span>
+                </div>
+                <div class="template-table-actions">
+                  <button class="mini-btn" type="button" @click="selectAllExportFields(group.table_id)">全选</button>
+                  <button class="mini-btn" type="button" @click="clearExportFields(group.table_id)">清空</button>
+                </div>
+              </div>
+
+              <div v-if="group.fields.length" class="template-field-grid">
+                <label v-for="field in group.fields" :key="`${group.table_id}-${field.field_key}`"
+                  class="template-field-option">
+                  <input type="checkbox" :checked="isExportFieldSelected(group.table_id, field.field_key)"
+                    @change="toggleExportField(group.table_id, field.field_key, $event.target.checked)" />
+                  <span>
+                    <strong>{{ field.field_label }}</strong>
+                    <em v-if="field.is_public">公共字段</em>
+                  </span>
+                </label>
+              </div>
+
+              <div v-else class="template-empty-fields">这张检查表暂未配置字段。</div>
+            </section>
+          </div>
+
+          <div class="template-modal-footer">
+            <button class="btn btn-secondary" type="button" @click="closeExportTemplateDialog">取消</button>
+            <button class="btn btn-primary" type="button" :disabled="exportTemplateDialog.loading"
+              @click="saveExportTemplateDialog">
+              保存模板
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
 
     <div class="content-grid">
       <div class="list-card card-surface">
@@ -435,6 +437,9 @@ const toggleExportField = (tableId, fieldKey, checked) => {
 }
 
 const selectAllExportFields = (tableId = null) => {
+  if (tableId && typeof tableId === 'object') {
+    tableId = null
+  }
   if (tableId !== null) {
     const tableKey = normalizeTemplateTableId(tableId)
     const group = exportTemplateTableGroups.value.find((item) => normalizeTemplateTableId(item.table_id) === tableKey)
