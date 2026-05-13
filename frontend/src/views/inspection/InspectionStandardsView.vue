@@ -151,12 +151,11 @@
 
         <div class="list-wrap">
           <button v-for="item in paginatedList" :key="getStandardIdentity(item)" class="standard-item"
-            :class="{ active: isActiveStandard(item) }" type="button"
-            @click="selectStandard(item)">
+            :class="{ active: isActiveStandard(item) }" type="button" @click="selectStandard(item)">
             <div class="standard-item-top">
               <span class="standard-code">{{ item.standard_id }}</span>
               <span class="standard-process">{{ item.inspection_table_name || activeInspectionTableName || '未选择检查表'
-                }}</span>
+              }}</span>
             </div>
             <div class="standard-check-item">{{ getStandardPrimaryTitle(item) }}</div>
             <div class="standard-card-meta" v-if="getStandardSummaryFields(item).length">
@@ -1652,6 +1651,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .template-modal-header {
@@ -1741,8 +1741,11 @@ onBeforeUnmount(() => {
 }
 
 .template-table-list {
+  flex: 1;
+  min-height: 0;
   padding: 18px 22px 22px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1754,6 +1757,7 @@ onBeforeUnmount(() => {
   border-radius: 18px;
   background: #ffffff;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .template-table-head {
@@ -2178,6 +2182,7 @@ onBeforeUnmount(() => {
 }
 
 @keyframes copy-toast-pulse {
+
   0%,
   100% {
     box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
