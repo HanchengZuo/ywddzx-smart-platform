@@ -73,6 +73,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
 CHECKLIST_FIELD_KEY_MAX_LENGTH = 63
 CHECKLIST_STANDARD_ID_BLOCK_SIZE = 1000
+PUBLIC_CHECKLIST_FIELD_TABLE_CODE = "public"
 RESERVED_CHECKLIST_FIELD_KEYS = {
     "id",
     "standard_id",
@@ -1654,16 +1655,7 @@ def ensure_backup_scheduler_started():
 
 
 def get_checklist_field_meta(cur, inspection_table_id):
-    cur.execute(
-        """
-        SELECT field_key, field_label
-        FROM inspection_table_fields
-        WHERE inspection_table_id = %s
-        ORDER BY sort_order ASC, id ASC;
-        """,
-        (inspection_table_id,),
-    )
-    rows = cur.fetchall()
+    rows = get_management_checklist_fields(cur, inspection_table_id, include_public=True)
     return [(row["field_key"], row["field_label"]) for row in rows]
 
 
@@ -1726,8 +1718,10 @@ def generate_checklist_field_key(table_code, sort_order, existing_keys=None):
     raise ValueError("字段系统标识自动生成失败，请重试。")
 
 
-def normalize_checklist_field_rows(fields, table_code=None):
+def normalize_checklist_field_rows(fields, table_code=None, allow_empty=False):
     if not isinstance(fields, list) or not fields:
+        if allow_empty:
+            return []
         raise ValueError("请至少配置一个检查表字段。")
 
     normalized = []
@@ -1933,6 +1927,36 @@ def ensure_checklist_standard_id_bases(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS inspection_public_fields (
+            id SERIAL PRIMARY KEY,
+            field_key TEXT UNIQUE NOT NULL,
+            field_label TEXT UNIQUE NOT NULL,
+            is_filterable BOOLEAN DEFAULT TRUE,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_public_fields
+        ADD COLUMN IF NOT EXISTS is_filterable BOOLEAN DEFAULT TRUE;
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inspection_public_fields_key_unique
+        ON inspection_public_fields (field_key);
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inspection_public_fields_label_unique
+        ON inspection_public_fields (field_label);
+        """
+    )
+    cur.execute(
+        """
         SELECT id, table_code, table_name, standard_id_base
         FROM inspection_tables
         ORDER BY id ASC;
@@ -2068,6 +2092,41 @@ def ensure_checklist_field_columns(cur, physical_table_name, fields):
         )
 
 
+def get_public_checklist_fields(cur):
+    cur.execute(
+        """
+        SELECT
+            id,
+            NULL::integer AS inspection_table_id,
+            field_key,
+            field_label,
+            is_filterable,
+            sort_order,
+            TRUE AS is_public
+        FROM inspection_public_fields
+        ORDER BY sort_order ASC, id ASC;
+        """
+    )
+    return cur.fetchall()
+
+
+def ensure_public_field_columns_for_all_checklists(cur, public_fields=None):
+    fields = [dict(field) for field in (public_fields if public_fields is not None else get_public_checklist_fields(cur))]
+    if not fields:
+        return
+    cur.execute(
+        """
+        SELECT table_code
+        FROM inspection_tables
+        ORDER BY id ASC;
+        """
+    )
+    for row in cur.fetchall():
+        physical_table_name = get_physical_table_name_by_code(row["table_code"])
+        if physical_table_name:
+            ensure_checklist_field_columns(cur, physical_table_name, fields)
+
+
 def checklist_physical_table_exists(cur, physical_table_name):
     cur.execute("SELECT to_regclass(%s) AS table_name;", (f"public.{physical_table_name}",))
     row = cur.fetchone()
@@ -2084,17 +2143,25 @@ def get_checklist_row_count(cur, physical_table_name):
     return int(row["total"] or 0)
 
 
-def get_management_checklist_fields(cur, inspection_table_id):
+def get_management_checklist_fields(cur, inspection_table_id, include_public=False):
+    public_fields = [dict(field) for field in get_public_checklist_fields(cur)] if include_public else []
     cur.execute(
         """
-        SELECT id, field_key, field_label, is_filterable, sort_order
+        SELECT
+            id,
+            inspection_table_id,
+            field_key,
+            field_label,
+            is_filterable,
+            sort_order,
+            FALSE AS is_public
         FROM inspection_table_fields
         WHERE inspection_table_id = %s
         ORDER BY sort_order ASC, id ASC;
         """,
         (inspection_table_id,),
     )
-    return cur.fetchall()
+    return [*public_fields, *cur.fetchall()]
 
 
 def upsert_checklist_fields(cur, inspection_table_id, fields):
@@ -2134,6 +2201,40 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
         )
 
 
+def upsert_public_checklist_fields(cur, fields):
+    incoming_keys = [field["field_key"] for field in fields]
+    cur.execute(
+        """
+        DELETE FROM inspection_public_fields
+        WHERE field_key <> ALL(%s::text[]);
+        """,
+        (incoming_keys,),
+    )
+    for field in fields:
+        cur.execute(
+            """
+            INSERT INTO inspection_public_fields (
+                field_key,
+                field_label,
+                is_filterable,
+                sort_order
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (field_key)
+            DO UPDATE SET
+                field_label = EXCLUDED.field_label,
+                is_filterable = EXCLUDED.is_filterable,
+                sort_order = EXCLUDED.sort_order;
+            """,
+            (
+                field["field_key"],
+                field["field_label"],
+                field["is_filterable"],
+                field["sort_order"],
+            ),
+        )
+
+
 def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
     incoming_keys = [field["field_key"] for field in fields]
     if not incoming_keys:
@@ -2151,10 +2252,71 @@ def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
     conflict = cur.fetchone()
     if conflict:
         raise ValueError("字段系统标识已被其他检查表使用，请重新保存生成新的字段键。")
+    cur.execute(
+        """
+        SELECT field_key
+        FROM inspection_public_fields
+        WHERE field_key = ANY(%s::text[])
+        LIMIT 1;
+        """,
+        (incoming_keys,),
+    )
+    if cur.fetchone():
+        raise ValueError("字段系统标识已被公共字段使用，请重新保存生成新的字段键。")
+
+
+def ensure_no_public_field_label_conflicts(cur, fields):
+    labels = [field["field_label"] for field in fields]
+    if not labels:
+        return
+    cur.execute(
+        """
+        SELECT field_label
+        FROM inspection_public_fields
+        WHERE field_label = ANY(%s::text[])
+        LIMIT 1;
+        """,
+        (labels,),
+    )
+    conflict = cur.fetchone()
+    if conflict:
+        raise ValueError(f"字段名称【{conflict['field_label']}】已作为公共字段存在，请勿在单张检查表内重复配置。")
+
+
+def ensure_unique_public_checklist_fields(cur, fields):
+    keys = [field["field_key"] for field in fields]
+    labels = [field["field_label"] for field in fields]
+    if keys:
+        cur.execute(
+            """
+            SELECT field_key
+            FROM inspection_table_fields
+            WHERE field_key = ANY(%s::text[])
+            LIMIT 1;
+            """,
+            (keys,),
+        )
+        if cur.fetchone():
+            raise ValueError("公共字段系统标识与已有检查表字段冲突，请重新保存。")
+    if labels:
+        cur.execute(
+            """
+            SELECT field_label
+            FROM inspection_table_fields
+            WHERE field_label = ANY(%s::text[])
+            LIMIT 1;
+            """,
+            (labels,),
+        )
+        conflict = cur.fetchone()
+        if conflict:
+            raise ValueError(f"公共字段名称【{conflict['field_label']}】已被某张检查表使用，请先调整名称。")
 
 
 def serialize_management_checklist(cur, row):
     physical_table_name = get_physical_table_name_by_code(row["table_code"])
+    local_fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"])]
+    combined_fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"], include_public=True)]
     return {
         "id": row["id"],
         "table_code": row["table_code"],
@@ -2169,7 +2331,8 @@ def serialize_management_checklist(cur, row):
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "physical_table_name": physical_table_name,
-        "fields": [dict(field) for field in get_management_checklist_fields(cur, row["id"])],
+        "fields": combined_fields,
+        "local_fields": local_fields,
         "standard_count": get_checklist_row_count(cur, physical_table_name),
     }
 
@@ -2417,7 +2580,7 @@ def get_management_checklist_standard_context(cur, inspection_table_id, require_
     if not checklist:
         raise LookupError("检查表不存在。")
 
-    fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id)]
+    fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
     if require_fields and not fields:
         raise ValueError("请先配置检查表字段，再维护规范数据。")
 
@@ -2470,10 +2633,15 @@ def normalize_checklist_backup_payload(payload):
     if not isinstance(checklists, list):
         raise ValueError("备份文件缺少 checklists 数组。")
 
+    public_fields = normalize_checklist_field_rows(
+        payload.get("public_fields") or [],
+        PUBLIC_CHECKLIST_FIELD_TABLE_CODE,
+        allow_empty=True,
+    )
     normalized = []
     seen_codes = set()
     seen_names = set()
-    seen_field_keys = set()
+    seen_field_keys = {field["field_key"] for field in public_fields}
     seen_standard_id_bases = set()
     for index, item in enumerate(checklists, start=1):
         if not isinstance(item, dict):
@@ -2497,15 +2665,20 @@ def normalize_checklist_backup_payload(payload):
         seen_names.add(table_name)
         seen_standard_id_bases.add(standard_id_base)
         fields = normalize_checklist_field_rows(item.get("fields"), table_code)
+        public_field_labels = {field["field_label"] for field in public_fields}
+        for field in fields:
+            if field["field_label"] in public_field_labels:
+                raise ValueError(f"第 {index} 张检查表字段【{field['field_label']}】与公共字段重复。")
         for field in fields:
             field_key = field["field_key"]
             if field_key in seen_field_keys:
                 raise ValueError(f"备份文件内字段系统标识 {field_key} 重复。")
             seen_field_keys.add(field_key)
+        combined_fields = [*public_fields, *fields]
         standards = (
             normalize_checklist_import_rows(
                 item.get("standards") or [],
-                fields,
+                combined_fields,
                 standard_id_base,
                 allow_reassign=True,
             )
@@ -2524,7 +2697,10 @@ def normalize_checklist_backup_payload(payload):
                 "standards": standards,
             }
         )
-    return normalized
+    return {
+        "public_fields": public_fields,
+        "checklists": normalized,
+    }
 
 
 def parse_checklist_backup_file(file_storage):
@@ -6533,6 +6709,7 @@ def get_management_checklists():
         return jsonify(
             {
                 "success": True,
+                "public_fields": [dict(field) for field in get_public_checklist_fields(cur)],
                 "checklists": [serialize_management_checklist(cur, row) for row in rows],
             }
         )
@@ -6541,6 +6718,84 @@ def get_management_checklists():
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/checklists/public-fields", methods=["GET"])
+def get_management_public_checklist_fields():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_checklists")
+        return jsonify(
+            {
+                "success": True,
+                "fields": [dict(field) for field in get_public_checklist_fields(cur)],
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/checklists/public-fields", methods=["PUT"])
+def update_management_public_checklist_fields():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        fields = normalize_checklist_field_rows(
+            data.get("fields") or [],
+            PUBLIC_CHECKLIST_FIELD_TABLE_CODE,
+            allow_empty=True,
+        )
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        require_management_user(cur, user_id, "manage_checklists")
+        ensure_unique_public_checklist_fields(cur, fields)
+        upsert_public_checklist_fields(cur, fields)
+        ensure_public_field_columns_for_all_checklists(cur, fields)
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "公共字段已保存，并已应用到所有检查表。",
+                "fields": [dict(field) for field in get_public_checklist_fields(cur)],
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "公共字段名称或系统标识已存在。"}), 400
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -6580,6 +6835,7 @@ def create_management_checklist():
         if cur.fetchone():
             raise ValueError("检查表编码或名称已存在。")
         ensure_unique_checklist_field_keys(cur, fields)
+        ensure_no_public_field_label_conflicts(cur, fields)
 
         cur.execute(
             """
@@ -6607,7 +6863,8 @@ def create_management_checklist():
             """,
             (standard_id_base, row["id"]),
         )
-        ensure_checklist_field_columns(cur, physical_table_name, fields)
+        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
+        ensure_checklist_field_columns(cur, physical_table_name, [*public_fields, *fields])
         upsert_checklist_fields(cur, row["id"], fields)
         conn.commit()
         return jsonify(
@@ -6666,8 +6923,10 @@ def update_management_checklist(inspection_table_id):
             return jsonify({"success": False, "error": "检查表不存在。"}), 404
         fields = normalize_checklist_field_rows(data.get("fields"), current_row["table_code"])
         ensure_unique_checklist_field_keys(cur, fields, inspection_table_id)
+        ensure_no_public_field_label_conflicts(cur, fields)
         physical_table_name = get_physical_table_name_by_code(current_row["table_code"])
-        ensure_checklist_field_columns(cur, physical_table_name, fields)
+        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
+        ensure_checklist_field_columns(cur, physical_table_name, [*public_fields, *fields])
         upsert_checklist_fields(cur, inspection_table_id, fields)
         cur.execute(
             """
@@ -6789,9 +7048,12 @@ def export_management_checklists():
             """
         )
         exported_checklists = []
+        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
         for row in cur.fetchall():
             fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"])]
+            combined_fields = [*public_fields, *fields]
             physical_table_name = get_physical_table_name_by_code(row["table_code"])
+            ensure_checklist_field_columns(cur, physical_table_name, combined_fields)
             exported_checklists.append(
                 {
                     "table_code": row["table_code"],
@@ -6807,16 +7069,18 @@ def export_management_checklists():
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "fields": fields,
-                    "standards": fetch_checklist_standard_rows(cur, physical_table_name, fields),
+                    "standards": fetch_checklist_standard_rows(cur, physical_table_name, combined_fields),
                 }
             )
 
+        conn.commit()
         now = beijing_now()
         response = jsonify(
             {
                 "backup_type": "ywddzx_checklists",
-                "version": 1,
+                "version": 2,
                 "exported_at": now.isoformat(),
+                "public_fields": public_fields,
                 "checklists": exported_checklists,
             }
         )
@@ -6842,7 +7106,9 @@ def import_management_checklists_backup():
     cur = None
 
     try:
-        imported_checklists = parse_checklist_backup_file(backup_file)
+        parsed_backup = parse_checklist_backup_file(backup_file)
+        imported_public_fields = parsed_backup["public_fields"]
+        imported_checklists = parsed_backup["checklists"]
         imported_codes = {item["table_code"] for item in imported_checklists}
         conn = get_db_connection()
         cur = conn.cursor()
@@ -6936,8 +7202,9 @@ def import_management_checklists_backup():
                 )
 
             physical_table_name = get_physical_table_name_by_code(item["table_code"])
+            combined_fields = [*imported_public_fields, *item["fields"]]
             cur.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(sql.Identifier(physical_table_name)))
-            ensure_checklist_field_columns(cur, physical_table_name, item["fields"])
+            ensure_checklist_field_columns(cur, physical_table_name, combined_fields)
             upsert_checklist_fields(cur, inspection_table_id, item["fields"])
             standards = rebase_checklist_standard_rows(
                 item["standards"],
@@ -6947,9 +7214,12 @@ def import_management_checklists_backup():
             insert_checklist_standard_rows(
                 cur,
                 physical_table_name,
-                item["fields"],
+                combined_fields,
                 standards,
             )
+
+        upsert_public_checklist_fields(cur, imported_public_fields)
+        ensure_public_field_columns_for_all_checklists(cur, imported_public_fields)
 
         conn.commit()
         return jsonify(
@@ -8295,33 +8565,25 @@ def get_inspection_tables():
 def get_inspection_table_fields():
     table_id = str(request.args.get("table_id", "")).strip()
 
-    if not table_id:
-        return jsonify({"success": False, "error": "缺少检查表信息。"}), 400
-
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT
-                f.id,
-                f.inspection_table_id,
-                f.field_key,
-                f.field_label,
-                f.is_filterable,
-                f.sort_order
-            FROM inspection_table_fields f
-            JOIN inspection_tables t ON f.inspection_table_id = t.id
-            WHERE f.inspection_table_id = %s
-              AND t.is_active = TRUE
-            ORDER BY f.sort_order ASC, f.id ASC;
-            """,
-            (table_id,),
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
+        if not table_id:
+            return jsonify([dict(field) for field in get_public_checklist_fields(cur)])
+
+        inspection_table = get_inspection_table_record(cur, table_id)
+        if not inspection_table:
+            return jsonify({"success": False, "error": "检查表不存在。"}), 404
+        if not inspection_table["is_active"]:
+            return jsonify({"success": False, "error": "检查表未启用。"}), 400
+
+        return jsonify(
+            [dict(field) for field in get_management_checklist_fields(cur, table_id, include_public=True)]
         )
-        rows = cur.fetchall()
-        return jsonify(rows)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
@@ -8355,9 +8617,12 @@ def get_inspection_table_standards():
         physical_table_name = get_physical_table_name_by_code(
             inspection_table["table_code"]
         )
-        field_meta = get_checklist_field_meta(cur, inspection_table["id"])
+        fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table["id"], include_public=True)]
+        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
             return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
+        conn.commit()
 
         cur.execute(
             sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
@@ -8617,9 +8882,11 @@ def inspection_register():
         physical_table_name = get_physical_table_name_by_code(
             inspection_table["table_code"]
         )
-        field_meta = get_checklist_field_meta(cur, inspection_table["id"])
+        fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table["id"], include_public=True)]
+        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
             return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
 
         today = beijing_today()
 

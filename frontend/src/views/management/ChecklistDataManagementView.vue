@@ -18,6 +18,7 @@
         </button>
         <input ref="backupFileInputRef" class="hidden-file-input" type="file" accept="application/json,.json"
           :disabled="backupImporting" @change="importBackup" />
+        <button class="btn btn-secondary" type="button" @click="openPublicFieldsDialog">添加公共字段</button>
         <button class="btn btn-primary" type="button" @click="openCreateDialog">新建检查表</button>
       </div>
     </div>
@@ -239,16 +240,29 @@
           <div class="edit-section">
             <div class="edit-section-head">
               <strong>字段结构</strong>
-              <button class="btn btn-secondary btn-sm" type="button" @click="addField">添加字段</button>
+              <button class="btn btn-secondary btn-sm" type="button" @click="addField">末尾添加字段</button>
             </div>
 
             <div class="field-table">
               <div class="field-row field-row-head">
+                <span>顺序</span>
                 <span>字段名称</span>
                 <span>筛选</span>
                 <span>操作</span>
               </div>
               <div v-for="(field, index) in form.fields" :key="field.local_id" class="field-row">
+                <div class="field-order-control">
+                  <strong>#{{ index + 1 }}</strong>
+                  <div>
+                    <button class="mini-icon-btn" type="button" :disabled="index === 0" @click="moveFieldUp(index)">
+                      上移
+                    </button>
+                    <button class="mini-icon-btn" type="button" :disabled="index === form.fields.length - 1"
+                      @click="moveFieldDown(index)">
+                      下移
+                    </button>
+                  </div>
+                </div>
                 <label>
                   <input v-model.trim="field.field_label" type="text" placeholder="检查内容" />
                 </label>
@@ -256,15 +270,19 @@
                   <input v-model="field.is_filterable" type="checkbox" />
                   <span>可筛选</span>
                 </label>
-                <button class="btn btn-danger btn-sm" type="button" :disabled="form.fields.length <= 1"
-                  @click="removeField(index)">
-                  删除
-                </button>
+                <div class="field-action-group">
+                  <button class="mini-icon-btn" type="button" @click="insertFieldBefore(index)">前插</button>
+                  <button class="mini-icon-btn" type="button" @click="insertFieldAfter(index)">后插</button>
+                  <button class="btn btn-danger btn-sm" type="button" :disabled="form.fields.length <= 1"
+                    @click="removeField(index)">
+                    删除
+                  </button>
+                </div>
               </div>
             </div>
 
             <div class="schema-note">
-              字段隐藏标识由系统按检查表编码自动生成，具备全局唯一识别性；用户只需要维护字段名称。
+              字段隐藏标识由系统按检查表编码自动生成，具备全局唯一识别性；可通过上移、下移、前插、后插调整字段顺序。
             </div>
           </div>
         </div>
@@ -336,16 +354,29 @@
           <div class="edit-section">
             <div class="edit-section-head">
               <strong>字段结构</strong>
-              <button class="btn btn-secondary btn-sm" type="button" @click="addEditField">添加字段</button>
+              <button class="btn btn-secondary btn-sm" type="button" @click="addEditField">末尾添加字段</button>
             </div>
 
             <div class="field-table">
               <div class="field-row field-row-head">
+                <span>顺序</span>
                 <span>字段名称</span>
                 <span>筛选</span>
                 <span>操作</span>
               </div>
               <div v-for="(field, index) in editDialog.fields" :key="field.local_id" class="field-row">
+                <div class="field-order-control">
+                  <strong>#{{ index + 1 }}</strong>
+                  <div>
+                    <button class="mini-icon-btn" type="button" :disabled="index === 0" @click="moveEditFieldUp(index)">
+                      上移
+                    </button>
+                    <button class="mini-icon-btn" type="button" :disabled="index === editDialog.fields.length - 1"
+                      @click="moveEditFieldDown(index)">
+                      下移
+                    </button>
+                  </div>
+                </div>
                 <label>
                   <input v-model.trim="field.field_label" type="text" placeholder="检查内容" />
                 </label>
@@ -353,10 +384,14 @@
                   <input v-model="field.is_filterable" type="checkbox" />
                   <span>可筛选</span>
                 </label>
-                <button class="btn btn-danger btn-sm" type="button" :disabled="editDialog.fields.length <= 1"
-                  @click="removeEditField(index)">
-                  删除
-                </button>
+                <div class="field-action-group">
+                  <button class="mini-icon-btn" type="button" @click="insertEditFieldBefore(index)">前插</button>
+                  <button class="mini-icon-btn" type="button" @click="insertEditFieldAfter(index)">后插</button>
+                  <button class="btn btn-danger btn-sm" type="button" :disabled="editDialog.fields.length <= 1"
+                    @click="removeEditField(index)">
+                    删除
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -366,6 +401,78 @@
           <button class="btn btn-secondary" type="button" @click="closeEditDialog">关闭</button>
           <button class="btn btn-primary" type="button" :disabled="editDialog.saving" @click="saveEditDialog">
             {{ editDialog.saving ? '保存中...' : '保存编辑' }}
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="publicDialog.visible" class="dialog-backdrop">
+      <section class="edit-dialog public-field-dialog card-surface">
+        <div class="dialog-head">
+          <div>
+            <div class="section-kicker">公共字段</div>
+            <h3>维护所有检查表共用字段</h3>
+            <p>公共字段会自动应用到每一张检查表；已有规范没有维护内容时页面统一显示为“-”。</p>
+          </div>
+          <button class="dialog-close" type="button" @click="closePublicFieldsDialog">×</button>
+        </div>
+
+        <div class="dialog-body">
+          <div class="edit-section">
+            <div class="edit-section-head">
+              <strong>公共字段结构</strong>
+              <button class="btn btn-secondary btn-sm" type="button" @click="addPublicField">末尾添加公共字段</button>
+            </div>
+
+            <div class="field-table">
+              <div class="field-row field-row-head">
+                <span>顺序</span>
+                <span>字段名称</span>
+                <span>筛选</span>
+                <span>操作</span>
+              </div>
+              <div v-for="(field, index) in publicDialog.fields" :key="field.local_id" class="field-row">
+                <div class="field-order-control">
+                  <strong>#{{ index + 1 }}</strong>
+                  <div>
+                    <button class="mini-icon-btn" type="button" :disabled="index === 0"
+                      @click="movePublicFieldUp(index)">
+                      上移
+                    </button>
+                    <button class="mini-icon-btn" type="button" :disabled="index === publicDialog.fields.length - 1"
+                      @click="movePublicFieldDown(index)">
+                      下移
+                    </button>
+                  </div>
+                </div>
+                <label>
+                  <input v-model.trim="field.field_label" type="text" placeholder="例如：事业部、业务类型" />
+                </label>
+                <label class="mini-check">
+                  <input v-model="field.is_filterable" type="checkbox" />
+                  <span>可筛选</span>
+                </label>
+                <div class="field-action-group">
+                  <button class="mini-icon-btn" type="button" @click="insertPublicFieldBefore(index)">前插</button>
+                  <button class="mini-icon-btn" type="button" @click="insertPublicFieldAfter(index)">后插</button>
+                  <button class="btn btn-danger btn-sm" type="button" @click="removePublicField(index)">删除</button>
+                </div>
+              </div>
+              <div v-if="!publicDialog.fields.length" class="standard-empty">
+                暂无公共字段。可点击“末尾添加公共字段”开始配置。
+              </div>
+            </div>
+
+            <div class="schema-note">
+              公共字段保存后会写入所有检查表的字段结构，并在巡检规范库筛选面板中优先显示。
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="btn btn-secondary" type="button" @click="closePublicFieldsDialog">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="publicDialog.saving" @click="savePublicFields">
+            {{ publicDialog.saving ? '保存中...' : '保存公共字段' }}
           </button>
         </div>
       </section>
@@ -384,7 +491,7 @@
 
         <div class="dialog-body">
           <div class="standard-manager">
-            <div class="standard-editor-card">
+            <div v-if="!standardState.editingDraft" class="standard-editor-card">
               <div class="standard-section-head">
                 <div>
                   <strong>新增规范</strong>
@@ -549,6 +656,7 @@ const backupExporting = ref(false)
 const backupImporting = ref(false)
 const backupFileInputRef = ref(null)
 const checklists = ref([])
+const publicFields = ref([])
 const selectedChecklist = ref(null)
 const message = reactive({
   text: '',
@@ -559,6 +667,7 @@ const checklistModeOptions = [
   { value: 'online', label: '线上检查表' },
   { value: 'offline', label: '线下检查表' }
 ]
+const PUBLIC_FIELD_TABLE_CODE = 'public'
 
 const normalizeChecklistMode = (value) => (
   checklistModeOptions.some((option) => option.value === value) ? value : 'online'
@@ -606,11 +715,18 @@ const createFieldKey = (tableCode, index = 1) => {
 }
 
 const createField = (field = {}, index = 1, tableCode = '') => ({
-  local_id: field.id || `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+  local_id: field.local_id || `${field.is_public ? 'public' : 'field'}_${field.id || Date.now()}_${Math.random().toString(16).slice(2)}`,
   field_key: field.field_key || createFieldKey(tableCode, index),
   field_label: field.field_label || '',
-  is_filterable: field.is_filterable ?? true
+  is_filterable: field.is_filterable ?? true,
+  is_public: Boolean(field.is_public)
 })
+
+const createPublicField = (field = {}, index = 1) => createField(
+  { ...field, is_public: true },
+  index,
+  PUBLIC_FIELD_TABLE_CODE
+)
 
 const defaultFields = (tableCode) => [
   createField({ field_label: '序号' }, 1, tableCode),
@@ -658,6 +774,11 @@ const createStandardState = () => ({
 
 const createDialog = reactive({ visible: false })
 const standardDialog = reactive({ visible: false })
+const publicDialog = reactive({
+  visible: false,
+  fields: [],
+  saving: false
+})
 const editDialog = reactive({
   visible: false,
   id: null,
@@ -720,7 +841,7 @@ const resetStandardState = (state, fields = []) => {
 
 const getStandardValue = (item, fieldKey) => {
   const value = item?.[fieldKey]
-  return value === null || value === undefined ? '' : String(value)
+  return value === null || value === undefined ? '' : String(value).trim()
 }
 
 const buildStandardPayload = (draft, fields) => {
@@ -745,7 +866,18 @@ const buildChecklistPayload = (source) => ({
   checklist_mode: normalizeChecklistMode(source.checklist_mode),
   description: source.description,
   is_active: source.is_active,
-  fields: source.fields.map((field) => ({
+  fields: source.fields
+    .filter((field) => !field.is_public)
+    .map((field) => ({
+      field_key: normalizeKey(field.field_key),
+      field_label: field.field_label,
+      is_filterable: Boolean(field.is_filterable)
+    }))
+})
+
+const buildPublicFieldsPayload = () => ({
+  user_id: currentUserId,
+  fields: publicDialog.fields.map((field) => ({
     field_key: normalizeKey(field.field_key),
     field_label: field.field_label,
     is_filterable: Boolean(field.is_filterable)
@@ -755,10 +887,10 @@ const buildChecklistPayload = (source) => ({
 const validateFieldRows = (fields, tableCode) => {
   const keys = new Set()
   const labels = new Set()
-  for (const field of fields) {
+  for (const [index, field] of fields.entries()) {
     field.field_key = normalizeKey(field.field_key)
     if (!field.field_key) {
-      field.field_key = createFieldKey(tableCode, fields.indexOf(field) + 1)
+      field.field_key = createFieldKey(tableCode, index + 1)
     }
     if (!field.field_label) return '请填写字段名称。'
     if (['id', 'standard_id', 'created_at', 'updated_at'].includes(field.field_key)) {
@@ -819,6 +951,7 @@ const fetchChecklists = async (options = {}) => {
         _ts: Date.now()
       }
     })
+    publicFields.value = (response.data?.public_fields || []).map((field, index) => createPublicField(field, index + 1))
     checklists.value = response.data?.checklists || []
     const nextSelected = previousSelectedId
       ? checklists.value.find((item) => String(item.id) === String(previousSelectedId))
@@ -854,6 +987,7 @@ const closeCreateDialog = () => {
 }
 
 const hydrateEditDialog = (item) => {
+  const localFields = item.local_fields || (item.fields || []).filter((field) => !field.is_public)
   Object.assign(editDialog, {
     visible: true,
     id: item.id,
@@ -862,7 +996,7 @@ const hydrateEditDialog = (item) => {
     checklist_mode: normalizeChecklistMode(item.checklist_mode),
     description: item.description || '',
     is_active: Boolean(item.is_active),
-    fields: (item.fields || []).map((field, index) => createField(field, index + 1, item.table_code)),
+    fields: localFields.map((field, index) => createField(field, index + 1, item.table_code)),
     standard_count: Number(item.standard_count || 0),
     physical_table_name: item.physical_table_name || '',
     saving: false
@@ -879,6 +1013,33 @@ const closeEditDialog = () => {
   editDialog.visible = false
 }
 
+const fetchPublicFields = async () => {
+  const response = await axios.get('/api/management/checklists/public-fields', {
+    params: {
+      user_id: currentUserId,
+      _ts: Date.now()
+    }
+  })
+  publicFields.value = (response.data?.fields || []).map((field, index) => createPublicField(field, index + 1))
+  return publicFields.value
+}
+
+const openPublicFieldsDialog = async () => {
+  try {
+    setMessage('')
+    await fetchPublicFields()
+    publicDialog.fields = publicFields.value.map((field, index) => createPublicField(field, index + 1))
+    publicDialog.saving = false
+    publicDialog.visible = true
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '公共字段加载失败。', 'error')
+  }
+}
+
+const closePublicFieldsDialog = () => {
+  publicDialog.visible = false
+}
+
 const openStandardDialog = () => {
   if (!selectedChecklist.value) return
   resetStandardDraft(standardState, selectedFields.value)
@@ -893,8 +1054,41 @@ const closeStandardDialog = () => {
   standardState.editingDraft = null
 }
 
+const insertFieldAt = (fields, tableCode, index) => {
+  const safeIndex = Math.min(Math.max(Number(index) || 0, 0), fields.length)
+  fields.splice(safeIndex, 0, createField({}, safeIndex + 1, tableCode))
+}
+
+const insertPublicFieldAt = (index) => {
+  const safeIndex = Math.min(Math.max(Number(index) || 0, 0), publicDialog.fields.length)
+  publicDialog.fields.splice(safeIndex, 0, createPublicField({}, safeIndex + 1))
+}
+
+const moveFieldInList = (fields, index, direction) => {
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= fields.length) return
+  const [field] = fields.splice(index, 1)
+  fields.splice(targetIndex, 0, field)
+}
+
 const addField = () => {
-  form.fields.push(createField({}, form.fields.length + 1, form.table_code))
+  insertFieldAt(form.fields, form.table_code, form.fields.length)
+}
+
+const insertFieldBefore = (index) => {
+  insertFieldAt(form.fields, form.table_code, index)
+}
+
+const insertFieldAfter = (index) => {
+  insertFieldAt(form.fields, form.table_code, index + 1)
+}
+
+const moveFieldUp = (index) => {
+  moveFieldInList(form.fields, index, -1)
+}
+
+const moveFieldDown = (index) => {
+  moveFieldInList(form.fields, index, 1)
 }
 
 const removeField = (index) => {
@@ -902,11 +1096,72 @@ const removeField = (index) => {
 }
 
 const addEditField = () => {
-  editDialog.fields.push(createField({}, editDialog.fields.length + 1, editDialog.table_code))
+  insertFieldAt(editDialog.fields, editDialog.table_code, editDialog.fields.length)
+}
+
+const insertEditFieldBefore = (index) => {
+  insertFieldAt(editDialog.fields, editDialog.table_code, index)
+}
+
+const insertEditFieldAfter = (index) => {
+  insertFieldAt(editDialog.fields, editDialog.table_code, index + 1)
+}
+
+const moveEditFieldUp = (index) => {
+  moveFieldInList(editDialog.fields, index, -1)
+}
+
+const moveEditFieldDown = (index) => {
+  moveFieldInList(editDialog.fields, index, 1)
 }
 
 const removeEditField = (index) => {
   editDialog.fields.splice(index, 1)
+}
+
+const addPublicField = () => {
+  insertPublicFieldAt(publicDialog.fields.length)
+}
+
+const insertPublicFieldBefore = (index) => {
+  insertPublicFieldAt(index)
+}
+
+const insertPublicFieldAfter = (index) => {
+  insertPublicFieldAt(index + 1)
+}
+
+const movePublicFieldUp = (index) => {
+  moveFieldInList(publicDialog.fields, index, -1)
+}
+
+const movePublicFieldDown = (index) => {
+  moveFieldInList(publicDialog.fields, index, 1)
+}
+
+const removePublicField = (index) => {
+  publicDialog.fields.splice(index, 1)
+}
+
+const savePublicFields = async () => {
+  const fieldError = validateFieldRows(publicDialog.fields, PUBLIC_FIELD_TABLE_CODE)
+  if (fieldError) {
+    setMessage(fieldError, 'error')
+    return
+  }
+
+  try {
+    publicDialog.saving = true
+    const response = await axios.put('/api/management/checklists/public-fields', buildPublicFieldsPayload())
+    publicFields.value = (response.data?.fields || []).map((field, index) => createPublicField(field, index + 1))
+    closePublicFieldsDialog()
+    await fetchChecklists()
+    setMessage(response.data?.message || '公共字段已保存。', 'success')
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '公共字段保存失败。', 'error')
+  } finally {
+    publicDialog.saving = false
+  }
 }
 
 const saveChecklist = async () => {
@@ -1498,7 +1753,7 @@ onMounted(fetchChecklists)
 
 .field-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 110px 80px;
+  grid-template-columns: 150px minmax(220px, 1fr) 110px minmax(220px, auto);
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -1520,6 +1775,61 @@ onMounted(fetchChecklists)
   border-radius: 12px;
   padding: 10px;
   box-sizing: border-box;
+}
+
+.field-order-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-order-control strong {
+  min-width: 42px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0e7490;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.field-order-control > div,
+.field-action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.field-action-group {
+  justify-content: flex-start;
+}
+
+.mini-icon-btn {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 10px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.mini-icon-btn:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.mini-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .mini-check {
@@ -1846,6 +2156,10 @@ onMounted(fetchChecklists)
 
 .standard-dialog {
   width: min(1120px, calc(100vw - 32px));
+}
+
+.public-field-dialog {
+  width: min(980px, calc(100vw - 32px));
 }
 
 .dialog-head {

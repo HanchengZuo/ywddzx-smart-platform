@@ -18,6 +18,18 @@
           <input v-model.trim="filters.keyword" type="text" placeholder="可搜索规范ID、规范详情或检查表相关内容" />
         </div>
 
+        <div v-for="field in publicFilterFields" :key="field.field_key" class="filter-item filter-item-public">
+          <label>{{ field.field_label }}</label>
+          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]">
+            <option value="">全部</option>
+            <option v-for="option in getFieldOptions(field.field_key)" :key="option" :value="option">
+              {{ option }}
+            </option>
+          </select>
+          <input v-else v-model.trim="dynamicFilters[field.field_key]" type="text"
+            :placeholder="`搜索${field.field_label}`" />
+        </div>
+
         <div class="filter-item">
           <label>检查表</label>
           <select v-model="filters.inspectionTableId">
@@ -28,7 +40,7 @@
           </select>
         </div>
 
-        <div v-for="field in filterableFields" :key="field.field_key" class="filter-item">
+        <div v-for="field in localFilterFields" :key="field.field_key" class="filter-item">
           <label>{{ field.field_label }}</label>
           <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]">
             <option value="">全部</option>
@@ -268,12 +280,27 @@ const activeStandardDetailEntries = computed(() => {
       value: String(value)
     }))
     .filter((entry) => entry.label)
-  if (mappedEntries.length) return mappedEntries
-  return parseStandardDetailText(activeStandard.value.standard_detail_text)
+  const fallbackEntries = parseStandardDetailText(activeStandard.value.standard_detail_text)
+  if (mappedEntries.length) {
+    const mappedLabels = new Set(mappedEntries.map((entry) => entry.label))
+    return [
+      ...mappedEntries,
+      ...fallbackEntries.filter((entry) => !mappedLabels.has(entry.label))
+    ]
+  }
+  return fallbackEntries
 })
 
 const filterableFields = computed(() => {
   return inspectionTableFields.value.filter((item) => item.is_filterable)
+})
+
+const publicFilterFields = computed(() => {
+  return filterableFields.value.filter((item) => item.is_public)
+})
+
+const localFilterFields = computed(() => {
+  return filterableFields.value.filter((item) => !item.is_public)
 })
 
 const isFieldSelect = (fieldKey) => {
@@ -451,16 +478,36 @@ const fetchInspectionTables = async () => {
 }
 
 const fetchInspectionTableFields = async () => {
-  if (!filters.value.inspectionTableId) {
-    inspectionTableFields.value = []
-    return
-  }
   const response = await axios.get('/api/inspection-table-fields', {
-    params: {
-      table_id: filters.value.inspectionTableId
-    }
+    params: filters.value.inspectionTableId
+      ? { table_id: filters.value.inspectionTableId }
+      : {}
   })
   inspectionTableFields.value = response.data || []
+  syncDynamicFilters()
+}
+
+const syncDynamicFilters = () => {
+  const nextDynamicFilters = {}
+  filterableFields.value.forEach((field) => {
+    nextDynamicFilters[field.field_key] = dynamicFilters.value[field.field_key] || ''
+  })
+  dynamicFilters.value = nextDynamicFilters
+}
+
+const buildStandardQueryParams = (tableId) => {
+  const params = {
+    table_id: tableId
+  }
+  if (filters.value.keyword) {
+    params.keyword = filters.value.keyword
+  }
+  Object.entries(dynamicFilters.value).forEach(([key, value]) => {
+    if (String(value || '').trim()) {
+      params[key] = value
+    }
+  })
+  return params
 }
 
 const fetchStandards = async () => {
@@ -472,10 +519,7 @@ const fetchStandards = async () => {
       const responses = await Promise.all(
         inspectionTables.value.map((table) =>
           axios.get('/api/inspection-table-standards', {
-            params: {
-              table_id: table.id,
-              ...(filters.value.keyword ? { keyword: filters.value.keyword } : {})
-            }
+            params: buildStandardQueryParams(table.id)
           })
         )
       )
@@ -492,21 +536,9 @@ const fetchStandards = async () => {
       return
     }
 
-    const params = {
-      table_id: filters.value.inspectionTableId
-    }
-
-    if (filters.value.keyword) {
-      params.keyword = filters.value.keyword
-    }
-
-    Object.entries(dynamicFilters.value).forEach(([key, value]) => {
-      if (String(value || '').trim()) {
-        params[key] = value
-      }
+    const response = await axios.get('/api/inspection-table-standards', {
+      params: buildStandardQueryParams(filters.value.inspectionTableId)
     })
-
-    const response = await axios.get('/api/inspection-table-standards', { params })
     standards.value = (response.data || []).map((item) => ({
       ...item,
       inspection_table_id: activeInspectionTable.value?.id,
@@ -521,20 +553,17 @@ const fetchStandards = async () => {
 }
 
 const resetFilters = async () => {
-  const alreadyShowingAllTables = !filters.value.inspectionTableId
   filters.value = {
     keyword: '',
     inspectionTableId: ''
   }
   dynamicFilters.value = {}
-  inspectionTableFields.value = []
   standards.value = []
   activeStandard.value = null
   copyMessage.value = ''
   page.value = 1
-  if (alreadyShowingAllTables) {
-    await fetchStandards()
-  }
+  await fetchInspectionTableFields()
+  await fetchStandards()
 }
 
 const selectStandard = (item) => {
@@ -637,21 +666,9 @@ watch(
     page.value = 1
     activeStandard.value = null
     standards.value = []
-    dynamicFilters.value = {}
-
-    if (!value) {
-      inspectionTableFields.value = []
-      await fetchStandards()
-      return
-    }
 
     try {
       await fetchInspectionTableFields()
-      const nextDynamicFilters = {}
-      filterableFields.value.forEach((field) => {
-        nextDynamicFilters[field.field_key] = ''
-      })
-      dynamicFilters.value = nextDynamicFilters
       await fetchStandards()
     } catch (error) {
       inspectionTableFields.value = []
@@ -681,9 +698,11 @@ onMounted(async () => {
   if (!hasPermission) return
   try {
     await fetchInspectionTables()
+    await fetchInspectionTableFields()
     await fetchStandards()
   } catch (error) {
     inspectionTables.value = []
+    inspectionTableFields.value = []
     standards.value = []
   }
 })
@@ -749,6 +768,22 @@ onBeforeUnmount(() => {
 
 .filter-item-keyword {
   grid-column: span 2;
+}
+
+.filter-item-public label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-item-public label::after {
+  content: '公共';
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0e7490;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .filter-item label {
