@@ -409,6 +409,17 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.5',
+    date: '2026-05-13',
+    title: '巡检表字段维护与公共字段能力升级',
+    summary: '优化检查表字段维护体验，并支持公共字段统一应用到所有检查表。',
+    items: [
+      '检查表字段支持上移、下移、前插和后插，新增字段空值统一显示为“-”。',
+      '规范数据编辑时隐藏新增窗口，减少维护过程中的误操作。',
+      '新增公共字段管理能力，并在巡检规范库筛选面板中优先展示公共字段。'
+    ]
+  },
+  {
     version: 'v1.4',
     date: '2026-05-13',
     title: '巡检记录检查人逻辑优化和检查表签名权限限制',
