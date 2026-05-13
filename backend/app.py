@@ -7895,6 +7895,22 @@ def get_station_map():
 
         cur.execute(
             """
+            WITH issue_counts AS (
+                SELECT
+                    station_id,
+                    COUNT(*) FILTER (WHERE status = '待整改') AS pending_rectification_count,
+                    COUNT(*) FILTER (WHERE status = '待复核') AS pending_review_count,
+                    COUNT(*) FILTER (WHERE status IN ('已闭环', '已整改')) AS closed_count
+                FROM issues
+                GROUP BY station_id
+            ),
+            inspection_latest AS (
+                SELECT
+                    station_id,
+                    MAX(inspection_date) AS latest_inspection_date
+                FROM inspections
+                GROUP BY station_id
+            )
             SELECT
                 s.id AS station_id,
                 s.station_name,
@@ -7907,32 +7923,22 @@ def get_station_map():
                 s.station_type,
                 s.asset_type,
                 s.status,
-                COALESCE(SUM(CASE WHEN i.status = '待整改' THEN 1 ELSE 0 END), 0) AS pending_rectification_count,
-                COALESCE(SUM(CASE WHEN i.status = '待复核' THEN 1 ELSE 0 END), 0) AS pending_review_count,
-                COALESCE(SUM(CASE WHEN i.status IN ('已闭环', '已整改') THEN 1 ELSE 0 END), 0) AS closed_count,
-                MAX(ins.inspection_date) AS latest_inspection_date
+                COALESCE(ic.pending_rectification_count, 0) AS pending_rectification_count,
+                COALESCE(ic.pending_review_count, 0) AS pending_review_count,
+                COALESCE(ic.closed_count, 0) AS closed_count,
+                il.latest_inspection_date
             FROM stations s
-            LEFT JOIN issues i ON i.station_id = s.id
-            LEFT JOIN inspections ins ON ins.station_id = s.id
+            LEFT JOIN issue_counts ic ON ic.station_id = s.id
+            LEFT JOIN inspection_latest il ON il.station_id = s.id
             WHERE s.longitude IS NOT NULL
               AND s.latitude IS NOT NULL
-            GROUP BY
-                s.id,
-                s.station_name,
-                s.region,
-                s.address,
-                s.longitude,
-                s.latitude,
-                s.station_manager_name,
-                s.station_manager_phone,
-                s.station_type,
-                s.asset_type,
-                s.status
             ORDER BY s.id;
             """
         )
         rows = cur.fetchall()
-        return jsonify(rows)
+        response = jsonify(rows)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:

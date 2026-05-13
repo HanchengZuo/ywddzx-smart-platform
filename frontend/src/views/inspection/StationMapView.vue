@@ -215,6 +215,7 @@ let markers = []
 let infoWindowInstance = null
 let autoRotateTimer = null
 let eventFeedRefreshTimer = null
+let stationRefreshTimer = null
 const prioritizedStations = computed(() => {
   return [...filteredStations.value]
     .filter((station) => !Number.isNaN(Number(station.longitude)) && !Number.isNaN(Number(station.latitude)))
@@ -324,6 +325,24 @@ const stopEventFeedRefresh = () => {
   }
 }
 
+const startStationRefresh = () => {
+  if (stationRefreshTimer) {
+    clearInterval(stationRefreshTimer)
+    stationRefreshTimer = null
+  }
+
+  stationRefreshTimer = setInterval(() => {
+    fetchStations()
+  }, 15000)
+}
+
+const stopStationRefresh = () => {
+  if (stationRefreshTimer) {
+    clearInterval(stationRefreshTimer)
+    stationRefreshTimer = null
+  }
+}
+
 const stopAutoRotate = () => {
   if (autoRotateTimer) {
     clearInterval(autoRotateTimer)
@@ -378,6 +397,19 @@ const loadAmapScript = () => {
   return mapScriptPromise
 }
 
+const syncAutoRotateTarget = () => {
+  if (!autoRotateTarget.value) return
+  const targetId = String(autoRotateTarget.value.station_id || autoRotateTarget.value.id || '').trim()
+  if (!targetId) return
+
+  const latestStation = stations.value.find((station) => {
+    return String(station.station_id || station.id || '').trim() === targetId
+  })
+  if (latestStation) {
+    autoRotateTarget.value = latestStation
+  }
+}
+
 const fetchStations = async () => {
   try {
     const response = await axios.get('/api/station-map', {
@@ -387,6 +419,7 @@ const fetchStations = async () => {
       }
     })
     stations.value = response.data || []
+    syncAutoRotateTarget()
   } catch (error) {
     console.error(error)
     stations.value = []
@@ -704,6 +737,7 @@ const initMap = async () => {
   await renderMarkers()
   startAutoRotate()
   startEventFeedRefresh()
+  startStationRefresh()
 }
 
 const initMobileEventView = async () => {
@@ -712,6 +746,13 @@ const initMobileEventView = async () => {
     fetchEventFeed()
   ])
   startEventFeedRefresh()
+  startStationRefresh()
+}
+
+const refreshStationMapData = () => {
+  if (document.visibilityState === 'hidden') return
+  fetchStations()
+  fetchEventFeed()
 }
 
 const recenterMap = () => {
@@ -780,8 +821,8 @@ onMounted(() => {
 
   window.addEventListener('resize', handleViewportResize)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
-  window.addEventListener('focus', fetchEventFeed)
-  document.addEventListener('visibilitychange', fetchEventFeed)
+  window.addEventListener('focus', refreshStationMapData)
+  document.addEventListener('visibilitychange', refreshStationMapData)
 })
 
 onBeforeUnmount(() => {
@@ -791,10 +832,11 @@ onBeforeUnmount(() => {
 
   window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  window.removeEventListener('focus', fetchEventFeed)
-  document.removeEventListener('visibilitychange', fetchEventFeed)
+  window.removeEventListener('focus', refreshStationMapData)
+  document.removeEventListener('visibilitychange', refreshStationMapData)
   stopAutoRotate()
   stopEventFeedRefresh()
+  stopStationRefresh()
   clearMarkers()
   if (mapInstance) {
     mapInstance.destroy()
