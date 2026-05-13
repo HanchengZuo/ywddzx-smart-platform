@@ -401,13 +401,27 @@ syncAxiosAuthHeader()
 
 const isLoginPage = computed(() => route.path === '/login')
 const formatAppVersion = (value) => {
-  const [major = '1', minor = '0'] = String(value || '1.0').split('.')
+  const [major = '1', minor = '0', patch = '0'] = String(value || '1.0').split('.')
   const normalizedMajor = Number.parseInt(major, 10)
   const normalizedMinor = Number.parseInt(minor, 10)
-  return `${Number.isFinite(normalizedMajor) ? normalizedMajor : 1}.${Number.isFinite(normalizedMinor) ? normalizedMinor : 0}`
+  const normalizedPatch = Number.parseInt(patch, 10)
+  const baseVersion = `${Number.isFinite(normalizedMajor) ? normalizedMajor : 1}.${Number.isFinite(normalizedMinor) ? normalizedMinor : 0}`
+  return Number.isFinite(normalizedPatch) && normalizedPatch > 0
+    ? `${baseVersion}.${normalizedPatch}`
+    : baseVersion
 }
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
+  {
+    version: 'v1.5.1',
+    date: '2026-05-13',
+    title: '巡检规范导出优化',
+    summary: '巡检规范库支持按筛选条件导出A4版式文件。',
+    items: [
+      '筛选后的全部规范可一键生成A4打印页面。',
+      '导出内容支持浏览器打印或保存为PDF。'
+    ]
+  },
   {
     version: 'v1.5',
     date: '2026-05-13',

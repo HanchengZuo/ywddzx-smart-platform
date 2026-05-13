@@ -58,6 +58,10 @@
         <button class="btn btn-secondary" type="button" @click="fetchStandards" :disabled="loading">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
+        <button class="btn btn-primary btn-export" type="button" @click="exportStandards"
+          :disabled="loading || filteredList.length === 0">
+          导出规范
+        </button>
       </div>
     </div>
 
@@ -269,18 +273,18 @@ const fieldOptionsMap = computed(() => {
   return map
 })
 
-const activeStandardDetailEntries = computed(() => {
-  if (!activeStandard.value) return []
-  const mappedEntries = Object.entries(activeStandard.value)
+const getStandardDetailEntries = (item) => {
+  if (!item) return []
+  const mappedEntries = Object.entries(item)
     .filter(([key, value]) => !DETAIL_HIDDEN_FIELDS.includes(key) && value !== null && String(value).trim())
     .filter(([key]) => shouldShowDetailKey(key))
     .map(([key, value]) => ({
       key,
-      label: getFieldLabel(activeStandard.value, key),
+      label: getFieldLabel(item, key),
       value: String(value)
     }))
     .filter((entry) => entry.label)
-  const fallbackEntries = parseStandardDetailText(activeStandard.value.standard_detail_text)
+  const fallbackEntries = parseStandardDetailText(item.standard_detail_text)
   if (mappedEntries.length) {
     const mappedLabels = new Set(mappedEntries.map((entry) => entry.label))
     return [
@@ -289,6 +293,10 @@ const activeStandardDetailEntries = computed(() => {
     ]
   }
   return fallbackEntries
+}
+
+const activeStandardDetailEntries = computed(() => {
+  return getStandardDetailEntries(activeStandard.value)
 })
 
 const filterableFields = computed(() => {
@@ -659,6 +667,388 @@ const copyStandard = async () => {
   }
 }
 
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
+const renderPrintMultiline = (value) => {
+  return escapeHtml(formatMultiline(value) || '-').replace(/\n/g, '<br>')
+}
+
+const getPrintDateText = () => {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(new Date())
+}
+
+const getExportFilterTags = () => {
+  const tags = [
+    {
+      label: '检查表',
+      value: activeInspectionTableName.value || '全部检查表'
+    }
+  ]
+
+  if (filters.value.keyword) {
+    tags.push({
+      label: '关键词',
+      value: filters.value.keyword
+    })
+  }
+
+  const fieldLabelMap = inspectionTableFields.value.reduce((map, field) => {
+    map[field.field_key] = field.field_label
+    return map
+  }, {})
+
+  Object.entries(dynamicFilters.value).forEach(([key, value]) => {
+    const text = String(value || '').trim()
+    if (!text) return
+    tags.push({
+      label: fieldLabelMap[key] || FRIENDLY_FIELD_LABELS[key] || key,
+      value: text
+    })
+  })
+
+  return tags
+}
+
+const buildStandardPrintCard = (item, index) => {
+  const entries = getStandardDetailEntries(item)
+  const detailHtml = entries.length
+    ? entries.map((entry) => `
+        <div class="field-row">
+          <div class="field-label">${escapeHtml(entry.label)}</div>
+          <div class="field-value">${renderPrintMultiline(entry.value)}</div>
+        </div>
+      `).join('')
+    : `<div class="field-row field-row-full">
+        <div class="field-label">规范内容</div>
+        <div class="field-value">${renderPrintMultiline(item.standard_detail_text || '暂无规范详情')}</div>
+      </div>`
+
+  return `
+    <article class="standard-card">
+      <div class="standard-head">
+        <div class="standard-index">${index + 1}</div>
+        <div class="standard-title-block">
+          <div class="standard-title">${escapeHtml(getStandardPrimaryTitle(item))}</div>
+          <div class="standard-subtitle">${escapeHtml(getStandardTableName(item))}</div>
+        </div>
+        <div class="standard-code">规范ID ${escapeHtml(item.standard_id || '-')}</div>
+      </div>
+      <div class="field-grid">
+        ${detailHtml}
+      </div>
+    </article>
+  `
+}
+
+const buildStandardsPrintDocument = () => {
+  const exportList = filteredList.value
+  const filterTags = getExportFilterTags()
+  const filterHtml = filterTags
+    .map((tag) => `<span class="filter-tag">${escapeHtml(tag.label)}：${escapeHtml(tag.value)}</span>`)
+    .join('')
+
+  return `<!doctype html>
+    <html lang="zh-CN">
+      <head>
+        <meta charset="utf-8" />
+        <title>巡检规范导出</title>
+        <style>
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            background: #dbe4ee;
+            color: #172033;
+            font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          .print-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            padding: 14px;
+            background: rgba(241, 245, 249, 0.92);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #cbd5e1;
+          }
+
+          .print-toolbar button {
+            height: 38px;
+            padding: 0 16px;
+            border-radius: 999px;
+            border: 1px solid #2563eb;
+            background: #2563eb;
+            color: #ffffff;
+            font-weight: 800;
+            cursor: pointer;
+          }
+
+          .paper {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 18px auto;
+            padding: 15mm 14mm;
+            background:
+              linear-gradient(135deg, rgba(37, 99, 235, 0.08), transparent 34%),
+              #ffffff;
+            box-shadow: 0 22px 50px rgba(15, 23, 42, 0.18);
+          }
+
+          .report-header {
+            padding-bottom: 14px;
+            border-bottom: 2px solid #172033;
+            margin-bottom: 14px;
+          }
+
+          .report-kicker {
+            font-size: 11px;
+            letter-spacing: 0.18em;
+            color: #2563eb;
+            font-weight: 900;
+            margin-bottom: 8px;
+          }
+
+          .report-title {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.25;
+            color: #0f172a;
+          }
+
+          .report-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 14px;
+            margin-top: 10px;
+            color: #475569;
+            font-size: 11px;
+            font-weight: 700;
+          }
+
+          .filter-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 12px 0 18px;
+          }
+
+          .filter-tag {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1e3a8a;
+            font-size: 10px;
+            font-weight: 800;
+          }
+
+          .standard-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            margin-bottom: 12px;
+            border: 1px solid #d8e2ee;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #ffffff;
+          }
+
+          .standard-head {
+            display: grid;
+            grid-template-columns: 32px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e5edf5;
+          }
+
+          .standard-index {
+            width: 26px;
+            height: 26px;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #172033;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 900;
+          }
+
+          .standard-title {
+            font-size: 14px;
+            line-height: 1.45;
+            font-weight: 900;
+            color: #0f172a;
+          }
+
+          .standard-subtitle {
+            margin-top: 2px;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 700;
+          }
+
+          .standard-code {
+            padding: 5px 9px;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: #1d4ed8;
+            font-size: 10px;
+            font-weight: 900;
+            white-space: nowrap;
+          }
+
+          .field-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0;
+          }
+
+          .field-row {
+            display: grid;
+            grid-template-columns: 84px minmax(0, 1fr);
+            min-height: 34px;
+            border-top: 1px solid #eef2f7;
+          }
+
+          .field-row:nth-child(1),
+          .field-row:nth-child(2) {
+            border-top: none;
+          }
+
+          .field-row-full {
+            grid-column: 1 / -1;
+          }
+
+          .field-label {
+            padding: 8px 9px;
+            background: #f8fafc;
+            border-right: 1px solid #eef2f7;
+            color: #64748b;
+            font-size: 10px;
+            line-height: 1.55;
+            font-weight: 900;
+            word-break: break-word;
+          }
+
+          .field-value {
+            padding: 8px 10px;
+            color: #1f2937;
+            font-size: 10.5px;
+            line-height: 1.7;
+            word-break: break-word;
+          }
+
+          .report-footer {
+            margin-top: 16px;
+            padding-top: 10px;
+            border-top: 1px solid #d8e2ee;
+            color: #94a3b8;
+            font-size: 10px;
+            text-align: center;
+          }
+
+          @media print {
+            body {
+              background: #ffffff;
+            }
+
+            .print-toolbar {
+              display: none;
+            }
+
+            .paper {
+              width: auto;
+              min-height: auto;
+              margin: 0;
+              padding: 0;
+              box-shadow: none;
+              background: #ffffff;
+            }
+
+            .standard-card {
+              margin-bottom: 9px;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="print-toolbar">
+          <button type="button" onclick="window.print()">打印 / 保存 PDF</button>
+          <button type="button" onclick="window.close()">关闭</button>
+        </div>
+        <main class="paper">
+          <header class="report-header">
+            <div class="report-kicker">INSPECTION STANDARD EXPORT</div>
+            <h1 class="report-title">巡检规范导出</h1>
+            <div class="report-meta">
+              <span>导出时间：${escapeHtml(getPrintDateText())}</span>
+              <span>规范数量：${exportList.length} 条</span>
+              <span>来源：业务督导中心数智管理平台</span>
+            </div>
+          </header>
+          <section class="filter-tags">
+            ${filterHtml || '<span class="filter-tag">全部规范</span>'}
+          </section>
+          <section class="standard-list">
+            ${exportList.map((item, index) => buildStandardPrintCard(item, index)).join('')}
+          </section>
+          <footer class="report-footer">本文件按当前筛选条件生成，仅用于巡检规范查阅、打印与留存。</footer>
+        </main>
+      </body>
+    </html>`
+}
+
+const exportStandards = () => {
+  if (!filteredList.value.length) {
+    showCopyToast('当前没有可导出的规范。', 'error')
+    return
+  }
+
+  const printWindow = window.open('', '_blank', 'width=1080,height=780')
+  if (!printWindow) {
+    showCopyToast('浏览器阻止了导出窗口，请允许弹窗后重试。', 'error')
+    return
+  }
+
+  printWindow.document.open()
+  printWindow.document.write(buildStandardsPrintDocument())
+  printWindow.document.close()
+  printWindow.focus()
+  window.setTimeout(() => {
+    printWindow.print()
+  }, 300)
+  showCopyToast('已生成A4导出页面，可在打印窗口保存为PDF。', 'success')
+}
+
 watch(
   () => filters.value.inspectionTableId,
   async (value) => {
@@ -830,6 +1220,11 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-export {
+  min-width: 112px;
 }
 
 .content-grid {
