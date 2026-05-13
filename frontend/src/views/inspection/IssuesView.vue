@@ -49,8 +49,8 @@
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
-                <div class="mobile-card-standard-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                  }}</div>
+                <div class="mobile-card-standard-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
+                }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
             </div>
@@ -292,8 +292,8 @@
                 <td class="nowrap">{{ item.standard_id || '暂无' }}</td>
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
-                    <div class="standard-detail-preview multiline-clamp">{{ formatMultiline(item.standard_detail_text)
-                      }}</div>
+                    <div class="standard-detail-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
+                    }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
@@ -568,7 +568,7 @@
         </div>
         <div class="standard-detail-modal-body">
           <div class="standard-detail-grid">
-            <div v-for="entry in standardDetailEntries" :key="`${standardDetailState.title}-${entry.label}`"
+            <div v-for="entry in standardDetailEntries" :key="`${standardDetailState.title}-${entry.key}`"
               class="standard-detail-card">
               <div class="standard-detail-card-label">{{ entry.label }}</div>
               <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
@@ -588,6 +588,10 @@ import {
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
+import {
+  getStandardDetailPreview,
+  parseStandardDetailText
+} from '@/utils/standardDetail'
 
 const filters = ref({
   month: '',
@@ -663,7 +667,6 @@ const rectificationPhotoDialog = ref({
 })
 
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
-const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
 const uniqueSortedOptions = (values) => {
   return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 }
@@ -1065,58 +1068,7 @@ const closeStandardDetail = () => {
 }
 
 const standardDetailEntries = computed(() => {
-  const content = formatMultiline(standardDetailState.value.content || '').trim()
-  if (!content) return []
-
-  const topLevelLabels = new Set([
-    '序号',
-    '业务流程',
-    '检查项目',
-    '检查内容',
-    '规范要求',
-    '检查方法',
-    '问题编号',
-    '常见问题',
-    '检查路径',
-    '是否禁止项',
-    '项目',
-    '检查类别',
-    '检查评比标准',
-    '检查方式',
-    '规范ID'
-  ])
-
-  const entries = []
-
-  content
-    .split('\n')
-    .map((line) => String(line || '').trim())
-    .filter(Boolean)
-    .forEach((line, index) => {
-      const separatorIndex = line.indexOf('：')
-      const possibleLabel = separatorIndex > -1 ? line.slice(0, separatorIndex).trim() : ''
-
-      if (separatorIndex > -1 && topLevelLabels.has(possibleLabel)) {
-        entries.push({
-          label: possibleLabel,
-          value: formatMultiline(line.slice(separatorIndex + 1).trim()) || '暂无'
-        })
-        return
-      }
-
-      if (entries.length > 0) {
-        const lastEntry = entries[entries.length - 1]
-        lastEntry.value = `${lastEntry.value}\n${formatMultiline(line)}`.trim()
-        return
-      }
-
-      entries.push({
-        label: `详情 ${index + 1}`,
-        value: formatMultiline(line)
-      })
-    })
-
-  return entries
+  return parseStandardDetailText(standardDetailState.value.content)
 })
 
 const openFilterDropdown = (key) => {
@@ -1517,6 +1469,7 @@ onBeforeUnmount(() => {
 .mobile-card-standard-preview {
   width: 100%;
   text-align: left;
+  white-space: pre-line;
 }
 
 .mobile-card-images {
@@ -1746,6 +1699,7 @@ onBeforeUnmount(() => {
 
 .standard-detail-preview {
   width: 100%;
+  white-space: pre-line;
 }
 
 .multiline-clamp {
