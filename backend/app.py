@@ -2033,6 +2033,16 @@ def ensure_inspection_checklist_management_schema(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS inspection_standard_export_templates (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            template_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT inspection_standard_export_templates_singleton CHECK (id = 1)
+        );
+        """
+    )
+    cur.execute(
+        """
         ALTER TABLE inspection_table_fields
         ADD COLUMN IF NOT EXISTS is_filterable BOOLEAN DEFAULT TRUE;
         """
@@ -2162,6 +2172,75 @@ def get_management_checklist_fields(cur, inspection_table_id, include_public=Fal
         (inspection_table_id,),
     )
     return [*public_fields, *cur.fetchall()]
+
+
+def normalize_standard_export_template_config(cur, raw_config):
+    config = raw_config if isinstance(raw_config, dict) else {}
+    cur.execute(
+        """
+        SELECT id
+        FROM inspection_tables
+        WHERE is_active = TRUE
+        ORDER BY id ASC;
+        """
+    )
+    normalized = {}
+    for table in cur.fetchall():
+        table_key = str(table["id"])
+        allowed_keys = {
+            str(field["field_key"])
+            for field in get_management_checklist_fields(cur, table["id"], include_public=True)
+        }
+        incoming_keys = config.get(table_key, config.get(table["id"], []))
+        if not isinstance(incoming_keys, list):
+            incoming_keys = []
+        normalized[table_key] = []
+        seen = set()
+        for field_key in incoming_keys:
+            text = str(field_key or "").strip()
+            if not text or text in seen or text not in allowed_keys:
+                continue
+            normalized[table_key].append(text)
+            seen.add(text)
+    return normalized
+
+
+def get_standard_export_template_config(cur):
+    cur.execute(
+        """
+        SELECT template_config
+        FROM inspection_standard_export_templates
+        WHERE id = 1;
+        """
+    )
+    row = cur.fetchone()
+    if not row:
+        return {"has_saved": False, "tables": {}}
+    return {
+        "has_saved": True,
+        "tables": normalize_standard_export_template_config(
+            cur, row.get("template_config") or {}
+        ),
+    }
+
+
+def save_standard_export_template_config(cur, template_config):
+    normalized = normalize_standard_export_template_config(cur, template_config)
+    cur.execute(
+        """
+        INSERT INTO inspection_standard_export_templates (
+            id,
+            template_config,
+            updated_at
+        )
+        VALUES (1, %s::jsonb, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO UPDATE
+        SET template_config = EXCLUDED.template_config,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        (json.dumps(normalized, ensure_ascii=False),),
+    )
+    return normalized
 
 
 def upsert_checklist_fields(cur, inspection_table_id, fields):
@@ -8591,6 +8670,68 @@ def get_inspection_table_fields():
             [dict(field) for field in get_management_checklist_fields(cur, table_id, include_public=True)]
         )
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-standard-export-template", methods=["GET"])
+def get_inspection_standard_export_template():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        conn.commit()
+
+        user = getattr(g, "current_user", None)
+        if not can_view_inspection_standards(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权访问巡检规范库。"}), 403
+
+        template = get_standard_export_template_config(cur)
+        response = jsonify(
+            {
+                "success": True,
+                "has_saved": template["has_saved"],
+                "tables": template["tables"],
+            }
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-standard-export-template", methods=["PUT"])
+def update_inspection_standard_export_template():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+
+        user = getattr(g, "current_user", None)
+        if not can_view_inspection_standards(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权访问巡检规范库。"}), 403
+
+        normalized = save_standard_export_template_config(cur, data.get("tables") or {})
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "导出规范公共模板已保存。",
+                "has_saved": True,
+                "tables": normalized,
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)

@@ -62,10 +62,78 @@
         <button class="btn btn-secondary" type="button" @click="fetchStandards" :disabled="loading">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
+        <button class="btn btn-secondary btn-export-template" type="button" @click="openExportTemplateDialog">
+          导出规范模板设定
+        </button>
         <button class="btn btn-primary btn-export" type="button" @click="exportStandards"
           :disabled="loading || filteredList.length === 0">
           导出规范
         </button>
+      </div>
+    </div>
+
+    <div v-if="exportTemplateDialog.visible" class="template-modal">
+      <div class="template-modal-card card-surface">
+        <div class="template-modal-header">
+          <div>
+            <div class="template-kicker">EXPORT TEMPLATE</div>
+            <h3>导出规范模板设定</h3>
+            <p>这是全系统共享模板。任何账号保存后，所有用户导出规范都会按这套字段口径生成A4文件。</p>
+          </div>
+          <button class="template-close-btn" type="button" @click="closeExportTemplateDialog">×</button>
+        </div>
+
+        <div class="template-modal-toolbar">
+          <div class="template-stat">
+            已选择 <strong>{{ exportTemplateSelectedTotal }}</strong> / {{ exportTemplateTotalFieldCount }} 个字段
+          </div>
+          <div class="template-toolbar-actions">
+            <button class="btn btn-secondary" type="button" @click="selectAllExportFields">全选全部</button>
+            <button class="btn btn-secondary" type="button" @click="clearAllExportFields">清空全部</button>
+            <button class="btn btn-secondary" type="button" @click="resetExportTemplateDraft">恢复默认</button>
+          </div>
+        </div>
+
+        <div v-if="exportTemplateDialog.loading" class="template-loading">
+          正在读取所有检查表字段...
+        </div>
+
+        <div v-else class="template-table-list">
+          <section v-for="group in exportTemplateTableGroups" :key="group.table_id" class="template-table-card">
+            <div class="template-table-head">
+              <div>
+                <h4>{{ group.table_name }}</h4>
+                <span>{{ getExportTemplateSelectedCount(group.table_id) }} / {{ group.fields.length }} 个字段</span>
+              </div>
+              <div class="template-table-actions">
+                <button class="mini-btn" type="button" @click="selectAllExportFields(group.table_id)">全选</button>
+                <button class="mini-btn" type="button" @click="clearExportFields(group.table_id)">清空</button>
+              </div>
+            </div>
+
+            <div v-if="group.fields.length" class="template-field-grid">
+              <label v-for="field in group.fields" :key="`${group.table_id}-${field.field_key}`"
+                class="template-field-option">
+                <input type="checkbox" :checked="isExportFieldSelected(group.table_id, field.field_key)"
+                  @change="toggleExportField(group.table_id, field.field_key, $event.target.checked)" />
+                <span>
+                  <strong>{{ field.field_label }}</strong>
+                  <em v-if="field.is_public">公共字段</em>
+                </span>
+              </label>
+            </div>
+
+            <div v-else class="template-empty-fields">这张检查表暂未配置字段。</div>
+          </section>
+        </div>
+
+        <div class="template-modal-footer">
+          <button class="btn btn-secondary" type="button" @click="closeExportTemplateDialog">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="exportTemplateDialog.loading"
+            @click="saveExportTemplateDialog">
+            保存模板
+          </button>
+        </div>
       </div>
     </div>
 
@@ -194,6 +262,14 @@ const filters = ref({
 })
 
 const dynamicFilters = ref({})
+const exportTemplateDialog = ref({
+  visible: false,
+  loading: false
+})
+const exportTemplateTableGroups = ref([])
+const exportTemplateHasSaved = ref(false)
+const exportTemplateSelection = ref({})
+const exportTemplateDraft = ref({})
 
 const SUMMARY_FIELD_CANDIDATES = [
   'serial_no',
@@ -300,6 +376,96 @@ const fieldOptionsMap = computed(() => {
 const uniqueSortedOptions = (values) => {
   return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const exportTemplateTotalFieldCount = computed(() => {
+  return exportTemplateTableGroups.value.reduce((total, group) => total + group.fields.length, 0)
+})
+
+const exportTemplateSelectedTotal = computed(() => {
+  return exportTemplateTableGroups.value.reduce((total, group) => {
+    return total + getExportTemplateSelectedCount(group.table_id)
+  }, 0)
+})
+
+const normalizeTemplateTableId = (tableId) => String(tableId || '')
+
+const normalizeFieldKeyList = (list = []) => {
+  return [...new Set((Array.isArray(list) ? list : []).map((item) => String(item || '').trim()).filter(Boolean))]
+}
+
+const buildAllSelectedExportTemplate = () => {
+  return exportTemplateTableGroups.value.reduce((selection, group) => {
+    selection[normalizeTemplateTableId(group.table_id)] = group.fields.map((field) => field.field_key)
+    return selection
+  }, {})
+}
+
+const normalizeExportTemplateSelection = (selection = {}) => {
+  return exportTemplateTableGroups.value.reduce((normalized, group) => {
+    const tableId = normalizeTemplateTableId(group.table_id)
+    const availableKeys = new Set(group.fields.map((field) => String(field.field_key)))
+    normalized[tableId] = normalizeFieldKeyList(selection[tableId]).filter((key) => availableKeys.has(key))
+    return normalized
+  }, {})
+}
+
+const getExportTemplateSelectedCount = (tableId) => {
+  const selected = exportTemplateDraft.value[normalizeTemplateTableId(tableId)] || []
+  return normalizeFieldKeyList(selected).length
+}
+
+const isExportFieldSelected = (tableId, fieldKey) => {
+  const selected = exportTemplateDraft.value[normalizeTemplateTableId(tableId)] || []
+  return selected.includes(fieldKey)
+}
+
+const toggleExportField = (tableId, fieldKey, checked) => {
+  const tableKey = normalizeTemplateTableId(tableId)
+  const selected = new Set(exportTemplateDraft.value[tableKey] || [])
+  if (checked) {
+    selected.add(fieldKey)
+  } else {
+    selected.delete(fieldKey)
+  }
+  exportTemplateDraft.value = {
+    ...exportTemplateDraft.value,
+    [tableKey]: [...selected]
+  }
+}
+
+const selectAllExportFields = (tableId = null) => {
+  if (tableId !== null) {
+    const tableKey = normalizeTemplateTableId(tableId)
+    const group = exportTemplateTableGroups.value.find((item) => normalizeTemplateTableId(item.table_id) === tableKey)
+    if (!group) return
+    exportTemplateDraft.value = {
+      ...exportTemplateDraft.value,
+      [tableKey]: group.fields.map((field) => field.field_key)
+    }
+    return
+  }
+
+  exportTemplateDraft.value = buildAllSelectedExportTemplate()
+}
+
+const clearExportFields = (tableId) => {
+  const tableKey = normalizeTemplateTableId(tableId)
+  exportTemplateDraft.value = {
+    ...exportTemplateDraft.value,
+    [tableKey]: []
+  }
+}
+
+const clearAllExportFields = () => {
+  exportTemplateDraft.value = exportTemplateTableGroups.value.reduce((selection, group) => {
+    selection[normalizeTemplateTableId(group.table_id)] = []
+    return selection
+  }, {})
+}
+
+const resetExportTemplateDraft = () => {
+  exportTemplateDraft.value = buildAllSelectedExportTemplate()
 }
 
 const isFieldWithLabel = (field, label) => normalizeFieldLabel(field?.field_label) === label
@@ -554,6 +720,105 @@ const fetchInspectionTableFields = async () => {
   syncDynamicFilters()
 }
 
+const ensureExportTemplateFieldsLoaded = async (force = false) => {
+  if (!force && exportTemplateTableGroups.value.length) {
+    exportTemplateDialog.value = {
+      ...exportTemplateDialog.value,
+      loading: false
+    }
+    return
+  }
+  if (!inspectionTables.value.length) {
+    await fetchInspectionTables()
+  }
+
+  exportTemplateDialog.value = {
+    ...exportTemplateDialog.value,
+    loading: true
+  }
+
+  try {
+    const responses = await Promise.all(
+      inspectionTables.value.map((table) =>
+        axios.get('/api/inspection-table-fields', {
+          params: { table_id: table.id }
+        })
+      )
+    )
+
+    exportTemplateTableGroups.value = inspectionTables.value.map((table, index) => ({
+      table_id: table.id,
+      table_name: table.table_name,
+      fields: (responses[index]?.data || []).map((field) => ({
+        field_key: String(field.field_key || ''),
+        field_label: field.field_label || field.field_key || '未命名字段',
+        is_public: Boolean(field.is_public)
+      })).filter((field) => field.field_key)
+    }))
+  } finally {
+    exportTemplateDialog.value = {
+      ...exportTemplateDialog.value,
+      loading: false
+    }
+  }
+}
+
+const fetchExportTemplateSelection = async () => {
+  const response = await axios.get('/api/inspection-standard-export-template')
+  exportTemplateHasSaved.value = Boolean(response.data?.has_saved)
+  exportTemplateSelection.value = response.data?.tables && typeof response.data.tables === 'object'
+    ? response.data.tables
+    : {}
+}
+
+const openExportTemplateDialog = async () => {
+  exportTemplateDialog.value = {
+    visible: true,
+    loading: true
+  }
+
+  try {
+    await ensureExportTemplateFieldsLoaded(true)
+    await fetchExportTemplateSelection()
+    exportTemplateDraft.value = exportTemplateHasSaved.value
+      ? normalizeExportTemplateSelection(exportTemplateSelection.value)
+      : buildAllSelectedExportTemplate()
+  } catch (error) {
+    showCopyToast('读取检查表字段失败，请稍后重试。', 'error')
+    closeExportTemplateDialog()
+  }
+}
+
+const closeExportTemplateDialog = () => {
+  exportTemplateDialog.value = {
+    visible: false,
+    loading: false
+  }
+  exportTemplateDraft.value = {}
+}
+
+const saveExportTemplateDialog = () => {
+  const normalized = normalizeExportTemplateSelection(exportTemplateDraft.value)
+  exportTemplateDialog.value = {
+    ...exportTemplateDialog.value,
+    loading: true
+  }
+  axios.put('/api/inspection-standard-export-template', {
+    tables: normalized
+  }).then((response) => {
+    exportTemplateSelection.value = response.data?.tables || normalized
+    exportTemplateHasSaved.value = true
+    closeExportTemplateDialog()
+    showCopyToast('导出规范公共模板已保存。', 'success')
+  }).catch((error) => {
+    exportTemplateDialog.value = {
+      ...exportTemplateDialog.value,
+      loading: false
+    }
+    showCopyToast(error?.response?.data?.error || '保存导出规范公共模板失败。', 'error')
+  })
+}
+
 const syncDynamicFilters = () => {
   const nextDynamicFilters = {}
   filterableFields.value.forEach((field) => {
@@ -780,8 +1045,48 @@ const getExportFilterTags = () => {
   return tags
 }
 
-const buildStandardPrintCard = (item, index) => {
+const getExportTableId = (item) => {
+  return normalizeTemplateTableId(
+    item?.inspection_table_id || filters.value.inspectionTableId || activeInspectionTable.value?.id || ''
+  )
+}
+
+const getExportTemplateFieldSet = (tableId) => {
+  const tableKey = normalizeTemplateTableId(tableId)
+  if (!exportTemplateHasSaved.value || !Array.isArray(exportTemplateSelection.value[tableKey])) {
+    return null
+  }
+  return new Set(normalizeFieldKeyList(exportTemplateSelection.value[tableKey]))
+}
+
+const getExportTableFields = (tableId) => {
+  const tableKey = normalizeTemplateTableId(tableId)
+  const group = exportTemplateTableGroups.value.find((item) => normalizeTemplateTableId(item.table_id) === tableKey)
+  return group?.fields || []
+}
+
+const getExportStandardDetailEntries = (item) => {
+  const tableId = getExportTableId(item)
+  const fields = getExportTableFields(tableId)
+  const selectedSet = getExportTemplateFieldSet(tableId)
+
+  if (fields.length) {
+    return fields
+      .filter((field) => !selectedSet || selectedSet.has(field.field_key))
+      .map((field) => ({
+        key: field.field_key,
+        label: field.field_label,
+        value: String(item?.[field.field_key] ?? '').trim() || '-'
+      }))
+  }
+
   const entries = getStandardDetailEntries(item)
+  if (!selectedSet) return entries
+  return entries.filter((entry) => selectedSet.has(entry.key))
+}
+
+const buildStandardPrintCard = (item, index) => {
+  const entries = getExportStandardDetailEntries(item)
   const detailHtml = entries.length
     ? entries.map((entry) => `
         <div class="field-row">
@@ -790,8 +1095,8 @@ const buildStandardPrintCard = (item, index) => {
         </div>
       `).join('')
     : `<div class="field-row field-row-full">
-        <div class="field-label">规范内容</div>
-        <div class="field-value">${renderPrintMultiline(item.standard_detail_text || '暂无规范详情')}</div>
+        <div class="field-label">导出字段</div>
+        <div class="field-value">当前检查表未选择导出字段。</div>
       </div>`
 
   return `
@@ -1086,9 +1391,17 @@ const buildStandardsPrintDocument = () => {
     </html>`
 }
 
-const exportStandards = () => {
+const exportStandards = async () => {
   if (!filteredList.value.length) {
     showCopyToast('当前没有可导出的规范。', 'error')
+    return
+  }
+
+  try {
+    await ensureExportTemplateFieldsLoaded(true)
+    await fetchExportTemplateSelection()
+  } catch (error) {
+    showCopyToast('读取导出模板字段失败，请稍后重试。', 'error')
     return
   }
 
@@ -1309,6 +1622,241 @@ onBeforeUnmount(() => {
 
 .btn-export {
   min-width: 112px;
+}
+
+.btn-export-template {
+  min-width: 164px;
+}
+
+.template-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  padding: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.46);
+  backdrop-filter: blur(10px);
+}
+
+.template-modal-card {
+  width: min(1080px, 100%);
+  max-height: min(860px, calc(100vh - 48px));
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.template-modal-header {
+  padding: 24px 26px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #e7edf4;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(37, 99, 235, 0.12), transparent 32%),
+    #ffffff;
+}
+
+.template-kicker {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  margin-bottom: 8px;
+}
+
+.template-modal-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 26px;
+  line-height: 1.35;
+}
+
+.template-modal-header p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.template-close-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid #d7e0ea;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.template-close-btn:hover {
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.template-modal-toolbar {
+  padding: 16px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e7edf4;
+  background: #f8fafc;
+  flex-wrap: wrap;
+}
+
+.template-stat {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.template-stat strong {
+  color: #2563eb;
+  font-size: 20px;
+}
+
+.template-toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.template-loading,
+.template-empty-fields {
+  padding: 28px;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.8;
+}
+
+.template-table-list {
+  padding: 18px 22px 22px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #f8fafc;
+}
+
+.template-table-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.template-table-head {
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.template-table-head h4 {
+  margin: 0 0 4px;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.template-table-head span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.template-table-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mini-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid #d7e0ea;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.template-field-grid {
+  padding: 16px 18px 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.template-field-option {
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.template-field-option:hover {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.template-field-option input {
+  margin-top: 3px;
+  accent-color: #2563eb;
+}
+
+.template-field-option span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-field-option strong {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.template-field-option em {
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0e7490;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.template-modal-footer {
+  padding: 16px 26px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  border-top: 1px solid #e7edf4;
+  background: #ffffff;
 }
 
 .content-grid {
@@ -1766,6 +2314,10 @@ onBeforeUnmount(() => {
   .detail-card {
     min-height: auto;
   }
+
+  .template-field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 768px) {
@@ -1800,6 +2352,52 @@ onBeforeUnmount(() => {
   .list-page-info,
   .list-pagination-summary {
     text-align: center;
+  }
+
+  .template-modal {
+    padding: 12px;
+    align-items: stretch;
+  }
+
+  .template-modal-card {
+    max-height: calc(100vh - 24px);
+  }
+
+  .template-modal-header,
+  .template-modal-toolbar,
+  .template-modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .template-modal-header h3 {
+    font-size: 22px;
+  }
+
+  .template-table-list {
+    padding: 14px;
+  }
+
+  .template-table-head,
+  .template-modal-toolbar,
+  .template-modal-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .template-toolbar-actions,
+  .template-table-actions,
+  .template-modal-footer {
+    width: 100%;
+  }
+
+  .template-toolbar-actions .btn,
+  .template-modal-footer .btn {
+    flex: 1;
+  }
+
+  .template-field-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

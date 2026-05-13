@@ -30,3 +30,16 @@ CREATE TABLE inspection_public_fields (
     sort_order INTEGER DEFAULT 0,                       -- 排序号，公共字段优先展示
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP      -- 创建时间
 );
+
+-- inspection_standard_export_templates 表：巡检规范公共导出模板
+-- 用途：
+-- 1. 记录导出规范时每张检查表需要展示哪些字段
+-- 2. 模板为全系统共享，不区分用户
+-- 3. 未配置模板时默认导出全部字段
+
+CREATE TABLE inspection_standard_export_templates (
+    id INTEGER PRIMARY KEY DEFAULT 1,                    -- 固定为 1，表示全局唯一模板
+    template_config JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {检查表ID: [字段键...]}
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,      -- 最近更新时间
+    CONSTRAINT inspection_standard_export_templates_singleton CHECK (id = 1)
+);
