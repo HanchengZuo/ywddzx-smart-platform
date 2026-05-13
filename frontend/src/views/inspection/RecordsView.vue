@@ -55,6 +55,14 @@
             <option value="异常">异常</option>
           </select>
         </div>
+        <div class="filter-item filter-item-signature">
+          <label>签名状态</label>
+          <select v-model="filters.signStatus">
+            <option value="">全部</option>
+            <option value="signed">已签名</option>
+            <option value="pending">待签名</option>
+          </select>
+        </div>
       </div>
 
       <div class="filter-actions">
@@ -531,7 +539,8 @@ const filters = ref({
   date: '',
   station: '',
   inspectionTableName: '',
-  result: ''
+  result: '',
+  signStatus: ''
 })
 
 const stationSelectRef = ref(null)
@@ -653,8 +662,9 @@ const filteredData = computed(() => {
     const matchedStation = !filters.value.station || matchesSmartSearch([item.station], filters.value.station)
     const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
     const matchedResult = !filters.value.result || item.result === filters.value.result
+    const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
 
-    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult
+    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult && matchedSignStatus
   })
 })
 
@@ -663,6 +673,10 @@ const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map
 
 const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
+
+const getRecordSignFilterStatus = (record) => {
+  return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
+}
 
 const groupedInspectionGroups = computed(() => {
   const batchMap = new Map()
@@ -1401,7 +1415,8 @@ const resetFilters = () => {
     date: '',
     station: '',
     inspectionTableName: '',
-    result: ''
+    result: '',
+    signStatus: ''
   }
   closeAllDropdowns()
 }
@@ -2862,7 +2877,8 @@ onBeforeUnmount(() => {
   }
 
   .filter-item-date input,
-  .filter-item-result select {
+  .filter-item-result select,
+  .filter-item-signature select {
     height: 48px;
     max-width: 100%;
     min-width: 0;

@@ -176,9 +176,36 @@
           </div>
         </div>
         <div v-if="filteredList.length > 0" class="list-pagination">
-          <button class="btn btn-secondary" type="button" @click="prevPage" :disabled="page <= 1">上一页</button>
-          <div class="list-pagination-summary">每页 {{ pageSize }} 条</div>
-          <button class="btn btn-secondary" type="button" @click="nextPage" :disabled="page >= totalPages">下一页</button>
+          <div class="list-pagination-summary">每页 {{ pageSize }} 条，共 {{ filteredList.length }} 条</div>
+          <div class="standard-pagination-controls">
+            <div class="standard-pagination-nav">
+              <button class="btn btn-secondary standard-pagination-btn" type="button" @click="goToPage(1)"
+                :disabled="page <= 1">首页</button>
+              <button class="btn btn-secondary standard-pagination-btn" type="button" @click="prevPage"
+                :disabled="page <= 1">上一页</button>
+            </div>
+            <div class="standard-page-list" aria-label="巡检规范页码">
+              <template v-for="item in visiblePageItems" :key="item.key">
+                <span v-if="item.type === 'ellipsis'" class="standard-page-ellipsis">...</span>
+                <button v-else class="standard-page-btn" :class="{ active: item.value === page }" type="button"
+                  @click="goToPage(item.value)">
+                  {{ item.value }}
+                </button>
+              </template>
+            </div>
+            <div class="standard-pagination-nav">
+              <button class="btn btn-secondary standard-pagination-btn" type="button" @click="nextPage"
+                :disabled="page >= totalPages">下一页</button>
+              <button class="btn btn-secondary standard-pagination-btn" type="button" @click="goToPage(totalPages)"
+                :disabled="page >= totalPages">末页</button>
+            </div>
+            <div class="standard-page-jump">
+              <span>跳至</span>
+              <input v-model="pageJumpInput" type="number" min="1" :max="totalPages" :placeholder="`1-${totalPages}`"
+                @keyup.enter="jumpToInputPage" />
+              <button class="btn btn-primary standard-page-jump-btn" type="button" @click="jumpToInputPage">跳转</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -226,6 +253,50 @@
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="standardDetailDialogVisible && activeStandard" class="mobile-standard-detail-modal"
+        @click.self="closeStandardDetailDialog">
+        <div class="mobile-standard-detail-sheet card-surface">
+          <div class="mobile-detail-handle"></div>
+          <div class="mobile-detail-header">
+            <div>
+              <div class="mobile-detail-kicker">规范详情</div>
+              <h3>{{ activeStandardTitle }}</h3>
+            </div>
+            <button class="mobile-detail-close" type="button" @click="closeStandardDetailDialog">×</button>
+          </div>
+
+          <div class="mobile-detail-meta">
+            <div>
+              <span>检查表</span>
+              <strong>{{ activeStandardTableName }}</strong>
+            </div>
+            <div>
+              <span>规范ID</span>
+              <strong>{{ activeStandard.standard_id }}</strong>
+            </div>
+          </div>
+
+          <div class="mobile-detail-actions">
+            <button class="btn btn-secondary" type="button" @click="copyCode">复制规范ID</button>
+            <button class="btn btn-primary" type="button" @click="copyStandard">复制整条规范</button>
+          </div>
+
+          <div v-if="activeStandardDetailEntries.length" class="mobile-detail-field-list">
+            <div v-for="entry in activeStandardDetailEntries" :key="`mobile-${activeStandardIdentity}-${entry.key}`"
+              class="mobile-detail-field-card">
+              <div class="detail-field-label">{{ entry.label }}</div>
+              <div class="detail-field-value multiline-content">{{ formatMultiline(entry.value) || '暂无' }}</div>
+            </div>
+          </div>
+          <div v-else class="empty-detail empty-detail-compact">
+            <div class="empty-detail-title">暂无字段内容</div>
+            <div class="empty-detail-desc">这条规范暂未维护可展示的字段内容。</div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
   <div v-else class="card-surface permission-card">
     <div class="permission-icon">!</div>
@@ -256,6 +327,9 @@ const copyMessageType = ref('info')
 let copyMessageTimer = null
 const page = ref(1)
 const pageSize = 5
+const pageJumpInput = ref('')
+const standardDetailDialogVisible = ref(false)
+const isMobileView = ref(false)
 
 const filters = ref({
   keyword: '',
@@ -676,17 +750,75 @@ const filteredList = computed(() => {
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredList.value.length / pageSize)))
 
+const visiblePageItems = computed(() => {
+  const total = totalPages.value
+  const current = page.value
+
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => {
+      const value = index + 1
+      return { type: 'page', value, key: `page-${value}` }
+    })
+  }
+
+  const pages = new Set([1, total, current, current - 1, current + 1])
+  if (current <= 3) {
+    pages.add(2)
+    pages.add(3)
+    pages.add(4)
+  }
+  if (current >= total - 2) {
+    pages.add(total - 1)
+    pages.add(total - 2)
+    pages.add(total - 3)
+  }
+
+  const sortedPages = [...pages]
+    .filter((value) => value >= 1 && value <= total)
+    .sort((a, b) => a - b)
+
+  const result = []
+  sortedPages.forEach((value, index) => {
+    const previous = sortedPages[index - 1]
+    if (index > 0 && value - previous > 1) {
+      result.push({ type: 'ellipsis', key: `ellipsis-${previous}-${value}` })
+    }
+    result.push({ type: 'page', value, key: `page-${value}` })
+  })
+
+  return result
+})
+
 const paginatedList = computed(() => {
   const start = (page.value - 1) * pageSize
   return filteredList.value.slice(start, start + pageSize)
 })
 
+const goToPage = (targetPage) => {
+  const normalizedPage = Number.parseInt(targetPage, 10)
+  if (!Number.isFinite(normalizedPage)) return
+  page.value = Math.min(Math.max(normalizedPage, 1), totalPages.value)
+}
+
 const prevPage = () => {
-  if (page.value > 1) page.value -= 1
+  goToPage(page.value - 1)
 }
 
 const nextPage = () => {
-  if (page.value < totalPages.value) page.value += 1
+  goToPage(page.value + 1)
+}
+
+const jumpToInputPage = () => {
+  goToPage(pageJumpInput.value)
+  pageJumpInput.value = ''
+}
+
+const syncMobileView = () => {
+  isMobileView.value = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+}
+
+const closeStandardDetailDialog = () => {
+  standardDetailDialogVisible.value = false
 }
 
 watch(
@@ -905,6 +1037,9 @@ const resetFilters = async () => {
 const selectStandard = (item) => {
   activeStandard.value = item
   copyMessage.value = ''
+  if (isMobileView.value) {
+    standardDetailDialogVisible.value = true
+  }
 }
 
 const showCopyToast = (message, type = 'info') => {
@@ -1472,7 +1607,21 @@ watch(
   }
 )
 
+watch(standardDetailDialogVisible, (visible) => {
+  if (!isMobileView.value || typeof document === 'undefined') return
+  document.body.style.overflow = visible ? 'hidden' : ''
+  document.documentElement.style.overflow = visible ? 'hidden' : ''
+})
+
+watch(isMobileView, (mobile) => {
+  if (!mobile) {
+    closeStandardDetailDialog()
+  }
+})
+
 onMounted(async () => {
+  syncMobileView()
+  window.addEventListener('resize', syncMobileView)
   if (!hasPermission) return
   try {
     await fetchInspectionTables()
@@ -1486,6 +1635,11 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncMobileView)
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+    document.documentElement.style.overflow = ''
+  }
   if (copyMessageTimer) {
     clearTimeout(copyMessageTimer)
     copyMessageTimer = null
@@ -1939,6 +2093,94 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+.standard-pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.standard-pagination-nav,
+.standard-page-list,
+.standard-page-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.standard-page-list {
+  padding: 4px;
+  border: 1px solid #dbe7f3;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.standard-page-btn {
+  min-width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #475569;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.standard-page-btn:hover {
+  background: #eaf2ff;
+  color: #1d4ed8;
+}
+
+.standard-page-btn.active {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+}
+
+.standard-page-ellipsis {
+  min-width: 22px;
+  color: #94a3b8;
+  font-weight: 900;
+  text-align: center;
+}
+
+.standard-page-jump {
+  padding: 4px 4px 4px 10px;
+  border: 1px solid #dbe7f3;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.standard-page-jump input {
+  width: 72px;
+  height: 32px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 900;
+  text-align: center;
+  outline: none;
+}
+
+.standard-page-jump input:focus {
+  border-color: #2563eb;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.standard-pagination-btn,
+.standard-page-jump-btn {
+  min-width: 70px;
+  justify-content: center;
+}
+
 .standard-item {
   width: 100%;
   text-align: left;
@@ -2307,6 +2549,129 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
+.mobile-standard-detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 12px max(14px, env(safe-area-inset-bottom));
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.mobile-standard-detail-sheet {
+  width: min(100%, 680px);
+  max-height: min(86vh, 760px);
+  overflow-y: auto;
+  border-radius: 28px 28px 20px 20px;
+  padding: 10px 16px 18px;
+  box-shadow: 0 -18px 44px rgba(15, 23, 42, 0.24);
+}
+
+.mobile-detail-handle {
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  margin: 4px auto 14px;
+  background: #cbd5e1;
+}
+
+.mobile-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e7edf4;
+}
+
+.mobile-detail-kicker {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: #2563eb;
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+
+.mobile-detail-header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 21px;
+  line-height: 1.35;
+}
+
+.mobile-detail-close {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 14px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mobile-detail-meta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.mobile-detail-meta div {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #e7edf4;
+  background: #f8fafc;
+}
+
+.mobile-detail-meta span {
+  display: block;
+  margin-bottom: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mobile-detail-meta strong {
+  display: block;
+  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.mobile-detail-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.mobile-detail-actions .btn {
+  min-width: 0;
+  justify-content: center;
+}
+
+.mobile-detail-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.mobile-detail-field-card {
+  padding: 14px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #e7edf4;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
 @media (max-width: 1200px) {
   .filter-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -2353,6 +2718,10 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
+  .detail-card {
+    display: none;
+  }
+
   .list-toolbar,
   .list-pagination {
     flex-direction: column;
@@ -2362,6 +2731,51 @@ onBeforeUnmount(() => {
   .list-page-info,
   .list-pagination-summary {
     text-align: center;
+  }
+
+  .standard-pagination-controls,
+  .standard-pagination-nav,
+  .standard-page-list,
+  .standard-page-jump {
+    width: 100%;
+  }
+
+  .standard-pagination-controls {
+    justify-content: stretch;
+  }
+
+  .standard-pagination-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .standard-page-list {
+    justify-content: center;
+    overflow-x: auto;
+    padding: 5px;
+  }
+
+  .standard-page-btn {
+    min-width: 38px;
+    height: 38px;
+  }
+
+  .standard-page-jump {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .standard-page-jump input {
+    width: 100%;
+  }
+
+  .standard-pagination-btn,
+  .standard-page-jump-btn {
+    width: 100%;
+  }
+
+  .mobile-standard-detail-modal {
+    display: flex;
   }
 
   .template-modal {

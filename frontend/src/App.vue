@@ -413,13 +413,24 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.6.3',
+    date: '2026-05-14',
+    title: '巡检规范库体验优化',
+    summary: '优化规范详情查看方式，并增强分页跳转能力。',
+    items: [
+      '移动端点击规范后以弹窗查看完整规范详情。',
+      '巡检规范库分页支持页码和指定页跳转。'
+    ]
+  },
+  {
     version: 'v1.6.2',
     date: '2026-05-14',
     title: '巡检记录分页与搜索优化',
     summary: '优化巡检记录分页跳转体验，并增强站点名称搜索。',
     items: [
       '巡检记录支持页码跳转，移动端默认每页显示5组记录。',
-      '站点筛选支持中文、拼音和拼音首字母匹配。'
+      '站点筛选支持中文、拼音和拼音首字母匹配。',
+      '巡检记录筛选面板新增已签名和待签名筛选。'
     ]
   },
   {
