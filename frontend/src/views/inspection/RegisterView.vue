@@ -71,21 +71,24 @@
             </div>
           </div>
 
-          <div class="form-item form-item-full">
-            <label>规范ID</label>
-            <input :value="selectedStandard?.standard_id || ''" type="text" readonly />
-          </div>
+          <template v-if="selectedStandard">
+            <div class="form-item form-item-full selected-standard-field selected-standard-first"
+              ref="selectedStandardStartRef">
+              <label>规范ID</label>
+              <input :value="selectedStandard.standard_id || ''" type="text" readonly />
+            </div>
 
-          <div class="form-item form-item-full">
-            <label>检查表名称</label>
-            <input :value="selectedStandard?.inspection_table_name || ''" type="text" readonly />
-          </div>
+            <div class="form-item form-item-full selected-standard-field">
+              <label>检查表名称</label>
+              <input :value="selectedStandard.inspection_table_name || ''" type="text" readonly />
+            </div>
 
-          <div class="form-item form-item-full">
-            <label>规范详情</label>
-            <textarea :value="normalizeStandardDetailForRegister(selectedStandard?.standard_detail_text || '')" rows="8"
-              readonly></textarea>
-          </div>
+            <div class="form-item form-item-full selected-standard-field selected-standard-detail">
+              <label>规范详情</label>
+              <textarea :value="normalizeStandardDetailForRegister(selectedStandard.standard_detail_text || '')" rows="8"
+                readonly></textarea>
+            </div>
+          </template>
         </div>
 
         <template v-if="showIssueFields">
@@ -150,7 +153,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import {
@@ -169,6 +172,7 @@ try {
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_inspections)
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
+const selectedStandardStartRef = ref(null)
 const stationDropdownVisible = ref(false)
 const standardDropdownVisible = ref(false)
 const stationSearch = ref('')
@@ -465,11 +469,26 @@ const selectStation = (station) => {
   stationDropdownVisible.value = false
 }
 
-const selectStandard = (standard) => {
+const scrollToSelectedStandard = async () => {
+  await nextTick()
+  const target = selectedStandardStartRef.value
+  if (!target || typeof window === 'undefined') return
+
+  const isMobile = window.matchMedia?.('(max-width: 900px)').matches
+  const topOffset = isMobile ? 12 : 24
+  const targetTop = target.getBoundingClientRect().top + window.scrollY - topOffset
+  window.scrollTo({
+    top: Math.max(targetTop, 0),
+    behavior: 'smooth'
+  })
+}
+
+const selectStandard = async (standard) => {
   standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
   form.value.standardId = standard.standard_id
   form.value.inspectionTableId = String(standard.inspection_table_id || '')
   standardDropdownVisible.value = false
+  await scrollToSelectedStandard()
 }
 
 const handleFileChange = async (event) => {
@@ -751,6 +770,54 @@ onBeforeUnmount(() => {
   color: #475569;
 }
 
+.selected-standard-field {
+  box-sizing: border-box;
+  position: relative;
+  padding: 14px;
+  border: 1px solid rgba(147, 197, 253, 0.46);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 34%),
+    linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.selected-standard-field *,
+.selected-standard-field *::before,
+.selected-standard-field *::after {
+  box-sizing: border-box;
+}
+
+.selected-standard-first {
+  scroll-margin-top: 18px;
+}
+
+.selected-standard-first::before {
+  content: '已选择规范';
+  width: fit-content;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selected-standard-field label {
+  color: #1e3a8a;
+}
+
+.selected-standard-field input,
+.selected-standard-field textarea {
+  border-color: rgba(191, 219, 254, 0.96);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.selected-standard-detail textarea {
+  min-height: 152px;
+  resize: none;
+}
+
 .search-select {
   position: relative;
 }
@@ -799,6 +866,10 @@ onBeforeUnmount(() => {
 
 .standard-detail-preview {
   white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 
@@ -1054,7 +1125,8 @@ onBeforeUnmount(() => {
   }
 
   .form-card {
-    padding: 16px;
+    padding: 14px;
+    border-radius: 18px;
   }
 
   .register-form {
@@ -1068,7 +1140,7 @@ onBeforeUnmount(() => {
 
   .form-grid {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 12px;
   }
 
   .form-item label {
@@ -1089,7 +1161,7 @@ onBeforeUnmount(() => {
   }
 
   .issue-toggle-group {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -1099,7 +1171,27 @@ onBeforeUnmount(() => {
   }
 
   .search-select-dropdown {
-    max-height: 240px;
+    max-height: min(56vh, 320px);
+    border-radius: 16px;
+    padding: 6px;
+  }
+
+  .search-select-option {
+    padding: 11px 10px;
+  }
+
+  .selected-standard-field {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .selected-standard-first {
+    scroll-margin-top: 12px;
+  }
+
+  .selected-standard-detail textarea {
+    min-height: 168px;
+    max-height: 42vh;
   }
 
   .option-main {
@@ -1114,7 +1206,7 @@ onBeforeUnmount(() => {
 
   .upload-dropzone {
     min-height: 148px;
-    padding: 20px 14px;
+    padding: 18px 14px;
   }
 
   .upload-title {
