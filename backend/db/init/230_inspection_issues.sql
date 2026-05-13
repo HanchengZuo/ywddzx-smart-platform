@@ -23,6 +23,7 @@
 CREATE TABLE issues (
     id SERIAL PRIMARY KEY,                                                    -- 问题ID，主键，自增
     inspection_id INTEGER NOT NULL REFERENCES inspections(id),                -- 所属巡检主记录ID
+    inspector_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,             -- 本条问题实际录入检查人ID
     station_id INTEGER NOT NULL REFERENCES stations(id),                      -- 所属站点ID
     inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id),    -- 所属检查表ID
     standard_id BIGINT NOT NULL,                                              -- 全局唯一规范ID
@@ -41,3 +42,15 @@ CREATE TABLE issues (
     review_note TEXT,                                                         -- 督导组复核说明
     review_photo_path TEXT                                                    -- 督导组复核照片路径
 );
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS inspector_id INTEGER REFERENCES users(id) ON DELETE RESTRICT;
+
+UPDATE issues i
+SET inspector_id = ins.inspector_id
+FROM inspections ins
+WHERE i.inspection_id = ins.id
+  AND i.inspector_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_issues_inspector_id
+ON issues (inspector_id);

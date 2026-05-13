@@ -126,7 +126,7 @@
                   查看问题
                 </button>
 
-                <button v-if="isSupervisorLike && record.sign_status !== '已签名确认'"
+                <button v-if="canSignInspectionRecord(record)"
                   class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
                   aria-label="结束检查签名确认" @click="openSignatureDialog(record)">
                   签名确认
@@ -220,7 +220,7 @@
                       <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
                     </div>
 
-                    <button v-else-if="isSupervisorLike" class="btn btn-primary signature-action-btn"
+                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
                       type="button" @click="openSignatureDialog(record)">
                       结束本检查表并签名确认
                     </button>
@@ -412,6 +412,10 @@
               </div>
 
               <div class="batch-issue-meta-grid">
+                <div>
+                  <span>检查人</span>
+                  <strong>{{ getInspectorLabel(issue) }}</strong>
+                </div>
                 <div>
                   <span>当前状态</span>
                   <strong>{{ issue.status || '-' }}</strong>
@@ -623,6 +627,17 @@ const getInspectionStation = (inspection) => inspection?.station_name || inspect
 
 const getInspectorLabel = (inspection) => {
   if (!inspection) return '-'
+  if (Array.isArray(inspection.inspectors) && inspection.inspectors.length) {
+    return inspection.inspectors
+      .map((item) => {
+        const name = item.real_name || item.username || ''
+        const phone = item.phone || ''
+        if (name && phone) return `${name}（${phone}）`
+        return name || phone
+      })
+      .filter(Boolean)
+      .join('、') || '-'
+  }
   const name = inspection.inspector_name || inspection.inspector_username || ''
   const phone = inspection.inspector_phone || ''
   if (name && phone) return `${name}（${phone}）`
@@ -743,6 +758,7 @@ const buildBatchDetailExportHtml = async () => {
         </div>
         <div class="info-grid compact">
           ${exportInfoItem('登记时间', issue.created_at)}
+          ${exportInfoItem('检查人', getInspectorLabel(issue))}
           ${exportInfoItem('规范ID', issue.standard_id)}
           ${exportInfoItem('整改结果', issue.rectification_result)}
           ${exportInfoItem('复核结果', issue.review_result)}
@@ -1039,6 +1055,8 @@ const closeBatchDetail = () => {
     issues: []
   }
 }
+
+const canSignInspectionRecord = (record) => Boolean(record?.can_sign_record)
 
 const canDeleteInspectionRecord = (record) => Boolean(record?.can_delete_record)
 

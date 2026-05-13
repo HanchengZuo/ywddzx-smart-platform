@@ -409,6 +409,17 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.4',
+    date: '2026-05-13',
+    title: '巡检记录检查人逻辑优化和检查表签名权限限制',
+    summary: '支持多人共同录入同一张检查表，并限制签名确认权限。',
+    items: [
+      '问题检查人以实际提交账号为准。',
+      '巡检记录支持展示多名检查人及每条问题的具体检查人。',
+      '检查表签名仅允许实际参与录入的检查人员操作。'
+    ]
+  },
+  {
     version: 'v1.3',
     date: '2026-05-11',
     title: '移动端分页优化',
@@ -1077,7 +1088,7 @@ textarea {
 }
 
 .login-version-dialog {
-  width: min(620px, 100%);
+  width: min(860px, calc(100vw - 44px));
   max-height: min(720px, calc(100vh - 44px));
   overflow: auto;
   border-radius: 28px;
@@ -1140,8 +1151,8 @@ textarea {
 
 .login-version-history-item {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 22px;
   padding: 18px;
   border-radius: 22px;
   background: #f8fafc;
@@ -2009,6 +2020,7 @@ textarea:focus {
   }
 
   .login-version-dialog {
+    width: 100%;
     max-height: calc(100vh - 24px);
     border-radius: 24px;
   }

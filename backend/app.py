@@ -2598,6 +2598,36 @@ def fetch_standard_from_table(cur, physical_table_name, standard_id):
     return cur.fetchone()
 
 
+def ensure_issue_inspector_schema(cur):
+    cur.execute("SELECT to_regclass('public.issues') AS table_name;")
+    if not cur.fetchone().get("table_name"):
+        return
+
+    cur.execute(
+        """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS inspector_id INTEGER REFERENCES users(id) ON DELETE RESTRICT;
+        """
+    )
+    cur.execute("SELECT to_regclass('public.inspections') AS table_name;")
+    if cur.fetchone().get("table_name"):
+        cur.execute(
+            """
+            UPDATE issues i
+            SET inspector_id = ins.inspector_id
+            FROM inspections ins
+            WHERE i.inspection_id = ins.id
+              AND i.inspector_id IS NULL;
+            """
+        )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issues_inspector_id
+        ON issues (inspector_id);
+        """
+    )
+
+
 def create_inspection_record(
     cur, station_id, inspector_id, inspection_table_id, batch_id
 ):
@@ -4483,6 +4513,7 @@ def sign_inspection_record(inspection_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         cur.execute(
             """
@@ -4533,6 +4564,36 @@ def sign_inspection_record(inspection_id):
 
         if inspection["sign_status"] == "已签名确认":
             return jsonify({"success": False, "error": "该检查表已完成签名确认。"}), 400
+
+        cur.execute(
+            """
+            SELECT 1
+            WHERE EXISTS (
+                SELECT 1
+                FROM inspections ins
+                WHERE ins.id = %s
+                  AND ins.inspector_id = %s
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM issues i
+                WHERE i.inspection_id = %s
+                  AND i.inspector_id = %s
+            )
+            LIMIT 1;
+            """,
+            (inspection_id, user_id, inspection_id, user_id),
+        )
+        if not cur.fetchone():
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "只有参与该检查表录入的检查人员可以发起签名确认。",
+                    }
+                ),
+                403,
+            )
 
         signature_path = save_signature_file(signature_file)
 
@@ -8507,6 +8568,7 @@ def inspection_register():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
+        ensure_issue_inspector_schema(cur)
         conn.commit()
 
         cur.execute(
@@ -8676,6 +8738,7 @@ def inspection_register():
             """
             INSERT INTO issues (
                 inspection_id,
+                inspector_id,
                 station_id,
                 inspection_table_id,
                 standard_id,
@@ -8684,11 +8747,12 @@ def inspection_register():
                 photo_path,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id;
             """,
             (
                 inspection_id,
+                inspector_id,
                 station_id,
                 inspection_table_id,
                 standard_id,
@@ -8740,6 +8804,7 @@ def get_my_issues():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         cur.execute(
             """
@@ -8764,7 +8829,7 @@ def get_my_issues():
                 SELECT
                     i.id,
                     i.station_id,
-                    ins.inspector_id,
+                    COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -8807,7 +8872,7 @@ def get_my_issues():
                 SELECT
                     i.id,
                     i.station_id,
-                    ins.inspector_id,
+                    COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -8859,6 +8924,7 @@ def get_issues():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         user = None
         where_clause = ""
@@ -8885,13 +8951,13 @@ def get_issues():
             pass
         elif can_view_own:
             if not user["station_id"]:
-                where_clause = "WHERE ins.inspector_id = %s"
+                where_clause = "WHERE COALESCE(i.inspector_id, ins.inspector_id) = %s"
                 params.append(user["id"])
             else:
-                where_clause = "WHERE i.station_id = %s OR ins.inspector_id = %s"
+                where_clause = "WHERE i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s"
                 params.extend([user["station_id"], user["id"]])
         else:
-            where_clause = "WHERE ins.inspector_id = %s"
+            where_clause = "WHERE COALESCE(i.inspector_id, ins.inspector_id) = %s"
             params.append(user["id"])
 
         can_explicit_edit = can_edit_inspection_issues(cur, user)
@@ -8903,15 +8969,15 @@ def get_issues():
                 SELECT
                     i.id,
                     i.station_id,
-                    ins.inspector_id,
+                    COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
                     TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
                     s.region,
                     s.station_name AS station,
                     s.station_manager_name AS station_manager,
                     s.station_manager_phone AS station_manager_phone,
-                    inspector.real_name AS inspector,
-                    inspector.phone AS inspector_phone,
+                    issue_inspector.real_name AS inspector,
+                    issue_inspector.phone AS inspector_phone,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
                     i.standard_detail_text,
@@ -8928,7 +8994,7 @@ def get_issues():
                 JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
-                JOIN users inspector ON ins.inspector_id = inspector.id
+                JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
                 {where_clause}
                 ORDER BY i.id DESC;
                 """
@@ -8985,6 +9051,7 @@ def update_issue(issue_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         user = get_user_by_id(cur, user_id)
         if not user:
@@ -8997,7 +9064,7 @@ def update_issue(issue_id):
                 i.station_id,
                 i.status,
                 i.rectification_result,
-                ins.inspector_id
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
@@ -9105,6 +9172,7 @@ def delete_issue(issue_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         user = get_user_by_id(cur, user_id)
         if not user:
@@ -9118,7 +9186,7 @@ def delete_issue(issue_id):
                 i.station_id,
                 i.status,
                 i.rectification_result,
-                ins.inspector_id
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
@@ -9497,6 +9565,7 @@ def get_inspections():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         user = None
         where_clause = ""
@@ -9547,7 +9616,8 @@ def get_inspections():
                     ins.sign_status,
                     ins.station_manager_signed_name,
                     ins.station_manager_signature_path,
-                    TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at
+                    TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+                    BOOL_OR(COALESCE(i.inspector_id, ins.inspector_id) = %s) AS current_user_participated
                 FROM inspections ins
                 JOIN stations s ON ins.station_id = s.id
                 JOIN inspection_tables t ON ins.inspection_table_id = t.id
@@ -9566,7 +9636,7 @@ def get_inspections():
                 ORDER BY ins.inspection_date DESC, ins.id DESC;
                 """
             ).format(where_clause=sql.SQL(where_clause)),
-            params,
+            [user["id"], *params],
         )
         rows = cur.fetchall()
         return jsonify(
@@ -9574,6 +9644,11 @@ def get_inspections():
                 {
                     **dict(row),
                     "can_delete_record": bool(can_delete_records),
+                    "can_sign_record": bool(
+                        is_supervisor_like(user)
+                        and row.get("sign_status") != "已签名确认"
+                        and row.get("current_user_participated")
+                    ),
                 }
                 for row in rows
             ]
@@ -9751,6 +9826,7 @@ def get_inspection_issues(inspection_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         user = None
         if user_id:
@@ -9806,7 +9882,39 @@ def get_inspection_issues(inspection_id):
 
         can_view_all = can_view_all_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
-        is_inspector = str(inspection.get("inspector_id") or "") == str(user.get("id") or "")
+        cur.execute(
+            """
+            SELECT DISTINCT
+                participant.id,
+                participant.username,
+                participant.real_name,
+                participant.phone
+            FROM (
+                SELECT ins.inspector_id AS inspector_id
+                FROM inspections ins
+                WHERE ins.id = %s
+                UNION
+                SELECT i.inspector_id AS inspector_id
+                FROM issues i
+                WHERE i.inspection_id = %s
+                  AND i.inspector_id IS NOT NULL
+            ) participant_ids
+            JOIN users participant ON participant_ids.inspector_id = participant.id
+            ORDER BY participant.id ASC;
+            """,
+            (inspection_id, inspection_id),
+        )
+        inspectors = [dict(row) for row in cur.fetchall()]
+        inspection = dict(inspection)
+        inspection["inspectors"] = inspectors
+        inspection["inspector_names"] = "、".join(
+            [
+                (row.get("real_name") or row.get("username") or str(row.get("id")))
+                for row in inspectors
+            ]
+        )
+
+        is_inspector = any(str(item.get("id") or "") == str(user.get("id") or "") for item in inspectors)
         if (
             can_view_own
             and not can_view_all
@@ -9821,6 +9929,10 @@ def get_inspection_issues(inspection_id):
             """
             SELECT
                 i.id,
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+                issue_inspector.username AS inspector_username,
+                issue_inspector.real_name AS inspector_name,
+                issue_inspector.phone AS inspector_phone,
                 TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
                 t.table_name AS inspection_table_name,
                 i.standard_id,
@@ -9835,7 +9947,9 @@ def get_inspection_issues(inspection_id):
                 i.review_photo_path AS review_photo,
                 i.status
             FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
             JOIN inspection_tables t ON i.inspection_table_id = t.id
+            JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
             WHERE i.inspection_id = %s
             ORDER BY i.id ASC;
             """,
