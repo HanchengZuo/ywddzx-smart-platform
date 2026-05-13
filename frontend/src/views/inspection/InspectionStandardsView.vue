@@ -18,16 +18,18 @@
           <input v-model.trim="filters.keyword" type="text" placeholder="可搜索规范ID、规范详情或检查表相关内容" />
         </div>
 
-        <div v-for="field in publicFilterFields" :key="field.field_key" class="filter-item filter-item-public">
+        <div v-for="field in publicFilterFields" :key="field.field_key" class="filter-item filter-item-public"
+          :class="{ 'filter-item-disabled': isFilterDisabled(field.field_key) }">
           <label>{{ field.field_label }}</label>
-          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]">
-            <option value="">全部</option>
+          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]"
+            :disabled="isFilterDisabled(field.field_key)">
+            <option value="">{{ getFilterDefaultOption(field.field_key) }}</option>
             <option v-for="option in getFieldOptions(field.field_key)" :key="option" :value="option">
               {{ option }}
             </option>
           </select>
           <input v-else v-model.trim="dynamicFilters[field.field_key]" type="text"
-            :placeholder="`搜索${field.field_label}`" />
+            :disabled="isFilterDisabled(field.field_key)" :placeholder="`搜索${field.field_label}`" />
         </div>
 
         <div class="filter-item">
@@ -40,16 +42,18 @@
           </select>
         </div>
 
-        <div v-for="field in localFilterFields" :key="field.field_key" class="filter-item">
+        <div v-for="field in localFilterFields" :key="field.field_key" class="filter-item"
+          :class="{ 'filter-item-disabled': isFilterDisabled(field.field_key) }">
           <label>{{ field.field_label }}</label>
-          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]">
-            <option value="">全部</option>
+          <select v-if="isFieldSelect(field.field_key)" v-model="dynamicFilters[field.field_key]"
+            :disabled="isFilterDisabled(field.field_key)">
+            <option value="">{{ getFilterDefaultOption(field.field_key) }}</option>
             <option v-for="option in getFieldOptions(field.field_key)" :key="option" :value="option">
               {{ option }}
             </option>
           </select>
           <input v-else v-model.trim="dynamicFilters[field.field_key]" type="text"
-            :placeholder="`搜索${field.field_label}`" />
+            :disabled="isFilterDisabled(field.field_key)" :placeholder="`搜索${field.field_label}`" />
         </div>
       </div>
 
@@ -228,8 +232,11 @@ const SELECT_OPTION_THRESHOLD = 12
 const SELECT_MAX_OPTION_TEXT_LENGTH = 16
 const INTERNAL_FIELD_KEY_PATTERN = /^(f_)?checklist_\d|^f_checklist_|^table_code$|^field_key$/
 const TITLE_EXCLUDED_LABELS = new Set(['序号', '编号', '规范ID', '标准ID'])
+const AREA_PRIMARY_LABEL = '一级区域'
+const AREA_SECONDARY_LABEL = '二级区域'
 
 const normalize = (value) => String(value || '').toLowerCase()
+const normalizeFieldLabel = (value) => String(value || '').replace(/\s/g, '')
 const formatMultiline = (value) => String(value || '').replace(/\\n/g, '\n')
 
 const activeInspectionTable = computed(() => {
@@ -264,14 +271,55 @@ const fieldMap = computed(() => {
 const fieldOptionsMap = computed(() => {
   const map = {}
   filterableFields.value.forEach((field) => {
+    if (isAreaSecondaryField(field)) {
+      return
+    }
     const values = standards.value
       .map((item) => String(item[field.field_key] || '').trim())
       .filter((value) => value && !value.includes('\n') && value.length <= SELECT_MAX_OPTION_TEXT_LENGTH)
-    const uniqueValues = [...new Set(values)]
-    map[field.field_key] = uniqueValues.length > 0 && uniqueValues.length <= SELECT_OPTION_THRESHOLD ? uniqueValues : []
+    const uniqueValues = uniqueSortedOptions(values)
+    map[field.field_key] = isAreaField(field)
+      ? uniqueValues
+      : uniqueValues.length > 0 && uniqueValues.length <= SELECT_OPTION_THRESHOLD ? uniqueValues : []
   })
+  const secondaryKey = areaSecondaryField.value?.field_key
+  const primaryKey = areaPrimaryField.value?.field_key
+  const primaryValue = primaryKey ? String(dynamicFilters.value[primaryKey] || '').trim() : ''
+  if (secondaryKey) {
+    map[secondaryKey] = primaryValue
+      ? uniqueSortedOptions(
+        standards.value
+          .filter((item) => String(item[primaryKey] || '').trim() === primaryValue)
+          .map((item) => item[secondaryKey])
+      )
+      : []
+  }
   return map
 })
+
+const uniqueSortedOptions = (values) => {
+  return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+}
+
+const isFieldWithLabel = (field, label) => normalizeFieldLabel(field?.field_label) === label
+
+const isAreaPrimaryField = (field) => isFieldWithLabel(field, AREA_PRIMARY_LABEL)
+
+const isAreaSecondaryField = (field) => isFieldWithLabel(field, AREA_SECONDARY_LABEL)
+
+const isAreaField = (field) => isAreaPrimaryField(field) || isAreaSecondaryField(field)
+
+const areaPrimaryField = computed(() => filterableFields.value.find(isAreaPrimaryField) || null)
+
+const areaSecondaryField = computed(() => filterableFields.value.find(isAreaSecondaryField) || null)
+
+const areaPrimaryFilterValue = computed(() => {
+  const primaryKey = areaPrimaryField.value?.field_key
+  return primaryKey ? String(dynamicFilters.value[primaryKey] || '').trim() : ''
+})
+
+const isAreaSecondaryFieldKey = (fieldKey) => String(fieldKey || '') === String(areaSecondaryField.value?.field_key || '')
 
 const getStandardDetailEntries = (item) => {
   if (!item) return []
@@ -312,11 +360,22 @@ const localFilterFields = computed(() => {
 })
 
 const isFieldSelect = (fieldKey) => {
-  return getFieldOptions(fieldKey).length > 0
+  const field = filterableFields.value.find((item) => item.field_key === fieldKey)
+  return Boolean(isAreaField(field) || getFieldOptions(fieldKey).length > 0)
 }
 
 const getFieldOptions = (fieldKey) => {
   return fieldOptionsMap.value[fieldKey] || []
+}
+
+const isFilterDisabled = (fieldKey) => {
+  if (!isAreaSecondaryFieldKey(fieldKey)) return false
+  const primaryKey = areaPrimaryField.value?.field_key
+  return !primaryKey || !String(dynamicFilters.value[primaryKey] || '').trim()
+}
+
+const getFilterDefaultOption = (fieldKey) => {
+  return isFilterDisabled(fieldKey) ? '请先选择一级区域' : '全部'
 }
 
 const getStandardIdentity = (item) => {
@@ -1084,6 +1143,18 @@ watch(
   { deep: true }
 )
 
+watch(
+  areaPrimaryFilterValue,
+  () => {
+    const secondaryKey = areaSecondaryField.value?.field_key
+    if (!secondaryKey || !dynamicFilters.value[secondaryKey]) return
+    dynamicFilters.value = {
+      ...dynamicFilters.value,
+      [secondaryKey]: ''
+    }
+  }
+)
+
 onMounted(async () => {
   if (!hasPermission) return
   try {
@@ -1213,6 +1284,19 @@ onBeforeUnmount(() => {
   outline: none;
   border-color: rgba(37, 99, 235, 0.4);
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+}
+
+.filter-item-disabled label {
+  color: #94a3b8;
+}
+
+.filter-item input:disabled,
+.filter-item select:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  box-shadow: none;
 }
 
 .filter-actions {
