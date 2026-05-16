@@ -16,22 +16,7 @@ CREATE TABLE inspection_table_fields (
     UNIQUE (inspection_table_id, field_key)
 );
 
--- inspection_public_fields 表：所有检查表共用字段配置表
--- 用途：
--- 1. 管理员可维护公共字段
--- 2. 公共字段会自动应用到所有检查表规范数据
--- 3. 字段系统标识全局唯一，避免与单张检查表字段冲突
-
-CREATE TABLE inspection_public_fields (
-    id SERIAL PRIMARY KEY,                              -- 公共字段ID，主键自增
-    field_key TEXT UNIQUE NOT NULL,                     -- 公共字段系统标识，全局唯一
-    field_label TEXT UNIQUE NOT NULL,                   -- 公共字段名称
-    is_filterable BOOLEAN DEFAULT TRUE,                 -- 是否可筛选
-    sort_order INTEGER DEFAULT 0,                       -- 排序号，公共字段优先展示
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP      -- 创建时间
-);
-
--- inspection_standard_export_templates 表：巡检规范公共导出模板
+-- inspection_standard_export_templates 表：外部规范导出模板
 -- 用途：
 -- 1. 记录导出规范时每张检查表需要展示哪些字段
 -- 2. 模板为全系统共享，不区分用户

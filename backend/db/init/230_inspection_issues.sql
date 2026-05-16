@@ -28,6 +28,8 @@ CREATE TABLE issues (
     inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id),    -- 所属检查表ID
     standard_id BIGINT NOT NULL,                                              -- 全局唯一规范ID
     standard_detail_text TEXT NOT NULL,                                       -- 规范详情快照（统一文本展示）
+    internal_standard_id TEXT,                                                -- 关联内部规范ID，可为空
+    internal_standard_detail_text TEXT,                                       -- 内部规范字段详情快照，可为空
 
     description TEXT NOT NULL,                                                -- 实际问题描述（督导组必须填写）
     photo_path TEXT NOT NULL,                                                 -- 问题原始照片路径（督导组必须上传，一问题一张）
@@ -46,6 +48,12 @@ CREATE TABLE issues (
 ALTER TABLE issues
 ADD COLUMN IF NOT EXISTS inspector_id INTEGER REFERENCES users(id) ON DELETE RESTRICT;
 
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS internal_standard_id TEXT;
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS internal_standard_detail_text TEXT;
+
 UPDATE issues i
 SET inspector_id = ins.inspector_id
 FROM inspections ins
@@ -54,3 +62,6 @@ WHERE i.inspection_id = ins.id
 
 CREATE INDEX IF NOT EXISTS idx_issues_inspector_id
 ON issues (inspector_id);
+
+CREATE INDEX IF NOT EXISTS idx_issues_internal_standard_id
+ON issues (internal_standard_id);

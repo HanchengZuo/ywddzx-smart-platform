@@ -2,9 +2,9 @@
   <div v-if="hasPermission" class="page-shell originals-page">
     <div class="page-header card-surface">
       <div>
-        <div class="page-kicker">巡检规范库</div>
+        <div class="page-kicker">外部规范库</div>
         <h2>检查表原件库</h2>
-        <p class="page-desc">集中查看各类检查表原始 PDF 文件，检查表目录来自数据库真实配置。</p>
+        <p class="page-desc">集中查看上海公司事业部检查表 PDF 原件，并追溯由检查表拆解形成的外部规范列表。</p>
       </div>
       <div class="header-badges">
         <span class="status-pill info">检查表 {{ checklistItems.length }}</span>
@@ -48,6 +48,10 @@
                 <span>文件大小</span>
                 <strong>{{ formatFileSize(item.file_size) }}</strong>
               </div>
+              <div>
+                <span>外部规范</span>
+                <strong>{{ getExternalStandardsByTable(item.inspection_table_id).length }} 条</strong>
+              </div>
             </div>
 
             <div class="checklist-card-footer">
@@ -60,6 +64,43 @@
                   @change="handlePdfChange(item, $event)" />
                 {{ uploadingId === item.inspection_table_id ? '上传中...' : item.has_pdf ? '上传新版' : '上传PDF' }}
               </label>
+            </div>
+
+            <div v-if="isMobileView && activeItem?.inspection_table_id === item.inspection_table_id"
+              class="mobile-external-section">
+              <div class="external-section-head">
+                <strong>外部规范列表</strong>
+                <span>{{ getExternalStandardsByTable(item.inspection_table_id).length }} 条</span>
+              </div>
+              <article v-for="standard in getPaginatedExternalStandards(item.inspection_table_id)"
+                :key="standard.external_standard_id" class="external-standard-card">
+                <div class="external-standard-top">
+                  <span>外部规范ID {{ standard.external_standard_id }}</span>
+                  <em :class="{ linked: standard.linked_internal_standard_id }">
+                    {{ standard.linked_internal_standard_id ? `内部 ${standard.linked_internal_standard_id}` : '未关联内部规范' }}
+                  </em>
+                </div>
+                <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
+              </article>
+              <div v-if="getExternalTotalPage(item.inspection_table_id) > 1" class="pagination-bar mobile-standard-pager">
+                <button class="btn btn-secondary pagination-btn" type="button"
+                  :disabled="getStandardPage(item.inspection_table_id) <= 1"
+                  @click.stop="setStandardPage(item.inspection_table_id, getStandardPage(item.inspection_table_id) - 1)">
+                  上一页
+                </button>
+                <div class="pagination-page-list scrollable-pages" @click.stop>
+                  <button v-for="pageNo in getAllPageNumbers(getExternalTotalPage(item.inspection_table_id))" :key="pageNo"
+                    class="pagination-page-btn" :class="{ active: pageNo === getStandardPage(item.inspection_table_id) }"
+                    type="button" @click="setStandardPage(item.inspection_table_id, pageNo)">
+                    {{ pageNo }}
+                  </button>
+                </div>
+                <button class="btn btn-secondary pagination-btn" type="button"
+                  :disabled="getStandardPage(item.inspection_table_id) >= getExternalTotalPage(item.inspection_table_id)"
+                  @click.stop="setStandardPage(item.inspection_table_id, getStandardPage(item.inspection_table_id) + 1)">
+                  下一页
+                </button>
+              </div>
             </div>
           </article>
 
@@ -109,6 +150,75 @@
             <div class="empty-title">还没有上传原始 PDF</div>
             <p>上传后，所有用户都可以在这里查看该检查表原件；移动端也可以直接打开预览。</p>
           </div>
+
+          <div class="external-section">
+            <div class="external-section-head">
+              <div>
+                <div class="section-kicker">外部规范列表</div>
+                <h3>由本检查表拆解得到的外部规范</h3>
+              </div>
+              <span class="status-pill info">{{ filteredActiveExternalStandards.length }} / {{ activeExternalStandards.length }} 条</span>
+            </div>
+
+            <div v-if="activeExternalStandards.length" class="external-filter-panel">
+              <label class="external-filter-item external-filter-keyword">
+                <span>关键词</span>
+                <input v-model.trim="desktopStandardFilters.keyword" type="search" placeholder="搜索外部规范ID或规范内容"
+                  @input="resetStandardPage(activeItem.inspection_table_id)" />
+              </label>
+              <label v-for="field in activeFilterFields" :key="field.field_key" class="external-filter-item">
+                <span>{{ field.field_label }}</span>
+                <select v-model="desktopStandardFilters.fieldValues[field.field_key]"
+                  @change="resetStandardPage(activeItem.inspection_table_id)">
+                  <option value="">全部</option>
+                  <option v-for="value in getFieldOptionValues(field.field_key)" :key="value" :value="value">
+                    {{ value }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <div v-if="filteredActiveExternalStandards.length" class="external-standard-list">
+              <article v-for="standard in paginatedActiveExternalStandards" :key="standard.external_standard_id"
+                class="external-standard-card">
+                <div class="external-standard-top">
+                  <span>外部规范ID {{ standard.external_standard_id }}</span>
+                  <em :class="{ linked: standard.linked_internal_standard_id }">
+                    {{ standard.linked_internal_standard_id ? `已关联内部规范 ${standard.linked_internal_standard_id}` : '未关联内部规范' }}
+                  </em>
+                </div>
+                <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
+              </article>
+
+              <div class="pagination-bar">
+                <div class="pagination-summary">
+                  共 {{ filteredActiveExternalStandards.length }} 条外部规范，第 {{ activeExternalPage }} / {{ activeExternalTotalPage }} 页
+                </div>
+                <div class="pagination-controls">
+                  <button class="btn btn-secondary pagination-btn" type="button"
+                    :disabled="activeExternalPage <= 1"
+                    @click="setStandardPage(activeItem.inspection_table_id, activeExternalPage - 1)">
+                    上一页
+                  </button>
+                  <div class="pagination-page-list scrollable-pages">
+                    <button v-for="pageNo in getAllPageNumbers(activeExternalTotalPage)" :key="pageNo"
+                      class="pagination-page-btn" :class="{ active: pageNo === activeExternalPage }"
+                      type="button" @click="setStandardPage(activeItem.inspection_table_id, pageNo)">
+                      {{ pageNo }}
+                    </button>
+                  </div>
+                  <button class="btn btn-secondary pagination-btn" type="button"
+                    :disabled="activeExternalPage >= activeExternalTotalPage"
+                    @click="setStandardPage(activeItem.inspection_table_id, activeExternalPage + 1)">
+                    下一页
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-external">
+              {{ activeExternalStandards.length ? '没有符合筛选条件的外部规范。' : '这张检查表暂未维护外部规范数据。' }}
+            </div>
+          </div>
         </template>
 
         <div v-else class="empty-preview">
@@ -128,7 +238,7 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const currentUsername = ref(localStorage.getItem('username') || '')
@@ -147,7 +257,15 @@ const actionMessageType = ref('info')
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.view_checklist_originals)
 const canManage = ref(currentRole === 'root' || Boolean(localPermissions.manage_checklist_originals))
 const checklistItems = ref([])
+const externalStandards = ref([])
 const activeTableId = ref('')
+const fieldMap = ref({})
+const standardPageByTable = ref({})
+const STANDARD_PAGE_SIZE = 5
+const desktopStandardFilters = reactive({
+  keyword: '',
+  fieldValues: {}
+})
 let actionMessageTimer = null
 
 const detectMobileViewport = () => {
@@ -166,6 +284,94 @@ const activeItem = computed(() => {
     checklistItems.value[0] ||
     null
 })
+
+const activeExternalStandards = computed(() => getExternalStandardsByTable(activeItem.value?.inspection_table_id))
+
+const activeFilterFields = computed(() => {
+  return (fieldMap.value[String(activeItem.value?.inspection_table_id || '')] || [])
+    .filter((field) => field.is_filterable)
+})
+
+const filteredActiveExternalStandards = computed(() => {
+  const keyword = String(desktopStandardFilters.keyword || '').trim().toLowerCase()
+  return activeExternalStandards.value.filter((item) => {
+    const keywordMatched = !keyword || [
+      item.external_standard_id,
+      item.standard_detail_text,
+      item.linked_internal_standard_id
+    ].join(' ').toLowerCase().includes(keyword)
+    if (!keywordMatched) return false
+
+    return activeFilterFields.value.every((field) => {
+      const filterValue = String(desktopStandardFilters.fieldValues[field.field_key] || '').trim()
+      if (!filterValue) return true
+      return String(item[field.field_key] ?? '').trim() === filterValue
+    })
+  })
+})
+
+const activeExternalTotalPage = computed(() => {
+  return Math.max(1, Math.ceil(filteredActiveExternalStandards.value.length / STANDARD_PAGE_SIZE))
+})
+
+const activeExternalPage = computed(() => {
+  return getStandardPage(activeItem.value?.inspection_table_id, activeExternalTotalPage.value)
+})
+
+const paginatedActiveExternalStandards = computed(() => {
+  const tableId = activeItem.value?.inspection_table_id
+  const start = (activeExternalPage.value - 1) * STANDARD_PAGE_SIZE
+  return filteredActiveExternalStandards.value.slice(start, start + STANDARD_PAGE_SIZE)
+})
+
+const getExternalStandardsByTable = (inspectionTableId) => {
+  return externalStandards.value.filter((item) => {
+    return String(item.inspection_table_id) === String(inspectionTableId || '')
+  })
+}
+
+const getStandardPage = (inspectionTableId, totalPage = null) => {
+  const tableKey = String(inspectionTableId || '')
+  const page = Number(standardPageByTable.value[tableKey] || 1)
+  const maxPage = Number(totalPage || getExternalTotalPage(inspectionTableId) || 1)
+  return Math.min(Math.max(page, 1), maxPage)
+}
+
+const setStandardPage = (inspectionTableId, pageValue) => {
+  const tableKey = String(inspectionTableId || '')
+  if (!tableKey) return
+  const totalPage = getExternalTotalPage(inspectionTableId)
+  standardPageByTable.value = {
+    ...standardPageByTable.value,
+    [tableKey]: Math.min(Math.max(Number(pageValue || 1), 1), totalPage)
+  }
+}
+
+const resetStandardPage = (inspectionTableId) => {
+  setStandardPage(inspectionTableId, 1)
+}
+
+const getExternalTotalPage = (inspectionTableId) => {
+  const list = getExternalStandardsByTable(inspectionTableId)
+  return Math.max(1, Math.ceil(list.length / STANDARD_PAGE_SIZE))
+}
+
+const getPaginatedExternalStandards = (inspectionTableId) => {
+  const list = getExternalStandardsByTable(inspectionTableId)
+  const page = getStandardPage(inspectionTableId)
+  const start = (page - 1) * STANDARD_PAGE_SIZE
+  return list.slice(start, start + STANDARD_PAGE_SIZE)
+}
+
+const getAllPageNumbers = (totalPage) => {
+  return Array.from({ length: Math.max(1, Number(totalPage || 1)) }, (_, index) => index + 1)
+}
+
+const getFieldOptionValues = (fieldKey) => {
+  return [...new Set(activeExternalStandards.value
+    .map((item) => String(item[fieldKey] ?? '').trim())
+    .filter(Boolean))]
+}
 
 const setActionMessage = (message, type = 'info') => {
   if (actionMessageTimer) {
@@ -192,6 +398,7 @@ const formatFileSize = (size) => {
 
 const selectItem = (item) => {
   activeTableId.value = String(item.inspection_table_id)
+  fetchFieldsForTable(item.inspection_table_id)
 }
 
 const handlePreviewClick = (item) => {
@@ -240,6 +447,32 @@ const fetchOriginals = async () => {
   }
 }
 
+const fetchExternalStandards = async () => {
+  const response = await axios.get('/api/external-standards', {
+    params: { _ts: Date.now() }
+  })
+  externalStandards.value = response.data?.items || []
+}
+
+const fetchFieldsForTable = async (inspectionTableId) => {
+  const tableKey = String(inspectionTableId || '')
+  if (!tableKey || fieldMap.value[tableKey]) return
+  try {
+    const response = await axios.get('/api/inspection-table-fields', {
+      params: { table_id: tableKey, _ts: Date.now() }
+    })
+    fieldMap.value = {
+      ...fieldMap.value,
+      [tableKey]: response.data || []
+    }
+  } catch (error) {
+    fieldMap.value = {
+      ...fieldMap.value,
+      [tableKey]: []
+    }
+  }
+}
+
 const handlePdfChange = async (item, event) => {
   const input = event.target
   const file = input.files?.[0]
@@ -284,8 +517,17 @@ const handleViewportResize = () => {
 
 onMounted(() => {
   window.addEventListener('resize', handleViewportResize)
-  fetchOriginals()
+  Promise.all([fetchOriginals(), fetchExternalStandards()]).catch((error) => {
+    setActionMessage(error?.response?.data?.error || '外部规范库加载失败。', 'error')
+  })
 })
+
+watch(activeItem, (item) => {
+  if (item?.inspection_table_id) {
+    fetchFieldsForTable(item.inspection_table_id)
+    resetStandardPage(item.inspection_table_id)
+  }
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleViewportResize)
@@ -484,7 +726,7 @@ onBeforeUnmount(() => {
 .card-meta-grid,
 .preview-meta-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 14px;
 }
@@ -556,6 +798,200 @@ onBeforeUnmount(() => {
   height: 100%;
   border: 0;
   background: #fff;
+}
+
+.external-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e5edf5;
+}
+
+.external-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.external-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+  border: 1px solid #e5edf5;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.external-filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.external-filter-item span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.external-filter-item input,
+.external-filter-item select {
+  width: 100%;
+  height: 40px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  padding: 0 11px;
+  box-sizing: border-box;
+}
+
+.external-standard-list,
+.mobile-external-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-external-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5edf5;
+}
+
+.external-standard-card {
+  padding: 14px;
+  border: 1px solid #e5edf5;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.external-standard-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.external-standard-top span {
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.external-standard-top em {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.external-standard-top em.linked {
+  background: #ecfdf5;
+  color: #15803d;
+}
+
+.external-standard-card p {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-line;
+}
+
+.empty-external {
+  min-height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.pagination-summary {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pagination-btn {
+  min-width: 72px;
+}
+
+.pagination-page-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, 48vw);
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.pagination-page-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.pagination-page-btn.active {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22);
+}
+
+.pagination-page-btn:hover {
+  background: #e0edff;
+  color: #1d4ed8;
+}
+
+.pagination-page-btn.active:hover {
+  background: #2563eb;
+  color: #fff;
+}
+
+.mobile-standard-pager {
+  gap: 10px;
+  min-width: 0;
 }
 
 .empty-block,
@@ -723,6 +1159,46 @@ onBeforeUnmount(() => {
 
   .checklist-card-main {
     flex-direction: column;
+  }
+
+  .external-section-head,
+  .external-standard-top {
+    flex-direction: column;
+  }
+
+  .external-filter-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .pagination-controls {
+    width: 100%;
+    justify-content: space-between;
+    min-width: 0;
+  }
+
+  .mobile-standard-pager {
+    width: 100%;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .mobile-standard-pager .pagination-page-list {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    justify-content: flex-start;
+    white-space: nowrap;
+  }
+
+  .mobile-standard-pager .pagination-btn {
+    min-width: 68px;
+    padding-inline: 10px;
+  }
+
+  .pagination-controls .pagination-page-list {
+    max-width: min(100%, 56vw);
   }
 
   .pdf-preview-shell {

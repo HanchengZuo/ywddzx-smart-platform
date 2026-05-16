@@ -73,13 +73,17 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
 CHECKLIST_FIELD_KEY_MAX_LENGTH = 63
 CHECKLIST_STANDARD_ID_BLOCK_SIZE = 1000
-PUBLIC_CHECKLIST_FIELD_TABLE_CODE = "public"
+SCHEMA_MIGRATION_LOCK_KEY = 2026051601
 RESERVED_CHECKLIST_FIELD_KEYS = {
     "id",
     "standard_id",
     "created_at",
     "updated_at",
 }
+
+
+def acquire_schema_migration_lock(cur):
+    cur.execute("SELECT pg_advisory_xact_lock(%s);", (SCHEMA_MIGRATION_LOCK_KEY,))
 
 # === Permission constants ===
 ROLE_OPTIONS = {"root", "supervisor", "station_manager"}
@@ -102,7 +106,7 @@ PERMISSION_CATALOG = [
         "key": "view_inspection_standards",
         "name": "查看页面",
         "category": "巡检规范库",
-        "description": "访问巡检规范库并查询检查表规范条目。",
+        "description": "访问业务督导中心自建的内部巡检规范库。",
         "defaults": {"root": True, "supervisor": True, "station_manager": True},
     },
     {
@@ -240,9 +244,16 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "manage_checklists",
-        "name": "管理巡检表数据",
-        "category": "巡检表数据管理",
-        "description": "访问巡检表数据管理页面，并维护检查表、字段结构和规范数据。",
+        "name": "管理检查表数据",
+        "category": "检查表数据管理",
+        "description": "访问检查表数据管理页面，并维护外部检查表、字段结构和外部规范数据。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
+        "key": "manage_internal_standards",
+        "name": "管理内部巡检规范",
+        "category": "巡检规范库数据管理",
+        "description": "访问巡检规范库数据管理页面，并维护内部规范字段配置和外部规范挂载关系。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
 ]
@@ -295,7 +306,8 @@ FEEDBACK_MODULE_OPTIONS = {
     "数据备份管理",
     "用户数据管理",
     "站点数据管理",
-    "巡检表数据管理",
+    "检查表数据管理",
+    "巡检规范库数据管理",
     "管理系统",
     "公共功能",
     "登录与账号",
@@ -1749,6 +1761,7 @@ def normalize_checklist_field_rows(fields, table_code=None, allow_empty=False):
                 "field_key": field_key,
                 "field_label": field_label,
                 "is_filterable": bool(field.get("is_filterable", True)) if isinstance(field, dict) else True,
+                "is_long_text": bool(field.get("is_long_text", False)) if isinstance(field, dict) else False,
                 "sort_order": index,
             }
         )
@@ -1927,36 +1940,6 @@ def ensure_checklist_standard_id_bases(cur):
     )
     cur.execute(
         """
-        CREATE TABLE IF NOT EXISTS inspection_public_fields (
-            id SERIAL PRIMARY KEY,
-            field_key TEXT UNIQUE NOT NULL,
-            field_label TEXT UNIQUE NOT NULL,
-            is_filterable BOOLEAN DEFAULT TRUE,
-            sort_order INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE inspection_public_fields
-        ADD COLUMN IF NOT EXISTS is_filterable BOOLEAN DEFAULT TRUE;
-        """
-    )
-    cur.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_inspection_public_fields_key_unique
-        ON inspection_public_fields (field_key);
-        """
-    )
-    cur.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_inspection_public_fields_label_unique
-        ON inspection_public_fields (field_label);
-        """
-    )
-    cur.execute(
-        """
         SELECT id, table_code, table_name, standard_id_base
         FROM inspection_tables
         ORDER BY id ASC;
@@ -1967,6 +1950,7 @@ def ensure_checklist_standard_id_bases(cur):
 
 
 def ensure_inspection_checklist_management_schema(cur):
+    acquire_schema_migration_lock(cur)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS inspection_tables (
@@ -2102,41 +2086,6 @@ def ensure_checklist_field_columns(cur, physical_table_name, fields):
         )
 
 
-def get_public_checklist_fields(cur):
-    cur.execute(
-        """
-        SELECT
-            id,
-            NULL::integer AS inspection_table_id,
-            field_key,
-            field_label,
-            is_filterable,
-            sort_order,
-            TRUE AS is_public
-        FROM inspection_public_fields
-        ORDER BY sort_order ASC, id ASC;
-        """
-    )
-    return cur.fetchall()
-
-
-def ensure_public_field_columns_for_all_checklists(cur, public_fields=None):
-    fields = [dict(field) for field in (public_fields if public_fields is not None else get_public_checklist_fields(cur))]
-    if not fields:
-        return
-    cur.execute(
-        """
-        SELECT table_code
-        FROM inspection_tables
-        ORDER BY id ASC;
-        """
-    )
-    for row in cur.fetchall():
-        physical_table_name = get_physical_table_name_by_code(row["table_code"])
-        if physical_table_name:
-            ensure_checklist_field_columns(cur, physical_table_name, fields)
-
-
 def checklist_physical_table_exists(cur, physical_table_name):
     cur.execute("SELECT to_regclass(%s) AS table_name;", (f"public.{physical_table_name}",))
     row = cur.fetchone()
@@ -2154,7 +2103,6 @@ def get_checklist_row_count(cur, physical_table_name):
 
 
 def get_management_checklist_fields(cur, inspection_table_id, include_public=False):
-    public_fields = [dict(field) for field in get_public_checklist_fields(cur)] if include_public else []
     cur.execute(
         """
         SELECT
@@ -2171,7 +2119,7 @@ def get_management_checklist_fields(cur, inspection_table_id, include_public=Fal
         """,
         (inspection_table_id,),
     )
-    return [*public_fields, *cur.fetchall()]
+    return cur.fetchall()
 
 
 def normalize_standard_export_template_config(cur, raw_config):
@@ -2280,40 +2228,6 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
         )
 
 
-def upsert_public_checklist_fields(cur, fields):
-    incoming_keys = [field["field_key"] for field in fields]
-    cur.execute(
-        """
-        DELETE FROM inspection_public_fields
-        WHERE field_key <> ALL(%s::text[]);
-        """,
-        (incoming_keys,),
-    )
-    for field in fields:
-        cur.execute(
-            """
-            INSERT INTO inspection_public_fields (
-                field_key,
-                field_label,
-                is_filterable,
-                sort_order
-            )
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (field_key)
-            DO UPDATE SET
-                field_label = EXCLUDED.field_label,
-                is_filterable = EXCLUDED.is_filterable,
-                sort_order = EXCLUDED.sort_order;
-            """,
-            (
-                field["field_key"],
-                field["field_label"],
-                field["is_filterable"],
-                field["sort_order"],
-            ),
-        )
-
-
 def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
     incoming_keys = [field["field_key"] for field in fields]
     if not incoming_keys:
@@ -2331,71 +2245,11 @@ def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
     conflict = cur.fetchone()
     if conflict:
         raise ValueError("字段系统标识已被其他检查表使用，请重新保存生成新的字段键。")
-    cur.execute(
-        """
-        SELECT field_key
-        FROM inspection_public_fields
-        WHERE field_key = ANY(%s::text[])
-        LIMIT 1;
-        """,
-        (incoming_keys,),
-    )
-    if cur.fetchone():
-        raise ValueError("字段系统标识已被公共字段使用，请重新保存生成新的字段键。")
-
-
-def ensure_no_public_field_label_conflicts(cur, fields):
-    labels = [field["field_label"] for field in fields]
-    if not labels:
-        return
-    cur.execute(
-        """
-        SELECT field_label
-        FROM inspection_public_fields
-        WHERE field_label = ANY(%s::text[])
-        LIMIT 1;
-        """,
-        (labels,),
-    )
-    conflict = cur.fetchone()
-    if conflict:
-        raise ValueError(f"字段名称【{conflict['field_label']}】已作为公共字段存在，请勿在单张检查表内重复配置。")
-
-
-def ensure_unique_public_checklist_fields(cur, fields):
-    keys = [field["field_key"] for field in fields]
-    labels = [field["field_label"] for field in fields]
-    if keys:
-        cur.execute(
-            """
-            SELECT field_key
-            FROM inspection_table_fields
-            WHERE field_key = ANY(%s::text[])
-            LIMIT 1;
-            """,
-            (keys,),
-        )
-        if cur.fetchone():
-            raise ValueError("公共字段系统标识与已有检查表字段冲突，请重新保存。")
-    if labels:
-        cur.execute(
-            """
-            SELECT field_label
-            FROM inspection_table_fields
-            WHERE field_label = ANY(%s::text[])
-            LIMIT 1;
-            """,
-            (labels,),
-        )
-        conflict = cur.fetchone()
-        if conflict:
-            raise ValueError(f"公共字段名称【{conflict['field_label']}】已被某张检查表使用，请先调整名称。")
 
 
 def serialize_management_checklist(cur, row):
     physical_table_name = get_physical_table_name_by_code(row["table_code"])
     local_fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"])]
-    combined_fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"], include_public=True)]
     return {
         "id": row["id"],
         "table_code": row["table_code"],
@@ -2410,7 +2264,7 @@ def serialize_management_checklist(cur, row):
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "physical_table_name": physical_table_name,
-        "fields": combined_fields,
+        "fields": local_fields,
         "local_fields": local_fields,
         "standard_count": get_checklist_row_count(cur, physical_table_name),
     }
@@ -2441,11 +2295,11 @@ def fetch_management_checklist(cur, inspection_table_id):
 def normalize_import_standard_id(value):
     text = str(value or "").strip()
     if not text:
-        raise ValueError("请填写规范ID。")
+        raise ValueError("请填写外部规范ID。")
     if re.match(r"^\d+\.0$", text):
         text = text[:-2]
     if not re.match(r"^-?\d+$", text):
-        raise ValueError(f"规范ID【{text}】不是有效整数。")
+        raise ValueError(f"外部规范ID【{text}】不是有效整数。")
     return int(text)
 
 
@@ -2481,11 +2335,11 @@ def normalize_checklist_import_rows(raw_rows, fields, standard_id_base=None, all
         if standard_id_base is not None and not (range_start <= standard_id <= range_end):
             if not allow_reassign:
                 raise ValueError(
-                    f"规范ID【{standard_id}】不在当前检查表号段 {range_start}-{range_end} 内。"
+                    f"外部规范ID【{standard_id}】不在当前检查表号段 {range_start}-{range_end} 内。"
                 )
             standard_id = range_start + index
         if standard_id in seen_ids:
-            raise ValueError(f"导入文件内规范ID【{standard_id}】重复。")
+            raise ValueError(f"导入文件内外部规范ID【{standard_id}】重复。")
         seen_ids.add(standard_id)
         item = {"standard_id": standard_id}
         for field in fields:
@@ -2614,7 +2468,7 @@ def get_next_checklist_standard_id(cur, checklist, physical_table_name):
     next_standard_id = int(row["max_standard_id"] or (range_start - 1)) + 1
     if next_standard_id > range_end:
         raise ValueError(
-            f"该检查表规范ID号段 {range_start}-{range_end} 已用完，"
+            f"该检查表外部规范ID号段 {range_start}-{range_end} 已用完，"
             f"单张检查表最多维护 {CHECKLIST_STANDARD_ID_BLOCK_SIZE} 条规范。"
         )
     return next_standard_id
@@ -2650,6 +2504,18 @@ def sync_referenced_standard_detail_text(cur, inspection_table_id, standard_id, 
           AND standard_id = %s;
         """,
         (detail_text, inspection_table_id, standard_id),
+    )
+    return cur.rowcount
+
+
+def sync_referenced_internal_standard_detail_text(cur, internal_standard_id, detail_text):
+    cur.execute(
+        """
+        UPDATE issues
+        SET internal_standard_detail_text = %s
+        WHERE UPPER(COALESCE(internal_standard_id, '')) = %s;
+        """,
+        (detail_text, str(internal_standard_id or "").upper()),
     )
     return cur.rowcount
 
@@ -2712,15 +2578,10 @@ def normalize_checklist_backup_payload(payload):
     if not isinstance(checklists, list):
         raise ValueError("备份文件缺少 checklists 数组。")
 
-    public_fields = normalize_checklist_field_rows(
-        payload.get("public_fields") or [],
-        PUBLIC_CHECKLIST_FIELD_TABLE_CODE,
-        allow_empty=True,
-    )
     normalized = []
     seen_codes = set()
     seen_names = set()
-    seen_field_keys = {field["field_key"] for field in public_fields}
+    seen_field_keys = set()
     seen_standard_id_bases = set()
     for index, item in enumerate(checklists, start=1):
         if not isinstance(item, dict):
@@ -2739,25 +2600,20 @@ def normalize_checklist_backup_payload(payload):
         if table_name in seen_names:
             raise ValueError(f"备份文件内检查表名称【{table_name}】重复。")
         if standard_id_base in seen_standard_id_bases:
-            raise ValueError(f"备份文件内规范ID号段【{standard_id_base}】重复。")
+            raise ValueError(f"备份文件内外部规范ID号段【{standard_id_base}】重复。")
         seen_codes.add(table_code)
         seen_names.add(table_name)
         seen_standard_id_bases.add(standard_id_base)
         fields = normalize_checklist_field_rows(item.get("fields"), table_code)
-        public_field_labels = {field["field_label"] for field in public_fields}
-        for field in fields:
-            if field["field_label"] in public_field_labels:
-                raise ValueError(f"第 {index} 张检查表字段【{field['field_label']}】与公共字段重复。")
         for field in fields:
             field_key = field["field_key"]
             if field_key in seen_field_keys:
                 raise ValueError(f"备份文件内字段系统标识 {field_key} 重复。")
             seen_field_keys.add(field_key)
-        combined_fields = [*public_fields, *fields]
         standards = (
             normalize_checklist_import_rows(
                 item.get("standards") or [],
-                combined_fields,
+                fields,
                 standard_id_base,
                 allow_reassign=True,
             )
@@ -2777,7 +2633,6 @@ def normalize_checklist_backup_payload(payload):
             }
         )
     return {
-        "public_fields": public_fields,
         "checklists": normalized,
     }
 
@@ -2854,6 +2709,7 @@ def fetch_standard_from_table(cur, physical_table_name, standard_id):
 
 
 def ensure_issue_inspector_schema(cur):
+    acquire_schema_migration_lock(cur)
     cur.execute("SELECT to_regclass('public.issues') AS table_name;")
     if not cur.fetchone().get("table_name"):
         return
@@ -2862,6 +2718,18 @@ def ensure_issue_inspector_schema(cur):
         """
         ALTER TABLE issues
         ADD COLUMN IF NOT EXISTS inspector_id INTEGER REFERENCES users(id) ON DELETE RESTRICT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS internal_standard_id TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS internal_standard_detail_text TEXT;
         """
     )
     cur.execute("SELECT to_regclass('public.inspections') AS table_name;")
@@ -2879,6 +2747,12 @@ def ensure_issue_inspector_schema(cur):
         """
         CREATE INDEX IF NOT EXISTS idx_issues_inspector_id
         ON issues (inspector_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issues_internal_standard_id
+        ON issues (internal_standard_id);
         """
     )
 
@@ -4521,70 +4395,739 @@ def serialize_standard_row(field_meta, row):
     return item
 
 
-def build_inspection_standard_ai_catalog(cur):
+def ensure_internal_standard_schema(cur):
+    acquire_schema_migration_lock(cur)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standards (
+            id SERIAL PRIMARY KEY,
+            internal_standard_id TEXT UNIQUE NOT NULL,
+            path_values JSONB NOT NULL DEFAULT '[]'::jsonb,
+            field_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+            content TEXT NOT NULL DEFAULT '',
+            notes TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_internal_standards
+        ADD COLUMN IF NOT EXISTS field_values JSONB NOT NULL DEFAULT '{}'::jsonb;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_internal_standards
+        ALTER COLUMN content SET DEFAULT '';
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspection_internal_standards
+        SET content = ''
+        WHERE content IS NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standard_fields (
+            id SERIAL PRIMARY KEY,
+            field_key TEXT UNIQUE NOT NULL,
+            field_label TEXT UNIQUE NOT NULL,
+            is_filterable BOOLEAN DEFAULT TRUE,
+            is_long_text BOOLEAN DEFAULT FALSE,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_internal_standard_fields
+        ADD COLUMN IF NOT EXISTS is_long_text BOOLEAN DEFAULT FALSE;
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standard_links (
+            id SERIAL PRIMARY KEY,
+            internal_standard_id INTEGER NOT NULL REFERENCES inspection_internal_standards(id) ON DELETE CASCADE,
+            external_standard_id BIGINT NOT NULL UNIQUE,
+            external_inspection_table_id INTEGER REFERENCES inspection_tables(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_internal_standards_path_values
+        ON inspection_internal_standards USING GIN (path_values);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_internal_standards_field_values
+        ON inspection_internal_standards USING GIN (field_values);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_internal_standard_links_internal
+        ON inspection_internal_standard_links (internal_standard_id);
+        """
+    )
+
+
+def get_internal_standard_fields(cur):
     cur.execute(
         """
         SELECT
             id,
-            table_code,
-            table_name,
-            checklist_mode,
-            description,
-            is_active
+            field_key,
+            field_label,
+            is_filterable,
+            is_long_text,
+            sort_order
+        FROM inspection_internal_standard_fields
+        ORDER BY sort_order ASC, id ASC;
+        """
+    )
+    return cur.fetchall()
+
+
+def normalize_internal_standard_field_rows(fields, allow_empty=True):
+    return normalize_checklist_field_rows(
+        fields,
+        table_code="internal_standard",
+        allow_empty=allow_empty,
+    )
+
+
+def upsert_internal_standard_fields(cur, fields):
+    incoming_keys = [field["field_key"] for field in fields]
+    current_rows = get_internal_standard_fields(cur)
+    current_keys = {row["field_key"] for row in current_rows}
+    removed_keys = [field_key for field_key in current_keys if field_key not in incoming_keys]
+
+    if incoming_keys:
+        cur.execute(
+            """
+            DELETE FROM inspection_internal_standard_fields
+            WHERE field_key <> ALL(%s::text[]);
+            """,
+            (incoming_keys,),
+        )
+    else:
+        cur.execute("DELETE FROM inspection_internal_standard_fields;")
+
+    for field in fields:
+        cur.execute(
+            """
+            INSERT INTO inspection_internal_standard_fields (
+                field_key,
+                field_label,
+                is_filterable,
+                is_long_text,
+                sort_order
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (field_key)
+            DO UPDATE SET
+                field_label = EXCLUDED.field_label,
+                is_filterable = EXCLUDED.is_filterable,
+                is_long_text = EXCLUDED.is_long_text,
+                sort_order = EXCLUDED.sort_order;
+            """,
+            (
+                field["field_key"],
+                field["field_label"],
+                field["is_filterable"],
+                field.get("is_long_text", False),
+                field["sort_order"],
+            ),
+        )
+
+    for field_key in removed_keys:
+        cur.execute(
+            """
+            UPDATE inspection_internal_standards
+            SET field_values = field_values - %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE field_values ? %s;
+            """,
+            (field_key, field_key),
+        )
+
+
+def parse_json_field(value, fallback):
+    if value in (None, ""):
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed
+        except Exception:
+            return fallback
+    return fallback
+
+
+def normalize_internal_field_values(raw_values, fields):
+    if not fields:
+        raise ValueError("请先配置内部规范字段。")
+    if not isinstance(raw_values, dict):
+        raise ValueError("内部规范字段内容格式不正确。")
+    normalized = {}
+    for field in fields:
+        field_key = field["field_key"]
+        normalized[field_key] = normalize_text(raw_values.get(field_key), 1000)
+    first_field = fields[0]
+    if not normalized.get(first_field["field_key"]):
+        raise ValueError(f"请填写首个字段【{first_field['field_label']}】，系统需要用它生成内部规范ID。")
+    return normalized
+
+
+def build_internal_path_values_from_field_values(fields, field_values):
+    return [
+        str(field_values.get(field["field_key"]) or "").strip()
+        for field in fields
+        if str(field_values.get(field["field_key"]) or "").strip()
+    ]
+
+
+def build_internal_standard_summary(fields, field_values):
+    parts = []
+    for field in fields:
+        value = str(field_values.get(field["field_key"]) or "").strip()
+        if value:
+            parts.append(f"{field['field_label']}：{value}")
+    return "\n".join(parts)
+
+
+def normalize_external_link_rows(value):
+    if not isinstance(value, list):
+        return []
+    links = []
+    seen = set()
+    for item in value:
+        raw_standard_id = item.get("external_standard_id") if isinstance(item, dict) else item
+        raw_table_id = item.get("external_inspection_table_id") if isinstance(item, dict) else None
+        standard_id = normalize_import_standard_id(raw_standard_id)
+        if standard_id in seen:
+            continue
+        seen.add(standard_id)
+        table_id = None
+        if raw_table_id not in (None, ""):
+            try:
+                table_id = int(raw_table_id)
+            except (TypeError, ValueError):
+                table_id = None
+        links.append(
+            {
+                "external_standard_id": standard_id,
+                "external_inspection_table_id": table_id,
+            }
+        )
+    return links
+
+
+def get_pinyin_initial_prefix(value):
+    text = str(value or "").strip()
+    if not text:
+        return "NB"
+    try:
+        from pypinyin import Style, lazy_pinyin
+
+        prefix = "".join(lazy_pinyin(text, style=Style.FIRST_LETTER)).upper()
+    except Exception:
+        basic_initials = {
+            "配": "P",
+            "电": "D",
+            "间": "J",
+            "加": "J",
+            "油": "Y",
+            "站": "Z",
+            "安": "A",
+            "全": "Q",
+            "服": "F",
+            "务": "W",
+            "卫": "W",
+            "生": "S",
+            "财": "C",
+            "质": "Z",
+            "量": "L",
+        }
+        prefix = "".join(
+            basic_initials.get(char, char[0].upper() if char.isascii() and char.isalnum() else "")
+            for char in text
+        )
+    prefix = re.sub(r"[^A-Z0-9]+", "", prefix)
+    return prefix or "NB"
+
+
+def generate_internal_standard_id(cur, first_field_value):
+    prefix = get_pinyin_initial_prefix(first_field_value)
+    cur.execute(
+        """
+        SELECT internal_standard_id
+        FROM inspection_internal_standards
+        WHERE internal_standard_id ~ %s;
+        """,
+        (f"^{prefix}[0-9]+$",),
+    )
+    max_number = 0
+    for row in cur.fetchall():
+        match = re.match(rf"^{re.escape(prefix)}(\d+)$", row["internal_standard_id"] or "")
+        if match:
+            max_number = max(max_number, int(match.group(1)))
+    return f"{prefix}{max_number + 1}"
+
+
+def fetch_external_standard_map(cur, external_standard_ids=None):
+    cur.execute("SELECT to_regclass('public.inspection_tables') AS table_name;")
+    row = cur.fetchone()
+    if not row or not row.get("table_name"):
+        return {}
+    params = []
+    filter_ids = {int(item) for item in external_standard_ids or [] if str(item).strip()}
+    result = {}
+    cur.execute(
+        """
+        SELECT id, table_code, table_name
         FROM inspection_tables
         WHERE is_active = TRUE
         ORDER BY id ASC;
         """
     )
-    inspection_tables = cur.fetchall()
+    for table in cur.fetchall():
+        physical_table_name = get_physical_table_name_by_code(table["table_code"])
+        if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+            continue
+        fields = [dict(field) for field in get_management_checklist_fields(cur, table["id"])]
+        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+        where_sql = sql.SQL("")
+        params = []
+        if filter_ids:
+            where_sql = sql.SQL(" WHERE standard_id = ANY(%s)")
+            params = [list(filter_ids)]
+        cur.execute(
+            sql.SQL("SELECT * FROM {}{} ORDER BY standard_id ASC;").format(
+                sql.Identifier(physical_table_name),
+                where_sql,
+            ),
+            params,
+        )
+        for row in cur.fetchall():
+            item = serialize_standard_row(field_meta, row)
+            standard_id = int(item["standard_id"])
+            result[standard_id] = {
+                **item,
+                "external_standard_id": standard_id,
+                "inspection_table_id": table["id"],
+                "inspection_table_name": table["table_name"],
+                "inspection_table_code": table["table_code"],
+            }
+    return result
+
+
+def fetch_internal_links_by_external_ids(cur, external_standard_ids):
+    ids = [int(item) for item in external_standard_ids if str(item).strip()]
+    if not ids:
+        return {}
+    cur.execute("SELECT to_regclass('public.inspection_internal_standard_links') AS table_name;")
+    row = cur.fetchone()
+    if not row or not row.get("table_name"):
+        return {}
+    cur.execute(
+        """
+        SELECT
+            l.external_standard_id,
+            s.id,
+            s.internal_standard_id,
+            s.path_values,
+            s.field_values,
+            s.content
+        FROM inspection_internal_standard_links l
+        JOIN inspection_internal_standards s ON s.id = l.internal_standard_id
+        WHERE l.external_standard_id = ANY(%s);
+        """,
+        (ids,),
+    )
+    return {int(row["external_standard_id"]): dict(row) for row in cur.fetchall()}
+
+
+def serialize_internal_standard(row, linked_externals=None, fields=None):
+    fields = fields or []
+    path_values = parse_json_field(row.get("path_values"), [])
+    field_values = parse_json_field(row.get("field_values"), {})
+    if not isinstance(path_values, list):
+        path_values = []
+    if not isinstance(field_values, dict):
+        field_values = {}
+    if fields and not field_values and path_values:
+        for index, field in enumerate(fields):
+            if index < len(path_values):
+                field_values[field["field_key"]] = path_values[index]
+    content = row.get("content") or ""
+    if fields and not content:
+        content = build_internal_standard_summary(fields, field_values)
+    return {
+        "id": row["id"],
+        "internal_standard_id": str(row["internal_standard_id"] or "").upper(),
+        "path_values": path_values,
+        "field_values": field_values,
+        "content": content,
+        "notes": row.get("notes") or "",
+        "is_active": bool(row.get("is_active")),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "linked_externals": linked_externals or [],
+    }
+
+
+def fetch_internal_standard_links(cur, internal_ids):
+    ids = [int(item) for item in internal_ids if item]
+    if not ids:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            l.internal_standard_id,
+            l.external_standard_id,
+            l.external_inspection_table_id
+        FROM inspection_internal_standard_links l
+        WHERE l.internal_standard_id = ANY(%s)
+        ORDER BY l.external_standard_id ASC;
+        """,
+        (ids,),
+    )
+    link_rows = cur.fetchall()
+    external_map = fetch_external_standard_map(cur, [row["external_standard_id"] for row in link_rows])
+    result = {item: [] for item in ids}
+    for row in link_rows:
+        external = external_map.get(int(row["external_standard_id"]))
+        result.setdefault(row["internal_standard_id"], []).append(
+            {
+                "external_standard_id": row["external_standard_id"],
+                "external_inspection_table_id": row["external_inspection_table_id"],
+                "inspection_table_name": external.get("inspection_table_name") if external else "",
+                "standard_detail_text": external.get("standard_detail_text") if external else "",
+            }
+        )
+    return result
+
+
+def replace_internal_standard_links(cur, internal_id, links):
+    external_ids = [item["external_standard_id"] for item in links]
+    if external_ids:
+        cur.execute(
+            """
+            SELECT
+                l.external_standard_id,
+                s.internal_standard_id
+            FROM inspection_internal_standard_links l
+            JOIN inspection_internal_standards s ON s.id = l.internal_standard_id
+            WHERE l.external_standard_id = ANY(%s)
+              AND l.internal_standard_id <> %s
+            LIMIT 1;
+            """,
+            (external_ids, internal_id),
+        )
+        conflict = cur.fetchone()
+        if conflict:
+            raise ValueError(
+                f"外部规范ID【{conflict['external_standard_id']}】已挂载到内部规范【{conflict['internal_standard_id']}】，不能重复挂载。"
+            )
+
+    external_map = fetch_external_standard_map(cur, external_ids)
+    missing = [item for item in external_ids if int(item) not in external_map]
+    if missing:
+        raise ValueError(f"外部规范ID【{missing[0]}】不存在。")
+
+    cur.execute("DELETE FROM inspection_internal_standard_links WHERE internal_standard_id = %s;", (internal_id,))
+    for item in links:
+        external = external_map[int(item["external_standard_id"])]
+        table_id = item.get("external_inspection_table_id") or external["inspection_table_id"]
+        cur.execute(
+            """
+            INSERT INTO inspection_internal_standard_links (
+                internal_standard_id,
+                external_standard_id,
+                external_inspection_table_id
+            )
+            VALUES (%s, %s, %s);
+            """,
+            (internal_id, item["external_standard_id"], table_id),
+        )
+
+
+def fetch_internal_standard_by_code(cur, internal_standard_id):
+    text = str(internal_standard_id or "").strip().upper()
+    if not text:
+        return None, [], []
+    cur.execute("SELECT to_regclass('public.inspection_internal_standards') AS table_name;")
+    row = cur.fetchone()
+    if not row or not row.get("table_name"):
+        return None, [], []
+    fields = [dict(field) for field in get_internal_standard_fields(cur)]
+    cur.execute(
+        """
+        SELECT
+            id,
+            internal_standard_id,
+            path_values,
+            field_values,
+            content,
+            notes,
+            is_active,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM inspection_internal_standards
+        WHERE UPPER(internal_standard_id) = %s
+          AND is_active = TRUE
+        LIMIT 1;
+        """,
+        (text,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, fields, []
+    link_map = fetch_internal_standard_links(cur, [row["id"]])
+    return serialize_internal_standard(row, link_map.get(row["id"], []), fields), fields, link_map.get(row["id"], [])
+
+
+def prepare_issue_registration_targets(
+    cur,
+    station_id,
+    inspector_id,
+    external_standards,
+    batch_id,
+    today,
+):
+    targets = []
+    for external in external_standards:
+        inspection_table_id = str(external.get("inspection_table_id") or "").strip()
+        standard_id = str(external.get("external_standard_id") or external.get("standard_id") or "").strip()
+        if not inspection_table_id or not standard_id:
+            raise ValueError("内部规范挂载的外部规范数据不完整。")
+
+        inspection_table = get_inspection_table_record(cur, inspection_table_id)
+        if not inspection_table:
+            raise ValueError(f"外部规范ID【{standard_id}】对应的检查表不存在。")
+        if not inspection_table["is_active"]:
+            raise ValueError(f"外部规范ID【{standard_id}】对应的检查表未启用。")
+
+        cur.execute(
+            """
+            SELECT ins.id, ins.sign_status
+            FROM inspections ins
+            WHERE ins.station_id = %s
+              AND ins.inspection_table_id = %s
+              AND ins.inspection_date = %s
+              AND ins.batch_id = %s
+            ORDER BY ins.id ASC;
+            """,
+            (station_id, inspection_table_id, today, batch_id),
+        )
+        existing_inspections = cur.fetchall()
+        existing_inspection_ids = [row["id"] for row in existing_inspections]
+
+        if existing_inspections and any(
+            row.get("sign_status") == "已签名确认" for row in existing_inspections
+        ):
+            raise ValueError(
+                f"站点当天【{inspection_table['table_name']}】已完成签名确认，不能继续登记。"
+            )
+
+        if existing_inspection_ids:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS issue_count
+                FROM issues
+                WHERE inspection_id = ANY(%s);
+                """,
+                (existing_inspection_ids,),
+            )
+            existing_issue_count = int(cur.fetchone()["issue_count"] or 0)
+            if existing_issue_count == 0:
+                raise ValueError(
+                    f"站点当天【{inspection_table['table_name']}】已提交“未发现问题”，不能再提交“发现问题”。"
+                )
+
+        targets.append(
+            {
+                "inspection_table_id": int(inspection_table_id),
+                "inspection_table_name": inspection_table["table_name"],
+                "standard_id": int(standard_id),
+                "standard_detail_text": external.get("standard_detail_text") or "",
+                "inspection_id": existing_inspection_ids[0] if existing_inspection_ids else None,
+            }
+        )
+    return targets
+
+
+def normalize_internal_standards_backup_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("备份文件格式不正确：根内容必须是对象。")
+    if payload.get("backup_type") != "ywddzx_internal_standards":
+        raise ValueError("备份文件类型不匹配，请选择巡检规范库备份文件。")
+    standards = payload.get("standards")
+    if not isinstance(standards, list):
+        raise ValueError("备份文件缺少 standards 数组。")
+
+    raw_fields = payload.get("fields")
+    if not isinstance(raw_fields, list):
+        max_path_length = 0
+        has_content = False
+        for item in standards:
+            if not isinstance(item, dict):
+                continue
+            path_values = item.get("path_values") or []
+            if isinstance(path_values, list):
+                max_path_length = max(max_path_length, len(path_values))
+            if str(item.get("content") or "").strip():
+                has_content = True
+        inferred_fields = [
+            {"field_label": f"层级{i}", "is_filterable": True}
+            for i in range(1, max_path_length + 1)
+        ]
+        if has_content:
+            inferred_fields.append({"field_label": "规范内容", "is_filterable": False})
+        raw_fields = inferred_fields
+
+    fields = normalize_internal_standard_field_rows(raw_fields or [], allow_empty=True)
+    normalized = []
+    seen_internal_ids = set()
+    seen_external_ids = set()
+    for index, item in enumerate(standards, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"第 {index} 条内部规范数据格式不正确。")
+        internal_standard_id = str(item.get("internal_standard_id") or "").strip().upper()
+        if not internal_standard_id:
+            raise ValueError(f"第 {index} 条内部规范缺少内部规范ID。")
+        if not re.match(r"^[A-Z0-9]+[0-9]$", internal_standard_id):
+            raise ValueError(f"内部规范ID【{internal_standard_id}】格式不正确。")
+        if internal_standard_id in seen_internal_ids:
+            raise ValueError(f"备份文件内内部规范ID【{internal_standard_id}】重复。")
+        seen_internal_ids.add(internal_standard_id)
+
+        raw_field_values = item.get("field_values")
+        if not isinstance(raw_field_values, dict):
+            raw_field_values = {}
+            legacy_path_values = item.get("path_values") or []
+            if isinstance(legacy_path_values, list):
+                for field_index, field in enumerate(fields):
+                    if field_index < len(legacy_path_values):
+                        raw_field_values[field["field_key"]] = legacy_path_values[field_index]
+            content_text = normalize_text(item.get("content"), 1000)
+            if content_text and fields:
+                raw_field_values[fields[-1]["field_key"]] = raw_field_values.get(fields[-1]["field_key"]) or content_text
+        field_values = normalize_internal_field_values(raw_field_values, fields) if fields else {}
+        path_values = build_internal_path_values_from_field_values(fields, field_values)
+        content = build_internal_standard_summary(fields, field_values)
+        links = normalize_external_link_rows(
+            item.get("external_links") or item.get("linked_externals") or []
+        )
+        for link in links:
+            external_standard_id = int(link["external_standard_id"])
+            if external_standard_id in seen_external_ids:
+                raise ValueError(
+                    f"备份文件内外部规范ID【{external_standard_id}】被多条内部规范重复挂载。"
+                )
+            seen_external_ids.add(external_standard_id)
+
+        normalized.append(
+            {
+                "internal_standard_id": internal_standard_id,
+                "path_values": path_values,
+                "field_values": field_values,
+                "content": content,
+                "notes": "",
+                "is_active": bool(item.get("is_active", True)),
+                "external_links": links,
+            }
+        )
+    return {
+        "fields": fields,
+        "standards": normalized,
+    }
+
+
+def parse_internal_standards_backup_file(file_storage):
+    if not file_storage or not file_storage.filename:
+        raise ValueError("请选择需要导入的巡检规范库备份文件。")
+    if not file_storage.filename.lower().endswith(".json"):
+        raise ValueError("巡检规范库备份文件只能导入 JSON 格式。")
+    file_bytes = file_storage.read()
+    if not file_bytes:
+        raise ValueError("备份文件内容为空。")
+    try:
+        payload = json.loads(file_bytes.decode("utf-8-sig"))
+    except Exception:
+        raise ValueError("备份文件不是有效的 JSON。")
+    return normalize_internal_standards_backup_payload(payload)
+
+
+def build_inspection_standard_ai_catalog(cur):
+    cur.execute(
+        """
+        SELECT
+            id,
+            internal_standard_id,
+            path_values,
+            field_values,
+            content,
+            notes,
+            is_active,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM inspection_internal_standards
+        WHERE is_active = TRUE
+        ORDER BY internal_standard_id ASC;
+        """
+    )
+    internal_rows = cur.fetchall()
+    fields = [dict(field) for field in get_internal_standard_fields(cur)]
+    link_map = fetch_internal_standard_links(cur, [row["id"] for row in internal_rows])
     ai_catalog = []
     full_standards = []
 
-    for inspection_table in inspection_tables:
-        physical_table_name = get_physical_table_name_by_code(
-            inspection_table["table_code"]
-        )
-        if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+    for row in internal_rows:
+        standard = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+        if not standard.get("linked_externals"):
             continue
 
-        fields = [
-            dict(field)
-            for field in get_management_checklist_fields(
-                cur,
-                inspection_table["id"],
-                include_public=True,
-            )
-        ]
-        ensure_checklist_field_columns(cur, physical_table_name, fields)
-        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+        detail_text = str(standard.get("content") or "").strip()
+        if not standard.get("internal_standard_id") or not detail_text:
+            continue
 
-        cur.execute(
-            sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
-                sql.Identifier(physical_table_name)
-            )
-        )
+        linked_table_names = []
+        for link in standard.get("linked_externals") or []:
+            table_name = str(link.get("inspection_table_name") or "").strip()
+            if table_name and table_name not in linked_table_names:
+                linked_table_names.append(table_name)
+        table_summary = "、".join(linked_table_names) or "未命名检查表"
 
-        for row in cur.fetchall():
-            standard = serialize_standard_row(field_meta, row)
-            detail_text = str(standard.get("standard_detail_text") or "").strip()
-            if not standard.get("standard_id") or not detail_text:
-                continue
-
-            enriched_standard = {
-                **standard,
-                "inspection_table_id": inspection_table["id"],
-                "inspection_table_name": inspection_table["table_name"],
-                "inspection_table_code": inspection_table["table_code"],
-                "checklist_mode": inspection_table.get("checklist_mode"),
+        enriched_standard = {
+            **standard,
+            "standard_id": standard["internal_standard_id"],
+            "internal_standard_id": standard["internal_standard_id"],
+            "inspection_table_id": "",
+            "inspection_table_name": table_summary,
+            "standard_detail_text": detail_text,
+        }
+        full_standards.append(enriched_standard)
+        ai_catalog.append(
+            {
+                "standard_id": str(standard["internal_standard_id"]),
+                "inspection_table_name": table_summary,
+                "detail_text": detail_text,
             }
-            full_standards.append(enriched_standard)
-            ai_catalog.append(
-                {
-                    "standard_id": str(standard["standard_id"]),
-                    "inspection_table_name": inspection_table["table_name"],
-                    "detail_text": detail_text,
-                }
-            )
+        )
 
     return ai_catalog, full_standards
 
@@ -6856,7 +7399,6 @@ def get_management_checklists():
         return jsonify(
             {
                 "success": True,
-                "public_fields": [dict(field) for field in get_public_checklist_fields(cur)],
                 "checklists": [serialize_management_checklist(cur, row) for row in rows],
             }
         )
@@ -6865,84 +7407,6 @@ def get_management_checklists():
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/management/checklists/public-fields", methods=["GET"])
-def get_management_public_checklist_fields():
-    user_id = str(request.args.get("user_id", "")).strip()
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_inspection_checklist_management_schema(cur)
-        conn.commit()
-        require_management_user(cur, user_id, "manage_checklists")
-        return jsonify(
-            {
-                "success": True,
-                "fields": [dict(field) for field in get_public_checklist_fields(cur)],
-            }
-        )
-    except PermissionError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 404
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/management/checklists/public-fields", methods=["PUT"])
-def update_management_public_checklist_fields():
-    data = request.get_json(silent=True) or {}
-    user_id = str(data.get("user_id", "")).strip()
-    conn = None
-    cur = None
-
-    try:
-        fields = normalize_checklist_field_rows(
-            data.get("fields") or [],
-            PUBLIC_CHECKLIST_FIELD_TABLE_CODE,
-            allow_empty=True,
-        )
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_inspection_checklist_management_schema(cur)
-        require_management_user(cur, user_id, "manage_checklists")
-        ensure_unique_public_checklist_fields(cur, fields)
-        upsert_public_checklist_fields(cur, fields)
-        ensure_public_field_columns_for_all_checklists(cur, fields)
-        conn.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "公共字段已保存，并已应用到所有检查表。",
-                "fields": [dict(field) for field in get_public_checklist_fields(cur)],
-            }
-        )
-    except PermissionError as exc:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 403
-    except LookupError as exc:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 404
-    except ValueError as exc:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 400
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        if getattr(e, "pgcode", "") == "23505":
-            return jsonify({"success": False, "error": "公共字段名称或系统标识已存在。"}), 400
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -6982,7 +7446,6 @@ def create_management_checklist():
         if cur.fetchone():
             raise ValueError("检查表编码或名称已存在。")
         ensure_unique_checklist_field_keys(cur, fields)
-        ensure_no_public_field_label_conflicts(cur, fields)
 
         cur.execute(
             """
@@ -7010,8 +7473,7 @@ def create_management_checklist():
             """,
             (standard_id_base, row["id"]),
         )
-        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
-        ensure_checklist_field_columns(cur, physical_table_name, [*public_fields, *fields])
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
         upsert_checklist_fields(cur, row["id"], fields)
         conn.commit()
         return jsonify(
@@ -7070,10 +7532,8 @@ def update_management_checklist(inspection_table_id):
             return jsonify({"success": False, "error": "检查表不存在。"}), 404
         fields = normalize_checklist_field_rows(data.get("fields"), current_row["table_code"])
         ensure_unique_checklist_field_keys(cur, fields, inspection_table_id)
-        ensure_no_public_field_label_conflicts(cur, fields)
         physical_table_name = get_physical_table_name_by_code(current_row["table_code"])
-        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
-        ensure_checklist_field_columns(cur, physical_table_name, [*public_fields, *fields])
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
         upsert_checklist_fields(cur, inspection_table_id, fields)
         cur.execute(
             """
@@ -7195,12 +7655,10 @@ def export_management_checklists():
             """
         )
         exported_checklists = []
-        public_fields = [dict(field) for field in get_public_checklist_fields(cur)]
         for row in cur.fetchall():
             fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"])]
-            combined_fields = [*public_fields, *fields]
             physical_table_name = get_physical_table_name_by_code(row["table_code"])
-            ensure_checklist_field_columns(cur, physical_table_name, combined_fields)
+            ensure_checklist_field_columns(cur, physical_table_name, fields)
             exported_checklists.append(
                 {
                     "table_code": row["table_code"],
@@ -7216,7 +7674,7 @@ def export_management_checklists():
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "fields": fields,
-                    "standards": fetch_checklist_standard_rows(cur, physical_table_name, combined_fields),
+                    "standards": fetch_checklist_standard_rows(cur, physical_table_name, fields),
                 }
             )
 
@@ -7227,7 +7685,6 @@ def export_management_checklists():
                 "backup_type": "ywddzx_checklists",
                 "version": 2,
                 "exported_at": now.isoformat(),
-                "public_fields": public_fields,
                 "checklists": exported_checklists,
             }
         )
@@ -7254,7 +7711,6 @@ def import_management_checklists_backup():
 
     try:
         parsed_backup = parse_checklist_backup_file(backup_file)
-        imported_public_fields = parsed_backup["public_fields"]
         imported_checklists = parsed_backup["checklists"]
         imported_codes = {item["table_code"] for item in imported_checklists}
         conn = get_db_connection()
@@ -7349,9 +7805,8 @@ def import_management_checklists_backup():
                 )
 
             physical_table_name = get_physical_table_name_by_code(item["table_code"])
-            combined_fields = [*imported_public_fields, *item["fields"]]
             cur.execute(sql.SQL("DROP TABLE IF EXISTS {};").format(sql.Identifier(physical_table_name)))
-            ensure_checklist_field_columns(cur, physical_table_name, combined_fields)
+            ensure_checklist_field_columns(cur, physical_table_name, item["fields"])
             upsert_checklist_fields(cur, inspection_table_id, item["fields"])
             standards = rebase_checklist_standard_rows(
                 item["standards"],
@@ -7361,12 +7816,9 @@ def import_management_checklists_backup():
             insert_checklist_standard_rows(
                 cur,
                 physical_table_name,
-                combined_fields,
+                item["fields"],
                 standards,
             )
-
-        upsert_public_checklist_fields(cur, imported_public_fields)
-        ensure_public_field_columns_for_all_checklists(cur, imported_public_fields)
 
         conn.commit()
         return jsonify(
@@ -7523,7 +7975,7 @@ def create_management_checklist_standard(inspection_table_id):
         return jsonify(
             {
                 "success": True,
-                "message": f"规范数据已新增，系统生成规范ID {row['standard_id']}。",
+                "message": f"外部规范数据已新增，系统生成外部规范ID {row['standard_id']}。",
                 "standard_id": row["standard_id"],
             }
         )
@@ -7543,7 +7995,7 @@ def create_management_checklist_standard(inspection_table_id):
         if conn:
             conn.rollback()
         if getattr(e, "pgcode", "") == "23505":
-            return jsonify({"success": False, "error": "规范ID自动生成冲突，请重试。"}), 400
+            return jsonify({"success": False, "error": "外部规范ID自动生成冲突，请重试。"}), 400
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -8727,7 +9179,7 @@ def get_inspection_table_fields():
         ensure_inspection_checklist_management_schema(cur)
         conn.commit()
         if not table_id:
-            return jsonify([dict(field) for field in get_public_checklist_fields(cur)])
+            return jsonify([])
 
         inspection_table = get_inspection_table_record(cur, table_id)
         if not inspection_table:
@@ -8837,8 +9289,6 @@ def get_inspection_table_standards():
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
             return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
-        ensure_checklist_field_columns(cur, physical_table_name, fields)
-        conn.commit()
 
         cur.execute(
             sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
@@ -8872,6 +9322,17 @@ def get_inspection_table_standards():
 
             if matched:
                 result.append(item)
+
+        internal_links = fetch_internal_links_by_external_ids(
+            cur,
+            [item["standard_id"] for item in result],
+        )
+        for item in result:
+            linked_internal = internal_links.get(int(item["standard_id"]))
+            item["linked_internal"] = linked_internal
+            item["linked_internal_standard_id"] = (
+                linked_internal.get("internal_standard_id") if linked_internal else ""
+            )
 
         return jsonify(result)
     except Exception as e:
@@ -9011,6 +9472,565 @@ def get_inspection_plan_overview():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/external-standards", methods=["GET"])
+def get_external_standards():
+    keyword = str(request.args.get("keyword", "")).strip().lower()
+    table_id = str(request.args.get("table_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if not (
+            can_view_checklist_originals(cur, user)
+            or can_view_inspection_standards(cur, user)
+            or has_permission(cur, user, "manage_internal_standards")
+        ):
+            return jsonify({"success": False, "error": "当前账号无权查看规范库。"}), 403
+
+        external_map = fetch_external_standard_map(cur)
+        conn.commit()
+        internal_links = fetch_internal_links_by_external_ids(cur, external_map.keys())
+        items = []
+        for item in external_map.values():
+            if table_id and str(item.get("inspection_table_id")) != table_id:
+                continue
+            haystack = "\n".join(
+                [
+                    str(item.get("external_standard_id") or ""),
+                    str(item.get("inspection_table_name") or ""),
+                    str(item.get("standard_detail_text") or ""),
+                ]
+            ).lower()
+            if keyword and keyword not in haystack:
+                continue
+            linked_internal = internal_links.get(int(item["external_standard_id"]))
+            items.append(
+                {
+                    **item,
+                    "linked_internal": linked_internal,
+                    "linked_internal_standard_id": linked_internal.get("internal_standard_id") if linked_internal else "",
+                }
+            )
+        return jsonify({"success": True, "items": items})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-internal-standards", methods=["GET"])
+def get_inspection_internal_standards():
+    keyword = str(request.args.get("keyword", "")).strip().lower()
+    conn = None
+    cur = None
+    try:
+        user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if not can_view_inspection_standards(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权访问巡检规范库。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                internal_standard_id,
+                path_values,
+                field_values,
+                content,
+                notes,
+                is_active,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM inspection_internal_standards
+            WHERE is_active = TRUE
+            ORDER BY internal_standard_id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        fields = [dict(field) for field in get_internal_standard_fields(cur)]
+        conn.commit()
+        link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        items = []
+        for row in rows:
+            item = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+            haystack = "\n".join(
+                [
+                    item["internal_standard_id"],
+                    " ".join(str(value or "") for value in item["field_values"].values()),
+                    item["content"],
+                    " ".join(str(link.get("external_standard_id") or "") for link in item["linked_externals"]),
+                ]
+            ).lower()
+            if keyword and keyword not in haystack:
+                continue
+            items.append(item)
+        return jsonify({"success": True, "fields": fields, "items": items})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards", methods=["GET"])
+def get_management_internal_standards():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        cur.execute(
+            """
+            SELECT
+                id,
+                internal_standard_id,
+                path_values,
+                field_values,
+                content,
+                notes,
+                is_active,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM inspection_internal_standards
+            ORDER BY internal_standard_id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        fields = [dict(field) for field in get_internal_standard_fields(cur)]
+        conn.commit()
+        link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        return jsonify(
+            {
+                "success": True,
+                "fields": fields,
+                "items": [
+                    serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+                    for row in rows
+                ],
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/fields", methods=["GET"])
+def get_management_internal_standard_fields():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        return jsonify(
+            {
+                "success": True,
+                "fields": [dict(field) for field in get_internal_standard_fields(cur)],
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/fields", methods=["PUT"])
+def update_management_internal_standard_fields():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        fields = normalize_internal_standard_field_rows(data.get("fields") or [], allow_empty=True)
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        upsert_internal_standard_fields(cur, fields)
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "内部规范字段配置已保存。",
+                "fields": [dict(field) for field in get_internal_standard_fields(cur)],
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "内部规范字段名称或系统标识已存在。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards", methods=["POST"])
+def create_management_internal_standard():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        links = normalize_external_link_rows(data.get("external_links") or [])
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        fields = [dict(field) for field in get_internal_standard_fields(cur)]
+        field_values = normalize_internal_field_values(data.get("field_values") or {}, fields)
+        path_values = build_internal_path_values_from_field_values(fields, field_values)
+        content = build_internal_standard_summary(fields, field_values)
+        internal_standard_id = generate_internal_standard_id(cur, field_values[fields[0]["field_key"]])
+        cur.execute(
+            """
+            INSERT INTO inspection_internal_standards (
+                internal_standard_id,
+                path_values,
+                field_values,
+                content,
+                notes,
+                is_active,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id;
+            """,
+            (
+                internal_standard_id,
+                json.dumps(path_values, ensure_ascii=False),
+                json.dumps(field_values, ensure_ascii=False),
+                content,
+                "",
+                bool(data.get("is_active", True)),
+            ),
+        )
+        row = cur.fetchone()
+        replace_internal_standard_links(cur, row["id"], links)
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"内部规范已创建，系统生成内部规范ID {internal_standard_id}。",
+                "id": row["id"],
+                "internal_standard_id": internal_standard_id,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except (LookupError, ValueError) as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/<int:standard_id>", methods=["PUT"])
+def update_management_internal_standard(standard_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        links = normalize_external_link_rows(data.get("external_links") or [])
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        fields = [dict(field) for field in get_internal_standard_fields(cur)]
+        field_values = normalize_internal_field_values(data.get("field_values") or {}, fields)
+        path_values = build_internal_path_values_from_field_values(fields, field_values)
+        content = build_internal_standard_summary(fields, field_values)
+        cur.execute(
+            "SELECT id, internal_standard_id FROM inspection_internal_standards WHERE id = %s LIMIT 1;",
+            (standard_id,),
+        )
+        existing_standard = cur.fetchone()
+        if not existing_standard:
+            return jsonify({"success": False, "error": "内部规范不存在。"}), 404
+        cur.execute(
+            """
+            UPDATE inspection_internal_standards
+            SET path_values = %s::jsonb,
+                field_values = %s::jsonb,
+                content = %s,
+                notes = %s,
+                is_active = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s;
+            """,
+            (
+                json.dumps(path_values, ensure_ascii=False),
+                json.dumps(field_values, ensure_ascii=False),
+                content,
+                "",
+                bool(data.get("is_active", True)),
+                standard_id,
+            ),
+        )
+        replace_internal_standard_links(cur, standard_id, links)
+        sync_referenced_internal_standard_detail_text(
+            cur,
+            existing_standard["internal_standard_id"],
+            content,
+        )
+        conn.commit()
+        return jsonify({"success": True, "message": "内部规范已保存。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except (LookupError, ValueError) as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/<int:standard_id>", methods=["DELETE"])
+def delete_management_internal_standard(standard_id):
+    user_id = str(request.args.get("user_id", "") or (request.get_json(silent=True) or {}).get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        cur.execute(
+            "DELETE FROM inspection_internal_standards WHERE id = %s RETURNING internal_standard_id;",
+            (standard_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"success": False, "error": "内部规范不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": f"内部规范 {row['internal_standard_id']} 已删除。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/export", methods=["GET"])
+def export_management_internal_standards():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        cur.execute(
+            """
+            SELECT
+                id,
+                internal_standard_id,
+                path_values,
+                field_values,
+                content,
+                notes,
+                is_active,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM inspection_internal_standards
+            ORDER BY internal_standard_id ASC;
+            """
+        )
+        rows = cur.fetchall()
+        fields = [dict(field) for field in get_internal_standard_fields(cur)]
+        link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        standards = []
+        for row in rows:
+            item = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+            standards.append(
+                {
+                    "internal_standard_id": item["internal_standard_id"],
+                    "field_values": item["field_values"],
+                    "is_active": item["is_active"],
+                    "external_links": [
+                        {
+                            "external_standard_id": link["external_standard_id"],
+                            "external_inspection_table_id": link.get("external_inspection_table_id"),
+                        }
+                        for link in item["linked_externals"]
+                    ],
+                }
+            )
+
+        now = beijing_now()
+        response = jsonify(
+            {
+                "backup_type": "ywddzx_internal_standards",
+                "version": 2,
+                "exported_at": now.isoformat(),
+                "fields": fields,
+                "standards": standards,
+            }
+        )
+        filename = f"ywddzx_internal_standards_backup_{now.strftime('%Y%m%d_%H%M%S')}.json"
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/import", methods=["POST"])
+def import_management_internal_standards():
+    user_id = str(request.form.get("user_id", "")).strip()
+    file_storage = request.files.get("file")
+    conn = None
+    cur = None
+    try:
+        backup_data = parse_internal_standards_backup_file(file_storage)
+        fields = backup_data["fields"]
+        standards = backup_data["standards"]
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+
+        external_ids = [
+            link["external_standard_id"]
+            for item in standards
+            for link in item["external_links"]
+        ]
+        external_map = fetch_external_standard_map(cur, external_ids)
+        for external_id in external_ids:
+            if int(external_id) not in external_map:
+                raise ValueError(f"外部规范ID【{external_id}】不存在，无法导入。")
+
+        cur.execute("DELETE FROM inspection_internal_standards;")
+        upsert_internal_standard_fields(cur, fields)
+        for item in standards:
+            cur.execute(
+                """
+                INSERT INTO inspection_internal_standards (
+                    internal_standard_id,
+                    path_values,
+                    field_values,
+                    content,
+                    notes,
+                    is_active,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s::jsonb, %s::jsonb, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id;
+                """,
+                (
+                    item["internal_standard_id"],
+                    json.dumps(item["path_values"], ensure_ascii=False),
+                    json.dumps(item["field_values"], ensure_ascii=False),
+                    item["content"],
+                    "",
+                    item["is_active"],
+                ),
+            )
+            row = cur.fetchone()
+            replace_internal_standard_links(cur, row["id"], item["external_links"])
+            sync_referenced_internal_standard_detail_text(
+                cur,
+                item["internal_standard_id"],
+                item["content"],
+            )
+
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"巡检规范库备份已导入，共恢复 {len(standards)} 条内部规范。",
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/inspection-standards/ai-recommend", methods=["POST"])
 def recommend_inspection_standard_by_ai():
     data = request.get_json(silent=True) or {}
@@ -9026,6 +10046,8 @@ def recommend_inspection_standard_by_ai():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
+        conn.commit()
 
         if not has_permission(cur, current_user, "submit_inspections"):
             return jsonify({"success": False, "error": "当前账号无权使用巡检登记功能。"}), 403
@@ -9084,6 +10106,7 @@ def inspection_register():
     inspection_table_id = str(request.form.get("inspection_table_id", "")).strip()
     has_issue = str(request.form.get("has_issue", "yes")).strip().lower()
     standard_id = str(request.form.get("standard_id", "")).strip()
+    internal_standard_id = str(request.form.get("internal_standard_id", "")).strip().upper()
     description = str(request.form.get("description", "")).strip()
     photo = request.files.get("photo")
 
@@ -9093,14 +10116,17 @@ def inspection_register():
     if not station_id:
         return jsonify({"success": False, "error": "请选择站点名称。"}), 400
 
-    if not inspection_table_id:
+    if has_issue != "yes" and not inspection_table_id:
         return jsonify({"success": False, "error": "请选择检查表。"}), 400
 
     if has_issue not in {"yes", "no"}:
         return jsonify({"success": False, "error": "是否发现问题参数不合法。"}), 400
 
-    if has_issue == "yes" and not standard_id:
+    if has_issue == "yes" and not standard_id and not internal_standard_id:
         return jsonify({"success": False, "error": "请选择规范。"}), 400
+
+    if has_issue == "yes" and standard_id and not internal_standard_id and not inspection_table_id:
+        return jsonify({"success": False, "error": "请选择检查表。"}), 400
 
     if has_issue == "yes" and not description:
         return jsonify({"success": False, "error": "请填写实际问题描述。"}), 400
@@ -9115,6 +10141,7 @@ def inspection_register():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
+        ensure_internal_standard_schema(cur)
         ensure_issue_inspector_schema(cur)
         conn.commit()
 
@@ -9153,6 +10180,113 @@ def inspection_register():
 
         if not station:
             return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        today = beijing_today()
+        batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
+
+        if has_issue == "yes" and internal_standard_id:
+            internal_standard, _internal_fields, linked_externals = fetch_internal_standard_by_code(
+                cur,
+                internal_standard_id,
+            )
+            if not internal_standard:
+                return jsonify({"success": False, "error": "所选内部规范不存在或未启用。"}), 404
+            if not linked_externals:
+                return jsonify({"success": False, "error": "所选内部规范尚未挂载外部规范，不能登记问题。"}), 400
+
+            external_map = fetch_external_standard_map(
+                cur,
+                [link["external_standard_id"] for link in linked_externals],
+            )
+            external_standards = []
+            for link in linked_externals:
+                external = external_map.get(int(link["external_standard_id"]))
+                if not external:
+                    return jsonify(
+                        {
+                            "success": False,
+                            "error": f"内部规范挂载的外部规范ID【{link['external_standard_id']}】不存在。",
+                        }
+                    ), 400
+                external_standards.append(external)
+
+            targets = prepare_issue_registration_targets(
+                cur,
+                station_id,
+                inspector_id,
+                external_standards,
+                batch_id,
+                today,
+            )
+            photo_path = save_uploaded_file(photo, "issues")
+            inspection_id_by_table = {}
+            created_issue_ids = []
+            internal_detail_text = internal_standard.get("content") or ""
+
+            for target in targets:
+                table_key = str(target["inspection_table_id"])
+                inspection_id = target["inspection_id"] or inspection_id_by_table.get(table_key)
+                if not inspection_id:
+                    inspection_id = create_inspection_record(
+                        cur,
+                        station_id,
+                        inspector_id,
+                        target["inspection_table_id"],
+                        batch_id,
+                    )
+                    inspection_id_by_table[table_key] = inspection_id
+
+                cur.execute(
+                    """
+                    INSERT INTO issues (
+                        inspection_id,
+                        inspector_id,
+                        station_id,
+                        inspection_table_id,
+                        standard_id,
+                        standard_detail_text,
+                        internal_standard_id,
+                        internal_standard_detail_text,
+                        description,
+                        photo_path,
+                        status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id;
+                    """,
+                    (
+                        inspection_id,
+                        inspector_id,
+                        station_id,
+                        target["inspection_table_id"],
+                        target["standard_id"],
+                        target["standard_detail_text"],
+                        internal_standard["internal_standard_id"],
+                        internal_detail_text,
+                        description,
+                        photo_path,
+                        "待整改",
+                    ),
+                )
+                created_issue_ids.append(cur.fetchone()["id"])
+                mark_related_plan_items_completed(
+                    cur,
+                    station_id,
+                    target["inspection_table_id"],
+                    inspection_id,
+                    today,
+                )
+
+            conn.commit()
+            return jsonify(
+                {
+                    "success": True,
+                    "message": f"巡检问题登记成功，已按内部规范生成 {len(created_issue_ids)} 条外部规范问题。",
+                    "inspection_id": next(iter(inspection_id_by_table.values()), targets[0]["inspection_id"]),
+                    "issue_id": created_issue_ids[0] if created_issue_ids else None,
+                    "issue_ids": created_issue_ids,
+                }
+            )
 
         inspection_table = get_inspection_table_record(cur, inspection_table_id)
         if not inspection_table:
@@ -9281,6 +10415,9 @@ def inspection_register():
         if not standard_detail_text:
             return jsonify({"success": False, "error": "规范详情生成失败。"}), 400
 
+        linked_internal = fetch_internal_links_by_external_ids(cur, [standard_id]).get(int(standard_id))
+        linked_internal_standard_id = linked_internal.get("internal_standard_id") if linked_internal else None
+        linked_internal_detail_text = linked_internal.get("content") if linked_internal else None
         photo_path = save_uploaded_file(photo, "issues")
 
         cur.execute(
@@ -9292,11 +10429,13 @@ def inspection_register():
                 inspection_table_id,
                 standard_id,
                 standard_detail_text,
+                internal_standard_id,
+                internal_standard_detail_text,
                 description,
                 photo_path,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id;
             """,
             (
@@ -9306,6 +10445,8 @@ def inspection_register():
                 inspection_table_id,
                 standard_id,
                 standard_detail_text,
+                linked_internal_standard_id,
+                linked_internal_detail_text,
                 description,
                 photo_path,
                 "待整改",
@@ -9383,6 +10524,8 @@ def get_my_issues():
                     t.table_name AS inspection_table_name,
                     i.standard_id,
                     i.standard_detail_text,
+                    i.internal_standard_id,
+                    i.internal_standard_detail_text,
                     i.description,
                     i.photo_path AS issue_photo,
                     i.rectification_result,
@@ -9426,6 +10569,8 @@ def get_my_issues():
                     t.table_name AS inspection_table_name,
                     i.standard_id,
                     i.standard_detail_text,
+                    i.internal_standard_id,
+                    i.internal_standard_detail_text,
                     i.description,
                     i.photo_path AS issue_photo,
                     i.rectification_result,
@@ -9530,6 +10675,8 @@ def get_issues():
                     t.table_name AS inspection_table_name,
                     i.standard_id,
                     i.standard_detail_text,
+                    i.internal_standard_id,
+                    i.internal_standard_detail_text,
                     i.description,
                     i.photo_path AS issue_photo,
                     i.rectification_result,
@@ -10486,6 +11633,8 @@ def get_inspection_issues(inspection_id):
                 t.table_name AS inspection_table_name,
                 i.standard_id,
                 i.standard_detail_text,
+                i.internal_standard_id,
+                i.internal_standard_detail_text,
                 i.description,
                 i.photo_path AS issue_photo,
                 i.rectification_result,

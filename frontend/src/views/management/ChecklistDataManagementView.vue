@@ -3,8 +3,8 @@
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">管理系统</div>
-        <h2>巡检表数据管理</h2>
-        <p class="page-desc">管理检查表字段结构，并在选中检查表后维护对应规范数据。</p>
+        <h2>检查表数据管理</h2>
+        <p class="page-desc">管理上海公司事业部检查表、字段结构和拆解后的外部规范数据。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchChecklists">
@@ -18,7 +18,6 @@
         </button>
         <input ref="backupFileInputRef" class="hidden-file-input" type="file" accept="application/json,.json"
           :disabled="backupImporting" @change="importBackup" />
-        <button class="btn btn-secondary" type="button" @click="openPublicFieldsDialog">添加公共字段</button>
         <button class="btn btn-primary" type="button" @click="openCreateDialog">新建检查表</button>
       </div>
     </div>
@@ -26,7 +25,7 @@
     <div v-if="!hasPermission" class="card-surface permission-card">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权限访问</div>
-      <div class="permission-desc">当前账号无权访问巡检表数据管理页面。</div>
+      <div class="permission-desc">当前账号无权访问检查表数据管理页面。</div>
     </div>
 
     <template v-else>
@@ -80,7 +79,7 @@
           <div v-if="selectedChecklist" class="standards-panel">
             <div class="pane-head">
               <div>
-                <div class="section-kicker">规范数据清单</div>
+                <div class="section-kicker">外部规范数据清单</div>
                 <h3>{{ selectedChecklist.table_name }}</h3>
                 <p>{{ selectedChecklist.description || '当前检查表暂无说明。' }}</p>
               </div>
@@ -97,7 +96,7 @@
                 <strong>{{ checklistModeLabel(selectedChecklist.checklist_mode) }}</strong>
               </div>
               <div>
-                <span>规范ID号段</span>
+                <span>外部规范ID号段</span>
                 <strong>{{ standardIdRangeLabel(selectedChecklist) }}</strong>
               </div>
               <div>
@@ -114,11 +113,11 @@
               <div class="standard-toolbar">
                 <div>
                   <strong>已维护规范</strong>
-                  <span>规范ID由系统按检查表号段自动生成；此处用于查看和快速检索。</span>
+                  <span>外部规范ID由系统按检查表号段自动生成；此处用于查看和快速检索。</span>
                 </div>
                 <div class="standard-toolbar-controls">
                   <label class="standard-search">
-                    <input v-model.trim="standardState.keyword" type="search" placeholder="搜索规范ID或字段内容"
+                    <input v-model.trim="standardState.keyword" type="search" placeholder="搜索外部规范ID或字段内容"
                       @keyup.enter="fetchStandards(standardState, selectedChecklist.id, selectedFields, 1)" />
                     <button class="btn btn-secondary btn-sm" type="button"
                       @click="fetchStandards(standardState, selectedChecklist.id, selectedFields, 1)">
@@ -142,7 +141,7 @@
                 <table class="standard-table">
                   <thead>
                     <tr>
-                      <th>规范ID</th>
+                      <th>外部规范ID</th>
                       <th v-for="field in selectedFields" :key="field.field_key">{{ field.field_label }}</th>
                       <th>创建时间</th>
                     </tr>
@@ -302,7 +301,7 @@
           <div>
             <div class="section-kicker">编辑检查表</div>
             <h3>{{ editDialog.table_name || '未命名检查表' }}</h3>
-            <p>这里只维护检查表基础信息和字段结构；规范数据请在右侧清单进入维护。</p>
+            <p>这里只维护外部检查表基础信息和字段结构；外部规范数据请在右侧清单进入维护。</p>
           </div>
           <button class="dialog-close" type="button" @click="closeEditDialog">×</button>
         </div>
@@ -406,85 +405,13 @@
       </section>
     </div>
 
-    <div v-if="publicDialog.visible" class="dialog-backdrop">
-      <section class="edit-dialog public-field-dialog card-surface">
-        <div class="dialog-head">
-          <div>
-            <div class="section-kicker">公共字段</div>
-            <h3>维护所有检查表共用字段</h3>
-            <p>公共字段会自动应用到每一张检查表；已有规范没有维护内容时页面统一显示为“-”。</p>
-          </div>
-          <button class="dialog-close" type="button" @click="closePublicFieldsDialog">×</button>
-        </div>
-
-        <div class="dialog-body">
-          <div class="edit-section">
-            <div class="edit-section-head">
-              <strong>公共字段结构</strong>
-              <button class="btn btn-secondary btn-sm" type="button" @click="addPublicField">末尾添加公共字段</button>
-            </div>
-
-            <div class="field-table">
-              <div class="field-row field-row-head">
-                <span>顺序</span>
-                <span>字段名称</span>
-                <span>筛选</span>
-                <span>操作</span>
-              </div>
-              <div v-for="(field, index) in publicDialog.fields" :key="field.local_id" class="field-row">
-                <div class="field-order-control">
-                  <strong>#{{ index + 1 }}</strong>
-                  <div>
-                    <button class="mini-icon-btn" type="button" :disabled="index === 0"
-                      @click="movePublicFieldUp(index)">
-                      上移
-                    </button>
-                    <button class="mini-icon-btn" type="button" :disabled="index === publicDialog.fields.length - 1"
-                      @click="movePublicFieldDown(index)">
-                      下移
-                    </button>
-                  </div>
-                </div>
-                <label>
-                  <input v-model.trim="field.field_label" type="text" placeholder="例如：事业部、业务类型" />
-                </label>
-                <label class="mini-check">
-                  <input v-model="field.is_filterable" type="checkbox" />
-                  <span>可筛选</span>
-                </label>
-                <div class="field-action-group">
-                  <button class="mini-icon-btn" type="button" @click="insertPublicFieldBefore(index)">前插</button>
-                  <button class="mini-icon-btn" type="button" @click="insertPublicFieldAfter(index)">后插</button>
-                  <button class="btn btn-danger btn-sm" type="button" @click="removePublicField(index)">删除</button>
-                </div>
-              </div>
-              <div v-if="!publicDialog.fields.length" class="standard-empty">
-                暂无公共字段。可点击“末尾添加公共字段”开始配置。
-              </div>
-            </div>
-
-            <div class="schema-note">
-              公共字段保存后会写入所有检查表的字段结构，并在巡检规范库筛选面板中优先显示。
-            </div>
-          </div>
-        </div>
-
-        <div class="dialog-actions">
-          <button class="btn btn-secondary" type="button" @click="closePublicFieldsDialog">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="publicDialog.saving" @click="savePublicFields">
-            {{ publicDialog.saving ? '保存中...' : '保存公共字段' }}
-          </button>
-        </div>
-      </section>
-    </div>
-
     <div v-if="standardDialog.visible && selectedChecklist" class="dialog-backdrop">
       <section class="edit-dialog standard-dialog card-surface">
         <div class="dialog-head">
           <div>
-            <div class="section-kicker">规范数据维护</div>
+            <div class="section-kicker">外部规范数据维护</div>
             <h3>{{ selectedChecklist.table_name }}</h3>
-            <p>规范ID由系统按检查表号段自动生成，新增和编辑时只需要维护字段内容。</p>
+            <p>外部规范ID由系统按检查表号段自动生成，新增和编辑时只需要维护字段内容。</p>
           </div>
           <button class="dialog-close" type="button" @click="closeStandardDialog">×</button>
         </div>
@@ -494,8 +421,8 @@
             <div v-if="!standardState.editingDraft" class="standard-editor-card">
               <div class="standard-section-head">
                 <div>
-                  <strong>新增规范</strong>
-                  <span>保存后系统会在本检查表号段内自动分配下一条规范ID。</span>
+                  <strong>新增外部规范</strong>
+                  <span>保存后系统会在本检查表号段内自动分配下一条外部规范ID。</span>
                 </div>
               </div>
 
@@ -513,7 +440,7 @@
                 </button>
                 <button class="btn btn-primary" type="button" :disabled="standardState.saving"
                   @click="createStandard(standardState, selectedChecklist.id, selectedFields)">
-                  {{ standardState.saving ? '保存中...' : '新增规范' }}
+                  {{ standardState.saving ? '保存中...' : '新增外部规范' }}
                 </button>
               </div>
             </div>
@@ -521,8 +448,8 @@
             <div v-if="standardState.editingDraft" ref="standardEditingPanelRef" class="standard-editor-card editing-panel">
               <div class="standard-section-head">
                 <div>
-                  <strong>编辑规范</strong>
-                  <span>规范ID {{ standardState.editingStandardId }} 为系统生成，不支持修改。</span>
+                  <strong>编辑外部规范</strong>
+                  <span>外部规范ID {{ standardState.editingStandardId }} 为系统生成，不支持修改。</span>
                 </div>
                 <button class="btn btn-secondary btn-sm" type="button" @click="cancelEditStandard(standardState)">
                   取消编辑
@@ -548,12 +475,12 @@
             <div class="standard-list-card">
               <div class="standard-toolbar">
                 <div>
-                  <strong>规范数据清单</strong>
+                  <strong>外部规范数据清单</strong>
                   <span>可在这里编辑或删除现有规范。</span>
                 </div>
                 <div class="standard-toolbar-controls">
                   <label class="standard-search">
-                    <input v-model.trim="standardState.keyword" type="search" placeholder="搜索规范ID或字段内容"
+                    <input v-model.trim="standardState.keyword" type="search" placeholder="搜索外部规范ID或字段内容"
                       @keyup.enter="fetchStandards(standardState, selectedChecklist.id, selectedFields, 1)" />
                     <button class="btn btn-secondary btn-sm" type="button"
                       @click="fetchStandards(standardState, selectedChecklist.id, selectedFields, 1)">
@@ -577,7 +504,7 @@
                 <table class="standard-table">
                   <thead>
                     <tr>
-                      <th>规范ID</th>
+                      <th>外部规范ID</th>
                       <th v-for="field in selectedFields" :key="field.field_key">{{ field.field_label }}</th>
                       <th>创建时间</th>
                       <th>操作</th>
@@ -656,7 +583,6 @@ const backupExporting = ref(false)
 const backupImporting = ref(false)
 const backupFileInputRef = ref(null)
 const checklists = ref([])
-const publicFields = ref([])
 const selectedChecklist = ref(null)
 const message = reactive({
   text: '',
@@ -667,7 +593,6 @@ const checklistModeOptions = [
   { value: 'online', label: '线上检查表' },
   { value: 'offline', label: '线下检查表' }
 ]
-const PUBLIC_FIELD_TABLE_CODE = 'public'
 
 const normalizeChecklistMode = (value) => (
   checklistModeOptions.some((option) => option.value === value) ? value : 'online'
@@ -715,18 +640,11 @@ const createFieldKey = (tableCode, index = 1) => {
 }
 
 const createField = (field = {}, index = 1, tableCode = '') => ({
-  local_id: field.local_id || `${field.is_public ? 'public' : 'field'}_${field.id || Date.now()}_${Math.random().toString(16).slice(2)}`,
+  local_id: field.local_id || `field_${field.id || Date.now()}_${Math.random().toString(16).slice(2)}`,
   field_key: field.field_key || createFieldKey(tableCode, index),
   field_label: field.field_label || '',
-  is_filterable: field.is_filterable ?? true,
-  is_public: Boolean(field.is_public)
+  is_filterable: field.is_filterable ?? true
 })
-
-const createPublicField = (field = {}, index = 1) => createField(
-  { ...field, is_public: true },
-  index,
-  PUBLIC_FIELD_TABLE_CODE
-)
 
 const defaultFields = (tableCode) => [
   createField({ field_label: '序号' }, 1, tableCode),
@@ -774,11 +692,6 @@ const createStandardState = () => ({
 
 const createDialog = reactive({ visible: false })
 const standardDialog = reactive({ visible: false })
-const publicDialog = reactive({
-  visible: false,
-  fields: [],
-  saving: false
-})
 const editDialog = reactive({
   visible: false,
   id: null,
@@ -866,18 +779,7 @@ const buildChecklistPayload = (source) => ({
   checklist_mode: normalizeChecklistMode(source.checklist_mode),
   description: source.description,
   is_active: source.is_active,
-  fields: source.fields
-    .filter((field) => !field.is_public)
-    .map((field) => ({
-      field_key: normalizeKey(field.field_key),
-      field_label: field.field_label,
-      is_filterable: Boolean(field.is_filterable)
-    }))
-})
-
-const buildPublicFieldsPayload = () => ({
-  user_id: currentUserId,
-  fields: publicDialog.fields.map((field) => ({
+  fields: source.fields.map((field) => ({
     field_key: normalizeKey(field.field_key),
     field_label: field.field_label,
     is_filterable: Boolean(field.is_filterable)
@@ -951,7 +853,6 @@ const fetchChecklists = async (options = {}) => {
         _ts: Date.now()
       }
     })
-    publicFields.value = (response.data?.public_fields || []).map((field, index) => createPublicField(field, index + 1))
     checklists.value = response.data?.checklists || []
     const nextSelected = previousSelectedId
       ? checklists.value.find((item) => String(item.id) === String(previousSelectedId))
@@ -1013,33 +914,6 @@ const closeEditDialog = () => {
   editDialog.visible = false
 }
 
-const fetchPublicFields = async () => {
-  const response = await axios.get('/api/management/checklists/public-fields', {
-    params: {
-      user_id: currentUserId,
-      _ts: Date.now()
-    }
-  })
-  publicFields.value = (response.data?.fields || []).map((field, index) => createPublicField(field, index + 1))
-  return publicFields.value
-}
-
-const openPublicFieldsDialog = async () => {
-  try {
-    setMessage('')
-    await fetchPublicFields()
-    publicDialog.fields = publicFields.value.map((field, index) => createPublicField(field, index + 1))
-    publicDialog.saving = false
-    publicDialog.visible = true
-  } catch (error) {
-    setMessage(error?.response?.data?.error || '公共字段加载失败。', 'error')
-  }
-}
-
-const closePublicFieldsDialog = () => {
-  publicDialog.visible = false
-}
-
 const openStandardDialog = () => {
   if (!selectedChecklist.value) return
   resetStandardDraft(standardState, selectedFields.value)
@@ -1057,11 +931,6 @@ const closeStandardDialog = () => {
 const insertFieldAt = (fields, tableCode, index) => {
   const safeIndex = Math.min(Math.max(Number(index) || 0, 0), fields.length)
   fields.splice(safeIndex, 0, createField({}, safeIndex + 1, tableCode))
-}
-
-const insertPublicFieldAt = (index) => {
-  const safeIndex = Math.min(Math.max(Number(index) || 0, 0), publicDialog.fields.length)
-  publicDialog.fields.splice(safeIndex, 0, createPublicField({}, safeIndex + 1))
 }
 
 const moveFieldInList = (fields, index, direction) => {
@@ -1117,51 +986,6 @@ const moveEditFieldDown = (index) => {
 
 const removeEditField = (index) => {
   editDialog.fields.splice(index, 1)
-}
-
-const addPublicField = () => {
-  insertPublicFieldAt(publicDialog.fields.length)
-}
-
-const insertPublicFieldBefore = (index) => {
-  insertPublicFieldAt(index)
-}
-
-const insertPublicFieldAfter = (index) => {
-  insertPublicFieldAt(index + 1)
-}
-
-const movePublicFieldUp = (index) => {
-  moveFieldInList(publicDialog.fields, index, -1)
-}
-
-const movePublicFieldDown = (index) => {
-  moveFieldInList(publicDialog.fields, index, 1)
-}
-
-const removePublicField = (index) => {
-  publicDialog.fields.splice(index, 1)
-}
-
-const savePublicFields = async () => {
-  const fieldError = validateFieldRows(publicDialog.fields, PUBLIC_FIELD_TABLE_CODE)
-  if (fieldError) {
-    setMessage(fieldError, 'error')
-    return
-  }
-
-  try {
-    publicDialog.saving = true
-    const response = await axios.put('/api/management/checklists/public-fields', buildPublicFieldsPayload())
-    publicFields.value = (response.data?.fields || []).map((field, index) => createPublicField(field, index + 1))
-    closePublicFieldsDialog()
-    await fetchChecklists()
-    setMessage(response.data?.message || '公共字段已保存。', 'success')
-  } catch (error) {
-    setMessage(error?.response?.data?.error || '公共字段保存失败。', 'error')
-  } finally {
-    publicDialog.saving = false
-  }
 }
 
 const saveChecklist = async () => {
@@ -1379,7 +1203,7 @@ const saveEditingStandard = async (state, checklistId, fields = []) => {
 
 const deleteStandard = async (state, checklistId, fields = [], item) => {
   if (!checklistId || !item?.standard_id) return
-  const confirmed = window.confirm(`确定删除规范ID【${item.standard_id}】吗？`)
+  const confirmed = window.confirm(`确定删除外部规范ID【${item.standard_id}】吗？`)
   if (!confirmed) return
 
   try {

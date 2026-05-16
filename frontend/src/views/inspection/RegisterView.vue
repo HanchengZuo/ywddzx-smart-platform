@@ -78,7 +78,7 @@
                   <div class="option-main">
                     {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
                   </div>
-                  <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未命名检查表' }}</div>
+                  <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
                   <div class="option-sub standard-detail-preview">{{
                     normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
                 </div>
@@ -166,12 +166,12 @@
           <template v-if="normalizedHasIssue === 'yes' && selectedStandard">
             <div class="form-item form-item-full selected-standard-field selected-standard-first"
               ref="selectedStandardStartRef">
-              <label>规范ID</label>
+              <label>{{ selectedStandard.internal_standard_id ? '内部规范ID' : '规范ID' }}</label>
               <input :value="selectedStandard.standard_id || ''" type="text" readonly />
             </div>
 
             <div class="form-item form-item-full selected-standard-field">
-              <label>检查表名称</label>
+              <label>{{ selectedStandard.internal_standard_id ? '关联检查表' : '检查表名称' }}</label>
               <input :value="selectedStandard.inspection_table_name || ''" type="text" readonly />
             </div>
 
@@ -369,6 +369,24 @@ const STANDARD_SEARCH_EXCLUDED_KEYS = new Set([
 ])
 
 const getStandardSearchValues = (item = {}) => {
+  if (item?.internal_standard_id) {
+    const fieldValues = Object.values(item.field_values || {})
+    const linkedValues = (item.linked_externals || []).flatMap((link) => [
+      link.external_standard_id,
+      link.inspection_table_name,
+      link.standard_detail_text
+    ])
+    return [
+      item.internal_standard_id,
+      item.standard_id,
+      item.content,
+      item.standard_detail_text,
+      item.inspection_table_name,
+      ...fieldValues,
+      ...linkedValues
+    ].filter((value) => value !== null && value !== undefined)
+  }
+
   return Object.entries(item)
     .filter(([key, value]) => !STANDARD_SEARCH_EXCLUDED_KEYS.has(key) && value !== null && value !== undefined)
     .map(([, value]) => value)
@@ -393,8 +411,10 @@ const matchesNumericStandardSearch = (item, keyword) => {
   const needle = normalizeExactNumericText(keyword)
   if (!needle) return true
   if (normalizeExactNumericText(item?.standard_id) === needle) return true
+  if (normalizeExactNumericText(item?.internal_standard_id) === needle) return true
+  if ((item?.linked_externals || []).some((link) => normalizeExactNumericText(link.external_standard_id) === needle)) return true
   return standardSequenceFieldKeys.value.some((fieldKey) => {
-    return normalizeExactNumericText(item?.[fieldKey]) === needle
+    return normalizeExactNumericText(item?.[fieldKey] ?? item?.field_values?.[fieldKey]) === needle
   })
 }
 
@@ -472,7 +492,7 @@ const filteredStandards = computed(() => {
 })
 
 const getStandardFallbackTitle = (item) => {
-  const firstLine = String(item?.standard_detail_text || '')
+  const firstLine = String(item?.standard_detail_text || item?.content || '')
     .replace(/\\n/g, '\n')
     .split('\n')
     .map((line) => line.trim())
@@ -483,11 +503,26 @@ const getStandardFallbackTitle = (item) => {
 }
 
 const getStandardTitle = (item) => {
+  if (item?.internal_standard_id) {
+    const firstValue = standardFields.value
+      .map((field) => String(item?.field_values?.[field.field_key] || '').trim())
+      .find(Boolean)
+    return firstValue || getStandardFallbackTitle(item) || '未命名内部规范'
+  }
   return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名规范'
 }
 
 const getStandardIdentity = (item) => {
+  if (item?.internal_standard_id) return `internal:${item.internal_standard_id}`
   return `${item?.inspection_table_id || 'unknown'}:${item?.standard_id || ''}`
+}
+
+const buildInternalStandardDetailText = (item, fields = standardFields.value) => {
+  const lines = fields.map((field) => {
+    const value = String(item?.field_values?.[field.field_key] || '').trim() || '-'
+    return `${field.field_label}：${value}`
+  })
+  return lines.filter(Boolean).join('\n') || item?.content || ''
 }
 
 const formatCurrentTime = () => {
@@ -513,38 +548,30 @@ const fetchInspectionTables = async () => {
 }
 
 const fetchStandards = async () => {
-  if (!inspectionTables.value.length) {
-    standards.value = []
-    standardFields.value = []
-    return
-  }
-
-  const [standardsResponses, fieldsResponses] = await Promise.all([
-    Promise.all(inspectionTables.value.map((table) => {
-      return axios.get('/api/inspection-table-standards', { params: { table_id: table.id } })
-    })),
-    Promise.all(inspectionTables.value.map((table) => {
-      return axios.get('/api/inspection-table-fields', { params: { table_id: table.id } })
-    }))
-  ])
-
-  standards.value = standardsResponses.flatMap((response, index) => {
-    const table = inspectionTables.value[index] || {}
-    return (response.data || []).map((standard) => ({
-      ...standard,
-      inspection_table_id: table.id,
-      inspection_table_name: table.table_name,
-      inspection_table_code: table.table_code
-    }))
+  const response = await axios.get('/api/inspection-internal-standards', {
+    params: { _ts: Date.now() }
   })
-
-  standardFields.value = fieldsResponses.flatMap((response, index) => {
-    const table = inspectionTables.value[index] || {}
-    return (response.data || []).map((field) => ({
-      ...field,
-      inspection_table_id: table.id,
-      inspection_table_name: table.table_name
-    }))
+  const fields = response.data?.fields || []
+  standardFields.value = fields
+  standards.value = (response.data?.items || []).map((item) => {
+    const linkedExternals = item.linked_externals || []
+    const linkedTableNames = [...new Set(
+      linkedExternals
+        .map((link) => String(link.inspection_table_name || '').trim())
+        .filter(Boolean)
+    )]
+    const detailText = buildInternalStandardDetailText(item, fields)
+    return {
+      ...item,
+      standard_id: item.internal_standard_id,
+      internal_standard_id: item.internal_standard_id,
+      standard_detail_text: detailText,
+      inspection_table_id: '',
+      inspection_table_name: linkedTableNames.length
+        ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`
+        : '未挂载外部检查表',
+      linked_externals: linkedExternals
+    }
   })
 }
 
@@ -674,8 +701,8 @@ const scrollToSelectedStandard = async () => {
 
 const selectStandard = async (standard) => {
   standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
-  form.value.standardId = standard.standard_id
-  form.value.inspectionTableId = String(standard.inspection_table_id || '')
+  form.value.standardId = standard.internal_standard_id || standard.standard_id
+  form.value.inspectionTableId = standard.internal_standard_id ? '' : String(standard.inspection_table_id || '')
   aiSelectedStandard.value = { ...standard }
   standardDropdownVisible.value = false
   await scrollToSelectedStandard()
@@ -827,10 +854,17 @@ const handleSubmit = async () => {
     return
   }
 
-  if (hasIssueValue === 'yes' && (!form.value.standardId || !form.value.inspectionTableId)) {
+  const currentStandard = selectedStandard.value
+
+  if (hasIssueValue === 'yes' && !form.value.standardId) {
     showSubmitToast(referenceMode.value === 'ai'
       ? '请先通过AI匹配并确认一条规范，或改用人工引用规范。'
       : '请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
+    return
+  }
+
+  if (hasIssueValue === 'yes' && !currentStandard?.internal_standard_id && !form.value.inspectionTableId) {
+    showSubmitToast('所选规范缺少检查表信息，请重新选择规范。', 'error')
     return
   }
 
@@ -866,13 +900,19 @@ const handleSubmit = async () => {
     const formData = new FormData()
     formData.append('inspector_id', inspectorId)
     formData.append('station_id', String(form.value.stationId))
-    formData.append('inspection_table_id', String(form.value.inspectionTableId))
     formData.append('has_issue', hasIssueValue)
 
     if (hasIssueValue === 'yes') {
-      formData.append('standard_id', String(form.value.standardId))
+      if (currentStandard?.internal_standard_id) {
+        formData.append('internal_standard_id', String(currentStandard.internal_standard_id))
+      } else {
+        formData.append('inspection_table_id', String(form.value.inspectionTableId))
+        formData.append('standard_id', String(form.value.standardId))
+      }
       formData.append('description', form.value.description)
       formData.append('photo', imageFile.value)
+    } else {
+      formData.append('inspection_table_id', String(form.value.inspectionTableId))
     }
 
     const response = await axios.post('/api/inspection-register', formData)

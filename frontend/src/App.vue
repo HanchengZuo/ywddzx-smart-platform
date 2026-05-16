@@ -245,9 +245,15 @@
         </button>
         <button v-if="canManageChecklists" class="nav-item"
           :class="{ active: isActive('/management/checklists'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/management/checklists')" :title="sidebarCollapsed ? '巡检表数据管理' : ''">
+          @click="go('/management/checklists')" :title="sidebarCollapsed ? '检查表数据管理' : ''">
           <span class="nav-item-icon">表</span>
-          <span v-if="!sidebarCollapsed">巡检表数据管理</span>
+          <span v-if="!sidebarCollapsed">检查表数据管理</span>
+        </button>
+        <button v-if="canManageInternalStandards" class="nav-item"
+          :class="{ active: isActive('/management/internal-standards'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/internal-standards')" :title="sidebarCollapsed ? '巡检规范库数据管理' : ''">
+          <span class="nav-item-icon">范</span>
+          <span v-if="!sidebarCollapsed">巡检规范库数据管理</span>
         </button>
         <button v-if="canManageBackups" class="nav-item"
           :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
@@ -413,6 +419,17 @@ const formatAppVersion = (value) => {
 const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 const versionHistory = [
   {
+    version: 'v1.8',
+    date: '2026-05-16',
+    title: '全面升级引入内部规范库',
+    summary: '优化巡检规范体系管理体验，并修复数据管理页面偶发死锁问题。',
+    items: [
+      '原巡检规范库替换成内部规范体系。',
+      '添加巡检规范库数据管理，对内部规范增删改查。',
+      '原巡检规范库内容迁移至检查表原件库形成外部规范概念，挂在检查表名下。'
+    ]
+  },
+  {
     version: 'v1.7',
     date: '2026-05-14',
     title: 'AI引用巡检规范',
@@ -475,12 +492,12 @@ const versionHistory = [
   {
     version: 'v1.5',
     date: '2026-05-13',
-    title: '巡检表字段维护与公共字段能力升级',
-    summary: '优化检查表字段维护体验，并支持公共字段统一应用到所有检查表。',
+    title: '检查表字段维护体验升级',
+    summary: '优化检查表字段维护体验，支持字段顺序调整和空内容统一展示。',
     items: [
       '检查表字段支持上移、下移、前插和后插，新增字段空值统一显示为“-”。',
       '规范数据编辑时隐藏新增窗口，减少维护过程中的误操作。',
-      '新增公共字段管理能力，并在巡检规范库筛选面板中优先展示公共字段。'
+      '规范数据空字段统一以短横线展示，提升数据维护和查看的一致性。'
     ]
   },
   {
@@ -587,11 +604,13 @@ const canViewTrainingSection = computed(() => canViewTrainingInternal.value || c
 const canManageUsers = computed(() => isRoot.value)
 const canManageStations = computed(() => hasPermissionKey('manage_stations'))
 const canManageChecklists = computed(() => hasPermissionKey('manage_checklists'))
+const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards'))
 const canManageBackups = computed(() => isRoot.value)
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
   canManageStations.value ||
   canManageChecklists.value ||
+  canManageInternalStandards.value ||
   canManageBackups.value
 ))
 const currentRoleLabel = computed(() => {
@@ -652,6 +671,7 @@ const resolveHomePath = (user) => {
   if (permissions.view_training_materials) return '/training/materials'
   if (permissions.manage_stations) return '/management/stations'
   if (permissions.manage_checklists) return '/management/checklists'
+  if (permissions.manage_internal_standards) return '/management/internal-standards'
   return '/feedback'
 }
 

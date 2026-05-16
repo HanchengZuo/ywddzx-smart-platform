@@ -34,7 +34,14 @@
               <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
               <span :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
-            <div class="mobile-card-code">规范ID：{{ item.standard_id || '暂无' }}</div>
+            <div class="mobile-card-code">
+              <span>规范ID</span>
+              <div class="standard-id-stack compact">
+                <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-${part.type}`" :class="part.type">
+                  <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
+                </span>
+              </div>
+            </div>
             <div class="mobile-card-meta">{{ item.month }}｜{{ item.time }}</div>
           </div>
 
@@ -44,12 +51,19 @@
             <div class="mobile-card-row"><span>站点负责人</span><strong>{{ item.station_manager }}</strong></div>
             <div class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
             <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
-            <div class="mobile-card-row"><span>规范ID</span><strong>{{ item.standard_id || '暂无' }}</strong></div>
+            <div class="mobile-card-row">
+              <span>规范ID</span>
+              <div class="standard-id-stack">
+                <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-row-${part.type}`" :class="part.type">
+                  <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
+                </span>
+              </div>
+            </div>
 
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
-                <div class="mobile-card-standard-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
+                <div class="mobile-card-standard-preview multiline-clamp">{{ getStandardDetailPreview(getCombinedStandardDetailText(item))
                 }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
@@ -264,7 +278,7 @@
                 <th class="nowrap">检查人员</th>
                 <th class="nowrap">检查人员手机号</th>
                 <th class="nowrap">检查表</th>
-                <th class="nowrap">规范ID</th>
+                <th class="nowrap">规范ID（内/外）</th>
                 <th>规范详情</th>
                 <th>问题描述</th>
                 <th class="nowrap">问题照片</th>
@@ -289,10 +303,16 @@
                 <td class="nowrap">{{ item.inspector }}</td>
                 <td class="nowrap">{{ item.inspector_phone }}</td>
                 <td class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
-                <td class="nowrap">{{ item.standard_id || '暂无' }}</td>
+                <td class="nowrap standard-id-cell">
+                  <div class="standard-id-stack">
+                    <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-table-${part.type}`" :class="part.type">
+                      <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
+                    </span>
+                  </div>
+                </td>
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
-                    <div class="standard-detail-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
+                    <div class="standard-detail-preview multiline-clamp">{{ getStandardDetailPreview(getCombinedStandardDetailText(item))
                     }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
@@ -402,7 +422,11 @@
             </div>
             <div>
               <span>规范ID</span>
-              <strong>{{ editDialog.issue?.standard_id || '-' }}</strong>
+              <div class="standard-id-stack compact">
+                <span v-for="part in getStandardIdParts(editDialog.issue)" :key="`edit-${part.type}`" :class="part.type">
+                  <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -567,11 +591,30 @@
           <button class="close-btn" type="button" @click="closeStandardDetail">×</button>
         </div>
         <div class="standard-detail-modal-body">
-          <div class="standard-detail-grid">
-            <div v-for="entry in standardDetailEntries" :key="`${standardDetailState.title}-${entry.key}`"
-              class="standard-detail-card">
-              <div class="standard-detail-card-label">{{ entry.label }}</div>
-              <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
+          <div class="standard-detail-section" :class="{ muted: !standardDetailState.item?.internal_standard_id }">
+            <div class="standard-detail-section-head">
+              <span>内部规范</span>
+              <strong>{{ standardDetailState.item?.internal_standard_id || '未关联内部规范' }}</strong>
+            </div>
+            <div v-if="standardInternalEntries.length" class="standard-detail-grid">
+              <div v-for="entry in standardInternalEntries" :key="`internal-${entry.key}`" class="standard-detail-card internal">
+                <div class="standard-detail-card-label">{{ entry.label }}</div>
+                <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
+              </div>
+            </div>
+            <p v-else>这条外部规范尚未关联内部规范。</p>
+          </div>
+
+          <div class="standard-detail-section external">
+            <div class="standard-detail-section-head">
+              <span>外部规范</span>
+              <strong>{{ standardDetailState.item?.standard_id || '暂无外部规范ID' }}</strong>
+            </div>
+            <div class="standard-detail-grid">
+              <div v-for="entry in standardExternalEntries" :key="`external-${entry.key}`" class="standard-detail-card external">
+                <div class="standard-detail-card-label">{{ entry.label }}</div>
+                <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
+              </div>
             </div>
           </div>
         </div>
@@ -685,8 +728,8 @@ const filteredData = computed(() => {
     const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
     const matchedInspector = !filters.value.inspector || normalizedKeyword(item.inspector).includes(normalizedKeyword(filters.value.inspector))
     const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
-    const matchedStandardId = !filters.value.standardId || normalizedKeyword(item.standard_id || item.code).includes(normalizedKeyword(filters.value.standardId))
-    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(item.standard_detail_text).includes(normalizedKeyword(filters.value.standardDetail))
+    const matchedStandardId = !filters.value.standardId || normalizedKeyword(getStandardIdSearchText(item)).includes(normalizedKeyword(filters.value.standardId))
+    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
@@ -744,6 +787,52 @@ const isClosedIssue = (item) => item?.status === '已闭环'
 const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
 const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
+
+const getStandardIdDisplay = (item = {}) => {
+  const externalId = item?.standard_id ? `外部 ${item.standard_id}` : '外部 暂无'
+  const internalId = item?.internal_standard_id ? `内部 ${item.internal_standard_id}` : ''
+  return internalId ? `${internalId}｜${externalId}` : externalId
+}
+
+const getStandardIdParts = (item = {}) => {
+  const parts = []
+  if (item?.internal_standard_id) {
+    parts.push({
+      type: 'internal',
+      label: '内部',
+      value: item.internal_standard_id
+    })
+  }
+  parts.push({
+    type: 'external',
+    label: '外部',
+    value: item?.standard_id || '暂无'
+  })
+  return parts
+}
+
+const getStandardIdSearchText = (item = {}) => {
+  return [
+    item?.standard_id,
+    item?.internal_standard_id,
+    item?.code
+  ].filter(Boolean).join(' ')
+}
+
+const getCombinedStandardDetailText = (item = {}) => {
+  const sections = []
+  if (item?.internal_standard_id || item?.internal_standard_detail_text) {
+    sections.push([
+      `内部规范ID：${item.internal_standard_id || '-'}`,
+      item.internal_standard_detail_text || '暂无内部规范详情'
+    ].join('\n'))
+  }
+  sections.push([
+    `外部规范ID：${item.standard_id || '-'}`,
+    item.standard_detail_text || '暂无外部规范详情'
+  ].join('\n'))
+  return sections.join('\n\n')
+}
 
 watch([filters, pageSize], () => {
   page.value = 1
@@ -1025,7 +1114,8 @@ const previewState = ref({
 const standardDetailState = ref({
   visible: false,
   title: '',
-  content: ''
+  content: '',
+  item: null
 })
 
 const resolveImage = (path) => {
@@ -1054,8 +1144,9 @@ const closePreview = () => {
 const openStandardDetail = (item) => {
   standardDetailState.value = {
     visible: true,
-    title: `规范详情｜${item.inspection_table_name || '未命名检查表'}｜${item.standard_id || '暂无'}`,
-    content: item.standard_detail_text || '暂无规范详情'
+    title: `规范详情｜${item.inspection_table_name || '未命名检查表'}｜${getStandardIdDisplay(item)}`,
+    content: getCombinedStandardDetailText(item),
+    item: { ...item }
   }
 }
 
@@ -1063,12 +1154,20 @@ const closeStandardDetail = () => {
   standardDetailState.value = {
     visible: false,
     title: '',
-    content: ''
+    content: '',
+    item: null
   }
 }
 
-const standardDetailEntries = computed(() => {
-  return parseStandardDetailText(standardDetailState.value.content)
+const standardInternalEntries = computed(() => {
+  const item = standardDetailState.value.item || {}
+  if (!item.internal_standard_id && !item.internal_standard_detail_text) return []
+  return parseStandardDetailText(item.internal_standard_detail_text || '暂无内部规范详情')
+})
+
+const standardExternalEntries = computed(() => {
+  const item = standardDetailState.value.item || {}
+  return parseStandardDetailText(item.standard_detail_text || '暂无外部规范详情')
 })
 
 const openFilterDropdown = (key) => {
@@ -1410,9 +1509,19 @@ onBeforeUnmount(() => {
 }
 
 .mobile-card-code {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   font-size: 13px;
   color: #334155;
   font-weight: 700;
+}
+
+.mobile-card-code > span {
+  color: #64748b;
+  font-size: 12px;
+  flex: 0 0 auto;
 }
 
 .mobile-card-meta {
@@ -1444,6 +1553,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #0f172a;
   text-align: right;
+}
+
+.mobile-card-row .standard-id-stack {
+  align-items: flex-end;
 }
 
 .mobile-card-row-top {
@@ -1688,6 +1801,52 @@ onBeforeUnmount(() => {
 
 .standard-detail-cell {
   min-width: 300px;
+}
+
+.standard-id-cell {
+  min-width: 128px;
+}
+
+.standard-id-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  white-space: normal;
+}
+
+.standard-id-stack.compact {
+  gap: 5px;
+}
+
+.standard-id-stack span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.standard-id-stack span.external {
+  border-color: #ccfbf1;
+  background: #ecfeff;
+  color: #0f766e;
+}
+
+.standard-id-stack em {
+  font-style: normal;
+  opacity: 0.72;
+}
+
+.standard-id-stack strong {
+  color: inherit;
+  font-size: 12px;
 }
 
 .standard-detail-box {
@@ -2037,6 +2196,46 @@ onBeforeUnmount(() => {
   line-height: 1.9;
   color: #334155;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.standard-detail-section {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(180deg, #eff6ff, #ffffff);
+}
+
+.standard-detail-section.external {
+  border-color: #99f6e4;
+  background: linear-gradient(180deg, #ecfeff, #ffffff);
+}
+
+.standard-detail-section.muted {
+  border-color: #e2e8f0;
+  background: #ffffff;
+}
+
+.standard-detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.standard-detail-section-head span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.standard-detail-section-head strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 950;
 }
 
 .standard-detail-grid {
@@ -2050,6 +2249,14 @@ onBeforeUnmount(() => {
   border-radius: 16px;
   background: #ffffff;
   border: 1px solid #e7edf4;
+}
+
+.standard-detail-card.internal {
+  border-color: #dbeafe;
+}
+
+.standard-detail-card.external {
+  border-color: #ccfbf1;
 }
 
 .standard-detail-card-label {
