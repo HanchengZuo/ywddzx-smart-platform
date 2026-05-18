@@ -200,17 +200,25 @@
                 <input id="issue-photo-camera" class="upload-input" type="file" accept="image/*" capture="environment"
                   @change="handleFileChange" />
 
-                <label for="issue-photo-upload" class="upload-dropzone">
+                <div class="upload-dropzone" :class="{ 'drag-active': isPhotoDragActive }" role="button" tabindex="0"
+                  @click="openIssuePhotoPicker" @keydown.enter.prevent="openIssuePhotoPicker"
+                  @keydown.space.prevent="openIssuePhotoPicker" @dragenter.prevent="handlePhotoDragEnter"
+                  @dragover.prevent="handlePhotoDragOver" @dragleave.prevent="handlePhotoDragLeave"
+                  @drop.prevent="handlePhotoDrop">
                   <div class="upload-icon">↑</div>
-                  <div class="upload-title">选择或更换问题照片</div>
+                  <div class="upload-title">
+                    <span class="desktop-upload-title">选择或拖拽问题照片</span>
+                    <span class="mobile-upload-title">选择或更换问题照片</span>
+                  </div>
                   <div class="upload-desc">
                     支持上传现场问题照片，建议使用清晰、完整、能准确反映问题的图片。
+                    <span class="desktop-drop-hint">桌面端可直接将图片拖到此处上传。</span>
                   </div>
                   <div class="upload-trigger-group">
-                    <label for="issue-photo-camera" class="upload-trigger upload-trigger-secondary">拍照上传</label>
-                    <label for="issue-photo-upload" class="upload-trigger">相册选择</label>
+                    <label for="issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照上传</label>
+                    <label for="issue-photo-upload" class="upload-trigger" @click.stop>相册选择</label>
                   </div>
-                </label>
+                </div>
 
                 <div v-if="imagePreviewUrl" class="image-preview-panel">
                   <img :src="imagePreviewUrl" alt="问题照片预览" class="image-preview-thumb" />
@@ -282,9 +290,11 @@ const aiNoRelated = ref(false)
 const aiSelectedStandard = ref(null)
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
+const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
 const submitMessageType = ref('info')
 let submitMessageTimer = null
+let photoDragDepth = 0
 const showSubmitToast = (message, type = 'info') => {
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
@@ -843,6 +853,10 @@ const handleFileChange = async (event) => {
     return
   }
 
+  await processSelectedImage(file)
+}
+
+const processSelectedImage = async (file) => {
   try {
     const prepared = await prepareImagePreview(file)
     imageFile.value = prepared.file
@@ -861,10 +875,57 @@ const handleFileChange = async (event) => {
   }
 }
 
+const isDesktopPhotoDropEnabled = () => {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia?.('(min-width: 901px) and (pointer: fine)').matches
+}
+
+const openIssuePhotoPicker = () => {
+  document.getElementById('issue-photo-upload')?.click()
+}
+
+const hasDraggedImage = (event) => {
+  return Array.from(event.dataTransfer?.items || []).some((item) => item.type?.startsWith('image/'))
+}
+
+const handlePhotoDragEnter = (event) => {
+  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  photoDragDepth += 1
+  isPhotoDragActive.value = true
+}
+
+const handlePhotoDragOver = (event) => {
+  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  event.dataTransfer.dropEffect = 'copy'
+  isPhotoDragActive.value = true
+}
+
+const handlePhotoDragLeave = () => {
+  if (!isDesktopPhotoDropEnabled()) return
+  photoDragDepth = Math.max(photoDragDepth - 1, 0)
+  if (photoDragDepth === 0) {
+    isPhotoDragActive.value = false
+  }
+}
+
+const handlePhotoDrop = async (event) => {
+  if (!isDesktopPhotoDropEnabled()) return
+  photoDragDepth = 0
+  isPhotoDragActive.value = false
+  const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type?.startsWith('image/'))
+  if (!file) {
+    showSubmitToast('请拖入图片文件。', 'error')
+    return
+  }
+  await processSelectedImage(file)
+}
+
 const clearImage = () => {
   imageFile.value = null
   revokeObjectUrl(imagePreviewUrl.value)
   imagePreviewUrl.value = ''
+  isPhotoDragActive.value = false
+  photoDragDepth = 0
   clearFileInputsById(['issue-photo-upload', 'issue-photo-camera'])
 }
 
@@ -1561,6 +1622,7 @@ onBeforeUnmount(() => {
 }
 
 .upload-dropzone {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1574,11 +1636,21 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
   cursor: pointer;
   transition: all 0.18s ease;
+  overflow: hidden;
 }
 
 .upload-dropzone:hover {
   border-color: #93c5fd;
   background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+}
+
+.upload-dropzone.drag-active {
+  border-color: #2563eb;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(37, 99, 235, 0.16), transparent 36%),
+    linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.14), 0 18px 36px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
 }
 
 .upload-icon {
@@ -1601,11 +1673,22 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
+.mobile-upload-title {
+  display: none;
+}
+
 .upload-desc {
   max-width: 560px;
   font-size: 13px;
   line-height: 1.8;
   color: #64748b;
+}
+
+.desktop-drop-hint {
+  display: block;
+  margin-top: 4px;
+  color: #2563eb;
+  font-weight: 700;
 }
 
 .upload-trigger-group {
@@ -1928,8 +2011,20 @@ onBeforeUnmount(() => {
     font-size: 15px;
   }
 
+  .desktop-upload-title {
+    display: none;
+  }
+
+  .mobile-upload-title {
+    display: inline;
+  }
+
   .upload-desc {
     font-size: 12px;
+  }
+
+  .desktop-drop-hint {
+    display: none;
   }
 
   .upload-trigger-group {

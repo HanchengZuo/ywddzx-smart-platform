@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.8.2',
+    date: '2026-05-18',
+    title: '问题照片上传更方便',
+    summary: '电脑端登记问题时，可以直接拖拽照片上传。',
+    items: [
+      '巡检登记电脑端支持把问题照片拖到上传框里。',
+      '手机端拍照和相册选择保持原来的操作方式。'
+    ]
+  },
+  {
     version: 'v1.8.1',
     date: '2026-05-18',
     title: '登记页规范展示可配置',
