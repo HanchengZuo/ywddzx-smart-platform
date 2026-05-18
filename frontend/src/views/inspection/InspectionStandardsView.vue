@@ -3,7 +3,7 @@
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
-        <h2>巡检规范库</h2>
+        <h2>巡检规范库（内部）</h2>
         <p class="page-desc">业务督导中心部门通过整理归纳外部规范库，从而自建形成的内部巡检规范库。</p>
       </div>
       <div class="header-badges">
@@ -90,13 +90,16 @@
 
         <div v-if="filteredStandards.length" class="pagination-bar">
           <button class="btn btn-secondary btn-sm" type="button" :disabled="page <= 1" @click="goToPage(1)">首页</button>
-          <button class="btn btn-secondary btn-sm" type="button" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="page <= 1"
+            @click="goToPage(page - 1)">上一页</button>
           <button v-for="item in visiblePageItems" :key="item.key" type="button" class="page-btn"
             :class="{ active: item.value === page }" :disabled="item.type === 'ellipsis'" @click="goToPage(item.value)">
             {{ item.type === 'ellipsis' ? '...' : item.value }}
           </button>
-          <button class="btn btn-secondary btn-sm" type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
-          <button class="btn btn-secondary btn-sm" type="button" :disabled="page >= totalPages" @click="goToPage(totalPages)">末页</button>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="page >= totalPages"
+            @click="goToPage(page + 1)">下一页</button>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="page >= totalPages"
+            @click="goToPage(totalPages)">末页</button>
         </div>
       </section>
 
@@ -144,7 +147,8 @@
     </div>
 
     <Teleport to="body">
-      <div v-if="mobileDialogVisible && activeStandard" class="mobile-detail-modal" @click.self="mobileDialogVisible = false">
+      <div v-if="mobileDialogVisible && activeStandard" class="mobile-detail-modal"
+        @click.self="mobileDialogVisible = false">
         <section class="mobile-detail-sheet card-surface">
           <div class="modal-handle"></div>
           <button class="modal-close" type="button" @click="mobileDialogVisible = false">×</button>
@@ -970,7 +974,7 @@ onBeforeUnmount(() => {
   margin-top: 14px;
 }
 
-.detail-block > strong {
+.detail-block>strong {
   display: block;
   margin-bottom: 13px;
 }
@@ -1204,6 +1208,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+
   .page-header,
   .filter-card,
   .standard-card-top,

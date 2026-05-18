@@ -3,7 +3,7 @@
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">外部规范库</div>
-        <h2>检查表原件库</h2>
+        <h2>检查表原件库（外部）</h2>
         <p class="page-desc">集中查看上海公司事业部检查表 PDF 原件，并追溯由检查表拆解形成的外部规范列表。</p>
       </div>
       <div class="header-badges">
@@ -27,8 +27,7 @@
 
         <div class="checklist-list">
           <article v-for="item in checklistItems" :key="item.inspection_table_id" class="checklist-card"
-            :class="{ active: activeItem?.inspection_table_id === item.inspection_table_id }"
-            @click="selectItem(item)">
+            :class="{ active: activeItem?.inspection_table_id === item.inspection_table_id }" @click="selectItem(item)">
             <div class="checklist-card-main">
               <div>
                 <h4>{{ item.table_name }}</h4>
@@ -77,21 +76,24 @@
                 <div class="external-standard-top">
                   <span>外部规范ID {{ standard.external_standard_id }}</span>
                   <em :class="{ linked: standard.linked_internal_standard_id }">
-                    {{ standard.linked_internal_standard_id ? `内部 ${standard.linked_internal_standard_id}` : '未关联内部规范' }}
+                    {{ standard.linked_internal_standard_id ? `内部 ${standard.linked_internal_standard_id}` : '未关联内部规范'
+                    }}
                   </em>
                 </div>
                 <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
               </article>
-              <div v-if="getExternalTotalPage(item.inspection_table_id) > 1" class="pagination-bar mobile-standard-pager">
+              <div v-if="getExternalTotalPage(item.inspection_table_id) > 1"
+                class="pagination-bar mobile-standard-pager">
                 <button class="btn btn-secondary pagination-btn" type="button"
                   :disabled="getStandardPage(item.inspection_table_id) <= 1"
                   @click.stop="setStandardPage(item.inspection_table_id, getStandardPage(item.inspection_table_id) - 1)">
                   上一页
                 </button>
                 <div class="pagination-page-list scrollable-pages" @click.stop>
-                  <button v-for="pageNo in getAllPageNumbers(getExternalTotalPage(item.inspection_table_id))" :key="pageNo"
-                    class="pagination-page-btn" :class="{ active: pageNo === getStandardPage(item.inspection_table_id) }"
-                    type="button" @click="setStandardPage(item.inspection_table_id, pageNo)">
+                  <button v-for="pageNo in getAllPageNumbers(getExternalTotalPage(item.inspection_table_id))"
+                    :key="pageNo" class="pagination-page-btn"
+                    :class="{ active: pageNo === getStandardPage(item.inspection_table_id) }" type="button"
+                    @click="setStandardPage(item.inspection_table_id, pageNo)">
                     {{ pageNo }}
                   </button>
                 </div>
@@ -157,7 +159,8 @@
                 <div class="section-kicker">外部规范列表</div>
                 <h3>由本检查表拆解得到的外部规范</h3>
               </div>
-              <span class="status-pill info">{{ filteredActiveExternalStandards.length }} / {{ activeExternalStandards.length }} 条</span>
+              <span class="status-pill info">{{ filteredActiveExternalStandards.length }} / {{
+                activeExternalStandards.length }} 条</span>
             </div>
 
             <div v-if="activeExternalStandards.length" class="external-filter-panel">
@@ -184,7 +187,8 @@
                 <div class="external-standard-top">
                   <span>外部规范ID {{ standard.external_standard_id }}</span>
                   <em :class="{ linked: standard.linked_internal_standard_id }">
-                    {{ standard.linked_internal_standard_id ? `已关联内部规范 ${standard.linked_internal_standard_id}` : '未关联内部规范' }}
+                    {{ standard.linked_internal_standard_id ? `已关联内部规范 ${standard.linked_internal_standard_id}` :
+                    '未关联内部规范' }}
                   </em>
                 </div>
                 <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
@@ -192,18 +196,18 @@
 
               <div class="pagination-bar">
                 <div class="pagination-summary">
-                  共 {{ filteredActiveExternalStandards.length }} 条外部规范，第 {{ activeExternalPage }} / {{ activeExternalTotalPage }} 页
+                  共 {{ filteredActiveExternalStandards.length }} 条外部规范，第 {{ activeExternalPage }} / {{
+                  activeExternalTotalPage }} 页
                 </div>
                 <div class="pagination-controls">
-                  <button class="btn btn-secondary pagination-btn" type="button"
-                    :disabled="activeExternalPage <= 1"
+                  <button class="btn btn-secondary pagination-btn" type="button" :disabled="activeExternalPage <= 1"
                     @click="setStandardPage(activeItem.inspection_table_id, activeExternalPage - 1)">
                     上一页
                   </button>
                   <div class="pagination-page-list scrollable-pages">
                     <button v-for="pageNo in getAllPageNumbers(activeExternalTotalPage)" :key="pageNo"
-                      class="pagination-page-btn" :class="{ active: pageNo === activeExternalPage }"
-                      type="button" @click="setStandardPage(activeItem.inspection_table_id, pageNo)">
+                      class="pagination-page-btn" :class="{ active: pageNo === activeExternalPage }" type="button"
+                      @click="setStandardPage(activeItem.inspection_table_id, pageNo)">
                       {{ pageNo }}
                     </button>
                   </div>
@@ -1125,6 +1129,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+
   .page-header,
   .preview-header {
     flex-direction: column;

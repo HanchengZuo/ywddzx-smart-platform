@@ -4395,6 +4395,107 @@ def serialize_standard_row(field_meta, row):
     return item
 
 
+INSPECTION_STANDARD_USAGE_MODES = {"internal", "external"}
+DEFAULT_INSPECTION_STANDARD_USAGE_MODE = "internal"
+INSPECTION_STANDARD_USAGE_MODE_LABELS = {
+    "internal": "内部规范库",
+    "external": "外部规范库",
+}
+
+
+def normalize_inspection_standard_usage_mode(value):
+    mode = str(value or "").strip().lower()
+    return mode if mode in INSPECTION_STANDARD_USAGE_MODES else DEFAULT_INSPECTION_STANDARD_USAGE_MODE
+
+
+def serialize_inspection_standard_usage_mode(mode, row=None):
+    normalized_mode = normalize_inspection_standard_usage_mode(mode)
+    return {
+        "mode": normalized_mode,
+        "mode_label": INSPECTION_STANDARD_USAGE_MODE_LABELS.get(normalized_mode, "内部规范库"),
+        "updated_by": row.get("updated_by") if row else None,
+        "updated_by_username": row.get("updated_by_username") if row else "",
+        "updated_by_name": row.get("updated_by_name") if row else "",
+        "updated_at": row.get("updated_at") if row else "",
+    }
+
+
+def ensure_inspection_standard_usage_settings_schema(cur):
+    acquire_schema_migration_lock(cur)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_standard_usage_settings (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+            register_standard_source TEXT NOT NULL DEFAULT 'internal',
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_inspection_standard_usage_singleton CHECK (singleton = TRUE),
+            CONSTRAINT chk_inspection_standard_usage_source
+                CHECK (register_standard_source IN ('internal', 'external'))
+        );
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO inspection_standard_usage_settings (singleton, register_standard_source)
+        VALUES (TRUE, %s)
+        ON CONFLICT (singleton) DO NOTHING;
+        """,
+        (DEFAULT_INSPECTION_STANDARD_USAGE_MODE,),
+    )
+
+
+def get_inspection_standard_usage_mode(cur):
+    cur.execute("SELECT to_regclass('public.inspection_standard_usage_settings') AS table_name;")
+    row = cur.fetchone()
+    if not row or not row.get("table_name"):
+        return serialize_inspection_standard_usage_mode(DEFAULT_INSPECTION_STANDARD_USAGE_MODE)
+
+    cur.execute(
+        """
+        SELECT
+            s.register_standard_source,
+            s.updated_by,
+            COALESCE(u.username, '') AS updated_by_username,
+            COALESCE(u.real_name, '') AS updated_by_name,
+            TO_CHAR(s.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM inspection_standard_usage_settings s
+        LEFT JOIN users u ON u.id = s.updated_by
+        WHERE s.singleton = TRUE
+        LIMIT 1;
+        """
+    )
+    setting = cur.fetchone()
+    if not setting:
+        return serialize_inspection_standard_usage_mode(DEFAULT_INSPECTION_STANDARD_USAGE_MODE)
+    return serialize_inspection_standard_usage_mode(
+        setting.get("register_standard_source"),
+        setting,
+    )
+
+
+def save_inspection_standard_usage_mode(cur, mode, user_id):
+    normalized_mode = normalize_inspection_standard_usage_mode(mode)
+    cur.execute(
+        """
+        INSERT INTO inspection_standard_usage_settings (
+            singleton,
+            register_standard_source,
+            updated_by,
+            updated_at
+        )
+        VALUES (TRUE, %s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (singleton)
+        DO UPDATE SET
+            register_standard_source = EXCLUDED.register_standard_source,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        (normalized_mode, user_id or None),
+    )
+    return get_inspection_standard_usage_mode(cur)
+
+
 def ensure_internal_standard_schema(cur):
     acquire_schema_migration_lock(cur)
     cur.execute(
@@ -4479,6 +4580,7 @@ def ensure_internal_standard_schema(cur):
         ON inspection_internal_standard_links (internal_standard_id);
         """
     )
+    ensure_inspection_standard_usage_settings_schema(cur)
 
 
 def get_internal_standard_fields(cur):
@@ -5072,7 +5174,41 @@ def parse_internal_standards_backup_file(file_storage):
     return normalize_internal_standards_backup_payload(payload)
 
 
-def build_inspection_standard_ai_catalog(cur):
+def build_external_inspection_standard_ai_catalog(cur):
+    external_map = fetch_external_standard_map(cur)
+    internal_links = fetch_internal_links_by_external_ids(cur, external_map.keys())
+    ai_catalog = []
+    full_standards = []
+
+    for standard in external_map.values():
+        standard_id = str(standard.get("external_standard_id") or standard.get("standard_id") or "").strip()
+        detail_text = str(standard.get("standard_detail_text") or "").strip()
+        if not standard_id or not detail_text:
+            continue
+        linked_internal = internal_links.get(int(standard["external_standard_id"]))
+        enriched_standard = {
+            **standard,
+            "standard_id": standard_id,
+            "external_standard_id": standard["external_standard_id"],
+            "inspection_table_id": standard.get("inspection_table_id") or "",
+            "inspection_table_name": standard.get("inspection_table_name") or "",
+            "standard_detail_text": detail_text,
+            "linked_internal": linked_internal,
+            "linked_internal_standard_id": linked_internal.get("internal_standard_id") if linked_internal else "",
+        }
+        full_standards.append(enriched_standard)
+        ai_catalog.append(
+            {
+                "standard_id": standard_id,
+                "inspection_table_name": enriched_standard["inspection_table_name"],
+                "detail_text": detail_text,
+            }
+        )
+
+    return ai_catalog, full_standards
+
+
+def build_internal_inspection_standard_ai_catalog(cur):
     cur.execute(
         """
         SELECT
@@ -5130,6 +5266,13 @@ def build_inspection_standard_ai_catalog(cur):
         )
 
     return ai_catalog, full_standards
+
+
+def build_inspection_standard_ai_catalog(cur, usage_mode=None):
+    mode = normalize_inspection_standard_usage_mode(usage_mode)
+    if mode == "external":
+        return build_external_inspection_standard_ai_catalog(cur)
+    return build_internal_inspection_standard_ai_catalog(cur)
 
 
 @app.route("/")
@@ -9207,7 +9350,7 @@ def get_inspection_standard_export_template():
         conn.commit()
 
         user = getattr(g, "current_user", None)
-        if not can_view_inspection_standards(cur, user):
+        if not (can_view_inspection_standards(cur, user) or has_permission(cur, user, "submit_inspections")):
             return jsonify({"success": False, "error": "当前账号无权访问巡检规范库。"}), 403
 
         template = get_standard_export_template_config(cur)
@@ -9485,6 +9628,7 @@ def get_external_standards():
         if not (
             can_view_checklist_originals(cur, user)
             or can_view_inspection_standards(cur, user)
+            or has_permission(cur, user, "submit_inspections")
             or has_permission(cur, user, "manage_internal_standards")
         ):
             return jsonify({"success": False, "error": "当前账号无权查看规范库。"}), 403
@@ -9578,6 +9722,30 @@ def get_inspection_internal_standards():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/inspection-standard-usage-mode", methods=["GET"])
+def get_public_inspection_standard_usage_mode():
+    conn = None
+    cur = None
+    try:
+        user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if not has_permission(cur, user, "submit_inspections"):
+            return jsonify({"success": False, "error": "当前账号无权使用巡检登记功能。"}), 403
+        return jsonify(
+            {
+                "success": True,
+                "usage_mode": get_inspection_standard_usage_mode(cur),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/internal-standards", methods=["GET"])
 def get_management_internal_standards():
     user_id = str(request.args.get("user_id", "")).strip()
@@ -9607,9 +9775,11 @@ def get_management_internal_standards():
         fields = [dict(field) for field in get_internal_standard_fields(cur)]
         conn.commit()
         link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        usage_mode = get_inspection_standard_usage_mode(cur)
         return jsonify(
             {
                 "success": True,
+                "usage_mode": usage_mode,
                 "fields": fields,
                 "items": [
                     serialize_internal_standard(row, link_map.get(row["id"], []), fields)
@@ -9622,6 +9792,71 @@ def get_management_internal_standards():
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/usage-mode", methods=["GET"])
+def get_management_internal_standard_usage_mode():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        return jsonify(
+            {
+                "success": True,
+                "usage_mode": get_inspection_standard_usage_mode(cur),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/usage-mode", methods=["PUT"])
+def update_management_internal_standard_usage_mode():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    mode = str(data.get("mode", "")).strip()
+    conn = None
+    cur = None
+    try:
+        if mode not in INSPECTION_STANDARD_USAGE_MODES:
+            return jsonify({"success": False, "error": "巡检登记规范来源参数不合法。"}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_standard_usage_settings_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        usage_mode = save_inspection_standard_usage_mode(cur, mode, user_id)
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"巡检登记已切换为使用{usage_mode['mode_label']}。",
+                "usage_mode": usage_mode,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -10052,7 +10287,8 @@ def recommend_inspection_standard_by_ai():
         if not has_permission(cur, current_user, "submit_inspections"):
             return jsonify({"success": False, "error": "当前账号无权使用巡检登记功能。"}), 403
 
-        ai_catalog, full_standards = build_inspection_standard_ai_catalog(cur)
+        usage_mode = get_inspection_standard_usage_mode(cur)
+        ai_catalog, full_standards = build_inspection_standard_ai_catalog(cur, usage_mode["mode"])
         conn.commit()
 
         recommendation_result = generate_standard_recommendations(
@@ -10087,6 +10323,7 @@ def recommend_inspection_standard_by_ai():
                 "no_related": no_related,
                 "items": [] if no_related else items,
                 "catalog_count": len(ai_catalog),
+                "usage_mode": usage_mode,
             }
         )
     except PermissionError as e:
@@ -10183,6 +10420,13 @@ def inspection_register():
 
         today = beijing_today()
         batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
+        usage_mode = get_inspection_standard_usage_mode(cur)
+
+        if has_issue == "yes" and usage_mode["mode"] == "external" and internal_standard_id:
+            return jsonify({"success": False, "error": "当前巡检登记已切换为外部规范库，请选择外部规范ID后提交。"}), 400
+
+        if has_issue == "yes" and usage_mode["mode"] == "internal" and standard_id and not internal_standard_id:
+            return jsonify({"success": False, "error": "当前巡检登记已切换为内部规范库，请选择内部规范ID后提交。"}), 400
 
         if has_issue == "yes" and internal_standard_id:
             internal_standard, _internal_fields, linked_externals = fetch_internal_standard_by_code(

@@ -36,6 +36,29 @@
     <template v-else>
       <div v-if="message.text" class="message-card" :class="message.type">{{ message.text }}</div>
 
+      <section class="card-surface usage-mode-card">
+        <div>
+          <div class="section-kicker">巡检登记规范来源</div>
+          <h3>当前使用{{ usageModeLabel }}进行巡检登记</h3>
+          <p>{{ usageModeDescription }}</p>
+          <span v-if="usageMode.updated_at" class="usage-mode-meta">
+            最近调整：{{ usageMode.updated_at }} · {{ usageMode.updated_by_name || usageMode.updated_by_username || '系统' }}
+          </span>
+        </div>
+        <div class="usage-mode-options" role="radiogroup" aria-label="巡检登记规范来源">
+          <button type="button" class="usage-mode-option" :class="{ active: usageMode.mode === 'internal' }"
+            :disabled="savingUsageMode" @click="updateUsageMode('internal')">
+            <strong>内部规范库</strong>
+            <span>使用业务督导中心自建内部规范，提交后自动展开到挂载的外部规范。</span>
+          </button>
+          <button type="button" class="usage-mode-option" :class="{ active: usageMode.mode === 'external' }"
+            :disabled="savingUsageMode" @click="updateUsageMode('external')">
+            <strong>外部规范库</strong>
+            <span>临时使用检查表原件库里的外部规范ID，适合内部规范整理期过渡。</span>
+          </button>
+        </div>
+      </section>
+
       <section class="card-surface list-card">
         <div class="list-head">
           <div>
@@ -275,6 +298,7 @@ try {
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_internal_standards)
 const loading = ref(false)
 const saving = ref(false)
+const savingUsageMode = ref(false)
 const keyword = ref('')
 const internalFields = ref([])
 const internalStandards = ref([])
@@ -282,6 +306,13 @@ const externalStandards = ref([])
 const importFileInput = ref(null)
 const fieldFilters = reactive({})
 const message = reactive({ text: '', type: 'info' })
+const usageMode = reactive({
+  mode: 'internal',
+  mode_label: '内部规范库',
+  updated_at: '',
+  updated_by_username: '',
+  updated_by_name: ''
+})
 let messageTimer = null
 
 const createEmptyStandardForm = () => ({
@@ -324,6 +355,11 @@ const getFieldValue = (item, fieldKey) => {
 }
 
 const filterableFields = computed(() => internalFields.value.filter((field) => field.is_filterable))
+
+const usageModeLabel = computed(() => usageMode.mode === 'external' ? '外部规范库' : '内部规范库')
+const usageModeDescription = computed(() => usageMode.mode === 'external'
+  ? '巡检登记会直接搜索和引用检查表原件库中的外部规范ID，问题仍会挂到对应检查表规范下。'
+  : '巡检登记会搜索和引用内部规范ID，并按挂载关系自动写入对应外部规范问题。')
 
 const filteredInternalStandards = computed(() => {
   const text = keyword.value.toLowerCase()
@@ -402,6 +438,7 @@ const fetchInternalStandards = async () => {
   })
   internalFields.value = response.data?.fields || []
   internalStandards.value = response.data?.items || []
+  Object.assign(usageMode, response.data?.usage_mode || {})
 }
 
 const fetchExternalStandards = async () => {
@@ -429,6 +466,23 @@ const fetchAll = async () => {
     setMessage(error?.response?.data?.error || '规范数据加载失败。', 'error')
   } finally {
     loading.value = false
+  }
+}
+
+const updateUsageMode = async (mode) => {
+  if (savingUsageMode.value || usageMode.mode === mode) return
+  try {
+    savingUsageMode.value = true
+    const response = await axios.put('/api/management/internal-standards/usage-mode', {
+      user_id: currentUserId,
+      mode
+    })
+    Object.assign(usageMode, response.data?.usage_mode || {})
+    setMessage(response.data?.message || '巡检登记规范来源已更新。', 'success')
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '巡检登记规范来源更新失败。', 'error')
+  } finally {
+    savingUsageMode.value = false
   }
 }
 
@@ -808,6 +862,81 @@ onMounted(fetchAll)
   border-color: #fecaca;
   background: #fef2f2;
   color: #dc2626;
+}
+
+.usage-mode-card {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(420px, 1.4fr);
+  gap: 18px;
+  align-items: stretch;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 92% 12%, rgba(20, 184, 166, 0.12), transparent 30%),
+    rgba(255, 255, 255, 0.97);
+}
+
+.usage-mode-card h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 22px;
+}
+
+.usage-mode-card p {
+  margin: 8px 0 10px;
+  color: #64748b;
+  line-height: 1.8;
+}
+
+.usage-mode-meta {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.usage-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.usage-mode-option {
+  min-height: 132px;
+  padding: 18px;
+  border: 1px solid #dbe4ee;
+  border-radius: 20px;
+  background: #fff;
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.usage-mode-option:hover:not(:disabled),
+.usage-mode-option.active {
+  border-color: #0f766e;
+  background: #f0fdfa;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.13), 0 14px 28px rgba(15, 118, 110, 0.08);
+}
+
+.usage-mode-option strong {
+  display: block;
+  color: #0f172a;
+  font-size: 17px;
+  margin-bottom: 8px;
+}
+
+.usage-mode-option.active strong {
+  color: #0f766e;
+}
+
+.usage-mode-option span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .dialog-message {
@@ -1337,6 +1466,10 @@ onMounted(fetchAll)
   .field-filter-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .usage-mode-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1372,8 +1505,14 @@ onMounted(fetchAll)
   .field-filter-panel,
   .field-value-grid,
   .field-config-row,
-  .external-toolbar {
+  .external-toolbar,
+  .usage-mode-options {
     grid-template-columns: 1fr;
+  }
+
+  .usage-mode-card {
+    padding: 18px;
+    border-radius: 22px;
   }
 
   .field-row-actions,

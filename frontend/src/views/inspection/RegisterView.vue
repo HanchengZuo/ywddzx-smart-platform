@@ -57,12 +57,12 @@
               <button type="button" class="reference-mode-btn" :class="{ active: referenceMode === 'manual' }"
                 @click="setReferenceMode('manual')">
                 <strong>人工引用规范</strong>
-                <span>手动输入规范ID，按现有流程选择规范。</span>
+                <span>手动输入{{ standardSourceMode === 'internal' ? '内部规范ID' : '外部规范ID' }}，按现有流程选择规范。</span>
               </button>
               <button type="button" class="reference-mode-btn reference-mode-btn-ai"
                 :class="{ active: referenceMode === 'ai' }" @click="setReferenceMode('ai')">
                 <strong>AI引用规范</strong>
-                <span>先填写实际问题描述，由AI推荐候选规范。</span>
+                <span>先填写问题描述，由AI从{{ standardSourceModeLabel }}推荐候选规范。</span>
               </button>
             </div>
           </div>
@@ -94,7 +94,7 @@
                 <div>
                   <div class="ai-reference-kicker">DEEPSEEK ASSISTED MATCH</div>
                   <h3>根据实际问题描述推荐规范</h3>
-                  <p>AI会读取当前巡检规范库资料并给出候选项，最终仍由你确认引用哪一条规范。</p>
+                  <p>AI会读取当前{{ standardSourceModeLabel }}资料并给出候选项，最终仍由你确认引用哪一条规范。</p>
                 </div>
               </div>
 
@@ -108,7 +108,8 @@
                   @click="runAiStandardMatch">
                   {{ aiMatching ? 'AI匹配中...' : 'AI匹配规范' }}
                 </button>
-                <button class="btn btn-secondary" type="button" :disabled="aiMatching" @click="setReferenceMode('manual')">
+                <button class="btn btn-secondary" type="button" :disabled="aiMatching"
+                  @click="setReferenceMode('manual')">
                   改用人工引用
                 </button>
               </div>
@@ -166,7 +167,7 @@
           <template v-if="normalizedHasIssue === 'yes' && selectedStandard">
             <div class="form-item form-item-full selected-standard-field selected-standard-first"
               ref="selectedStandardStartRef">
-              <label>{{ selectedStandard.internal_standard_id ? '内部规范ID' : '规范ID' }}</label>
+              <label>{{ selectedStandard.internal_standard_id ? '内部规范ID' : '外部规范ID' }}</label>
               <input :value="selectedStandard.standard_id || ''" type="text" readonly />
             </div>
 
@@ -177,8 +178,8 @@
 
             <div class="form-item form-item-full selected-standard-field selected-standard-detail">
               <label>规范详情</label>
-              <textarea :value="normalizeStandardDetailForRegister(selectedStandard.standard_detail_text || '')" rows="8"
-                readonly></textarea>
+              <textarea :value="normalizeStandardDetailForRegister(selectedStandard.standard_detail_text || '')"
+                rows="8" readonly></textarea>
             </div>
           </template>
         </div>
@@ -272,6 +273,7 @@ const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
 const tableSearch = ref('')
+const standardSourceMode = ref('internal')
 const referenceMode = ref('manual')
 const aiMatching = ref(false)
 const aiRecommendations = ref([])
@@ -412,7 +414,18 @@ const matchesNumericStandardSearch = (item, keyword) => {
   if (!needle) return true
   if (normalizeExactNumericText(item?.standard_id) === needle) return true
   if (normalizeExactNumericText(item?.internal_standard_id) === needle) return true
+  if (normalizeExactNumericText(item?.external_standard_id) === needle) return true
   if ((item?.linked_externals || []).some((link) => normalizeExactNumericText(link.external_standard_id) === needle)) return true
+  const sequenceDetailMatched = normalizeStandardDetailForRegister(item?.standard_detail_text || '')
+    .split('\n')
+    .some((line) => {
+      const separatorIndex = line.indexOf('：')
+      if (separatorIndex < 0) return false
+      const label = line.slice(0, separatorIndex).trim()
+      const value = line.slice(separatorIndex + 1).trim()
+      return label.includes('序号') && normalizeExactNumericText(value) === needle
+    })
+  if (sequenceDetailMatched) return true
   return standardSequenceFieldKeys.value.some((fieldKey) => {
     return normalizeExactNumericText(item?.[fieldKey] ?? item?.field_values?.[fieldKey]) === needle
   })
@@ -430,6 +443,8 @@ const selectedStandard = computed(() => {
 const normalizedHasIssue = computed(() => {
   return String(form.value.hasIssue || 'yes').trim().toLowerCase()
 })
+
+const standardSourceModeLabel = computed(() => standardSourceMode.value === 'external' ? '外部规范库' : '内部规范库')
 
 const showIssueFields = computed(() => {
   const hasIssueYes = String(form.value.hasIssue || 'yes').trim().toLowerCase() === 'yes'
@@ -547,7 +562,30 @@ const fetchInspectionTables = async () => {
   inspectionTables.value = response.data || []
 }
 
+const fetchStandardSourceMode = async () => {
+  const response = await axios.get('/api/inspection-standard-usage-mode', {
+    params: { _ts: Date.now() }
+  })
+  standardSourceMode.value = response.data?.usage_mode?.mode === 'external' ? 'external' : 'internal'
+}
+
 const fetchStandards = async () => {
+  if (standardSourceMode.value === 'external') {
+    const response = await axios.get('/api/external-standards', {
+      params: { _ts: Date.now() }
+    })
+    standardFields.value = []
+    standards.value = (response.data?.items || []).map((item) => ({
+      ...item,
+      standard_id: String(item.standard_id || item.external_standard_id || ''),
+      external_standard_id: item.external_standard_id || item.standard_id,
+      inspection_table_id: String(item.inspection_table_id || ''),
+      inspection_table_name: item.inspection_table_name || '未命名检查表',
+      standard_detail_text: item.standard_detail_text || ''
+    }))
+    return
+  }
+
   const response = await axios.get('/api/inspection-internal-standards', {
     params: { _ts: Date.now() }
   })
@@ -741,7 +779,8 @@ const runAiStandardMatch = async () => {
   try {
     aiMatching.value = true
     const response = await axios.post('/api/inspection-standards/ai-recommend', {
-      description
+      description,
+      standard_source_mode: standardSourceMode.value
     })
     aiRecommendations.value = response.data?.items || []
     aiNoRelated.value = Boolean(response.data?.no_related)
@@ -753,7 +792,7 @@ const runAiStandardMatch = async () => {
     }
 
     aiReferenceMessage.value = response.data?.ai_generated
-      ? 'AI已生成候选规范，请选择最符合现场问题的一条。'
+      ? `AI已生成${standardSourceModeLabel.value}候选规范，请选择最符合现场问题的一条。`
       : `${response.data?.message || 'AI暂不可用，已使用本地规则匹配。'}请人工确认候选规范。`
     aiReferenceMessageType.value = response.data?.ai_generated ? 'success' : 'warning'
   } catch (error) {
@@ -962,7 +1001,7 @@ onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
   try {
-    await Promise.all([fetchStations(), fetchInspectionTables()])
+    await Promise.all([fetchStations(), fetchInspectionTables(), fetchStandardSourceMode()])
     applyRememberedStation()
     await fetchStandards()
   } catch (error) {

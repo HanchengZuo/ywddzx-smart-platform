@@ -57,3 +57,23 @@ ON inspection_internal_standards USING GIN (field_values);
 
 CREATE INDEX IF NOT EXISTS idx_internal_standard_links_internal
 ON inspection_internal_standard_links (internal_standard_id);
+
+-- inspection_standard_usage_settings 表：巡检登记规范来源开关
+-- 说明：
+-- 1. internal 表示巡检登记使用业务督导中心自建内部规范库
+-- 2. external 表示巡检登记临时切回检查表原件库中的外部规范
+-- 3. 使用单行配置，便于内部规范整理期灵活切换
+
+CREATE TABLE inspection_standard_usage_settings (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    register_standard_source TEXT NOT NULL DEFAULT 'internal',
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_inspection_standard_usage_singleton CHECK (singleton = TRUE),
+    CONSTRAINT chk_inspection_standard_usage_source
+        CHECK (register_standard_source IN ('internal', 'external'))
+);
+
+INSERT INTO inspection_standard_usage_settings (singleton, register_standard_source)
+VALUES (TRUE, 'internal')
+ON CONFLICT (singleton) DO NOTHING;
