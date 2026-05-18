@@ -79,8 +79,7 @@
                     {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
                   </div>
                   <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
-                  <div class="option-sub standard-detail-preview">{{
-                    normalizeStandardDetailForRegister(standard.standard_detail_text) }}</div>
+                  <div class="option-sub standard-detail-preview">{{ getRegisterStandardPreview(standard) }}</div>
                 </div>
                 <div v-if="filteredStandards.length === 0" class="search-select-empty">无匹配规范</div>
               </div>
@@ -482,6 +481,14 @@ const normalizeStandardDetailForRegister = (value) => {
   return result.join('\n')
 }
 
+const getRegisterStandardPreview = (standard) => {
+  const hasRegisterDisplayText = Object.prototype.hasOwnProperty.call(standard || {}, 'register_display_text')
+  const text = hasRegisterDisplayText ? standard?.register_display_text : standard?.standard_detail_text
+  return normalizeStandardDetailForRegister(
+    text || '未设置登记展示字段'
+  )
+}
+
 const filteredStations = computed(() => {
   return stations.value.filter((item) => {
     return matchesSmartSearch([item.station_name, item.region, item.station_usernames], stationSearch.value)
@@ -581,7 +588,8 @@ const fetchStandards = async () => {
       external_standard_id: item.external_standard_id || item.standard_id,
       inspection_table_id: String(item.inspection_table_id || ''),
       inspection_table_name: item.inspection_table_name || '未命名检查表',
-      standard_detail_text: item.standard_detail_text || ''
+      standard_detail_text: item.standard_detail_text || '',
+      register_display_text: item.register_display_text || ''
     }))
     return
   }
@@ -604,6 +612,7 @@ const fetchStandards = async () => {
       standard_id: item.internal_standard_id,
       internal_standard_id: item.internal_standard_id,
       standard_detail_text: detailText,
+      register_display_text: item.register_display_text || '',
       inspection_table_id: '',
       inspection_table_name: linkedTableNames.length
         ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`
@@ -1537,10 +1546,7 @@ onBeforeUnmount(() => {
 
 .standard-detail-preview {
   white-space: pre-line;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  line-height: 1.65;
 }
 
 

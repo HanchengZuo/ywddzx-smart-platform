@@ -20,7 +20,9 @@ CREATE TABLE inspection_internal_standards (
 -- 说明：
 -- 1. 管理员可自由定义字段数量和顺序
 -- 2. is_filterable 用于前端筛选面板
--- 3. 字段删除后，对应 field_values 内容会在业务层清理
+-- 3. is_long_text 用于新增/编辑内部规范时展示长文本输入框
+-- 4. is_register_visible 用于巡检登记规范搜索结果展示
+-- 5. 字段删除后，对应 field_values 内容会在业务层清理
 
 CREATE TABLE inspection_internal_standard_fields (
     id SERIAL PRIMARY KEY,
@@ -28,12 +30,16 @@ CREATE TABLE inspection_internal_standard_fields (
     field_label TEXT UNIQUE NOT NULL,
     is_filterable BOOLEAN DEFAULT TRUE,
     is_long_text BOOLEAN DEFAULT FALSE,
+    is_register_visible BOOLEAN DEFAULT TRUE,
     sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 ALTER TABLE inspection_internal_standard_fields
 ADD COLUMN IF NOT EXISTS is_long_text BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE inspection_internal_standard_fields
+ADD COLUMN IF NOT EXISTS is_register_visible BOOLEAN DEFAULT TRUE;
 
 -- inspection_internal_standard_links 表：内部规范与外部规范唯一挂载关系
 -- 说明：

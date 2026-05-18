@@ -142,18 +142,29 @@
           <button class="modal-close" type="button" @click="closeFieldDialog">×</button>
         </div>
 
+        <div class="field-config-help">
+          <span>长内容：新增规范时使用更大的输入框。</span>
+          <span>可显示：巡检登记搜索规范时展示该字段。</span>
+        </div>
+
         <div class="field-config-list">
           <div v-for="(field, index) in fieldDialog.fields" :key="field.local_id" class="field-config-row">
             <span class="field-order">字段 {{ index + 1 }}</span>
             <input v-model.trim="field.field_label" type="text" placeholder="字段名称，例如：区域、环节、规范事项" />
-            <label class="filter-switch">
-              <input v-model="field.is_filterable" type="checkbox" />
-              可筛选
-            </label>
-            <label class="filter-switch">
-              <input v-model="field.is_long_text" type="checkbox" />
-              长内容
-            </label>
+            <div class="field-flag-group" aria-label="字段属性">
+              <label class="filter-switch">
+                <input v-model="field.is_filterable" type="checkbox" />
+                <span>可筛选</span>
+              </label>
+              <label class="filter-switch">
+                <input v-model="field.is_long_text" type="checkbox" />
+                <span>长内容</span>
+              </label>
+              <label class="filter-switch">
+                <input v-model="field.is_register_visible" type="checkbox" />
+                <span>可显示</span>
+              </label>
+            </div>
             <div class="field-row-actions">
               <button class="btn btn-secondary btn-sm" type="button" :disabled="index === 0" @click="moveField(index, -1)">上移</button>
               <button class="btn btn-secondary btn-sm" type="button" :disabled="index === fieldDialog.fields.length - 1"
@@ -489,6 +500,9 @@ const updateUsageMode = async (mode) => {
 const openFieldDialog = () => {
   fieldDialog.fields = internalFields.value.map((field) => ({
     ...field,
+    is_filterable: field.is_filterable ?? true,
+    is_long_text: field.is_long_text ?? false,
+    is_register_visible: field.is_register_visible ?? true,
     local_id: field.field_key || `field_${Date.now()}_${Math.random().toString(16).slice(2)}`
   }))
   fieldDialog.error = ''
@@ -506,7 +520,8 @@ const addField = () => {
     field_key: '',
     field_label: '',
     is_filterable: true,
-    is_long_text: false
+    is_long_text: false,
+    is_register_visible: true
   })
 }
 
@@ -540,7 +555,8 @@ const saveFields = async () => {
         field_key: field.field_key,
         field_label: field.field_label,
         is_filterable: field.is_filterable,
-        is_long_text: field.is_long_text
+        is_long_text: field.is_long_text,
+        is_register_visible: field.is_register_visible
       }))
     })
     internalFields.value = response.data?.fields || []
@@ -1214,7 +1230,7 @@ onMounted(fetchAll)
 }
 
 .field-modal {
-  width: min(980px, calc(100vw - 32px));
+  width: min(1080px, calc(100vw - 32px));
 }
 
 .modal-head {
@@ -1242,25 +1258,55 @@ onMounted(fetchAll)
   gap: 12px;
 }
 
+.field-config-help {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.field-config-help span {
+  padding: 11px 13px;
+  border: 1px solid #ccfbf1;
+  border-radius: 14px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.6;
+}
+
 .field-config-row {
   display: grid;
-  grid-template-columns: 86px minmax(220px, 1fr) 92px 92px minmax(220px, auto);
+  grid-template-columns: 90px minmax(220px, 1fr) minmax(260px, 0.8fr) minmax(220px, auto);
   gap: 12px;
   align-items: center;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid #e5edf5;
-  border-radius: 18px;
-  background: #f8fafc;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #ffffff, #f8fafc);
   box-sizing: border-box;
 }
 
 .field-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 999px;
+  background: #ecfeff;
   color: #64748b;
   font-size: 13px;
   font-weight: 900;
 }
 
-.filter-switch,
+.field-flag-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .switch-field {
   display: inline-flex;
   align-items: center;
@@ -1268,6 +1314,35 @@ onMounted(fetchAll)
   color: #475569;
   font-size: 13px;
   font-weight: 900;
+}
+
+.filter-switch {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.filter-switch:has(input:checked) {
+  border-color: #5eead4;
+  background: #ecfeff;
+  color: #0f766e;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.08);
+}
+
+.filter-switch input {
+  width: 14px;
+  height: 14px;
+  accent-color: #0f766e;
 }
 
 .field-row-actions {
@@ -1505,6 +1580,7 @@ onMounted(fetchAll)
   .field-filter-panel,
   .field-value-grid,
   .field-config-row,
+  .field-config-help,
   .external-toolbar,
   .usage-mode-options {
     grid-template-columns: 1fr;

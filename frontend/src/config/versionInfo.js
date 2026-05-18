@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.8.1',
+    date: '2026-05-18',
+    title: '登记页规范展示可配置',
+    summary: '可以自己决定巡检登记搜索规范时显示哪些字段。',
+    items: [
+      '检查表字段新增“可显示”，登记搜索结果只显示勾选字段。',
+      '内部规范字段也新增“可显示”，长内容和显示规则说明更清楚。',
+      '优化内部规范字段配置弹窗，选项更好看也更好点。'
+    ]
+  },
+  {
     version: 'v1.8',
     date: '2026-05-16',
     title: '全面升级引入内部规范库',

@@ -1684,6 +1684,24 @@ def build_standard_detail_text(field_meta, row):
     return "\n".join(lines)
 
 
+def normalize_boolean_flag(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "否"}
+    return bool(value)
+
+
+def build_register_display_field_meta(fields):
+    return [
+        (field["field_key"], field["field_label"])
+        for field in fields
+        if normalize_boolean_flag(field.get("is_register_visible"), True)
+    ]
+
+
 def normalize_checklist_code(value):
     text = str(value or "").strip().lower()
     text = re.sub(r"[^a-z0-9_]+", "_", text).strip("_")
@@ -1760,8 +1778,9 @@ def normalize_checklist_field_rows(fields, table_code=None, allow_empty=False):
             {
                 "field_key": field_key,
                 "field_label": field_label,
-                "is_filterable": bool(field.get("is_filterable", True)) if isinstance(field, dict) else True,
-                "is_long_text": bool(field.get("is_long_text", False)) if isinstance(field, dict) else False,
+                "is_filterable": normalize_boolean_flag(field.get("is_filterable"), True) if isinstance(field, dict) else True,
+                "is_register_visible": normalize_boolean_flag(field.get("is_register_visible"), True) if isinstance(field, dict) else True,
+                "is_long_text": normalize_boolean_flag(field.get("is_long_text"), False) if isinstance(field, dict) else False,
                 "sort_order": index,
             }
         )
@@ -2010,6 +2029,7 @@ def ensure_inspection_checklist_management_schema(cur):
             field_key TEXT NOT NULL,
             field_label TEXT NOT NULL,
             is_filterable BOOLEAN DEFAULT TRUE,
+            is_register_visible BOOLEAN DEFAULT TRUE,
             sort_order INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -2029,6 +2049,12 @@ def ensure_inspection_checklist_management_schema(cur):
         """
         ALTER TABLE inspection_table_fields
         ADD COLUMN IF NOT EXISTS is_filterable BOOLEAN DEFAULT TRUE;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_fields
+        ADD COLUMN IF NOT EXISTS is_register_visible BOOLEAN DEFAULT TRUE;
         """
     )
     cur.execute(
@@ -2105,12 +2131,26 @@ def get_checklist_row_count(cur, physical_table_name):
 def get_management_checklist_fields(cur, inspection_table_id, include_public=False):
     cur.execute(
         """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'inspection_table_fields'
+              AND column_name = 'is_register_visible'
+        ) AS has_column;
+        """
+    )
+    has_register_visible_column = bool(cur.fetchone().get("has_column"))
+    register_visible_select = "is_register_visible" if has_register_visible_column else "TRUE AS is_register_visible"
+    cur.execute(
+        f"""
         SELECT
             id,
             inspection_table_id,
             field_key,
             field_label,
             is_filterable,
+            {register_visible_select},
             sort_order,
             FALSE AS is_public
         FROM inspection_table_fields
@@ -2209,13 +2249,15 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
                 field_key,
                 field_label,
                 is_filterable,
+                is_register_visible,
                 sort_order
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (inspection_table_id, field_key)
             DO UPDATE SET
                 field_label = EXCLUDED.field_label,
                 is_filterable = EXCLUDED.is_filterable,
+                is_register_visible = EXCLUDED.is_register_visible,
                 sort_order = EXCLUDED.sort_order;
             """,
             (
@@ -2223,6 +2265,7 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
                 field["field_key"],
                 field["field_label"],
                 field["is_filterable"],
+                field["is_register_visible"],
                 field["sort_order"],
             ),
         )
@@ -4383,7 +4426,7 @@ def get_or_create_inspection_batch(cur, station_id, inspector_id, batch_date):
     return row["id"]
 
 
-def serialize_standard_row(field_meta, row):
+def serialize_standard_row(field_meta, row, register_field_meta=None):
     item = {
         "id": row.get("id"),
         "standard_id": row.get("standard_id"),
@@ -4392,6 +4435,8 @@ def serialize_standard_row(field_meta, row):
     for field_key, _field_label in field_meta:
         item[field_key] = row.get(field_key)
     item["standard_detail_text"] = build_standard_detail_text(field_meta, row)
+    if register_field_meta is not None:
+        item["register_display_text"] = build_standard_detail_text(register_field_meta, row)
     return item
 
 
@@ -4540,6 +4585,7 @@ def ensure_internal_standard_schema(cur):
             field_label TEXT UNIQUE NOT NULL,
             is_filterable BOOLEAN DEFAULT TRUE,
             is_long_text BOOLEAN DEFAULT FALSE,
+            is_register_visible BOOLEAN DEFAULT TRUE,
             sort_order INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -4549,6 +4595,12 @@ def ensure_internal_standard_schema(cur):
         """
         ALTER TABLE inspection_internal_standard_fields
         ADD COLUMN IF NOT EXISTS is_long_text BOOLEAN DEFAULT FALSE;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_internal_standard_fields
+        ADD COLUMN IF NOT EXISTS is_register_visible BOOLEAN DEFAULT TRUE;
         """
     )
     cur.execute(
@@ -4586,12 +4638,26 @@ def ensure_internal_standard_schema(cur):
 def get_internal_standard_fields(cur):
     cur.execute(
         """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'inspection_internal_standard_fields'
+              AND column_name = 'is_register_visible'
+        ) AS has_column;
+        """
+    )
+    has_register_visible_column = bool(cur.fetchone().get("has_column"))
+    register_visible_select = "is_register_visible" if has_register_visible_column else "TRUE AS is_register_visible"
+    cur.execute(
+        f"""
         SELECT
             id,
             field_key,
             field_label,
             is_filterable,
             is_long_text,
+            {register_visible_select},
             sort_order
         FROM inspection_internal_standard_fields
         ORDER BY sort_order ASC, id ASC;
@@ -4633,14 +4699,16 @@ def upsert_internal_standard_fields(cur, fields):
                 field_label,
                 is_filterable,
                 is_long_text,
+                is_register_visible,
                 sort_order
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (field_key)
             DO UPDATE SET
                 field_label = EXCLUDED.field_label,
                 is_filterable = EXCLUDED.is_filterable,
                 is_long_text = EXCLUDED.is_long_text,
+                is_register_visible = EXCLUDED.is_register_visible,
                 sort_order = EXCLUDED.sort_order;
             """,
             (
@@ -4648,6 +4716,7 @@ def upsert_internal_standard_fields(cur, fields):
                 field["field_label"],
                 field["is_filterable"],
                 field.get("is_long_text", False),
+                field["is_register_visible"],
                 field["sort_order"],
             ),
         )
@@ -4811,6 +4880,7 @@ def fetch_external_standard_map(cur, external_standard_ids=None):
             continue
         fields = [dict(field) for field in get_management_checklist_fields(cur, table["id"])]
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+        register_field_meta = build_register_display_field_meta(fields)
         where_sql = sql.SQL("")
         params = []
         if filter_ids:
@@ -4824,7 +4894,7 @@ def fetch_external_standard_map(cur, external_standard_ids=None):
             params,
         )
         for row in cur.fetchall():
-            item = serialize_standard_row(field_meta, row)
+            item = serialize_standard_row(field_meta, row, register_field_meta)
             standard_id = int(item["standard_id"])
             result[standard_id] = {
                 **item,
@@ -4877,12 +4947,17 @@ def serialize_internal_standard(row, linked_externals=None, fields=None):
     content = row.get("content") or ""
     if fields and not content:
         content = build_internal_standard_summary(fields, field_values)
+    register_display_text = build_internal_standard_summary(
+        [field for field in fields if normalize_boolean_flag(field.get("is_register_visible"), True)],
+        field_values,
+    ) if fields else ""
     return {
         "id": row["id"],
         "internal_standard_id": str(row["internal_standard_id"] or "").upper(),
         "path_values": path_values,
         "field_values": field_values,
         "content": content,
+        "register_display_text": register_display_text,
         "notes": row.get("notes") or "",
         "is_active": bool(row.get("is_active")),
         "created_at": row.get("created_at"),
@@ -9430,6 +9505,7 @@ def get_inspection_table_standards():
         )
         fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table["id"], include_public=True)]
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+        register_field_meta = build_register_display_field_meta(fields)
         if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
             return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
 
@@ -9448,7 +9524,7 @@ def get_inspection_table_standards():
 
         result = []
         for row in rows:
-            item = serialize_standard_row(field_meta, row)
+            item = serialize_standard_row(field_meta, row, register_field_meta)
             haystack = "\n".join(
                 [str(v).strip() for v in item.values() if v is not None]
             ).lower()

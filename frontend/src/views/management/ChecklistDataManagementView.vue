@@ -246,7 +246,7 @@
               <div class="field-row field-row-head">
                 <span>顺序</span>
                 <span>字段名称</span>
-                <span>筛选</span>
+                <span>字段属性</span>
                 <span>操作</span>
               </div>
               <div v-for="(field, index) in form.fields" :key="field.local_id" class="field-row">
@@ -265,10 +265,16 @@
                 <label>
                   <input v-model.trim="field.field_label" type="text" placeholder="检查内容" />
                 </label>
-                <label class="mini-check">
-                  <input v-model="field.is_filterable" type="checkbox" />
-                  <span>可筛选</span>
-                </label>
+                <div class="field-flag-group">
+                  <label class="mini-check">
+                    <input v-model="field.is_filterable" type="checkbox" />
+                    <span>可筛选</span>
+                  </label>
+                  <label class="mini-check">
+                    <input v-model="field.is_register_visible" type="checkbox" />
+                    <span>可显示</span>
+                  </label>
+                </div>
                 <div class="field-action-group">
                   <button class="mini-icon-btn" type="button" @click="insertFieldBefore(index)">前插</button>
                   <button class="mini-icon-btn" type="button" @click="insertFieldAfter(index)">后插</button>
@@ -281,7 +287,7 @@
             </div>
 
             <div class="schema-note">
-              字段隐藏标识由系统按检查表编码自动生成，具备全局唯一识别性；可通过上移、下移、前插、后插调整字段顺序。
+              可筛选用于规范库筛选；可显示仅影响巡检登记规范搜索下拉展示。
             </div>
           </div>
         </div>
@@ -360,7 +366,7 @@
               <div class="field-row field-row-head">
                 <span>顺序</span>
                 <span>字段名称</span>
-                <span>筛选</span>
+                <span>字段属性</span>
                 <span>操作</span>
               </div>
               <div v-for="(field, index) in editDialog.fields" :key="field.local_id" class="field-row">
@@ -379,10 +385,16 @@
                 <label>
                   <input v-model.trim="field.field_label" type="text" placeholder="检查内容" />
                 </label>
-                <label class="mini-check">
-                  <input v-model="field.is_filterable" type="checkbox" />
-                  <span>可筛选</span>
-                </label>
+                <div class="field-flag-group">
+                  <label class="mini-check">
+                    <input v-model="field.is_filterable" type="checkbox" />
+                    <span>可筛选</span>
+                  </label>
+                  <label class="mini-check">
+                    <input v-model="field.is_register_visible" type="checkbox" />
+                    <span>可显示</span>
+                  </label>
+                </div>
                 <div class="field-action-group">
                   <button class="mini-icon-btn" type="button" @click="insertEditFieldBefore(index)">前插</button>
                   <button class="mini-icon-btn" type="button" @click="insertEditFieldAfter(index)">后插</button>
@@ -392,6 +404,10 @@
                   </button>
                 </div>
               </div>
+            </div>
+
+            <div class="schema-note">
+              可显示仅影响巡检登记规范搜索下拉展示，不改变规范库完整详情。
             </div>
           </div>
         </div>
@@ -643,7 +659,8 @@ const createField = (field = {}, index = 1, tableCode = '') => ({
   local_id: field.local_id || `field_${field.id || Date.now()}_${Math.random().toString(16).slice(2)}`,
   field_key: field.field_key || createFieldKey(tableCode, index),
   field_label: field.field_label || '',
-  is_filterable: field.is_filterable ?? true
+  is_filterable: field.is_filterable ?? true,
+  is_register_visible: field.is_register_visible ?? true
 })
 
 const defaultFields = (tableCode) => [
@@ -782,7 +799,8 @@ const buildChecklistPayload = (source) => ({
   fields: source.fields.map((field) => ({
     field_key: normalizeKey(field.field_key),
     field_label: field.field_label,
-    is_filterable: Boolean(field.is_filterable)
+    is_filterable: Boolean(field.is_filterable),
+    is_register_visible: Boolean(field.is_register_visible)
   }))
 })
 
@@ -1577,7 +1595,7 @@ onMounted(fetchChecklists)
 
 .field-row {
   display: grid;
-  grid-template-columns: 150px minmax(220px, 1fr) 110px minmax(220px, auto);
+  grid-template-columns: 150px minmax(220px, 1fr) 190px minmax(220px, auto);
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -1633,6 +1651,13 @@ onMounted(fetchChecklists)
   justify-content: flex-start;
 }
 
+.field-flag-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .mini-icon-btn {
   min-height: 30px;
   padding: 0 9px;
@@ -1657,12 +1682,30 @@ onMounted(fetchChecklists)
 }
 
 .mini-check {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #475569;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #dbeafe;
+  background: #f8fafc;
+  color: #334155;
   font-size: 13px;
   font-weight: 800;
+  cursor: pointer;
+}
+
+.mini-check:has(input:checked) {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.mini-check input {
+  width: 14px;
+  height: 14px;
+  accent-color: #2563eb;
 }
 
 .schema-note {
