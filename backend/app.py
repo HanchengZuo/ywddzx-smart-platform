@@ -5147,6 +5147,180 @@ def prepare_issue_registration_targets(
     return targets
 
 
+def resolve_issue_standard_edit_target(
+    cur,
+    usage_mode,
+    standard_id=None,
+    internal_standard_id=None,
+    preferred_external_standard_id=None,
+):
+    mode = normalize_inspection_standard_usage_mode(usage_mode)
+    if mode == "internal":
+        internal_code = str(internal_standard_id or "").strip().upper()
+        if not internal_code:
+            raise ValueError("请选择内部规范ID。")
+        internal_standard, _internal_fields, linked_externals = fetch_internal_standard_by_code(
+            cur,
+            internal_code,
+        )
+        if not internal_standard:
+            raise ValueError("所选内部规范不存在或未启用。")
+        if not linked_externals:
+            raise ValueError("所选内部规范尚未挂载外部规范，不能用于巡检问题。")
+
+        sorted_links = sorted(
+            linked_externals,
+            key=lambda item: int(item.get("external_standard_id") or 0),
+        )
+        preferred_external_id = str(preferred_external_standard_id or "").strip()
+        first_link = next(
+            (
+                link
+                for link in sorted_links
+                if str(link.get("external_standard_id") or "").strip() == preferred_external_id
+            ),
+            sorted_links[0],
+        )
+        external_map = fetch_external_standard_map(cur, [first_link["external_standard_id"]])
+        external = external_map.get(int(first_link["external_standard_id"]))
+        if not external:
+            raise ValueError(f"内部规范挂载的外部规范ID【{first_link['external_standard_id']}】不存在。")
+
+        return {
+            "inspection_table_id": int(external["inspection_table_id"]),
+            "standard_id": int(external["external_standard_id"]),
+            "standard_detail_text": external.get("standard_detail_text") or "",
+            "internal_standard_id": internal_standard["internal_standard_id"],
+            "internal_standard_detail_text": internal_standard.get("content") or "",
+        }
+
+    external_id = normalize_import_standard_id(standard_id)
+    external_map = fetch_external_standard_map(cur, [external_id])
+    external = external_map.get(external_id)
+    if not external:
+        raise ValueError("所选外部规范不存在或对应检查表未启用。")
+
+    linked_internal = fetch_internal_links_by_external_ids(cur, [external_id]).get(external_id)
+    return {
+        "inspection_table_id": int(external["inspection_table_id"]),
+        "standard_id": external_id,
+        "standard_detail_text": external.get("standard_detail_text") or "",
+        "internal_standard_id": linked_internal.get("internal_standard_id") if linked_internal else None,
+        "internal_standard_detail_text": linked_internal.get("content") if linked_internal else None,
+    }
+
+
+def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id):
+    current_table_id = int(issue["inspection_table_id"])
+    target_table_id = int(target_inspection_table_id)
+    if current_table_id == target_table_id:
+        return int(issue["inspection_id"])
+
+    cur.execute(
+        """
+        SELECT ins.id, ins.sign_status
+        FROM inspections ins
+        WHERE ins.station_id = %s
+          AND ins.inspection_table_id = %s
+          AND ins.inspection_date = %s
+          AND ins.batch_id IS NOT DISTINCT FROM %s
+        ORDER BY ins.id ASC;
+        """,
+        (
+            issue["station_id"],
+            target_table_id,
+            issue["inspection_date"],
+            issue.get("batch_id"),
+        ),
+    )
+    existing_inspections = cur.fetchall()
+    existing_ids = [row["id"] for row in existing_inspections]
+    if existing_inspections and any(row.get("sign_status") == "已签名确认" for row in existing_inspections):
+        raise ValueError("目标检查表已完成签名确认，不能把问题改挂到该检查表。")
+
+    if existing_ids:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS issue_count
+            FROM issues
+            WHERE inspection_id = ANY(%s);
+            """,
+            (existing_ids,),
+        )
+        if int(cur.fetchone()["issue_count"] or 0) == 0:
+            raise ValueError("目标检查表当天已提交“未发现问题”，不能把问题改挂到该检查表。")
+        return int(existing_ids[0])
+
+    cur.execute(
+        """
+        INSERT INTO inspections (
+            station_id,
+            inspector_id,
+            inspection_table_id,
+            inspection_date,
+            batch_id
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id;
+        """,
+        (
+            issue["station_id"],
+            issue["inspector_id"],
+            target_table_id,
+            issue["inspection_date"],
+            issue.get("batch_id"),
+        ),
+    )
+    return int(cur.fetchone()["id"])
+
+
+def cleanup_empty_inspection_after_issue_move(cur, inspection_id):
+    if not inspection_id:
+        return
+    cur.execute(
+        """
+        SELECT id, batch_id, sign_status
+        FROM inspections
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (inspection_id,),
+    )
+    inspection = cur.fetchone()
+    if not inspection or inspection.get("sign_status") == "已签名确认":
+        return
+
+    cur.execute("SELECT COUNT(*) AS issue_count FROM issues WHERE inspection_id = %s;", (inspection_id,))
+    if int(cur.fetchone()["issue_count"] or 0) > 0:
+        return
+
+    cur.execute(
+        """
+        UPDATE inspection_plan_station_items
+        SET completion_status = 'pending',
+            completed_inspection_id = NULL,
+            completed_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE completed_inspection_id = %s;
+        """,
+        (inspection_id,),
+    )
+    cur.execute("DELETE FROM inspections WHERE id = %s;", (inspection_id,))
+    if inspection.get("batch_id"):
+        cur.execute(
+            """
+            DELETE FROM inspection_batches b
+            WHERE b.id = %s
+              AND NOT EXISTS (
+                SELECT 1
+                FROM inspections ins
+                WHERE ins.batch_id = b.id
+              );
+            """,
+            (inspection["batch_id"],),
+        )
+
+
 def normalize_internal_standards_backup_payload(payload):
     if not isinstance(payload, dict):
         raise ValueError("备份文件格式不正确：根内容必须是对象。")
@@ -11046,6 +11220,8 @@ def update_issue(issue_id):
     status = canonical_issue_status(data.get("status"))
     rectification_note = str(data.get("rectification_note", "")).strip() or None
     review_note = str(data.get("review_note", "")).strip() or None
+    standard_id = str(data.get("standard_id", "")).strip()
+    internal_standard_id = str(data.get("internal_standard_id", "")).strip().upper()
     issue_photo = request.files.get("issue_photo")
 
     if not user_id:
@@ -11083,10 +11259,19 @@ def update_issue(issue_id):
             """
             SELECT
                 i.id,
+                i.inspection_id,
                 i.station_id,
+                i.inspection_table_id,
+                i.standard_id,
+                i.standard_detail_text,
+                i.internal_standard_id,
+                i.internal_standard_detail_text,
                 i.status,
                 i.rectification_result,
-                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+                ins.inspection_date,
+                ins.batch_id,
+                ins.sign_status AS inspection_sign_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
@@ -11142,10 +11327,57 @@ def update_issue(issue_id):
         ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
+        current_standard = {
+            "inspection_table_id": int(issue["inspection_table_id"]),
+            "standard_id": int(issue["standard_id"]),
+            "standard_detail_text": issue.get("standard_detail_text") or "",
+            "internal_standard_id": issue.get("internal_standard_id"),
+            "internal_standard_detail_text": issue.get("internal_standard_detail_text"),
+        }
+        usage_mode = get_inspection_standard_usage_mode(cur)
+        if usage_mode["mode"] == "internal":
+            if internal_standard_id or issue.get("internal_standard_id"):
+                target_standard = resolve_issue_standard_edit_target(
+                cur,
+                "internal",
+                internal_standard_id=internal_standard_id or issue.get("internal_standard_id"),
+                preferred_external_standard_id=issue.get("standard_id"),
+            )
+            else:
+                target_standard = current_standard
+        else:
+            target_standard = resolve_issue_standard_edit_target(
+                cur,
+                "external",
+                standard_id=standard_id or issue.get("standard_id"),
+            )
+
+        standard_changed = (
+            int(target_standard["inspection_table_id"]) != int(issue["inspection_table_id"])
+            or int(target_standard["standard_id"]) != int(issue["standard_id"])
+            or str(target_standard.get("internal_standard_id") or "") != str(issue.get("internal_standard_id") or "")
+        )
+        if standard_changed and issue.get("inspection_sign_status") == "已签名确认" and not is_root_user(user):
+            return jsonify({"success": False, "error": "该问题所属检查表已签名确认，只有 root 账号可以调整规范ID。"}), 403
+
+        target_inspection_id = get_or_create_issue_edit_inspection(
+            cur,
+            issue,
+            target_standard["inspection_table_id"],
+        )
+        old_inspection_id = int(issue["inspection_id"])
+        new_photo_path = save_uploaded_file(issue_photo, "issues") if issue_photo and issue_photo.filename else None
+
         cur.execute(
             """
             UPDATE issues
             SET description = %s,
+                inspection_id = %s,
+                inspection_table_id = %s,
+                standard_id = %s,
+                standard_detail_text = %s,
+                internal_standard_id = %s,
+                internal_standard_detail_text = %s,
                 status = %s,
                 rectification_result = %s,
                 rectification_note = %s,
@@ -11156,15 +11388,30 @@ def update_issue(issue_id):
             """,
             (
                 description,
+                target_inspection_id,
+                target_standard["inspection_table_id"],
+                target_standard["standard_id"],
+                target_standard["standard_detail_text"],
+                target_standard.get("internal_standard_id"),
+                target_standard.get("internal_standard_detail_text"),
                 status,
                 rectification_result,
                 rectification_note,
                 review_result,
                 review_note,
-                save_uploaded_file(issue_photo, "issues") if issue_photo and issue_photo.filename else None,
+                new_photo_path,
                 issue_id,
             ),
         )
+        mark_related_plan_items_completed(
+            cur,
+            issue["station_id"],
+            target_standard["inspection_table_id"],
+            target_inspection_id,
+            issue["inspection_date"],
+        )
+        if old_inspection_id != int(target_inspection_id):
+            cleanup_empty_inspection_after_issue_move(cur, old_inspection_id)
 
         conn.commit()
         return jsonify({"success": True, "message": "巡检问题已保存。"})

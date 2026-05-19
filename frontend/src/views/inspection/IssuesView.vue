@@ -448,31 +448,109 @@
           </div>
 
           <div class="issue-edit-grid">
+            <div class="issue-edit-field issue-edit-field-wide">
+              <span>编辑{{ editStandardInputLabel }}</span>
+              <div class="edit-standard-panel">
+                <div class="edit-standard-mode">
+                  当前巡检登记使用：<strong>{{ standardSourceModeLabel }}</strong>
+                  <span v-if="standardSourceMode === 'internal'">只能调整内部规范ID，外部规范会按挂载关系自动变化。</span>
+                  <span v-else>只能调整外部规范ID，内部规范会随外部规范关联自动变化。</span>
+                </div>
+                <div class="search-select" ref="editStandardSelectRef">
+                  <input v-model="editDialog.standardSearch" type="text" :placeholder="`搜索并选择${editStandardInputLabel}`"
+                    :disabled="editStandardLoading" @focus="openEditStandardDropdown" @input="handleEditStandardInput" />
+                  <div v-if="editStandardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
+                    <div v-if="editStandardLoading" class="search-select-empty">正在加载规范数据...</div>
+                    <template v-else>
+                      <div v-for="standard in filteredEditStandards" :key="getEditStandardIdentity(standard)"
+                        class="search-select-option" @click="selectEditStandard(standard)">
+                        <div class="option-main">
+                          {{ standard.standard_id }}｜{{ getEditStandardTitle(standard) }}
+                        </div>
+                        <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
+                        <div class="option-sub standard-detail-preview">{{ getEditStandardPreview(standard) }}</div>
+                      </div>
+                      <div v-if="filteredEditStandards.length === 0" class="search-select-empty">无匹配规范</div>
+                    </template>
+                  </div>
+                </div>
+                <div class="edit-standard-result">
+                  <div>
+                    <span>{{ standardSourceMode === 'internal' ? '将保存的内部规范ID' : '将保存的外部规范ID' }}</span>
+                    <strong>{{ editStandardReferenceValue || '-' }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ standardSourceMode === 'internal' ? '关联外部规范' : '关联内部规范' }}</span>
+                    <strong v-if="standardSourceMode === 'internal'">
+                      {{ selectedEditStandard?.linked_externals?.length
+                        ? selectedEditStandard.linked_externals.map((link) => link.external_standard_id).join('、')
+                        : '-' }}
+                    </strong>
+                    <strong v-else>{{ selectedEditStandard?.internal_standard_id || '未关联内部规范' }}</strong>
+                  </div>
+                  <div>
+                    <span>检查表</span>
+                    <strong>{{ selectedEditStandard?.inspection_table_name || editDialog.issue?.inspection_table_name || '-' }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
             <label class="issue-edit-field issue-edit-field-wide">
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
             <div class="issue-edit-field issue-edit-field-wide">
               <span>问题照片</span>
-              <div class="rectification-photo-panel">
-                <div v-if="editDialog.issue?.issue_photo" class="rectification-photo-current">
-                  <span>当前问题照片</span>
-                  <button class="image-btn" type="button"
-                    @click="preview(resolveImage(editDialog.issue.issue_photo), '当前问题照片')">
-                    <img :src="resolveImage(editDialog.issue.issue_photo)" class="thumb" alt="当前问题照片" />
-                  </button>
+              <div class="upload-card issue-edit-upload-card">
+                <input id="edit-issue-photo-upload" class="upload-input" type="file" accept="image/*"
+                  @change="handleIssuePhotoChange" />
+                <input id="edit-issue-photo-camera" class="upload-input" type="file" accept="image/*" capture="environment"
+                  @change="handleIssuePhotoChange" />
+
+                <div class="upload-dropzone" :class="{ 'drag-active': editIssuePhotoDragActive }" role="button" tabindex="0"
+                  @click="openEditIssuePhotoPicker" @keydown.enter.prevent="openEditIssuePhotoPicker"
+                  @keydown.space.prevent="openEditIssuePhotoPicker" @dragenter.prevent="handleEditIssuePhotoDragEnter"
+                  @dragover.prevent="handleEditIssuePhotoDragOver" @dragleave.prevent="handleEditIssuePhotoDragLeave"
+                  @drop.prevent="handleEditIssuePhotoDrop">
+                  <div class="upload-icon">↑</div>
+                  <div class="upload-title">
+                    <span class="desktop-upload-title">选择或拖拽新的问题照片</span>
+                    <span class="mobile-upload-title">选择或更换问题照片</span>
+                  </div>
+                  <div class="upload-desc">
+                    不选择新照片则保留原照片；桌面端可直接将图片拖到此处上传。
+                  </div>
+                  <div class="upload-trigger-group">
+                    <label for="edit-issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照上传</label>
+                    <label for="edit-issue-photo-upload" class="upload-trigger" @click.stop>相册选择</label>
+                  </div>
                 </div>
 
-                <label class="issue-edit-field issue-edit-field-wide">
-                  <span>上传新的问题照片</span>
-                  <input type="file" accept="image/*" @change="handleIssuePhotoChange" />
-                </label>
-
-                <div v-if="editDialog.issuePhotoPreview" class="rectification-photo-preview issue-photo-preview">
-                  <img :src="editDialog.issuePhotoPreview" alt="新的问题照片预览" />
-                  <div>
-                    <strong>已选择新问题照片</strong>
-                    <span>{{ editDialog.issuePhotoFile?.name || '待上传图片' }}</span>
+                <div class="issue-edit-photo-grid">
+                  <div v-if="editDialog.issue?.issue_photo" class="image-preview-panel issue-current-photo-panel">
+                    <img :src="resolveImage(editDialog.issue.issue_photo)" alt="当前问题照片" class="image-preview-thumb" />
+                    <div class="image-preview-meta">
+                      <div class="image-preview-title">当前问题照片</div>
+                      <div class="image-preview-name">未选择新照片时将继续保留</div>
+                      <div class="image-preview-actions">
+                        <button class="btn btn-light image-action-btn" type="button"
+                          @click="preview(resolveImage(editDialog.issue.issue_photo), '当前问题照片')">
+                          查看原图
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="editDialog.issuePhotoPreview" class="image-preview-panel">
+                    <img :src="editDialog.issuePhotoPreview" alt="新的问题照片预览" class="image-preview-thumb" />
+                    <div class="image-preview-meta">
+                      <div class="image-preview-title">已选择新问题照片</div>
+                      <div class="image-preview-name">{{ editDialog.issuePhotoFile?.name || '已上传图片' }}</div>
+                      <div class="image-preview-actions">
+                        <label for="edit-issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
+                        <label for="edit-issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
+                        <button class="btn btn-secondary image-action-btn" type="button" @click="clearIssuePhoto">移除图片</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -645,6 +723,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
   clearFileInput,
+  clearFileInputsById,
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
@@ -675,6 +754,7 @@ const stationSelectRef = ref(null)
 const stationManagerSelectRef = ref(null)
 const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
+const editStandardSelectRef = ref(null)
 
 const dropdownVisible = ref({
   region: false,
@@ -703,6 +783,13 @@ const localPermissions = ref(parsedPermissions)
 const actionMessage = ref('')
 const actionMessageType = ref('info')
 let actionMessageTimer = null
+const standardSourceMode = ref('external')
+const editStandards = ref([])
+const editStandardFields = ref([])
+const editStandardDropdownVisible = ref(false)
+const editStandardLoading = ref(false)
+const editIssuePhotoDragActive = ref(false)
+let editIssuePhotoDragDepth = 0
 
 const editDialog = ref({
   visible: false,
@@ -711,7 +798,11 @@ const editDialog = ref({
   issue: null,
   issuePhotoFile: null,
   issuePhotoPreview: '',
+  standardSearch: '',
+  standardDirty: false,
   form: {
+    standard_id: '',
+    internal_standard_id: '',
     description: '',
     status: '待整改',
     rectification_result: '',
@@ -886,6 +977,92 @@ const getCombinedStandardDetailText = (item = {}) => {
   return sections.join('\n\n')
 }
 
+const standardSourceModeLabel = computed(() => (
+  standardSourceMode.value === 'internal' ? '内部规范库' : '外部规范库'
+))
+
+const editStandardInputLabel = computed(() => (
+  standardSourceMode.value === 'internal' ? '内部规范ID' : '外部规范ID'
+))
+
+const editStandardReferenceValue = computed(() => (
+  standardSourceMode.value === 'internal'
+    ? editDialog.value.form.internal_standard_id
+    : editDialog.value.form.standard_id
+))
+
+const getStandardFallbackTitle = (item = {}) => {
+  const firstLine = String(item.standard_detail_text || item.content || '')
+    .replace(/\\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+  if (!firstLine) return ''
+  const separatorIndex = firstLine.indexOf('：')
+  return separatorIndex > -1 ? firstLine.slice(separatorIndex + 1).trim() : firstLine
+}
+
+const getEditStandardTitle = (item = {}) => {
+  if (item.internal_standard_id) {
+    const firstValue = editStandardFields.value
+      .map((field) => String(item?.field_values?.[field.field_key] || '').trim())
+      .find(Boolean)
+    return firstValue || getStandardFallbackTitle(item) || '未命名内部规范'
+  }
+  return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名外部规范'
+}
+
+const getEditStandardPreview = (item = {}) => {
+  if (item.internal_standard_id) {
+    return item.register_display_text || item.standard_detail_text || item.content || '暂无内部规范详情'
+  }
+  return item.register_display_text || item.standard_detail_text || '暂无外部规范详情'
+}
+
+const getEditStandardIdentity = (item = {}) => {
+  if (item.internal_standard_id) return `internal:${item.internal_standard_id}`
+  return `external:${item.inspection_table_id || 'unknown'}:${item.standard_id || ''}`
+}
+
+const selectedEditStandard = computed(() => {
+  const currentValue = String(editStandardReferenceValue.value || '')
+  if (!currentValue) return null
+  if (standardSourceMode.value === 'internal') {
+    return editStandards.value.find((item) => String(item.internal_standard_id || item.standard_id) === currentValue) || null
+  }
+  return editStandards.value.find((item) => String(item.standard_id) === currentValue) || null
+})
+
+const canKeepExternalOnlyIssueStandard = computed(() => (
+  standardSourceMode.value === 'internal' &&
+  !editDialog.value.standardDirty &&
+  !editDialog.value.form.internal_standard_id &&
+  Boolean(editDialog.value.form.standard_id)
+))
+
+const filteredEditStandards = computed(() => {
+  const keyword = normalizedKeyword(editDialog.value.standardSearch).trim()
+  return editStandards.value.filter((item) => {
+    if (!keyword) return true
+    const values = [
+      item.standard_id,
+      item.external_standard_id,
+      item.internal_standard_id,
+      item.inspection_table_name,
+      item.standard_detail_text,
+      item.register_display_text,
+      item.content,
+      ...Object.values(item.field_values || {}),
+      ...(item.linked_externals || []).flatMap((link) => [
+        link.external_standard_id,
+        link.inspection_table_name,
+        link.standard_detail_text
+      ])
+    ]
+    return values.some((value) => normalizedKeyword(value).includes(keyword))
+  }).slice(0, 40)
+})
+
 watch([filters, pageSize], () => {
   page.value = 1
 }, { deep: true })
@@ -910,6 +1087,73 @@ const fetchIssues = async () => {
     list.value = []
   } finally {
     loading.value = false
+  }
+}
+
+const buildEditInternalStandardDetailText = (item, fields = editStandardFields.value) => {
+  const lines = fields.map((field) => {
+    const value = String(item?.field_values?.[field.field_key] || '').trim() || '-'
+    return `${field.field_label}：${value}`
+  })
+  return lines.join('\n')
+}
+
+const fetchEditStandardReferenceData = async () => {
+  try {
+    editStandardLoading.value = true
+    const modeResponse = await axios.get('/api/inspection-standard-usage-mode', {
+      params: { _ts: Date.now() }
+    })
+    const nextMode = modeResponse.data?.usage_mode?.mode === 'internal' ? 'internal' : 'external'
+    standardSourceMode.value = nextMode
+
+    if (nextMode === 'internal') {
+      const response = await axios.get('/api/inspection-internal-standards', {
+        params: { _ts: Date.now() }
+      })
+      const fields = response.data?.fields || []
+      editStandardFields.value = fields
+      editStandards.value = (response.data?.items || []).map((item) => {
+        const linkedExternals = item.linked_externals || []
+        const linkedTableNames = [...new Set(
+          linkedExternals
+            .map((link) => String(link.inspection_table_name || '').trim())
+            .filter(Boolean)
+        )]
+        return {
+          ...item,
+          standard_id: item.internal_standard_id,
+          internal_standard_id: item.internal_standard_id,
+          standard_detail_text: buildEditInternalStandardDetailText(item, fields),
+          inspection_table_name: linkedTableNames.length
+            ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`
+            : '未挂载外部检查表',
+          linked_externals: linkedExternals
+        }
+      })
+      return
+    }
+
+    const response = await axios.get('/api/external-standards', {
+      params: { _ts: Date.now() }
+    })
+    editStandardFields.value = []
+    editStandards.value = (response.data?.items || []).map((item) => ({
+      ...item,
+      standard_id: String(item.standard_id || item.external_standard_id || ''),
+      external_standard_id: item.external_standard_id || item.standard_id,
+      internal_standard_id: item.linked_internal_standard_id || item.linked_internal?.internal_standard_id || '',
+      inspection_table_id: String(item.inspection_table_id || ''),
+      inspection_table_name: item.inspection_table_name || '未命名检查表',
+      standard_detail_text: item.standard_detail_text || '',
+      register_display_text: item.register_display_text || ''
+    }))
+  } catch (error) {
+    editStandards.value = []
+    editStandardFields.value = []
+    showActionMessage(error?.response?.data?.error || '规范数据加载失败，请稍后重试。', 'error')
+  } finally {
+    editStandardLoading.value = false
   }
 }
 
@@ -975,6 +1219,8 @@ const showActionMessage = (text, type = 'info') => {
 }
 
 const createIssueEditForm = (item = {}) => ({
+  standard_id: item.standard_id ? String(item.standard_id) : '',
+  internal_standard_id: item.internal_standard_id ? String(item.internal_standard_id).toUpperCase() : '',
   description: item.description || '',
   status: item.status || '待整改',
   rectification_result: item.rectification_result || '',
@@ -987,7 +1233,18 @@ const revokeIssuePhotoPreview = () => {
   revokeObjectUrl(editDialog.value.issuePhotoPreview)
 }
 
-const openEditDialog = (item) => {
+const syncEditStandardSearch = () => {
+  const selected = selectedEditStandard.value
+  if (selected) {
+    editDialog.value.standardSearch = `${editStandardReferenceValue.value}｜${getEditStandardTitle(selected)}`
+    editDialog.value.standardDirty = false
+    return
+  }
+  editDialog.value.standardSearch = editStandardReferenceValue.value || ''
+  editDialog.value.standardDirty = false
+}
+
+const openEditDialog = async (item) => {
   revokeIssuePhotoPreview()
   editDialog.value = {
     visible: true,
@@ -996,13 +1253,24 @@ const openEditDialog = (item) => {
     issue: item,
     issuePhotoFile: null,
     issuePhotoPreview: '',
+    standardSearch: '',
+    standardDirty: false,
     form: createIssueEditForm(item)
   }
+  editStandardDropdownVisible.value = false
+  editIssuePhotoDragActive.value = false
+  editIssuePhotoDragDepth = 0
+  await fetchEditStandardReferenceData()
+  syncEditStandardSearch()
 }
 
 const closeEditDialog = () => {
   if (editDialog.value.saving) return
   revokeIssuePhotoPreview()
+  clearFileInputsById(['edit-issue-photo-upload', 'edit-issue-photo-camera'])
+  editStandardDropdownVisible.value = false
+  editIssuePhotoDragActive.value = false
+  editIssuePhotoDragDepth = 0
   editDialog.value = {
     visible: false,
     saving: false,
@@ -1010,12 +1278,13 @@ const closeEditDialog = () => {
     issue: null,
     issuePhotoFile: null,
     issuePhotoPreview: '',
+    standardSearch: '',
+    standardDirty: false,
     form: createIssueEditForm()
   }
 }
 
-const handleIssuePhotoChange = async (event) => {
-  const file = event.target.files?.[0]
+const processIssuePhotoFile = async (file) => {
   revokeIssuePhotoPreview()
   if (!file) {
     editDialog.value.issuePhotoFile = null
@@ -1029,11 +1298,99 @@ const handleIssuePhotoChange = async (event) => {
     editDialog.value.issuePhotoPreview = prepared.previewUrl
     editDialog.value.error = ''
   } catch (error) {
-    clearFileInput(event)
     editDialog.value.issuePhotoFile = null
     editDialog.value.issuePhotoPreview = ''
     editDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
   }
+}
+
+const handleIssuePhotoChange = async (event) => {
+  await processIssuePhotoFile(event.target.files?.[0])
+  if (!editDialog.value.issuePhotoFile) {
+    clearFileInput(event)
+  }
+}
+
+const openEditIssuePhotoPicker = () => {
+  document.getElementById('edit-issue-photo-upload')?.click()
+}
+
+const isDesktopPhotoDropEnabled = () => {
+  return window.matchMedia?.('(min-width: 901px) and (pointer: fine)').matches
+}
+
+const hasDraggedImage = (event) => {
+  return Array.from(event.dataTransfer?.items || []).some((item) => item.type?.startsWith('image/'))
+}
+
+const handleEditIssuePhotoDragEnter = (event) => {
+  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  editIssuePhotoDragDepth += 1
+  editIssuePhotoDragActive.value = true
+}
+
+const handleEditIssuePhotoDragOver = (event) => {
+  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  event.dataTransfer.dropEffect = 'copy'
+  editIssuePhotoDragActive.value = true
+}
+
+const handleEditIssuePhotoDragLeave = () => {
+  if (!isDesktopPhotoDropEnabled()) return
+  editIssuePhotoDragDepth = Math.max(editIssuePhotoDragDepth - 1, 0)
+  if (editIssuePhotoDragDepth === 0) {
+    editIssuePhotoDragActive.value = false
+  }
+}
+
+const handleEditIssuePhotoDrop = async (event) => {
+  if (!isDesktopPhotoDropEnabled()) return
+  editIssuePhotoDragDepth = 0
+  editIssuePhotoDragActive.value = false
+  const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type?.startsWith('image/'))
+  if (!file) {
+    editDialog.value.error = '请拖入图片文件。'
+    return
+  }
+  await processIssuePhotoFile(file)
+}
+
+const clearIssuePhoto = () => {
+  editDialog.value.issuePhotoFile = null
+  revokeIssuePhotoPreview()
+  editDialog.value.issuePhotoPreview = ''
+  editIssuePhotoDragActive.value = false
+  editIssuePhotoDragDepth = 0
+  clearFileInputsById(['edit-issue-photo-upload', 'edit-issue-photo-camera'])
+}
+
+const openEditStandardDropdown = () => {
+  editStandardDropdownVisible.value = true
+}
+
+const handleEditStandardInput = () => {
+  editDialog.value.standardDirty = true
+  if (standardSourceMode.value === 'internal') {
+    editDialog.value.form.internal_standard_id = ''
+  } else {
+    editDialog.value.form.standard_id = ''
+  }
+  editStandardDropdownVisible.value = true
+}
+
+const selectEditStandard = (standard) => {
+  if (standardSourceMode.value === 'internal') {
+    editDialog.value.form.internal_standard_id = String(standard.internal_standard_id || standard.standard_id || '').toUpperCase()
+    const firstExternal = (standard.linked_externals || [])[0]
+    editDialog.value.form.standard_id = firstExternal?.external_standard_id ? String(firstExternal.external_standard_id) : ''
+  } else {
+    editDialog.value.form.standard_id = String(standard.standard_id || standard.external_standard_id || '')
+    editDialog.value.form.internal_standard_id = standard.internal_standard_id ? String(standard.internal_standard_id).toUpperCase() : ''
+  }
+  editDialog.value.standardSearch = `${editStandardReferenceValue.value}｜${getEditStandardTitle(standard)}`
+  editDialog.value.standardDirty = false
+  editStandardDropdownVisible.value = false
+  editDialog.value.error = ''
 }
 
 const revokeRectificationPhotoPreview = () => {
@@ -1129,12 +1486,23 @@ const saveIssueEdit = async () => {
     return
   }
 
+  if (!editStandardReferenceValue.value && !canKeepExternalOnlyIssueStandard.value) {
+    editDialog.value.error = `请选择${editStandardInputLabel.value}。`
+    return
+  }
+
+  if (!selectedEditStandard.value && !canKeepExternalOnlyIssueStandard.value) {
+    editDialog.value.error = `请选择有效的${editStandardInputLabel.value}，不要只输入未匹配的文本。`
+    return
+  }
+
   try {
     editDialog.value.saving = true
     editDialog.value.error = ''
     const userId = localStorage.getItem('user_id') || ''
     const formData = new FormData()
     formData.append('user_id', userId)
+    formData.append('standard_source_mode', standardSourceMode.value)
     Object.entries(editDialog.value.form).forEach(([key, value]) => {
       formData.append(key, value ?? '')
     })
@@ -1293,6 +1661,9 @@ const handleClickOutside = (event) => {
   }
   if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
     dropdownVisible.value.inspectionTableName = false
+  }
+  if (editStandardSelectRef.value && !editStandardSelectRef.value.contains(event.target)) {
+    editStandardDropdownVisible.value = false
   }
 }
 
@@ -1541,6 +1912,17 @@ onBeforeUnmount(() => {
 
 .btn-primary:hover:not(:disabled) {
   background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+}
+
+.btn-light {
+  background: #fff;
+  color: #334155;
+  border-color: #cbd5e1;
+  font-weight: 800;
+}
+
+.btn-light:hover:not(:disabled) {
+  background: #f8fafc;
 }
 
 .btn-danger {
@@ -2196,7 +2578,7 @@ onBeforeUnmount(() => {
 }
 
 .issue-edit-modal {
-  width: min(820px, 100%);
+  width: min(920px, 100%);
   max-height: min(88vh, 900px);
   overflow: auto;
 }
@@ -2280,6 +2662,261 @@ onBeforeUnmount(() => {
 
 .issue-edit-field input[type="file"] {
   padding: 10px 12px;
+}
+
+.issue-edit-field .search-select input {
+  width: 100%;
+  height: 44px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 0 14px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.edit-standard-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbe7ff;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(37, 99, 235, 0.1), transparent 34%),
+    linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.edit-standard-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.edit-standard-mode strong {
+  color: #1d4ed8;
+}
+
+.edit-standard-mode span {
+  display: inline;
+  margin: 0;
+  color: #475569;
+}
+
+.edit-standard-result {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.edit-standard-result > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.edit-standard-result span {
+  margin-bottom: 5px;
+}
+
+.edit-standard-result strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.upload-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.upload-input {
+  display: none;
+}
+
+.upload-dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 10px;
+  min-height: 168px;
+  padding: 24px 20px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  overflow: hidden;
+}
+
+.upload-dropzone:hover {
+  border-color: #93c5fd;
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+}
+
+.upload-dropzone.drag-active {
+  border-color: #2563eb;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(37, 99, 235, 0.16), transparent 36%),
+    linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.14), 0 18px 36px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
+}
+
+.upload-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 24px;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.upload-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.mobile-upload-title {
+  display: none;
+}
+
+.upload-desc {
+  max-width: 560px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #64748b;
+}
+
+.upload-trigger-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.upload-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-trigger-secondary {
+  background: #eef4ff;
+  color: #1d4ed8;
+  border: 1px solid #bfd3ff;
+}
+
+.upload-trigger:hover {
+  filter: brightness(0.98);
+}
+
+.upload-trigger-secondary:hover {
+  background: #e0edff;
+  border-color: #93c5fd;
+}
+
+.issue-edit-photo-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.image-preview-panel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+}
+
+.issue-current-photo-panel {
+  border-color: #dbe4ee;
+  background: #f8fafc;
+}
+
+.image-preview-thumb {
+  width: 94px;
+  height: 94px;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid #86efac;
+  background: #fff;
+}
+
+.issue-current-photo-panel .image-preview-thumb {
+  border-color: #cbd5e1;
+}
+
+.image-preview-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.image-preview-title {
+  color: #166534;
+  font-size: 14px;
+  font-weight: 900;
+  margin-bottom: 6px;
+}
+
+.issue-current-photo-panel .image-preview-title {
+  color: #334155;
+}
+
+.image-preview-name {
+  color: #15803d;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.issue-current-photo-panel .image-preview-name {
+  color: #64748b;
+}
+
+.image-preview-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.image-action-btn {
+  min-height: 34px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .issue-edit-hint {
@@ -2740,6 +3377,49 @@ onBeforeUnmount(() => {
   .issue-edit-summary,
   .issue-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .edit-standard-result {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-dropzone {
+    min-height: 144px;
+    padding: 20px 16px;
+  }
+
+  .desktop-upload-title {
+    display: none;
+  }
+
+  .mobile-upload-title {
+    display: inline;
+  }
+
+  .upload-desc {
+    font-size: 12px;
+  }
+
+  .upload-trigger-group,
+  .image-preview-actions {
+    width: 100%;
+  }
+
+  .upload-trigger,
+  .image-action-btn {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .image-preview-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .image-preview-thumb {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
   }
 
   .issue-edit-actions {
