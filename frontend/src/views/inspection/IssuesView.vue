@@ -116,8 +116,9 @@
             <option v-for="size in pageSizeOptions" :key="`mobile-${size}`" :value="size">{{ size }}</option>
           </select>
           <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <div class="page-jump-strip" aria-label="页码跳转">
-            <button v-for="pageNumber in visiblePageNumbers" :key="`mobile-page-${pageNumber}`" type="button"
+          <div class="page-jump-strip mobile-page-track" :class="{ 'is-scrollable': mobilePageNumbers.length > 5 }"
+            aria-label="页码跳转">
+            <button v-for="pageNumber in mobilePageNumbers" :key="`mobile-page-${pageNumber}`" type="button"
               class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
               {{ pageNumber }}
             </button>
@@ -816,6 +817,10 @@ const visiblePageNumbers = computed(() => {
   start = Math.max(1, end - maxVisible + 1)
   return Array.from({ length: end - start + 1 }, (_item, index) => start + index)
 })
+
+const mobilePageNumbers = computed(() => (
+  Array.from({ length: totalPage.value }, (_item, index) => index + 1)
+))
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
@@ -2622,15 +2627,47 @@ onBeforeUnmount(() => {
 
   .mobile-pagination-bar .page-jump-strip {
     grid-row: 3;
+    width: 100%;
     max-width: 100%;
+    box-sizing: border-box;
     justify-content: flex-start;
-    padding-bottom: 4px;
-    padding-top: 2px;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    scrollbar-width: thin;
+  }
+
+  .mobile-pagination-bar .page-jump-strip:not(.is-scrollable) .page-number-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .mobile-pagination-bar .page-jump-strip.is-scrollable {
+    overflow-x: auto;
+  }
+
+  .mobile-pagination-bar .page-jump-strip.is-scrollable .page-number-btn {
+    min-width: 42px;
+  }
+
+  .mobile-pagination-bar .page-number-btn {
+    height: 38px;
+    border-radius: 12px;
   }
 
   .mobile-pagination-bar .page-total-label {
     grid-row: 4;
-    padding-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-weight: 900;
     text-align: center;
   }
 

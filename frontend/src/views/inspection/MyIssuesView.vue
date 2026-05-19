@@ -25,29 +25,51 @@
       </div>
     </div>
 
-    <div class="toolbar-card card-surface">
-      <div class="toolbar-grid">
+    <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters }">
+      <div class="filter-head">
+        <div>
+          <div class="filter-kicker">筛选面板</div>
+          <h3>快速定位待办问题</h3>
+        </div>
+        <div class="filter-head-actions">
+          <span v-if="activeFilterCount" class="active-filter-pill">已选 {{ activeFilterCount }} 项</span>
+          <button v-if="isMobileView" class="btn btn-secondary mobile-filter-toggle" type="button"
+            @click="showMobileFilters = !showMobileFilters">
+            {{ showMobileFilters ? '收起筛选' : '展开筛选' }}
+          </button>
+        </div>
+      </div>
 
-        <div class="toolbar-item">
-          <label>当前账号类型</label>
-          <input :value="currentRole === 'station_manager' ? '站点账号' : '督导组账号'" type="text" readonly />
+      <div class="filter-grid">
+        <div class="filter-item">
+          <label>检查月度</label>
+          <input v-model="filters.month" type="month" />
         </div>
 
-        <div class="toolbar-item">
-          <label>问题状态</label>
-          <select v-model="filters.status">
-            <option value="">全部</option>
-            <option value="待整改">待整改</option>
-            <option value="待复核">待复核</option>
-            <option value="已闭环">已闭环</option>
-            <option value="站经无法整改">站经无法整改</option>
-          </select>
+        <div class="filter-item">
+          <label>检查时间（按天）</label>
+          <input v-model="filters.date" type="date" />
         </div>
 
-        <div class="toolbar-item">
+        <div class="filter-item">
+          <label>站点所属地</label>
+          <div class="search-select" ref="regionSelectRef">
+            <input v-model="filters.region" placeholder="搜索或选择站点所属地" @focus="openFilterDropdown('region')"
+              @input="openFilterDropdown('region')" />
+            <div v-if="dropdownVisible.region" class="search-select-dropdown">
+              <div v-for="option in filteredRegionOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('region', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredRegionOptions.length === 0" class="search-select-empty">无匹配站点所属地</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-item">
           <label>站点名称</label>
           <div class="search-select" ref="stationSelectRef">
-            <input v-model="filters.station" type="text" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
+            <input v-model="filters.station" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
               @input="openFilterDropdown('station')" />
             <div v-if="dropdownVisible.station" class="search-select-dropdown">
               <div v-for="option in filteredStationOptions" :key="option" class="search-select-option"
@@ -58,35 +80,9 @@
             </div>
           </div>
         </div>
-
-        <div class="toolbar-item">
-          <label>检查表</label>
-          <div class="search-select" ref="inspectionTableSelectRef">
-            <input v-model="filters.inspectionTableName" type="text" placeholder="搜索或选择检查表"
-              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
-            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
-              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
-                @click="selectFilterOption('inspectionTableName', option)">
-                <div class="option-main">{{ option }}</div>
-              </div>
-              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="toolbar-item">
-          <label>规范ID</label>
-          <input v-model="filters.standardId" type="text" placeholder="搜索规范ID" />
-        </div>
-
-        <div class="toolbar-item toolbar-item-wide">
-          <label>规范详情</label>
-          <input v-model="filters.standardDetail" type="text" placeholder="搜索规范详情关键词" />
-        </div>
-
       </div>
 
-      <div class="toolbar-actions">
+      <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
         <button class="btn btn-secondary" type="button" @click="fetchMyIssues" :disabled="loading">
           {{ loading ? '刷新中...' : '刷新数据' }}
@@ -190,12 +186,17 @@
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
+            <option v-for="size in pageSizeOptions" :key="`mobile-${size}`" :value="size">{{ size }}</option>
           </select>
           <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
+          <div class="page-jump-strip mobile-page-track" :class="{ 'is-scrollable': mobilePageNumbers.length > 5 }"
+            aria-label="页码跳转">
+            <button v-for="pageNumber in mobilePageNumbers" :key="`mobile-page-${pageNumber}`" type="button"
+              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
+              {{ pageNumber }}
+            </button>
+          </div>
+          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
       </div>
@@ -314,12 +315,16 @@
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
+            <option v-for="size in pageSizeOptions" :key="`desktop-${size}`" :value="size">{{ size }}</option>
           </select>
           <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
+          <div class="page-jump-strip" aria-label="页码跳转">
+            <button v-for="pageNumber in visiblePageNumbers" :key="`desktop-page-${pageNumber}`" type="button"
+              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
+              {{ pageNumber }}
+            </button>
+          </div>
+          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
       </div>
@@ -532,38 +537,45 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
+const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
-const inspectionTableSelectRef = ref(null)
 
 const dropdownVisible = ref({
-  station: false,
-  inspectionTableName: false
+  region: false,
+  station: false
 })
 
 const filters = ref({
-  status: '',
-  station: '',
-  inspectionTableName: '',
-  standardId: '',
-  standardDetail: ''
+  month: '',
+  date: '',
+  region: '',
+  station: ''
 })
+
+const isMobileView = ref(false)
+const showMobileFilters = ref(false)
 
 const filteredData = computed(() => {
   return issues.value.filter((item) => {
-    const matchedStatus = !filters.value.status || item.status === filters.value.status
+    const matchedMonth = !filters.value.month || String(item.month || '').startsWith(filters.value.month)
+    const matchedDate = !filters.value.date || String(item.time || '').startsWith(filters.value.date)
+    const matchedRegion = !filters.value.region || normalizedKeyword(item.region).includes(normalizedKeyword(filters.value.region))
     const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
-    const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
-    const matchedStandardId = !filters.value.standardId || normalizedKeyword(item.standard_id).includes(normalizedKeyword(filters.value.standardId))
-    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(item.standard_detail_text).includes(normalizedKeyword(filters.value.standardDetail))
-    return matchedStatus && matchedStation && matchedInspectionTableName && matchedStandardId && matchedStandardDetail
+    return matchedMonth && matchedDate && matchedRegion && matchedStation
   })
 })
 
+const regionOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.region)))
 const stationOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.station)))
-const inspectionTableOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.inspection_table_name)))
 
+const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
-const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
+
+const activeFilterCount = computed(() => {
+  return Object.values(filters.value).filter((value) => String(value || '').trim()).length
+})
+
+const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 50, 100])
 
 const page = ref(1)
 const pageSize = ref(20)
@@ -574,6 +586,23 @@ const paginatedData = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filteredData.value.slice(start, start + pageSize.value)
 })
+
+const visiblePageNumbers = computed(() => {
+  const maxVisible = 7
+  const total = totalPage.value
+  if (total <= maxVisible) {
+    return Array.from({ length: total }, (_item, index) => index + 1)
+  }
+  const half = Math.floor(maxVisible / 2)
+  let start = Math.max(1, page.value - half)
+  let end = Math.min(total, start + maxVisible - 1)
+  start = Math.max(1, end - maxVisible + 1)
+  return Array.from({ length: end - start + 1 }, (_item, index) => start + index)
+})
+
+const mobilePageNumbers = computed(() => (
+  Array.from({ length: totalPage.value }, (_item, index) => index + 1)
+))
 
 watch([filters, pageSize], () => {
   page.value = 1
@@ -598,11 +627,10 @@ const filterOptionByKeyword = (options, keyword) => {
 
 const resetFilters = () => {
   filters.value = {
-    status: '',
-    station: '',
-    inspectionTableName: '',
-    standardId: '',
-    standardDetail: ''
+    month: '',
+    date: '',
+    region: '',
+    station: ''
   }
   closeAllDropdowns()
 }
@@ -613,6 +641,12 @@ const prevPage = () => {
 
 const nextPage = () => {
   if (page.value < totalPage.value) page.value += 1
+}
+
+const goToPage = (targetPage) => {
+  const nextPage = Number(targetPage)
+  if (Number.isNaN(nextPage)) return
+  page.value = Math.min(Math.max(nextPage, 1), totalPage.value)
 }
 
 const previewState = ref({
@@ -675,17 +709,17 @@ const selectFilterOption = (key, value) => {
 
 const closeAllDropdowns = () => {
   dropdownVisible.value = {
-    station: false,
-    inspectionTableName: false
+    region: false,
+    station: false
   }
 }
 
 const handleClickOutside = (event) => {
+  if (regionSelectRef.value && !regionSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.region = false
+  }
   if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
     dropdownVisible.value.station = false
-  }
-  if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
-    dropdownVisible.value.inspectionTableName = false
   }
 }
 
@@ -943,13 +977,23 @@ const statusClass = (status) => {
   return 'status-tag'
 }
 
+const updateResponsiveState = () => {
+  const nextIsMobile = window.matchMedia?.('(max-width: 768px)').matches ?? false
+  if (nextIsMobile === isMobileView.value) return
+  isMobileView.value = nextIsMobile
+  pageSize.value = nextIsMobile ? 5 : 20
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
+  updateResponsiveState()
+  window.addEventListener('resize', updateResponsiveState)
   fetchMyIssues()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', updateResponsiveState)
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
     actionMessageTimer = null
@@ -996,25 +1040,75 @@ onBeforeUnmount(() => {
 }
 
 
-.toolbar-card,
+.filter-card,
 .table-card {
   padding: 20px;
 }
 
-.toolbar-grid {
+.filter-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.filter-kicker {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.filter-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.active-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mobile-filter-toggle {
+  display: none;
+}
+
+.filter-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 16px;
 }
 
-.toolbar-item {
+.filter-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
 
-.toolbar-item-wide {
+.filter-item-wide {
   grid-column: span 2;
   min-width: 0;
 }
@@ -1066,15 +1160,15 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
-.toolbar-item label,
+.filter-item label,
 .form-item label {
   font-size: 14px;
   font-weight: 700;
   color: #374151;
 }
 
-.toolbar-item input,
-.toolbar-item select,
+.filter-item input,
+.filter-item select,
 .form-item input,
 .form-item select,
 .form-item textarea {
@@ -1087,8 +1181,8 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.toolbar-item input,
-.toolbar-item select,
+.filter-item input,
+.filter-item select,
 .form-item input,
 .form-item select {
   height: 44px;
@@ -1101,7 +1195,7 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 
-.toolbar-actions,
+.filter-actions,
 .drawer-actions {
   margin-top: 16px;
   display: flex;
@@ -1545,6 +1639,41 @@ onBeforeUnmount(() => {
   padding: 0 10px;
 }
 
+.page-jump-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(420px, 46vw);
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.page-number-btn {
+  min-width: 36px;
+  height: 36px;
+  border: 1px solid #dbe4ee;
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.page-number-btn.active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+}
+
+.page-total-label {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .btn {
   height: 40px;
   padding: 0 16px;
@@ -1953,11 +2082,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
-  .toolbar-grid {
+  .filter-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 
-  .toolbar-item-wide {
+  .filter-item-wide {
     grid-column: span 2;
   }
 
@@ -1967,7 +2096,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .toolbar-item-wide {
+  .filter-item-wide {
     grid-column: span 1;
   }
 
@@ -1991,28 +2120,68 @@ onBeforeUnmount(() => {
     margin-bottom: 10px;
   }
 
-  .toolbar-card,
+  .filter-card,
   .table-card,
   .summary-card {
     padding: 16px;
   }
 
-  .toolbar-grid {
+  .filter-card {
+    order: 1;
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .mobile-issue-list {
+    order: 2;
+  }
+
+  .table-card {
+    order: 3;
+  }
+
+  .filter-head {
+    align-items: center;
+    margin-bottom: 0;
+  }
+
+  .filter-card.mobile-expanded .filter-head {
+    margin-bottom: 14px;
+  }
+
+  .filter-head h3 {
+    font-size: 17px;
+  }
+
+  .filter-head-actions {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mobile-filter-toggle {
+    display: inline-flex;
+    min-height: 38px;
+    width: auto;
+  }
+
+  .filter-card:not(.mobile-expanded) .filter-grid,
+  .filter-card:not(.mobile-expanded) .filter-actions {
+    display: none;
+  }
+
+  .filter-grid {
     grid-template-columns: 1fr;
     gap: 14px;
   }
 
-  .toolbar-card {
-    display: none;
-  }
-
-  .toolbar-item label,
+  .filter-item label,
   .form-item label {
     font-size: 13px;
   }
 
-  .toolbar-item input,
-  .toolbar-item select,
+  .filter-item input,
+  .filter-item select,
   .form-item input,
   .form-item select {
     height: 46px;
@@ -2026,8 +2195,13 @@ onBeforeUnmount(() => {
     font-size: 15px;
   }
 
-  .toolbar-actions,
+  .filter-actions,
   .drawer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination-bar {
     flex-direction: column;
     align-items: stretch;
   }
@@ -2051,6 +2225,96 @@ onBeforeUnmount(() => {
   .mobile-pagination-bar {
     display: flex;
     padding: 14px;
+    margin-top: 12px;
+    border-radius: 20px;
+  }
+
+  .mobile-pagination-bar .pagination-summary {
+    text-align: center;
+    font-weight: 900;
+  }
+
+  .mobile-pagination-bar .pagination-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .mobile-pagination-bar .pagination-controls label {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .mobile-pagination-bar .pagination-controls select {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    height: 42px;
+  }
+
+  .mobile-pagination-bar .pagination-controls > .btn:first-of-type {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .mobile-pagination-bar .pagination-controls > .btn:last-of-type {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .mobile-pagination-bar .page-jump-strip,
+  .mobile-pagination-bar .page-total-label {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-pagination-bar .page-jump-strip {
+    grid-row: 3;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    scrollbar-width: thin;
+  }
+
+  .mobile-pagination-bar .page-jump-strip:not(.is-scrollable) .page-number-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .mobile-pagination-bar .page-jump-strip.is-scrollable {
+    overflow-x: auto;
+  }
+
+  .mobile-pagination-bar .page-jump-strip.is-scrollable .page-number-btn {
+    min-width: 42px;
+  }
+
+  .mobile-pagination-bar .page-number-btn {
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .mobile-pagination-bar .page-total-label {
+    grid-row: 4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-weight: 900;
+    text-align: center;
   }
 
   .drawer-panel {
