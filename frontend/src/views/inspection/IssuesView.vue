@@ -50,15 +50,6 @@
             <div class="mobile-card-row"><span>所属地</span><strong>{{ item.region }}</strong></div>
             <div class="mobile-card-row"><span>站点负责人</span><strong>{{ item.station_manager }}</strong></div>
             <div class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
-            <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
-            <div class="mobile-card-row">
-              <span>规范ID</span>
-              <div class="standard-id-stack">
-                <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-row-${part.type}`" :class="part.type">
-                  <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
-                </span>
-              </div>
-            </div>
 
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
@@ -122,18 +113,35 @@
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
+            <option v-for="size in pageSizeOptions" :key="`mobile-${size}`" :value="size">{{ size }}</option>
           </select>
           <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
+          <div class="page-jump-strip" aria-label="页码跳转">
+            <button v-for="pageNumber in visiblePageNumbers" :key="`mobile-page-${pageNumber}`" type="button"
+              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
+              {{ pageNumber }}
+            </button>
+          </div>
+          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
       </div>
     </div>
 
-    <div class="filter-card card-surface">
+    <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters }">
+      <div class="filter-head">
+        <div>
+          <div class="filter-kicker">筛选面板</div>
+          <h3>快速定位巡检问题</h3>
+        </div>
+        <div class="filter-head-actions">
+          <span v-if="activeFilterCount" class="active-filter-pill">已选 {{ activeFilterCount }} 项</span>
+          <button v-if="isMobileView" class="btn btn-secondary mobile-filter-toggle" type="button"
+            @click="showMobileFilters = !showMobileFilters">
+            {{ showMobileFilters ? '收起筛选' : '展开筛选' }}
+          </button>
+        </div>
+      </div>
       <div class="filter-grid">
         <div class="filter-item">
           <label>检查月度</label>
@@ -256,6 +264,10 @@
       </div>
 
       <div class="filter-actions">
+        <button v-if="isMobileView" class="btn btn-primary mobile-today-filter-btn" type="button"
+          @click="filterMyTodayIssues">
+          只看我今天检查的问题
+        </button>
         <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
         <button class="btn btn-secondary" @click="fetchIssues" :disabled="loading">
           {{ loading ? '刷新中...' : '刷新数据' }}
@@ -393,12 +405,16 @@
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-            <option :value="100">100</option>
+            <option v-for="size in pageSizeOptions" :key="`desktop-${size}`" :value="size">{{ size }}</option>
           </select>
           <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <span>{{ page }} / {{ totalPage }}</span>
+          <div class="page-jump-strip" aria-label="页码跳转">
+            <button v-for="pageNumber in visiblePageNumbers" :key="`desktop-page-${pageNumber}`" type="button"
+              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
+              {{ pageNumber }}
+            </button>
+          </div>
+          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
         </div>
       </div>
@@ -667,10 +683,14 @@ const dropdownVisible = ref({
   inspectionTableName: false
 })
 
+const isMobileView = ref(false)
+const showMobileFilters = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 const deletingIssueId = ref(null)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
+const currentRealName = localStorage.getItem('real_name') || ''
+const currentUsername = localStorage.getItem('username') || ''
 let parsedPermissions = {}
 try {
   parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -763,11 +783,38 @@ const filteredStationManagerOptions = computed(() => filterOptionByKeyword(stati
 const filteredInspectorOptions = computed(() => filterOptionByKeyword(inspectorOptions.value, filters.value.inspector))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
+const activeFilterCount = computed(() => {
+  return Object.values(filters.value).filter((value) => String(value || '').trim()).length
+})
+
+const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 50, 100])
+
 const totalPage = computed(() => Math.max(1, Math.ceil(filteredData.value.length / pageSize.value)))
 
 const paginatedData = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filteredData.value.slice(start, start + pageSize.value)
+})
+
+const currentInspectorFilterValue = computed(() => {
+  const candidates = [currentRealName, currentUsername]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+  const options = inspectorOptions.value
+  return candidates.find((candidate) => options.includes(candidate)) || candidates[0] || ''
+})
+
+const visiblePageNumbers = computed(() => {
+  const maxVisible = isMobileView.value ? 5 : 7
+  const total = totalPage.value
+  if (total <= maxVisible) {
+    return Array.from({ length: total }, (_item, index) => index + 1)
+  }
+  const half = Math.floor(maxVisible / 2)
+  let start = Math.max(1, page.value - half)
+  let end = Math.min(total, start + maxVisible - 1)
+  start = Math.max(1, end - maxVisible + 1)
+  return Array.from({ length: end - start + 1 }, (_item, index) => start + index)
 })
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
@@ -877,6 +924,38 @@ const resetFilters = () => {
     status: ''
   }
   closeAllDropdowns()
+}
+
+const formatLocalDate = (value = new Date()) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const filterMyTodayIssues = () => {
+  const inspector = currentInspectorFilterValue.value
+  if (!inspector) {
+    showActionMessage('当前账号缺少姓名，暂时不能自动筛选。', 'error')
+    return
+  }
+  filters.value = {
+    month: '',
+    date: formatLocalDate(),
+    region: '',
+    station: '',
+    stationManager: '',
+    inspector,
+    inspectionTableName: '',
+    standardId: '',
+    standardDetail: '',
+    rectificationResult: '',
+    reviewResult: '',
+    status: ''
+  }
+  closeAllDropdowns()
+  showMobileFilters.value = false
+  showActionMessage('已筛选我今天检查的问题。', 'success')
 }
 
 const showActionMessage = (text, type = 'info') => {
@@ -1099,6 +1178,11 @@ const nextPage = () => {
   }
 }
 
+const goToPage = (targetPage) => {
+  const safePage = Math.min(Math.max(Number(targetPage) || 1, 1), totalPage.value)
+  page.value = safePage
+}
+
 const prevPage = () => {
   if (page.value > 1) {
     page.value -= 1
@@ -1215,13 +1299,23 @@ const statusClass = (status) => {
   return 'status-tag'
 }
 
+const updateResponsiveState = () => {
+  const nextIsMobile = window.matchMedia?.('(max-width: 768px)').matches ?? false
+  if (nextIsMobile === isMobileView.value) return
+  isMobileView.value = nextIsMobile
+  pageSize.value = nextIsMobile ? 5 : 20
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
+  updateResponsiveState()
+  window.addEventListener('resize', updateResponsiveState)
   fetchIssues()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('resize', updateResponsiveState)
   revokeIssuePhotoPreview()
   revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
@@ -1269,6 +1363,60 @@ onBeforeUnmount(() => {
 .filter-card,
 .table-card {
   padding: 20px;
+}
+
+.filter-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.filter-kicker {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.filter-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.active-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mobile-filter-toggle {
+  display: none;
+}
+
+.mobile-today-filter-btn {
+  display: none;
 }
 
 .filter-grid {
@@ -1925,6 +2073,41 @@ onBeforeUnmount(() => {
   padding: 0 10px;
 }
 
+.page-jump-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(420px, 46vw);
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.page-number-btn {
+  min-width: 36px;
+  height: 36px;
+  border: 1px solid #dbe4ee;
+  border-radius: 10px;
+  background: #fff;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.page-number-btn.active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+}
+
+.page-total-label {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .empty-row {
   text-align: center;
   color: #6b7280;
@@ -2284,6 +2467,22 @@ onBeforeUnmount(() => {
   }
 
   .page-header {
+    order: 0;
+  }
+
+  .filter-card {
+    order: 1;
+  }
+
+  .mobile-issue-list {
+    order: 2;
+  }
+
+  .table-card {
+    order: 3;
+  }
+
+  .page-header {
     padding: 18px 16px;
   }
 
@@ -2298,6 +2497,45 @@ onBeforeUnmount(() => {
   .filter-card,
   .table-card {
     padding: 16px;
+  }
+
+  .filter-card {
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .filter-head {
+    align-items: center;
+    margin-bottom: 0;
+  }
+
+  .filter-card.mobile-expanded .filter-head {
+    margin-bottom: 14px;
+  }
+
+  .filter-head h3 {
+    font-size: 17px;
+  }
+
+  .filter-head-actions {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mobile-filter-toggle {
+    display: inline-flex;
+    min-height: 38px;
+    width: auto;
+  }
+
+  .mobile-today-filter-btn {
+    display: inline-flex;
+  }
+
+  .filter-card:not(.mobile-expanded) .filter-grid,
+  .filter-card:not(.mobile-expanded) .filter-actions {
+    display: none;
   }
 
   .filter-grid {
@@ -2335,6 +2573,67 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
+  .mobile-pagination-bar {
+    margin-top: 12px;
+    border-radius: 20px;
+  }
+
+  .mobile-pagination-bar .pagination-summary {
+    text-align: center;
+    font-weight: 900;
+  }
+
+  .mobile-pagination-bar .pagination-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .mobile-pagination-bar .pagination-controls label {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .mobile-pagination-bar .pagination-controls select {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    height: 42px;
+  }
+
+  .mobile-pagination-bar .pagination-controls > .btn:first-of-type {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .mobile-pagination-bar .pagination-controls > .btn:last-of-type {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .mobile-pagination-bar .page-jump-strip,
+  .mobile-pagination-bar .page-total-label {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-pagination-bar .page-jump-strip {
+    grid-row: 3;
+    max-width: 100%;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+    padding-top: 2px;
+  }
+
+  .mobile-pagination-bar .page-total-label {
+    grid-row: 4;
+    padding-top: 2px;
+    text-align: center;
+  }
+
   .table-card {
     display: none;
   }
@@ -2350,6 +2649,46 @@ onBeforeUnmount(() => {
 
   .mobile-card-images {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .mobile-issue-cards {
+    gap: 14px;
+  }
+
+  .mobile-issue-card {
+    padding: 15px;
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.1), transparent 28%),
+      rgba(255, 255, 255, 0.98);
+  }
+
+  .mobile-card-body {
+    padding: 12px;
+    border: 1px solid #edf2f7;
+    border-radius: 16px;
+    background: #f8fafc;
+  }
+
+  .mobile-card-row strong {
+    max-width: 68%;
+    word-break: break-word;
+  }
+
+  .mobile-card-row-top {
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .mobile-card-row-top > span {
+    font-weight: 900;
+  }
+
+  .mobile-card-text,
+  .mobile-card-standard-box {
+    width: 100%;
+    text-align: left;
+    align-items: stretch;
   }
 
   .btn {

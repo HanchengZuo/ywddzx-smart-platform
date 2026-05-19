@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.8.3',
+    date: '2026-05-19',
+    title: '问题列表手机端更顺手',
+    summary: '手机端筛选放到上面，列表一次少显示一点。',
+    items: [
+      '巡检问题列表手机端筛选入口移到列表上方。',
+      '手机端默认每页显示5条问题，翻页更轻快。',
+      '优化手机端问题卡片和分页跳转。',
+      '筛选面板添加只查看我今日问题功能。'
+    ]
+  },
+  {
     version: 'v1.8.2',
     date: '2026-05-18',
     title: '问题照片上传更方便',
