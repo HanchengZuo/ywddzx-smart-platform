@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.8.4',
+    date: '2026-05-19',
+    title: '巡检问题编辑增强',
+    summary: '编辑问题时可以调整规范ID，照片上传也更顺手。',
+    items: [
+      '编辑巡检问题支持按当前规范库模式修改规范ID。',
+      '问题照片替换改成拖拽、拍照和相册选择的上传方式。',
+      '规范变更后自动同步检查表和规范关联。'
+    ]
+  },
+  {
     version: 'v1.8.3',
     date: '2026-05-19',
     title: '问题列表手机端更顺手',
