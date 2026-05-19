@@ -69,14 +69,28 @@
                 placeholder="请描述出现位置、操作步骤、实际现象和你期望的效果。系统会根据说明自动生成反馈标题。"></textarea>
             </label>
 
-            <div class="field-block full-width">
+            <div ref="feedbackScreenshotUploadSectionRef" class="field-block full-width screenshot-upload-anchor">
               <span>上传截图</span>
-              <label class="upload-zone" for="feedback-screenshots">
-                <input id="feedback-screenshots" type="file" accept="image/*" multiple
+              <div class="upload-zone" :class="{ 'drag-active': isScreenshotDragActive }" role="button" tabindex="0"
+                :aria-disabled="submitting || screenshotProcessing" @click="openScreenshotPicker"
+                @keydown.enter.prevent="openScreenshotPicker" @keydown.space.prevent="openScreenshotPicker"
+                @dragenter.prevent="handleScreenshotDragEnter" @dragover.prevent="handleScreenshotDragOver"
+                @dragleave.prevent="handleScreenshotDragLeave" @drop.prevent="handleScreenshotDrop"
+                @paste="handleScreenshotPaste">
+                <input id="feedback-screenshots" class="upload-input" type="file" accept="image/*" multiple
                   :disabled="submitting || screenshotProcessing" @change="handleScreenshotChange" />
-                <strong>{{ screenshotProcessing ? '正在处理截图...' : '选择截图' }}</strong>
+                <input id="feedback-screenshots-camera" class="upload-input" type="file" accept="image/*"
+                  capture="environment" :disabled="submitting || screenshotProcessing"
+                  @change="handleScreenshotChange" />
+                <div class="upload-icon">↑</div>
+                <strong>{{ screenshotProcessing ? '正在处理截图...' : '选择、拖拽或粘贴截图' }}</strong>
                 <small>支持多张图片，最多 6 张。系统会先压缩截图，再随反馈一起提交。</small>
-              </label>
+                <div class="upload-trigger-group">
+                  <label for="feedback-screenshots-camera" class="upload-trigger upload-trigger-secondary"
+                    @click.stop>拍照上传</label>
+                  <label for="feedback-screenshots" class="upload-trigger" @click.stop>相册选择</label>
+                </div>
+              </div>
 
               <div v-if="screenshotPreviews.length" class="screenshot-preview-grid">
                 <div v-for="(item, index) in screenshotPreviews" :key="item.url" class="screenshot-preview">
@@ -215,12 +229,18 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
 import {
+  clearFileInputsById,
+  getImageFilesFromClipboardEvent,
+  getImageFilesFromDataTransfer,
+  hasImageInDataTransfer,
+  isDesktopImageDropEnabled,
   prepareImagePreviewList,
   revokeObjectUrl,
-  revokePreviewList
+  revokePreviewList,
+  scrollImageUploadIntoView
 } from '@/utils/imageUpload'
 
 const defaultFeedbackTypes = ['Bug反馈', '功能建议', '界面优化', '流程建议', '其他']
@@ -261,6 +281,8 @@ const commentSubmittingId = ref(null)
 const acceptingId = ref(null)
 const screenshotFiles = ref([])
 const screenshotPreviews = ref([])
+const feedbackScreenshotUploadSectionRef = ref(null)
+const isScreenshotDragActive = ref(false)
 const commentDrafts = reactive({})
 const filters = reactive({
   feedback_type: '',
@@ -280,6 +302,8 @@ const preview = reactive({
   url: ''
 })
 let messageTimer = null
+let screenshotDragDepth = 0
+const SCREENSHOT_LIMIT = 6
 
 const totalComments = computed(() => feedbacks.value.reduce((sum, item) => sum + (item.comments?.length || 0), 0))
 const acceptedCount = computed(() => feedbacks.value.filter((item) => item.is_accepted).length)
@@ -330,15 +354,21 @@ const releasePreviews = () => {
   screenshotPreviews.value = []
 }
 
-const handleScreenshotChange = async (event) => {
-  const selectedFiles = Array.from(event.target.files || [])
-  event.target.value = ''
-  if (!selectedFiles.length) return
+const scrollToScreenshotUpload = async () => {
+  await nextTick()
+  scrollImageUploadIntoView(feedbackScreenshotUploadSectionRef.value)
+}
 
-  const remainingCount = Math.max(0, 6 - screenshotFiles.value.length)
+const processScreenshotFiles = async (files = [], options = {}) => {
+  if (submitting.value || screenshotProcessing.value) return false
+
+  const selectedFiles = Array.from(files || []).filter(Boolean)
+  if (!selectedFiles.length) return false
+
+  const remainingCount = Math.max(0, SCREENSHOT_LIMIT - screenshotFiles.value.length)
   if (remainingCount <= 0) {
     setMessage('最多上传 6 张截图，请先移除已有截图后再添加。', 'error')
-    return
+    return false
   }
 
   const filesToProcess = selectedFiles.slice(0, remainingCount)
@@ -347,18 +377,20 @@ const handleScreenshotChange = async (event) => {
   }
 
   screenshotProcessing.value = true
+  let uploaded = false
 
   try {
     const result = await prepareImagePreviewList(filesToProcess, {
-      limit: 6,
+      limit: SCREENSHOT_LIMIT,
       existingCount: screenshotFiles.value.length,
       maxUploadBytes: 500 * 1024,
       maxWidth: 1600
     })
 
     if (result.files.length) {
-      screenshotFiles.value = [...screenshotFiles.value, ...result.files].slice(0, 6)
-      screenshotPreviews.value = [...screenshotPreviews.value, ...result.previews].slice(0, 6)
+      screenshotFiles.value = [...screenshotFiles.value, ...result.files].slice(0, SCREENSHOT_LIMIT)
+      screenshotPreviews.value = [...screenshotPreviews.value, ...result.previews].slice(0, SCREENSHOT_LIMIT)
+      uploaded = true
     }
 
     if (result.failedCount) {
@@ -366,9 +398,82 @@ const handleScreenshotChange = async (event) => {
     } else if (result.files.length) {
       setMessage('截图已压缩处理，可以发布反馈。', 'success')
     }
+  } catch (error) {
+    setMessage(error?.message || '截图处理失败，请更换图片后重试。', 'error')
   } finally {
     screenshotProcessing.value = false
   }
+
+  if (uploaded && options.follow) {
+    await scrollToScreenshotUpload()
+  }
+
+  return uploaded
+}
+
+const handleScreenshotChange = async (event) => {
+  const selectedFiles = Array.from(event.target.files || [])
+  event.target.value = ''
+  await processScreenshotFiles(selectedFiles)
+}
+
+const openScreenshotPicker = () => {
+  if (submitting.value || screenshotProcessing.value) return
+  document.getElementById('feedback-screenshots')?.click()
+}
+
+const handleScreenshotDragEnter = (event) => {
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
+  screenshotDragDepth += 1
+  isScreenshotDragActive.value = true
+}
+
+const handleScreenshotDragOver = (event) => {
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
+  event.dataTransfer.dropEffect = 'copy'
+  isScreenshotDragActive.value = true
+}
+
+const handleScreenshotDragLeave = () => {
+  if (!isDesktopImageDropEnabled()) return
+  screenshotDragDepth = Math.max(screenshotDragDepth - 1, 0)
+  if (screenshotDragDepth === 0) {
+    isScreenshotDragActive.value = false
+  }
+}
+
+const handleScreenshotDrop = async (event) => {
+  if (!isDesktopImageDropEnabled()) return
+  screenshotDragDepth = 0
+  isScreenshotDragActive.value = false
+  const files = getImageFilesFromDataTransfer(event.dataTransfer)
+  if (!files.length) {
+    setMessage('请拖入图片文件。', 'error')
+    return
+  }
+  await processScreenshotFiles(files, { follow: true })
+}
+
+const handleScreenshotPaste = async (event) => {
+  const files = getImageFilesFromClipboardEvent(event)
+  if (!files.length) {
+    setMessage('剪贴板里没有可上传的图片。', 'error')
+    return
+  }
+  event.preventDefault()
+  screenshotDragDepth = 0
+  isScreenshotDragActive.value = false
+  await processScreenshotFiles(files, { follow: true })
+}
+
+const handleWindowScreenshotPaste = async (event) => {
+  if (event.defaultPrevented || submitting.value || screenshotProcessing.value) return
+  const files = getImageFilesFromClipboardEvent(event)
+  if (!files.length) return
+  event.preventDefault()
+  screenshotDragDepth = 0
+  isScreenshotDragActive.value = false
+  await processScreenshotFiles(files, { follow: true })
 }
 
 const removeScreenshot = (index) => {
@@ -385,6 +490,9 @@ const resetForm = () => {
   form.description = ''
   screenshotFiles.value = []
   releasePreviews()
+  isScreenshotDragActive.value = false
+  screenshotDragDepth = 0
+  clearFileInputsById(['feedback-screenshots', 'feedback-screenshots-camera'])
 }
 
 const fetchFeedbacks = async () => {
@@ -532,9 +640,13 @@ const closePreview = () => {
   preview.url = ''
 }
 
-onMounted(fetchFeedbacks)
+onMounted(() => {
+  window.addEventListener('paste', handleWindowScreenshotPaste)
+  fetchFeedbacks()
+})
 
 onBeforeUnmount(() => {
+  window.removeEventListener('paste', handleWindowScreenshotPaste)
   if (messageTimer) clearTimeout(messageTimer)
   releasePreviews()
 })
@@ -861,19 +973,63 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 
-.upload-zone {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 18px;
-  border: 1px dashed #93c5fd;
-  border-radius: 18px;
-  background: #f8fbff;
-  cursor: pointer;
+.screenshot-upload-anchor {
+  scroll-margin-top: 96px;
 }
 
-.upload-zone input {
+.upload-zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 174px;
+  padding: 22px;
+  text-align: center;
+  border: 1.5px dashed #93c5fd;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.1), transparent 34%),
+    #f8fbff;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.upload-zone:hover {
+  border-color: #2563eb;
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.12);
+}
+
+.upload-zone.drag-active {
+  transform: translateY(-1px);
+  border-color: #1d4ed8;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.16), transparent 38%),
+    #eff6ff;
+  box-shadow: 0 18px 38px rgba(37, 99, 235, 0.18);
+}
+
+.upload-zone[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.upload-input {
   display: none;
+}
+
+.upload-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 18px;
+  color: #1d4ed8;
+  font-size: 28px;
+  font-weight: 900;
+  background: #dbeafe;
 }
 
 .upload-zone strong {
@@ -882,8 +1038,47 @@ onBeforeUnmount(() => {
 }
 
 .upload-zone small {
+  max-width: 480px;
   color: #64748b;
   line-height: 1.6;
+}
+
+.upload-trigger-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.upload-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.upload-trigger-secondary {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.upload-trigger:hover {
+  transform: translateY(-1px);
+  background: #1d4ed8;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.16);
+}
+
+.upload-trigger-secondary:hover {
+  color: #fff;
 }
 
 .screenshot-preview-grid,

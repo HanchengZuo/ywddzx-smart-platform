@@ -135,6 +135,10 @@ export const getImageFileFromFileList = (files = []) => {
     return Array.from(files || []).find(isImageFile) || null
 }
 
+export const getImageFilesFromFileList = (files = []) => {
+    return Array.from(files || []).filter(isImageFile)
+}
+
 export const hasImageInDataTransfer = (dataTransfer) => {
     const items = Array.from(dataTransfer?.items || [])
     if (items.length) {
@@ -144,18 +148,27 @@ export const hasImageInDataTransfer = (dataTransfer) => {
 }
 
 export const getImageFileFromDataTransfer = (dataTransfer) => {
+    return getImageFilesFromDataTransfer(dataTransfer)[0] || null
+}
+
+export const getImageFilesFromDataTransfer = (dataTransfer) => {
     const items = Array.from(dataTransfer?.items || [])
+    const itemFiles = []
     for (const item of items) {
         if (item.kind === 'file' && item.type?.startsWith('image/')) {
             const file = item.getAsFile?.()
-            if (file) return file
+            if (file) itemFiles.push(file)
         }
     }
-    return getImageFileFromFileList(dataTransfer?.files || [])
+    return itemFiles.length ? itemFiles : getImageFilesFromFileList(dataTransfer?.files || [])
 }
 
 export const getImageFileFromClipboardEvent = (event) => {
     return getImageFileFromDataTransfer(event?.clipboardData)
+}
+
+export const getImageFilesFromClipboardEvent = (event) => {
+    return getImageFilesFromDataTransfer(event?.clipboardData)
 }
 
 export const scrollImageUploadIntoView = (target, options = {}) => {
