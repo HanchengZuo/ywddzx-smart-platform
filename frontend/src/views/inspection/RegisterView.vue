@@ -204,7 +204,7 @@
                   @click="openIssuePhotoPicker" @keydown.enter.prevent="openIssuePhotoPicker"
                   @keydown.space.prevent="openIssuePhotoPicker" @dragenter.prevent="handlePhotoDragEnter"
                   @dragover.prevent="handlePhotoDragOver" @dragleave.prevent="handlePhotoDragLeave"
-                  @drop.prevent="handlePhotoDrop">
+                  @drop.prevent="handlePhotoDrop" @paste="handlePhotoPaste">
                   <div class="upload-icon">↑</div>
                   <div class="upload-title">
                     <span class="desktop-upload-title">选择或拖拽问题照片</span>
@@ -212,7 +212,7 @@
                   </div>
                   <div class="upload-desc">
                     支持上传现场问题照片，建议使用清晰、完整、能准确反映问题的图片。
-                    <span class="desktop-drop-hint">桌面端可直接将图片拖到此处上传。</span>
+                    <span class="desktop-drop-hint">桌面端可拖拽图片，也可复制图片后在此处粘贴上传。</span>
                   </div>
                   <div class="upload-trigger-group">
                     <label for="issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照上传</label>
@@ -258,6 +258,10 @@ import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import {
   clearFileInputsById,
+  getImageFileFromClipboardEvent,
+  getImageFileFromDataTransfer,
+  hasImageInDataTransfer,
+  isDesktopImageDropEnabled,
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
@@ -875,33 +879,24 @@ const processSelectedImage = async (file) => {
   }
 }
 
-const isDesktopPhotoDropEnabled = () => {
-  if (typeof window === 'undefined') return false
-  return window.matchMedia?.('(min-width: 901px) and (pointer: fine)').matches
-}
-
 const openIssuePhotoPicker = () => {
   document.getElementById('issue-photo-upload')?.click()
 }
 
-const hasDraggedImage = (event) => {
-  return Array.from(event.dataTransfer?.items || []).some((item) => item.type?.startsWith('image/'))
-}
-
 const handlePhotoDragEnter = (event) => {
-  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
   photoDragDepth += 1
   isPhotoDragActive.value = true
 }
 
 const handlePhotoDragOver = (event) => {
-  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
   event.dataTransfer.dropEffect = 'copy'
   isPhotoDragActive.value = true
 }
 
 const handlePhotoDragLeave = () => {
-  if (!isDesktopPhotoDropEnabled()) return
+  if (!isDesktopImageDropEnabled()) return
   photoDragDepth = Math.max(photoDragDepth - 1, 0)
   if (photoDragDepth === 0) {
     isPhotoDragActive.value = false
@@ -909,14 +904,36 @@ const handlePhotoDragLeave = () => {
 }
 
 const handlePhotoDrop = async (event) => {
-  if (!isDesktopPhotoDropEnabled()) return
+  if (!isDesktopImageDropEnabled()) return
   photoDragDepth = 0
   isPhotoDragActive.value = false
-  const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type?.startsWith('image/'))
+  const file = getImageFileFromDataTransfer(event.dataTransfer)
   if (!file) {
     showSubmitToast('请拖入图片文件。', 'error')
     return
   }
+  await processSelectedImage(file)
+}
+
+const handlePhotoPaste = async (event) => {
+  const file = getImageFileFromClipboardEvent(event)
+  if (!file) {
+    showSubmitToast('剪贴板里没有可上传的图片。', 'error')
+    return
+  }
+  event.preventDefault()
+  photoDragDepth = 0
+  isPhotoDragActive.value = false
+  await processSelectedImage(file)
+}
+
+const handleWindowPhotoPaste = async (event) => {
+  if (event.defaultPrevented || normalizedHasIssue.value !== 'yes') return
+  const file = getImageFileFromClipboardEvent(event)
+  if (!file) return
+  event.preventDefault()
+  photoDragDepth = 0
+  isPhotoDragActive.value = false
   await processSelectedImage(file)
 }
 
@@ -1070,6 +1087,7 @@ watch(
 onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('paste', handleWindowPhotoPaste)
   try {
     await Promise.all([fetchStations(), fetchInspectionTables(), fetchStandardSourceMode()])
     applyRememberedStation()
@@ -1081,6 +1099,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('paste', handleWindowPhotoPaste)
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
     submitMessageTimer = null

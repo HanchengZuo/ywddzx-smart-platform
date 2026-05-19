@@ -511,14 +511,14 @@
                   @click="openEditIssuePhotoPicker" @keydown.enter.prevent="openEditIssuePhotoPicker"
                   @keydown.space.prevent="openEditIssuePhotoPicker" @dragenter.prevent="handleEditIssuePhotoDragEnter"
                   @dragover.prevent="handleEditIssuePhotoDragOver" @dragleave.prevent="handleEditIssuePhotoDragLeave"
-                  @drop.prevent="handleEditIssuePhotoDrop">
+                  @drop.prevent="handleEditIssuePhotoDrop" @paste="handleEditIssuePhotoPaste">
                   <div class="upload-icon">↑</div>
                   <div class="upload-title">
                     <span class="desktop-upload-title">选择或拖拽新的问题照片</span>
                     <span class="mobile-upload-title">选择或更换问题照片</span>
                   </div>
                   <div class="upload-desc">
-                    不选择新照片则保留原照片；桌面端可直接将图片拖到此处上传。
+                    不选择新照片则保留原照片；桌面端可拖拽图片，也可复制图片后在此处粘贴上传。
                   </div>
                   <div class="upload-trigger-group">
                     <label for="edit-issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照上传</label>
@@ -724,6 +724,10 @@ import axios from 'axios'
 import {
   clearFileInput,
   clearFileInputsById,
+  getImageFileFromClipboardEvent,
+  getImageFileFromDataTransfer,
+  hasImageInDataTransfer,
+  isDesktopImageDropEnabled,
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
@@ -1315,28 +1319,20 @@ const openEditIssuePhotoPicker = () => {
   document.getElementById('edit-issue-photo-upload')?.click()
 }
 
-const isDesktopPhotoDropEnabled = () => {
-  return window.matchMedia?.('(min-width: 901px) and (pointer: fine)').matches
-}
-
-const hasDraggedImage = (event) => {
-  return Array.from(event.dataTransfer?.items || []).some((item) => item.type?.startsWith('image/'))
-}
-
 const handleEditIssuePhotoDragEnter = (event) => {
-  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
   editIssuePhotoDragDepth += 1
   editIssuePhotoDragActive.value = true
 }
 
 const handleEditIssuePhotoDragOver = (event) => {
-  if (!isDesktopPhotoDropEnabled() || !hasDraggedImage(event)) return
+  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
   event.dataTransfer.dropEffect = 'copy'
   editIssuePhotoDragActive.value = true
 }
 
 const handleEditIssuePhotoDragLeave = () => {
-  if (!isDesktopPhotoDropEnabled()) return
+  if (!isDesktopImageDropEnabled()) return
   editIssuePhotoDragDepth = Math.max(editIssuePhotoDragDepth - 1, 0)
   if (editIssuePhotoDragDepth === 0) {
     editIssuePhotoDragActive.value = false
@@ -1344,14 +1340,36 @@ const handleEditIssuePhotoDragLeave = () => {
 }
 
 const handleEditIssuePhotoDrop = async (event) => {
-  if (!isDesktopPhotoDropEnabled()) return
+  if (!isDesktopImageDropEnabled()) return
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type?.startsWith('image/'))
+  const file = getImageFileFromDataTransfer(event.dataTransfer)
   if (!file) {
     editDialog.value.error = '请拖入图片文件。'
     return
   }
+  await processIssuePhotoFile(file)
+}
+
+const handleEditIssuePhotoPaste = async (event) => {
+  const file = getImageFileFromClipboardEvent(event)
+  if (!file) {
+    editDialog.value.error = '剪贴板里没有可上传的图片。'
+    return
+  }
+  event.preventDefault()
+  editIssuePhotoDragDepth = 0
+  editIssuePhotoDragActive.value = false
+  await processIssuePhotoFile(file)
+}
+
+const handleWindowEditIssuePhotoPaste = async (event) => {
+  if (event.defaultPrevented || !editDialog.value.visible) return
+  const file = getImageFileFromClipboardEvent(event)
+  if (!file) return
+  event.preventDefault()
+  editIssuePhotoDragDepth = 0
+  editIssuePhotoDragActive.value = false
   await processIssuePhotoFile(file)
 }
 
@@ -1684,6 +1702,7 @@ const updateResponsiveState = () => {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
+  window.addEventListener('paste', handleWindowEditIssuePhotoPaste)
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
   fetchIssues()
@@ -1691,6 +1710,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  window.removeEventListener('paste', handleWindowEditIssuePhotoPaste)
   window.removeEventListener('resize', updateResponsiveState)
   revokeIssuePhotoPreview()
   revokeRectificationPhotoPreview()

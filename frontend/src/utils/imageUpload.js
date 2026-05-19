@@ -120,6 +120,44 @@ export const validateImageType = (file) => {
     return ACCEPTED_IMAGE_TYPES.includes(file.type)
 }
 
+export const isImageFile = (file) => {
+    if (!file) return false
+    if (!file.type) return true
+    return file.type.startsWith('image/')
+}
+
+export const isDesktopImageDropEnabled = () => {
+    if (typeof window === 'undefined') return false
+    return Boolean(window.matchMedia?.('(min-width: 901px) and (pointer: fine)').matches)
+}
+
+export const getImageFileFromFileList = (files = []) => {
+    return Array.from(files || []).find(isImageFile) || null
+}
+
+export const hasImageInDataTransfer = (dataTransfer) => {
+    const items = Array.from(dataTransfer?.items || [])
+    if (items.length) {
+        return items.some((item) => item.kind === 'file' && item.type?.startsWith('image/'))
+    }
+    return Array.from(dataTransfer?.files || []).some(isImageFile)
+}
+
+export const getImageFileFromDataTransfer = (dataTransfer) => {
+    const items = Array.from(dataTransfer?.items || [])
+    for (const item of items) {
+        if (item.kind === 'file' && item.type?.startsWith('image/')) {
+            const file = item.getAsFile?.()
+            if (file) return file
+        }
+    }
+    return getImageFileFromFileList(dataTransfer?.files || [])
+}
+
+export const getImageFileFromClipboardEvent = (event) => {
+    return getImageFileFromDataTransfer(event?.clipboardData)
+}
+
 export const clearFileInput = (target) => {
     const input = target?.target || target
     if (input && typeof input.value !== 'undefined') {

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.8.5',
+    date: '2026-05-19',
+    title: '图片粘贴上传',
+    summary: '登记和编辑问题时，可以直接粘贴截图上传。',
+    items: [
+      '巡检登记支持复制图片后直接粘贴上传。',
+      '编辑巡检问题更换照片也支持粘贴上传。',
+      '整理图片拖拽和粘贴上传的共用处理逻辑。'
+    ]
+  },
+  {
     version: 'v1.8.4',
     date: '2026-05-19',
     title: '巡检问题编辑增强',
