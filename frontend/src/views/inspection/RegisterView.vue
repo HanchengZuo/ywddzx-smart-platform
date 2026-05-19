@@ -192,7 +192,7 @@
               <textarea v-model="form.description" rows="4" placeholder="请填写现场实际问题描述"></textarea>
             </div>
 
-            <div class="form-item form-item-full">
+            <div ref="issuePhotoUploadSectionRef" class="form-item form-item-full upload-follow-anchor">
               <label>上传问题照片</label>
               <div class="upload-card">
                 <input id="issue-photo-upload" class="upload-input" type="file" accept="image/*"
@@ -263,7 +263,8 @@ import {
   hasImageInDataTransfer,
   isDesktopImageDropEnabled,
   prepareImagePreview,
-  revokeObjectUrl
+  revokeObjectUrl,
+  scrollImageUploadIntoView
 } from '@/utils/imageUpload'
 
 const currentRole = localStorage.getItem('user_role') || ''
@@ -294,6 +295,7 @@ const aiNoRelated = ref(false)
 const aiSelectedStandard = ref(null)
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
+const issuePhotoUploadSectionRef = ref(null)
 const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
 const submitMessageType = ref('info')
@@ -873,10 +875,17 @@ const processSelectedImage = async (file) => {
       submitMessage.value = ''
       submitMessageType.value = 'info'
     }
+    return true
   } catch (error) {
     showSubmitToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
     clearImage()
+    return false
   }
+}
+
+const scrollToIssuePhotoUpload = async () => {
+  await nextTick()
+  scrollImageUploadIntoView(issuePhotoUploadSectionRef.value)
 }
 
 const openIssuePhotoPicker = () => {
@@ -924,7 +933,10 @@ const handlePhotoPaste = async (event) => {
   event.preventDefault()
   photoDragDepth = 0
   isPhotoDragActive.value = false
-  await processSelectedImage(file)
+  const uploaded = await processSelectedImage(file)
+  if (uploaded) {
+    await scrollToIssuePhotoUpload()
+  }
 }
 
 const handleWindowPhotoPaste = async (event) => {
@@ -934,7 +946,10 @@ const handleWindowPhotoPaste = async (event) => {
   event.preventDefault()
   photoDragDepth = 0
   isPhotoDragActive.value = false
-  await processSelectedImage(file)
+  const uploaded = await processSelectedImage(file)
+  if (uploaded) {
+    await scrollToIssuePhotoUpload()
+  }
 }
 
 const clearImage = () => {
@@ -1629,6 +1644,9 @@ onBeforeUnmount(() => {
   line-height: 1.65;
 }
 
+.upload-follow-anchor {
+  scroll-margin-top: 96px;
+}
 
 .upload-card {
   display: flex;

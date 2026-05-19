@@ -158,6 +158,27 @@ export const getImageFileFromClipboardEvent = (event) => {
     return getImageFileFromDataTransfer(event?.clipboardData)
 }
 
+export const scrollImageUploadIntoView = (target, options = {}) => {
+    const element = target?.$el || target
+    if (!element || typeof element.getBoundingClientRect !== 'function' || typeof element.scrollIntoView !== 'function') {
+        return
+    }
+
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+    const topOffset = Number.isFinite(options.topOffset) ? options.topOffset : 96
+    const bottomOffset = Number.isFinite(options.bottomOffset) ? options.bottomOffset : 32
+    const rect = element.getBoundingClientRect()
+    const isComfortablyVisible = rect.top >= topOffset && rect.bottom <= viewportHeight - bottomOffset
+
+    if (!isComfortablyVisible) {
+        element.scrollIntoView({
+            behavior: options.behavior || 'smooth',
+            block: options.block || 'start',
+            inline: 'nearest'
+        })
+    }
+}
+
 export const clearFileInput = (target) => {
     const input = target?.target || target
     if (input && typeof input.value !== 'undefined') {

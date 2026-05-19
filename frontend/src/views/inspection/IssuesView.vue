@@ -499,7 +499,7 @@
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
-            <div class="issue-edit-field issue-edit-field-wide">
+            <div ref="editIssuePhotoUploadSectionRef" class="issue-edit-field issue-edit-field-wide upload-follow-anchor">
               <span>问题照片</span>
               <div class="upload-card issue-edit-upload-card">
                 <input id="edit-issue-photo-upload" class="upload-input" type="file" accept="image/*"
@@ -719,7 +719,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
   clearFileInput,
@@ -729,7 +729,8 @@ import {
   hasImageInDataTransfer,
   isDesktopImageDropEnabled,
   prepareImagePreview,
-  revokeObjectUrl
+  revokeObjectUrl,
+  scrollImageUploadIntoView
 } from '@/utils/imageUpload'
 import {
   getStandardDetailPreview,
@@ -793,6 +794,7 @@ const editStandardFields = ref([])
 const editStandardDropdownVisible = ref(false)
 const editStandardLoading = ref(false)
 const editIssuePhotoDragActive = ref(false)
+const editIssuePhotoUploadSectionRef = ref(null)
 let editIssuePhotoDragDepth = 0
 
 const editDialog = ref({
@@ -1293,7 +1295,7 @@ const processIssuePhotoFile = async (file) => {
   if (!file) {
     editDialog.value.issuePhotoFile = null
     editDialog.value.issuePhotoPreview = ''
-    return
+    return false
   }
 
   try {
@@ -1301,11 +1303,21 @@ const processIssuePhotoFile = async (file) => {
     editDialog.value.issuePhotoFile = prepared.file
     editDialog.value.issuePhotoPreview = prepared.previewUrl
     editDialog.value.error = ''
+    return true
   } catch (error) {
     editDialog.value.issuePhotoFile = null
     editDialog.value.issuePhotoPreview = ''
     editDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
+    return false
   }
+}
+
+const scrollToEditIssuePhotoUpload = async () => {
+  await nextTick()
+  scrollImageUploadIntoView(editIssuePhotoUploadSectionRef.value, {
+    topOffset: 40,
+    bottomOffset: 24
+  })
 }
 
 const handleIssuePhotoChange = async (event) => {
@@ -1360,7 +1372,10 @@ const handleEditIssuePhotoPaste = async (event) => {
   event.preventDefault()
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  await processIssuePhotoFile(file)
+  const uploaded = await processIssuePhotoFile(file)
+  if (uploaded) {
+    await scrollToEditIssuePhotoUpload()
+  }
 }
 
 const handleWindowEditIssuePhotoPaste = async (event) => {
@@ -1370,7 +1385,10 @@ const handleWindowEditIssuePhotoPaste = async (event) => {
   event.preventDefault()
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  await processIssuePhotoFile(file)
+  const uploaded = await processIssuePhotoFile(file)
+  if (uploaded) {
+    await scrollToEditIssuePhotoUpload()
+  }
 }
 
 const clearIssuePhoto = () => {
@@ -2752,6 +2770,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
+}
+
+.upload-follow-anchor {
+  scroll-margin-top: 72px;
 }
 
 .upload-card {
