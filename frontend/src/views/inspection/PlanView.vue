@@ -1228,6 +1228,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { clearAuthSession, getStoredAuthToken, isUsableAuthToken } from '@/utils/authSession'
 
 const currentRole = localStorage.getItem('user_role') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -2174,12 +2175,18 @@ const normalizeResponseList = (payload) => {
 }
 
 const requestJson = async (url, options = {}) => {
+    const token = getStoredAuthToken()
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+    }
+    if (isUsableAuthToken(token)) {
+        headers.Authorization = `Bearer ${token}`
+    }
+
     const response = await fetch(url, {
-        headers: {
-            'Content-Type': 'application/json',
-            ...(options.headers || {})
-        },
-        ...options
+        ...options,
+        headers
     })
 
     let payload = null
@@ -2187,6 +2194,13 @@ const requestJson = async (url, options = {}) => {
         payload = await response.json()
     } catch {
         payload = null
+    }
+
+    if (response.status === 401) {
+        clearAuthSession(payload?.error || '登录已过期，请重新登录。')
+        if (window.location.pathname !== '/login') {
+            window.location.assign('/login')
+        }
     }
 
     if (!response.ok || payload?.success === false) {
@@ -2284,7 +2298,8 @@ const fetchPlanConfigs = async () => {
 
         const groupedPlanMap = new Map()
         items.forEach((item) => {
-            const key = item.inspection_table_name
+            const key = String(item.inspection_table_id || item.inspection_table_name || '')
+            if (!key) return
             if (!groupedPlanMap.has(key)) {
                 groupedPlanMap.set(key, [])
             }
@@ -2292,7 +2307,7 @@ const fetchPlanConfigs = async () => {
         })
 
         baseRows.forEach((row) => {
-            const tableConfigs = groupedPlanMap.get(row.name) || []
+            const tableConfigs = groupedPlanMap.get(String(row.inspectionTableId || '')) || []
             if (tableConfigs.length === 0) {
                 row.planConfigId = null
                 row.plan = 0
