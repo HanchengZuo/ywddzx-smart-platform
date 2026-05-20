@@ -282,6 +282,7 @@
           <table class="issues-table">
             <thead>
               <tr>
+                <th class="nowrap">ID</th>
                 <th class="nowrap">检查月度</th>
                 <th class="nowrap">检查时间</th>
                 <th class="nowrap">站点所属地</th>
@@ -307,6 +308,7 @@
             </thead>
             <tbody>
               <tr v-for="item in paginatedData" :key="item.id">
+                <td class="nowrap issue-id-cell">{{ item.id }}</td>
                 <td class="nowrap">{{ item.month }}</td>
                 <td class="nowrap">{{ item.time }}</td>
                 <td class="nowrap">{{ item.region }}</td>
@@ -930,7 +932,7 @@ const canManageIssues = computed(() => (
     item?.can_update_rectification_photo
   ))
 ))
-const issueTableColspan = computed(() => canManageIssues.value ? 21 : 20)
+const issueTableColspan = computed(() => canManageIssues.value ? 22 : 21)
 
 const isClosedIssue = (item) => item?.status === '已闭环'
 const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
@@ -2322,6 +2324,11 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.issue-id-cell {
+  color: #475569;
+  font-weight: 900;
 }
 
 .nowrap-col {
