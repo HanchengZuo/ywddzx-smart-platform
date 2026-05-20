@@ -56,11 +56,19 @@
           </select>
         </div>
         <div class="filter-item filter-item-signature">
-          <label>签名状态</label>
+          <label>站经理签名状态</label>
           <select v-model="filters.signStatus">
             <option value="">全部</option>
             <option value="signed">已签名</option>
             <option value="pending">待签名</option>
+          </select>
+        </div>
+        <div class="filter-item filter-item-completion">
+          <label>检查人确认状态</label>
+          <select v-model="filters.completionStatus">
+            <option value="">全部</option>
+            <option value="completed">已确认完成</option>
+            <option value="pending">待检查人确认</option>
           </select>
         </div>
       </div>
@@ -126,6 +134,10 @@
                   :class="{ signed: record.sign_status === '已签名确认' }">
                   {{ record.sign_status === '已签名确认' ? '已签名' : '待签名' }}
                 </span>
+                <span class="mobile-meta-pill"
+                  :class="{ signed: isInspectionCompleted(record) }">
+                  {{ isInspectionCompleted(record) ? '已完成' : '待完成确认' }}
+                </span>
               </div>
 
               <div class="mobile-batch-item-actions">
@@ -134,10 +146,17 @@
                   查看问题
                 </button>
 
+                <button v-if="canCompleteInspectionRecord(record)"
+                  class="btn btn-primary batch-action-btn mobile-action-btn mobile-action-complete" type="button"
+                  :disabled="completingInspectionId === record.id" aria-label="确认检查表完成"
+                  @click="completeInspectionRecord(record)">
+                  {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
+                </button>
+
                 <button v-if="canSignInspectionRecord(record)"
                   class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
-                  aria-label="结束检查签名确认" @click="openSignatureDialog(record)">
-                  签名确认
+                  aria-label="本表站经理签字确认" @click="openSignatureDialog(record)">
+                  站经理签名
                 </button>
 
                 <button v-if="canDeleteInspectionRecord(record)"
@@ -150,7 +169,7 @@
 
               <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
                 class="mobile-signature-box">
-                <div class="mobile-signature-label">本表已签名</div>
+                <div class="mobile-signature-label">站经理已签名</div>
                 <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
                   alt="站经理签名" />
                 <div class="mobile-signature-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
@@ -212,7 +231,8 @@
                 <th>结果</th>
                 <th>发现问题数</th>
                 <th>本表问题</th>
-                <th>本表签字确认</th>
+                <th>本表检查人完成确认</th>
+                <th>本表站经理签字确认</th>
               </tr>
             </thead>
             <tbody>
@@ -242,6 +262,19 @@
                     </div>
                   </td>
 
+                  <td class="batch-completion-cell">
+                    <div v-if="isInspectionCompleted(record)" class="completion-preview-box">
+                      <div class="signature-status-badge success">已确认完成</div>
+                      <div class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
+                    </div>
+                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
+                      type="button" :disabled="completingInspectionId === record.id"
+                      @click="completeInspectionRecord(record)">
+                      {{ completingInspectionId === record.id ? '确认中...' : '检查人确认完成' }}
+                    </button>
+                    <span v-else class="signature-status-badge pending">待检查人确认</span>
+                  </td>
+
                   <td class="batch-signature-cell">
                     <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
                       class="signature-preview-box">
@@ -253,7 +286,7 @@
 
                     <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
                       type="button" @click="openSignatureDialog(record)">
-                      结束本检查表并签名确认
+                      本表站经理签字确认
                     </button>
 
                     <span v-else class="signature-status-badge pending">待签名确认</span>
@@ -262,7 +295,7 @@
                 </tr>
               </template>
               <tr v-if="!loading && paginatedInspectionGroups.length === 0">
-                <td colspan="7" class="empty-row">
+                <td colspan="8" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb"></div>
                     <div class="empty-state-kicker">暂无记录</div>
@@ -273,7 +306,7 @@
                 </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="7" class="empty-row">
+                <td colspan="8" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb loading"></div>
                     <div class="empty-state-kicker">同步中</div>
@@ -369,8 +402,8 @@
       <div v-else class="signature-dialog card-surface">
         <div class="signature-dialog-header">
           <div>
-            <div class="batch-detail-kicker">检查表签名确认</div>
-            <h3>{{ signatureDialog.record?.inspection_table_name || '检查表签名确认' }}</h3>
+            <div class="batch-detail-kicker">本表站经理签字确认</div>
+            <h3>{{ signatureDialog.record?.inspection_table_name || '本表站经理签字确认' }}</h3>
             <div class="batch-detail-meta">
               <span>巡检日期：{{ signatureDialog.record?.date || '-' }}</span>
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
@@ -383,7 +416,7 @@
         <div class="signature-layout">
           <div class="signature-side-card">
             <div class="signature-side-title">确认提示</div>
-            <div class="signature-side-desc">请将手机交由站经理签字。提交后，本检查表将完成签名确认，不能继续登记同一天同站点的该检查表问题。</div>
+            <div class="signature-side-desc">请将手机交由站经理签字。该环节仅保留站经理签字确认，检查表是否封存以“本表检查人完成确认”为准。</div>
             <div class="signature-side-meta">
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
               <span>日期：{{ signatureDialog.record?.date || '-' }}</span>
@@ -450,6 +483,10 @@
             <div>
               <span>签名状态</span>
               <strong>{{ batchDetail.inspection?.sign_status || '待签名确认' }}</strong>
+            </div>
+            <div>
+              <span>完成确认</span>
+              <strong>{{ batchDetail.inspection?.inspector_completion_status || '待检查人确认' }}</strong>
             </div>
           </div>
 
@@ -540,7 +577,8 @@ const filters = ref({
   station: '',
   inspectionTableName: '',
   result: '',
-  signStatus: ''
+  signStatus: '',
+  completionStatus: ''
 })
 
 const stationSelectRef = ref(null)
@@ -555,6 +593,7 @@ const list = ref([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 const deletingInspectionId = ref(null)
+const completingInspectionId = ref(null)
 const actionMessage = ref({
   text: '',
   type: 'info'
@@ -663,8 +702,9 @@ const filteredData = computed(() => {
     const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
     const matchedResult = !filters.value.result || item.result === filters.value.result
     const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
+    const matchedCompletionStatus = !filters.value.completionStatus || getRecordCompletionFilterStatus(item) === filters.value.completionStatus
 
-    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult && matchedSignStatus
+    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult && matchedSignStatus && matchedCompletionStatus
   })
 })
 
@@ -676,6 +716,20 @@ const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(insp
 
 const getRecordSignFilterStatus = (record) => {
   return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
+}
+
+const isInspectionCompleted = (record) => record?.inspector_completion_status === '已确认完成'
+
+const getRecordCompletionFilterStatus = (record) => {
+  return isInspectionCompleted(record) ? 'completed' : 'pending'
+}
+
+const getCompletionMeta = (record) => {
+  if (!isInspectionCompleted(record)) return '待检查人确认'
+  const name = record.inspector_completed_by_name || record.inspector_completed_by_username || ''
+  const time = record.inspector_completed_at || ''
+  const source = record.inspector_completion_source_label || ''
+  return [source, name, time].filter(Boolean).join('｜') || '已确认完成'
 }
 
 const groupedInspectionGroups = computed(() => {
@@ -1166,7 +1220,39 @@ const closeBatchDetail = () => {
 
 const canSignInspectionRecord = (record) => Boolean(record?.can_sign_record)
 
+const canCompleteInspectionRecord = (record) => Boolean(record?.can_complete_record)
+
 const canDeleteInspectionRecord = (record) => Boolean(record?.can_delete_record)
+
+const completeInspectionRecord = async (record) => {
+  if (!record?.id || completingInspectionId.value) return
+  const confirmed = window.confirm(
+    `确认【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】已经检查完成吗？\n\n确认后，本月该站点这张检查表将封存，不能继续新增、编辑或删除问题。`
+  )
+  if (!confirmed) return
+
+  try {
+    completingInspectionId.value = record.id
+    showActionMessage('')
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.post(`/api/inspections/${record.id}/complete`, {
+      user_id: userId
+    })
+    if (String(batchDetail.value.inspection?.id || '') === String(record.id)) {
+      batchDetail.value.inspection = {
+        ...(batchDetail.value.inspection || {}),
+        inspector_completion_status: '已确认完成',
+        inspector_completion_source_label: '检查人手动确认'
+      }
+    }
+    await fetchInspections()
+    showActionMessage(response.data?.message || '检查表已确认完成。', 'success')
+  } catch (error) {
+    showActionMessage(error?.response?.data?.error || '确认完成失败。', 'error')
+  } finally {
+    completingInspectionId.value = null
+  }
+}
 
 const deleteInspectionRecord = async (record) => {
   if (!record?.id || deletingInspectionId.value) return
@@ -1416,7 +1502,8 @@ const resetFilters = () => {
     station: '',
     inspectionTableName: '',
     result: '',
-    signStatus: ''
+    signStatus: '',
+    completionStatus: ''
   }
   closeAllDropdowns()
 }

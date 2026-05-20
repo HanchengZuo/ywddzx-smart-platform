@@ -81,6 +81,10 @@ const routes = [
     component: () => import('../views/management/InternalStandardsManagementView.vue')
   },
   {
+    path: '/management/inspection-completion',
+    component: () => import('../views/management/InspectionCompletionManagementView.vue')
+  },
+  {
     path: '/management/backups',
     component: () => import('../views/management/BackupManagementView.vue')
   },
@@ -106,6 +110,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
   if (path === '/management/checklists') return hasPermission(role, permissions, 'manage_checklists')
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
+  if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
   if (path === '/inspection/station-map') return hasPermission(role, permissions, 'view_station_map')
   if (path === '/inspection/register') return hasPermission(role, permissions, 'submit_inspections')
@@ -156,6 +161,7 @@ const resolveFallbackPath = (role, permissions) => {
   if (permissions.manage_stations) return '/management/stations'
   if (permissions.manage_checklists) return '/management/checklists'
   if (permissions.manage_internal_standards) return '/management/internal-standards'
+  if (role === 'root') return '/management/inspection-completion'
   if (role === 'supervisor') return '/inspection/my-issues'
   return '/feedback'
 }

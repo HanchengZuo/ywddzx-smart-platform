@@ -173,6 +173,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
+        "key": "sign_inspection_records",
+        "name": "本表站经理签字确认",
+        "category": "巡检记录",
+        "description": "在已选择的本站/全部站点范围内，发起本表站经理签字确认。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_inspection_plans",
         "name": "查看页面",
         "category": "巡检计划",
@@ -279,12 +286,21 @@ PERMISSION_ANY_DEPENDENCIES = {
         "view_own_inspection_records",
         "view_all_inspection_records",
     ),
+    "sign_inspection_records": (
+        "view_own_inspection_records",
+        "view_all_inspection_records",
+    ),
 }
 STATION_TYPE_OPTIONS = {"加油站", "充电站"}
 STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
 STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
+INSPECTION_COMPLETION_PENDING = "待检查人确认"
+INSPECTION_COMPLETION_DONE = "已确认完成"
+INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin"}
+DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
+INSPECTION_COMPLETION_SCHEMA_READY = False
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_STATUS_ALIASES = {"已整改": "已闭环"}
@@ -2801,9 +2817,9 @@ def ensure_issue_inspector_schema(cur):
 
 
 def create_inspection_record(
-    cur, station_id, inspector_id, inspection_table_id, batch_id
+    cur, station_id, inspector_id, inspection_table_id, batch_id, inspection_date=None
 ):
-    today = beijing_today()
+    target_date = inspection_date or beijing_today()
     cur.execute(
         """
         INSERT INTO inspections (
@@ -2816,10 +2832,340 @@ def create_inspection_record(
         VALUES (%s, %s, %s, %s, %s)
         RETURNING id;
         """,
-        (station_id, inspector_id, inspection_table_id, today, batch_id),
+        (station_id, inspector_id, inspection_table_id, target_date, batch_id),
     )
     row = cur.fetchone()
     return row["id"]
+
+
+def ensure_inspection_completion_schema(cur):
+    global INSPECTION_COMPLETION_SCHEMA_READY
+    if INSPECTION_COMPLETION_SCHEMA_READY:
+        return
+    acquire_schema_migration_lock(cur)
+    cur.execute(
+        """
+        ALTER TABLE inspections
+        ADD COLUMN IF NOT EXISTS inspector_completion_status TEXT NOT NULL DEFAULT '待检查人确认';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspections
+        ADD COLUMN IF NOT EXISTS inspector_completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspections
+        ADD COLUMN IF NOT EXISTS inspector_completed_at TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspections
+        ADD COLUMN IF NOT EXISTS inspector_completion_source TEXT;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspections
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_completion_status = '待检查人确认'
+        WHERE inspector_completion_status IS NULL
+           OR inspector_completion_status NOT IN ('待检查人确认', '已确认完成');
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspections
+        SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+        WHERE updated_at IS NULL;
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspections_station_table_month
+        ON inspections (station_id, inspection_table_id, inspection_date);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspections_completion_status
+        ON inspections (inspector_completion_status, inspection_date);
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_completion_settings (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+            auto_complete_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            auto_complete_days INTEGER NOT NULL DEFAULT 7,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_inspection_completion_singleton CHECK (singleton = TRUE),
+            CONSTRAINT chk_inspection_completion_days CHECK (auto_complete_days BETWEEN 1 AND 31)
+        );
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO inspection_completion_settings (
+            singleton,
+            auto_complete_enabled,
+            auto_complete_days
+        )
+        VALUES (TRUE, TRUE, %s)
+        ON CONFLICT (singleton) DO NOTHING;
+        """,
+        (DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS,),
+    )
+    connection = getattr(cur, "connection", None)
+    if connection:
+        connection.commit()
+    INSPECTION_COMPLETION_SCHEMA_READY = True
+
+
+def serialize_inspection_completion_config(row=None):
+    return {
+        "auto_complete_enabled": bool(row.get("auto_complete_enabled")) if row else True,
+        "auto_complete_days": int(row.get("auto_complete_days") or DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS)
+        if row
+        else DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS,
+        "updated_by": row.get("updated_by") if row else None,
+        "updated_by_username": row.get("updated_by_username") if row else "",
+        "updated_by_name": row.get("updated_by_name") if row else "",
+        "updated_at": row.get("updated_at") if row else "",
+    }
+
+
+def get_inspection_completion_config(cur):
+    ensure_inspection_completion_schema(cur)
+    cur.execute(
+        """
+        SELECT
+            s.auto_complete_enabled,
+            s.auto_complete_days,
+            s.updated_by,
+            COALESCE(u.username, '') AS updated_by_username,
+            COALESCE(u.real_name, '') AS updated_by_name,
+            TO_CHAR(s.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM inspection_completion_settings s
+        LEFT JOIN users u ON u.id = s.updated_by
+        WHERE s.singleton = TRUE
+        LIMIT 1;
+        """
+    )
+    return serialize_inspection_completion_config(cur.fetchone())
+
+
+def save_inspection_completion_config(cur, data, user_id):
+    enabled = bool(data.get("auto_complete_enabled", True))
+    try:
+        days = int(data.get("auto_complete_days", DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS))
+    except (TypeError, ValueError):
+        raise ValueError("自动确认天数必须是数字。")
+    if days < 1 or days > 31:
+        raise ValueError("自动确认天数需设置为 1-31 天。")
+
+    ensure_inspection_completion_schema(cur)
+    cur.execute(
+        """
+        INSERT INTO inspection_completion_settings (
+            singleton,
+            auto_complete_enabled,
+            auto_complete_days,
+            updated_by,
+            updated_at
+        )
+        VALUES (TRUE, %s, %s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (singleton)
+        DO UPDATE SET
+            auto_complete_enabled = EXCLUDED.auto_complete_enabled,
+            auto_complete_days = EXCLUDED.auto_complete_days,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        (enabled, days, user_id or None),
+    )
+    return get_inspection_completion_config(cur)
+
+
+def auto_complete_overdue_inspections(cur):
+    config = get_inspection_completion_config(cur)
+    if not config["auto_complete_enabled"]:
+        return 0
+
+    cutoff_date = beijing_today() - timedelta(days=config["auto_complete_days"])
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_completion_status = %s,
+            inspector_completed_by = NULL,
+            inspector_completed_at = COALESCE(inspector_completed_at, CURRENT_TIMESTAMP),
+            inspector_completion_source = 'auto',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE inspector_completion_status <> %s
+          AND inspection_date <= %s;
+        """,
+        (INSPECTION_COMPLETION_DONE, INSPECTION_COMPLETION_DONE, cutoff_date),
+    )
+    return cur.rowcount
+
+
+def get_month_date_range(target_date):
+    if isinstance(target_date, str):
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+    month_start = target_date.replace(day=1)
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month
+
+
+def lock_monthly_inspection_scope(cur, station_id, inspection_table_id, target_date):
+    month_start, _ = get_month_date_range(target_date)
+    lock_seed = f"inspection-month:{station_id}:{inspection_table_id}:{month_start:%Y%m}"
+    lock_key = int.from_bytes(
+        hashlib.blake2b(lock_seed.encode("utf-8"), digest_size=8).digest(),
+        byteorder="big",
+        signed=True,
+    )
+    cur.execute("SELECT pg_advisory_xact_lock(%s);", (lock_key,))
+
+
+def find_monthly_inspection(cur, station_id, inspection_table_id, target_date):
+    month_start, next_month = get_month_date_range(target_date)
+    cur.execute(
+        """
+        SELECT
+            id,
+            batch_id,
+            inspection_date,
+            inspector_completion_status,
+            inspector_completed_at
+        FROM inspections
+        WHERE station_id = %s
+          AND inspection_table_id = %s
+          AND inspection_date >= %s
+          AND inspection_date < %s
+        ORDER BY
+            CASE WHEN inspector_completion_status = %s THEN 1 ELSE 0 END ASC,
+            inspection_date ASC,
+            id ASC
+        LIMIT 1;
+        """,
+        (
+            station_id,
+            inspection_table_id,
+            month_start,
+            next_month,
+            INSPECTION_COMPLETION_DONE,
+        ),
+    )
+    return cur.fetchone()
+
+
+def get_or_create_monthly_inspection(
+    cur,
+    station_id,
+    inspector_id,
+    inspection_table_id,
+    target_date,
+):
+    lock_monthly_inspection_scope(cur, station_id, inspection_table_id, target_date)
+    inspection = find_monthly_inspection(cur, station_id, inspection_table_id, target_date)
+    if inspection:
+        if inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
+            raise ValueError("该站点本月已完成确认该检查表，不能继续登记。")
+        return inspection["id"]
+
+    batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, target_date)
+    return create_inspection_record(
+        cur,
+        station_id,
+        inspector_id,
+        inspection_table_id,
+        batch_id,
+        target_date,
+    )
+
+
+def inspection_completion_source_label(value):
+    return {
+        "manual": "检查人手动确认",
+        "auto": "系统自动确认",
+        "admin": "后台管理确认",
+    }.get(str(value or ""), "")
+
+
+def complete_inspection_record(cur, inspection_id, user_id=None, source="manual"):
+    normalized_source = source if source in INSPECTION_COMPLETION_SOURCES else "manual"
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_completion_status = %s,
+            inspector_completed_by = %s,
+            inspector_completed_at = CURRENT_TIMESTAMP,
+            inspector_completion_source = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+          AND inspector_completion_status <> %s;
+        """,
+        (
+            INSPECTION_COMPLETION_DONE,
+            user_id,
+            normalized_source,
+            inspection_id,
+            INSPECTION_COMPLETION_DONE,
+        ),
+    )
+    return cur.rowcount
+
+
+def reopen_inspection_record(cur, inspection_id):
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_completion_status = %s,
+            inspector_completed_by = NULL,
+            inspector_completed_at = NULL,
+            inspector_completion_source = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s;
+        """,
+        (INSPECTION_COMPLETION_PENDING, inspection_id),
+    )
+    return cur.rowcount
+
+
+def user_participated_in_inspection(cur, inspection_id, user_id):
+    cur.execute(
+        """
+        SELECT 1
+        WHERE EXISTS (
+            SELECT 1
+            FROM inspections ins
+            WHERE ins.id = %s
+              AND ins.inspector_id = %s
+        )
+        OR EXISTS (
+            SELECT 1
+            FROM issues i
+            WHERE i.inspection_id = %s
+              AND i.inspector_id = %s
+        )
+        LIMIT 1;
+        """,
+        (inspection_id, user_id, inspection_id, user_id),
+    )
+    return bool(cur.fetchone())
 
 
 # === Permission helpers ===
@@ -3045,15 +3391,19 @@ def normalize_issue_row_for_response(
             data[key] = normalize_issue_result_for_response(data.get(key))
     creator_can_modify = can_user_use_creator_issue_controls(user, data)
     closed = is_closed_issue_status(data.get("status"))
+    inspection_completed = data.get("inspection_completion_status") == INSPECTION_COMPLETION_DONE
     data["can_edit_issue_workflow"] = bool(
-        is_root_user(user) or (can_explicit_edit and not closed)
+        not inspection_completed and (is_root_user(user) or (can_explicit_edit and not closed))
     )
     data["can_edit_issue"] = bool(
-        is_root_user(user) or ((can_explicit_edit or creator_can_modify) and not closed)
+        not inspection_completed and (is_root_user(user) or ((can_explicit_edit or creator_can_modify) and not closed))
     )
     data["can_delete_issue"] = bool(
-        is_root_user(user)
-        or ((can_explicit_delete or creator_can_modify) and not closed)
+        not inspection_completed
+        and (
+            is_root_user(user)
+            or ((can_explicit_delete or creator_can_modify) and not closed)
+        )
     )
     data["can_update_rectification_photo"] = can_user_update_rectification_photo(
         user, data, can_explicit_edit
@@ -3081,6 +3431,10 @@ def can_view_own_inspection_records(cur, user):
 
 def can_delete_inspection_records(cur, user):
     return has_permission(cur, user, "delete_inspection_records")
+
+
+def can_sign_inspection_records(cur, user):
+    return has_permission(cur, user, "sign_inspection_records")
 
 
 def can_view_own_certificates(cur, user):
@@ -4385,6 +4739,10 @@ def save_inspection_plan_config_stations(plan_config_id):
         sync_plan_station_items_completion_by_history(cur, plan_config_id)
         conn.commit()
         return jsonify({"success": True, "message": "巡检计划站点明细保存成功。"})
+    except ValueError as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         if conn:
             conn.rollback()
@@ -5098,42 +5456,17 @@ def prepare_issue_registration_targets(
         if not inspection_table["is_active"]:
             raise ValueError(f"外部规范ID【{standard_id}】对应的检查表未启用。")
 
-        cur.execute(
-            """
-            SELECT ins.id, ins.sign_status
-            FROM inspections ins
-            WHERE ins.station_id = %s
-              AND ins.inspection_table_id = %s
-              AND ins.inspection_date = %s
-              AND ins.batch_id = %s
-            ORDER BY ins.id ASC;
-            """,
-            (station_id, inspection_table_id, today, batch_id),
+        lock_monthly_inspection_scope(cur, station_id, inspection_table_id, today)
+        existing_inspection = find_monthly_inspection(
+            cur,
+            station_id,
+            inspection_table_id,
+            today,
         )
-        existing_inspections = cur.fetchall()
-        existing_inspection_ids = [row["id"] for row in existing_inspections]
-
-        if existing_inspections and any(
-            row.get("sign_status") == "已签名确认" for row in existing_inspections
-        ):
+        if existing_inspection and existing_inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
             raise ValueError(
-                f"站点当天【{inspection_table['table_name']}】已完成签名确认，不能继续登记。"
+                f"站点本月【{inspection_table['table_name']}】已确认完成，不能继续登记。"
             )
-
-        if existing_inspection_ids:
-            cur.execute(
-                """
-                SELECT COUNT(*) AS issue_count
-                FROM issues
-                WHERE inspection_id = ANY(%s);
-                """,
-                (existing_inspection_ids,),
-            )
-            existing_issue_count = int(cur.fetchone()["issue_count"] or 0)
-            if existing_issue_count == 0:
-                raise ValueError(
-                    f"站点当天【{inspection_table['table_name']}】已提交“未发现问题”，不能再提交“发现问题”。"
-                )
 
         targets.append(
             {
@@ -5141,7 +5474,7 @@ def prepare_issue_registration_targets(
                 "inspection_table_name": inspection_table["table_name"],
                 "standard_id": int(standard_id),
                 "standard_detail_text": external.get("standard_detail_text") or "",
-                "inspection_id": existing_inspection_ids[0] if existing_inspection_ids else None,
+                "inspection_id": existing_inspection["id"] if existing_inspection else None,
             }
         )
     return targets
@@ -5216,40 +5549,22 @@ def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id):
     if current_table_id == target_table_id:
         return int(issue["inspection_id"])
 
-    cur.execute(
-        """
-        SELECT ins.id, ins.sign_status
-        FROM inspections ins
-        WHERE ins.station_id = %s
-          AND ins.inspection_table_id = %s
-          AND ins.inspection_date = %s
-          AND ins.batch_id IS NOT DISTINCT FROM %s
-        ORDER BY ins.id ASC;
-        """,
-        (
-            issue["station_id"],
-            target_table_id,
-            issue["inspection_date"],
-            issue.get("batch_id"),
-        ),
+    lock_monthly_inspection_scope(
+        cur,
+        issue["station_id"],
+        target_table_id,
+        issue["inspection_date"],
     )
-    existing_inspections = cur.fetchall()
-    existing_ids = [row["id"] for row in existing_inspections]
-    if existing_inspections and any(row.get("sign_status") == "已签名确认" for row in existing_inspections):
-        raise ValueError("目标检查表已完成签名确认，不能把问题改挂到该检查表。")
-
-    if existing_ids:
-        cur.execute(
-            """
-            SELECT COUNT(*) AS issue_count
-            FROM issues
-            WHERE inspection_id = ANY(%s);
-            """,
-            (existing_ids,),
-        )
-        if int(cur.fetchone()["issue_count"] or 0) == 0:
-            raise ValueError("目标检查表当天已提交“未发现问题”，不能把问题改挂到该检查表。")
-        return int(existing_ids[0])
+    existing_inspection = find_monthly_inspection(
+        cur,
+        issue["station_id"],
+        target_table_id,
+        issue["inspection_date"],
+    )
+    if existing_inspection:
+        if existing_inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
+            raise ValueError("目标检查表本月已确认完成，不能把问题改挂到该检查表。")
+        return int(existing_inspection["id"])
 
     cur.execute(
         """
@@ -5279,7 +5594,7 @@ def cleanup_empty_inspection_after_issue_move(cur, inspection_id):
         return
     cur.execute(
         """
-        SELECT id, batch_id, sign_status
+        SELECT id, batch_id, sign_status, inspector_completion_status
         FROM inspections
         WHERE id = %s
         LIMIT 1;
@@ -5287,7 +5602,11 @@ def cleanup_empty_inspection_after_issue_move(cur, inspection_id):
         (inspection_id,),
     )
     inspection = cur.fetchone()
-    if not inspection or inspection.get("sign_status") == "已签名确认":
+    if (
+        not inspection
+        or inspection.get("sign_status") == "已签名确认"
+        or inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE
+    ):
         return
 
     cur.execute("SELECT COUNT(*) AS issue_count FROM issues WHERE inspection_id = %s;", (inspection_id,))
@@ -5772,27 +6091,21 @@ def sign_inspection_record(inspection_id):
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        conn.commit()
 
-        cur.execute(
-            """
-            SELECT id, role
-            FROM users
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (user_id,),
-        )
-        user = cur.fetchone()
+        user = get_user_by_id(cur, user_id)
 
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not is_supervisor_like(user):
+        if not can_sign_inspection_records(cur, user):
             return (
                 jsonify(
                     {
                         "success": False,
-                        "error": "只有督导组账号可以发起检查表签名确认。",
+                        "error": "当前账号无权发起本表站经理签字确认。",
                     }
                 ),
                 403,
@@ -5842,7 +6155,7 @@ def sign_inspection_record(inspection_id):
             """,
             (inspection_id, user_id, inspection_id, user_id),
         )
-        if not cur.fetchone():
+        if not is_root_user(user) and not cur.fetchone():
             return (
                 jsonify(
                     {
@@ -10630,6 +10943,8 @@ def inspection_register():
         ensure_inspection_checklist_management_schema(cur)
         ensure_internal_standard_schema(cur)
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
         conn.commit()
 
         cur.execute(
@@ -10800,81 +11115,13 @@ def inspection_register():
 
         today = beijing_today()
 
-        batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
-
-        cur.execute(
-            """
-            SELECT ins.id, ins.sign_status
-            FROM inspections ins
-            WHERE ins.station_id = %s
-              AND ins.inspection_table_id = %s
-              AND ins.inspection_date = %s
-              AND ins.batch_id = %s
-            ORDER BY ins.id ASC;
-            """,
-            (station_id, inspection_table_id, today, batch_id),
+        inspection_id = get_or_create_monthly_inspection(
+            cur,
+            station_id,
+            inspector_id,
+            inspection_table_id,
+            today,
         )
-        existing_inspections = cur.fetchall()
-
-        existing_inspection_ids = [row["id"] for row in existing_inspections]
-
-        if existing_inspections and any(
-            row.get("sign_status") == "已签名确认" for row in existing_inspections
-        ):
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": "该站点当天该检查表已完成签名确认，不能继续登记。",
-                    }
-                ),
-                400,
-            )
-
-        if existing_inspection_ids:
-            cur.execute(
-                """
-                SELECT COUNT(*) AS issue_count
-                FROM issues
-                WHERE inspection_id = ANY(%s);
-                """,
-                (existing_inspection_ids,),
-            )
-            existing_issue_row = cur.fetchone()
-            existing_issue_count = int(existing_issue_row["issue_count"] or 0)
-
-            if has_issue == "no":
-                return (
-                    jsonify(
-                        {
-                            "success": False,
-                            "error": "该站点当天该检查表已提交过巡检结果，不能重复提交“未发现问题”。",
-                        }
-                    ),
-                    400,
-                )
-
-            if has_issue == "yes" and existing_issue_count == 0:
-                return (
-                    jsonify(
-                        {
-                            "success": False,
-                            "error": "该站点当天该检查表已提交“未发现问题”，不能再提交“发现问题”。",
-                        }
-                    ),
-                    400,
-                )
-
-        if existing_inspection_ids:
-            inspection_id = existing_inspection_ids[0]
-        else:
-            inspection_id = create_inspection_record(
-                cur,
-                station_id,
-                inspector_id,
-                inspection_table_id,
-                batch_id,
-            )
 
         if has_issue == "no":
             mark_related_plan_items_completed(
@@ -10964,6 +11211,10 @@ def inspection_register():
                 "issue_id": issue["id"],
             }
         )
+    except ValueError as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         if conn:
             conn.rollback()
@@ -10989,6 +11240,9 @@ def get_my_issues():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        conn.commit()
 
         cur.execute(
             """
@@ -11032,7 +11286,8 @@ def get_my_issues():
                     i.review_note,
                     i.review_photo_path AS review_photo,
                     i.status,
-                    ins.sign_status AS inspection_sign_status
+                    ins.sign_status AS inspection_sign_status,
+                    ins.inspector_completion_status AS inspection_completion_status
                 FROM issues i
                 JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
@@ -11080,7 +11335,8 @@ def get_my_issues():
                     i.review_note,
                     i.review_photo_path AS review_photo,
                     i.status,
-                    ins.sign_status AS inspection_sign_status
+                    ins.sign_status AS inspection_sign_status,
+                    ins.inspector_completion_status AS inspection_completion_status
                 FROM issues i
                 JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
@@ -11119,6 +11375,9 @@ def get_issues():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        conn.commit()
 
         user = None
         where_clause = ""
@@ -11185,7 +11444,8 @@ def get_issues():
                     i.review_result,
                     i.review_note,
                     i.review_photo_path AS review_photo,
-                    i.status
+                    i.status,
+                    ins.inspector_completion_status AS inspection_completion_status
                 FROM issues i
                 JOIN inspections ins ON i.inspection_id = ins.id
                 JOIN stations s ON i.station_id = s.id
@@ -11198,6 +11458,7 @@ def get_issues():
             params,
         )
         rows = cur.fetchall()
+        conn.commit()
         return jsonify(
             [
                 normalize_issue_row_for_response(
@@ -11271,7 +11532,8 @@ def update_issue(issue_id):
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 ins.inspection_date,
                 ins.batch_id,
-                ins.sign_status AS inspection_sign_status
+                ins.sign_status AS inspection_sign_status,
+                ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
@@ -11283,6 +11545,9 @@ def update_issue(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if issue.get("inspection_completion_status") == INSPECTION_COMPLETION_DONE:
+            return jsonify({"success": False, "error": "该问题所属检查表已确认完成，不能继续编辑。"}), 403
 
         if is_closed_issue_status(issue["status"]) and not is_root_user(user):
             return (
@@ -11351,14 +11616,6 @@ def update_issue(issue_id):
                 "external",
                 standard_id=standard_id or issue.get("standard_id"),
             )
-
-        standard_changed = (
-            int(target_standard["inspection_table_id"]) != int(issue["inspection_table_id"])
-            or int(target_standard["standard_id"]) != int(issue["standard_id"])
-            or str(target_standard.get("internal_standard_id") or "") != str(issue.get("internal_standard_id") or "")
-        )
-        if standard_changed and issue.get("inspection_sign_status") == "已签名确认" and not is_root_user(user):
-            return jsonify({"success": False, "error": "该问题所属检查表已签名确认，只有 root 账号可以调整规范ID。"}), 403
 
         target_inspection_id = get_or_create_issue_edit_inspection(
             cur,
@@ -11442,6 +11699,9 @@ def delete_issue(issue_id):
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        conn.commit()
 
         user = get_user_by_id(cur, user_id)
         if not user:
@@ -11455,7 +11715,8 @@ def delete_issue(issue_id):
                 i.station_id,
                 i.status,
                 i.rectification_result,
-                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+                ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
@@ -11467,6 +11728,9 @@ def delete_issue(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if issue.get("inspection_completion_status") == INSPECTION_COMPLETION_DONE:
+            return jsonify({"success": False, "error": "该问题所属检查表已确认完成，不能继续删除。"}), 403
 
         if is_closed_issue_status(issue["status"]) and not is_root_user(user):
             return (
@@ -11823,6 +12087,279 @@ def delete_inspection_plan_config(plan_config_id):
         close_db_resources(cur, conn)
 
 
+@app.route("/api/inspections/<int:inspection_id>/complete", methods=["POST"])
+def complete_inspection_by_inspector(inspection_id):
+    data = request.get_json(silent=True) or {}
+    user_id = get_authenticated_request_user_id(data.get("user_id"))
+
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        if not is_supervisor_like(user):
+            return jsonify({"success": False, "error": "只有督导组账号可以确认检查表完成。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                ins.id,
+                ins.station_id,
+                ins.inspection_table_id,
+                ins.inspector_completion_status,
+                s.station_name,
+                t.table_name
+            FROM inspections ins
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            WHERE ins.id = %s
+            LIMIT 1;
+            """,
+            (inspection_id,),
+        )
+        inspection = cur.fetchone()
+        if not inspection:
+            return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
+
+        if inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
+            return jsonify({"success": False, "error": "该检查表已确认完成。"}), 400
+
+        if not is_root_user(user) and not user_participated_in_inspection(cur, inspection_id, user_id):
+            return jsonify({"success": False, "error": "只有参与该检查表录入的检查人员可以确认完成。"}), 403
+
+        complete_inspection_record(cur, inspection_id, user_id, "manual")
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "检查表已确认完成，后续不能再新增、编辑或删除该表问题。",
+                "inspection_id": inspection_id,
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/inspection-completion")
+def get_management_inspection_completion():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_inspection_completion")
+        auto_completed_count = auto_complete_overdue_inspections(cur)
+        config = get_inspection_completion_config(cur)
+
+        cur.execute(
+            """
+            SELECT
+                ins.id,
+                ins.batch_id,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS inspection_date,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM') AS inspection_month,
+                (%s::date - ins.inspection_date) AS age_days,
+                s.station_name,
+                s.region AS station_region,
+                t.table_name AS inspection_table_name,
+                COUNT(i.id) AS issue_count,
+                ins.sign_status,
+                ins.inspector_completion_status,
+                ins.inspector_completion_source,
+                TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
+                COALESCE(completed_user.username, '') AS inspector_completed_by_username,
+                COALESCE(completed_user.real_name, '') AS inspector_completed_by_name,
+                STRING_AGG(
+                    DISTINCT COALESCE(participant.real_name, participant.username),
+                    '、'
+                ) FILTER (WHERE participant.id IS NOT NULL) AS inspector_names,
+                TO_CHAR(ins.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(COALESCE(ins.updated_at, ins.created_at), 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM inspections ins
+            JOIN stations s ON s.id = ins.station_id
+            JOIN inspection_tables t ON t.id = ins.inspection_table_id
+            LEFT JOIN issues i ON i.inspection_id = ins.id
+            LEFT JOIN users completed_user ON completed_user.id = ins.inspector_completed_by
+            LEFT JOIN users participant ON participant.id = COALESCE(i.inspector_id, ins.inspector_id)
+            GROUP BY
+                ins.id,
+                ins.batch_id,
+                ins.inspection_date,
+                s.station_name,
+                s.region,
+                t.table_name,
+                ins.sign_status,
+                ins.inspector_completion_status,
+                ins.inspector_completion_source,
+                ins.inspector_completed_at,
+                completed_user.username,
+                completed_user.real_name,
+                ins.created_at,
+                ins.updated_at
+            ORDER BY ins.inspection_date DESC, ins.id DESC
+            LIMIT 500;
+            """,
+            (beijing_today(),),
+        )
+        records = []
+        for row in cur.fetchall():
+            item = dict(row)
+            item["issue_count"] = int(item.get("issue_count") or 0)
+            item["age_days"] = int(item.get("age_days") or 0)
+            item["inspector_completion_source_label"] = inspection_completion_source_label(
+                item.get("inspector_completion_source")
+            )
+            records.append(item)
+
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "config": config,
+                "records": records,
+                "auto_completed_count": auto_completed_count,
+                "actor": {
+                    "id": actor["id"],
+                    "username": actor["username"],
+                    "real_name": actor["real_name"],
+                },
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/inspection-completion/config", methods=["PUT"])
+def update_management_inspection_completion_config():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, user_id, "manage_inspection_completion")
+        config = save_inspection_completion_config(cur, data, actor["id"])
+        conn.commit()
+        return jsonify({"success": True, "message": "巡检完成确认规则已保存。", "config": config})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/inspection-completion/<int:inspection_id>/complete", methods=["POST"])
+def complete_management_inspection_record(inspection_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, user_id, "manage_inspection_completion")
+        ensure_inspection_completion_schema(cur)
+        updated = complete_inspection_record(cur, inspection_id, actor["id"], "admin")
+        if updated == 0:
+            return jsonify({"success": False, "error": "该巡检记录不存在或已确认完成。"}), 400
+        conn.commit()
+        return jsonify({"success": True, "message": "已在后台确认该检查表完成。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/inspection-completion/<int:inspection_id>/reopen", methods=["POST"])
+def reopen_management_inspection_record(inspection_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_inspection_completion")
+        ensure_inspection_completion_schema(cur)
+        updated = reopen_inspection_record(cur, inspection_id)
+        if updated == 0:
+            return jsonify({"success": False, "error": "该巡检记录不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": "该检查表已恢复为未完成状态。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 # 新增巡检记录接口
 @app.route("/api/inspections")
 def get_inspections():
@@ -11835,6 +12372,9 @@ def get_inspections():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        conn.commit()
 
         user = None
         where_clause = ""
@@ -11858,6 +12398,7 @@ def get_inspections():
         can_view_all = can_view_all_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
         can_delete_records = can_delete_inspection_records(cur, user)
+        can_sign_records = can_sign_inspection_records(cur, user)
         if can_view_all:
             pass
         elif can_view_own:
@@ -11886,10 +12427,16 @@ def get_inspections():
                     ins.station_manager_signed_name,
                     ins.station_manager_signature_path,
                     TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+                    ins.inspector_completion_status,
+                    ins.inspector_completion_source,
+                    TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
+                    completed_user.username AS inspector_completed_by_username,
+                    completed_user.real_name AS inspector_completed_by_name,
                     BOOL_OR(COALESCE(i.inspector_id, ins.inspector_id) = %s) AS current_user_participated
                 FROM inspections ins
                 JOIN stations s ON ins.station_id = s.id
                 JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                LEFT JOIN users completed_user ON completed_user.id = ins.inspector_completed_by
                 LEFT JOIN issues i ON ins.id = i.inspection_id
                 {where_clause}
                 GROUP BY
@@ -11901,7 +12448,12 @@ def get_inspections():
                     ins.sign_status,
                     ins.station_manager_signed_name,
                     ins.station_manager_signature_path,
-                    ins.station_manager_signed_at
+                    ins.station_manager_signed_at,
+                    ins.inspector_completion_status,
+                    ins.inspector_completion_source,
+                    ins.inspector_completed_at,
+                    completed_user.username,
+                    completed_user.real_name
                 ORDER BY ins.inspection_date DESC, ins.id DESC;
                 """
             ).format(where_clause=sql.SQL(where_clause)),
@@ -11914,9 +12466,17 @@ def get_inspections():
                     **dict(row),
                     "can_delete_record": bool(can_delete_records),
                     "can_sign_record": bool(
-                        is_supervisor_like(user)
+                        can_sign_records
                         and row.get("sign_status") != "已签名确认"
+                        and (is_root_user(user) or row.get("current_user_participated"))
+                    ),
+                    "can_complete_record": bool(
+                        is_supervisor_like(user)
+                        and row.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE
                         and row.get("current_user_participated")
+                    ),
+                    "inspector_completion_source_label": inspection_completion_source_label(
+                        row.get("inspector_completion_source")
                     ),
                 }
                 for row in rows
@@ -12123,6 +12683,11 @@ def get_inspection_issues(inspection_id):
                 ins.station_manager_signed_name,
                 ins.station_manager_signature_path,
                 TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+                ins.inspector_completion_status,
+                ins.inspector_completion_source,
+                TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
+                completed_user.username AS inspector_completed_by_username,
+                completed_user.real_name AS inspector_completed_by_name,
                 s.station_name,
                 s.region AS station_region,
                 s.address AS station_address,
@@ -12136,6 +12701,7 @@ def get_inspection_issues(inspection_id):
             JOIN stations s ON ins.station_id = s.id
             JOIN inspection_tables t ON ins.inspection_table_id = t.id
             JOIN users inspector ON ins.inspector_id = inspector.id
+            LEFT JOIN users completed_user ON completed_user.id = ins.inspector_completed_by
             WHERE ins.id = %s
             LIMIT 1;
             """,
@@ -12182,6 +12748,9 @@ def get_inspection_issues(inspection_id):
                 for row in inspectors
             ]
         )
+        inspection["inspector_completion_source_label"] = inspection_completion_source_label(
+            inspection.get("inspector_completion_source")
+        )
 
         is_inspector = any(str(item.get("id") or "") == str(user.get("id") or "") for item in inspectors)
         if (
@@ -12216,7 +12785,8 @@ def get_inspection_issues(inspection_id):
                 i.review_result,
                 i.review_note,
                 i.review_photo_path AS review_photo,
-                i.status
+                i.status,
+                ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             JOIN inspection_tables t ON i.inspection_table_id = t.id

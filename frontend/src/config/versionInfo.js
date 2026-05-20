@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9',
+    date: '2026-05-20',
+    title: '巡检记录封存逻辑升级',
+    summary: '巡检记录改为检查人手动确认完成，并支持后台管理自动封存规则。',
+    items: [
+      '同站点同检查表当月只保留一条巡检记录。',
+      '签字确认和未发现问题不再自动封存检查表。',
+      '巡检记录新增检查人确认完成和完成状态筛选。',
+      '管理系统新增巡检封存管理页面，可设置自动确认天数。'
+    ]
+  },
+  {
     version: 'v1.8.5',
     date: '2026-05-19',
     title: '图片粘贴上传',

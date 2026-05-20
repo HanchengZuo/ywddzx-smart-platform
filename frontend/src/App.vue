@@ -255,6 +255,12 @@
           <span class="nav-item-icon">范</span>
           <span v-if="!sidebarCollapsed">巡检规范库数据管理</span>
         </button>
+        <button v-if="canManageInspectionCompletion" class="nav-item"
+          :class="{ active: isActive('/management/inspection-completion'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/inspection-completion')" :title="sidebarCollapsed ? '巡检封存管理' : ''">
+          <span class="nav-item-icon">封</span>
+          <span v-if="!sidebarCollapsed">巡检封存管理</span>
+        </button>
         <button v-if="canManageBackups" class="nav-item"
           :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/backups')" :title="sidebarCollapsed ? '数据备份管理' : ''">
@@ -460,12 +466,14 @@ const canManageUsers = computed(() => isRoot.value)
 const canManageStations = computed(() => hasPermissionKey('manage_stations'))
 const canManageChecklists = computed(() => hasPermissionKey('manage_checklists'))
 const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards'))
+const canManageInspectionCompletion = computed(() => isRoot.value)
 const canManageBackups = computed(() => isRoot.value)
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
   canManageStations.value ||
   canManageChecklists.value ||
   canManageInternalStandards.value ||
+  canManageInspectionCompletion.value ||
   canManageBackups.value
 ))
 const currentRoleLabel = computed(() => {
@@ -527,6 +535,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_stations) return '/management/stations'
   if (permissions.manage_checklists) return '/management/checklists'
   if (permissions.manage_internal_standards) return '/management/internal-standards'
+  if (role === 'root') return '/management/inspection-completion'
   return '/feedback'
 }
 
