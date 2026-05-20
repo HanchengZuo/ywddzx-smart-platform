@@ -4,7 +4,7 @@
       <div>
         <div class="page-kicker">管理系统</div>
         <h2>巡检封存管理</h2>
-        <p>管理检查人完成确认、自动封存规则，以及同站点同检查表当月唯一记录的执行情况。</p>
+        <p>管理检查人完成确认、自动封存规则，以及同站点同检查表按自然周期唯一记录的执行情况。</p>
       </div>
       <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchData">
         {{ loading ? '刷新中...' : '刷新数据' }}
@@ -37,6 +37,16 @@
             <input v-model.number="config.auto_complete_days" type="number" min="1" max="31" />
             <small>默认 7 天；建议不超过一个巡检周。</small>
           </label>
+          <label class="field-row">
+            <span>同站同表唯一周期</span>
+            <select v-model="config.record_uniqueness_period">
+              <option value="week">自然周</option>
+              <option value="month">自然月</option>
+              <option value="quarter">自然季度</option>
+              <option value="year">自然年</option>
+            </select>
+            <small>按真实日历周期判断，不按固定天数滚动计算。</small>
+          </label>
         </div>
 
         <div class="config-actions">
@@ -53,7 +63,8 @@
         <div class="section-kicker">业务规则</div>
         <h3>当前执行逻辑</h3>
         <p>签字确认和未发现问题不再自动封存；只有检查人完成确认或自动到期确认后，才禁止继续新增、编辑、删除该检查表问题。</p>
-        <p>同一站点同一检查表在同一自然月只保留一条巡检记录，未确认完成前跨天继续写入同一条记录。</p>
+        <p>同一站点同一检查表在同一{{ recordPeriodLabel }}只保留一条巡检记录，未确认完成前跨天继续写入同一条记录。</p>
+        <p>系统会读取提交当天所属的真实日历周期；例如设置为自然月时，月底录入后第二天跨月即可重新登记。</p>
       </div>
 
       <div class="card-surface stat-card">
@@ -94,8 +105,8 @@
           </select>
         </label>
         <label>
-          <span>巡检月份</span>
-          <input v-model="filters.month" type="month" />
+          <span>记录周期</span>
+          <input v-model.trim="filters.period" type="text" placeholder="输入月份、周、季度或年份" />
         </label>
         <label>
           <span>站点</span>
@@ -111,7 +122,7 @@
         <table>
           <thead>
             <tr>
-              <th>巡检月份</th>
+              <th>记录周期</th>
               <th>站点</th>
               <th>检查表</th>
               <th>问题数</th>
@@ -124,7 +135,7 @@
           <tbody>
             <tr v-for="record in paginatedRecords" :key="record.id">
               <td>
-                <strong>{{ record.inspection_month || '-' }}</strong>
+                <strong>{{ record.inspection_period_label || record.inspection_month || '-' }}</strong>
                 <small>{{ record.inspection_date || '-' }}</small>
               </td>
               <td>
@@ -225,11 +236,13 @@ const records = ref([])
 const config = reactive({
   auto_complete_enabled: true,
   auto_complete_days: 7,
+  record_uniqueness_period: 'month',
+  record_uniqueness_period_label: '自然月',
   updated_at: ''
 })
 const filters = reactive({
   completionStatus: '',
-  month: '',
+  period: '',
   station: '',
   table: ''
 })
@@ -262,15 +275,25 @@ const showMessage = (text, type = 'info') => {
 const isCompleted = (record) => record?.inspector_completion_status === '已确认完成'
 const pendingCount = computed(() => records.value.filter((record) => !isCompleted(record)).length)
 const completedCount = computed(() => records.value.filter(isCompleted).length)
+const periodLabels = {
+  week: '自然周',
+  month: '自然月',
+  quarter: '自然季度',
+  year: '自然年'
+}
+const recordPeriodLabel = computed(() => {
+  return config.record_uniqueness_period_label || periodLabels[config.record_uniqueness_period] || '自然月'
+})
 
 const normalize = (value) => String(value || '').trim().toLowerCase()
 const filteredRecords = computed(() => records.value.filter((record) => {
   const status = isCompleted(record) ? 'completed' : 'pending'
   const matchedStatus = !filters.completionStatus || filters.completionStatus === status
-  const matchedMonth = !filters.month || record.inspection_month === filters.month
+  const periodText = `${record.inspection_period_label || ''} ${record.inspection_period_key || ''} ${record.inspection_month || ''}`
+  const matchedPeriod = !filters.period || normalize(periodText).includes(normalize(filters.period))
   const matchedStation = !filters.station || normalize(record.station_name).includes(normalize(filters.station))
   const matchedTable = !filters.table || normalize(record.inspection_table_name).includes(normalize(filters.table))
-  return matchedStatus && matchedMonth && matchedStation && matchedTable
+  return matchedStatus && matchedPeriod && matchedStation && matchedTable
 }))
 
 const totalPage = computed(() => Math.max(1, Math.ceil(filteredRecords.value.length / pageSize.value)))
@@ -329,6 +352,8 @@ const completionMeta = (record) => {
 const applyConfig = (nextConfig = {}) => {
   config.auto_complete_enabled = Boolean(nextConfig.auto_complete_enabled)
   config.auto_complete_days = Number(nextConfig.auto_complete_days || 7)
+  config.record_uniqueness_period = nextConfig.record_uniqueness_period || 'month'
+  config.record_uniqueness_period_label = nextConfig.record_uniqueness_period_label || periodLabels[config.record_uniqueness_period] || '自然月'
   config.updated_at = nextConfig.updated_at || ''
 }
 
@@ -357,7 +382,8 @@ const saveConfig = async () => {
     const response = await axios.put('/api/management/inspection-completion/config', {
       user_id: userId(),
       auto_complete_enabled: config.auto_complete_enabled,
-      auto_complete_days: config.auto_complete_days
+      auto_complete_days: config.auto_complete_days,
+      record_uniqueness_period: config.record_uniqueness_period
     })
     applyConfig(response.data?.config || config)
     showMessage(response.data?.message || '规则已保存。', 'success')
@@ -387,7 +413,7 @@ const confirmComplete = async (record) => {
 
 const reopenRecord = async (record) => {
   if (!record?.id || actingId.value) return
-  if (!window.confirm(`确认将【${record.station_name}｜${record.inspection_table_name}】恢复为未完成吗？恢复后仍受当月唯一记录规则限制。`)) return
+  if (!window.confirm(`确认将【${record.station_name}｜${record.inspection_table_name}】恢复为未完成吗？恢复后仍受当前自然周期唯一记录规则限制。`)) return
   try {
     actingId.value = record.id
     const response = await axios.post(`/api/management/inspection-completion/${record.id}/reopen`, {
@@ -404,7 +430,7 @@ const reopenRecord = async (record) => {
 
 const resetFilters = () => {
   filters.completionStatus = ''
-  filters.month = ''
+  filters.period = ''
   filters.station = ''
   filters.table = ''
 }
@@ -564,6 +590,7 @@ td small,
 }
 
 .field-row input,
+.field-row select,
 .filter-grid input,
 .filter-grid select {
   width: 100%;

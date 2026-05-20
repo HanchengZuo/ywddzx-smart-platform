@@ -300,6 +300,8 @@ INSPECTION_COMPLETION_PENDING = "待检查人确认"
 INSPECTION_COMPLETION_DONE = "已确认完成"
 INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin"}
 DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
+DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
+INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
 INSPECTION_COMPLETION_SCHEMA_READY = False
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
@@ -2906,6 +2908,7 @@ def ensure_inspection_completion_schema(cur):
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
             auto_complete_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             auto_complete_days INTEGER NOT NULL DEFAULT 7,
+            record_uniqueness_period TEXT NOT NULL DEFAULT 'month',
             updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT chk_inspection_completion_singleton CHECK (singleton = TRUE),
@@ -2915,15 +2918,30 @@ def ensure_inspection_completion_schema(cur):
     )
     cur.execute(
         """
+        ALTER TABLE inspection_completion_settings
+        ADD COLUMN IF NOT EXISTS record_uniqueness_period TEXT NOT NULL DEFAULT 'month';
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspection_completion_settings
+        SET record_uniqueness_period = 'month'
+        WHERE record_uniqueness_period IS NULL
+           OR record_uniqueness_period NOT IN ('week', 'month', 'quarter', 'year');
+        """
+    )
+    cur.execute(
+        """
         INSERT INTO inspection_completion_settings (
             singleton,
             auto_complete_enabled,
-            auto_complete_days
+            auto_complete_days,
+            record_uniqueness_period
         )
-        VALUES (TRUE, TRUE, %s)
+        VALUES (TRUE, TRUE, %s, %s)
         ON CONFLICT (singleton) DO NOTHING;
         """,
-        (DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS,),
+        (DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS, DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD),
     )
     connection = getattr(cur, "connection", None)
     if connection:
@@ -2932,11 +2950,16 @@ def ensure_inspection_completion_schema(cur):
 
 
 def serialize_inspection_completion_config(row=None):
+    period = str(row.get("record_uniqueness_period") if row else "").strip() or DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD
+    if period not in INSPECTION_RECORD_UNIQUENESS_PERIODS:
+        period = DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD
     return {
         "auto_complete_enabled": bool(row.get("auto_complete_enabled")) if row else True,
         "auto_complete_days": int(row.get("auto_complete_days") or DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS)
         if row
         else DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS,
+        "record_uniqueness_period": period,
+        "record_uniqueness_period_label": inspection_period_label(period),
         "updated_by": row.get("updated_by") if row else None,
         "updated_by_username": row.get("updated_by_username") if row else "",
         "updated_by_name": row.get("updated_by_name") if row else "",
@@ -2951,6 +2974,7 @@ def get_inspection_completion_config(cur):
         SELECT
             s.auto_complete_enabled,
             s.auto_complete_days,
+            s.record_uniqueness_period,
             s.updated_by,
             COALESCE(u.username, '') AS updated_by_username,
             COALESCE(u.real_name, '') AS updated_by_name,
@@ -2966,6 +2990,11 @@ def get_inspection_completion_config(cur):
 
 def save_inspection_completion_config(cur, data, user_id):
     enabled = bool(data.get("auto_complete_enabled", True))
+    period = str(
+        data.get("record_uniqueness_period") or DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD
+    ).strip()
+    if period not in INSPECTION_RECORD_UNIQUENESS_PERIODS:
+        raise ValueError("巡检记录唯一周期参数不合法。")
     try:
         days = int(data.get("auto_complete_days", DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS))
     except (TypeError, ValueError):
@@ -2980,18 +3009,20 @@ def save_inspection_completion_config(cur, data, user_id):
             singleton,
             auto_complete_enabled,
             auto_complete_days,
+            record_uniqueness_period,
             updated_by,
             updated_at
         )
-        VALUES (TRUE, %s, %s, %s, CURRENT_TIMESTAMP)
+        VALUES (TRUE, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (singleton)
         DO UPDATE SET
             auto_complete_enabled = EXCLUDED.auto_complete_enabled,
             auto_complete_days = EXCLUDED.auto_complete_days,
+            record_uniqueness_period = EXCLUDED.record_uniqueness_period,
             updated_by = EXCLUDED.updated_by,
             updated_at = CURRENT_TIMESTAMP;
         """,
-        (enabled, days, user_id or None),
+        (enabled, days, period, user_id or None),
     )
     return get_inspection_completion_config(cur)
 
@@ -3018,20 +3049,92 @@ def auto_complete_overdue_inspections(cur):
     return cur.rowcount
 
 
-def get_month_date_range(target_date):
+def normalize_inspection_period(value):
+    period = str(value or DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD).strip()
+    if period not in INSPECTION_RECORD_UNIQUENESS_PERIODS:
+        return DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD
+    return period
+
+
+def inspection_period_label(period):
+    return {
+        "week": "自然周",
+        "month": "自然月",
+        "quarter": "自然季度",
+        "year": "自然年",
+    }.get(normalize_inspection_period(period), "自然月")
+
+
+def inspection_period_scope_text(period):
+    return {
+        "week": "本自然周",
+        "month": "本自然月",
+        "quarter": "本自然季度",
+        "year": "本自然年",
+    }.get(normalize_inspection_period(period), "本自然月")
+
+
+def get_inspection_period_range(target_date, period=None):
+    period = normalize_inspection_period(period)
     if isinstance(target_date, str):
         target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
-    month_start = target_date.replace(day=1)
-    if month_start.month == 12:
-        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    if period == "week":
+        period_start = target_date - timedelta(days=target_date.weekday())
+        period_end = period_start + timedelta(days=7)
+    elif period == "quarter":
+        start_month = ((target_date.month - 1) // 3) * 3 + 1
+        period_start = target_date.replace(month=start_month, day=1)
+        if start_month == 10:
+            period_end = period_start.replace(year=period_start.year + 1, month=1)
+        else:
+            period_end = period_start.replace(month=start_month + 3)
+    elif period == "year":
+        period_start = target_date.replace(month=1, day=1)
+        period_end = period_start.replace(year=period_start.year + 1)
     else:
-        next_month = month_start.replace(month=month_start.month + 1)
-    return month_start, next_month
+        period_start = target_date.replace(day=1)
+        if period_start.month == 12:
+            period_end = period_start.replace(year=period_start.year + 1, month=1)
+        else:
+            period_end = period_start.replace(month=period_start.month + 1)
+    return period_start, period_end
 
 
-def lock_monthly_inspection_scope(cur, station_id, inspection_table_id, target_date):
-    month_start, _ = get_month_date_range(target_date)
-    lock_seed = f"inspection-month:{station_id}:{inspection_table_id}:{month_start:%Y%m}"
+def format_inspection_period_key(target_date, period=None):
+    period = normalize_inspection_period(period)
+    if isinstance(target_date, str):
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+    period_start, _ = get_inspection_period_range(target_date, period)
+    if period == "week":
+        iso_year, iso_week, _ = target_date.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if period == "quarter":
+        quarter = ((target_date.month - 1) // 3) + 1
+        return f"{target_date.year}-Q{quarter}"
+    if period == "year":
+        return str(target_date.year)
+    return period_start.strftime("%Y-%m")
+
+
+def format_inspection_period_label(target_date, period=None):
+    period = normalize_inspection_period(period)
+    if isinstance(target_date, str):
+        target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+    if period == "week":
+        period_start, period_end = get_inspection_period_range(target_date, period)
+        return f"{period_start.strftime('%Y-%m-%d')}至{(period_end - timedelta(days=1)).strftime('%Y-%m-%d')}"
+    if period == "quarter":
+        quarter = ((target_date.month - 1) // 3) + 1
+        return f"{target_date.year}年第{quarter}季度"
+    if period == "year":
+        return f"{target_date.year}年"
+    return f"{target_date.year}年{target_date.month}月"
+
+
+def lock_inspection_period_scope(cur, station_id, inspection_table_id, target_date, period=None):
+    period = normalize_inspection_period(period)
+    period_start, _ = get_inspection_period_range(target_date, period)
+    lock_seed = f"inspection-period:{period}:{station_id}:{inspection_table_id}:{period_start.isoformat()}"
     lock_key = int.from_bytes(
         hashlib.blake2b(lock_seed.encode("utf-8"), digest_size=8).digest(),
         byteorder="big",
@@ -3040,8 +3143,8 @@ def lock_monthly_inspection_scope(cur, station_id, inspection_table_id, target_d
     cur.execute("SELECT pg_advisory_xact_lock(%s);", (lock_key,))
 
 
-def find_monthly_inspection(cur, station_id, inspection_table_id, target_date):
-    month_start, next_month = get_month_date_range(target_date)
+def find_period_inspection(cur, station_id, inspection_table_id, target_date, period=None):
+    period_start, period_end = get_inspection_period_range(target_date, period)
     cur.execute(
         """
         SELECT
@@ -3064,26 +3167,27 @@ def find_monthly_inspection(cur, station_id, inspection_table_id, target_date):
         (
             station_id,
             inspection_table_id,
-            month_start,
-            next_month,
+            period_start,
+            period_end,
             INSPECTION_COMPLETION_DONE,
         ),
     )
     return cur.fetchone()
 
 
-def get_or_create_monthly_inspection(
+def get_or_create_period_inspection(
     cur,
     station_id,
     inspector_id,
     inspection_table_id,
     target_date,
 ):
-    lock_monthly_inspection_scope(cur, station_id, inspection_table_id, target_date)
-    inspection = find_monthly_inspection(cur, station_id, inspection_table_id, target_date)
+    period = get_inspection_completion_config(cur)["record_uniqueness_period"]
+    lock_inspection_period_scope(cur, station_id, inspection_table_id, target_date, period)
+    inspection = find_period_inspection(cur, station_id, inspection_table_id, target_date, period)
     if inspection:
         if inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
-            raise ValueError("该站点本月已完成确认该检查表，不能继续登记。")
+            raise ValueError(f"该站点{inspection_period_scope_text(period)}已完成确认该检查表，不能继续登记。")
         return inspection["id"]
 
     batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, target_date)
@@ -5444,6 +5548,7 @@ def prepare_issue_registration_targets(
     today,
 ):
     targets = []
+    period = get_inspection_completion_config(cur)["record_uniqueness_period"]
     for external in external_standards:
         inspection_table_id = str(external.get("inspection_table_id") or "").strip()
         standard_id = str(external.get("external_standard_id") or external.get("standard_id") or "").strip()
@@ -5456,16 +5561,17 @@ def prepare_issue_registration_targets(
         if not inspection_table["is_active"]:
             raise ValueError(f"外部规范ID【{standard_id}】对应的检查表未启用。")
 
-        lock_monthly_inspection_scope(cur, station_id, inspection_table_id, today)
-        existing_inspection = find_monthly_inspection(
+        lock_inspection_period_scope(cur, station_id, inspection_table_id, today, period)
+        existing_inspection = find_period_inspection(
             cur,
             station_id,
             inspection_table_id,
             today,
+            period,
         )
         if existing_inspection and existing_inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
             raise ValueError(
-                f"站点本月【{inspection_table['table_name']}】已确认完成，不能继续登记。"
+                f"站点{inspection_period_scope_text(period)}【{inspection_table['table_name']}】已确认完成，不能继续登记。"
             )
 
         targets.append(
@@ -5549,21 +5655,24 @@ def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id):
     if current_table_id == target_table_id:
         return int(issue["inspection_id"])
 
-    lock_monthly_inspection_scope(
+    period = get_inspection_completion_config(cur)["record_uniqueness_period"]
+    lock_inspection_period_scope(
         cur,
         issue["station_id"],
         target_table_id,
         issue["inspection_date"],
+        period,
     )
-    existing_inspection = find_monthly_inspection(
+    existing_inspection = find_period_inspection(
         cur,
         issue["station_id"],
         target_table_id,
         issue["inspection_date"],
+        period,
     )
     if existing_inspection:
         if existing_inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
-            raise ValueError("目标检查表本月已确认完成，不能把问题改挂到该检查表。")
+            raise ValueError(f"目标检查表{inspection_period_scope_text(period)}已确认完成，不能把问题改挂到该检查表。")
         return int(existing_inspection["id"])
 
     cur.execute(
@@ -11115,7 +11224,7 @@ def inspection_register():
 
         today = beijing_today()
 
-        inspection_id = get_or_create_monthly_inspection(
+        inspection_id = get_or_create_period_inspection(
             cur,
             station_id,
             inspector_id,
@@ -12225,6 +12334,14 @@ def get_management_inspection_completion():
             item = dict(row)
             item["issue_count"] = int(item.get("issue_count") or 0)
             item["age_days"] = int(item.get("age_days") or 0)
+            item["inspection_period_key"] = format_inspection_period_key(
+                item.get("inspection_date"),
+                config["record_uniqueness_period"],
+            )
+            item["inspection_period_label"] = format_inspection_period_label(
+                item.get("inspection_date"),
+                config["record_uniqueness_period"],
+            )
             item["inspector_completion_source_label"] = inspection_completion_source_label(
                 item.get("inspector_completion_source")
             )
