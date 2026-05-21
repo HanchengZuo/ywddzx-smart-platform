@@ -753,6 +753,12 @@ const resolveHomePath = (user) => {
 }
 
 const go = (path) => {
+  if (route.path === '/inspection/register' && route.path !== path) {
+    window.open(`${window.location.origin}${path}`, '_blank', 'noopener,noreferrer')
+    mobileMenuOpen.value = false
+    return
+  }
+
   if (route.path !== path) {
     router.push(path)
   }
