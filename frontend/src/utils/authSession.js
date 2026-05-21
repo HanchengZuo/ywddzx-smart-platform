@@ -2,6 +2,7 @@ import axios from 'axios'
 
 const AUTH_STORAGE_KEYS = [
   'auth_token',
+  'auth_expires_at',
   'user_id',
   'username',
   'real_name',
@@ -18,8 +19,20 @@ const AUTH_STORAGE_KEYS = [
 
 const AUTH_MESSAGE_KEY = 'auth_session_message'
 const DEFAULT_EXPIRED_MESSAGE = '登录已过期，请重新登录。'
+export const AUTH_SESSION_EXPIRED_EVENT = 'auth-session-expired'
 
 export const getStoredAuthToken = () => localStorage.getItem('auth_token') || ''
+
+export const getStoredAuthExpiresAt = () => {
+  const value = Number.parseInt(localStorage.getItem('auth_expires_at') || '0', 10)
+  return Number.isFinite(value) ? value : 0
+}
+
+export const getStoredAuthSecondsRemaining = () => {
+  const expiresAt = getStoredAuthExpiresAt()
+  if (!expiresAt) return 0
+  return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+}
 
 export const isUsableAuthToken = (token = getStoredAuthToken()) => {
   const value = String(token || '').trim()
@@ -51,12 +64,27 @@ export const clearAuthSession = (message = '') => {
   syncAxiosAuthHeader()
 }
 
-export const storeAuthSession = (user, token) => {
+export const notifyAuthSessionExpired = (message = DEFAULT_EXPIRED_MESSAGE) => {
+  clearAuthSession(message || DEFAULT_EXPIRED_MESSAGE)
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, {
+    detail: {
+      message: message || DEFAULT_EXPIRED_MESSAGE
+    }
+  }))
+}
+
+export const storeAuthSession = (user, token, expiresInSeconds = null) => {
   if (!token) {
     throw new Error('登录响应缺少服务端令牌。')
   }
 
   localStorage.setItem('auth_token', token)
+  const ttl = Number(expiresInSeconds)
+  if (Number.isFinite(ttl) && ttl > 0) {
+    localStorage.setItem('auth_expires_at', String(Date.now() + ttl * 1000))
+  } else {
+    localStorage.removeItem('auth_expires_at')
+  }
   localStorage.setItem('user_id', user?.id ?? '')
   localStorage.setItem('username', user?.username || '')
   localStorage.setItem('real_name', user?.real_name || '')
@@ -73,7 +101,7 @@ export const storeAuthSession = (user, token) => {
   syncAxiosAuthHeader()
 }
 
-export const configureAxiosAuth = (router) => {
+export const configureAxiosAuth = () => {
   syncAxiosAuthHeader()
 
   axios.interceptors.request.use((config) => {
@@ -93,10 +121,7 @@ export const configureAxiosAuth = (router) => {
       const status = error?.response?.status
       const url = String(error?.config?.url || '')
       if (status === 401 && !url.includes('/api/login')) {
-        clearAuthSession(error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE)
-        if (router?.currentRoute?.value?.path !== '/login') {
-          router?.push?.('/login')
-        }
+        notifyAuthSessionExpired(error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE)
       }
       return Promise.reject(error)
     }

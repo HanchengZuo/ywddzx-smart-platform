@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9.1',
+    date: '2026-05-21',
+    title: '登录过期保护',
+    summary: '长时间停留页面时，系统会提前提醒并保护已填写内容。',
+    items: [
+      '登录快过期时提前提醒，避免填完才发现失效。',
+      '会话过期后不自动跳走当前页面，可新窗口登录后继续提交。',
+      '巡检登记和系统反馈新增本地草稿，刷新或误关闭后可自动恢复。'
+    ]
+  },
+  {
     version: 'v1.9',
     date: '2026-05-20',
     title: '巡检记录封存逻辑升级',

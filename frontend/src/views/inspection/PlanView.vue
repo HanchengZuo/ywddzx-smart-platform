@@ -1228,7 +1228,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { clearAuthSession, getStoredAuthToken, isUsableAuthToken } from '@/utils/authSession'
+import { getStoredAuthToken, isUsableAuthToken, notifyAuthSessionExpired } from '@/utils/authSession'
 
 const currentRole = localStorage.getItem('user_role') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -2197,10 +2197,7 @@ const requestJson = async (url, options = {}) => {
     }
 
     if (response.status === 401) {
-        clearAuthSession(payload?.error || '登录已过期，请重新登录。')
-        if (window.location.pathname !== '/login') {
-            window.location.assign('/login')
-        }
+        notifyAuthSessionExpired(payload?.error || '登录已过期，请重新登录。')
     }
 
     if (!response.ok || payload?.success === false) {

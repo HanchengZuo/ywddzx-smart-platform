@@ -266,6 +266,11 @@ import {
   revokeObjectUrl,
   scrollImageUploadIntoView
 } from '@/utils/imageUpload'
+import {
+  createLocalDraftManager,
+  draftAssetToFile,
+  fileToDraftAsset
+} from '@/utils/localDraft'
 
 const currentRole = localStorage.getItem('user_role') || ''
 let localPermissions = {}
@@ -295,6 +300,7 @@ const aiNoRelated = ref(false)
 const aiSelectedStandard = ref(null)
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
+const imageDraftAsset = ref(null)
 const issuePhotoUploadSectionRef = ref(null)
 const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
@@ -323,6 +329,9 @@ const standardFields = ref([])
 const inspectionTables = ref([])
 const STANDARD_SEARCH_RESULT_LIMIT = 80
 const LAST_REGISTER_STATION_KEY = 'inspection_register_last_station'
+const REGISTER_DRAFT_SCOPE = 'inspection-register'
+let registerDraftManager = null
+let registerDraftReady = false
 
 const form = ref({
   stationId: '',
@@ -331,6 +340,42 @@ const form = ref({
   standardId: '',
   description: ''
 })
+
+const buildRegisterDraftData = () => ({
+  form: { ...form.value },
+  stationSearch: stationSearch.value,
+  standardSearch: standardSearch.value,
+  tableSearch: tableSearch.value,
+  referenceMode: referenceMode.value,
+  standardSourceMode: standardSourceMode.value,
+  image: imageDraftAsset.value
+})
+
+const buildRegisterDraftFallbackData = (data) => ({
+  ...data,
+  image: null
+})
+
+const isRegisterDraftEmpty = (data) => {
+  const draftForm = data?.form || {}
+  return !String(draftForm.description || '').trim() &&
+    !String(draftForm.standardId || '').trim() &&
+    !String(draftForm.inspectionTableId || '').trim() &&
+    !String(data?.standardSearch || '').trim() &&
+    !String(data?.tableSearch || '').trim() &&
+    !data?.image
+}
+
+registerDraftManager = createLocalDraftManager(REGISTER_DRAFT_SCOPE, {
+  collect: buildRegisterDraftData,
+  collectFallback: buildRegisterDraftFallbackData,
+  isEmpty: isRegisterDraftEmpty,
+  onFallback: () => showSubmitToast('草稿文字已自动保存，图片较大需重新选择。', 'info')
+})
+
+const handleRegisterBeforeUnload = () => {
+  registerDraftManager?.flush()
+}
 
 const normalizeSearchToken = (value) => {
   return String(value || '')
@@ -851,6 +896,58 @@ const applyRememberedStation = () => {
   }
 }
 
+const restoreRegisterDraft = async () => {
+  const draft = registerDraftManager?.load()?.data
+  if (!draft || isRegisterDraftEmpty(draft)) return false
+
+  await registerDraftManager.pause(async () => {
+    const draftForm = draft.form || {}
+    form.value = {
+      stationId: draftForm.stationId || '',
+      hasIssue: draftForm.hasIssue === 'no' ? 'no' : 'yes',
+      inspectionTableId: String(draftForm.inspectionTableId || ''),
+      standardId: String(draftForm.standardId || ''),
+      description: draftForm.description || ''
+    }
+    stationSearch.value = draft.stationSearch || stations.value.find((item) => {
+      return String(item.id) === String(form.value.stationId)
+    })?.station_name || ''
+    tableSearch.value = draft.tableSearch || inspectionTables.value.find((item) => {
+      return String(item.id) === String(form.value.inspectionTableId)
+    })?.table_name || ''
+    referenceMode.value = draft.referenceMode === 'ai' ? 'ai' : 'manual'
+    standardSearch.value = draft.standardSearch || ''
+
+    if (form.value.hasIssue === 'yes' && draft.standardSourceMode && draft.standardSourceMode !== standardSourceMode.value) {
+      clearSelectedStandard()
+    } else if (form.value.standardId) {
+      const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
+      if (standard) {
+        aiSelectedStandard.value = { ...standard }
+        standardSearch.value = draft.standardSearch || `${standard.standard_id}｜${getStandardTitle(standard)}`
+      }
+    }
+
+    if (draft.image?.data_url) {
+      try {
+        const restoredFile = await draftAssetToFile(draft.image)
+        if (restoredFile) {
+          imageFile.value = restoredFile
+          imageDraftAsset.value = draft.image
+          revokeObjectUrl(imagePreviewUrl.value)
+          imagePreviewUrl.value = URL.createObjectURL(restoredFile)
+        }
+      } catch (error) {
+        imageDraftAsset.value = null
+        showSubmitToast('已恢复文字草稿，图片需要重新选择。', 'info')
+      }
+    }
+  })
+
+  showSubmitToast('已恢复上次未提交的巡检登记草稿。', 'success')
+  return true
+}
+
 const handleFileChange = async (event) => {
   const file = event.target.files?.[0]
 
@@ -868,6 +965,13 @@ const processSelectedImage = async (file) => {
     imageFile.value = prepared.file
     revokeObjectUrl(imagePreviewUrl.value)
     imagePreviewUrl.value = prepared.previewUrl
+    try {
+      imageDraftAsset.value = await fileToDraftAsset(prepared.file)
+    } catch {
+      imageDraftAsset.value = null
+      showSubmitToast('图片已选择，草稿只会保存文字内容。', 'info')
+    }
+    registerDraftManager?.scheduleSave()
 
     if (submitMessageType.value !== 'success' && submitMessageTimer) {
       clearTimeout(submitMessageTimer)
@@ -954,11 +1058,13 @@ const handleWindowPhotoPaste = async (event) => {
 
 const clearImage = () => {
   imageFile.value = null
+  imageDraftAsset.value = null
   revokeObjectUrl(imagePreviewUrl.value)
   imagePreviewUrl.value = ''
   isPhotoDragActive.value = false
   photoDragDepth = 0
   clearFileInputsById(['issue-photo-upload', 'issue-photo-camera'])
+  registerDraftManager?.scheduleSave()
 }
 
 const resetForm = (preserveMessage = false) => {
@@ -985,6 +1091,7 @@ const resetForm = (preserveMessage = false) => {
   clearImage()
   applyRememberedStation()
   createdTime.value = formatCurrentTime()
+  registerDraftManager?.clear()
 }
 
 const handleSubmit = async () => {
@@ -1099,22 +1206,38 @@ watch(
   }
 )
 
+watch(
+  [form, stationSearch, standardSearch, tableSearch, referenceMode, imageDraftAsset],
+  () => {
+    if (!registerDraftReady) return
+    registerDraftManager?.scheduleSave()
+  },
+  { deep: true }
+)
+
 onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('paste', handleWindowPhotoPaste)
+  window.addEventListener('beforeunload', handleRegisterBeforeUnload)
   try {
     await Promise.all([fetchStations(), fetchInspectionTables(), fetchStandardSourceMode()])
     applyRememberedStation()
     await fetchStandards()
+    await restoreRegisterDraft()
+    registerDraftReady = true
   } catch (error) {
     showSubmitToast('初始化站点或规范数据失败，请检查后端服务。', 'error')
+    registerDraftReady = true
   }
 })
 
 onBeforeUnmount(() => {
+  registerDraftManager?.flush()
+  registerDraftManager?.destroy()
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('paste', handleWindowPhotoPaste)
+  window.removeEventListener('beforeunload', handleRegisterBeforeUnload)
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
     submitMessageTimer = null

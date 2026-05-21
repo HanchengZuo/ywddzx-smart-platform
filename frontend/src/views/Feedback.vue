@@ -229,7 +229,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import {
   clearFileInputsById,
@@ -242,6 +242,11 @@ import {
   revokePreviewList,
   scrollImageUploadIntoView
 } from '@/utils/imageUpload'
+import {
+  createLocalDraftManager,
+  draftAssetToFile,
+  fileToDraftAsset
+} from '@/utils/localDraft'
 
 const defaultFeedbackTypes = ['Bug反馈', '功能建议', '界面优化', '流程建议', '其他']
 const defaultModules = [
@@ -281,6 +286,7 @@ const commentSubmittingId = ref(null)
 const acceptingId = ref(null)
 const screenshotFiles = ref([])
 const screenshotPreviews = ref([])
+const screenshotDraftAssets = ref([])
 const feedbackScreenshotUploadSectionRef = ref(null)
 const isScreenshotDragActive = ref(false)
 const commentDrafts = reactive({})
@@ -293,6 +299,24 @@ const form = reactive({
   module: '巡检系统',
   description: ''
 })
+
+const buildFeedbackDraftData = () => ({
+  form: { ...form },
+  screenshots: screenshotDraftAssets.value
+})
+
+const buildFeedbackDraftFallbackData = (data) => ({
+  ...data,
+  screenshots: []
+})
+
+const isFeedbackDraftEmpty = (data) => {
+  const draftForm = data?.form || {}
+  return !String(draftForm.description || '').trim() &&
+    !data?.screenshots?.length &&
+    (!draftForm.feedback_type || draftForm.feedback_type === (feedbackTypes.value[0] || 'Bug反馈')) &&
+    (!draftForm.module || draftForm.module === (moduleOptions.value[0] || '巡检系统'))
+}
 const message = reactive({
   text: '',
   type: 'info'
@@ -304,6 +328,9 @@ const preview = reactive({
 let messageTimer = null
 let screenshotDragDepth = 0
 const SCREENSHOT_LIMIT = 6
+const FEEDBACK_DRAFT_SCOPE = 'system-feedback'
+let feedbackDraftManager = null
+let feedbackDraftReady = false
 
 const totalComments = computed(() => feedbacks.value.reduce((sum, item) => sum + (item.comments?.length || 0), 0))
 const acceptedCount = computed(() => feedbacks.value.filter((item) => item.is_accepted).length)
@@ -327,6 +354,17 @@ const setMessage = (text, type = 'info') => {
     message.text = ''
     messageTimer = null
   }, 2600)
+}
+
+feedbackDraftManager = createLocalDraftManager(FEEDBACK_DRAFT_SCOPE, {
+  collect: buildFeedbackDraftData,
+  collectFallback: buildFeedbackDraftFallbackData,
+  isEmpty: isFeedbackDraftEmpty,
+  onFallback: () => setMessage('反馈文字草稿已自动保存，截图较大需重新选择。', 'info')
+})
+
+const handleFeedbackBeforeUnload = () => {
+  feedbackDraftManager?.flush()
 }
 
 const roleLabel = (role) => {
@@ -390,6 +428,17 @@ const processScreenshotFiles = async (files = [], options = {}) => {
     if (result.files.length) {
       screenshotFiles.value = [...screenshotFiles.value, ...result.files].slice(0, SCREENSHOT_LIMIT)
       screenshotPreviews.value = [...screenshotPreviews.value, ...result.previews].slice(0, SCREENSHOT_LIMIT)
+      const draftAssets = await Promise.all(result.files.map(async (file) => {
+        try {
+          return await fileToDraftAsset(file)
+        } catch {
+          return null
+        }
+      }))
+      screenshotDraftAssets.value = [
+        ...screenshotDraftAssets.value,
+        ...draftAssets.filter(Boolean)
+      ].slice(0, SCREENSHOT_LIMIT)
       uploaded = true
     }
 
@@ -480,8 +529,10 @@ const removeScreenshot = (index) => {
   revokeObjectUrl(screenshotPreviews.value[index]?.url)
   const nextFiles = screenshotFiles.value.filter((_, fileIndex) => fileIndex !== index)
   const nextPreviews = screenshotPreviews.value.filter((_, previewIndex) => previewIndex !== index)
+  const nextDraftAssets = screenshotDraftAssets.value.filter((_, assetIndex) => assetIndex !== index)
   screenshotFiles.value = nextFiles
   screenshotPreviews.value = nextPreviews
+  screenshotDraftAssets.value = nextDraftAssets
 }
 
 const resetForm = () => {
@@ -489,10 +540,55 @@ const resetForm = () => {
   form.module = moduleOptions.value[0] || '巡检系统'
   form.description = ''
   screenshotFiles.value = []
+  screenshotDraftAssets.value = []
   releasePreviews()
   isScreenshotDragActive.value = false
   screenshotDragDepth = 0
   clearFileInputsById(['feedback-screenshots', 'feedback-screenshots-camera'])
+  feedbackDraftManager?.clear()
+}
+
+const restoreFeedbackDraft = async () => {
+  const draft = feedbackDraftManager?.load()?.data
+  if (!draft || isFeedbackDraftEmpty(draft)) return false
+
+  await feedbackDraftManager.pause(async () => {
+    const draftForm = draft.form || {}
+    form.feedback_type = feedbackTypes.value.includes(draftForm.feedback_type)
+      ? draftForm.feedback_type
+      : feedbackTypes.value[0] || 'Bug反馈'
+    form.module = moduleOptions.value.includes(draftForm.module)
+      ? draftForm.module
+      : moduleOptions.value[0] || '巡检系统'
+    form.description = draftForm.description || ''
+
+    const restoredAssets = Array.isArray(draft.screenshots) ? draft.screenshots.slice(0, SCREENSHOT_LIMIT) : []
+    const restoredFiles = []
+    const restoredPreviews = []
+    const restoredDraftAssets = []
+    for (const asset of restoredAssets) {
+      try {
+        const file = await draftAssetToFile(asset)
+        if (!file) continue
+        restoredFiles.push(file)
+        restoredDraftAssets.push(asset)
+        restoredPreviews.push({
+          file,
+          url: URL.createObjectURL(file)
+        })
+      } catch {
+        // 图片草稿损坏时跳过，文字草稿仍然恢复。
+      }
+    }
+
+    screenshotFiles.value = restoredFiles
+    screenshotDraftAssets.value = restoredDraftAssets
+    releasePreviews()
+    screenshotPreviews.value = restoredPreviews
+  })
+
+  setMessage('已恢复上次未提交的反馈草稿。', 'success')
+  return true
 }
 
 const fetchFeedbacks = async () => {
@@ -640,13 +736,28 @@ const closePreview = () => {
   preview.url = ''
 }
 
-onMounted(() => {
+watch(
+  [() => form.feedback_type, () => form.module, () => form.description, screenshotDraftAssets],
+  () => {
+    if (!feedbackDraftReady) return
+    feedbackDraftManager?.scheduleSave()
+  },
+  { deep: true }
+)
+
+onMounted(async () => {
   window.addEventListener('paste', handleWindowScreenshotPaste)
-  fetchFeedbacks()
+  window.addEventListener('beforeunload', handleFeedbackBeforeUnload)
+  await fetchFeedbacks()
+  await restoreFeedbackDraft()
+  feedbackDraftReady = true
 })
 
 onBeforeUnmount(() => {
+  feedbackDraftManager?.flush()
+  feedbackDraftManager?.destroy()
   window.removeEventListener('paste', handleWindowScreenshotPaste)
+  window.removeEventListener('beforeunload', handleFeedbackBeforeUnload)
   if (messageTimer) clearTimeout(messageTimer)
   releasePreviews()
 })

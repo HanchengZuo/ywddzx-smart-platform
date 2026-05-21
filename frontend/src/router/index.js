@@ -175,7 +175,7 @@ const verifyStoredAuthToken = async () => {
 
   try {
     const response = await axios.get('/api/auth/me')
-    storeAuthSession(response.data.user, response.data.token || token)
+    storeAuthSession(response.data.user, response.data.token || token, response.data.expires_in)
     return true
   } catch (error) {
     clearAuthSession(error?.response?.data?.error || '登录已过期，请重新登录。')

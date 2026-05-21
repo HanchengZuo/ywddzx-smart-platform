@@ -351,15 +351,56 @@
         </div>
       </form>
     </div>
+
+    <div v-if="sessionNotice.visible && sessionNotice.mode === 'warning' && !isLoginPage" class="session-warning-toast"
+      role="status">
+      <div class="session-warning-mark">!</div>
+      <div class="session-warning-body">
+        <strong>登录即将过期</strong>
+        <span>预计剩余 {{ sessionRemainingLabel }}。请尽快保存当前内容，或新窗口重新登录后继续。</span>
+      </div>
+      <div class="session-warning-actions">
+        <button class="btn btn-secondary btn-sm" type="button" @click="hideSessionWarning">先处理当前内容</button>
+        <button class="btn btn-primary btn-sm" type="button" @click="openLoginInNewWindow">新窗口登录</button>
+      </div>
+    </div>
+
+    <div v-if="sessionNotice.visible && sessionNotice.mode === 'expired' && !isLoginPage" class="session-guard-overlay"
+      role="dialog" aria-modal="true">
+      <div class="session-guard-card">
+        <div class="session-guard-eyebrow">登录会话保护</div>
+        <h2>登录会话已过期</h2>
+        <p>{{ sessionNotice.message || '为避免继续填写后提交失败，系统已暂停当前页面操作。' }}</p>
+        <div class="session-guard-tip">
+          当前页面不会自动跳走，已填写内容会保留在页面上。建议打开新窗口重新登录，登录完成后回到本页面点击检测。
+        </div>
+        <div class="session-guard-actions">
+          <button class="btn btn-secondary" type="button" :disabled="sessionNotice.checking"
+            @click="verifySessionSilently">
+            {{ sessionNotice.checking ? '正在检测...' : '我已重新登录，重新检测' }}
+          </button>
+          <button class="btn btn-primary" type="button" @click="openLoginInNewWindow">新窗口登录</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
-import { clearAuthSession, consumeAuthSessionMessage, storeAuthSession, syncAxiosAuthHeader } from './utils/authSession'
+import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  clearAuthSession,
+  consumeAuthSessionMessage,
+  getStoredAuthSecondsRemaining,
+  getStoredAuthToken,
+  isUsableAuthToken,
+  storeAuthSession,
+  syncAxiosAuthHeader
+} from './utils/authSession'
 
 const router = useRouter()
 const route = useRoute()
@@ -383,6 +424,18 @@ const sidebarCollapsed = ref(false)
 const mobileMenuOpen = ref(false)
 const loginVersionModalOpen = ref(false)
 const defaultInitialPassword = '123456'
+const sessionCheckIntervalMs = 60 * 1000
+const sessionWarningThresholdSeconds = 10 * 60
+let sessionMonitorTimer = null
+let dismissedSessionWarningToken = ''
+
+const sessionNotice = reactive({
+  visible: false,
+  mode: 'warning',
+  message: '',
+  secondsRemaining: 0,
+  checking: false
+})
 
 const parseStoredPermissions = () => {
   try {
@@ -480,6 +533,18 @@ const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
   return authState.role === 'supervisor' ? '督导组账号' : '站点账号'
 })
+const sessionRemainingLabel = computed(() => {
+  const totalSeconds = Math.max(0, Number(sessionNotice.secondsRemaining) || 0)
+  if (totalSeconds >= 3600) {
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    return minutes ? `${hours}小时${minutes}分钟` : `${hours}小时`
+  }
+  if (totalSeconds >= 60) {
+    return `${Math.ceil(totalSeconds / 60)}分钟`
+  }
+  return `${Math.max(1, totalSeconds)}秒`
+})
 
 const syncAuthState = () => {
   authState.token = localStorage.getItem('auth_token') || ''
@@ -504,14 +569,162 @@ const showAuthSessionMessageIfNeeded = () => {
   }
 }
 
+const resetSessionNotice = () => {
+  sessionNotice.visible = false
+  sessionNotice.mode = 'warning'
+  sessionNotice.message = ''
+  sessionNotice.secondsRemaining = 0
+  sessionNotice.checking = false
+}
+
+const showSessionWarning = (secondsRemaining) => {
+  if (isLoginPage.value) return
+  const currentToken = getStoredAuthToken()
+  if (dismissedSessionWarningToken === currentToken && secondsRemaining > 120) return
+  sessionNotice.visible = true
+  sessionNotice.mode = 'warning'
+  sessionNotice.message = ''
+  sessionNotice.secondsRemaining = secondsRemaining
+}
+
+const showSessionExpired = (message = '登录已过期，请重新登录。') => {
+  if (isLoginPage.value) return
+  sessionNotice.visible = true
+  sessionNotice.mode = 'expired'
+  sessionNotice.message = message
+  sessionNotice.secondsRemaining = 0
+}
+
+const hideSessionWarning = () => {
+  if (sessionNotice.mode !== 'warning') return
+  dismissedSessionWarningToken = getStoredAuthToken()
+  sessionNotice.visible = false
+}
+
+const openLoginInNewWindow = () => {
+  window.open(`${window.location.origin}/login`, '_blank', 'noopener,noreferrer')
+}
+
+const verifySessionSilently = async () => {
+  if (isLoginPage.value) return
+  const token = getStoredAuthToken()
+  if (!isUsableAuthToken(token)) {
+    if (authState.userId) {
+      showSessionExpired('登录已过期，请重新登录。')
+    }
+    return
+  }
+
+  if (sessionNotice.checking) return
+  sessionNotice.checking = true
+
+  try {
+    const response = await axios.get('/api/auth/me')
+    const user = response.data?.user
+    const refreshedToken = response.data?.token || token
+    const expiresIn = Number(response.data?.expires_in || 0)
+    if (user && refreshedToken) {
+      storeAuthSession(user, refreshedToken, expiresIn)
+      syncAuthState()
+    }
+
+    if (expiresIn > sessionWarningThresholdSeconds) {
+      resetSessionNotice()
+      dismissedSessionWarningToken = ''
+    } else if (expiresIn > 0) {
+      showSessionWarning(expiresIn)
+    }
+  } catch (error) {
+    if (error?.response?.status !== 401) {
+      console.warn('会话状态检测失败，将等待下次自动检测。', error)
+    }
+  } finally {
+    sessionNotice.checking = false
+  }
+}
+
+const checkStoredSessionClock = () => {
+  if (isLoginPage.value) {
+    resetSessionNotice()
+    return
+  }
+
+  const token = getStoredAuthToken()
+  if (!isUsableAuthToken(token)) return
+
+  const remainingSeconds = getStoredAuthSecondsRemaining()
+  if (remainingSeconds <= 0) {
+    verifySessionSilently()
+    return
+  }
+
+  if (remainingSeconds <= sessionWarningThresholdSeconds) {
+    if (sessionNotice.visible && sessionNotice.mode === 'warning') {
+      sessionNotice.secondsRemaining = remainingSeconds
+    } else {
+      showSessionWarning(remainingSeconds)
+    }
+    return
+  }
+
+  if (sessionNotice.mode === 'warning') {
+    resetSessionNotice()
+    dismissedSessionWarningToken = ''
+  }
+}
+
+const runSessionMonitor = () => {
+  checkStoredSessionClock()
+  if (!isLoginPage.value && isUsableAuthToken(getStoredAuthToken())) {
+    verifySessionSilently()
+  }
+}
+
+const handleAuthSessionExpired = (event) => {
+  syncAuthState()
+  showSessionExpired(event?.detail?.message || '登录已过期，请重新登录。')
+}
+
+const handleAuthStorageChange = (event) => {
+  if (!['auth_token', 'auth_expires_at', 'user_id', 'permissions'].includes(event.key)) return
+  syncAuthState()
+  if (isLoginPage.value) return
+  if (isUsableAuthToken(getStoredAuthToken())) {
+    verifySessionSilently()
+  }
+}
+
 watch(
   () => route.path,
   () => {
     syncAuthState()
     showAuthSessionMessageIfNeeded()
+    if (route.path === '/login') {
+      resetSessionNotice()
+    } else {
+      window.setTimeout(runSessionMonitor, 0)
+    }
   },
   { immediate: true }
 )
+
+onMounted(() => {
+  window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
+  window.addEventListener('storage', handleAuthStorageChange)
+  window.addEventListener('focus', runSessionMonitor)
+  sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
+  runSessionMonitor()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
+  window.removeEventListener('storage', handleAuthStorageChange)
+  window.removeEventListener('focus', runSessionMonitor)
+  if (sessionMonitorTimer) {
+    window.clearInterval(sessionMonitorTimer)
+    sessionMonitorTimer = null
+  }
+})
 
 const isActive = (path) => route.path === path
 
@@ -601,7 +814,7 @@ const handlePasswordChange = async () => {
     })
 
     if (response.data?.token && response.data?.user) {
-      storeAuthSession(response.data.user, response.data.token)
+      storeAuthSession(response.data.user, response.data.token, response.data.expires_in)
     } else {
       localStorage.setItem('must_change_password', 'false')
       syncAxiosAuthHeader()
@@ -645,8 +858,9 @@ const handleLogin = async () => {
       return
     }
 
-    storeAuthSession(user, token)
+    storeAuthSession(user, token, response.data.expires_in)
 
+    resetSessionNotice()
     resetPasswordChangeForm()
     syncAuthState()
     loginForm.password = ''
@@ -659,6 +873,7 @@ const handleLogin = async () => {
 
 const handleLogout = () => {
   clearAuthSession()
+  resetSessionNotice()
   resetPasswordChangeForm()
   syncAuthState()
   mobileMenuOpen.value = false
@@ -1372,6 +1587,136 @@ textarea:focus {
   margin-top: 20px;
 }
 
+.session-warning-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 340;
+  width: min(560px, calc(100vw - 48px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(245, 158, 11, 0.16), transparent 38%),
+    rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(251, 191, 36, 0.36);
+  box-shadow: 0 22px 54px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.session-warning-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #92400e;
+  font-size: 22px;
+  font-weight: 900;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+}
+
+.session-warning-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-warning-body strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.session-warning-body span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.session-warning-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-guard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 360;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 34% 18%, rgba(37, 99, 235, 0.18), transparent 34%),
+    rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.session-guard-card {
+  width: min(560px, 100%);
+  border-radius: 30px;
+  padding: 30px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.11), transparent 36%),
+    #fff;
+  border: 1px solid rgba(203, 213, 225, 0.88);
+  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.36);
+}
+
+.session-guard-eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 14px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid rgba(37, 99, 235, 0.13);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.session-guard-card h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 28px;
+  letter-spacing: -0.7px;
+}
+
+.session-guard-card p {
+  margin: 12px 0 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.session-guard-tip {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.session-guard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+}
+
 .layout {
   display: flex;
   width: 100%;
@@ -2029,6 +2374,60 @@ textarea:focus {
   }
 
   .force-password-actions .btn {
+    width: 100%;
+  }
+
+  .session-warning-toast {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: flex-start;
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .session-warning-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 14px;
+    font-size: 18px;
+  }
+
+  .session-warning-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .session-warning-actions .btn {
+    flex: 1;
+    padding: 0 10px;
+  }
+
+  .session-guard-overlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .session-guard-card {
+    align-self: center;
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+    border-radius: 24px;
+    padding: 24px 18px;
+  }
+
+  .session-guard-card h2 {
+    font-size: 24px;
+  }
+
+  .session-guard-actions {
+    flex-direction: column-reverse;
+  }
+
+  .session-guard-actions .btn {
     width: 100%;
   }
 }
