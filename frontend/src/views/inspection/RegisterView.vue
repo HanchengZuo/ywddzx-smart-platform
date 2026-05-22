@@ -223,13 +223,11 @@
                 <div v-if="imagePreviewUrl" class="image-preview-panel">
                   <button class="image-preview-thumb-btn" type="button" @click="openIssuePhotoPreview">
                     <img :src="imagePreviewUrl" alt="问题照片预览" class="image-preview-thumb" />
-                    <span>点击查看大图</span>
                   </button>
                   <div class="image-preview-meta">
                     <div class="image-preview-title">已选择问题照片</div>
                     <div class="image-preview-name">{{ imageFile?.name || '已上传图片' }}</div>
                     <div class="image-preview-actions">
-                      <button class="btn btn-light image-action-btn" type="button" @click="openIssuePhotoPreview">查看大图</button>
                       <label for="issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
                       <label for="issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
                       <button class="btn btn-secondary image-action-btn" type="button" @click="clearImage">移除图片</button>
@@ -255,9 +253,9 @@
     </div>
 
     <div v-if="issuePhotoPreviewVisible" class="issue-photo-preview-overlay" @click.self="closeIssuePhotoPreview">
-      <div class="issue-photo-preview-dialog">
+      <div class="issue-photo-preview-dialog" @wheel.prevent="handleIssuePhotoPreviewWheel" @dblclick="resetIssuePhotoPreviewScale">
         <button class="issue-photo-preview-close" type="button" @click="closeIssuePhotoPreview">关闭</button>
-        <img :src="imagePreviewUrl" alt="问题照片大图预览" />
+        <img :src="imagePreviewUrl" :style="issuePhotoPreviewImageStyle" alt="问题照片大图预览" />
       </div>
     </div>
   </div>
@@ -313,6 +311,7 @@ const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const imageDraftAsset = ref(null)
 const issuePhotoPreviewVisible = ref(false)
+const issuePhotoPreviewScale = ref(1)
 const issuePhotoUploadSectionRef = ref(null)
 const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
@@ -524,6 +523,10 @@ const showIssueFields = computed(() => {
   const hasStandard = Boolean(String(form.value.standardId || '').trim())
   return hasIssueYes && hasStation && hasStandard
 })
+
+const issuePhotoPreviewImageStyle = computed(() => ({
+  transform: `scale(${issuePhotoPreviewScale.value})`
+}))
 
 const normalizeStandardDetailForRegister = (value) => {
   const lines = String(value || '')
@@ -1010,11 +1013,23 @@ const openIssuePhotoPicker = () => {
 
 const openIssuePhotoPreview = () => {
   if (!imagePreviewUrl.value) return
+  issuePhotoPreviewScale.value = 1
   issuePhotoPreviewVisible.value = true
 }
 
 const closeIssuePhotoPreview = () => {
   issuePhotoPreviewVisible.value = false
+  issuePhotoPreviewScale.value = 1
+}
+
+const resetIssuePhotoPreviewScale = () => {
+  issuePhotoPreviewScale.value = 1
+}
+
+const handleIssuePhotoPreviewWheel = (event) => {
+  const delta = event.deltaY > 0 ? -0.12 : 0.12
+  const nextScale = issuePhotoPreviewScale.value + delta
+  issuePhotoPreviewScale.value = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
 
 const handlePhotoDragEnter = (event) => {
@@ -1952,23 +1967,6 @@ onBeforeUnmount(() => {
   transform: scale(1.04);
 }
 
-.image-preview-thumb-btn span {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 26px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  backdrop-filter: blur(6px);
-}
-
 .image-preview-meta {
   display: flex;
   flex-direction: column;
@@ -2023,8 +2021,13 @@ onBeforeUnmount(() => {
 
 .issue-photo-preview-dialog {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   max-width: min(980px, 96vw);
   max-height: 92vh;
+  overflow: visible;
+  cursor: zoom-in;
 }
 
 .issue-photo-preview-dialog img {
@@ -2034,6 +2037,9 @@ onBeforeUnmount(() => {
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
+  transform-origin: center center;
+  transition: transform 0.12s ease-out;
+  will-change: transform;
 }
 
 .issue-photo-preview-close {
