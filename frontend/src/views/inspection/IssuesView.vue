@@ -455,7 +455,7 @@
           <div class="issue-edit-grid">
             <label v-if="editDialog.issue?.can_change_issue_inspector" class="issue-edit-field issue-edit-field-wide">
               <span>检查人归属</span>
-              <select v-model="editDialog.form.inspector_id" :disabled="inspectorUserLoading">
+              <select v-model="editDialog.form.target_inspector_id" :disabled="inspectorUserLoading">
                 <option value="">{{ inspectorUserLoading ? '正在加载检查人...' : '请选择检查人' }}</option>
                 <option v-for="inspector in inspectorUserOptions" :key="inspector.id" :value="inspector.id">
                   {{ inspectorUserLabel(inspector) }}
@@ -826,7 +826,7 @@ const editDialog = ref({
   form: {
     standard_id: '',
     internal_standard_id: '',
-    inspector_id: '',
+    target_inspector_id: '',
     description: '',
     status: '待整改',
     rectification_result: '',
@@ -1283,7 +1283,7 @@ const showActionMessage = (text, type = 'info') => {
 const createIssueEditForm = (item = {}) => ({
   standard_id: item.standard_id ? String(item.standard_id) : '',
   internal_standard_id: item.internal_standard_id ? String(item.internal_standard_id).toUpperCase() : '',
-  inspector_id: item.inspector_user_id || item.inspector_id ? String(item.inspector_user_id || item.inspector_id) : '',
+  target_inspector_id: item.inspector_user_id || item.inspector_id ? String(item.inspector_user_id || item.inspector_id) : '',
   description: item.description || '',
   status: item.status || '待整改',
   rectification_result: item.rectification_result || '',

@@ -11696,7 +11696,7 @@ def update_issue(issue_id):
     review_note = str(data.get("review_note", "")).strip() or None
     standard_id = str(data.get("standard_id", "")).strip()
     internal_standard_id = str(data.get("internal_standard_id", "")).strip().upper()
-    inspector_id = str(data.get("inspector_id", "")).strip()
+    target_inspector_id_param = str(data.get("target_inspector_id", "")).strip()
     issue_photo = request.files.get("issue_photo")
 
     if not user_id:
@@ -11807,9 +11807,9 @@ def update_issue(issue_id):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
         target_inspector_id = int(issue["inspector_id"])
-        if inspector_id:
+        if target_inspector_id_param:
             try:
-                requested_inspector_id = int(inspector_id)
+                requested_inspector_id = int(target_inspector_id_param)
             except (TypeError, ValueError):
                 return jsonify({"success": False, "error": "检查人参数不合法。"}), 400
 
