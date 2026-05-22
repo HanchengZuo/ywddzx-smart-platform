@@ -13,7 +13,21 @@
       </div>
     </transition>
 
-    <div class="filter-card card-surface">
+    <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters }">
+      <div class="filter-head">
+        <div>
+          <div class="filter-kicker">筛选面板</div>
+          <h3>快速定位巡检记录</h3>
+        </div>
+        <div class="filter-head-actions">
+          <span v-if="activeFilterCount" class="active-filter-pill">已选 {{ activeFilterCount }} 项</span>
+          <button v-if="isMobileView" class="btn btn-secondary mobile-filter-toggle" type="button"
+            @click="showMobileFilters = !showMobileFilters">
+            {{ showMobileFilters ? '收起筛选' : '展开筛选' }}
+          </button>
+        </div>
+      </div>
+
       <div class="filter-grid">
         <div class="filter-item filter-item-date">
           <label>巡检日期</label>
@@ -127,10 +141,17 @@
       </div>
 
       <div class="filter-actions">
-        <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" type="button" @click="fetchInspections" :disabled="loading">
-          {{ loading ? '刷新中...' : '刷新数据' }}
-        </button>
+        <div class="filter-quick-actions">
+          <button class="btn btn-primary today-filter-btn" type="button" @click="filterMyTodayRecords">
+            只看我今天的巡检记录
+          </button>
+        </div>
+        <div class="filter-main-actions">
+          <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
+          <button class="btn btn-secondary" type="button" @click="fetchInspections" :disabled="loading">
+            {{ loading ? '刷新中...' : '刷新数据' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -656,6 +677,8 @@ const dropdownVisible = ref({
 
 const list = ref([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
+const currentRealName = localStorage.getItem('real_name') || ''
+const currentUsername = localStorage.getItem('username') || ''
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 const deletingInspectionId = ref(null)
 const completingInspectionId = ref(null)
@@ -674,6 +697,7 @@ const detectMobileViewport = () => {
 }
 
 const isMobileView = ref(detectMobileViewport())
+const showMobileFilters = ref(false)
 const isLandscapeMobile = ref(window.innerWidth > window.innerHeight)
 const signatureCanvasRef = ref(null)
 const signaturePadInstance = ref(null)
@@ -827,6 +851,26 @@ const inspectorOptions = computed(() => uniqueSortedOptions(list.value.flatMap(g
 const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filterSearch.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
 const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(inspectorOptions.value, filterSearch.value.inspector))
+
+const activeFilterCount = computed(() => {
+  return [
+    filters.value.date,
+    filters.value.result,
+    filters.value.signStatus,
+    filters.value.completionStatus,
+    ...filters.value.station,
+    ...filters.value.inspectionTableName,
+    ...filters.value.inspector
+  ].filter((value) => String(value || '').trim()).length
+})
+
+const currentInspectorFilterValue = computed(() => {
+  const candidates = [currentRealName, currentUsername]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+  const options = inspectorOptions.value
+  return candidates.find((candidate) => options.includes(candidate)) || candidates[0] || ''
+})
 
 const getRecordSignFilterStatus = (record) => {
   return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
@@ -1628,6 +1672,38 @@ const resetFilters = () => {
   closeAllDropdowns()
 }
 
+const formatLocalDate = (value = new Date()) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const filterMyTodayRecords = () => {
+  const inspector = currentInspectorFilterValue.value
+  if (!inspector) {
+    showActionMessage('当前账号缺少姓名，暂时不能自动筛选。', 'error')
+    return
+  }
+  filters.value = {
+    date: formatLocalDate(),
+    station: [],
+    inspectionTableName: [],
+    inspector: [inspector],
+    result: '',
+    signStatus: '',
+    completionStatus: ''
+  }
+  filterSearch.value = {
+    station: '',
+    inspectionTableName: '',
+    inspector: ''
+  }
+  closeAllDropdowns()
+  showMobileFilters.value = false
+  showActionMessage('已筛选我今天的巡检记录。', 'success')
+}
+
 const goToPage = (targetPage) => {
   const normalizedPage = Number.parseInt(targetPage, 10)
   if (!Number.isFinite(normalizedPage)) return
@@ -1810,6 +1886,62 @@ onBeforeUnmount(() => {
 .filter-card,
 .table-card {
   padding: 20px;
+}
+
+.filter-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.filter-kicker {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.filter-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.filter-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.active-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mobile-filter-toggle {
+  display: none;
+}
+
+.today-filter-btn {
+  display: inline-flex;
+  border-color: rgba(37, 99, 235, 0.28);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.14);
 }
 
 .filter-grid {
@@ -2033,8 +2165,23 @@ onBeforeUnmount(() => {
 .filter-actions {
   margin-top: 16px;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f7;
+}
+
+.filter-quick-actions,
+.filter-main-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-main-actions {
+  justify-content: flex-end;
 }
 
 .btn {
@@ -3198,6 +3345,40 @@ onBeforeUnmount(() => {
       linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
   }
 
+  .filter-head {
+    align-items: center;
+    margin-bottom: 0;
+  }
+
+  .filter-card.mobile-expanded .filter-head {
+    margin-bottom: 14px;
+  }
+
+  .filter-head h3 {
+    font-size: 17px;
+  }
+
+  .filter-head-actions {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mobile-filter-toggle {
+    display: inline-flex;
+    min-height: 38px;
+    width: auto;
+  }
+
+  .today-filter-btn {
+    display: inline-flex;
+  }
+
+  .filter-card:not(.mobile-expanded) .filter-grid,
+  .filter-card:not(.mobile-expanded) .filter-actions {
+    display: none;
+  }
+
   .filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
@@ -3305,6 +3486,20 @@ onBeforeUnmount(() => {
 
   .filter-actions {
     gap: 10px;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .filter-quick-actions,
+  .filter-main-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-quick-actions .btn,
+  .filter-main-actions .btn {
+    width: 100%;
   }
 
   .pagination-bar {

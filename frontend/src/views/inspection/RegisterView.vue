@@ -699,10 +699,21 @@ const fetchStandards = async () => {
 }
 
 const openStationDropdown = () => {
+  if (form.value.stationId || stationSearch.value) {
+    form.value.stationId = ''
+    stationSearch.value = ''
+  }
   stationDropdownVisible.value = true
 }
 
 const openStandardDropdown = () => {
+  if (form.value.standardId || standardSearch.value) {
+    form.value.inspectionTableId = ''
+    form.value.standardId = ''
+    standardSearch.value = ''
+    aiSelectedStandard.value = null
+    clearAiReferenceState()
+  }
   standardDropdownVisible.value = true
 }
 
