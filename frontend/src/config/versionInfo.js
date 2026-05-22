@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9.4',
+    date: '2026-05-22',
+    title: '问题列表导出',
+    summary: '巡检问题列表支持按筛选结果后台导出 Excel。',
+    items: [
+      '筛选后的巡检问题可提交后台导出任务。',
+      '导出文件生成后可直接下载，照片内容不导出。',
+      '导出文件保留7天后自动清理。'
+    ]
+  },
+  {
     version: 'v1.9.3',
     date: '2026-05-22',
     title: '筛选和归属调整',

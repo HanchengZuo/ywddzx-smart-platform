@@ -14,6 +14,7 @@ import zipfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from io import BytesIO
+from xml.sax.saxutils import escape as xml_escape
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
@@ -49,6 +50,7 @@ SIGNATURES_STORAGE_DIR = os.path.join(STORAGE_ROOT, "signatures")
 INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_originals")
 TRAINING_MATERIALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "training_materials")
 FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screenshots")
+ISSUE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issue_exports")
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
@@ -58,6 +60,8 @@ COS_BACKUP_PREFIX = os.environ.get("COS_BACKUP_PREFIX", "ywddzx-full-backups/").
 COS_BACKUP_RETENTION_COUNT = 3
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
+ISSUE_EXPORT_RETENTION_DAYS = 7
+ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS = 60 * 60
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 32
 AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS = int(
@@ -676,6 +680,8 @@ BACKUP_FREQUENCY_INTERVALS = {
 backup_scheduler_started = False
 backup_scheduler_lock = threading.Lock()
 backup_job_lock = threading.Lock()
+issue_export_cleanup_lock = threading.Lock()
+issue_export_cleanup_last_run = 0
 
 
 def isoformat_or_none(value):
@@ -1314,6 +1320,7 @@ def get_required_storage_dirs():
         INSPECTION_ORIGINALS_STORAGE_DIR,
         TRAINING_MATERIALS_STORAGE_DIR,
         FEEDBACK_SCREENSHOTS_STORAGE_DIR,
+        ISSUE_EXPORTS_STORAGE_DIR,
         DEFAULT_BACKUP_DIR,
     )
 
@@ -1457,6 +1464,7 @@ def backup_scheduler_loop():
     while True:
         try:
             maybe_run_scheduled_backup()
+            maybe_cleanup_expired_issue_exports()
         except Exception:
             pass
         time.sleep(60)
@@ -3566,6 +3574,466 @@ def normalize_issue_row_for_response(
     )
     data.pop("inspector_id", None)
     return data
+
+
+def ensure_issue_export_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS issue_export_tasks (
+            task_id TEXT PRIMARY KEY,
+            created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            selected_count INTEGER NOT NULL DEFAULT 0,
+            exported_count INTEGER NOT NULL DEFAULT 0,
+            filter_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            file_path TEXT,
+            download_filename TEXT,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issue_export_tasks_created_by
+        ON issue_export_tasks (created_by, created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issue_export_tasks_expires_at
+        ON issue_export_tasks (expires_at);
+        """
+    )
+
+
+def cleanup_expired_issue_exports(cur):
+    ensure_issue_export_schema(cur)
+    cur.execute(
+        """
+        SELECT file_path
+        FROM issue_export_tasks
+        WHERE expires_at < CURRENT_TIMESTAMP;
+        """
+    )
+    for row in cur.fetchall():
+        if row.get("file_path"):
+            remove_storage_file(row["file_path"])
+    cur.execute("DELETE FROM issue_export_tasks WHERE expires_at < CURRENT_TIMESTAMP;")
+
+    os.makedirs(ISSUE_EXPORTS_STORAGE_DIR, exist_ok=True)
+    cutoff = time.time() - ISSUE_EXPORT_RETENTION_DAYS * 24 * 60 * 60
+    for name in os.listdir(ISSUE_EXPORTS_STORAGE_DIR):
+        path = os.path.abspath(os.path.join(ISSUE_EXPORTS_STORAGE_DIR, name))
+        if os.path.commonpath([os.path.abspath(ISSUE_EXPORTS_STORAGE_DIR), path]) != os.path.abspath(ISSUE_EXPORTS_STORAGE_DIR):
+            continue
+        if os.path.isfile(path) and path.lower().endswith(".xlsx") and os.path.getmtime(path) < cutoff:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def maybe_cleanup_expired_issue_exports():
+    global issue_export_cleanup_last_run
+    now = time.time()
+    if now - issue_export_cleanup_last_run < ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS:
+        return
+    if not issue_export_cleanup_lock.acquire(blocking=False):
+        return
+
+    conn = None
+    cur = None
+    try:
+        if now - issue_export_cleanup_last_run < ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS:
+            return
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cleanup_expired_issue_exports(cur)
+        conn.commit()
+        issue_export_cleanup_last_run = now
+    except Exception:
+        if conn:
+            conn.rollback()
+    finally:
+        close_db_resources(cur, conn)
+        issue_export_cleanup_lock.release()
+
+
+def normalize_issue_export_ids(raw_ids):
+    if not isinstance(raw_ids, list):
+        raise ValueError("导出任务缺少筛选后的问题ID列表。")
+    normalized = []
+    seen = set()
+    for raw_id in raw_ids:
+        try:
+            issue_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if issue_id <= 0 or issue_id in seen:
+            continue
+        seen.add(issue_id)
+        normalized.append(issue_id)
+    if not normalized:
+        raise ValueError("当前筛选结果为空，不能导出。")
+    return normalized
+
+
+def normalize_issue_export_filter_summary(raw_summary):
+    if not isinstance(raw_summary, dict):
+        return {}
+    allowed_keys = {
+        "month",
+        "date",
+        "region",
+        "station",
+        "stationManager",
+        "inspector",
+        "inspectionTableName",
+        "standardId",
+        "standardDetail",
+        "rectificationResult",
+        "reviewResult",
+        "status",
+    }
+    return {
+        key: str(value or "").strip()
+        for key, value in raw_summary.items()
+        if key in allowed_keys and str(value or "").strip()
+    }
+
+
+def get_issue_export_task_for_user(cur, task_id, user):
+    cur.execute(
+        """
+        SELECT
+            task_id,
+            created_by,
+            status,
+            selected_count,
+            exported_count,
+            filter_summary,
+            file_path,
+            download_filename,
+            error_message,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+            TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+            TO_CHAR(expires_at, 'YYYY-MM-DD HH24:MI') AS expires_at
+        FROM issue_export_tasks
+        WHERE task_id = %s
+        LIMIT 1;
+        """,
+        (task_id,),
+    )
+    task = cur.fetchone()
+    if not task:
+        raise LookupError("导出任务不存在或已过期。")
+    if not is_root_user(user) and str(task["created_by"]) != str(user["id"]):
+        raise PermissionError("当前账号无权查看该导出任务。")
+    return task
+
+
+def serialize_issue_export_task(task):
+    status = task.get("status")
+    task_id = task.get("task_id")
+    return {
+        "task_id": task_id,
+        "status": status,
+        "selected_count": int(task.get("selected_count") or 0),
+        "exported_count": int(task.get("exported_count") or 0),
+        "filter_summary": task.get("filter_summary") or {},
+        "download_filename": task.get("download_filename") or "",
+        "download_url": f"/api/issues/export-tasks/{task_id}/download" if status == "completed" else "",
+        "error_message": task.get("error_message") or "",
+        "created_at": task.get("created_at") or "",
+        "updated_at": task.get("updated_at") or "",
+        "completed_at": task.get("completed_at") or "",
+        "expires_at": task.get("expires_at") or "",
+    }
+
+
+def fetch_issue_export_rows(cur, user, issue_ids):
+    where_parts = ["i.id = ANY(%s)"]
+    params = [issue_ids]
+
+    can_view_all = can_view_all_inspection_issues(cur, user)
+    can_view_own = can_view_own_inspection_issues(cur, user)
+    if can_view_all:
+        pass
+    elif can_view_own:
+        if not user.get("station_id"):
+            where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
+            params.append(user["id"])
+        else:
+            where_parts.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
+            params.extend([user["station_id"], user["id"]])
+    else:
+        where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
+        params.append(user["id"])
+
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT
+                i.id,
+                TO_CHAR(i.created_at, 'YYYY-MM') AS month,
+                TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
+                s.region,
+                s.station_name AS station,
+                s.station_manager_name AS station_manager,
+                s.station_manager_phone AS station_manager_phone,
+                issue_inspector.real_name AS inspector,
+                issue_inspector.phone AS inspector_phone,
+                t.table_name AS inspection_table_name,
+                i.internal_standard_id,
+                i.standard_id,
+                i.internal_standard_detail_text,
+                i.standard_detail_text,
+                i.description,
+                i.rectification_result,
+                i.rectification_note,
+                i.review_result,
+                i.review_note,
+                i.status
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON i.station_id = s.id
+            JOIN inspection_tables t ON i.inspection_table_id = t.id
+            JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
+            WHERE {where_clause}
+            ORDER BY i.id DESC;
+            """
+        ).format(where_clause=sql.SQL(" AND ").join(sql.SQL(part) for part in where_parts)),
+        params,
+    )
+    return cur.fetchall()
+
+
+ISSUE_EXPORT_COLUMNS = [
+    ("ID", "id"),
+    ("检查月度", "month"),
+    ("检查时间", "time"),
+    ("站点所属地", "region"),
+    ("站点名称", "station"),
+    ("站点负责人", "station_manager"),
+    ("站点负责人手机号", "station_manager_phone"),
+    ("检查人员", "inspector"),
+    ("检查人员手机号", "inspector_phone"),
+    ("检查表", "inspection_table_name"),
+    ("内部规范ID", "internal_standard_id"),
+    ("外部规范ID", "standard_id"),
+    ("内部规范详情", "internal_standard_detail_text"),
+    ("外部规范详情", "standard_detail_text"),
+    ("问题描述", "description"),
+    ("问题照片", "issue_photo"),
+    ("站经理整改结果", "rectification_result"),
+    ("站点反馈整改说明", "rectification_note"),
+    ("站点反馈整改照片", "rectification_photo"),
+    ("督导组复核结果", "review_result"),
+    ("督导组复核说明", "review_note"),
+    ("督导组复核照片", "review_photo"),
+    ("问题状态", "status"),
+]
+
+
+def excel_column_name(index):
+    name = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+def xlsx_text_cell(value):
+    text = "" if value is None else str(value)
+    text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
+    return f'<c t="inlineStr"><is><t xml:space="preserve">{xml_escape(text)}</t></is></c>'
+
+
+def write_issue_export_xlsx(file_path, rows):
+    headers = [column[0] for column in ISSUE_EXPORT_COLUMNS]
+    now = beijing_now().replace(microsecond=0).isoformat()
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    with zipfile.ZipFile(file_path, "w", zipfile.ZIP_DEFLATED) as xlsx:
+        xlsx.writestr(
+            "[Content_Types].xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>""",
+        )
+        xlsx.writestr(
+            "_rels/.rels",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>""",
+        )
+        xlsx.writestr(
+            "xl/workbook.xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="巡检问题列表" sheetId="1" r:id="rId1"/></sheets>
+</workbook>""",
+        )
+        xlsx.writestr(
+            "xl/_rels/workbook.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>""",
+        )
+        xlsx.writestr(
+            "xl/styles.xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>
+  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>""",
+        )
+        xlsx.writestr(
+            "docProps/core.xml",
+            f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>巡检问题列表导出</dc:title>
+  <dc:creator>业务督导中心数智管理平台</dc:creator>
+  <dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">{now}</dcterms:modified>
+</cp:coreProperties>""",
+        )
+        xlsx.writestr(
+            "docProps/app.xml",
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+  <Application>业务督导中心数智管理平台</Application>
+</Properties>""",
+        )
+
+        with xlsx.open("xl/worksheets/sheet1.xml", "w") as sheet:
+            sheet.write(
+                b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                b'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+                b'<cols>'
+            )
+            for index, header in enumerate(headers, start=1):
+                width = 18
+                if header in {"内部规范详情", "外部规范详情", "问题描述", "站点反馈整改说明", "督导组复核说明"}:
+                    width = 34
+                sheet.write(f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'.encode("utf-8"))
+            sheet.write(b"</cols><sheetData>")
+            header_cells = "".join(xlsx_text_cell(header) for header in headers)
+            sheet.write(f'<row r="1">{header_cells}</row>'.encode("utf-8"))
+            for row_index, row in enumerate(rows, start=2):
+                cells = []
+                for _header, key in ISSUE_EXPORT_COLUMNS:
+                    value = "" if key in {"issue_photo", "rectification_photo", "review_photo"} else row.get(key)
+                    cells.append(xlsx_text_cell(value))
+                sheet.write(f'<row r="{row_index}">{"".join(cells)}</row>'.encode("utf-8"))
+            sheet.write(b"</sheetData><autoFilter ref=\"A1:W1\"/></worksheet>")
+
+
+def mark_issue_export_task_failed(task_id, message):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_export_schema(cur)
+        cur.execute(
+            """
+            UPDATE issue_export_tasks
+            SET status = 'failed',
+                error_message = %s,
+                updated_at = CURRENT_TIMESTAMP,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (message, task_id),
+        )
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+
+def run_issue_export_task(task_id, issue_ids, user_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_export_schema(cur)
+        cur.execute(
+            """
+            UPDATE issue_export_tasks
+            SET status = 'running',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (task_id,),
+        )
+        conn.commit()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("导出用户不存在。")
+        rows = fetch_issue_export_rows(cur, user, issue_ids)
+        if not rows:
+            raise ValueError("当前筛选结果中没有可导出的数据。")
+
+        now = beijing_now()
+        filename = f"巡检问题列表_{now.strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}.xlsx"
+        safe_filename = secure_filename(filename) or f"inspection_issues_{task_id[:8]}.xlsx"
+        if not safe_filename.lower().endswith(".xlsx"):
+            safe_filename = f"inspection_issues_{task_id[:8]}.xlsx"
+        abs_path = os.path.join(ISSUE_EXPORTS_STORAGE_DIR, safe_filename)
+        relative_path = f"issue_exports/{safe_filename}"
+        write_issue_export_xlsx(abs_path, rows)
+        cur.execute(
+            """
+            UPDATE issue_export_tasks
+            SET status = 'completed',
+                exported_count = %s,
+                file_path = %s,
+                download_filename = %s,
+                updated_at = CURRENT_TIMESTAMP,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (len(rows), relative_path, filename, task_id),
+        )
+        conn.commit()
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        mark_issue_export_task_failed(task_id, str(exc))
+    finally:
+        close_db_resources(cur, conn)
+
+
+def start_issue_export_task(task_id, issue_ids, user_id):
+    thread = threading.Thread(
+        target=run_issue_export_task,
+        args=(task_id, issue_ids, user_id),
+        daemon=True,
+    )
+    thread.start()
 
 
 def normalize_optional_issue_result(value, field_label):
@@ -11682,6 +12150,173 @@ def get_issues():
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/export-tasks", methods=["POST"])
+def create_issue_export_task():
+    data = request.get_json(silent=True) or {}
+    user_id = get_authenticated_request_user_id(data.get("user_id"))
+    conn = None
+    cur = None
+
+    try:
+        issue_ids = normalize_issue_export_ids(data.get("issue_ids"))
+        filter_summary = normalize_issue_export_filter_summary(data.get("filter_summary"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_export_schema(cur)
+        cleanup_expired_issue_exports(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+
+        task_id = uuid.uuid4().hex
+        now = beijing_now()
+        download_filename = f"巡检问题列表_{now.strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}.xlsx"
+        cur.execute(
+            """
+            INSERT INTO issue_export_tasks (
+                task_id,
+                created_by,
+                status,
+                selected_count,
+                exported_count,
+                filter_summary,
+                download_filename,
+                expires_at
+            )
+            VALUES (%s, %s, 'pending', %s, 0, %s::jsonb, %s, CURRENT_TIMESTAMP + INTERVAL '7 days')
+            RETURNING
+                task_id,
+                created_by,
+                status,
+                selected_count,
+                exported_count,
+                filter_summary,
+                file_path,
+                download_filename,
+                error_message,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+                TO_CHAR(expires_at, 'YYYY-MM-DD HH24:MI') AS expires_at;
+            """,
+            (
+                task_id,
+                user["id"],
+                len(issue_ids),
+                json.dumps(filter_summary, ensure_ascii=False),
+                download_filename,
+            ),
+        )
+        task = cur.fetchone()
+        conn.commit()
+        start_issue_export_task(task_id, issue_ids, user["id"])
+        return jsonify(
+            {
+                "success": True,
+                "message": "导出任务已提交，系统正在后台生成 Excel 文件。",
+                "task": serialize_issue_export_task(task),
+            }
+        )
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/export-tasks/<task_id>")
+def get_issue_export_task(task_id):
+    user_id = get_authenticated_request_user_id(request.args.get("user_id"))
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_export_schema(cur)
+        cleanup_expired_issue_exports(cur)
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        task = get_issue_export_task_for_user(cur, task_id, user)
+        conn.commit()
+        return jsonify({"success": True, "task": serialize_issue_export_task(task)})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/export-tasks/<task_id>/download")
+def download_issue_export_task(task_id):
+    user_id = get_authenticated_request_user_id(request.args.get("user_id"))
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_export_schema(cur)
+        cleanup_expired_issue_exports(cur)
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        task = get_issue_export_task_for_user(cur, task_id, user)
+        conn.commit()
+
+        if task["status"] != "completed":
+            return jsonify({"success": False, "error": "导出文件尚未生成完成。"}), 400
+        if not task.get("file_path"):
+            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
+
+        abs_path = resolve_storage_abs_path(task["file_path"])
+        if not abs_path or not os.path.isfile(abs_path):
+            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
+
+        response = send_file(
+            abs_path,
+            as_attachment=True,
+            download_name=task.get("download_filename") or f"inspection_issues_{task_id[:8]}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
     finally:
         close_db_resources(cur, conn)
 

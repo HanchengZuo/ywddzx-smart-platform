@@ -271,6 +271,9 @@
           </button>
         </div>
         <div class="filter-main-actions">
+          <button class="btn btn-export" type="button" :disabled="loading || filteredData.length === 0" @click="openExportDialog">
+            导出数据
+          </button>
           <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
           <button class="btn btn-secondary" @click="fetchIssues" :disabled="loading">
             {{ loading ? '刷新中...' : '刷新数据' }}
@@ -422,6 +425,100 @@
           </div>
           <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
           <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="exportDialog.visible" class="image-modal">
+      <div class="image-modal-content issue-export-modal">
+        <div class="image-modal-header">
+          <span>导出巡检问题数据</span>
+          <button class="close-btn" type="button" :disabled="exportDialog.submitting" @click="closeExportDialog">×</button>
+        </div>
+
+        <div class="issue-export-body">
+          <div class="export-notice">
+            <div>
+              <strong>导出说明</strong>
+              <p>本次导出只包含当前筛选后的文字数据。问题照片、整改照片、复核照片会保留字段列名，但图片内容不导出。</p>
+            </div>
+            <span>Excel</span>
+          </div>
+
+          <div class="export-summary-grid">
+            <div class="export-summary-card primary">
+              <span>准备导出</span>
+              <strong>{{ exportDialog.selectedCount }}</strong>
+              <em>条巡检问题</em>
+            </div>
+            <div class="export-summary-card">
+              <span>筛选条件</span>
+              <strong>{{ exportFilterChips.length }}</strong>
+              <em>{{ exportFilterChips.length ? '项已应用' : '当前为全部数据' }}</em>
+            </div>
+            <div class="export-summary-card">
+              <span>保存期限</span>
+              <strong>7天</strong>
+              <em>到期自动清理</em>
+            </div>
+          </div>
+
+          <div class="export-filter-panel">
+            <div class="export-section-title">当前筛选结果</div>
+            <div v-if="exportFilterChips.length" class="export-filter-chips">
+              <span v-for="chip in exportFilterChips" :key="chip.key">{{ chip.label }}：{{ chip.value }}</span>
+            </div>
+            <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
+          </div>
+
+          <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status">
+            <div class="export-task-head">
+              <div>
+                <span>任务状态</span>
+                <strong>{{ exportStatusLabel }}</strong>
+              </div>
+              <em v-if="exportDialog.expiresAt">文件保留至 {{ exportDialog.expiresAt }}</em>
+            </div>
+            <div class="export-progress">
+              <div class="export-progress-bar" :style="{ width: exportProgressWidth }"></div>
+            </div>
+            <p v-if="exportDialog.status === 'completed'">
+              Excel 文件已生成，共导出 {{ exportDialog.exportedCount }} 条数据，可以直接下载。
+            </p>
+            <p v-else-if="exportDialog.status === 'failed'" class="export-error-text">
+              {{ exportDialog.error || '导出失败，请稍后重试。' }}
+            </p>
+            <p v-else>系统正在后台整理数据并生成 Excel，数据量较大时请稍候。</p>
+          </div>
+
+          <div v-if="exportDialog.error && !exportDialog.taskId" class="form-error">{{ exportDialog.error }}</div>
+        </div>
+
+        <div class="issue-edit-actions export-actions">
+          <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting" @click="closeExportDialog">
+            关闭
+          </button>
+          <button
+            v-if="exportDialog.taskId && ['completed', 'failed'].includes(exportDialog.status)"
+            class="btn btn-secondary"
+            type="button"
+            :disabled="exportDialog.downloading"
+            @click="resetExportDialogForCurrentFilters"
+          >
+            重新按当前筛选导出
+          </button>
+          <button
+            v-if="exportDialog.status !== 'completed'"
+            class="btn btn-primary"
+            type="button"
+            :disabled="exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running'"
+            @click="submitIssueExportTask"
+          >
+            {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ? '生成中...' : '提交导出任务' }}
+          </button>
+          <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading" @click="downloadIssueExport">
+            {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
+          </button>
         </div>
       </div>
     </div>
@@ -845,6 +942,36 @@ const rectificationPhotoDialog = ref({
   preview: ''
 })
 
+const exportDialog = ref({
+  visible: false,
+  submitting: false,
+  downloading: false,
+  taskId: '',
+  status: 'idle',
+  error: '',
+  selectedCount: 0,
+  exportedCount: 0,
+  fileName: '',
+  expiresAt: '',
+  filterSummary: {}
+})
+let exportPollTimer = null
+
+const exportFilterLabels = {
+  month: '检查月度',
+  date: '检查时间',
+  region: '站点所属地',
+  station: '站点名称',
+  stationManager: '站点负责人',
+  inspector: '检查人员',
+  inspectionTableName: '检查表',
+  standardId: '规范ID',
+  standardDetail: '规范详情',
+  rectificationResult: '站经理整改结果',
+  reviewResult: '督导组复核结果',
+  status: '问题状态'
+}
+
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const uniqueSortedOptions = (values) => {
   return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
@@ -901,6 +1028,36 @@ const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(insp
 
 const activeFilterCount = computed(() => {
   return Object.values(filters.value).filter((value) => String(value || '').trim()).length
+})
+
+const exportFilterChips = computed(() => {
+  return Object.entries(exportDialog.value.filterSummary || {})
+    .filter(([_key, value]) => String(value || '').trim())
+    .map(([key, value]) => ({
+      key,
+      label: exportFilterLabels[key] || key,
+      value
+    }))
+})
+
+const exportStatusLabel = computed(() => {
+  const labels = {
+    idle: '待提交',
+    pending: '排队中',
+    running: '生成中',
+    completed: '已完成',
+    failed: '生成失败'
+  }
+  return labels[exportDialog.value.status] || '准备中'
+})
+
+const exportProgressWidth = computed(() => {
+  const status = exportDialog.value.status
+  if (status === 'completed') return '100%'
+  if (status === 'running') return '72%'
+  if (status === 'pending') return '32%'
+  if (status === 'failed') return '100%'
+  return '0%'
 })
 
 const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 50, 100])
@@ -1267,6 +1424,149 @@ const filterMyTodayIssues = () => {
   closeAllDropdowns()
   showMobileFilters.value = false
   showActionMessage('已筛选我今天检查的问题。', 'success')
+}
+
+const buildCurrentExportFilterSummary = () => {
+  return Object.fromEntries(
+    Object.entries(filters.value)
+      .map(([key, value]) => [key, String(value || '').trim()])
+      .filter(([_key, value]) => value)
+  )
+}
+
+const resetExportDialogForCurrentFilters = () => {
+  stopExportPolling()
+  exportDialog.value = {
+    visible: true,
+    submitting: false,
+    downloading: false,
+    taskId: '',
+    status: 'idle',
+    error: '',
+    selectedCount: filteredData.value.length,
+    exportedCount: 0,
+    fileName: '',
+    expiresAt: '',
+    filterSummary: buildCurrentExportFilterSummary()
+  }
+}
+
+const openExportDialog = () => {
+  if (!filteredData.value.length) {
+    showActionMessage('当前筛选结果为空，不能导出。', 'error')
+    return
+  }
+  if (exportDialog.value.taskId && ['pending', 'running', 'completed', 'failed'].includes(exportDialog.value.status)) {
+    exportDialog.value.visible = true
+    if (['pending', 'running'].includes(exportDialog.value.status)) {
+      startExportPolling()
+    }
+    return
+  }
+  resetExportDialogForCurrentFilters()
+}
+
+const closeExportDialog = () => {
+  if (exportDialog.value.submitting) return
+  exportDialog.value.visible = false
+  if (!['pending', 'running'].includes(exportDialog.value.status)) {
+    stopExportPolling()
+  }
+}
+
+const stopExportPolling = () => {
+  if (exportPollTimer) {
+    window.clearInterval(exportPollTimer)
+    exportPollTimer = null
+  }
+}
+
+const applyExportTask = (task = {}) => {
+  exportDialog.value.taskId = task.task_id || exportDialog.value.taskId
+  exportDialog.value.status = task.status || exportDialog.value.status
+  exportDialog.value.selectedCount = Number(task.selected_count ?? exportDialog.value.selectedCount) || 0
+  exportDialog.value.exportedCount = Number(task.exported_count || 0)
+  exportDialog.value.fileName = task.download_filename || exportDialog.value.fileName
+  exportDialog.value.expiresAt = task.expires_at || exportDialog.value.expiresAt
+  exportDialog.value.filterSummary = task.filter_summary || exportDialog.value.filterSummary || {}
+  exportDialog.value.error = task.error_message || ''
+}
+
+const pollIssueExportTask = async () => {
+  if (!exportDialog.value.taskId) return
+  try {
+    const response = await axios.get(`/api/issues/export-tasks/${exportDialog.value.taskId}`, {
+      params: {
+        user_id: localStorage.getItem('user_id') || '',
+        _ts: Date.now()
+      }
+    })
+    applyExportTask(response.data?.task || {})
+    if (['completed', 'failed'].includes(exportDialog.value.status)) {
+      stopExportPolling()
+      if (exportDialog.value.status === 'completed') {
+        showActionMessage('巡检问题导出文件已生成。', 'success')
+      }
+    }
+  } catch (error) {
+    stopExportPolling()
+    exportDialog.value.status = 'failed'
+    exportDialog.value.error = error?.response?.data?.error || '导出任务状态查询失败。'
+  }
+}
+
+const startExportPolling = () => {
+  stopExportPolling()
+  pollIssueExportTask()
+  exportPollTimer = window.setInterval(pollIssueExportTask, 1600)
+}
+
+const submitIssueExportTask = async () => {
+  if (!filteredData.value.length) {
+    exportDialog.value.error = '当前筛选结果为空，不能导出。'
+    return
+  }
+  try {
+    exportDialog.value.submitting = true
+    exportDialog.value.error = ''
+    const response = await axios.post('/api/issues/export-tasks', {
+      user_id: localStorage.getItem('user_id') || '',
+      issue_ids: filteredData.value.map((item) => item.id),
+      filter_summary: buildCurrentExportFilterSummary()
+    })
+    applyExportTask(response.data?.task || {})
+    startExportPolling()
+  } catch (error) {
+    exportDialog.value.error = error?.response?.data?.error || '导出任务提交失败。'
+    exportDialog.value.status = 'failed'
+  } finally {
+    exportDialog.value.submitting = false
+  }
+}
+
+const downloadIssueExport = async () => {
+  if (!exportDialog.value.taskId) return
+  try {
+    exportDialog.value.downloading = true
+    const response = await axios.get(`/api/issues/export-tasks/${exportDialog.value.taskId}/download`, {
+      params: { user_id: localStorage.getItem('user_id') || '' },
+      responseType: 'blob'
+    })
+    const blobUrl = window.URL.createObjectURL(new Blob([response.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }))
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = exportDialog.value.fileName || `巡检问题列表_${exportDialog.value.taskId.slice(0, 8)}.xlsx`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(blobUrl)
+  } catch (error) {
+    exportDialog.value.error = error?.response?.data?.error || '导出文件下载失败。'
+  } finally {
+    exportDialog.value.downloading = false
+  }
 }
 
 const showActionMessage = (text, type = 'info') => {
@@ -1790,6 +2090,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('paste', handleWindowEditIssuePhotoPaste)
   window.removeEventListener('resize', updateResponsiveState)
+  stopExportPolling()
   revokeIssuePhotoPreview()
   revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
@@ -2369,6 +2670,19 @@ onBeforeUnmount(() => {
   background: #f9fafb;
 }
 
+.btn-export {
+  border-color: #99f6e4;
+  background: linear-gradient(135deg, #ecfeff 0%, #f0fdf4 100%);
+  color: #0f766e;
+  font-weight: 900;
+  box-shadow: 0 10px 20px rgba(15, 118, 110, 0.12);
+}
+
+.btn-export:hover:not(:disabled) {
+  border-color: #5eead4;
+  background: linear-gradient(135deg, #ccfbf1 0%, #dcfce7 100%);
+}
+
 .table-scroll-wrap {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -2696,6 +3010,213 @@ onBeforeUnmount(() => {
   max-height: 78vh;
   object-fit: contain;
   background: #f8fafc;
+}
+
+.issue-export-modal {
+  width: min(780px, 100%);
+  max-height: min(88vh, 860px);
+  overflow: auto;
+}
+
+.issue-export-body {
+  padding: 20px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(20, 184, 166, 0.12), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.export-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid #ccfbf1;
+  border-radius: 18px;
+  background: #f0fdfa;
+}
+
+.export-notice strong,
+.export-section-title {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.export-notice p {
+  margin: 6px 0 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.export-notice > span {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  height: 36px;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.export-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.export-summary-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.export-summary-card.primary {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.export-summary-card span,
+.export-summary-card em,
+.export-task-head span,
+.export-task-head em {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.export-summary-card strong {
+  display: block;
+  margin: 6px 0 4px;
+  color: #0f172a;
+  font-size: 28px;
+  font-weight: 950;
+}
+
+.export-filter-panel,
+.export-task-panel {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.export-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.export-filter-chips span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  word-break: break-word;
+}
+
+.export-empty-filter {
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.export-task-panel.completed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.export-task-panel.failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.export-task-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.export-task-head strong {
+  display: block;
+  margin-top: 5px;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.export-progress {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.export-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #14b8a6 100%);
+  transition: width 0.35s ease;
+}
+
+.export-task-panel.running .export-progress-bar,
+.export-task-panel.pending .export-progress-bar {
+  background-size: 200% 100%;
+  animation: exportProgressFlow 1.2s linear infinite;
+}
+
+.export-task-panel.failed .export-progress-bar {
+  background: #ef4444;
+}
+
+.export-task-panel p {
+  margin: 12px 0 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.export-error-text {
+  color: #b91c1c !important;
+  font-weight: 900;
+}
+
+.export-actions {
+  margin: 0;
+  padding: 16px 20px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+@keyframes exportProgressFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 200% 50%;
+  }
 }
 
 .issue-edit-modal {
@@ -3519,6 +4040,40 @@ onBeforeUnmount(() => {
 
   .image-modal {
     padding: 12px;
+  }
+
+  .issue-export-modal {
+    max-height: 92vh;
+  }
+
+  .issue-export-body {
+    padding: 14px;
+  }
+
+  .export-notice,
+  .export-task-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .export-notice > span {
+    width: fit-content;
+  }
+
+  .export-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .export-filter-chips span {
+    width: 100%;
+    justify-content: flex-start;
+    border-radius: 12px;
+    padding: 8px 10px;
+  }
+
+  .export-actions {
+    flex-direction: column;
+    padding: 14px;
   }
 
   .issue-edit-summary,
