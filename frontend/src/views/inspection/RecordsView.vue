@@ -47,6 +47,20 @@
             </div>
           </div>
         </div>
+        <div class="filter-item filter-item-inspector">
+          <label>检查人</label>
+          <div class="search-select" ref="inspectorSelectRef">
+            <input v-model="filters.inspector" type="text" placeholder="搜索或选择检查人"
+              @focus="openFilterDropdown('inspector')" @input="openFilterDropdown('inspector')" />
+            <div v-if="dropdownVisible.inspector" class="search-select-dropdown">
+              <div v-for="option in filteredInspectorOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspector', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人</div>
+            </div>
+          </div>
+        </div>
         <div class="filter-item filter-item-result">
           <label>结果</label>
           <select v-model="filters.result">
@@ -576,6 +590,7 @@ const filters = ref({
   date: '',
   station: '',
   inspectionTableName: '',
+  inspector: '',
   result: '',
   signStatus: '',
   completionStatus: ''
@@ -583,10 +598,12 @@ const filters = ref({
 
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
+const inspectorSelectRef = ref(null)
 
 const dropdownVisible = ref({
   station: false,
-  inspectionTableName: false
+  inspectionTableName: false,
+  inspector: false
 })
 
 const list = ref([])
@@ -695,24 +712,57 @@ const filterStationOptionByKeyword = (options, keyword) => {
   return options.filter((item) => matchesSmartSearch([item], keyword))
 }
 
+const getInspectionInspectorSearchValues = (record) => {
+  const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
+  const inspectorValues = inspectors.flatMap((item) => [
+    item.real_name,
+    item.username,
+    item.phone
+  ])
+  return [
+    record?.inspector_names,
+    record?.inspector_search_text,
+    record?.inspector_name,
+    record?.inspector_username,
+    record?.inspector_phone,
+    ...inspectorValues
+  ].filter(Boolean)
+}
+
+const getInspectionInspectorOptionValues = (record) => {
+  const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
+  if (inspectors.length) {
+    return inspectors
+      .map((item) => item.real_name || item.username || item.phone || '')
+      .filter(Boolean)
+  }
+  return String(record?.inspector_names || record?.inspector_name || record?.inspector_username || '')
+    .split(/[、,，/]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 const filteredData = computed(() => {
   return list.value.filter((item) => {
     const matchedDate = !filters.value.date || item.date === filters.value.date
     const matchedStation = !filters.value.station || matchesSmartSearch([item.station], filters.value.station)
     const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
+    const matchedInspector = !filters.value.inspector || matchesSmartSearch(getInspectionInspectorSearchValues(item), filters.value.inspector)
     const matchedResult = !filters.value.result || item.result === filters.value.result
     const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
     const matchedCompletionStatus = !filters.value.completionStatus || getRecordCompletionFilterStatus(item) === filters.value.completionStatus
 
-    return matchedDate && matchedStation && matchedInspectionTableName && matchedResult && matchedSignStatus && matchedCompletionStatus
+    return matchedDate && matchedStation && matchedInspectionTableName && matchedInspector && matchedResult && matchedSignStatus && matchedCompletionStatus
   })
 })
 
 const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
 const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
+const inspectorOptions = computed(() => uniqueSortedOptions(list.value.flatMap(getInspectionInspectorOptionValues)))
 
 const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
+const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(inspectorOptions.value, filters.value.inspector))
 
 const getRecordSignFilterStatus = (record) => {
   return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
@@ -1501,6 +1551,7 @@ const resetFilters = () => {
     date: '',
     station: '',
     inspectionTableName: '',
+    inspector: '',
     result: '',
     signStatus: '',
     completionStatus: ''
@@ -1539,7 +1590,8 @@ const selectFilterOption = (key, value) => {
 const closeAllDropdowns = () => {
   dropdownVisible.value = {
     station: false,
-    inspectionTableName: false
+    inspectionTableName: false,
+    inspector: false
   }
 }
 
@@ -1549,6 +1601,9 @@ const handleClickOutside = (event) => {
   }
   if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
     dropdownVisible.value.inspectionTableName = false
+  }
+  if (inspectorSelectRef.value && !inspectorSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspector = false
   }
 }
 

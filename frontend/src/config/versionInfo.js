@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9.2',
+    date: '2026-05-22',
+    title: '筛选功能补充',
+    summary: '补齐巡检问题和巡检记录的常用筛选入口。',
+    items: [
+      '巡检问题列表电脑端新增“只看我今天检查的问题”。',
+      '巡检记录新增按检查人筛选。'
+    ]
+  },
+  {
     version: 'v1.9.1',
     date: '2026-05-21',
     title: '登录过期保护',

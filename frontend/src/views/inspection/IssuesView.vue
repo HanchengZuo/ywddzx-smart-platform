@@ -265,14 +265,17 @@
       </div>
 
       <div class="filter-actions">
-        <button v-if="isMobileView" class="btn btn-primary mobile-today-filter-btn" type="button"
-          @click="filterMyTodayIssues">
-          只看我今天检查的问题
-        </button>
-        <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" @click="fetchIssues" :disabled="loading">
-          {{ loading ? '刷新中...' : '刷新数据' }}
-        </button>
+        <div class="filter-quick-actions">
+          <button class="btn btn-primary today-filter-btn" type="button" @click="filterMyTodayIssues">
+            只看我今天检查的问题
+          </button>
+        </div>
+        <div class="filter-main-actions">
+          <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
+          <button class="btn btn-secondary" @click="fetchIssues" :disabled="loading">
+            {{ loading ? '刷新中...' : '刷新数据' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1831,8 +1834,10 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.mobile-today-filter-btn {
-  display: none;
+.today-filter-btn {
+  display: inline-flex;
+  border-color: rgba(37, 99, 235, 0.28);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.14);
 }
 
 .filter-grid {
@@ -1918,6 +1923,22 @@ onBeforeUnmount(() => {
 .filter-actions {
   margin-top: 16px;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f7;
+}
+
+.filter-quick-actions,
+.filter-main-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-main-actions {
   justify-content: flex-end;
 }
 
@@ -3220,7 +3241,7 @@ onBeforeUnmount(() => {
     width: auto;
   }
 
-  .mobile-today-filter-btn {
+  .today-filter-btn {
     display: inline-flex;
   }
 
@@ -3257,6 +3278,20 @@ onBeforeUnmount(() => {
 
   .filter-actions {
     gap: 10px;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .filter-quick-actions,
+  .filter-main-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-quick-actions .btn,
+  .filter-main-actions .btn {
+    width: 100%;
   }
 
   .pagination-bar {

@@ -12549,6 +12549,40 @@ def get_inspections():
                     TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
                     completed_user.username AS inspector_completed_by_username,
                     completed_user.real_name AS inspector_completed_by_name,
+                    (
+                        SELECT STRING_AGG(
+                            DISTINCT COALESCE(participant.real_name, participant.username, participant.phone, participant.id::text),
+                            '、'
+                        )
+                        FROM (
+                            SELECT ins_part.inspector_id AS inspector_id
+                            FROM inspections ins_part
+                            WHERE ins_part.id = ins.id
+                            UNION
+                            SELECT issue_part.inspector_id AS inspector_id
+                            FROM issues issue_part
+                            WHERE issue_part.inspection_id = ins.id
+                              AND issue_part.inspector_id IS NOT NULL
+                        ) participant_ids
+                        JOIN users participant ON participant.id = participant_ids.inspector_id
+                    ) AS inspector_names,
+                    (
+                        SELECT STRING_AGG(
+                            DISTINCT CONCAT_WS(' ', participant.real_name, participant.username, participant.phone),
+                            ' '
+                        )
+                        FROM (
+                            SELECT ins_part.inspector_id AS inspector_id
+                            FROM inspections ins_part
+                            WHERE ins_part.id = ins.id
+                            UNION
+                            SELECT issue_part.inspector_id AS inspector_id
+                            FROM issues issue_part
+                            WHERE issue_part.inspection_id = ins.id
+                              AND issue_part.inspector_id IS NOT NULL
+                        ) participant_ids
+                        JOIN users participant ON participant.id = participant_ids.inspector_id
+                    ) AS inspector_search_text,
                     BOOL_OR(COALESCE(i.inspector_id, ins.inspector_id) = %s) AS current_user_participated
                 FROM inspections ins
                 JOIN stations s ON ins.station_id = s.id
