@@ -4423,6 +4423,15 @@ def ensure_feedback_schema(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS system_feedback_read_states (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            last_read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_system_feedbacks_created_at
         ON system_feedbacks(created_at DESC);
         """
@@ -4444,6 +4453,66 @@ def ensure_feedback_schema(cur):
         CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_feedback_id
         ON system_feedback_comments(feedback_id);
         """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_feedback_read_states_last_read
+        ON system_feedback_read_states(last_read_at DESC);
+        """
+    )
+
+
+def get_or_create_feedback_last_read_at(cur, user_id):
+    cur.execute(
+        """
+        SELECT last_read_at
+        FROM system_feedback_read_states
+        WHERE user_id = %s
+        LIMIT 1;
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if row:
+        return row["last_read_at"]
+
+    cur.execute(
+        """
+        INSERT INTO system_feedback_read_states (user_id, last_read_at, updated_at)
+        VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id) DO NOTHING
+        RETURNING last_read_at;
+        """,
+        (user_id,),
+    )
+    created = cur.fetchone()
+    return created["last_read_at"] if created else datetime.now()
+
+
+def get_feedback_unread_count(cur, user_id):
+    last_read_at = get_or_create_feedback_last_read_at(cur, user_id)
+    cur.execute(
+        """
+        SELECT COUNT(*) AS unread_count
+        FROM system_feedbacks
+        WHERE created_at > %s;
+        """,
+        (last_read_at,),
+    )
+    row = cur.fetchone()
+    return int(row["unread_count"] or 0)
+
+
+def mark_feedbacks_read(cur, user_id):
+    cur.execute(
+        """
+        INSERT INTO system_feedback_read_states (user_id, last_read_at, updated_at)
+        VALUES (%s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id) DO UPDATE
+        SET last_read_at = EXCLUDED.last_read_at,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        (user_id,),
     )
 
 
@@ -7868,6 +7937,48 @@ def delete_management_user(target_user_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks/unread-count", methods=["GET"])
+def get_system_feedback_unread_count():
+    current_user = get_current_request_user()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        unread_count = get_feedback_unread_count(cur, current_user["id"])
+        conn.commit()
+        return jsonify({"success": True, "unread_count": unread_count})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/feedbacks/mark-read", methods=["POST"])
+def mark_system_feedbacks_read():
+    current_user = get_current_request_user()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        mark_feedbacks_read(cur, current_user["id"])
+        conn.commit()
+        return jsonify({"success": True, "unread_count": 0})
     except Exception as e:
         if conn:
             conn.rollback()

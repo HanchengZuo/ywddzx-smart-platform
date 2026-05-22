@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS system_feedback_comments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS system_feedback_read_states (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    last_read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_system_feedbacks_created_at
     ON system_feedbacks(created_at DESC);
 
@@ -49,3 +55,6 @@ CREATE INDEX IF NOT EXISTS idx_system_feedback_screenshots_feedback_id
 
 CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_feedback_id
     ON system_feedback_comments(feedback_id);
+
+CREATE INDEX IF NOT EXISTS idx_system_feedback_read_states_last_read
+    ON system_feedback_read_states(last_read_at DESC);

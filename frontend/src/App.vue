@@ -224,7 +224,10 @@
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
         <button class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/feedback')" :title="sidebarCollapsed ? '系统反馈' : ''">
-          <span class="nav-item-icon">馈</span>
+          <span class="nav-item-icon feedback-nav-icon">
+            馈
+            <span v-if="feedbackUnreadCount > 0" class="feedback-unread-badge">{{ feedbackUnreadDisplay }}</span>
+          </span>
           <span v-if="!sidebarCollapsed">系统反馈</span>
         </button>
       </div>
@@ -442,6 +445,8 @@ const sessionNotice = reactive({
   secondsRemaining: 0,
   checking: false
 })
+const feedbackUnreadCount = ref(0)
+let feedbackUnreadRequestId = 0
 
 const parseStoredPermissions = () => {
   try {
@@ -552,6 +557,10 @@ const sessionRemainingLabel = computed(() => {
     return `${Math.ceil(totalSeconds / 60)}分钟`
   }
   return `${Math.max(1, totalSeconds)}秒`
+})
+const feedbackUnreadDisplay = computed(() => {
+  const count = Number(feedbackUnreadCount.value) || 0
+  return count > 99 ? '99+' : String(count)
 })
 
 const syncAuthState = () => {
@@ -699,7 +708,59 @@ const handleAuthStorageChange = (event) => {
   if (isLoginPage.value) return
   if (isUsableAuthToken(getStoredAuthToken())) {
     verifySessionSilently()
+    syncFeedbackUnreadForRoute()
   }
+}
+
+const refreshFeedbackUnreadCount = async () => {
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+    feedbackUnreadCount.value = 0
+    return
+  }
+  const requestId = ++feedbackUnreadRequestId
+  try {
+    const response = await axios.get('/api/feedbacks/unread-count', {
+      params: { _ts: Date.now() }
+    })
+    if (requestId !== feedbackUnreadRequestId) return
+    feedbackUnreadCount.value = Number(response.data?.unread_count || 0)
+  } catch (error) {
+    if (error?.response?.status && error.response.status !== 401) {
+      console.warn('系统反馈未读数量读取失败。', error)
+    }
+  }
+}
+
+const markFeedbackRead = async () => {
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+    feedbackUnreadCount.value = 0
+    return
+  }
+  try {
+    await axios.post('/api/feedbacks/mark-read', {})
+    feedbackUnreadCount.value = 0
+  } catch (error) {
+    if (error?.response?.status && error.response.status !== 401) {
+      console.warn('系统反馈已读状态更新失败。', error)
+    }
+  }
+}
+
+const syncFeedbackUnreadForRoute = () => {
+  if (isLoginPage.value) {
+    feedbackUnreadCount.value = 0
+    return
+  }
+  if (route.path === '/feedback') {
+    markFeedbackRead()
+    return
+  }
+  refreshFeedbackUnreadCount()
+}
+
+const handleWindowFocus = () => {
+  runSessionMonitor()
+  syncFeedbackUnreadForRoute()
 }
 
 watch(
@@ -709,8 +770,10 @@ watch(
     showAuthSessionMessageIfNeeded()
     if (route.path === '/login') {
       resetSessionNotice()
+      feedbackUnreadCount.value = 0
     } else {
       window.setTimeout(runSessionMonitor, 0)
+      window.setTimeout(syncFeedbackUnreadForRoute, 0)
     }
   },
   { immediate: true }
@@ -719,15 +782,16 @@ watch(
 onMounted(() => {
   window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.addEventListener('storage', handleAuthStorageChange)
-  window.addEventListener('focus', runSessionMonitor)
+  window.addEventListener('focus', handleWindowFocus)
   sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
   runSessionMonitor()
+  syncFeedbackUnreadForRoute()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.removeEventListener('storage', handleAuthStorageChange)
-  window.removeEventListener('focus', runSessionMonitor)
+  window.removeEventListener('focus', handleWindowFocus)
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null
@@ -1935,6 +1999,31 @@ textarea:focus {
   border-color: rgba(191, 219, 254, 0.36);
   color: #fff;
   box-shadow: 0 8px 16px rgba(37, 99, 235, 0.28);
+}
+
+.feedback-nav-icon {
+  position: relative;
+}
+
+.feedback-unread-badge {
+  position: absolute;
+  right: -8px;
+  top: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #fff;
+  border: 2px solid #122033;
+  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.38);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 950;
+  letter-spacing: -0.02em;
 }
 
 .sidebar.collapsed {
