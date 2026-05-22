@@ -7,10 +7,16 @@ from ai_prompts import (
     INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT,
     build_inspection_standard_recommendation_prompt,
 )
+from ai_usage import build_ai_usage_meta
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-v4-pro"
+FEEDBACK_TITLE_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的系统反馈标题生成助手。"
+    "请根据反馈类型、问题模块和详细说明，生成一个简短、专业、准确的问题标题。"
+    "标题用于反馈列表展示，必须直接输出标题本身，不要解释，不要加前缀，不要加标点。"
+)
 
 AI_ERROR_MESSAGES = {
     400: "AI 标题生成请求格式异常，已使用默认标题。",
@@ -125,6 +131,28 @@ def get_standard_recommendation_ai_error_message(error):
         status_code,
         "AI 规范匹配失败，已使用本地规则匹配。",
     )
+
+
+def with_ai_usage_meta(
+    result,
+    prompt_text="",
+    completion_text="",
+    ai_called=False,
+    success=False,
+    fallback_used=False,
+    status_code=None,
+):
+    payload = dict(result or {})
+    payload["usage"] = build_ai_usage_meta(
+        DEEPSEEK_MODEL,
+        prompt_text=prompt_text,
+        completion_text=completion_text,
+        ai_called=ai_called,
+        success=success,
+        fallback_used=fallback_used,
+        status_code=status_code,
+    )
+    return payload
 
 
 def normalize_standard_id(value):
@@ -285,37 +313,50 @@ def generate_standard_recommendations(issue_description, standards):
     ]
 
     if not normalized_standards:
-        return {
-            "generated": False,
-            "message": "巡检规范库暂无可匹配数据。",
-            "summary": "巡检规范库暂无可匹配数据。",
-            "no_related": True,
-            "recommendations": [],
-        }
+        return with_ai_usage_meta(
+            {
+                "generated": False,
+                "message": "巡检规范库暂无可匹配数据。",
+                "summary": "巡检规范库暂无可匹配数据。",
+                "no_related": True,
+                "recommendations": [],
+            },
+            prompt_text=normalized_description,
+            fallback_used=True,
+        )
 
     try:
         client = get_deepseek_client()
     except Exception as exc:
         logging.exception("DeepSeek client initialization failed for standard recommendation: %s", exc)
-        return build_standard_recommendation_result(
-            normalized_description,
-            normalized_standards,
-            False,
-            "AI 服务初始化失败，已使用本地规则匹配。",
+        return with_ai_usage_meta(
+            build_standard_recommendation_result(
+                normalized_description,
+                normalized_standards,
+                False,
+                "AI 服务初始化失败，已使用本地规则匹配。",
+            ),
+            prompt_text=normalized_description,
+            fallback_used=True,
         )
 
     if not client:
-        return build_standard_recommendation_result(
-            normalized_description,
-            normalized_standards,
-            False,
-            "未配置 AI 服务，已使用本地规则匹配。",
+        return with_ai_usage_meta(
+            build_standard_recommendation_result(
+                normalized_description,
+                normalized_standards,
+                False,
+                "未配置 AI 服务，已使用本地规则匹配。",
+            ),
+            prompt_text=normalized_description,
+            fallback_used=True,
         )
 
     prompt = build_inspection_standard_recommendation_prompt(
         normalized_description,
         normalized_standards,
     )
+    prompt_text = f"{INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT}\n{prompt}"
 
     try:
         response = client.chat.completions.create(
@@ -338,19 +379,31 @@ def generate_standard_recommendations(issue_description, standards):
                 "DeepSeek returned an unusable standard recommendation payload: %r",
                 raw_content,
             )
-            return build_standard_recommendation_result(
-                normalized_description,
-                normalized_standards,
-                False,
-                "AI 返回内容无法识别，已使用本地规则匹配。",
+            return with_ai_usage_meta(
+                build_standard_recommendation_result(
+                    normalized_description,
+                    normalized_standards,
+                    False,
+                    "AI 返回内容无法识别，已使用本地规则匹配。",
+                ),
+                prompt_text=prompt_text,
+                completion_text=raw_content,
+                ai_called=True,
+                fallback_used=True,
             )
 
-        return build_standard_recommendation_result(
-            normalized_description,
-            normalized_standards,
-            True,
-            "AI 规范匹配完成。",
-            payload,
+        return with_ai_usage_meta(
+            build_standard_recommendation_result(
+                normalized_description,
+                normalized_standards,
+                True,
+                "AI 规范匹配完成。",
+                payload,
+            ),
+            prompt_text=prompt_text,
+            completion_text=raw_content,
+            ai_called=True,
+            success=True,
         )
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
@@ -359,11 +412,17 @@ def generate_standard_recommendations(issue_description, standards):
             status_code,
             exc,
         )
-        return build_standard_recommendation_result(
-            normalized_description,
-            normalized_standards,
-            False,
-            get_standard_recommendation_ai_error_message(exc),
+        return with_ai_usage_meta(
+            build_standard_recommendation_result(
+                normalized_description,
+                normalized_standards,
+                False,
+                get_standard_recommendation_ai_error_message(exc),
+            ),
+            prompt_text=prompt_text,
+            ai_called=True,
+            fallback_used=True,
+            status_code=status_code,
         )
 
 
@@ -373,31 +432,39 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
         module_name,
         detail_text,
     )
-    client = None
-
-    try:
-        client = get_deepseek_client()
-    except Exception as exc:
-        logging.exception("DeepSeek client initialization failed: %s", exc)
-        return {
-            "title": fallback_title,
-            "generated": False,
-            "message": "AI 服务初始化失败，已使用默认标题。",
-        }
-
-    if not client:
-        return {
-            "title": fallback_title,
-            "generated": False,
-            "message": "未配置 AI 服务，已使用默认标题。",
-        }
-
     prompt = (
         f"反馈类型：{feedback_type}\n"
         f"问题模块：{module_name}\n"
         f"详细说明：{detail_text}\n\n"
         "请生成一个 8-20 个中文字符的问题标题。"
     )
+    prompt_text = f"{FEEDBACK_TITLE_SYSTEM_PROMPT}\n{prompt}"
+    client = None
+
+    try:
+        client = get_deepseek_client()
+    except Exception as exc:
+        logging.exception("DeepSeek client initialization failed: %s", exc)
+        return with_ai_usage_meta(
+            {
+                "title": fallback_title,
+                "generated": False,
+                "message": "AI 服务初始化失败，已使用默认标题。",
+            },
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
+
+    if not client:
+        return with_ai_usage_meta(
+            {
+                "title": fallback_title,
+                "generated": False,
+                "message": "未配置 AI 服务，已使用默认标题。",
+            },
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
 
     try:
         response = client.chat.completions.create(
@@ -405,11 +472,7 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "你是“业务督导中心数智化管理平台”的系统反馈标题生成助手。"
-                        "请根据反馈类型、问题模块和详细说明，生成一个简短、专业、准确的问题标题。"
-                        "标题用于反馈列表展示，必须直接输出标题本身，不要解释，不要加前缀，不要加标点。"
-                    ),
+                    "content": FEEDBACK_TITLE_SYSTEM_PROMPT,
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -421,16 +484,28 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
         title = normalize_ai_title(raw_title)
         if not title:
             logging.warning("DeepSeek returned an unusable feedback title: %r", raw_title)
-            return {
-                "title": fallback_title,
-                "generated": False,
-                "message": "AI 标题内容不符合规范，已使用默认标题。",
-            }
-        return {
-            "title": title,
-            "generated": True,
-            "message": "AI 标题生成成功。",
-        }
+            return with_ai_usage_meta(
+                {
+                    "title": fallback_title,
+                    "generated": False,
+                    "message": "AI 标题内容不符合规范，已使用默认标题。",
+                },
+                prompt_text=prompt_text,
+                completion_text=raw_title,
+                ai_called=True,
+                fallback_used=True,
+            )
+        return with_ai_usage_meta(
+            {
+                "title": title,
+                "generated": True,
+                "message": "AI 标题生成成功。",
+            },
+            prompt_text=prompt_text,
+            completion_text=raw_title,
+            ai_called=True,
+            success=True,
+        )
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
@@ -438,8 +513,14 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
             status_code,
             exc,
         )
-        return {
-            "title": fallback_title,
-            "generated": False,
-            "message": get_ai_error_message(exc),
-        }
+        return with_ai_usage_meta(
+            {
+                "title": fallback_title,
+                "generated": False,
+                "message": get_ai_error_message(exc),
+            },
+            prompt_text=prompt_text,
+            ai_called=True,
+            fallback_used=True,
+            status_code=status_code,
+        )

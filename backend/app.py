@@ -22,6 +22,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import generate_feedback_title, generate_standard_recommendations
+from ai_usage import get_ai_pricing_table
 
 try:
     from qcloud_cos import CosConfig, CosS3Client
@@ -267,6 +268,13 @@ PERMISSION_CATALOG = [
         "description": "访问巡检规范库数据管理页面，并维护内部规范字段配置和外部规范挂载关系。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
+    {
+        "key": "manage_ai_usage",
+        "name": "查看 AI 调用统计",
+        "category": "AI调用统计",
+        "description": "查看系统内 DeepSeek AI 调用次数、使用位置、字符量、估算 token 和费用。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
 ]
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
@@ -330,6 +338,7 @@ FEEDBACK_MODULE_OPTIONS = {
     "站点数据管理",
     "检查表数据管理",
     "巡检规范库数据管理",
+    "AI调用统计",
     "管理系统",
     "公共功能",
     "登录与账号",
@@ -3360,6 +3369,274 @@ def ensure_user_security_schema(cur):
         );
         """
     )
+
+
+def ensure_ai_usage_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_usage_logs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username TEXT,
+            real_name TEXT,
+            role TEXT,
+            usage_module TEXT NOT NULL,
+            usage_action TEXT NOT NULL,
+            model TEXT NOT NULL,
+            base_url TEXT DEFAULT 'https://api.deepseek.com',
+            ai_called BOOLEAN NOT NULL DEFAULT FALSE,
+            ai_generated BOOLEAN NOT NULL DEFAULT FALSE,
+            success BOOLEAN NOT NULL DEFAULT FALSE,
+            fallback_used BOOLEAN NOT NULL DEFAULT FALSE,
+            status_code INTEGER,
+            prompt_chars INTEGER NOT NULL DEFAULT 0,
+            prompt_chinese_chars INTEGER NOT NULL DEFAULT 0,
+            prompt_other_chars INTEGER NOT NULL DEFAULT 0,
+            completion_chars INTEGER NOT NULL DEFAULT 0,
+            completion_chinese_chars INTEGER NOT NULL DEFAULT 0,
+            completion_other_chars INTEGER NOT NULL DEFAULT 0,
+            total_chars INTEGER NOT NULL DEFAULT 0,
+            input_tokens_est NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            output_tokens_est NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            total_tokens_est NUMERIC(14, 2) NOT NULL DEFAULT 0,
+            input_cost_est NUMERIC(14, 6) NOT NULL DEFAULT 0,
+            output_cost_est NUMERIC(14, 6) NOT NULL DEFAULT 0,
+            total_cost_est NUMERIC(14, 6) NOT NULL DEFAULT 0,
+            message TEXT,
+            request_summary TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_created_at
+        ON ai_usage_logs(created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_user_id
+        ON ai_usage_logs(user_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_module_action
+        ON ai_usage_logs(usage_module, usage_action);
+        """
+    )
+
+
+def get_number(value, default=0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_integer(value, default=0):
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def record_ai_usage_log(
+    cur,
+    user,
+    ai_result,
+    usage_module,
+    usage_action,
+    request_summary="",
+):
+    ensure_ai_usage_schema(cur)
+    usage = (ai_result or {}).get("usage") or {}
+    model = str(usage.get("model") or "deepseek-v4-pro").strip() or "deepseek-v4-pro"
+    base_url = str(usage.get("base_url") or "https://api.deepseek.com").strip()
+    message = str((ai_result or {}).get("message") or "")[:500]
+    user = user or {}
+    cur.execute(
+        """
+        INSERT INTO ai_usage_logs (
+            user_id,
+            username,
+            real_name,
+            role,
+            usage_module,
+            usage_action,
+            model,
+            base_url,
+            ai_called,
+            ai_generated,
+            success,
+            fallback_used,
+            status_code,
+            prompt_chars,
+            prompt_chinese_chars,
+            prompt_other_chars,
+            completion_chars,
+            completion_chinese_chars,
+            completion_other_chars,
+            total_chars,
+            input_tokens_est,
+            output_tokens_est,
+            total_tokens_est,
+            input_cost_est,
+            output_cost_est,
+            total_cost_est,
+            message,
+            request_summary
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+        );
+        """,
+        (
+            user.get("id"),
+            user.get("username"),
+            user.get("real_name"),
+            user.get("role"),
+            str(usage_module or "AI功能")[:80],
+            str(usage_action or "AI调用")[:80],
+            model[:80],
+            base_url[:160],
+            bool(usage.get("ai_called")),
+            bool((ai_result or {}).get("generated")),
+            bool(usage.get("success")),
+            bool(usage.get("fallback_used")),
+            usage.get("status_code"),
+            get_integer(usage.get("prompt_chars")),
+            get_integer(usage.get("prompt_chinese_chars")),
+            get_integer(usage.get("prompt_other_chars")),
+            get_integer(usage.get("completion_chars")),
+            get_integer(usage.get("completion_chinese_chars")),
+            get_integer(usage.get("completion_other_chars")),
+            get_integer(usage.get("total_chars")),
+            get_number(usage.get("input_tokens_est")),
+            get_number(usage.get("output_tokens_est")),
+            get_number(usage.get("total_tokens_est")),
+            get_number(usage.get("input_cost_est")),
+            get_number(usage.get("output_cost_est")),
+            get_number(usage.get("total_cost_est")),
+            message,
+            str(request_summary or "")[:500],
+        ),
+    )
+
+
+def serialize_ai_usage_row(row):
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "username": row["username"],
+        "real_name": row["real_name"],
+        "role": row["role"],
+        "usage_module": row["usage_module"],
+        "usage_action": row["usage_action"],
+        "model": row["model"],
+        "base_url": row["base_url"],
+        "ai_called": bool(row["ai_called"]),
+        "ai_generated": bool(row["ai_generated"]),
+        "success": bool(row["success"]),
+        "fallback_used": bool(row["fallback_used"]),
+        "status_code": row["status_code"],
+        "prompt_chars": get_integer(row["prompt_chars"]),
+        "prompt_chinese_chars": get_integer(row["prompt_chinese_chars"]),
+        "prompt_other_chars": get_integer(row["prompt_other_chars"]),
+        "completion_chars": get_integer(row["completion_chars"]),
+        "completion_chinese_chars": get_integer(row["completion_chinese_chars"]),
+        "completion_other_chars": get_integer(row["completion_other_chars"]),
+        "total_chars": get_integer(row["total_chars"]),
+        "input_tokens_est": get_number(row["input_tokens_est"]),
+        "output_tokens_est": get_number(row["output_tokens_est"]),
+        "total_tokens_est": get_number(row["total_tokens_est"]),
+        "input_cost_est": get_number(row["input_cost_est"]),
+        "output_cost_est": get_number(row["output_cost_est"]),
+        "total_cost_est": get_number(row["total_cost_est"]),
+        "message": row["message"] or "",
+        "request_summary": row["request_summary"] or "",
+        "created_at": row["created_at"],
+    }
+
+
+def build_ai_usage_aggregate(rows, group_keys, label_builder):
+    grouped = {}
+    for row in rows:
+        key = tuple(str(row.get(item) or "") for item in group_keys)
+        if key not in grouped:
+            grouped[key] = {
+                "key": "||".join(key),
+                "label": label_builder(row),
+                "calls": 0,
+                "ai_called": 0,
+                "success": 0,
+                "fallback": 0,
+                "total_chars": 0,
+                "total_tokens_est": 0.0,
+                "total_cost_est": 0.0,
+            }
+        item = grouped[key]
+        item["calls"] += 1
+        item["ai_called"] += 1 if row.get("ai_called") else 0
+        item["success"] += 1 if row.get("success") else 0
+        item["fallback"] += 1 if row.get("fallback_used") else 0
+        item["total_chars"] += get_integer(row.get("total_chars"))
+        item["total_tokens_est"] += get_number(row.get("total_tokens_est"))
+        item["total_cost_est"] += get_number(row.get("total_cost_est"))
+
+    return sorted(
+        (
+            {
+                **item,
+                "total_tokens_est": round(item["total_tokens_est"], 2),
+                "total_cost_est": round(item["total_cost_est"], 6),
+            }
+            for item in grouped.values()
+        ),
+        key=lambda item: (-item["calls"], -item["total_cost_est"], item["label"]),
+    )
+
+
+def build_ai_usage_summary(rows):
+    return {
+        "total_calls": len(rows),
+        "ai_called": sum(1 for row in rows if row.get("ai_called")),
+        "success": sum(1 for row in rows if row.get("success")),
+        "fallback": sum(1 for row in rows if row.get("fallback_used")),
+        "prompt_chars": sum(get_integer(row.get("prompt_chars")) for row in rows),
+        "completion_chars": sum(get_integer(row.get("completion_chars")) for row in rows),
+        "total_chars": sum(get_integer(row.get("total_chars")) for row in rows),
+        "input_tokens_est": round(
+            sum(get_number(row.get("input_tokens_est")) for row in rows),
+            2,
+        ),
+        "output_tokens_est": round(
+            sum(get_number(row.get("output_tokens_est")) for row in rows),
+            2,
+        ),
+        "total_tokens_est": round(
+            sum(get_number(row.get("total_tokens_est")) for row in rows),
+            2,
+        ),
+        "input_cost_est": round(
+            sum(get_number(row.get("input_cost_est")) for row in rows),
+            6,
+        ),
+        "output_cost_est": round(
+            sum(get_number(row.get("output_cost_est")) for row in rows),
+            6,
+        ),
+        "total_cost_est": round(
+            sum(get_number(row.get("total_cost_est")) for row in rows),
+            6,
+        ),
+    }
 
 
 def is_root_user(user):
@@ -7772,6 +8049,15 @@ def create_system_feedback():
                 (feedback_id, file_path, index),
             )
 
+        record_ai_usage_log(
+            cur,
+            current_user,
+            title_result,
+            "系统反馈",
+            "自动生成反馈标题",
+            f"{feedback_type} · {module} · {description[:160]}",
+        )
+
         conn.commit()
         return jsonify(
             {
@@ -7989,6 +8275,175 @@ def delete_system_feedback_comment(comment_id):
     except Exception as e:
         if conn:
             conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/ai-usage", methods=["GET"])
+def get_management_ai_usage():
+    user_id = str(request.args.get("user_id", "")).strip()
+    date_from = str(request.args.get("date_from", "")).strip()
+    date_to = str(request.args.get("date_to", "")).strip()
+    usage_module = str(request.args.get("usage_module", "")).strip()
+    model = str(request.args.get("model", "")).strip()
+    status = str(request.args.get("status", "")).strip()
+    keyword = str(request.args.get("keyword", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        ensure_ai_usage_schema(cur)
+        require_management_user(cur, user_id, "manage_ai_usage")
+
+        where_clauses = []
+        params = []
+
+        if date_from:
+            datetime.strptime(date_from, "%Y-%m-%d")
+            where_clauses.append("created_at >= %s::date")
+            params.append(date_from)
+
+        if date_to:
+            datetime.strptime(date_to, "%Y-%m-%d")
+            where_clauses.append("created_at < (%s::date + INTERVAL '1 day')")
+            params.append(date_to)
+
+        if usage_module:
+            where_clauses.append("usage_module = %s")
+            params.append(usage_module)
+
+        if model:
+            where_clauses.append("model = %s")
+            params.append(model)
+
+        if status == "success":
+            where_clauses.append("success = TRUE")
+        elif status == "fallback":
+            where_clauses.append("fallback_used = TRUE")
+        elif status == "called":
+            where_clauses.append("ai_called = TRUE")
+        elif status == "not_called":
+            where_clauses.append("ai_called = FALSE")
+
+        if keyword:
+            where_clauses.append(
+                """
+                (
+                    username ILIKE %s OR
+                    real_name ILIKE %s OR
+                    usage_module ILIKE %s OR
+                    usage_action ILIKE %s OR
+                    request_summary ILIKE %s
+                )
+                """
+            )
+            like_keyword = f"%{keyword}%"
+            params.extend([like_keyword] * 5)
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        cur.execute(
+            f"""
+            SELECT
+                id,
+                user_id,
+                username,
+                real_name,
+                role,
+                usage_module,
+                usage_action,
+                model,
+                base_url,
+                ai_called,
+                ai_generated,
+                success,
+                fallback_used,
+                status_code,
+                prompt_chars,
+                prompt_chinese_chars,
+                prompt_other_chars,
+                completion_chars,
+                completion_chinese_chars,
+                completion_other_chars,
+                total_chars,
+                input_tokens_est,
+                output_tokens_est,
+                total_tokens_est,
+                input_cost_est,
+                output_cost_est,
+                total_cost_est,
+                message,
+                request_summary,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at
+            FROM ai_usage_logs
+            {where_sql}
+            ORDER BY id DESC
+            LIMIT 2000;
+            """,
+            params,
+        )
+        rows = [serialize_ai_usage_row(row) for row in cur.fetchall()]
+
+        cur.execute(
+            """
+            SELECT DISTINCT usage_module
+            FROM ai_usage_logs
+            WHERE usage_module IS NOT NULL AND usage_module <> ''
+            ORDER BY usage_module ASC;
+            """
+        )
+        modules = [row["usage_module"] for row in cur.fetchall()]
+
+        cur.execute(
+            """
+            SELECT DISTINCT model
+            FROM ai_usage_logs
+            WHERE model IS NOT NULL AND model <> ''
+            ORDER BY model ASC;
+            """
+        )
+        models = [row["model"] for row in cur.fetchall()]
+        conn.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "summary": build_ai_usage_summary(rows),
+                "by_user": build_ai_usage_aggregate(
+                    rows,
+                    ["user_id", "username"],
+                    lambda row: row.get("real_name")
+                    or row.get("username")
+                    or f"用户{row.get('user_id') or '-'}",
+                ),
+                "by_context": build_ai_usage_aggregate(
+                    rows,
+                    ["usage_module", "usage_action"],
+                    lambda row: f"{row.get('usage_module') or '-'} · {row.get('usage_action') or '-'}",
+                ),
+                "items": rows,
+                "options": {
+                    "modules": modules,
+                    "models": models,
+                    "pricing": get_ai_pricing_table(),
+                    "status": [
+                        {"value": "", "label": "全部状态"},
+                        {"value": "success", "label": "AI 成功"},
+                        {"value": "fallback", "label": "使用回退"},
+                        {"value": "called", "label": "已请求 AI"},
+                        {"value": "not_called", "label": "未请求 AI"},
+                    ],
+                },
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError:
+        return jsonify({"success": False, "error": "日期格式不正确。"}), 400
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -11538,6 +11993,15 @@ def recommend_inspection_standard_by_ai():
             description,
             ai_catalog,
         )
+        record_ai_usage_log(
+            cur,
+            current_user,
+            recommendation_result,
+            "巡检登记",
+            "AI引用规范",
+            description[:200],
+        )
+        conn.commit()
         standard_map = {
             str(item.get("standard_id")): item
             for item in full_standards

@@ -267,6 +267,12 @@
           <span class="nav-item-icon">备</span>
           <span v-if="!sidebarCollapsed">数据备份管理</span>
         </button>
+        <button v-if="canManageAiUsage" class="nav-item"
+          :class="{ active: isActive('/management/ai-usage'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/ai-usage')" :title="sidebarCollapsed ? 'AI调用统计' : ''">
+          <span class="nav-item-icon">智</span>
+          <span v-if="!sidebarCollapsed">AI调用统计</span>
+        </button>
       </div>
     </aside>
 
@@ -521,13 +527,15 @@ const canManageChecklists = computed(() => hasPermissionKey('manage_checklists')
 const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards'))
 const canManageInspectionCompletion = computed(() => isRoot.value)
 const canManageBackups = computed(() => isRoot.value)
+const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage'))
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
   canManageStations.value ||
   canManageChecklists.value ||
   canManageInternalStandards.value ||
   canManageInspectionCompletion.value ||
-  canManageBackups.value
+  canManageBackups.value ||
+  canManageAiUsage.value
 ))
 const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
@@ -748,6 +756,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_stations) return '/management/stations'
   if (permissions.manage_checklists) return '/management/checklists'
   if (permissions.manage_internal_standards) return '/management/internal-standards'
+  if (permissions.manage_ai_usage) return '/management/ai-usage'
   if (role === 'root') return '/management/inspection-completion'
   return '/feedback'
 }
