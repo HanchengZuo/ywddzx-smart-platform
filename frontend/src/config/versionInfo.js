@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9.5',
+    date: '2026-05-22',
+    title: '反馈和照片预览优化',
+    summary: '反馈列表更清楚，巡检登记照片可放大查看。',
+    items: [
+      '系统反馈广场的每条反馈分层更明显。',
+      '巡检登记上传的问题照片支持点击放大预览。'
+    ]
+  },
+  {
     version: 'v1.9.4',
     date: '2026-05-22',
     title: '问题列表导出',

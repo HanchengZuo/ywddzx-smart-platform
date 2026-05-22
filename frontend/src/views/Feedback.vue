@@ -1349,19 +1349,54 @@ onBeforeUnmount(() => {
 }
 
 .feedback-list {
+  counter-reset: feedback-thread;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-top: 18px;
+  gap: 24px;
+  margin-top: 20px;
+  padding: 4px;
 }
 
 .feedback-thread {
-  padding: 18px;
-  border: 1px solid #e2e8f0;
-  border-radius: 20px;
+  counter-increment: feedback-thread;
+  position: relative;
+  overflow: hidden;
+  padding: 22px 22px 20px 30px;
+  border: 1px solid #cbd5e1;
+  border-radius: 24px;
   background:
-    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.08), transparent 24%),
-    #ffffff;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94)),
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.12), transparent 26%);
+  box-shadow:
+    0 20px 42px rgba(15, 23, 42, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.feedback-thread::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18px;
+  bottom: 18px;
+  width: 6px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, #2563eb, #14b8a6);
+}
+
+.feedback-thread::after {
+  content: "#" counter(feedback-thread, decimal-leading-zero);
+  position: absolute;
+  right: 18px;
+  top: 16px;
+  color: rgba(37, 99, 235, 0.1);
+  font-size: 32px;
+  font-weight: 950;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.feedback-thread + .feedback-thread {
+  margin-top: 2px;
 }
 
 .feedback-thread.accepted {
@@ -1370,6 +1405,21 @@ onBeforeUnmount(() => {
     linear-gradient(135deg, rgba(240, 253, 244, 0.92), rgba(255, 255, 255, 0.98) 44%),
     radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.18), transparent 28%);
   box-shadow: 0 18px 38px rgba(22, 163, 74, 0.1);
+}
+
+.feedback-thread.accepted::before {
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+}
+
+.thread-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.78);
 }
 
 .thread-tags {
@@ -1394,6 +1444,7 @@ onBeforeUnmount(() => {
   margin: 0;
   color: #0f172a;
   font-size: 20px;
+  line-height: 1.45;
 }
 
 .thread-actions {
@@ -1408,7 +1459,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
-  margin-top: 12px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
   color: #64748b;
   font-size: 13px;
 }
@@ -1443,6 +1498,10 @@ onBeforeUnmount(() => {
 
 .thread-desc {
   margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
   color: #334155;
   line-height: 1.85;
   white-space: pre-wrap;
@@ -1450,8 +1509,10 @@ onBeforeUnmount(() => {
 
 .comment-panel {
   margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px dashed #cbd5e1;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.78);
 }
 
 .comment-title {

@@ -221,11 +221,15 @@
                 </div>
 
                 <div v-if="imagePreviewUrl" class="image-preview-panel">
-                  <img :src="imagePreviewUrl" alt="问题照片预览" class="image-preview-thumb" />
+                  <button class="image-preview-thumb-btn" type="button" @click="openIssuePhotoPreview">
+                    <img :src="imagePreviewUrl" alt="问题照片预览" class="image-preview-thumb" />
+                    <span>点击查看大图</span>
+                  </button>
                   <div class="image-preview-meta">
                     <div class="image-preview-title">已选择问题照片</div>
                     <div class="image-preview-name">{{ imageFile?.name || '已上传图片' }}</div>
                     <div class="image-preview-actions">
+                      <button class="btn btn-light image-action-btn" type="button" @click="openIssuePhotoPreview">查看大图</button>
                       <label for="issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
                       <label for="issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
                       <button class="btn btn-secondary image-action-btn" type="button" @click="clearImage">移除图片</button>
@@ -248,6 +252,13 @@
           <div v-if="submitMessage" class="submit-toast" :class="submitMessageType">{{ submitMessage }}</div>
         </transition>
       </form>
+    </div>
+
+    <div v-if="issuePhotoPreviewVisible" class="issue-photo-preview-overlay" @click.self="closeIssuePhotoPreview">
+      <div class="issue-photo-preview-dialog">
+        <button class="issue-photo-preview-close" type="button" @click="closeIssuePhotoPreview">关闭</button>
+        <img :src="imagePreviewUrl" alt="问题照片大图预览" />
+      </div>
     </div>
   </div>
 </template>
@@ -301,6 +312,7 @@ const aiSelectedStandard = ref(null)
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const imageDraftAsset = ref(null)
+const issuePhotoPreviewVisible = ref(false)
 const issuePhotoUploadSectionRef = ref(null)
 const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
@@ -996,6 +1008,15 @@ const openIssuePhotoPicker = () => {
   document.getElementById('issue-photo-upload')?.click()
 }
 
+const openIssuePhotoPreview = () => {
+  if (!imagePreviewUrl.value) return
+  issuePhotoPreviewVisible.value = true
+}
+
+const closeIssuePhotoPreview = () => {
+  issuePhotoPreviewVisible.value = false
+}
+
 const handlePhotoDragEnter = (event) => {
   if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
   photoDragDepth += 1
@@ -1057,6 +1078,7 @@ const handleWindowPhotoPaste = async (event) => {
 }
 
 const clearImage = () => {
+  closeIssuePhotoPreview()
   imageFile.value = null
   imageDraftAsset.value = null
   revokeObjectUrl(imagePreviewUrl.value)
@@ -1242,6 +1264,7 @@ onBeforeUnmount(() => {
     clearTimeout(submitMessageTimer)
     submitMessageTimer = null
   }
+  closeIssuePhotoPreview()
   revokeObjectUrl(imagePreviewUrl.value)
 })
 </script>
@@ -1900,14 +1923,50 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.image-preview-thumb {
+.image-preview-thumb-btn {
+  position: relative;
+  display: block;
+  flex-shrink: 0;
   width: 148px;
   height: 108px;
-  object-fit: cover;
+  padding: 0;
+  border: none;
   border-radius: 14px;
+  overflow: hidden;
+  background: #f8fafc;
+  cursor: zoom-in;
+}
+
+.image-preview-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
   border: 1px solid #cbd5e1;
   background: #f8fafc;
-  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.image-preview-thumb-btn:hover .image-preview-thumb {
+  transform: scale(1.04);
+}
+
+.image-preview-thumb-btn span {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  backdrop-filter: blur(6px);
 }
 
 .image-preview-meta {
@@ -1949,6 +2008,46 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.issue-photo-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.issue-photo-preview-dialog {
+  position: relative;
+  max-width: min(980px, 96vw);
+  max-height: 92vh;
+}
+
+.issue-photo-preview-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: 92vh;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
+}
+
+.issue-photo-preview-close {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 2;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  padding: 8px 12px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .btn {
@@ -2202,10 +2301,16 @@ onBeforeUnmount(() => {
     padding: 12px;
   }
 
+  .image-preview-thumb-btn {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+  }
+
   .image-preview-thumb {
     width: 100%;
     max-width: none;
-    height: auto;
+    height: 100%;
     aspect-ratio: 4 / 3;
   }
 
