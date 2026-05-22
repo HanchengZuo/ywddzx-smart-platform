@@ -21,42 +21,81 @@
         </div>
         <div class="filter-item filter-item-station">
           <label>站点</label>
-          <div class="search-select" ref="stationSelectRef">
-            <input v-model="filters.station" type="text" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
-              @input="openFilterDropdown('station')" />
-            <div v-if="dropdownVisible.station" class="search-select-dropdown">
-              <div v-for="option in filteredStationOptions" :key="option" class="search-select-option"
-                @click="selectFilterOption('station', option)">
-                <div class="option-main">{{ option }}</div>
+          <div class="search-select multi-search-select" ref="stationSelectRef">
+            <div class="multi-select-control" @click="focusMultiFilterInput('station')">
+              <div class="multi-selected-values">
+                <span v-for="value in filters.station" :key="`station-${value}`" class="multi-selected-chip">
+                  {{ value }}
+                  <button type="button" @click.stop="removeMultiFilterValue('station', value)">×</button>
+                </span>
+                <input ref="stationFilterInputRef" v-model="filterSearch.station" type="text"
+                  :placeholder="filters.station.length ? '继续搜索站点' : '搜索并多选站点'"
+                  @focus="openFilterDropdown('station')" @input="openFilterDropdown('station')" />
               </div>
+              <span v-if="filters.station.length" class="multi-selected-count">已选 {{ filters.station.length }}</span>
+            </div>
+            <div v-if="dropdownVisible.station" class="search-select-dropdown">
+              <button v-for="option in filteredStationOptions" :key="option" type="button"
+                class="search-select-option multi-select-option"
+                :class="{ selected: isMultiFilterSelected('station', option) }"
+                @mousedown.prevent @click="toggleMultiFilter('station', option)">
+                <span class="multi-option-check">{{ isMultiFilterSelected('station', option) ? '✓' : '' }}</span>
+                <div class="option-main">{{ option }}</div>
+              </button>
               <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点</div>
             </div>
           </div>
         </div>
         <div class="filter-item filter-item-table">
           <label>检查表</label>
-          <div class="search-select" ref="inspectionTableSelectRef">
-            <input v-model="filters.inspectionTableName" type="text" placeholder="搜索或选择检查表"
-              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
-            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
-              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
-                @click="selectFilterOption('inspectionTableName', option)">
-                <div class="option-main">{{ option }}</div>
+          <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
+            <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
+              <div class="multi-selected-values">
+                <span v-for="value in filters.inspectionTableName" :key="`table-${value}`" class="multi-selected-chip">
+                  {{ value }}
+                  <button type="button" @click.stop="removeMultiFilterValue('inspectionTableName', value)">×</button>
+                </span>
+                <input ref="inspectionTableFilterInputRef" v-model="filterSearch.inspectionTableName" type="text"
+                  :placeholder="filters.inspectionTableName.length ? '继续搜索检查表' : '搜索并多选检查表'"
+                  @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
               </div>
+              <span v-if="filters.inspectionTableName.length" class="multi-selected-count">已选 {{ filters.inspectionTableName.length }}</span>
+            </div>
+            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
+              <button v-for="option in filteredInspectionTableOptions" :key="option" type="button"
+                class="search-select-option multi-select-option"
+                :class="{ selected: isMultiFilterSelected('inspectionTableName', option) }"
+                @mousedown.prevent @click="toggleMultiFilter('inspectionTableName', option)">
+                <span class="multi-option-check">{{ isMultiFilterSelected('inspectionTableName', option) ? '✓' : '' }}</span>
+                <div class="option-main">{{ option }}</div>
+              </button>
               <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
             </div>
           </div>
         </div>
         <div class="filter-item filter-item-inspector">
           <label>检查人</label>
-          <div class="search-select" ref="inspectorSelectRef">
-            <input v-model="filters.inspector" type="text" placeholder="搜索或选择检查人"
-              @focus="openFilterDropdown('inspector')" @input="openFilterDropdown('inspector')" />
-            <div v-if="dropdownVisible.inspector" class="search-select-dropdown">
-              <div v-for="option in filteredInspectorOptions" :key="option" class="search-select-option"
-                @click="selectFilterOption('inspector', option)">
-                <div class="option-main">{{ option }}</div>
+          <div class="search-select multi-search-select" ref="inspectorSelectRef">
+            <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
+              <div class="multi-selected-values">
+                <span v-for="value in filters.inspector" :key="`inspector-${value}`" class="multi-selected-chip">
+                  {{ value }}
+                  <button type="button" @click.stop="removeMultiFilterValue('inspector', value)">×</button>
+                </span>
+                <input ref="inspectorFilterInputRef" v-model="filterSearch.inspector" type="text"
+                  :placeholder="filters.inspector.length ? '继续搜索检查人' : '搜索并多选检查人'"
+                  @focus="openFilterDropdown('inspector')" @input="openFilterDropdown('inspector')" />
               </div>
+              <span v-if="filters.inspector.length" class="multi-selected-count">已选 {{ filters.inspector.length }}</span>
+            </div>
+            <div v-if="dropdownVisible.inspector" class="search-select-dropdown">
+              <button v-for="option in filteredInspectorOptions" :key="option" type="button"
+                class="search-select-option multi-select-option"
+                :class="{ selected: isMultiFilterSelected('inspector', option) }"
+                @mousedown.prevent @click="toggleMultiFilter('inspector', option)">
+                <span class="multi-option-check">{{ isMultiFilterSelected('inspector', option) ? '✓' : '' }}</span>
+                <div class="option-main">{{ option }}</div>
+              </button>
               <div v-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人</div>
             </div>
           </div>
@@ -588,9 +627,9 @@ import { pinyin } from 'pinyin-pro'
 
 const filters = ref({
   date: '',
-  station: '',
-  inspectionTableName: '',
-  inspector: '',
+  station: [],
+  inspectionTableName: [],
+  inspector: [],
   result: '',
   signStatus: '',
   completionStatus: ''
@@ -599,6 +638,15 @@ const filters = ref({
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const inspectorSelectRef = ref(null)
+const stationFilterInputRef = ref(null)
+const inspectionTableFilterInputRef = ref(null)
+const inspectorFilterInputRef = ref(null)
+
+const filterSearch = ref({
+  station: '',
+  inspectionTableName: '',
+  inspector: ''
+})
 
 const dropdownVisible = ref({
   station: false,
@@ -712,6 +760,22 @@ const filterStationOptionByKeyword = (options, keyword) => {
   return options.filter((item) => matchesSmartSearch([item], keyword))
 }
 
+const getMultiFilterValues = (key) => Array.isArray(filters.value[key]) ? filters.value[key] : []
+
+const matchesAnySelectedText = (value, selectedValues) => {
+  const selected = Array.isArray(selectedValues) ? selectedValues : []
+  if (!selected.length) return true
+  const normalizedValue = normalizedKeyword(value)
+  return selected.some((item) => normalizedValue === normalizedKeyword(item))
+}
+
+const matchesSelectedInspector = (record, selectedValues) => {
+  const selected = Array.isArray(selectedValues) ? selectedValues : []
+  if (!selected.length) return true
+  const searchValues = getInspectionInspectorSearchValues(record)
+  return selected.some((item) => matchesSmartSearch(searchValues, item))
+}
+
 const getInspectionInspectorSearchValues = (record) => {
   const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
   const inspectorValues = inspectors.flatMap((item) => [
@@ -745,9 +809,9 @@ const getInspectionInspectorOptionValues = (record) => {
 const filteredData = computed(() => {
   return list.value.filter((item) => {
     const matchedDate = !filters.value.date || item.date === filters.value.date
-    const matchedStation = !filters.value.station || matchesSmartSearch([item.station], filters.value.station)
-    const matchedInspectionTableName = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
-    const matchedInspector = !filters.value.inspector || matchesSmartSearch(getInspectionInspectorSearchValues(item), filters.value.inspector)
+    const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
+    const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
+    const matchedInspector = matchesSelectedInspector(item, filters.value.inspector)
     const matchedResult = !filters.value.result || item.result === filters.value.result
     const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
     const matchedCompletionStatus = !filters.value.completionStatus || getRecordCompletionFilterStatus(item) === filters.value.completionStatus
@@ -760,9 +824,9 @@ const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) 
 const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
 const inspectorOptions = computed(() => uniqueSortedOptions(list.value.flatMap(getInspectionInspectorOptionValues)))
 
-const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filters.value.station))
-const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
-const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(inspectorOptions.value, filters.value.inspector))
+const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filterSearch.value.station))
+const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
+const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(inspectorOptions.value, filterSearch.value.inspector))
 
 const getRecordSignFilterStatus = (record) => {
   return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
@@ -1549,12 +1613,17 @@ const fetchInspections = async () => {
 const resetFilters = () => {
   filters.value = {
     date: '',
-    station: '',
-    inspectionTableName: '',
-    inspector: '',
+    station: [],
+    inspectionTableName: [],
+    inspector: [],
     result: '',
     signStatus: '',
     completionStatus: ''
+  }
+  filterSearch.value = {
+    station: '',
+    inspectionTableName: '',
+    inspector: ''
   }
   closeAllDropdowns()
 }
@@ -1582,9 +1651,32 @@ const openFilterDropdown = (key) => {
   dropdownVisible.value[key] = true
 }
 
-const selectFilterOption = (key, value) => {
-  filters.value[key] = value
-  dropdownVisible.value[key] = false
+const isMultiFilterSelected = (key, value) => {
+  return getMultiFilterValues(key).includes(value)
+}
+
+const toggleMultiFilter = (key, value) => {
+  const selected = getMultiFilterValues(key)
+  filters.value[key] = selected.includes(value)
+    ? selected.filter((item) => item !== value)
+    : [...selected, value]
+  filterSearch.value[key] = ''
+  dropdownVisible.value[key] = true
+}
+
+const removeMultiFilterValue = (key, value) => {
+  filters.value[key] = getMultiFilterValues(key).filter((item) => item !== value)
+}
+
+const focusMultiFilterInput = async (key) => {
+  openFilterDropdown(key)
+  await nextTick()
+  const refMap = {
+    station: stationFilterInputRef,
+    inspectionTableName: inspectionTableFilterInputRef,
+    inspector: inspectorFilterInputRef
+  }
+  refMap[key]?.value?.focus()
 }
 
 const closeAllDropdowns = () => {
@@ -1742,9 +1834,94 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.multi-search-select {
+  min-width: 0;
+}
+
 .search-select input {
   width: 100%;
   box-sizing: border-box;
+}
+
+.multi-select-control {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 5px 8px;
+  background: #fff;
+  box-sizing: border-box;
+  cursor: text;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.multi-select-control:focus-within {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.multi-selected-values {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.multi-selected-values input {
+  flex: 1 1 110px;
+  min-width: 88px;
+  height: 30px;
+  border: none;
+  outline: none;
+  padding: 0 4px;
+  background: transparent;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.multi-selected-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.multi-selected-chip button {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-weight: 900;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.multi-selected-count {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .search-select-dropdown {
@@ -1765,6 +1942,37 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   cursor: pointer;
   border-bottom: 1px solid #eef2f7;
+}
+
+.multi-select-option {
+  width: 100%;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  background: #fff;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.multi-select-option.selected {
+  background: #eff6ff;
+}
+
+.multi-option-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid #bfdbfe;
+  background: #fff;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+  flex: 0 0 auto;
 }
 
 .search-select-option:last-child {
@@ -1798,6 +2006,15 @@ onBeforeUnmount(() => {
   font-size: 14px;
   box-sizing: border-box;
   color-scheme: light;
+}
+
+.filter-item .multi-selected-values input {
+  height: 30px;
+  border: none;
+  border-radius: 0;
+  padding: 0 4px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .filter-item select {
@@ -3018,6 +3235,11 @@ onBeforeUnmount(() => {
     padding: 0 12px;
   }
 
+  .filter-item .multi-selected-values input {
+    height: 32px;
+    padding: 0 4px;
+  }
+
   .filter-item-date input,
   .filter-item-result select,
   .filter-item-signature select {
@@ -3060,6 +3282,14 @@ onBeforeUnmount(() => {
     border-radius: 15px;
     border-color: #dbe4ee;
     background: #fff;
+  }
+
+  .filter-item-station .multi-selected-values input,
+  .filter-item-table .multi-selected-values input,
+  .filter-item-inspector .multi-selected-values input {
+    border: none;
+    border-radius: 0;
+    background: transparent;
   }
 
   .search-select-dropdown {

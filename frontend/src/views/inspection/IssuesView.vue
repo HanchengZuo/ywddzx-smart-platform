@@ -453,6 +453,16 @@
           </div>
 
           <div class="issue-edit-grid">
+            <label v-if="editDialog.issue?.can_change_issue_inspector" class="issue-edit-field issue-edit-field-wide">
+              <span>检查人归属</span>
+              <select v-model="editDialog.form.inspector_id" :disabled="inspectorUserLoading">
+                <option value="">{{ inspectorUserLoading ? '正在加载检查人...' : '请选择检查人' }}</option>
+                <option v-for="inspector in inspectorUserOptions" :key="inspector.id" :value="inspector.id">
+                  {{ inspectorUserLabel(inspector) }}
+                </option>
+              </select>
+              <small class="field-help">仅 root 可调整。保存后该问题会挂到新的检查人名下，巡检记录参与人同步更新。</small>
+            </label>
             <div class="issue-edit-field issue-edit-field-wide">
               <span>编辑{{ editStandardInputLabel }}</span>
               <div class="edit-standard-panel">
@@ -798,6 +808,8 @@ const editStandards = ref([])
 const editStandardFields = ref([])
 const editStandardDropdownVisible = ref(false)
 const editStandardLoading = ref(false)
+const inspectorUserOptions = ref([])
+const inspectorUserLoading = ref(false)
 const editIssuePhotoDragActive = ref(false)
 const editIssuePhotoUploadSectionRef = ref(null)
 let editIssuePhotoDragDepth = 0
@@ -814,6 +826,7 @@ const editDialog = ref({
   form: {
     standard_id: '',
     internal_standard_id: '',
+    inspector_id: '',
     description: '',
     status: '待整改',
     rectification_result: '',
@@ -926,13 +939,16 @@ const mobilePageNumbers = computed(() => (
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
+const canChangeIssueInspectors = computed(() => currentRole === 'root' || list.value.some((item) => item?.can_change_issue_inspector))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
   canDeleteIssues.value ||
+  canChangeIssueInspectors.value ||
   list.value.some((item) => (
     item?.can_edit_issue ||
     item?.can_delete_issue ||
-    item?.can_update_rectification_photo
+    item?.can_update_rectification_photo ||
+    item?.can_change_issue_inspector
   ))
 ))
 const issueTableColspan = computed(() => canManageIssues.value ? 22 : 21)
@@ -1168,6 +1184,41 @@ const fetchEditStandardReferenceData = async () => {
   }
 }
 
+const fetchInspectorUserOptions = async () => {
+  if (currentRole !== 'root') {
+    inspectorUserOptions.value = []
+    return
+  }
+  try {
+    inspectorUserLoading.value = true
+    const response = await axios.get('/api/users', {
+      params: { _ts: Date.now() }
+    })
+    inspectorUserOptions.value = (response.data || [])
+      .filter((item) => ['root', 'supervisor'].includes(item.role))
+      .map((item) => ({
+        id: String(item.id),
+        username: item.username || '',
+        real_name: item.real_name || '',
+        phone: item.phone || '',
+        role: item.role || ''
+      }))
+  } catch (error) {
+    inspectorUserOptions.value = []
+    showActionMessage(error?.response?.data?.error || '检查人列表加载失败。', 'error')
+  } finally {
+    inspectorUserLoading.value = false
+  }
+}
+
+const inspectorUserLabel = (item = {}) => {
+  const name = item.real_name || item.username || `用户${item.id}`
+  const extras = [item.username && item.username !== name ? item.username : '', item.phone]
+    .filter(Boolean)
+    .join('｜')
+  return extras ? `${name}（${extras}）` : name
+}
+
 const resetFilters = () => {
   filters.value = {
     month: '',
@@ -1232,6 +1283,7 @@ const showActionMessage = (text, type = 'info') => {
 const createIssueEditForm = (item = {}) => ({
   standard_id: item.standard_id ? String(item.standard_id) : '',
   internal_standard_id: item.internal_standard_id ? String(item.internal_standard_id).toUpperCase() : '',
+  inspector_id: item.inspector_user_id || item.inspector_id ? String(item.inspector_user_id || item.inspector_id) : '',
   description: item.description || '',
   status: item.status || '待整改',
   rectification_result: item.rectification_result || '',
@@ -1271,7 +1323,10 @@ const openEditDialog = async (item) => {
   editStandardDropdownVisible.value = false
   editIssuePhotoDragActive.value = false
   editIssuePhotoDragDepth = 0
-  await fetchEditStandardReferenceData()
+  await Promise.all([
+    fetchEditStandardReferenceData(),
+    fetchInspectorUserOptions()
+  ])
   syncEditStandardSearch()
 }
 
@@ -2724,6 +2779,14 @@ onBeforeUnmount(() => {
 .issue-edit-field select {
   height: 42px;
   padding: 0 12px;
+}
+
+.field-help {
+  display: block;
+  margin-top: 7px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .issue-edit-field input[type="file"] {

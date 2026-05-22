@@ -392,6 +392,11 @@ const scopedPermissionLayouts = {
         key: 'creator_issue_controls',
         name: '编辑/删除自己提交的问题',
         description: '通用规则：督导组成员提交的问题，在站点尚未整改反馈前，可自动维护自己的问题描述和照片。'
+      },
+      {
+        key: 'root_change_issue_inspector',
+        name: '调整问题检查人归属',
+        description: 'root 固定拥有：可把单条巡检问题改挂到其他检查人名下，普通账号不能配置。'
       }
     ]
   },

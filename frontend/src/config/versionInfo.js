@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v1.9.3',
+    date: '2026-05-22',
+    title: '筛选和归属调整',
+    summary: '巡检记录筛选更灵活，root 可修正问题检查人归属。',
+    items: [
+      '巡检记录的站点、检查表和检查人支持多选筛选。',
+      'root 可在编辑巡检问题时调整检查人归属。',
+      '用户权限页新增检查人归属调整的只读规则说明。'
+    ]
+  },
+  {
     version: 'v1.9.2',
     date: '2026-05-22',
     title: '筛选功能补充',

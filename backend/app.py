@@ -3467,6 +3467,10 @@ def can_delete_inspection_issues(cur, user):
     return has_permission(cur, user, "delete_inspection_issues")
 
 
+def can_change_issue_inspector(user):
+    return is_root_user(user)
+
+
 def canonical_issue_status(value):
     normalized = str(value or "").strip()
     return ISSUE_STATUS_ALIASES.get(normalized, normalized)
@@ -3532,6 +3536,7 @@ def normalize_issue_row_for_response(
     row, user=None, can_explicit_edit=False, can_explicit_delete=False
 ):
     data = dict(row)
+    data["inspector_user_id"] = data.get("inspector_id")
     if "status" in data:
         data["status"] = canonical_issue_status(data.get("status"))
     for key in ("rectification_result", "review_result"):
@@ -3555,6 +3560,9 @@ def normalize_issue_row_for_response(
     )
     data["can_update_rectification_photo"] = can_user_update_rectification_photo(
         user, data, can_explicit_edit
+    )
+    data["can_change_issue_inspector"] = bool(
+        not inspection_completed and can_change_issue_inspector(user)
     )
     data.pop("inspector_id", None)
     return data
@@ -5693,12 +5701,13 @@ def resolve_issue_standard_edit_target(
     }
 
 
-def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id):
+def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id, target_inspector_id=None):
     current_table_id = int(issue["inspection_table_id"])
     target_table_id = int(target_inspection_table_id)
     if current_table_id == target_table_id:
         return int(issue["inspection_id"])
 
+    next_inspector_id = int(target_inspector_id or issue["inspector_id"])
     period = get_inspection_completion_config(cur)["record_uniqueness_period"]
     lock_inspection_period_scope(
         cur,
@@ -5733,13 +5742,41 @@ def get_or_create_issue_edit_inspection(cur, issue, target_inspection_table_id):
         """,
         (
             issue["station_id"],
-            issue["inspector_id"],
+            next_inspector_id,
             target_table_id,
             issue["inspection_date"],
             issue.get("batch_id"),
         ),
     )
     return int(cur.fetchone()["id"])
+
+
+def sync_inspection_primary_inspector(cur, inspection_id):
+    if not inspection_id:
+        return
+    cur.execute(
+        """
+        SELECT inspector_id
+        FROM issues
+        WHERE inspection_id = %s
+          AND inspector_id IS NOT NULL
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1;
+        """,
+        (inspection_id,),
+    )
+    row = cur.fetchone()
+    if not row or not row.get("inspector_id"):
+        return
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_id = %s
+        WHERE id = %s
+          AND inspector_id <> %s;
+        """,
+        (row["inspector_id"], inspection_id, row["inspector_id"]),
+    )
 
 
 def cleanup_empty_inspection_after_issue_move(cur, inspection_id):
@@ -11659,6 +11696,7 @@ def update_issue(issue_id):
     review_note = str(data.get("review_note", "")).strip() or None
     standard_id = str(data.get("standard_id", "")).strip()
     internal_standard_id = str(data.get("internal_standard_id", "")).strip().upper()
+    inspector_id = str(data.get("inspector_id", "")).strip()
     issue_photo = request.files.get("issue_photo")
 
     if not user_id:
@@ -11768,6 +11806,25 @@ def update_issue(issue_id):
         ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
+        target_inspector_id = int(issue["inspector_id"])
+        if inspector_id:
+            try:
+                requested_inspector_id = int(inspector_id)
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "检查人参数不合法。"}), 400
+
+            if requested_inspector_id != int(issue["inspector_id"]):
+                if not can_change_issue_inspector(user):
+                    return jsonify({"success": False, "error": "只有 root 账号可以修改问题检查人归属。"}), 403
+                target_inspector = get_user_by_id(cur, requested_inspector_id)
+                if not target_inspector:
+                    return jsonify({"success": False, "error": "目标检查人不存在。"}), 404
+                if not is_supervisor_like(target_inspector) and not has_permission(
+                    cur, target_inspector, "submit_inspections"
+                ):
+                    return jsonify({"success": False, "error": "目标检查人必须具备巡检登记权限。"}), 400
+                target_inspector_id = requested_inspector_id
+
         current_standard = {
             "inspection_table_id": int(issue["inspection_table_id"]),
             "standard_id": int(issue["standard_id"]),
@@ -11779,11 +11836,11 @@ def update_issue(issue_id):
         if usage_mode["mode"] == "internal":
             if internal_standard_id or issue.get("internal_standard_id"):
                 target_standard = resolve_issue_standard_edit_target(
-                cur,
-                "internal",
-                internal_standard_id=internal_standard_id or issue.get("internal_standard_id"),
-                preferred_external_standard_id=issue.get("standard_id"),
-            )
+                    cur,
+                    "internal",
+                    internal_standard_id=internal_standard_id or issue.get("internal_standard_id"),
+                    preferred_external_standard_id=issue.get("standard_id"),
+                )
             else:
                 target_standard = current_standard
         else:
@@ -11797,6 +11854,7 @@ def update_issue(issue_id):
             cur,
             issue,
             target_standard["inspection_table_id"],
+            target_inspector_id,
         )
         old_inspection_id = int(issue["inspection_id"])
         new_photo_path = save_uploaded_file(issue_photo, "issues") if issue_photo and issue_photo.filename else None
@@ -11805,6 +11863,7 @@ def update_issue(issue_id):
             """
             UPDATE issues
             SET description = %s,
+                inspector_id = %s,
                 inspection_id = %s,
                 inspection_table_id = %s,
                 standard_id = %s,
@@ -11821,6 +11880,7 @@ def update_issue(issue_id):
             """,
             (
                 description,
+                target_inspector_id,
                 target_inspection_id,
                 target_standard["inspection_table_id"],
                 target_standard["standard_id"],
@@ -11843,7 +11903,9 @@ def update_issue(issue_id):
             target_inspection_id,
             issue["inspection_date"],
         )
+        sync_inspection_primary_inspector(cur, target_inspection_id)
         if old_inspection_id != int(target_inspection_id):
+            sync_inspection_primary_inspector(cur, old_inspection_id)
             cleanup_empty_inspection_after_issue_move(cur, old_inspection_id)
 
         conn.commit()
@@ -11934,6 +11996,7 @@ def delete_issue(issue_id):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
         cur.execute("DELETE FROM issues WHERE id = %s;", (issue_id,))
+        sync_inspection_primary_inspector(cur, issue["inspection_id"])
 
         # 巡检主记录和计划完成痕迹保留，记录结果由剩余问题数聚合自动体现。
         conn.commit()
