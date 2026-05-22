@@ -298,7 +298,7 @@ STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
 INSPECTION_COMPLETION_PENDING = "待检查人确认"
 INSPECTION_COMPLETION_DONE = "已确认完成"
-INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin"}
+INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin", "signature", "admin_reopen"}
 DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
 DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
 INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
@@ -2892,6 +2892,23 @@ def ensure_inspection_completion_schema(cur):
     )
     cur.execute(
         """
+        UPDATE inspections
+        SET inspector_completion_status = '已确认完成',
+            inspector_completed_at = COALESCE(
+                inspector_completed_at,
+                station_manager_signed_at,
+                updated_at,
+                created_at,
+                CURRENT_TIMESTAMP
+            ),
+            inspector_completion_source = COALESCE(NULLIF(inspector_completion_source, ''), 'signature'),
+            updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+        WHERE sign_status = '已签名确认'
+          AND inspector_completion_status <> '已确认完成';
+        """
+    )
+    cur.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_inspections_station_table_month
         ON inspections (station_id, inspection_table_id, inspection_date);
         """
@@ -3042,7 +3059,9 @@ def auto_complete_overdue_inspections(cur):
             inspector_completion_source = 'auto',
             updated_at = CURRENT_TIMESTAMP
         WHERE inspector_completion_status <> %s
-          AND inspection_date <= %s;
+          AND inspection_date <= %s
+          AND COALESCE(sign_status, '') <> '已签名确认'
+          AND COALESCE(inspector_completion_source, '') <> 'admin_reopen';
         """,
         (INSPECTION_COMPLETION_DONE, INSPECTION_COMPLETION_DONE, cutoff_date),
     )
@@ -3206,7 +3225,31 @@ def inspection_completion_source_label(value):
         "manual": "检查人手动确认",
         "auto": "系统自动确认",
         "admin": "后台管理确认",
+        "signature": "站经理签字确认",
+        "admin_reopen": "后台恢复未完成",
     }.get(str(value or ""), "")
+
+
+def sync_signed_inspections_completion(cur):
+    cur.execute(
+        """
+        UPDATE inspections
+        SET inspector_completion_status = %s,
+            inspector_completed_at = COALESCE(
+                inspector_completed_at,
+                station_manager_signed_at,
+                updated_at,
+                created_at,
+                CURRENT_TIMESTAMP
+            ),
+            inspector_completion_source = COALESCE(NULLIF(inspector_completion_source, ''), 'signature'),
+            updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+        WHERE sign_status = '已签名确认'
+          AND inspector_completion_status <> %s;
+        """,
+        (INSPECTION_COMPLETION_DONE, INSPECTION_COMPLETION_DONE),
+    )
+    return cur.rowcount
 
 
 def complete_inspection_record(cur, inspection_id, user_id=None, source="manual"):
@@ -3240,9 +3283,10 @@ def reopen_inspection_record(cur, inspection_id):
         SET inspector_completion_status = %s,
             inspector_completed_by = NULL,
             inspector_completed_at = NULL,
-            inspector_completion_source = NULL,
+            inspector_completion_source = 'admin_reopen',
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = %s;
+        WHERE id = %s
+          AND COALESCE(sign_status, '') <> '已签名确认';
         """,
         (INSPECTION_COMPLETION_PENDING, inspection_id),
     )
@@ -6201,6 +6245,7 @@ def sign_inspection_record(inspection_id):
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
+        sync_signed_inspections_completion(cur)
         auto_complete_overdue_inspections(cur)
         conn.commit()
 
@@ -6276,6 +6321,7 @@ def sign_inspection_record(inspection_id):
             )
 
         signature_path = save_signature_file(signature_file)
+        signed_at = beijing_now()
 
         cur.execute(
             """
@@ -6283,13 +6329,33 @@ def sign_inspection_record(inspection_id):
             SET sign_status = '已签名确认',
                 station_manager_signed_name = %s,
                 station_manager_signature_path = %s,
-                station_manager_signed_at = %s
+                station_manager_signed_at = %s,
+                inspector_completion_status = %s,
+                inspector_completed_by = CASE
+                    WHEN inspector_completion_status = %s THEN inspector_completed_by
+                    ELSE %s
+                END,
+                inspector_completed_at = CASE
+                    WHEN inspector_completion_status = %s THEN inspector_completed_at
+                    ELSE %s
+                END,
+                inspector_completion_source = CASE
+                    WHEN inspector_completion_status = %s THEN inspector_completion_source
+                    ELSE 'signature'
+                END,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = %s;
             """,
             (
                 signed_name,
                 signature_path,
-                beijing_now(),
+                signed_at,
+                INSPECTION_COMPLETION_DONE,
+                INSPECTION_COMPLETION_DONE,
+                user_id,
+                INSPECTION_COMPLETION_DONE,
+                signed_at,
+                INSPECTION_COMPLETION_DONE,
                 inspection_id,
             ),
         )
@@ -11350,6 +11416,7 @@ def get_my_issues():
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
+        sync_signed_inspections_completion(cur)
         auto_complete_overdue_inspections(cur)
         conn.commit()
 
@@ -12275,6 +12342,7 @@ def get_management_inspection_completion():
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
+        sync_signed_inspections_completion(cur)
         actor = require_management_user(cur, user_id, "manage_inspection_completion")
         auto_completed_count = auto_complete_overdue_inspections(cur)
         config = get_inspection_completion_config(cur)
@@ -12292,6 +12360,8 @@ def get_management_inspection_completion():
                 t.table_name AS inspection_table_name,
                 COUNT(i.id) AS issue_count,
                 ins.sign_status,
+                ins.station_manager_signed_name,
+                TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
                 ins.inspector_completion_status,
                 ins.inspector_completion_source,
                 TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
@@ -12317,6 +12387,8 @@ def get_management_inspection_completion():
                 s.region,
                 t.table_name,
                 ins.sign_status,
+                ins.station_manager_signed_name,
+                ins.station_manager_signed_at,
                 ins.inspector_completion_status,
                 ins.inspector_completion_source,
                 ins.inspector_completed_at,
@@ -12456,6 +12528,21 @@ def reopen_management_inspection_record(inspection_id):
         cur = conn.cursor()
         require_management_user(cur, user_id, "manage_inspection_completion")
         ensure_inspection_completion_schema(cur)
+        sync_signed_inspections_completion(cur)
+        cur.execute(
+            """
+            SELECT id, sign_status
+            FROM inspections
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (inspection_id,),
+        )
+        inspection = cur.fetchone()
+        if not inspection:
+            return jsonify({"success": False, "error": "该巡检记录不存在。"}), 404
+        if inspection.get("sign_status") == "已签名确认":
+            return jsonify({"success": False, "error": "站经理已签字确认的巡检记录不能恢复为未完成。"}), 400
         updated = reopen_inspection_record(cur, inspection_id)
         if updated == 0:
             return jsonify({"success": False, "error": "该巡检记录不存在。"}), 404

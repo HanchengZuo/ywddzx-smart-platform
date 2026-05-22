@@ -62,7 +62,7 @@
       <div class="card-surface rule-card">
         <div class="section-kicker">业务规则</div>
         <h3>当前执行逻辑</h3>
-        <p>签字确认和未发现问题不再自动封存；只有检查人完成确认或自动到期确认后，才禁止继续新增、编辑、删除该检查表问题。</p>
+        <p>站经理签字确认、检查人完成确认或自动到期确认都会封存巡检记录，封存后禁止继续新增、编辑、删除该检查表问题。</p>
         <p>同一站点同一检查表在同一{{ recordPeriodLabel }}只保留一条巡检记录，未确认完成前跨天继续写入同一条记录。</p>
         <p>系统会读取提交当天所属的真实日历周期；例如设置为自然月时，月底录入后第二天跨月即可重新登记。</p>
       </div>
@@ -147,7 +147,7 @@
               <td>{{ record.inspector_names || '-' }}</td>
               <td>
                 <span :class="['status-chip', isCompleted(record) ? 'success' : 'warning']">
-                  {{ record.inspector_completion_status || '待检查人确认' }}
+                  {{ completionStatusLabel(record) }}
                 </span>
                 <small v-if="isCompleted(record)" class="status-meta">
                   {{ completionMeta(record) }}
@@ -164,10 +164,12 @@
                     :disabled="actingId === record.id" @click="confirmComplete(record)">
                     后台确认
                   </button>
-                  <button v-else class="btn btn-secondary btn-sm" type="button" :disabled="actingId === record.id"
-                    @click="reopenRecord(record)">
+                  <button v-else class="btn btn-secondary btn-sm" type="button"
+                    :disabled="actingId === record.id || isSigned(record)"
+                    :title="isSigned(record) ? '站经理已签字确认，不能恢复未完成' : ''" @click="reopenRecord(record)">
                     恢复未完成
                   </button>
+                  <small v-if="isSigned(record)" class="action-hint">站经理已签字，不能恢复</small>
                 </div>
               </td>
             </tr>
@@ -272,7 +274,8 @@ const showMessage = (text, type = 'info') => {
   }, 2600)
 }
 
-const isCompleted = (record) => record?.inspector_completion_status === '已确认完成'
+const isSigned = (record) => record?.sign_status === '已签名确认'
+const isCompleted = (record) => record?.inspector_completion_status === '已确认完成' || isSigned(record)
 const pendingCount = computed(() => records.value.filter((record) => !isCompleted(record)).length)
 const completedCount = computed(() => records.value.filter(isCompleted).length)
 const periodLabels = {
@@ -343,10 +346,22 @@ const paginatedRecords = computed(() => {
 })
 
 const completionMeta = (record) => {
+  if (isSigned(record) && (
+    !record.inspector_completion_source_label ||
+    record.inspector_completion_source === 'signature'
+  )) {
+    const signedName = record.station_manager_signed_name || ''
+    const signedAt = record.station_manager_signed_at || record.inspector_completed_at || ''
+    return ['站经理签字确认', signedName, signedAt].filter(Boolean).join('｜') || '站经理签字确认'
+  }
   const source = record.inspector_completion_source_label || ''
   const by = record.inspector_completed_by_name || record.inspector_completed_by_username || ''
   const at = record.inspector_completed_at || ''
   return [source, by, at].filter(Boolean).join('｜') || '已确认完成'
+}
+
+const completionStatusLabel = (record) => {
+  return isCompleted(record) ? '已确认完成' : record?.inspector_completion_status || '待检查人确认'
 }
 
 const applyConfig = (nextConfig = {}) => {
@@ -413,6 +428,10 @@ const confirmComplete = async (record) => {
 
 const reopenRecord = async (record) => {
   if (!record?.id || actingId.value) return
+  if (isSigned(record)) {
+    showMessage('站经理已签字确认的巡检记录不能恢复为未完成。', 'error')
+    return
+  }
   if (!window.confirm(`确认将【${record.station_name}｜${record.inspection_table_name}】恢复为未完成吗？恢复后仍受当前自然周期唯一记录规则限制。`)) return
   try {
     actingId.value = record.id
@@ -610,6 +629,17 @@ td small,
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.table-actions {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.action-hint {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .filter-grid {
