@@ -320,6 +320,7 @@ INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin", "signature", "admin_
 DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
 DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
 INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
+ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
@@ -2799,6 +2800,9 @@ def fetch_standard_from_table(cur, physical_table_name, standard_id):
 
 
 def ensure_issue_inspector_schema(cur):
+    global ISSUE_INSPECTOR_SCHEMA_READY
+    if ISSUE_INSPECTOR_SCHEMA_READY:
+        return
     acquire_schema_migration_lock(cur)
     cur.execute("SELECT to_regclass('public.issues') AS table_name;")
     if not cur.fetchone().get("table_name"):
@@ -2885,6 +2889,7 @@ def ensure_issue_inspector_schema(cur):
         ON issues (audit_status);
         """
     )
+    ISSUE_INSPECTOR_SCHEMA_READY = True
 
 
 def create_inspection_record(

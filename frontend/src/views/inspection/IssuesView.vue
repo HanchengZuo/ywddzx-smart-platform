@@ -88,19 +88,26 @@
           </div>
 
           <div class="mobile-card-images">
-            <button class="mobile-image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
-              <img :src="resolveImage(item.issue_photo)" class="mobile-thumb" alt="问题照片" />
+            <button v-if="item.issue_photo" class="mobile-image-btn" type="button"
+              @click="preview(resolveImage(item.issue_photo), '问题照片')">
+              <img v-if="listImagesReady" :src="resolveImage(item.issue_photo)" class="mobile-thumb" alt="问题照片"
+                loading="lazy" decoding="async" fetchpriority="low" />
+              <span v-else class="mobile-thumb-placeholder">问题照片</span>
               <span>问题照片</span>
             </button>
 
             <button v-if="item.rectification_photo" class="mobile-image-btn" type="button"
               @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
-              <img :src="resolveImage(item.rectification_photo)" class="mobile-thumb" alt="站点反馈整改照片" />
+              <img v-if="listImagesReady" :src="resolveImage(item.rectification_photo)" class="mobile-thumb"
+                alt="站点反馈整改照片" loading="lazy" decoding="async" fetchpriority="low" />
+              <span v-else class="mobile-thumb-placeholder">整改照片</span>
               <span>整改照片</span>
             </button>
             <button v-if="item.review_photo" class="mobile-image-btn" type="button"
               @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-              <img :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片" />
+              <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="mobile-thumb" alt="督导组复核照片"
+                loading="lazy" decoding="async" fetchpriority="low" />
+              <span v-else class="mobile-thumb-placeholder">复核照片</span>
               <span>复核照片</span>
             </button>
           </div>
@@ -147,20 +154,36 @@
       <div v-if="!loading && filteredData.length" class="pagination-bar mobile-pagination-bar card-surface">
         <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
         <div class="pagination-controls">
-          <label>每页显示</label>
-          <select v-model.number="pageSize">
-            <option v-for="size in pageSizeOptions" :key="`mobile-${size}`" :value="size">{{ size }}</option>
-          </select>
-          <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <div class="page-jump-strip mobile-page-track" :class="{ 'is-scrollable': mobilePageNumbers.length > 5 }"
-            aria-label="页码跳转">
-            <button v-for="pageNumber in mobilePageNumbers" :key="`mobile-page-${pageNumber}`" type="button"
-              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
-              {{ pageNumber }}
-            </button>
+          <div class="pagination-size-control">
+            <label>每页显示</label>
+            <select v-model.number="pageSize">
+              <option v-for="size in pageSizeOptions" :key="`mobile-${size}`" :value="size">{{ size }}</option>
+            </select>
           </div>
-          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
-          <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="goToPage(1)">首页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="prevPage">上一页</button>
+          </div>
+          <div class="pagination-page-list" aria-label="巡检问题页码">
+            <template v-for="item in visiblePageItems" :key="`mobile-${item.key}`">
+              <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis">...</span>
+              <button v-else class="pagination-page-btn" :class="{ active: item.value === page }" type="button"
+                @click="goToPage(item.value)">
+                {{ item.value }}
+              </button>
+            </template>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage"
+              @click="goToPage(totalPage)">末页</button>
+          </div>
+          <div class="pagination-jump">
+            <span>跳至</span>
+            <input v-model="pageJumpInput" type="number" min="1" :max="totalPage" :placeholder="`1-${totalPage}`"
+              @keyup.enter="jumpToInputPage" />
+            <button class="btn btn-primary pagination-jump-btn" type="button" @click="jumpToInputPage">跳转</button>
+          </div>
         </div>
       </div>
     </div>
@@ -414,16 +437,22 @@
                 </td>
                 <td class="long-text">{{ item.description }}</td>
                 <td class="nowrap">
-                  <button class="image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
-                    <img :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片" />
+                  <button v-if="item.issue_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.issue_photo), '问题照片')">
+                    <img v-if="listImagesReady" :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片"
+                      loading="lazy" decoding="async" fetchpriority="low" />
+                    <span v-else class="thumb-placeholder">问题照片</span>
                   </button>
+                  <span v-else>暂无</span>
                 </td>
                 <td class="nowrap">{{ item.rectification_result || '暂无' }}</td>
                 <td class="nowrap">{{ item.rectification_note || '暂无' }}</td>
                 <td class="nowrap">
                   <button v-if="item.rectification_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
-                    <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
+                    <img v-if="listImagesReady" :src="resolveImage(item.rectification_photo)" class="thumb"
+                      alt="站点反馈整改照片" loading="lazy" decoding="async" fetchpriority="low" />
+                    <span v-else class="thumb-placeholder">整改照片</span>
                   </button>
                   <span v-else>暂无</span>
                 </td>
@@ -432,7 +461,9 @@
                 <td class="nowrap">
                   <button v-if="item.review_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-                    <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
+                    <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片"
+                      loading="lazy" decoding="async" fetchpriority="low" />
+                    <span v-else class="thumb-placeholder">复核照片</span>
                   </button>
                   <span v-else>暂无</span>
                 </td>
@@ -512,19 +543,36 @@
       <div class="pagination-bar">
         <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
         <div class="pagination-controls">
-          <label>每页显示</label>
-          <select v-model.number="pageSize">
-            <option v-for="size in pageSizeOptions" :key="`desktop-${size}`" :value="size">{{ size }}</option>
-          </select>
-          <button class="btn btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
-          <div class="page-jump-strip" aria-label="页码跳转">
-            <button v-for="pageNumber in visiblePageNumbers" :key="`desktop-page-${pageNumber}`" type="button"
-              class="page-number-btn" :class="{ active: pageNumber === page }" @click="goToPage(pageNumber)">
-              {{ pageNumber }}
-            </button>
+          <div class="pagination-size-control">
+            <label>每页显示</label>
+            <select v-model.number="pageSize">
+              <option v-for="size in pageSizeOptions" :key="`desktop-${size}`" :value="size">{{ size }}</option>
+            </select>
           </div>
-          <span class="page-total-label">{{ page }} / {{ totalPage }}</span>
-          <button class="btn btn-secondary" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="goToPage(1)">首页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page <= 1" @click="prevPage">上一页</button>
+          </div>
+          <div class="pagination-page-list" aria-label="巡检问题页码">
+            <template v-for="item in visiblePageItems" :key="`desktop-${item.key}`">
+              <span v-if="item.type === 'ellipsis'" class="pagination-ellipsis">...</span>
+              <button v-else class="pagination-page-btn" :class="{ active: item.value === page }" type="button"
+                @click="goToPage(item.value)">
+                {{ item.value }}
+              </button>
+            </template>
+          </div>
+          <div class="pagination-nav-row">
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage" @click="nextPage">下一页</button>
+            <button class="btn btn-secondary pagination-btn" :disabled="page >= totalPage"
+              @click="goToPage(totalPage)">末页</button>
+          </div>
+          <div class="pagination-jump">
+            <span>跳至</span>
+            <input v-model="pageJumpInput" type="number" min="1" :max="totalPage" :placeholder="`1-${totalPage}`"
+              @keyup.enter="jumpToInputPage" />
+            <button class="btn btn-primary pagination-jump-btn" type="button" @click="jumpToInputPage">跳转</button>
+          </div>
         </div>
       </div>
     </div>
@@ -938,7 +986,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
   clearFileInput,
@@ -973,7 +1021,7 @@ const filters = ref({
   auditState: ''
 })
 
-const list = ref([])
+const list = shallowRef([])
 const loading = ref(false)
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
@@ -995,6 +1043,9 @@ const isMobileView = ref(false)
 const showMobileFilters = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
+const pageJumpInput = ref('')
+const listImagesReady = ref(false)
+let listImagesReadyTimer = null
 const deletingIssueId = ref(null)
 const auditingIssueId = ref(null)
 const auditNotice = ref({
@@ -1206,22 +1257,44 @@ const currentInspectorFilterValue = computed(() => {
   return candidates.find((candidate) => options.includes(candidate)) || candidates[0] || ''
 })
 
-const visiblePageNumbers = computed(() => {
-  const maxVisible = isMobileView.value ? 5 : 7
+const visiblePageItems = computed(() => {
   const total = totalPage.value
-  if (total <= maxVisible) {
-    return Array.from({ length: total }, (_item, index) => index + 1)
-  }
-  const half = Math.floor(maxVisible / 2)
-  let start = Math.max(1, page.value - half)
-  let end = Math.min(total, start + maxVisible - 1)
-  start = Math.max(1, end - maxVisible + 1)
-  return Array.from({ length: end - start + 1 }, (_item, index) => start + index)
-})
+  const current = page.value
 
-const mobilePageNumbers = computed(() => (
-  Array.from({ length: totalPage.value }, (_item, index) => index + 1)
-))
+  if (total <= 7) {
+    return Array.from({ length: total }, (_item, index) => {
+      const value = index + 1
+      return { type: 'page', value, key: `page-${value}` }
+    })
+  }
+
+  const pages = new Set([1, total, current, current - 1, current + 1])
+  if (current <= 3) {
+    pages.add(2)
+    pages.add(3)
+    pages.add(4)
+  }
+  if (current >= total - 2) {
+    pages.add(total - 1)
+    pages.add(total - 2)
+    pages.add(total - 3)
+  }
+
+  const sortedPages = [...pages]
+    .filter((value) => value >= 1 && value <= total)
+    .sort((a, b) => a - b)
+
+  const result = []
+  sortedPages.forEach((value, index) => {
+    const previous = sortedPages[index - 1]
+    if (index > 0 && value - previous > 1) {
+      result.push({ type: 'ellipsis', key: `ellipsis-${previous}-${value}` })
+    }
+    result.push({ type: 'page', value, key: `page-${value}` })
+  })
+
+  return result
+})
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
@@ -1420,6 +1493,23 @@ watch(totalPage, (value) => {
     page.value = value
   }
 })
+
+const scheduleListImageLoading = () => {
+  listImagesReady.value = false
+  if (listImagesReadyTimer) {
+    clearTimeout(listImagesReadyTimer)
+  }
+  listImagesReadyTimer = window.setTimeout(() => {
+    listImagesReady.value = true
+    listImagesReadyTimer = null
+  }, 160)
+}
+
+watch(
+  () => paginatedData.value.map((item) => item.id).join(','),
+  scheduleListImageLoading,
+  { immediate: true }
+)
 
 const fetchIssues = async () => {
   try {
@@ -2212,20 +2302,23 @@ const handleTableFullscreenChange = () => {
 
 
 const nextPage = () => {
-  if (page.value < totalPage.value) {
-    page.value += 1
-  }
+  goToPage(page.value + 1)
 }
 
 const goToPage = (targetPage) => {
-  const safePage = Math.min(Math.max(Number(targetPage) || 1, 1), totalPage.value)
+  const normalizedPage = Number.parseInt(targetPage, 10)
+  if (!Number.isFinite(normalizedPage)) return
+  const safePage = Math.min(Math.max(normalizedPage, 1), totalPage.value)
   page.value = safePage
 }
 
 const prevPage = () => {
-  if (page.value > 1) {
-    page.value -= 1
-  }
+  goToPage(page.value - 1)
+}
+
+const jumpToInputPage = () => {
+  goToPage(pageJumpInput.value)
+  pageJumpInput.value = ''
 }
 
 const previewState = ref({
@@ -2375,6 +2468,9 @@ onBeforeUnmount(() => {
   }
   if (auditNoticeTimer) {
     clearTimeout(auditNoticeTimer)
+  }
+  if (listImagesReadyTimer) {
+    clearTimeout(listImagesReadyTimer)
   }
 })
 </script>
@@ -2940,6 +3036,24 @@ onBeforeUnmount(() => {
   border: 1px solid #cbd5e1;
 }
 
+.mobile-thumb-placeholder,
+.thumb-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #bfdbfe;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+  color: #2563eb;
+  font-weight: 900;
+}
+
+.mobile-thumb-placeholder {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .mobile-card-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -3388,6 +3502,13 @@ onBeforeUnmount(() => {
   border: 1px solid #cbd5e1;
 }
 
+.thumb-placeholder {
+  width: 88px;
+  height: 66px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .image-btn {
   border: none;
   padding: 0;
@@ -3416,46 +3537,81 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.pagination-controls select {
+.pagination-size-control,
+.pagination-nav-row,
+.pagination-page-list,
+.pagination-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-size-control label,
+.pagination-jump span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pagination-controls select,
+.pagination-jump input {
   height: 40px;
   border: 1px solid #d1d5db;
   border-radius: 10px;
   padding: 0 10px;
-}
-
-.page-jump-strip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: min(420px, 46vw);
-  overflow-x: auto;
-  padding: 2px;
-}
-
-.page-number-btn {
-  min-width: 36px;
-  height: 36px;
-  border: 1px solid #dbe4ee;
-  border-radius: 10px;
   background: #fff;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.pagination-jump input {
+  width: 78px;
+  text-align: center;
+}
+
+.pagination-btn,
+.pagination-jump-btn {
+  min-width: 72px;
+}
+
+.pagination-page-list {
+  padding: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.pagination-page-btn {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
   color: #475569;
   font-size: 13px;
   font-weight: 900;
   cursor: pointer;
-  flex: 0 0 auto;
+  transition: all 0.18s ease;
 }
 
-.page-number-btn.active {
-  border-color: #2563eb;
+.pagination-page-btn:hover {
+  background: #e0edff;
+  color: #1d4ed8;
+}
+
+.pagination-page-btn.active {
   background: #2563eb;
   color: #fff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22);
 }
 
-.page-total-label {
-  color: #475569;
-  font-size: 13px;
+.pagination-ellipsis {
+  min-width: 28px;
+  text-align: center;
+  color: #94a3b8;
   font-weight: 900;
+  line-height: 34px;
 }
 
 .empty-row {
@@ -4431,87 +4587,45 @@ onBeforeUnmount(() => {
     font-weight: 900;
   }
 
-  .mobile-pagination-bar .pagination-controls {
+  .pagination-size-control,
+  .pagination-nav-row,
+  .pagination-jump {
+    width: 100%;
+  }
+
+  .pagination-size-control {
+    justify-content: space-between;
+  }
+
+  .pagination-size-control select {
+    width: 128px;
+  }
+
+  .pagination-nav-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
   }
 
-  .mobile-pagination-bar .pagination-controls label {
-    grid-column: 1;
-    grid-row: 1;
-    align-self: center;
-    color: #64748b;
-    font-size: 13px;
-    font-weight: 900;
-  }
-
-  .mobile-pagination-bar .pagination-controls select {
-    grid-column: 2;
-    grid-row: 1;
+  .pagination-page-list {
     width: 100%;
-    height: 42px;
-  }
-
-  .mobile-pagination-bar .pagination-controls>.btn:first-of-type {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .mobile-pagination-bar .pagination-controls>.btn:last-of-type {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .mobile-pagination-bar .page-jump-strip,
-  .mobile-pagination-bar .page-total-label {
-    grid-column: 1 / -1;
-  }
-
-  .mobile-pagination-bar .page-jump-strip {
-    grid-row: 3;
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    justify-content: flex-start;
-    gap: 8px;
-    padding: 8px;
-    border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-    scrollbar-width: thin;
-  }
-
-  .mobile-pagination-bar .page-jump-strip:not(.is-scrollable) .page-number-btn {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .mobile-pagination-bar .page-jump-strip.is-scrollable {
-    overflow-x: auto;
-  }
-
-  .mobile-pagination-bar .page-jump-strip.is-scrollable .page-number-btn {
-    min-width: 42px;
-  }
-
-  .mobile-pagination-bar .page-number-btn {
-    height: 38px;
-    border-radius: 12px;
-  }
-
-  .mobile-pagination-bar .page-total-label {
-    grid-row: 4;
-    display: inline-flex;
-    align-items: center;
     justify-content: center;
-    min-height: 34px;
-    border-radius: 999px;
-    background: #eff6ff;
-    color: #1d4ed8;
-    font-weight: 900;
-    text-align: center;
+    overflow-x: auto;
+    padding: 5px;
+  }
+
+  .pagination-page-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+  }
+
+  .pagination-jump {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 82px;
+  }
+
+  .pagination-jump input {
+    width: 100%;
   }
 
   .table-card {
@@ -4586,6 +4700,12 @@ onBeforeUnmount(() => {
   .btn {
     width: 100%;
     min-height: 46px;
+  }
+
+  .pagination-btn,
+  .pagination-jump-btn {
+    width: 100%;
+    min-width: 0;
   }
 
   .image-modal {

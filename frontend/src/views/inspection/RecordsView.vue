@@ -249,8 +249,9 @@
               <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
                 class="mobile-signature-box">
                 <div class="mobile-signature-label">站经理已签名</div>
-                <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
-                  alt="站经理签名" />
+                <img v-if="recordImagesReady" :src="resolveImage(record.station_manager_signature_path)"
+                  class="signature-preview-image" alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                <div v-else class="signature-preview-placeholder">签名</div>
                 <div class="mobile-signature-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
                 <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
                   type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
@@ -363,8 +364,10 @@
                       class="signature-signed-wrap">
                       <div class="signature-preview-box">
                         <div class="signature-status-badge success">已签名确认</div>
-                        <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
-                          alt="站经理签名" />
+                        <img v-if="recordImagesReady" :src="resolveImage(record.station_manager_signature_path)"
+                          class="signature-preview-image" alt="站经理签名" loading="lazy" decoding="async"
+                          fetchpriority="low" />
+                        <div v-else class="signature-preview-placeholder">签名</div>
                         <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
                       </div>
                       <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
@@ -640,19 +643,19 @@
                 <div class="batch-issue-image-card">
                   <span>问题照片</span>
                   <img v-if="issue.issue_photo" :src="resolveImage(issue.issue_photo)" class="batch-issue-image"
-                    alt="问题照片" />
+                    alt="问题照片" loading="lazy" decoding="async" />
                   <div v-else class="batch-issue-image-empty">暂无问题照片</div>
                 </div>
                 <div class="batch-issue-image-card">
                   <span>整改照片</span>
                   <img v-if="issue.rectification_photo" :src="resolveImage(issue.rectification_photo)"
-                    class="batch-issue-image" alt="整改照片" />
+                    class="batch-issue-image" alt="整改照片" loading="lazy" decoding="async" />
                   <div v-else class="batch-issue-image-empty">暂无整改照片</div>
                 </div>
                 <div class="batch-issue-image-card">
                   <span>复核照片</span>
                   <img v-if="issue.review_photo" :src="resolveImage(issue.review_photo)" class="batch-issue-image"
-                    alt="复核照片" />
+                    alt="复核照片" loading="lazy" decoding="async" />
                   <div v-else class="batch-issue-image-empty">暂无复核照片</div>
                 </div>
               </div>
@@ -666,7 +669,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
 import SignaturePad from 'signature_pad'
 import { pinyin } from 'pinyin-pro'
@@ -700,7 +703,7 @@ const dropdownVisible = ref({
   inspector: false
 })
 
-const list = ref([])
+const list = shallowRef([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -752,6 +755,8 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(5)
 const pageJumpInput = ref('')
+const recordImagesReady = ref(false)
+let recordImagesReadyTimer = null
 
 const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
 
@@ -1721,6 +1726,23 @@ watch(totalPage, (value) => {
   }
 })
 
+const scheduleRecordImageLoading = () => {
+  recordImagesReady.value = false
+  if (recordImagesReadyTimer) {
+    clearTimeout(recordImagesReadyTimer)
+  }
+  recordImagesReadyTimer = window.setTimeout(() => {
+    recordImagesReady.value = true
+    recordImagesReadyTimer = null
+  }, 160)
+}
+
+watch(
+  () => paginatedInspectionGroups.value.flatMap((group) => group.records.map((record) => record.id)).join(','),
+  scheduleRecordImageLoading,
+  { immediate: true }
+)
+
 watch(
   () => [signatureDialog.value.visible, isLandscapeMobile.value, isMobileView.value],
   async ([visible, landscape, mobile]) => {
@@ -1902,6 +1924,9 @@ onBeforeUnmount(() => {
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
     actionMessageTimer = null
+  }
+  if (recordImagesReadyTimer) {
+    clearTimeout(recordImagesReadyTimer)
   }
   if (signaturePadInstance.value) {
     signaturePadInstance.value.off()
@@ -2767,6 +2792,22 @@ onBeforeUnmount(() => {
   border: 1px solid #dbe4ee;
   border-radius: 12px;
   padding: 8px;
+  box-sizing: border-box;
+}
+
+.signature-preview-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 220px;
+  max-width: 100%;
+  height: 88px;
+  border: 1px dashed #bfdbfe;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 900;
   box-sizing: border-box;
 }
 
@@ -3770,7 +3811,8 @@ onBeforeUnmount(() => {
     white-space: nowrap;
   }
 
-  .signature-preview-image {
+  .signature-preview-image,
+  .signature-preview-placeholder {
     width: 100%;
     height: 82px;
   }
