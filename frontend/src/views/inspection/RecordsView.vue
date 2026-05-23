@@ -257,6 +257,9 @@
                   type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
                   {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
                 </button>
+                <span v-else-if="record.reset_signature_lock_reason" class="signature-reset-locked">
+                  {{ record.reset_signature_lock_reason }}
+                </span>
               </div>
             </div>
           </div>
@@ -374,6 +377,9 @@
                         type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
                         {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
                       </button>
+                      <span v-else-if="record.reset_signature_lock_reason" class="signature-reset-locked">
+                        {{ record.reset_signature_lock_reason }}
+                      </span>
                     </div>
 
 	                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
@@ -2781,6 +2787,22 @@ onBeforeUnmount(() => {
 .signature-reset-btn:hover:not(:disabled) {
   border-color: #fca5a5;
   background: #fee2e2;
+}
+
+.signature-reset-locked {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 180px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
 }
 
 .signature-preview-image {

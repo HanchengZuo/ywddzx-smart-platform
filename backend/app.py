@@ -7450,6 +7450,31 @@ def reset_inspection_signature(inspection_id):
         ):
             return jsonify({"success": False, "error": "该巡检记录尚未完成站经理签名，无需重置。"}), 400
 
+        cur.execute(
+            """
+            SELECT COUNT(*) AS rectified_issue_count
+            FROM issues
+            WHERE inspection_id = %s
+              AND (
+                  NULLIF(TRIM(COALESCE(rectification_result, '')), '') IS NOT NULL
+                  OR NULLIF(TRIM(COALESCE(rectification_note, '')), '') IS NOT NULL
+                  OR NULLIF(TRIM(COALESCE(rectification_photo_path, '')), '') IS NOT NULL
+              );
+            """,
+            (inspection_id,),
+        )
+        rectified_issue_count = int(cur.fetchone()["rectified_issue_count"] or 0)
+        if rectified_issue_count > 0:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"该巡检记录已有 {rectified_issue_count} 条问题提交了站经理整改，不能重置站经理签名。",
+                    }
+                ),
+                400,
+            )
+
         signature_path = inspection.get("station_manager_signature_path")
         cur.execute(
             """
@@ -14348,6 +14373,11 @@ def get_inspections():
                     COUNT(i.id) AS total_issue_count,
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') = 'pending') AS pending_audit_count,
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') <> 'pending') AS audited_issue_count,
+                    COUNT(i.id) FILTER (
+                        WHERE NULLIF(TRIM(COALESCE(i.rectification_result, '')), '') IS NOT NULL
+                           OR NULLIF(TRIM(COALESCE(i.rectification_note, '')), '') IS NOT NULL
+                           OR NULLIF(TRIM(COALESCE(i.rectification_photo_path, '')), '') IS NOT NULL
+                    ) AS rectified_issue_count,
                     ins.sign_status,
                     ins.station_manager_signed_name,
                     ins.station_manager_signature_path,
@@ -14435,6 +14465,12 @@ def get_inspections():
                     "can_reset_signature": bool(
                         can_reset_signature
                         and row.get("sign_status") == "已签名确认"
+                        and int(row.get("rectified_issue_count") or 0) == 0
+                    ),
+                    "reset_signature_lock_reason": (
+                        "已有站经理整改，不能重置签名。"
+                        if int(row.get("rectified_issue_count") or 0) > 0
+                        else ""
                     ),
                     "can_sign_record": bool(
                         is_station_manager(user)
