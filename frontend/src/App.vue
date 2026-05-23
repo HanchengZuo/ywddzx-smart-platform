@@ -153,7 +153,10 @@
         <button class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/my-issues')"
           :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">
-          <span class="nav-item-icon">待</span>
+          <span class="nav-item-icon feedback-nav-icon">
+            待
+            <span v-if="myPendingRectificationCount > 0" class="feedback-unread-badge">{{ myPendingRectificationDisplay }}</span>
+          </span>
           <span v-if="!sidebarCollapsed">{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</span>
         </button>
 
@@ -167,7 +170,10 @@
         <button v-if="canViewRecords" class="nav-item"
           :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
-          <span class="nav-item-icon">录</span>
+          <span class="nav-item-icon feedback-nav-icon">
+            录
+            <span v-if="inspectionSignPendingCount > 0" class="feedback-unread-badge">{{ inspectionSignPendingDisplay }}</span>
+          </span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
         </button>
 
@@ -435,6 +441,8 @@ const loginVersionModalOpen = ref(false)
 const defaultInitialPassword = '123456'
 const sessionCheckIntervalMs = 60 * 1000
 const sessionWarningThresholdSeconds = 10 * 60
+const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
+const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
 let sessionMonitorTimer = null
 let dismissedSessionWarningToken = ''
 
@@ -446,7 +454,11 @@ const sessionNotice = reactive({
   checking: false
 })
 const feedbackUnreadCount = ref(0)
+const inspectionSignPendingCount = ref(0)
+const myPendingRectificationCount = ref(0)
 let feedbackUnreadRequestId = 0
+let inspectionSignPendingRequestId = 0
+let myPendingRectificationRequestId = 0
 
 const parseStoredPermissions = () => {
   try {
@@ -560,6 +572,14 @@ const sessionRemainingLabel = computed(() => {
 })
 const feedbackUnreadDisplay = computed(() => {
   const count = Number(feedbackUnreadCount.value) || 0
+  return count > 99 ? '99+' : String(count)
+})
+const inspectionSignPendingDisplay = computed(() => {
+  const count = Number(inspectionSignPendingCount.value) || 0
+  return count > 99 ? '99+' : String(count)
+})
+const myPendingRectificationDisplay = computed(() => {
+  const count = Number(myPendingRectificationCount.value) || 0
   return count > 99 ? '99+' : String(count)
 })
 
@@ -709,6 +729,8 @@ const handleAuthStorageChange = (event) => {
   if (isUsableAuthToken(getStoredAuthToken())) {
     verifySessionSilently()
     syncFeedbackUnreadForRoute()
+    syncInspectionSignPendingForRoute()
+    syncMyPendingRectificationForRoute()
   }
 }
 
@@ -727,6 +749,48 @@ const refreshFeedbackUnreadCount = async () => {
   } catch (error) {
     if (error?.response?.status && error.response.status !== 401) {
       console.warn('系统反馈未读数量读取失败。', error)
+    }
+  }
+}
+
+const refreshInspectionSignPendingCount = async () => {
+  if (
+    isLoginPage.value ||
+    authState.role !== 'station_manager' ||
+    !isUsableAuthToken(getStoredAuthToken())
+  ) {
+    inspectionSignPendingCount.value = 0
+    return
+  }
+  const requestId = ++inspectionSignPendingRequestId
+  try {
+    const response = await axios.get('/api/inspections/sign-pending-count', {
+      params: { _ts: Date.now() }
+    })
+    if (requestId !== inspectionSignPendingRequestId) return
+    inspectionSignPendingCount.value = Number(response.data?.pending_count || 0)
+  } catch (error) {
+    if (error?.response?.status && error.response.status !== 401) {
+      console.warn('巡检记录待签数量读取失败。', error)
+    }
+  }
+}
+
+const refreshMyPendingRectificationCount = async () => {
+  if (isLoginPage.value || authState.role !== 'station_manager' || !isUsableAuthToken(getStoredAuthToken())) {
+    myPendingRectificationCount.value = 0
+    return
+  }
+  const requestId = ++myPendingRectificationRequestId
+  try {
+    const response = await axios.get('/api/my-issues/pending-rectification-count', {
+      params: { _ts: Date.now() }
+    })
+    if (requestId !== myPendingRectificationRequestId) return
+    myPendingRectificationCount.value = Number(response.data?.pending_count || 0)
+  } catch (error) {
+    if (error?.response?.status && error.response.status !== 401) {
+      console.warn('我的待整改问题数量读取失败。', error)
     }
   }
 }
@@ -758,9 +822,27 @@ const syncFeedbackUnreadForRoute = () => {
   refreshFeedbackUnreadCount()
 }
 
+const syncInspectionSignPendingForRoute = () => {
+  refreshInspectionSignPendingCount()
+}
+
+const syncMyPendingRectificationForRoute = () => {
+  refreshMyPendingRectificationCount()
+}
+
 const handleWindowFocus = () => {
   runSessionMonitor()
   syncFeedbackUnreadForRoute()
+  syncInspectionSignPendingForRoute()
+  syncMyPendingRectificationForRoute()
+}
+
+const handleInspectionSignPendingRefresh = () => {
+  syncInspectionSignPendingForRoute()
+}
+
+const handleMyPendingRectificationRefresh = () => {
+  syncMyPendingRectificationForRoute()
 }
 
 watch(
@@ -771,9 +853,13 @@ watch(
     if (route.path === '/login') {
       resetSessionNotice()
       feedbackUnreadCount.value = 0
+      inspectionSignPendingCount.value = 0
+      myPendingRectificationCount.value = 0
     } else {
       window.setTimeout(runSessionMonitor, 0)
       window.setTimeout(syncFeedbackUnreadForRoute, 0)
+      window.setTimeout(syncInspectionSignPendingForRoute, 0)
+      window.setTimeout(syncMyPendingRectificationForRoute, 0)
     }
   },
   { immediate: true }
@@ -783,15 +869,21 @@ onMounted(() => {
   window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.addEventListener('storage', handleAuthStorageChange)
   window.addEventListener('focus', handleWindowFocus)
+  window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
+  window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
   runSessionMonitor()
   syncFeedbackUnreadForRoute()
+  syncInspectionSignPendingForRoute()
+  syncMyPendingRectificationForRoute()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.removeEventListener('storage', handleAuthStorageChange)
   window.removeEventListener('focus', handleWindowFocus)
+  window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
+  window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null

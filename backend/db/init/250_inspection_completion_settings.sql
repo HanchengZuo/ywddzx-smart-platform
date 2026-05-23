@@ -29,6 +29,25 @@ UPDATE inspections
 SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
 WHERE updated_at IS NULL;
 
+UPDATE inspections
+SET sign_status = '已签名确认',
+    station_manager_signed_at = COALESCE(station_manager_signed_at, updated_at, created_at, CURRENT_TIMESTAMP),
+    updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+WHERE COALESCE(sign_status, '') <> '已签名确认'
+  AND (
+      station_manager_signed_at IS NOT NULL
+      OR NULLIF(station_manager_signature_path, '') IS NOT NULL
+      OR NULLIF(station_manager_signed_name, '') IS NOT NULL
+  );
+
+UPDATE inspections
+SET inspector_completion_status = '已确认完成',
+    inspector_completed_at = COALESCE(inspector_completed_at, station_manager_signed_at, updated_at, created_at, CURRENT_TIMESTAMP),
+    inspector_completion_source = COALESCE(NULLIF(inspector_completion_source, ''), 'signature'),
+    updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+WHERE sign_status = '已签名确认'
+  AND inspector_completion_status <> '已确认完成';
+
 CREATE INDEX IF NOT EXISTS idx_inspections_station_table_month
 ON inspections (station_id, inspection_table_id, inspection_date);
 

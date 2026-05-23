@@ -3,6 +3,15 @@
     <transition name="toast-fade">
       <div v-if="actionMessage" class="message-toast" :class="actionMessageType">{{ actionMessage }}</div>
     </transition>
+    <transition name="audit-notice-fade">
+      <div v-if="auditNotice.visible" class="audit-center-notice" :class="auditNotice.type">
+        <div class="audit-center-card card-surface">
+          <div class="audit-center-icon">{{ auditNotice.type === 'success' ? '✓' : '!' }}</div>
+          <strong>{{ auditNotice.title }}</strong>
+          <p>{{ auditNotice.message }}</p>
+        </div>
+      </div>
+    </transition>
 
     <div class="page-header card-surface">
       <div>
@@ -28,7 +37,8 @@
       </div>
 
       <div v-else class="mobile-issue-cards">
-        <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface">
+        <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface"
+          :class="issueAuditRowClass(item)">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
               <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
@@ -50,12 +60,16 @@
             <div class="mobile-card-row"><span>所属地</span><strong>{{ item.region }}</strong></div>
             <div class="mobile-card-row"><span>站点负责人</span><strong>{{ item.station_manager }}</strong></div>
             <div class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
+            <div v-if="!isIssueAuditPending(item)" class="mobile-card-row"><span>审核结论</span><strong
+                :class="auditStatusClass(item)">{{
+              auditStatusLabel(item) }}</strong></div>
 
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
-                <div class="mobile-card-standard-preview multiline-clamp">{{ getStandardDetailPreview(getCombinedStandardDetailText(item))
-                }}</div>
+                <div class="mobile-card-standard-preview multiline-clamp">{{
+                  getStandardDetailPreview(getCombinedStandardDetailText(item))
+                  }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
             </div>
@@ -91,7 +105,26 @@
             </button>
           </div>
 
-          <div v-if="canManageIssues" class="mobile-card-actions">
+          <div v-if="canManageIssues || canAuditIssues" class="mobile-card-actions">
+            <template v-if="canAuditIssueRow(item)">
+              <template v-if="isIssueAuditPending(item)">
+                <button class="btn btn-success" type="button" :disabled="auditingIssueId === item.id"
+                  @click="auditIssue(item, 'approved')">
+                  通过
+                </button>
+                <button class="btn btn-danger" type="button" :disabled="auditingIssueId === item.id"
+                  @click="auditIssue(item, 'rejected')">
+                  否决
+                </button>
+              </template>
+              <template v-else>
+                <span :class="auditStatusClass(item)">{{ auditStatusLabel(item) }}</span>
+                <button class="btn btn-secondary" type="button" :disabled="auditingIssueId === item.id"
+                  @click="auditIssue(item, 'pending')">
+                  重新判定
+                </button>
+              </template>
+            </template>
             <button v-if="canEditIssueRow(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
               编辑问题
             </button>
@@ -103,7 +136,10 @@
               :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
               {{ deletingIssueId === item.id ? '删除中...' : '删除问题' }}
             </button>
-            <span v-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
+            <span v-if="issueOperationLockReason(item)" class="locked-action">{{ issueOperationLockReason(item)
+              }}</span>
+            <span v-else-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
+            <span v-else-if="!canAuditIssueRow(item) && !hasIssueOperation(item)" class="locked-action">暂无可操作</span>
           </div>
         </div>
       </div>
@@ -256,10 +292,28 @@
           <label>问题状态</label>
           <select v-model="filters.status">
             <option value="">全部</option>
+            <option value="待审核">待审核</option>
+            <option value="待签名">待签名</option>
             <option value="待整改">待整改</option>
             <option value="待复核">待复核</option>
             <option value="已闭环">已闭环</option>
             <option value="站经无法整改">站经无法整改</option>
+          </select>
+        </div>
+        <div class="filter-item">
+          <label>审核结论</label>
+          <select v-model="filters.auditStatus">
+            <option value="">全部</option>
+            <option value="approved">审核通过</option>
+            <option value="rejected">审核否决</option>
+          </select>
+        </div>
+        <div class="filter-item">
+          <label>审核状态</label>
+          <select v-model="filters.auditState">
+            <option value="">全部</option>
+            <option value="pending">待审核</option>
+            <option value="done">已审核</option>
           </select>
         </div>
       </div>
@@ -271,7 +325,8 @@
           </button>
         </div>
         <div class="filter-main-actions">
-          <button class="btn btn-export" type="button" :disabled="loading || filteredData.length === 0" @click="openExportDialog">
+          <button class="btn btn-export" type="button" :disabled="loading || filteredData.length === 0"
+            @click="openExportDialog">
             导出数据
           </button>
           <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
@@ -282,7 +337,23 @@
       </div>
     </div>
 
-    <div class="table-card card-surface">
+    <div ref="tableCardRef" class="table-card card-surface" :class="{ 'fullscreen-table-card': tableFullscreen }"
+      :style="{ '--issue-table-zoom': tableZoom }">
+      <div class="table-card-head">
+        <div>
+          <div class="filter-kicker">问题清单</div>
+          <h3>{{ tableFullscreen ? '全屏查看巡检问题' : '巡检问题明细' }}</h3>
+        </div>
+        <div class="table-view-actions">
+          <label v-if="tableFullscreen" class="table-zoom-control">
+            <span>缩放 {{ Math.round(tableZoom * 100) }}%</span>
+            <input v-model.number="tableZoom" type="range" min="0.2" max="1" step="0.02" />
+          </label>
+          <button class="btn btn-secondary" type="button" @click="toggleTableFullscreen">
+            {{ tableFullscreen ? '退出全屏' : '全屏显示' }}
+          </button>
+        </div>
+      </div>
       <div class="table-scroll-wrap">
         <div class="table-scroll">
           <table class="issues-table">
@@ -309,11 +380,12 @@
                 <th class="nowrap">督导组复核说明</th>
                 <th class="nowrap">督导组复核照片</th>
                 <th class="nowrap-col status-col">问题状态</th>
+                <th class="nowrap audit-col">审核</th>
                 <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in paginatedData" :key="item.id">
+              <tr v-for="item in paginatedData" :key="item.id" :class="issueAuditRowClass(item)">
                 <td class="nowrap issue-id-cell">{{ item.id }}</td>
                 <td class="nowrap">{{ item.month }}</td>
                 <td class="nowrap">{{ item.time }}</td>
@@ -326,15 +398,17 @@
                 <td class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
                 <td class="nowrap standard-id-cell">
                   <div class="standard-id-stack">
-                    <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-table-${part.type}`" :class="part.type">
+                    <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-table-${part.type}`"
+                      :class="part.type">
                       <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
                     </span>
                   </div>
                 </td>
                 <td class="standard-detail-cell">
                   <div class="standard-detail-box">
-                    <div class="standard-detail-preview multiline-clamp">{{ getStandardDetailPreview(getCombinedStandardDetailText(item))
-                    }}</div>
+                    <div class="standard-detail-preview multiline-clamp">{{
+                      getStandardDetailPreview(getCombinedStandardDetailText(item))
+                      }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
@@ -365,6 +439,28 @@
                 <td class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
+                <td class="nowrap audit-col">
+                  <div class="audit-actions">
+                    <template v-if="canAuditIssueRow(item)">
+                      <template v-if="isIssueAuditPending(item)">
+                        <button class="btn btn-success btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                          @click="auditIssue(item, 'approved')">通过</button>
+                        <button class="btn btn-danger btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                          @click="auditIssue(item, 'rejected')">否决</button>
+                      </template>
+                      <template v-else>
+                        <span :class="auditStatusClass(item)">{{ auditStatusLabel(item) }}</span>
+                        <button class="btn btn-secondary btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                          @click="auditIssue(item, 'pending')">重新判定</button>
+                      </template>
+                    </template>
+                    <template v-else>
+                      <span v-if="!isIssueAuditPending(item)" :class="auditStatusClass(item)">{{
+                        auditStatusLabel(item) }}</span>
+                      <span v-else class="audit-empty">-</span>
+                    </template>
+                  </div>
+                </td>
                 <td v-if="canManageIssues" class="nowrap operation-col">
                   <div class="table-actions">
                     <button v-if="canEditIssueRow(item)" class="btn btn-secondary btn-sm" type="button"
@@ -379,7 +475,10 @@
                       :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
                       {{ deletingIssueId === item.id ? '删除中' : '删除' }}
                     </button>
-                    <span v-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
+                    <span v-if="issueOperationLockReason(item)" class="locked-action">{{ issueOperationLockReason(item)
+                      }}</span>
+                    <span v-else-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
+                    <span v-else-if="!hasIssueOperation(item)" class="locked-action">暂无可操作</span>
                   </div>
                 </td>
               </tr>
@@ -390,7 +489,8 @@
                     <div class="empty-state-kicker">暂无记录</div>
                     <h3>当前没有符合条件的问题记录</h3>
                     <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
-                    <button class="btn btn-secondary btn-sm empty-state-action" type="button" @click="resetFilters">重置筛选</button>
+                    <button class="btn btn-secondary btn-sm empty-state-action" type="button"
+                      @click="resetFilters">重置筛选</button>
                   </div>
                 </td>
               </tr>
@@ -433,7 +533,8 @@
       <div class="image-modal-content issue-export-modal">
         <div class="image-modal-header">
           <span>导出巡检问题数据</span>
-          <button class="close-btn" type="button" :disabled="exportDialog.submitting" @click="closeExportDialog">×</button>
+          <button class="close-btn" type="button" :disabled="exportDialog.submitting"
+            @click="closeExportDialog">×</button>
         </div>
 
         <div class="issue-export-body">
@@ -495,28 +596,24 @@
         </div>
 
         <div class="issue-edit-actions export-actions">
-          <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting" @click="closeExportDialog">
+          <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting"
+            @click="closeExportDialog">
             关闭
           </button>
-          <button
-            v-if="exportDialog.taskId && ['completed', 'failed'].includes(exportDialog.status)"
-            class="btn btn-secondary"
-            type="button"
-            :disabled="exportDialog.downloading"
-            @click="resetExportDialogForCurrentFilters"
-          >
+          <button v-if="exportDialog.taskId && ['completed', 'failed'].includes(exportDialog.status)"
+            class="btn btn-secondary" type="button" :disabled="exportDialog.downloading"
+            @click="resetExportDialogForCurrentFilters">
             重新按当前筛选导出
           </button>
-          <button
-            v-if="exportDialog.status !== 'completed'"
-            class="btn btn-primary"
-            type="button"
+          <button v-if="exportDialog.status !== 'completed'" class="btn btn-primary" type="button"
             :disabled="exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running'"
-            @click="submitIssueExportTask"
-          >
-            {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ? '生成中...' : '提交导出任务' }}
+            @click="submitIssueExportTask">
+            {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ?
+              '生成中...'
+              : '提交导出任务' }}
           </button>
-          <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading" @click="downloadIssueExport">
+          <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
+            @click="downloadIssueExport">
             {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
           </button>
         </div>
@@ -542,7 +639,8 @@
             <div>
               <span>规范ID</span>
               <div class="standard-id-stack compact">
-                <span v-for="part in getStandardIdParts(editDialog.issue)" :key="`edit-${part.type}`" :class="part.type">
+                <span v-for="part in getStandardIdParts(editDialog.issue)" :key="`edit-${part.type}`"
+                  :class="part.type">
                   <em>{{ part.label }}</em><strong>{{ part.value }}</strong>
                 </span>
               </div>
@@ -570,7 +668,8 @@
                 </div>
                 <div class="search-select" ref="editStandardSelectRef">
                   <input v-model="editDialog.standardSearch" type="text" :placeholder="`搜索并选择${editStandardInputLabel}`"
-                    :disabled="editStandardLoading" @focus="openEditStandardDropdown" @input="handleEditStandardInput" />
+                    :disabled="editStandardLoading" @focus="openEditStandardDropdown"
+                    @input="handleEditStandardInput" />
                   <div v-if="editStandardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
                     <div v-if="editStandardLoading" class="search-select-empty">正在加载规范数据...</div>
                     <template v-else>
@@ -579,7 +678,8 @@
                         <div class="option-main">
                           {{ standard.standard_id }}｜{{ getEditStandardTitle(standard) }}
                         </div>
-                        <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
+                        <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}
+                        </div>
                         <div class="option-sub standard-detail-preview">{{ getEditStandardPreview(standard) }}</div>
                       </div>
                       <div v-if="filteredEditStandards.length === 0" class="search-select-empty">无匹配规范</div>
@@ -594,15 +694,17 @@
                   <div>
                     <span>{{ standardSourceMode === 'internal' ? '关联外部规范' : '关联内部规范' }}</span>
                     <strong v-if="standardSourceMode === 'internal'">
-                      {{ selectedEditStandard?.linked_externals?.length
+                      {{selectedEditStandard?.linked_externals?.length
                         ? selectedEditStandard.linked_externals.map((link) => link.external_standard_id).join('、')
-                        : '-' }}
+                        : '-'}}
                     </strong>
                     <strong v-else>{{ selectedEditStandard?.internal_standard_id || '未关联内部规范' }}</strong>
                   </div>
                   <div>
                     <span>检查表</span>
-                    <strong>{{ selectedEditStandard?.inspection_table_name || editDialog.issue?.inspection_table_name || '-' }}</strong>
+                    <strong>{{ selectedEditStandard?.inspection_table_name || editDialog.issue?.inspection_table_name ||
+                      '-'
+                      }}</strong>
                   </div>
                 </div>
               </div>
@@ -611,16 +713,17 @@
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
-            <div ref="editIssuePhotoUploadSectionRef" class="issue-edit-field issue-edit-field-wide upload-follow-anchor">
+            <div ref="editIssuePhotoUploadSectionRef"
+              class="issue-edit-field issue-edit-field-wide upload-follow-anchor">
               <span>问题照片</span>
               <div class="upload-card issue-edit-upload-card">
                 <input id="edit-issue-photo-upload" class="upload-input" type="file" accept="image/*"
                   @change="handleIssuePhotoChange" />
-                <input id="edit-issue-photo-camera" class="upload-input" type="file" accept="image/*" capture="environment"
-                  @change="handleIssuePhotoChange" />
+                <input id="edit-issue-photo-camera" class="upload-input" type="file" accept="image/*"
+                  capture="environment" @change="handleIssuePhotoChange" />
 
-                <div class="upload-dropzone" :class="{ 'drag-active': editIssuePhotoDragActive }" role="button" tabindex="0"
-                  @click="openEditIssuePhotoPicker" @keydown.enter.prevent="openEditIssuePhotoPicker"
+                <div class="upload-dropzone" :class="{ 'drag-active': editIssuePhotoDragActive }" role="button"
+                  tabindex="0" @click="openEditIssuePhotoPicker" @keydown.enter.prevent="openEditIssuePhotoPicker"
                   @keydown.space.prevent="openEditIssuePhotoPicker" @dragenter.prevent="handleEditIssuePhotoDragEnter"
                   @dragover.prevent="handleEditIssuePhotoDragOver" @dragleave.prevent="handleEditIssuePhotoDragLeave"
                   @drop.prevent="handleEditIssuePhotoDrop" @paste="handleEditIssuePhotoPaste">
@@ -633,7 +736,8 @@
                     不选择新照片则保留原照片；桌面端可拖拽图片，也可复制图片后在此处粘贴上传。
                   </div>
                   <div class="upload-trigger-group">
-                    <label for="edit-issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照上传</label>
+                    <label for="edit-issue-photo-camera" class="upload-trigger upload-trigger-secondary"
+                      @click.stop>拍照上传</label>
                     <label for="edit-issue-photo-upload" class="upload-trigger" @click.stop>相册选择</label>
                   </div>
                 </div>
@@ -660,7 +764,8 @@
                       <div class="image-preview-actions">
                         <label for="edit-issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
                         <label for="edit-issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
-                        <button class="btn btn-secondary image-action-btn" type="button" @click="clearIssuePhoto">移除图片</button>
+                        <button class="btn btn-secondary image-action-btn" type="button"
+                          @click="clearIssuePhoto">移除图片</button>
                       </div>
                     </div>
                   </div>
@@ -804,7 +909,8 @@
               <strong>{{ standardDetailState.item?.internal_standard_id || '未关联内部规范' }}</strong>
             </div>
             <div v-if="standardInternalEntries.length" class="standard-detail-grid">
-              <div v-for="entry in standardInternalEntries" :key="`internal-${entry.key}`" class="standard-detail-card internal">
+              <div v-for="entry in standardInternalEntries" :key="`internal-${entry.key}`"
+                class="standard-detail-card internal">
                 <div class="standard-detail-card-label">{{ entry.label }}</div>
                 <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
               </div>
@@ -818,7 +924,8 @@
               <strong>{{ standardDetailState.item?.standard_id || '暂无外部规范ID' }}</strong>
             </div>
             <div class="standard-detail-grid">
-              <div v-for="entry in standardExternalEntries" :key="`external-${entry.key}`" class="standard-detail-card external">
+              <div v-for="entry in standardExternalEntries" :key="`external-${entry.key}`"
+                class="standard-detail-card external">
                 <div class="standard-detail-card-label">{{ entry.label }}</div>
                 <div class="standard-detail-card-value multiline-cell">{{ entry.value }}</div>
               </div>
@@ -861,7 +968,9 @@ const filters = ref({
   standardDetail: '',
   rectificationResult: '',
   reviewResult: '',
-  status: ''
+  status: '',
+  auditStatus: '',
+  auditState: ''
 })
 
 const list = ref([])
@@ -872,6 +981,7 @@ const stationManagerSelectRef = ref(null)
 const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const editStandardSelectRef = ref(null)
+const tableCardRef = ref(null)
 
 const dropdownVisible = ref({
   region: false,
@@ -886,6 +996,16 @@ const showMobileFilters = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 const deletingIssueId = ref(null)
+const auditingIssueId = ref(null)
+const auditNotice = ref({
+  visible: false,
+  type: 'success',
+  title: '',
+  message: ''
+})
+let auditNoticeTimer = null
+const tableFullscreen = ref(false)
+const tableZoom = ref(1)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -969,7 +1089,9 @@ const exportFilterLabels = {
   standardDetail: '规范详情',
   rectificationResult: '站经理整改结果',
   reviewResult: '督导组复核结果',
-  status: '问题状态'
+  status: '问题状态',
+  auditStatus: '审核结论',
+  auditState: '审核状态'
 }
 
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
@@ -996,6 +1118,11 @@ const filteredData = computed(() => {
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
+    const matchedAuditStatus = !filters.value.auditStatus || normalizeAuditStatus(item) === filters.value.auditStatus
+    const matchedAuditState = !filters.value.auditState ||
+      (filters.value.auditState === 'pending'
+        ? normalizeAuditStatus(item) === 'pending'
+        : normalizeAuditStatus(item) !== 'pending')
 
     return (
       matchedMonth &&
@@ -1009,7 +1136,9 @@ const filteredData = computed(() => {
       matchedStandardDetail &&
       matchedRectificationResult &&
       matchedReviewResult &&
-      matchedStatus
+      matchedStatus &&
+      matchedAuditStatus &&
+      matchedAuditState
     )
   })
 })
@@ -1096,6 +1225,7 @@ const mobilePageNumbers = computed(() => (
 
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
+const canAuditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.audit_inspection_issues) || list.value.some((item) => item?.can_audit_issue))
 const canChangeIssueInspectors = computed(() => currentRole === 'root' || list.value.some((item) => item?.can_change_issue_inspector))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
@@ -1108,12 +1238,46 @@ const canManageIssues = computed(() => (
     item?.can_change_issue_inspector
   ))
 ))
-const issueTableColspan = computed(() => canManageIssues.value ? 22 : 21)
+const issueTableColspan = computed(() => 22 + (canManageIssues.value ? 1 : 0))
 
 const isClosedIssue = (item) => item?.status === '已闭环'
+const issueOperationLockReason = (item = {}) => {
+  const reason = String(item?.operation_lock_reason || '').trim()
+  if (reason) return reason
+  if (item?.inspection_signed) return '已签字不可操作'
+  return ''
+}
 const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
 const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
+const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
+const hasIssueOperation = (item) => (
+  canEditIssueRow(item) ||
+  canUpdateRectificationPhotoRow(item) ||
+  canDeleteIssueRow(item) ||
+  Boolean(issueOperationLockReason(item)) ||
+  (isClosedIssue(item) && currentRole !== 'root')
+)
+const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
+const isIssueAuditPending = (item) => normalizeAuditStatus(item) === 'pending'
+const auditStatusLabel = (item) => {
+  const status = normalizeAuditStatus(item)
+  if (status === 'approved') return '通过'
+  if (status === 'rejected') return '否决'
+  return ''
+}
+const auditStatusClass = (item) => {
+  const status = normalizeAuditStatus(item)
+  if (status === 'approved') return 'audit-status-chip approved'
+  if (status === 'rejected') return 'audit-status-chip rejected'
+  return 'audit-status-chip pending'
+}
+const issueAuditRowClass = (item) => {
+  const status = normalizeAuditStatus(item)
+  if (status === 'approved') return 'issue-audit-approved'
+  if (status === 'rejected') return 'issue-audit-rejected'
+  return ''
+}
 
 const getStandardIdDisplay = (item = {}) => {
   const externalId = item?.standard_id ? `外部 ${item.standard_id}` : '外部 暂无'
@@ -1389,7 +1553,9 @@ const resetFilters = () => {
     standardDetail: '',
     rectificationResult: '',
     reviewResult: '',
-    status: ''
+    status: '',
+    auditStatus: '',
+    auditState: ''
   }
   closeAllDropdowns()
 }
@@ -1419,7 +1585,9 @@ const filterMyTodayIssues = () => {
     standardDetail: '',
     rectificationResult: '',
     reviewResult: '',
-    status: ''
+    status: '',
+    auditStatus: '',
+    auditState: ''
   }
   closeAllDropdowns()
   showMobileFilters.value = false
@@ -1580,12 +1748,27 @@ const showActionMessage = (text, type = 'info') => {
   }, 2200)
 }
 
+const showAuditNotice = (title, message, type = 'success') => {
+  auditNotice.value = {
+    visible: true,
+    type,
+    title,
+    message
+  }
+  if (auditNoticeTimer) {
+    clearTimeout(auditNoticeTimer)
+  }
+  auditNoticeTimer = window.setTimeout(() => {
+    auditNotice.value.visible = false
+  }, 1900)
+}
+
 const createIssueEditForm = (item = {}) => ({
   standard_id: item.standard_id ? String(item.standard_id) : '',
   internal_standard_id: item.internal_standard_id ? String(item.internal_standard_id).toUpperCase() : '',
   target_inspector_id: item.inspector_user_id || item.inspector_id ? String(item.inspector_user_id || item.inspector_id) : '',
   description: item.description || '',
-  status: item.status || '待整改',
+  status: item.raw_status || item.workflow_status || (item.status === '待签名' ? '待整改' : item.status) || '待整改',
   rectification_result: item.rectification_result || '',
   rectification_note: item.rectification_note || '',
   review_result: item.review_result || '',
@@ -1910,6 +2093,7 @@ const saveIssueEdit = async () => {
     closeEditDialog()
     showActionMessage('巡检问题已保存。', 'success')
     await fetchIssues()
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     editDialog.value.error = error?.response?.data?.error || '保存巡检问题失败。'
   } finally {
@@ -1933,10 +2117,96 @@ const deleteIssue = async (item) => {
     })
     showActionMessage('巡检问题已删除。', 'success')
     await fetchIssues()
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '删除巡检问题失败。', 'error')
   } finally {
     deletingIssueId.value = null
+  }
+}
+
+const auditIssue = async (item, status) => {
+  if (!item?.id || auditingIssueId.value === item.id) return
+  const actionLabels = {
+    approved: '审核通过',
+    rejected: '审核否决',
+    pending: '重新判定'
+  }
+  const actionLabel = actionLabels[status] || '审核'
+
+  try {
+    auditingIssueId.value = item.id
+    const response = await axios.post(`/api/issues/${item.id}/audit`, {
+      user_id: localStorage.getItem('user_id') || '',
+      action: status
+    })
+    const message = response.data?.message || `问题 #${item.id} 已${actionLabel}。`
+    showAuditNotice(actionLabel, message, status === 'rejected' ? 'danger' : 'success')
+    await fetchIssues()
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
+  } catch (error) {
+    showAuditNotice('审核失败', error?.response?.data?.error || '问题审核操作失败。', 'danger')
+  } finally {
+    auditingIssueId.value = null
+  }
+}
+
+const calculateAutoTableZoom = () => {
+  const tableWidth = 3140
+  const viewportWidth = Math.max(window.innerWidth || tableWidth, 320)
+  const horizontalPadding = tableFullscreen.value ? 64 : 40
+  const nextZoom = (viewportWidth - horizontalPadding) / tableWidth
+  return Number(Math.min(1, Math.max(0.2, nextZoom)).toFixed(2))
+}
+
+const setAutoTableZoom = () => {
+  tableZoom.value = calculateAutoTableZoom()
+}
+
+const enterTableFullscreen = async () => {
+  const fullscreenTarget = tableCardRef.value
+  try {
+    if (fullscreenTarget?.requestFullscreen && !document.fullscreenElement) {
+      await fullscreenTarget.requestFullscreen()
+    }
+  } catch (error) {
+    // 浏览器拒绝原生全屏时，仍保留页面内全屏兜底。
+  }
+  tableFullscreen.value = true
+  await nextTick()
+  setAutoTableZoom()
+}
+
+const exitTableFullscreen = async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen()
+    }
+  } catch (error) {
+    // 退出原生全屏失败不影响页面状态恢复。
+  }
+  tableFullscreen.value = false
+  tableZoom.value = 1
+}
+
+const toggleTableFullscreen = () => {
+  if (tableFullscreen.value || document.fullscreenElement === tableCardRef.value) {
+    exitTableFullscreen()
+    return
+  }
+  enterTableFullscreen()
+}
+
+const handleTableFullscreenChange = () => {
+  if (document.fullscreenElement === tableCardRef.value) {
+    tableFullscreen.value = true
+    setAutoTableZoom()
+    return
+  }
+  if (!document.fullscreenElement && tableFullscreen.value) {
+    tableFullscreen.value = false
+    tableZoom.value = 1
   }
 }
 
@@ -2064,6 +2334,8 @@ const handleClickOutside = (event) => {
 }
 
 const statusClass = (status) => {
+  if (status === '待审核') return 'status-tag audit'
+  if (status === '待签名') return 'status-tag pending'
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
@@ -2073,6 +2345,9 @@ const statusClass = (status) => {
 
 const updateResponsiveState = () => {
   const nextIsMobile = window.matchMedia?.('(max-width: 768px)').matches ?? false
+  if (tableFullscreen.value) {
+    setAutoTableZoom()
+  }
   if (nextIsMobile === isMobileView.value) return
   isMobileView.value = nextIsMobile
   pageSize.value = nextIsMobile ? 5 : 20
@@ -2083,6 +2358,7 @@ onMounted(() => {
   window.addEventListener('paste', handleWindowEditIssuePhotoPaste)
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
+  document.addEventListener('fullscreenchange', handleTableFullscreenChange)
   fetchIssues()
 })
 
@@ -2090,11 +2366,15 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('paste', handleWindowEditIssuePhotoPaste)
   window.removeEventListener('resize', updateResponsiveState)
+  document.removeEventListener('fullscreenchange', handleTableFullscreenChange)
   stopExportPolling()
   revokeIssuePhotoPreview()
   revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
+  }
+  if (auditNoticeTimer) {
+    clearTimeout(auditNoticeTimer)
   }
 })
 </script>
@@ -2353,9 +2633,85 @@ onBeforeUnmount(() => {
   background: #fee2e2;
 }
 
+.btn-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+  font-weight: 800;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #dcfce7;
+}
+
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.audit-center-notice {
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(2px);
+}
+
+.audit-center-card {
+  width: min(420px, 100%);
+  padding: 24px 22px;
+  text-align: center;
+  border-radius: 24px;
+  box-shadow: 0 28px 58px rgba(15, 23, 42, 0.22);
+}
+
+.audit-center-icon {
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 26px;
+  font-weight: 950;
+}
+
+.audit-center-notice.danger .audit-center-icon {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.audit-center-card strong {
+  display: block;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.audit-center-card p {
+  margin: 8px 0 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.audit-notice-fade-enter-active,
+.audit-notice-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.audit-notice-fade-enter-from,
+.audit-notice-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
 }
 
 .message-toast {
@@ -2406,6 +2762,7 @@ onBeforeUnmount(() => {
 }
 
 @keyframes toast-pulse {
+
   0%,
   100% {
     box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
@@ -2432,6 +2789,20 @@ onBeforeUnmount(() => {
 
 .mobile-issue-card {
   padding: 16px;
+}
+
+.mobile-issue-card.issue-audit-approved {
+  border-color: #bbf7d0;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.12), transparent 30%),
+    rgba(240, 253, 244, 0.94);
+}
+
+.mobile-issue-card.issue-audit-rejected {
+  border-color: #fecaca;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(239, 68, 68, 0.11), transparent 30%),
+    rgba(254, 242, 242, 0.94);
 }
 
 .mobile-card-head {
@@ -2470,7 +2841,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.mobile-card-code > span {
+.mobile-card-code>span {
   color: #64748b;
   font-size: 12px;
   flex: 0 0 auto;
@@ -2654,6 +3025,7 @@ onBeforeUnmount(() => {
 }
 
 @keyframes emptyPulse {
+
   0%,
   100% {
     transform: translateY(0) scale(1);
@@ -2683,6 +3055,82 @@ onBeforeUnmount(() => {
   background: linear-gradient(135deg, #ccfbf1 0%, #dcfce7 100%);
 }
 
+.table-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.table-card-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.table-view-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.table-zoom-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.table-zoom-control input {
+  width: 150px;
+  accent-color: #2563eb;
+}
+
+.fullscreen-table-card {
+  position: fixed;
+  inset: 16px;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(37, 99, 235, 0.1), transparent 32%),
+    rgba(255, 255, 255, 0.98);
+}
+
+.fullscreen-table-card:fullscreen {
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.fullscreen-table-card .table-scroll-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+.fullscreen-table-card .table-scroll {
+  max-height: none;
+  height: 100%;
+  overflow: auto;
+}
+
+.fullscreen-table-card .issues-table {
+  zoom: var(--issue-table-zoom);
+}
+
 .table-scroll-wrap {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -2696,16 +3144,16 @@ onBeforeUnmount(() => {
 
 .issues-table {
   width: 100%;
-  min-width: 2940px;
+  min-width: 3140px;
   border-collapse: collapse;
 }
 
 .issues-table th,
 .issues-table td {
   border: 1px solid #e5e7eb;
-  padding: 12px 14px;
-  text-align: left;
-  vertical-align: top;
+  padding: 10px 12px;
+  text-align: center;
+  vertical-align: middle;
   font-size: 14px;
   color: #111827;
 }
@@ -2714,6 +3162,22 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.issues-table tr.issue-audit-approved td {
+  background: rgba(240, 253, 244, 0.86);
+}
+
+.issues-table tr.issue-audit-rejected td {
+  background: rgba(254, 242, 242, 0.9);
+}
+
+.issues-table tr.issue-audit-approved:hover td {
+  background: rgba(220, 252, 231, 0.9);
+}
+
+.issues-table tr.issue-audit-rejected:hover td {
+  background: rgba(254, 226, 226, 0.92);
 }
 
 .issue-id-cell {
@@ -2726,22 +3190,79 @@ onBeforeUnmount(() => {
 }
 
 .status-col {
-  min-width: 110px;
+  min-width: 92px;
 }
 
 .operation-col {
-  min-width: 280px;
+  width: 1%;
+  min-width: 104px;
+}
+
+.audit-col {
+  width: 1%;
+  min-width: 108px;
+}
+
+.audit-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.audit-actions .btn {
+  width: 100%;
+  min-width: 76px;
+  padding-inline: 10px;
+}
+
+.audit-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 76px;
+  min-height: 34px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid #dbe4ee;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.audit-empty {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.audit-status-chip.approved {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.audit-status-chip.rejected {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .table-actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  flex-wrap: nowrap;
 }
 
 .table-actions .btn {
-  width: auto;
+  width: 100%;
+  min-width: 76px;
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -2749,7 +3270,9 @@ onBeforeUnmount(() => {
 .locked-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 32px;
+  max-width: 148px;
   padding: 0 10px;
   border-radius: 999px;
   background: #f8fafc;
@@ -2757,6 +3280,9 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
 }
 
 .nowrap {
@@ -2764,9 +3290,10 @@ onBeforeUnmount(() => {
 }
 
 .long-text {
-  min-width: 260px;
+  min-width: 240px;
   white-space: normal;
   line-height: 1.7;
+  text-align: center;
 }
 
 .standard-detail-cell {
@@ -2780,7 +3307,7 @@ onBeforeUnmount(() => {
 .standard-id-stack {
   display: inline-flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   white-space: normal;
 }
@@ -2822,12 +3349,13 @@ onBeforeUnmount(() => {
 .standard-detail-box {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
 }
 
 .standard-detail-preview {
   width: 100%;
+  text-align: center;
   white-space: pre-line;
 }
 
@@ -2954,6 +3482,16 @@ onBeforeUnmount(() => {
   color: #dc2626;
 }
 
+.status-tag.audit {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.status-tag.pending {
+  background: #ecfeff;
+  color: #0891b2;
+}
+
 .status-tag.warning {
   background: #fff7ed;
   color: #d97706;
@@ -3051,7 +3589,7 @@ onBeforeUnmount(() => {
   line-height: 1.8;
 }
 
-.export-notice > span {
+.export-notice>span {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -3364,7 +3902,7 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.edit-standard-result > div {
+.edit-standard-result>div {
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid #e2e8f0;
@@ -3915,12 +4453,12 @@ onBeforeUnmount(() => {
     height: 42px;
   }
 
-  .mobile-pagination-bar .pagination-controls > .btn:first-of-type {
+  .mobile-pagination-bar .pagination-controls>.btn:first-of-type {
     grid-column: 1;
     grid-row: 2;
   }
 
-  .mobile-pagination-bar .pagination-controls > .btn:last-of-type {
+  .mobile-pagination-bar .pagination-controls>.btn:last-of-type {
     grid-column: 2;
     grid-row: 2;
   }
@@ -4005,6 +4543,18 @@ onBeforeUnmount(() => {
       rgba(255, 255, 255, 0.98);
   }
 
+  .mobile-issue-card.issue-audit-approved {
+    background:
+      radial-gradient(circle at 100% 0%, rgba(34, 197, 94, 0.12), transparent 30%),
+      rgba(240, 253, 244, 0.96);
+  }
+
+  .mobile-issue-card.issue-audit-rejected {
+    background:
+      radial-gradient(circle at 100% 0%, rgba(239, 68, 68, 0.11), transparent 30%),
+      rgba(254, 242, 242, 0.96);
+  }
+
   .mobile-card-body {
     padding: 12px;
     border: 1px solid #edf2f7;
@@ -4022,7 +4572,7 @@ onBeforeUnmount(() => {
     gap: 7px;
   }
 
-  .mobile-card-row-top > span {
+  .mobile-card-row-top>span {
     font-weight: 900;
   }
 
@@ -4056,7 +4606,7 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
-  .export-notice > span {
+  .export-notice>span {
     width: fit-content;
   }
 

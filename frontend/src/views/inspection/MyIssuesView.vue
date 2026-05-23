@@ -931,6 +931,7 @@ const submitAction = async () => {
         formData
       )
       await fetchMyIssues()
+      window.dispatchEvent(new Event('my-pending-rectification-refresh'))
       closeActionDrawer()
       showActionToast(response.data.message || '整改提交成功。', 'success')
       return
@@ -970,6 +971,8 @@ const submitAction = async () => {
 }
 
 const statusClass = (status) => {
+  if (status === '待审核') return 'status-tag audit'
+  if (status === '待签名') return 'status-tag pending'
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
@@ -1733,6 +1736,16 @@ onBeforeUnmount(() => {
 .status-tag.danger {
   background: #fef2f2;
   color: #dc2626;
+}
+
+.status-tag.audit {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.status-tag.pending {
+  background: #ecfeff;
+  color: #0891b2;
 }
 
 .status-tag.warning {

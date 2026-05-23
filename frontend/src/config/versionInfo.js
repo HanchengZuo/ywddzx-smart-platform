@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.0',
+    date: '2026-05-22',
+    title: '巡检审核流程上线',
+    summary: '巡检问题先审核，站经理再签字，流程更清楚。',
+    items: [
+      '巡检问题新增审核通过和审核否决。',
+      '审核否决的问题不再进入巡检记录和待办流转。',
+      '巡检问题先待审核，后待签名，其次待整改。',
+      '巡检记录新增待签提醒，问题列表支持全屏缩放查看。'
+    ]
+  },
+  {
     version: 'v1.9.6',
     date: '2026-05-22',
     title: '巡检记录筛选优化',

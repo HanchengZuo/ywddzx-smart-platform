@@ -377,16 +377,17 @@ const dependentPermissionMap = {
 }
 
 const anyDependentPermissionMap = {
-  edit_inspection_issues: ['view_own_inspection_issues', 'view_all_inspection_issues'],
-  delete_inspection_issues: ['view_own_inspection_issues', 'view_all_inspection_issues'],
-  delete_inspection_records: ['view_own_inspection_records', 'view_all_inspection_records'],
-  sign_inspection_records: ['view_own_inspection_records', 'view_all_inspection_records']
+  edit_inspection_issues: ['view_all_inspection_issues'],
+  delete_inspection_issues: ['view_all_inspection_issues'],
+  audit_inspection_issues: ['view_all_inspection_issues'],
+  delete_inspection_records: ['view_all_inspection_records'],
+  reset_inspection_signature: ['view_all_inspection_records']
 }
 
 const scopedPermissionLayouts = {
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues'],
-    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues'],
+    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues'],
     readonlyItems: [
       {
         key: 'creator_issue_controls',
@@ -402,7 +403,7 @@ const scopedPermissionLayouts = {
   },
   '巡检记录': {
     scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records'],
-    actionKeys: ['sign_inspection_records', 'delete_inspection_records']
+    actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
   },
   '站点证照有效期管理': {
     scopeKeys: ['view_own_certificates', 'view_all_certificates'],

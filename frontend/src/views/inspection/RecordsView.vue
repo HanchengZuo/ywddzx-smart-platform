@@ -233,6 +233,11 @@
                   站经理签名
                 </button>
 
+                <div v-else-if="shouldShowSignatureProgress(record)" class="mobile-sign-progress-card">
+                  <strong>{{ getSignatureProgressTitle(record) }}</strong>
+                  <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
+                </div>
+
                 <button v-if="canDeleteInspectionRecord(record)"
                   class="btn btn-danger batch-action-btn mobile-action-btn mobile-action-delete" type="button"
                   :disabled="deletingInspectionId === record.id" aria-label="删除巡检记录"
@@ -247,6 +252,10 @@
                 <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
                   alt="站经理签名" />
                 <div class="mobile-signature-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+                <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
+                  type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
+                  {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
+                </button>
               </div>
             </div>
           </div>
@@ -341,27 +350,43 @@
                       <div class="signature-status-badge success">已确认完成</div>
                       <div class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
                     </div>
-                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
-                      type="button" :disabled="completingInspectionId === record.id"
-                      @click="completeInspectionRecord(record)">
-                      {{ completingInspectionId === record.id ? '确认中...' : '检查人确认完成' }}
-                    </button>
+	                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
+	                      type="button" :disabled="completingInspectionId === record.id"
+	                      @click="completeInspectionRecord(record)">
+	                      {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
+	                    </button>
                     <span v-else class="signature-status-badge pending">待检查人确认</span>
                   </td>
 
                   <td class="batch-signature-cell">
                     <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
-                      class="signature-preview-box">
-                      <div class="signature-status-badge success">已签名确认</div>
-                      <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
-                        alt="站经理签名" />
-                      <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+                      class="signature-signed-wrap">
+                      <div class="signature-preview-box">
+                        <div class="signature-status-badge success">已签名确认</div>
+                        <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                          alt="站经理签名" />
+                        <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+                      </div>
+                      <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
+                        type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
+                        {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
+                      </button>
                     </div>
 
-                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
-                      type="button" @click="openSignatureDialog(record)">
-                      本表站经理签字确认
-                    </button>
+	                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
+	                      type="button" @click="openSignatureDialog(record)">
+	                      站经理签字
+	                    </button>
+
+	                    <div v-else-if="shouldShowSignatureProgress(record)" class="signature-progress-box">
+	                      <div class="signature-status-badge pending">{{ getSignatureProgressTitle(record) }}</div>
+	                      <p class="signature-progress-copy">
+	                        <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
+	                      </p>
+	                      <div v-if="getTotalIssueCount(record) > 0" class="signature-progress-track">
+	                        <span :style="{ width: getSignatureProgressWidth(record) }"></span>
+                      </div>
+                    </div>
 
                     <span v-else class="signature-status-badge pending">待签名确认</span>
                   </td>
@@ -682,6 +707,7 @@ const currentUsername = localStorage.getItem('username') || ''
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 const deletingInspectionId = ref(null)
 const completingInspectionId = ref(null)
+const resettingSignatureId = ref(null)
 const actionMessage = ref({
   text: '',
   type: 'info'
@@ -1382,10 +1408,50 @@ const canCompleteInspectionRecord = (record) => Boolean(record?.can_complete_rec
 
 const canDeleteInspectionRecord = (record) => Boolean(record?.can_delete_record)
 
+const canResetInspectionSignature = (record) => Boolean(record?.can_reset_signature)
+
+const getTotalIssueCount = (record) => Number(record?.total_issue_count ?? record?.issue_count ?? 0) || 0
+
+const getPendingAuditCount = (record) => Number(record?.pending_audit_count || 0) || 0
+
+const getAuditedIssueCount = (record) => Number(record?.audited_issue_count || 0) || 0
+
+const shouldShowSignatureProgress = (record) => (
+  record?.sign_status !== '已签名确认' &&
+  getPendingAuditCount(record) > 0
+)
+
+const getSignatureProgressTitle = (record) => {
+  return getPendingAuditCount(record) > 0 ? '等待问题审核' : '待站经理签名'
+}
+
+const getSignatureProgressText = (record) => {
+  return getSignatureProgressLines(record).join('')
+}
+
+const getSignatureProgressLines = (record) => {
+  const total = getTotalIssueCount(record)
+  const pending = getPendingAuditCount(record)
+  if (pending > 0) {
+    return [
+      '本表问题审核完成后进入签字环节：',
+      `已审核 ${getAuditedIssueCount(record)}/${total}，剩余 ${pending} 条。`
+    ]
+  }
+  return ['审核已完成，请等待站经理账号进行本表签字确认。']
+}
+
+const getSignatureProgressWidth = (record) => {
+  const total = getTotalIssueCount(record)
+  if (total <= 0) return '100%'
+  const done = Math.min(getAuditedIssueCount(record), total)
+  return `${Math.round((done / total) * 100)}%`
+}
+
 const completeInspectionRecord = async (record) => {
   if (!record?.id || completingInspectionId.value) return
   const confirmed = window.confirm(
-    `确认【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】已经检查完成吗？\n\n确认后，本月该站点这张检查表将封存，不能继续新增、编辑或删除问题。`
+    `确认【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】已经检查完成吗？\n\n确认后，本周期该站点这张检查表将封存，不能继续新增问题；已记录问题仍按权限维护。`
   )
   if (!confirmed) return
 
@@ -1436,6 +1502,41 @@ const deleteInspectionRecord = async (record) => {
     showActionMessage(error?.response?.data?.error || '巡检记录删除失败。', 'error')
   } finally {
     deletingInspectionId.value = null
+  }
+}
+
+const resetInspectionSignature = async (record) => {
+  if (!record?.id || resettingSignatureId.value) return
+
+  const confirmed = window.confirm(
+    `确定重置【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】的站经理签名吗？\n\n重置后只撤销站经理签名，并将本记录下的问题退回待审核；检查人完成确认状态保持不变，重新审核完成后可再次签字。`
+  )
+  if (!confirmed) return
+
+  try {
+    resettingSignatureId.value = record.id
+    showActionMessage('')
+    const userId = localStorage.getItem('user_id') || ''
+    const response = await axios.post(`/api/inspections/${record.id}/signature/reset`, {
+      user_id: userId
+    })
+    if (String(batchDetail.value.inspection?.id || '') === String(record.id)) {
+      batchDetail.value.inspection = {
+        ...(batchDetail.value.inspection || {}),
+        sign_status: '待签名确认',
+        station_manager_signed_name: '',
+        station_manager_signature_path: '',
+        station_manager_signed_at: ''
+      }
+    }
+    await fetchInspections()
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
+    showActionMessage(response.data?.message || '站经理签名已重置。', 'success')
+  } catch (error) {
+    showActionMessage(error?.response?.data?.error || '重置站经理签名失败。', 'error')
+  } finally {
+    resettingSignatureId.value = null
   }
 }
 
@@ -1555,6 +1656,8 @@ const submitInspectionSignature = async () => {
     await axios.post(`/api/inspections/${record.id}/sign`, formData)
     closeSignatureDialog()
     await fetchInspections()
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     signatureDialog.value.error = error?.response?.data?.error || '提交签名失败。'
   } finally {
@@ -2230,20 +2333,20 @@ onBeforeUnmount(() => {
 }
 
 .signature-action-btn {
-  width: 100%;
-  min-width: 220px;
-  min-height: 44px;
-  white-space: normal;
-  line-height: 1.5;
-  padding: 10px 14px;
+  width: auto;
+  min-width: 118px;
+  min-height: 38px;
+  white-space: nowrap;
+  line-height: 1.3;
+  padding: 8px 13px;
 }
 
 .batch-action-btn {
-  width: 100%;
+  width: auto;
   min-width: 96px;
-  white-space: normal;
-  line-height: 1.5;
-  padding: 10px 12px;
+  white-space: nowrap;
+  line-height: 1.3;
+  padding: 8px 12px;
 }
 
 .record-action-stack {
@@ -2424,6 +2527,33 @@ onBeforeUnmount(() => {
   border: 1px solid #dbe4ee;
   border-radius: 14px;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-sign-progress-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.mobile-sign-progress-card strong {
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.mobile-sign-progress-card span {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .mobile-signature-label {
@@ -2591,15 +2721,15 @@ onBeforeUnmount(() => {
 .batch-action-cell,
 .batch-signature-cell {
   vertical-align: middle;
-  text-align: left;
+  text-align: center;
 }
 
 .batch-action-cell {
-  min-width: 150px;
+  min-width: 132px;
 }
 
 .batch-signature-cell {
-  min-width: 260px;
+  min-width: 218px;
 }
 
 .signature-preview-box {
@@ -2607,6 +2737,25 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+
+.signature-signed-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.signature-reset-btn {
+  min-width: 58px;
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fff7f7;
+}
+
+.signature-reset-btn:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: #fee2e2;
 }
 
 .signature-preview-image {
@@ -2649,6 +2798,46 @@ onBeforeUnmount(() => {
   color: #1d4ed8;
 }
 
+.signature-progress-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  margin: 0 auto;
+}
+
+.signature-progress-box p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.signature-progress-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+
+.signature-progress-track {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.signature-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #14b8a6 100%);
+  transition: width 0.25s ease;
+}
+
 .signature-dialog-header {
   display: flex;
   align-items: flex-start;
@@ -2659,8 +2848,8 @@ onBeforeUnmount(() => {
 
 .signature-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px;
   align-items: stretch;
 }
 
@@ -2704,12 +2893,12 @@ onBeforeUnmount(() => {
 }
 
 .signature-canvas-landscape {
-  height: 300px;
+  height: 420px;
 }
 
 .signature-dialog {
-  width: min(860px, 100%);
-  max-height: min(88vh, 920px);
+  width: min(1120px, 100%);
+  max-height: min(92vh, 980px);
   padding: 24px;
   overflow: auto;
 }
@@ -2737,7 +2926,7 @@ onBeforeUnmount(() => {
 .signature-canvas {
   display: block;
   width: 100%;
-  height: 240px;
+  height: 320px;
   touch-action: none;
   cursor: crosshair;
 }

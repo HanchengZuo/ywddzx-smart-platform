@@ -42,7 +42,10 @@ CREATE TABLE issues (
 
     review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改
     review_note TEXT,                                                         -- 督导组复核说明
-    review_photo_path TEXT                                                    -- 督导组复核照片路径
+    review_photo_path TEXT,                                                   -- 督导组复核照片路径
+    audit_status TEXT NOT NULL DEFAULT 'pending',                             -- 审核状态：pending / approved / rejected
+    audited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,               -- 审核人
+    audited_at TIMESTAMP                                                      -- 审核时间
 );
 
 ALTER TABLE issues
@@ -54,14 +57,40 @@ ADD COLUMN IF NOT EXISTS internal_standard_id TEXT;
 ALTER TABLE issues
 ADD COLUMN IF NOT EXISTS internal_standard_detail_text TEXT;
 
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS audit_status TEXT NOT NULL DEFAULT 'pending';
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS audited_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP;
+
 UPDATE issues i
 SET inspector_id = ins.inspector_id
 FROM inspections ins
 WHERE i.inspection_id = ins.id
   AND i.inspector_id IS NULL;
 
+-- 兼容旧数据：站经理已签字确认的历史问题默认视为审核通过，审核时间沿用签字时间。
+UPDATE issues i
+SET audit_status = 'approved',
+    audited_at = COALESCE(ins.station_manager_signed_at, i.audited_at, i.created_at, CURRENT_TIMESTAMP)
+FROM inspections ins
+WHERE i.inspection_id = ins.id
+  AND (
+      COALESCE(ins.sign_status, '') = '已签名确认'
+      OR ins.station_manager_signed_at IS NOT NULL
+      OR NULLIF(ins.station_manager_signature_path, '') IS NOT NULL
+      OR NULLIF(ins.station_manager_signed_name, '') IS NOT NULL
+  )
+  AND COALESCE(i.audit_status, 'pending') = 'pending';
+
 CREATE INDEX IF NOT EXISTS idx_issues_inspector_id
 ON issues (inspector_id);
 
 CREATE INDEX IF NOT EXISTS idx_issues_internal_standard_id
 ON issues (internal_standard_id);
+
+CREATE INDEX IF NOT EXISTS idx_issues_audit_status
+ON issues (audit_status);
