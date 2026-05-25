@@ -254,7 +254,6 @@
 
     <div v-if="issuePhotoPreviewVisible" class="issue-photo-preview-overlay" @click.self="closeIssuePhotoPreview">
       <div class="issue-photo-preview-dialog" @wheel.prevent="handleIssuePhotoPreviewWheel" @dblclick="resetIssuePhotoPreviewScale">
-        <button class="issue-photo-preview-close" type="button" @click="closeIssuePhotoPreview">关闭</button>
         <img :src="imagePreviewUrl" :style="issuePhotoPreviewImageStyle" alt="问题照片大图预览" />
       </div>
     </div>
@@ -2051,20 +2050,6 @@ onBeforeUnmount(() => {
   transform-origin: center center;
   transition: transform 0.12s ease-out;
   will-change: transform;
-}
-
-.issue-photo-preview-close {
-  position: absolute;
-  right: 12px;
-  top: 12px;
-  z-index: 2;
-  border: none;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.78);
-  color: #fff;
-  padding: 8px 12px;
-  font-weight: 800;
-  cursor: pointer;
 }
 
 .btn {

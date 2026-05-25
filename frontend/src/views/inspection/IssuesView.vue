@@ -968,13 +968,9 @@
       </div>
     </div>
 
-    <div v-if="previewState.visible" class="image-modal" @click.self="closePreview">
-      <div class="image-modal-content">
-        <div class="image-modal-header">
-          <span>{{ previewState.title }}</span>
-          <button class="close-btn" type="button" @click="closePreview">×</button>
-        </div>
-        <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
+    <div v-if="previewState.visible" class="issue-photo-preview-overlay" @click.self="closePreview">
+      <div class="issue-photo-preview-dialog" @wheel.prevent="handlePreviewWheel" @dblclick="resetPreviewScale">
+        <img :src="previewState.url" :style="previewImageStyle" :alt="previewState.title || '图片预览'" />
       </div>
     </div>
     <div v-if="standardDetailState.visible" class="image-modal" @click.self="closeStandardDetail">
@@ -2573,7 +2569,8 @@ const jumpToInputPage = () => {
 const previewState = ref({
   visible: false,
   url: '',
-  title: ''
+  title: '',
+  scale: 1
 })
 
 const standardDetailState = ref({
@@ -2594,7 +2591,8 @@ const preview = (url, title) => {
   previewState.value = {
     visible: true,
     url,
-    title
+    title,
+    scale: 1
   }
 }
 
@@ -2602,8 +2600,23 @@ const closePreview = () => {
   previewState.value = {
     visible: false,
     url: '',
-    title: ''
+    title: '',
+    scale: 1
   }
+}
+
+const previewImageStyle = computed(() => ({
+  transform: `scale(${previewState.value.scale})`
+}))
+
+const resetPreviewScale = () => {
+  previewState.value.scale = 1
+}
+
+const handlePreviewWheel = (event) => {
+  const delta = event.deltaY > 0 ? -0.12 : 0.12
+  const nextScale = previewState.value.scale + delta
+  previewState.value.scale = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
 
 const openStandardDetail = (item) => {
@@ -3629,12 +3642,14 @@ onBeforeUnmount(() => {
 }
 
 .fullscreen-overlay-host .image-modal,
+.fullscreen-overlay-host .issue-photo-preview-overlay,
 .fullscreen-overlay-host .audit-center-notice,
 .fullscreen-overlay-host .message-toast {
   z-index: 9500;
 }
 
-.fullscreen-overlay-host .image-modal {
+.fullscreen-overlay-host .image-modal,
+.fullscreen-overlay-host .issue-photo-preview-overlay {
   pointer-events: auto;
 }
 
@@ -4069,6 +4084,40 @@ onBeforeUnmount(() => {
   justify-content: center;
   z-index: 1000;
   padding: 24px;
+}
+
+.issue-photo-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.issue-photo-preview-dialog {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: visible;
+  cursor: zoom-in;
+}
+
+.issue-photo-preview-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: 92vh;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
+  transform-origin: center center;
+  transition: transform 0.12s ease-out;
+  will-change: transform;
 }
 
 .image-modal-content {
