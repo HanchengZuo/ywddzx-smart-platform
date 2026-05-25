@@ -1096,6 +1096,8 @@ const tableZoom = ref(1)
 const overlayTeleportTarget = computed(() => (
   tableFullscreen.value && fullscreenOverlayHostRef.value ? fullscreenOverlayHostRef.value : 'body'
 ))
+let fullscreenDomMutationGuard = false
+let fullscreenDomMutationTimer = null
 const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
@@ -2289,6 +2291,7 @@ const saveRectificationPhoto = async () => {
     return
   }
 
+  let preserveFullscreen = false
   try {
     rectificationPhotoDialog.value.saving = true
     rectificationPhotoDialog.value.error = ''
@@ -2296,12 +2299,14 @@ const saveRectificationPhoto = async () => {
     formData.append('user_id', localStorage.getItem('user_id') || '')
     formData.append('rectification_photo', rectificationPhotoDialog.value.file)
     await axios.post(`/api/issues/${issueId}/rectification-photo`, formData)
+    preserveFullscreen = beginFullscreenDomPreservation()
     closeRectificationPhotoDialog()
     showActionMessage('整改照片已更新。', 'success')
     await fetchIssues()
   } catch (error) {
     rectificationPhotoDialog.value.error = error?.response?.data?.error || '整改照片更新失败。'
   } finally {
+    await finishFullscreenDomPreservation(preserveFullscreen)
     if (rectificationPhotoDialog.value.visible) {
       rectificationPhotoDialog.value.saving = false
     }
@@ -2330,6 +2335,7 @@ const saveIssueEdit = async () => {
     return
   }
 
+  let preserveFullscreen = false
   try {
     editDialog.value.saving = true
     editDialog.value.error = ''
@@ -2344,6 +2350,7 @@ const saveIssueEdit = async () => {
       formData.append('issue_photo', editDialog.value.issuePhotoFile)
     }
     await axios.put(`/api/issues/${issueId}`, formData)
+    preserveFullscreen = beginFullscreenDomPreservation()
     editDialog.value.saving = false
     closeEditDialog()
     showActionMessage('巡检问题已保存。', 'success')
@@ -2352,6 +2359,7 @@ const saveIssueEdit = async () => {
   } catch (error) {
     editDialog.value.error = error?.response?.data?.error || '保存巡检问题失败。'
   } finally {
+    await finishFullscreenDomPreservation(preserveFullscreen)
     if (editDialog.value.visible) {
       editDialog.value.saving = false
     }
@@ -2364,18 +2372,21 @@ const deleteIssue = async (item) => {
   const confirmed = window.confirm(`确认删除问题 #${item.id} 吗？删除后巡检记录的问题数量会自动重新计算。`)
   if (!confirmed) return
 
+  let preserveFullscreen = false
   try {
     deletingIssueId.value = item.id
     const userId = localStorage.getItem('user_id') || ''
     await axios.delete(`/api/issues/${item.id}`, {
       data: { user_id: userId }
     })
+    preserveFullscreen = beginFullscreenDomPreservation()
     showActionMessage('巡检问题已删除。', 'success')
     await fetchIssues()
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '删除巡检问题失败。', 'error')
   } finally {
+    await finishFullscreenDomPreservation(preserveFullscreen)
     deletingIssueId.value = null
   }
 }
@@ -2389,12 +2400,14 @@ const auditIssue = async (item, status) => {
   }
   const actionLabel = actionLabels[status] || '审核'
 
+  let preserveFullscreen = false
   try {
     auditingIssueId.value = item.id
     const response = await axios.post(`/api/issues/${item.id}/audit`, {
       user_id: localStorage.getItem('user_id') || '',
       action: status
     })
+    preserveFullscreen = beginFullscreenDomPreservation()
     const message = response.data?.message || `问题 #${item.id} 已${actionLabel}。`
     showAuditNotice(actionLabel, message, status === 'rejected' ? 'danger' : 'success')
     await fetchIssues()
@@ -2403,6 +2416,7 @@ const auditIssue = async (item, status) => {
   } catch (error) {
     showAuditNotice('审核失败', error?.response?.data?.error || '问题审核操作失败。', 'danger')
   } finally {
+    await finishFullscreenDomPreservation(preserveFullscreen)
     auditingIssueId.value = null
   }
 }
@@ -2433,7 +2447,44 @@ const enterTableFullscreen = async () => {
   setAutoTableZoom()
 }
 
+const beginFullscreenDomPreservation = () => {
+  const shouldPreserve = tableFullscreen.value || document.fullscreenElement === tableCardRef.value
+  if (!shouldPreserve) return false
+  fullscreenDomMutationGuard = true
+  if (fullscreenDomMutationTimer) {
+    clearTimeout(fullscreenDomMutationTimer)
+    fullscreenDomMutationTimer = null
+  }
+  return true
+}
+
+const finishFullscreenDomPreservation = async (shouldPreserve) => {
+  if (!shouldPreserve) return
+  await nextTick()
+  tableFullscreen.value = true
+  setAutoTableZoom()
+  if (!document.fullscreenElement && tableCardRef.value?.requestFullscreen) {
+    try {
+      await tableCardRef.value.requestFullscreen()
+    } catch (error) {
+      // 异步保存后浏览器可能拒绝重新进入原生全屏，保留页面内全屏兜底。
+    }
+  }
+  await nextTick()
+  tableFullscreen.value = true
+  setAutoTableZoom()
+  fullscreenDomMutationTimer = window.setTimeout(() => {
+    fullscreenDomMutationGuard = false
+    fullscreenDomMutationTimer = null
+  }, 450)
+}
+
 const exitTableFullscreen = async () => {
+  fullscreenDomMutationGuard = false
+  if (fullscreenDomMutationTimer) {
+    clearTimeout(fullscreenDomMutationTimer)
+    fullscreenDomMutationTimer = null
+  }
   try {
     if (document.fullscreenElement) {
       await document.exitFullscreen()
@@ -2460,6 +2511,15 @@ const handleTableFullscreenChange = () => {
     return
   }
   if (!document.fullscreenElement && tableFullscreen.value) {
+    if (fullscreenDomMutationGuard) {
+      tableFullscreen.value = true
+      nextTick(() => {
+        if (tableFullscreen.value) {
+          setAutoTableZoom()
+        }
+      })
+      return
+    }
     tableFullscreen.value = false
     tableZoom.value = 1
   }
@@ -2636,6 +2696,9 @@ onBeforeUnmount(() => {
   }
   if (auditNoticeTimer) {
     clearTimeout(auditNoticeTimer)
+  }
+  if (fullscreenDomMutationTimer) {
+    clearTimeout(fullscreenDomMutationTimer)
   }
   if (listImagesReadyTimer) {
     clearTimeout(listImagesReadyTimer)
