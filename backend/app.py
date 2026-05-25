@@ -164,6 +164,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
+        "key": "change_issue_inspector",
+        "name": "调整问题检查人归属",
+        "category": "巡检问题列表",
+        "description": "把单条巡检问题改挂到其他具备巡检登记能力的检查人名下。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_own_inspection_records",
         "name": "查看本站数据",
         "category": "巡检记录",
@@ -300,6 +307,9 @@ PERMISSION_ANY_DEPENDENCIES = {
         "view_all_inspection_issues",
     ),
     "audit_inspection_issues": (
+        "view_all_inspection_issues",
+    ),
+    "change_issue_inspector": (
         "view_all_inspection_issues",
     ),
     "delete_inspection_records": (
@@ -3852,8 +3862,8 @@ def can_audit_inspection_issues(cur, user):
     return has_permission(cur, user, "audit_inspection_issues")
 
 
-def can_change_issue_inspector(user):
-    return is_root_user(user)
+def can_change_issue_inspector(cur, user):
+    return has_permission(cur, user, "change_issue_inspector")
 
 
 def normalize_issue_audit_status(value):
@@ -3955,7 +3965,12 @@ def display_issue_status(issue):
 
 
 def normalize_issue_row_for_response(
-    row, user=None, can_explicit_edit=False, can_explicit_delete=False, can_explicit_audit=False
+    row,
+    user=None,
+    can_explicit_edit=False,
+    can_explicit_delete=False,
+    can_explicit_audit=False,
+    can_explicit_change_inspector=None,
 ):
     data = dict(row)
     data["inspector_user_id"] = data.get("inspector_id")
@@ -3998,8 +4013,12 @@ def normalize_issue_row_for_response(
     data["can_update_rectification_photo"] = can_user_update_rectification_photo(
         user, data, can_explicit_edit
     )
+    if can_explicit_change_inspector is None:
+        can_explicit_change_inspector = is_root_user(user)
     data["can_change_issue_inspector"] = bool(
-        not issue_mutation_locked and can_change_issue_inspector(user)
+        not issue_mutation_locked
+        and can_explicit_change_inspector
+        and (is_root_user(user) or not closed)
     )
     data["can_audit_issue"] = bool(can_explicit_audit and not inspection_signed)
     data["can_mark_excellent_issue"] = bool(can_explicit_audit and data["audit_status"] != "rejected")
@@ -13156,10 +13175,16 @@ def get_my_issues():
             rows = cur.fetchall()
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
+            can_explicit_change_inspector = can_change_issue_inspector(cur, user)
             return jsonify(
                 [
                     normalize_issue_row_for_response(
-                        row, user, can_explicit_edit, can_explicit_delete
+                        row,
+                        user,
+                        can_explicit_edit,
+                        can_explicit_delete,
+                        False,
+                        can_explicit_change_inspector,
                     )
                     for row in rows
                 ]
@@ -13208,10 +13233,16 @@ def get_my_issues():
             rows = cur.fetchall()
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
+            can_explicit_change_inspector = can_change_issue_inspector(cur, user)
             return jsonify(
                 [
                     normalize_issue_row_for_response(
-                        row, user, can_explicit_edit, can_explicit_delete
+                        row,
+                        user,
+                        can_explicit_edit,
+                        can_explicit_delete,
+                        False,
+                        can_explicit_change_inspector,
                     )
                     for row in rows
                 ]
@@ -13312,6 +13343,7 @@ def get_issues():
         can_explicit_edit = can_edit_inspection_issues(cur, user)
         can_explicit_delete = can_delete_inspection_issues(cur, user)
         can_explicit_audit = can_audit_inspection_issues(cur, user)
+        can_explicit_change_inspector = can_change_issue_inspector(cur, user)
 
         cur.execute(
             sql.SQL(
@@ -13369,7 +13401,12 @@ def get_issues():
         return jsonify(
             [
                 normalize_issue_row_for_response(
-                    row, user, can_explicit_edit, can_explicit_delete, can_explicit_audit
+                    row,
+                    user,
+                    can_explicit_edit,
+                    can_explicit_delete,
+                    can_explicit_audit,
+                    can_explicit_change_inspector,
                 )
                 for row in rows
             ]
@@ -13789,9 +13826,13 @@ def update_issue(issue_id):
                 i.standard_detail_text,
                 i.internal_standard_id,
                 i.internal_standard_detail_text,
+                i.description,
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
                 i.rectification_result,
+                i.rectification_note,
+                i.review_result,
+                i.review_note,
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 ins.inspection_date,
                 ins.batch_id,
@@ -13827,8 +13868,9 @@ def update_issue(issue_id):
             )
 
         can_explicit_edit = can_edit_inspection_issues(cur, user)
+        can_explicit_change_inspector = can_change_issue_inspector(cur, user)
         creator_can_modify = can_user_use_creator_issue_controls(user, issue)
-        if not can_explicit_edit and not creator_can_modify:
+        if not can_explicit_edit and not creator_can_modify and not can_explicit_change_inspector:
             return jsonify({"success": False, "error": "当前账号无权编辑巡检问题。"}), 403
 
         if creator_can_modify and not can_explicit_edit and not is_root_user(user):
@@ -13859,6 +13901,7 @@ def update_issue(issue_id):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
 
         target_inspector_id = int(issue["inspector_id"])
+        inspector_changed = False
         if target_inspector_id_param:
             try:
                 requested_inspector_id = int(target_inspector_id_param)
@@ -13866,8 +13909,8 @@ def update_issue(issue_id):
                 return jsonify({"success": False, "error": "检查人参数不合法。"}), 400
 
             if requested_inspector_id != int(issue["inspector_id"]):
-                if not can_change_issue_inspector(user):
-                    return jsonify({"success": False, "error": "只有 root 账号可以修改问题检查人归属。"}), 403
+                if not can_explicit_change_inspector:
+                    return jsonify({"success": False, "error": "当前账号无权修改问题检查人归属。"}), 403
                 target_inspector = get_user_by_id(cur, requested_inspector_id)
                 if not target_inspector:
                     return jsonify({"success": False, "error": "目标检查人不存在。"}), 404
@@ -13876,6 +13919,22 @@ def update_issue(issue_id):
                 ):
                     return jsonify({"success": False, "error": "目标检查人必须具备巡检登记权限。"}), 400
                 target_inspector_id = requested_inspector_id
+                inspector_changed = True
+        elif can_explicit_change_inspector and not (can_explicit_edit or creator_can_modify):
+            return jsonify({"success": False, "error": "请选择要调整到的检查人。"}), 400
+
+        can_edit_issue_content = bool(can_explicit_edit or creator_can_modify)
+        if not can_edit_issue_content:
+            if not inspector_changed:
+                return jsonify({"success": False, "error": "当前账号只能调整检查人归属，请选择新的检查人后保存。"}), 400
+            description = issue.get("description") or ""
+            status = canonical_issue_status(issue.get("status"))
+            rectification_result = normalize_issue_result_for_response(issue.get("rectification_result"))
+            rectification_note = issue.get("rectification_note")
+            review_result = normalize_issue_result_for_response(issue.get("review_result"))
+            review_note = issue.get("review_note")
+            standard_id = str(issue.get("standard_id") or "")
+            internal_standard_id = str(issue.get("internal_standard_id") or "").strip().upper()
 
         current_standard = {
             "inspection_table_id": int(issue["inspection_table_id"]),
@@ -13885,7 +13944,9 @@ def update_issue(issue_id):
             "internal_standard_detail_text": issue.get("internal_standard_detail_text"),
         }
         usage_mode = get_inspection_standard_usage_mode(cur)
-        if usage_mode["mode"] == "internal":
+        if not can_edit_issue_content:
+            target_standard = current_standard
+        elif usage_mode["mode"] == "internal":
             if internal_standard_id or issue.get("internal_standard_id"):
                 target_standard = resolve_issue_standard_edit_target(
                     cur,
@@ -13909,7 +13970,11 @@ def update_issue(issue_id):
             target_inspector_id,
         )
         old_inspection_id = int(issue["inspection_id"])
-        new_photo_path = save_uploaded_file(issue_photo, "issues") if issue_photo and issue_photo.filename else None
+        new_photo_path = (
+            save_uploaded_file(issue_photo, "issues")
+            if can_edit_issue_content and issue_photo and issue_photo.filename
+            else None
+        )
 
         cur.execute(
             """

@@ -127,8 +127,8 @@
                 </button>
               </template>
             </template>
-            <button v-if="canEditIssueRow(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
-              编辑问题
+            <button v-if="canOpenIssueEditDialog(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
+              {{ canEditIssueRow(item) ? '编辑问题' : '调整检查人' }}
             </button>
             <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary" type="button"
               @click="openRectificationPhotoDialog(item)">
@@ -537,9 +537,9 @@
                 </td>
                 <td v-if="canManageIssues" class="nowrap operation-col">
                   <div class="table-actions">
-                    <button v-if="canEditIssueRow(item)" class="btn btn-secondary btn-sm" type="button"
+                    <button v-if="canOpenIssueEditDialog(item)" class="btn btn-secondary btn-sm" type="button"
                       @click="openEditDialog(item)">
-                      编辑
+                      {{ canEditIssueRow(item) ? '编辑' : '调检查人' }}
                     </button>
                     <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary btn-sm" type="button"
                       @click="openRectificationPhotoDialog(item)">
@@ -770,9 +770,9 @@
                   {{ inspectorUserLabel(inspector) }}
                 </option>
               </select>
-              <small class="field-help">仅 root 可调整。保存后该问题会挂到新的检查人名下，巡检记录参与人同步更新。</small>
+              <small class="field-help">保存后该问题会挂到新的检查人名下，巡检记录参与人同步更新。</small>
             </label>
-            <div class="issue-edit-field issue-edit-field-wide">
+            <div v-if="canEditDialogIssueContent" class="issue-edit-field issue-edit-field-wide">
               <span>编辑{{ editStandardInputLabel }}</span>
               <div class="edit-standard-panel">
                 <div class="edit-standard-mode">
@@ -823,11 +823,11 @@
                 </div>
               </div>
             </div>
-            <label class="issue-edit-field issue-edit-field-wide">
+            <label v-if="canEditDialogIssueContent" class="issue-edit-field issue-edit-field-wide">
               <span>问题描述</span>
               <textarea v-model="editDialog.form.description" rows="4" placeholder="请填写实际问题描述"></textarea>
             </label>
-            <div ref="editIssuePhotoUploadSectionRef"
+            <div v-if="canEditDialogIssueContent" ref="editIssuePhotoUploadSectionRef"
               class="issue-edit-field issue-edit-field-wide upload-follow-anchor">
               <span>问题照片</span>
               <div class="upload-card issue-edit-upload-card">
@@ -920,7 +920,10 @@
               <textarea v-model="editDialog.form.review_note" rows="3" placeholder="可补充或修正督导组复核说明"></textarea>
             </label>
           </div>
-          <div v-if="!editDialog.issue?.can_edit_issue_workflow" class="issue-edit-hint">
+          <div v-if="!canEditDialogIssueContent && canChangeDialogIssueInspector" class="issue-edit-hint">
+            当前账号仅可调整该问题的检查人归属，不会修改问题描述、照片、规范或流转状态。
+          </div>
+          <div v-else-if="!editDialog.issue?.can_edit_issue_workflow" class="issue-edit-hint">
             你是该问题的上传人，可在站点提交整改前修改问题描述和问题照片；流转状态、整改和复核信息仍由业务流程控制。
           </div>
 
@@ -1441,7 +1444,7 @@ const visiblePageItems = computed(() => {
 const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.edit_inspection_issues))
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
 const canAuditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.audit_inspection_issues) || list.value.some((item) => item?.can_audit_issue))
-const canChangeIssueInspectors = computed(() => currentRole === 'root' || list.value.some((item) => item?.can_change_issue_inspector))
+const canChangeIssueInspectors = computed(() => currentRole === 'root' || Boolean(localPermissions.value.change_issue_inspector) || list.value.some((item) => item?.can_change_issue_inspector))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
   canDeleteIssues.value ||
@@ -1454,6 +1457,8 @@ const canManageIssues = computed(() => (
   ))
 ))
 const visibleIssueColumns = computed(() => issueColumnDefinitions.filter((column) => issueColumnVisibility.value[column.key] !== false))
+const canEditDialogIssueContent = computed(() => Boolean(editDialog.value.issue?.can_edit_issue))
+const canChangeDialogIssueInspector = computed(() => Boolean(editDialog.value.issue?.can_change_issue_inspector))
 const groupedIssueColumns = computed(() => {
   const groupMap = new Map()
   issueColumnDefinitions.forEach((column) => {
@@ -1528,6 +1533,8 @@ const issueOperationLockReason = (item = {}) => {
   return ''
 }
 const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
+const canChangeIssueInspectorRow = (item) => Boolean(item?.can_change_issue_inspector)
+const canOpenIssueEditDialog = (item) => canEditIssueRow(item) || canChangeIssueInspectorRow(item)
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
 const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
 const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
@@ -1815,7 +1822,7 @@ const fetchEditStandardReferenceData = async () => {
 }
 
 const fetchInspectorUserOptions = async () => {
-  if (currentRole !== 'root') {
+  if (!editDialog.value.issue?.can_change_issue_inspector) {
     inspectorUserOptions.value = []
     return
   }
@@ -2117,11 +2124,11 @@ const openEditDialog = async (item) => {
   editStandardDropdownVisible.value = false
   editIssuePhotoDragActive.value = false
   editIssuePhotoDragDepth = 0
-  await Promise.all([
-    fetchEditStandardReferenceData(),
-    fetchInspectorUserOptions()
-  ])
-  syncEditStandardSearch()
+  const preloadTasks = []
+  if (item?.can_edit_issue) preloadTasks.push(fetchEditStandardReferenceData())
+  if (item?.can_change_issue_inspector) preloadTasks.push(fetchInspectorUserOptions())
+  await Promise.all(preloadTasks)
+  if (item?.can_edit_issue) syncEditStandardSearch()
 }
 
 const closeEditDialog = () => {
@@ -2234,6 +2241,7 @@ const handleEditIssuePhotoPaste = async (event) => {
 
 const handleWindowEditIssuePhotoPaste = async (event) => {
   if (event.defaultPrevented || !editDialog.value.visible) return
+  if (!canEditDialogIssueContent.value) return
   const file = getImageFileFromClipboardEvent(event)
   if (!file) return
   event.preventDefault()
@@ -2374,18 +2382,23 @@ const saveIssueEdit = async () => {
     return
   }
 
-  if (!editDialog.value.form.description.trim()) {
-    editDialog.value.error = '请填写问题描述。'
-    return
-  }
+  if (canEditDialogIssueContent.value) {
+    if (!editDialog.value.form.description.trim()) {
+      editDialog.value.error = '请填写问题描述。'
+      return
+    }
 
-  if (!editStandardReferenceValue.value && !canKeepExternalOnlyIssueStandard.value) {
-    editDialog.value.error = `请选择${editStandardInputLabel.value}。`
-    return
-  }
+    if (!editStandardReferenceValue.value && !canKeepExternalOnlyIssueStandard.value) {
+      editDialog.value.error = `请选择${editStandardInputLabel.value}。`
+      return
+    }
 
-  if (!selectedEditStandard.value && !canKeepExternalOnlyIssueStandard.value) {
-    editDialog.value.error = `请选择有效的${editStandardInputLabel.value}，不要只输入未匹配的文本。`
+    if (!selectedEditStandard.value && !canKeepExternalOnlyIssueStandard.value) {
+      editDialog.value.error = `请选择有效的${editStandardInputLabel.value}，不要只输入未匹配的文本。`
+      return
+    }
+  } else if (!canChangeDialogIssueInspector.value) {
+    editDialog.value.error = '当前账号无权保存该问题。'
     return
   }
 

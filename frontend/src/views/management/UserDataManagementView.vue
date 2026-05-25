@@ -380,6 +380,7 @@ const anyDependentPermissionMap = {
   edit_inspection_issues: ['view_all_inspection_issues'],
   delete_inspection_issues: ['view_all_inspection_issues'],
   audit_inspection_issues: ['view_all_inspection_issues'],
+  change_issue_inspector: ['view_all_inspection_issues'],
   delete_inspection_records: ['view_all_inspection_records'],
   reset_inspection_signature: ['view_all_inspection_records']
 }
@@ -387,17 +388,12 @@ const anyDependentPermissionMap = {
 const scopedPermissionLayouts = {
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues'],
-    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues'],
+    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector'],
     readonlyItems: [
       {
         key: 'creator_issue_controls',
         name: '编辑/删除自己提交的问题',
         description: '通用规则：督导组成员提交的问题，在站点尚未整改反馈前，可自动维护自己的问题描述和照片。'
-      },
-      {
-        key: 'root_change_issue_inspector',
-        name: '调整问题检查人归属',
-        description: 'root 固定拥有：可把单条巡检问题改挂到其他检查人名下，普通账号不能配置。'
       }
     ]
   },
