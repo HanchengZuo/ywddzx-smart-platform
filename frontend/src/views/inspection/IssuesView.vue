@@ -395,7 +395,7 @@
         </div>
       </div>
       <div class="table-scroll-wrap">
-        <div class="table-scroll">
+        <div ref="tableScrollRef" class="table-scroll">
           <table class="issues-table">
             <thead>
               <tr>
@@ -1064,6 +1064,7 @@ const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const editStandardSelectRef = ref(null)
 const tableCardRef = ref(null)
+const tableScrollRef = ref(null)
 const fullscreenOverlayHostRef = ref(null)
 const columnSettingsRef = ref(null)
 
@@ -2530,11 +2531,34 @@ const nextPage = () => {
   goToPage(page.value + 1)
 }
 
+const scrollIssueTableToTop = async () => {
+  await nextTick()
+  const tableScroll = tableScrollRef.value
+  if (tableScroll) {
+    tableScroll.scrollTo({
+      top: 0,
+      left: tableScroll.scrollLeft,
+      behavior: 'smooth'
+    })
+  }
+  if (!isMobileView.value && !tableFullscreen.value && tableCardRef.value) {
+    tableCardRef.value.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+      inline: 'nearest'
+    })
+  }
+}
+
 const goToPage = (targetPage) => {
   const normalizedPage = Number.parseInt(targetPage, 10)
   if (!Number.isFinite(normalizedPage)) return
   const safePage = Math.min(Math.max(normalizedPage, 1), totalPage.value)
+  const pageChanged = safePage !== page.value
   page.value = safePage
+  if (pageChanged) {
+    scrollIssueTableToTop()
+  }
 }
 
 const prevPage = () => {
