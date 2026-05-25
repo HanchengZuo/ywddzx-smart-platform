@@ -4488,6 +4488,272 @@ def start_issue_export_task(task_id, issue_ids, user_id):
     thread.start()
 
 
+ATTENDANCE_MODE_META = {
+    "online": {
+        "label": "视频检查",
+        "short_label": "视频",
+        "description": "统计检查表模式为线上的巡检记录。",
+    },
+    "offline": {
+        "label": "现场检查",
+        "short_label": "现场",
+        "description": "统计检查表模式为线下的巡检记录。",
+    },
+}
+
+
+def parse_attendance_month(month_value):
+    month_text = str(month_value or "").strip()
+    if not month_text:
+        today = beijing_today()
+        month_text = today.strftime("%Y-%m")
+    try:
+        month_start = datetime.strptime(month_text, "%Y-%m").date()
+    except ValueError as exc:
+        raise ValueError("月份格式必须为 YYYY-MM。") from exc
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return month_text, month_start, next_month
+
+
+def normalize_attendance_mode(mode_value):
+    mode = str(mode_value or "all").strip().lower()
+    if mode not in {"all", "online", "offline"}:
+        raise ValueError("检查方式参数不合法。")
+    return mode
+
+
+def append_unique_item(target_map, key, item):
+    if key is None or key == "":
+        return
+    target_map.setdefault(str(key), item)
+
+
+def sorted_dict_items(item_map, name_key="name"):
+    return sorted(
+        item_map.values(),
+        key=lambda item: str(item.get(name_key) or item.get("date") or item.get("id") or ""),
+    )
+
+
+def build_attendance_payload(rows, month, mode_filter):
+    modes = ["online", "offline"] if mode_filter == "all" else [mode_filter]
+    buckets = {
+        mode: {
+            "mode": mode,
+            **ATTENDANCE_MODE_META[mode],
+            "people_map": {},
+            "groups_map": {},
+            "station_ids": set(),
+            "inspection_ids": set(),
+            "checklist_ids": set(),
+        }
+        for mode in modes
+    }
+
+    for row in rows:
+        mode = row.get("checklist_mode") or "online"
+        if mode not in buckets:
+            continue
+
+        bucket = buckets[mode]
+        inspector_id = row.get("inspector_id")
+        inspection_date = row.get("inspection_date")
+        station_id = row.get("station_id")
+        table_id = row.get("inspection_table_id")
+        inspection_id = row.get("inspection_id")
+
+        if not inspector_id or not inspection_date:
+            continue
+
+        inspector_name = (
+            row.get("inspector_name")
+            or row.get("inspector_username")
+            or row.get("inspector_phone")
+            or str(inspector_id)
+        )
+        person_key = str(inspector_id)
+        person = bucket["people_map"].setdefault(
+            person_key,
+            {
+                "inspector_id": inspector_id,
+                "inspector_name": inspector_name,
+                "username": row.get("inspector_username") or "",
+                "phone": row.get("inspector_phone") or "",
+                "attendance_dates": set(),
+                "inspection_ids": set(),
+                "stations_map": {},
+                "checklists_map": {},
+                "activity_days": {},
+            },
+        )
+        person["attendance_dates"].add(inspection_date)
+        person["inspection_ids"].add(inspection_id)
+        append_unique_item(
+            person["stations_map"],
+            station_id,
+            {
+                "id": station_id,
+                "name": row.get("station_name") or "未命名站点",
+                "region": row.get("station_region") or "",
+            },
+        )
+        append_unique_item(
+            person["checklists_map"],
+            table_id,
+            {
+                "id": table_id,
+                "name": row.get("inspection_table_name") or "未命名检查表",
+            },
+        )
+        activity = person["activity_days"].setdefault(
+            inspection_date,
+            {
+                "date": inspection_date,
+                "stations_map": {},
+                "checklists_map": {},
+            },
+        )
+        append_unique_item(
+            activity["stations_map"],
+            station_id,
+            {
+                "id": station_id,
+                "name": row.get("station_name") or "未命名站点",
+                "region": row.get("station_region") or "",
+            },
+        )
+        append_unique_item(
+            activity["checklists_map"],
+            table_id,
+            {
+                "id": table_id,
+                "name": row.get("inspection_table_name") or "未命名检查表",
+            },
+        )
+
+        group_key = f"{inspection_date}:{station_id}"
+        group = bucket["groups_map"].setdefault(
+            group_key,
+            {
+                "date": inspection_date,
+                "station_id": station_id,
+                "station_name": row.get("station_name") or "未命名站点",
+                "station_region": row.get("station_region") or "",
+                "inspectors_map": {},
+                "checklists_map": {},
+                "inspection_ids": set(),
+            },
+        )
+        append_unique_item(
+            group["inspectors_map"],
+            inspector_id,
+            {
+                "id": inspector_id,
+                "name": inspector_name,
+                "username": row.get("inspector_username") or "",
+                "phone": row.get("inspector_phone") or "",
+            },
+        )
+        append_unique_item(
+            group["checklists_map"],
+            table_id,
+            {
+                "id": table_id,
+                "name": row.get("inspection_table_name") or "未命名检查表",
+            },
+        )
+        group["inspection_ids"].add(inspection_id)
+
+        bucket["station_ids"].add(station_id)
+        bucket["inspection_ids"].add(inspection_id)
+        bucket["checklist_ids"].add(table_id)
+
+    mode_payloads = []
+    for mode in modes:
+        bucket = buckets[mode]
+        people = []
+        for person in bucket["people_map"].values():
+            activity_days = []
+            for activity in sorted(person["activity_days"].values(), key=lambda item: item["date"]):
+                activity_days.append(
+                    {
+                        "date": activity["date"],
+                        "stations": sorted_dict_items(activity["stations_map"]),
+                        "checklists": sorted_dict_items(activity["checklists_map"]),
+                    }
+                )
+            people.append(
+                {
+                    "inspector_id": person["inspector_id"],
+                    "inspector_name": person["inspector_name"],
+                    "username": person["username"],
+                    "phone": person["phone"],
+                    "attendance_days": len(person["attendance_dates"]),
+                    "inspection_count": len(person["inspection_ids"]),
+                    "station_count": len(person["stations_map"]),
+                    "checklist_count": len(person["checklists_map"]),
+                    "attendance_dates": sorted(person["attendance_dates"]),
+                    "stations": sorted_dict_items(person["stations_map"]),
+                    "checklists": sorted_dict_items(person["checklists_map"]),
+                    "activity_days": activity_days,
+                }
+            )
+        people.sort(
+            key=lambda item: (
+                -item["attendance_days"],
+                -item["inspection_count"],
+                item["inspector_name"],
+            )
+        )
+
+        groups = []
+        for group in bucket["groups_map"].values():
+            inspectors = sorted_dict_items(group["inspectors_map"])
+            checklists = sorted_dict_items(group["checklists_map"])
+            groups.append(
+                {
+                    "date": group["date"],
+                    "station_id": group["station_id"],
+                    "station_name": group["station_name"],
+                    "station_region": group["station_region"],
+                    "inspectors": inspectors,
+                    "checklists": checklists,
+                    "inspector_count": len(inspectors),
+                    "checklist_count": len(checklists),
+                    "inspection_count": len(group["inspection_ids"]),
+                }
+            )
+        groups.sort(key=lambda item: (item["date"], item["station_region"], item["station_name"]))
+
+        mode_payloads.append(
+            {
+                "mode": bucket["mode"],
+                "label": bucket["label"],
+                "short_label": bucket["short_label"],
+                "description": bucket["description"],
+                "summary": {
+                    "inspector_count": len(people),
+                    "attendance_person_days": sum(item["attendance_days"] for item in people),
+                    "group_count": len(groups),
+                    "station_count": len([item for item in bucket["station_ids"] if item]),
+                    "inspection_count": len([item for item in bucket["inspection_ids"] if item]),
+                    "checklist_count": len([item for item in bucket["checklist_ids"] if item]),
+                },
+                "people": people,
+                "groups": groups,
+            }
+        )
+
+    return {
+        "month": month,
+        "mode": mode_filter,
+        "modes": mode_payloads,
+    }
+
+
 def normalize_optional_issue_result(value, field_label):
     normalized = canonical_issue_result(value)
     if not normalized:
@@ -4515,6 +4781,10 @@ def can_reset_inspection_signature(cur, user):
 
 def can_sign_inspection_records(_cur, user):
     return is_station_manager(user) and bool(user.get("station_id"))
+
+
+def can_view_assessment(cur, user):
+    return has_permission(cur, user, "view_assessment")
 
 
 def can_view_own_certificates(cur, user):
@@ -14410,6 +14680,118 @@ def reopen_management_inspection_record(inspection_id):
     except Exception as e:
         if conn:
             conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/attendance", methods=["GET"])
+def get_assessment_attendance():
+    try:
+        month, month_start, next_month = parse_attendance_month(request.args.get("month"))
+        mode_filter = normalize_attendance_mode(request.args.get("mode", "all"))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_assessment(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看人员出勤统计。"}), 403
+
+        base_mode_clause = ""
+        issue_mode_clause = ""
+        params = [month_start, next_month]
+        if mode_filter != "all":
+            base_mode_clause = "AND COALESCE(NULLIF(t.checklist_mode, ''), 'online') = %s"
+            params.append(mode_filter)
+        params.extend([month_start, next_month])
+        if mode_filter != "all":
+            issue_mode_clause = "AND COALESCE(NULLIF(t.checklist_mode, ''), 'online') = %s"
+            params.append(mode_filter)
+
+        cur.execute(
+            f"""
+            WITH participant_rows AS (
+                SELECT
+                    ins.id AS inspection_id,
+                    ins.inspection_date,
+                    ins.station_id,
+                    s.station_name,
+                    s.region AS station_region,
+                    t.id AS inspection_table_id,
+                    t.table_name AS inspection_table_name,
+                    COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
+                    ins.inspector_id
+                FROM inspections ins
+                JOIN stations s ON s.id = ins.station_id
+                JOIN inspection_tables t ON t.id = ins.inspection_table_id
+                WHERE ins.inspection_date >= %s
+                  AND ins.inspection_date < %s
+                  {base_mode_clause}
+
+                UNION
+
+                SELECT
+                    ins.id AS inspection_id,
+                    ins.inspection_date,
+                    ins.station_id,
+                    s.station_name,
+                    s.region AS station_region,
+                    t.id AS inspection_table_id,
+                    t.table_name AS inspection_table_name,
+                    COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
+                    i.inspector_id
+                FROM issues i
+                JOIN inspections ins ON ins.id = i.inspection_id
+                JOIN stations s ON s.id = ins.station_id
+                JOIN inspection_tables t ON t.id = ins.inspection_table_id
+                WHERE ins.inspection_date >= %s
+                  AND ins.inspection_date < %s
+                  AND i.inspector_id IS NOT NULL
+                  AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+                  {issue_mode_clause}
+            )
+            SELECT DISTINCT
+                p.inspection_id,
+                TO_CHAR(p.inspection_date, 'YYYY-MM-DD') AS inspection_date,
+                p.station_id,
+                p.station_name,
+                p.station_region,
+                p.inspection_table_id,
+                p.inspection_table_name,
+                p.checklist_mode,
+                p.inspector_id,
+                u.username AS inspector_username,
+                u.real_name AS inspector_name,
+                u.phone AS inspector_phone
+            FROM participant_rows p
+            JOIN users u ON u.id = p.inspector_id
+            WHERE p.inspector_id IS NOT NULL
+              AND p.checklist_mode IN ('online', 'offline')
+            ORDER BY
+                p.checklist_mode,
+                inspection_date,
+                p.station_region,
+                p.station_name,
+                p.inspection_table_name,
+                inspector_name;
+            """,
+            params,
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+        return jsonify(
+            {
+                "success": True,
+                **build_attendance_payload(rows, month, mode_filter),
+            }
+        )
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)

@@ -199,6 +199,12 @@
           <span class="nav-item-icon">考</span>
           <span v-if="!sidebarCollapsed">考核系统</span>
         </button>
+        <button class="nav-item"
+          :class="{ active: isActive('/assessment/attendance'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/assessment/attendance')" :title="sidebarCollapsed ? '人员出勤' : ''">
+          <span class="nav-item-icon">勤</span>
+          <span v-if="!sidebarCollapsed">人员出勤</span>
+        </button>
       </div>
 
       <div v-if="canViewTrainingSection" class="menu-section">

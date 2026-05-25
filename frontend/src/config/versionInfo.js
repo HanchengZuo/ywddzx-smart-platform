@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.3',
+    date: '2026-05-25',
+    title: '人员出勤统计',
+    summary: '考核系统新增人员出勤页面，视频和现场分开统计。',
+    items: [
+      '新增人员出勤统计页面。',
+      '支持按月份查看督导员出勤天数。',
+      '点击站点标签可联动高亮检查表和小组记录。'
+    ]
+  },
+  {
     version: 'v2.2',
     date: '2026-05-25',
     title: '优秀问题星标',
