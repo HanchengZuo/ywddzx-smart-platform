@@ -605,6 +605,17 @@
           </div>
         </div>
       </div>
+
+      <div v-if="tableFullscreen && previewState.visible" class="image-modal fullscreen-preview-modal"
+        @click.self="closePreview">
+        <div class="image-modal-content">
+          <div class="image-modal-header">
+            <span>{{ previewState.title }}</span>
+            <button class="close-btn" type="button" @click="closePreview">×</button>
+          </div>
+          <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
+        </div>
+      </div>
     </div>
 
     <div v-if="exportDialog.visible" class="image-modal">
@@ -965,7 +976,7 @@
       </div>
     </div>
 
-    <div v-if="previewState.visible" class="image-modal" @click.self="closePreview">
+    <div v-if="!tableFullscreen && previewState.visible" class="image-modal" @click.self="closePreview">
       <div class="image-modal-content">
         <div class="image-modal-header">
           <span>{{ previewState.title }}</span>
@@ -3948,6 +3959,10 @@ onBeforeUnmount(() => {
   justify-content: center;
   z-index: 1000;
   padding: 24px;
+}
+
+.fullscreen-preview-modal {
+  z-index: 9500;
 }
 
 .image-modal-content {
