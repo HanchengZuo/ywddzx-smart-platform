@@ -361,7 +361,7 @@
     </div>
 
     <div ref="tableCardRef" class="table-card card-surface" :class="{ 'fullscreen-table-card': tableFullscreen }"
-      :style="{ '--issue-table-zoom': tableZoom }">
+      :style="{ '--issue-table-zoom': tableZoom, '--issue-table-min-width': `${issueTableMinWidth}px` }">
       <div class="table-card-head">
         <div>
           <div class="filter-kicker">问题清单</div>
@@ -372,6 +372,36 @@
             <span>缩放 {{ Math.round(tableZoom * 100) }}%</span>
             <input v-model.number="tableZoom" type="range" min="0.2" max="1" step="0.02" />
           </label>
+          <div ref="columnSettingsRef" class="column-settings-wrap">
+            <button class="btn btn-secondary column-settings-btn" type="button" @click.stop="toggleColumnSettings">
+              字段显示 {{ visibleIssueColumns.length }}/{{ issueColumnDefinitions.length }}
+            </button>
+            <div v-if="columnSettingsOpen" class="column-settings-panel card-surface" @click.stop>
+              <div class="column-settings-header">
+                <div>
+                  <strong>字段显示设置</strong>
+                  <p>隐藏暂时不看的字段，问题数据不会受影响。</p>
+                </div>
+                <button class="close-btn" type="button" @click="columnSettingsOpen = false">×</button>
+              </div>
+              <div class="column-settings-actions">
+                <button class="btn btn-primary btn-sm" type="button" @click="showAllIssueColumns">全部显示</button>
+                <button class="btn btn-secondary btn-sm" type="button" @click="applyCompactIssueColumns">常用精简</button>
+                <button class="btn btn-secondary btn-sm" type="button" @click="resetIssueColumns">恢复默认</button>
+              </div>
+              <div class="column-settings-groups">
+                <section v-for="group in groupedIssueColumns" :key="group.name" class="column-settings-group">
+                  <div class="column-settings-group-title">{{ group.name }}</div>
+                  <label v-for="column in group.columns" :key="column.key" class="column-toggle-item"
+                    :class="{ active: isIssueColumnVisible(column.key) }">
+                    <input type="checkbox" :checked="isIssueColumnVisible(column.key)"
+                      @change="toggleIssueColumn(column.key)" />
+                    <span>{{ column.label }}</span>
+                  </label>
+                </section>
+              </div>
+            </div>
+          </div>
           <button class="btn btn-secondary" type="button" @click="toggleTableFullscreen">
             {{ tableFullscreen ? '退出全屏' : '全屏显示' }}
           </button>
@@ -382,44 +412,44 @@
           <table class="issues-table">
             <thead>
               <tr>
-                <th class="nowrap">ID</th>
-                <th class="nowrap">检查月度</th>
-                <th class="nowrap">检查时间</th>
-                <th class="nowrap">站点所属地</th>
-                <th class="nowrap">站点名称</th>
-                <th class="nowrap">站点负责人</th>
-                <th class="nowrap">站点负责人手机号</th>
-                <th class="nowrap">检查人员</th>
-                <th class="nowrap">检查人员手机号</th>
-                <th class="nowrap">检查表</th>
-                <th class="nowrap">规范ID（内/外）</th>
-                <th>规范详情</th>
-                <th>问题描述</th>
-                <th class="nowrap">问题照片</th>
-                <th class="nowrap">站经理整改结果</th>
-                <th class="nowrap">站点反馈整改说明</th>
-                <th class="nowrap">站点反馈整改照片</th>
-                <th class="nowrap">督导组复核结果</th>
-                <th class="nowrap">督导组复核说明</th>
-                <th class="nowrap">督导组复核照片</th>
-                <th class="nowrap-col status-col">问题状态</th>
-                <th class="nowrap audit-col">审核</th>
+                <th v-if="isIssueColumnVisible('id')" class="nowrap">ID</th>
+                <th v-if="isIssueColumnVisible('month')" class="nowrap">检查月度</th>
+                <th v-if="isIssueColumnVisible('time')" class="nowrap">检查时间</th>
+                <th v-if="isIssueColumnVisible('region')" class="nowrap">站点所属地</th>
+                <th v-if="isIssueColumnVisible('station')" class="nowrap">站点名称</th>
+                <th v-if="isIssueColumnVisible('station_manager')" class="nowrap">站点负责人</th>
+                <th v-if="isIssueColumnVisible('station_manager_phone')" class="nowrap">站点负责人手机号</th>
+                <th v-if="isIssueColumnVisible('inspector')" class="nowrap">检查人员</th>
+                <th v-if="isIssueColumnVisible('inspector_phone')" class="nowrap">检查人员手机号</th>
+                <th v-if="isIssueColumnVisible('inspection_table_name')" class="nowrap">检查表</th>
+                <th v-if="isIssueColumnVisible('standard_id')" class="nowrap">规范ID（内/外）</th>
+                <th v-if="isIssueColumnVisible('standard_detail')">规范详情</th>
+                <th v-if="isIssueColumnVisible('description')">问题描述</th>
+                <th v-if="isIssueColumnVisible('issue_photo')" class="nowrap">问题照片</th>
+                <th v-if="isIssueColumnVisible('rectification_result')" class="nowrap">站经理整改结果</th>
+                <th v-if="isIssueColumnVisible('rectification_note')" class="nowrap">站点反馈整改说明</th>
+                <th v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">站点反馈整改照片</th>
+                <th v-if="isIssueColumnVisible('review_result')" class="nowrap">督导组复核结果</th>
+                <th v-if="isIssueColumnVisible('review_note')" class="nowrap">督导组复核说明</th>
+                <th v-if="isIssueColumnVisible('review_photo')" class="nowrap">督导组复核照片</th>
+                <th v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">问题状态</th>
+                <th v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">审核</th>
                 <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in paginatedData" :key="item.id" :class="issueAuditRowClass(item)">
-                <td class="nowrap issue-id-cell">{{ item.id }}</td>
-                <td class="nowrap">{{ item.month }}</td>
-                <td class="nowrap">{{ item.time }}</td>
-                <td class="nowrap">{{ item.region }}</td>
-                <td class="nowrap">{{ item.station }}</td>
-                <td class="nowrap">{{ item.station_manager }}</td>
-                <td class="nowrap">{{ item.station_manager_phone }}</td>
-                <td class="nowrap">{{ item.inspector }}</td>
-                <td class="nowrap">{{ item.inspector_phone }}</td>
-                <td class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
-                <td class="nowrap standard-id-cell">
+                <td v-if="isIssueColumnVisible('id')" class="nowrap issue-id-cell">{{ item.id }}</td>
+                <td v-if="isIssueColumnVisible('month')" class="nowrap">{{ item.month }}</td>
+                <td v-if="isIssueColumnVisible('time')" class="nowrap">{{ item.time }}</td>
+                <td v-if="isIssueColumnVisible('region')" class="nowrap">{{ item.region }}</td>
+                <td v-if="isIssueColumnVisible('station')" class="nowrap">{{ item.station }}</td>
+                <td v-if="isIssueColumnVisible('station_manager')" class="nowrap">{{ item.station_manager }}</td>
+                <td v-if="isIssueColumnVisible('station_manager_phone')" class="nowrap">{{ item.station_manager_phone }}</td>
+                <td v-if="isIssueColumnVisible('inspector')" class="nowrap">{{ item.inspector }}</td>
+                <td v-if="isIssueColumnVisible('inspector_phone')" class="nowrap">{{ item.inspector_phone }}</td>
+                <td v-if="isIssueColumnVisible('inspection_table_name')" class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('standard_id')" class="nowrap standard-id-cell">
                   <div class="standard-id-stack">
                     <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-table-${part.type}`"
                       :class="part.type">
@@ -427,7 +457,7 @@
                     </span>
                   </div>
                 </td>
-                <td class="standard-detail-cell">
+                <td v-if="isIssueColumnVisible('standard_detail')" class="standard-detail-cell">
                   <div class="standard-detail-box">
                     <div class="standard-detail-preview multiline-clamp">{{
                       getStandardDetailPreview(getCombinedStandardDetailText(item))
@@ -435,8 +465,8 @@
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
-                <td class="long-text">{{ item.description }}</td>
-                <td class="nowrap">
+                <td v-if="isIssueColumnVisible('description')" class="long-text">{{ item.description }}</td>
+                <td v-if="isIssueColumnVisible('issue_photo')" class="nowrap">
                   <button v-if="item.issue_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.issue_photo), '问题照片')">
                     <img v-if="listImagesReady" :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片"
@@ -445,9 +475,9 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
-                <td class="nowrap">{{ item.rectification_result || '暂无' }}</td>
-                <td class="nowrap">{{ item.rectification_note || '暂无' }}</td>
-                <td class="nowrap">
+                <td v-if="isIssueColumnVisible('rectification_result')" class="nowrap">{{ item.rectification_result || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('rectification_note')" class="nowrap">{{ item.rectification_note || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">
                   <button v-if="item.rectification_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
                     <img v-if="listImagesReady" :src="resolveImage(item.rectification_photo)" class="thumb"
@@ -456,9 +486,9 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
-                <td class="nowrap">{{ item.review_result || '暂无' }}</td>
-                <td class="nowrap">{{ item.review_note || '暂无' }}</td>
-                <td class="nowrap">
+                <td v-if="isIssueColumnVisible('review_result')" class="nowrap">{{ item.review_result || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('review_note')" class="nowrap">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('review_photo')" class="nowrap">
                   <button v-if="item.review_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
                     <img v-if="listImagesReady" :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片"
@@ -467,10 +497,10 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
-                <td class="nowrap-col status-col">
+                <td v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
-                <td class="nowrap audit-col">
+                <td v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">
                   <div class="audit-actions">
                     <template v-if="canAuditIssueRow(item)">
                       <template v-if="isIssueAuditPending(item)">
@@ -1030,6 +1060,7 @@ const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const editStandardSelectRef = ref(null)
 const tableCardRef = ref(null)
+const columnSettingsRef = ref(null)
 
 const dropdownVisible = ref({
   region: false,
@@ -1057,6 +1088,7 @@ const auditNotice = ref({
 let auditNoticeTimer = null
 const tableFullscreen = ref(false)
 const tableZoom = ref(1)
+const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -1071,6 +1103,60 @@ const localPermissions = ref(parsedPermissions)
 const actionMessage = ref('')
 const actionMessageType = ref('info')
 let actionMessageTimer = null
+const ISSUE_COLUMNS_STORAGE_KEY = 'inspection_issue_table_visible_columns_v2'
+const issueColumnDefinitions = [
+  { key: 'id', label: 'ID', group: '基础信息', width: 72 },
+  { key: 'month', label: '检查月度', group: '基础信息', width: 104 },
+  { key: 'time', label: '检查时间', group: '基础信息', width: 148 },
+  { key: 'region', label: '站点所属地', group: '基础信息', width: 126 },
+  { key: 'station', label: '站点名称', group: '基础信息', width: 150 },
+  { key: 'station_manager', label: '站点负责人', group: '基础信息', width: 128 },
+  { key: 'station_manager_phone', label: '站点负责人手机号', group: '基础信息', width: 148 },
+  { key: 'inspector', label: '检查人员', group: '基础信息', width: 116 },
+  { key: 'inspector_phone', label: '检查人员手机号', group: '基础信息', width: 148 },
+  { key: 'inspection_table_name', label: '检查表', group: '规范问题', width: 146 },
+  { key: 'standard_id', label: '规范ID（内/外）', group: '规范问题', width: 150 },
+  { key: 'standard_detail', label: '规范详情', group: '规范问题', width: 250 },
+  { key: 'description', label: '问题描述', group: '规范问题', width: 250 },
+  { key: 'issue_photo', label: '问题照片', group: '规范问题', width: 104 },
+  { key: 'rectification_result', label: '站经理整改结果', group: '整改复核', width: 136 },
+  { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核', width: 210 },
+  { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核', width: 120 },
+  { key: 'review_result', label: '督导组复核结果', group: '整改复核', width: 136 },
+  { key: 'review_note', label: '督导组复核说明', group: '整改复核', width: 210 },
+  { key: 'review_photo', label: '督导组复核照片', group: '整改复核', width: 120 },
+  { key: 'status', label: '问题状态', group: '状态操作', width: 104 },
+  { key: 'audit', label: '审核', group: '状态操作', width: 116 }
+]
+const defaultIssueColumnVisibility = issueColumnDefinitions.reduce((result, column) => {
+  result[column.key] = true
+  return result
+}, {})
+const compactIssueColumnKeys = new Set([
+  'id',
+  'time',
+  'station',
+  'inspector',
+  'inspection_table_name',
+  'standard_id',
+  'description',
+  'issue_photo',
+  'status',
+  'audit'
+])
+const loadIssueColumnVisibility = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ISSUE_COLUMNS_STORAGE_KEY) || '{}')
+    const visibility = {
+      ...defaultIssueColumnVisibility,
+      ...Object.fromEntries(issueColumnDefinitions.map((column) => [column.key, parsed[column.key] !== false]))
+    }
+    return Object.values(visibility).some(Boolean) ? visibility : { ...defaultIssueColumnVisibility }
+  } catch (error) {
+    return { ...defaultIssueColumnVisibility }
+  }
+}
+const issueColumnVisibility = ref(loadIssueColumnVisibility())
 const standardSourceMode = ref('external')
 const editStandards = ref([])
 const editStandardFields = ref([])
@@ -1311,7 +1397,72 @@ const canManageIssues = computed(() => (
     item?.can_change_issue_inspector
   ))
 ))
-const issueTableColspan = computed(() => 22 + (canManageIssues.value ? 1 : 0))
+const visibleIssueColumns = computed(() => issueColumnDefinitions.filter((column) => issueColumnVisibility.value[column.key] !== false))
+const groupedIssueColumns = computed(() => {
+  const groupMap = new Map()
+  issueColumnDefinitions.forEach((column) => {
+    if (!groupMap.has(column.group)) {
+      groupMap.set(column.group, [])
+    }
+    groupMap.get(column.group).push(column)
+  })
+  return Array.from(groupMap.entries()).map(([name, columns]) => ({ name, columns }))
+})
+const issueTableMinWidth = computed(() => {
+  const operationWidth = canManageIssues.value ? 128 : 0
+  const baseWidth = visibleIssueColumns.value.reduce((total, column) => total + column.width, operationWidth)
+  return Math.max(980, baseWidth + 96)
+})
+const issueTableColspan = computed(() => visibleIssueColumns.value.length + (canManageIssues.value ? 1 : 0))
+
+const isIssueColumnVisible = (key) => issueColumnVisibility.value[key] !== false
+
+const saveIssueColumnVisibility = () => {
+  localStorage.setItem(ISSUE_COLUMNS_STORAGE_KEY, JSON.stringify(issueColumnVisibility.value))
+}
+
+const setIssueColumnVisibility = (nextVisibility, message = '') => {
+  issueColumnVisibility.value = { ...defaultIssueColumnVisibility, ...nextVisibility }
+  saveIssueColumnVisibility()
+  if (tableFullscreen.value) {
+    setAutoTableZoom()
+  }
+  if (message) {
+    showActionMessage(message, 'success')
+  }
+}
+
+const toggleIssueColumn = (key) => {
+  const nextVisible = !isIssueColumnVisible(key)
+  if (!nextVisible && visibleIssueColumns.value.length <= 1) {
+    showActionMessage('至少保留一个字段显示。', 'error')
+    return
+  }
+  setIssueColumnVisibility({
+    ...issueColumnVisibility.value,
+    [key]: nextVisible
+  })
+}
+
+const showAllIssueColumns = () => {
+  setIssueColumnVisibility({ ...defaultIssueColumnVisibility }, '已显示全部字段。')
+}
+
+const resetIssueColumns = () => {
+  setIssueColumnVisibility({ ...defaultIssueColumnVisibility }, '已恢复默认字段显示。')
+}
+
+const applyCompactIssueColumns = () => {
+  const nextVisibility = issueColumnDefinitions.reduce((result, column) => {
+    result[column.key] = compactIssueColumnKeys.has(column.key)
+    return result
+  }, {})
+  setIssueColumnVisibility(nextVisibility, '已切换为常用精简字段。')
+}
+
+const toggleColumnSettings = () => {
+  columnSettingsOpen.value = !columnSettingsOpen.value
+}
 
 const isClosedIssue = (item) => item?.status === '已闭环'
 const issueOperationLockReason = (item = {}) => {
@@ -1491,6 +1642,12 @@ watch([filters, pageSize], () => {
 watch(totalPage, (value) => {
   if (page.value > value) {
     page.value = value
+  }
+})
+
+watch(issueTableMinWidth, () => {
+  if (tableFullscreen.value) {
+    setAutoTableZoom()
   }
 })
 
@@ -2243,7 +2400,7 @@ const auditIssue = async (item, status) => {
 }
 
 const calculateAutoTableZoom = () => {
-  const tableWidth = 3140
+  const tableWidth = issueTableMinWidth.value
   const viewportWidth = Math.max(window.innerWidth || tableWidth, 320)
   const horizontalPadding = tableFullscreen.value ? 64 : 40
   const nextZoom = (viewportWidth - horizontalPadding) / tableWidth
@@ -2423,6 +2580,9 @@ const handleClickOutside = (event) => {
   }
   if (editStandardSelectRef.value && !editStandardSelectRef.value.contains(event.target)) {
     editStandardDropdownVisible.value = false
+  }
+  if (columnSettingsRef.value && !columnSettingsRef.value.contains(event.target)) {
+    columnSettingsOpen.value = false
   }
 }
 
@@ -3184,11 +3344,127 @@ onBeforeUnmount(() => {
 }
 
 .table-view-actions {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.column-settings-wrap {
+  position: relative;
+}
+
+.column-settings-btn {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.column-settings-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  width: min(620px, calc(100vw - 48px));
+  padding: 16px;
+  box-shadow: 0 24px 58px rgba(15, 23, 42, 0.18);
+}
+
+.column-settings-panel::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  right: 42px;
+  width: 14px;
+  height: 14px;
+  transform: rotate(45deg);
+  border-top: 1px solid #dbe4ee;
+  border-left: 1px solid #dbe4ee;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.column-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.column-settings-header strong {
+  display: block;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.column-settings-header p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.column-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.column-settings-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.column-settings-group {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.08), transparent 34%),
+    #f8fafc;
+}
+
+.column-settings-group-title {
+  margin-bottom: 9px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.column-toggle-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  margin-top: 7px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #fff;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.column-toggle-item input {
+  accent-color: #2563eb;
+}
+
+.column-toggle-item.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: 0 8px 16px rgba(37, 99, 235, 0.08);
 }
 
 .table-zoom-control {
@@ -3258,7 +3534,7 @@ onBeforeUnmount(() => {
 
 .issues-table {
   width: 100%;
-  min-width: 3140px;
+  min-width: var(--issue-table-min-width, 3140px);
   border-collapse: collapse;
 }
 

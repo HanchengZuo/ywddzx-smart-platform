@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.1',
+    date: '2026-05-25',
+    title: '问题清单字段显示',
+    summary: '巡检问题列表可按需隐藏字段，桌面端看表更清爽。',
+    items: [
+      '巡检问题列表电脑端新增字段显示设置。',
+      '支持全部显示、常用精简和恢复默认。',
+      '字段显示选择会自动记住，下次进入继续沿用。'
+    ]
+  },
+  {
     version: 'v2.0',
     date: '2026-05-22',
     title: '巡检审核流程上线',
