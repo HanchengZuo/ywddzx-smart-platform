@@ -382,7 +382,8 @@
         <div class="table-view-actions">
           <label v-if="tableFullscreen" class="table-zoom-control">
             <span>缩放 {{ Math.round(tableZoom * 100) }}%</span>
-            <input v-model.number="tableZoom" type="range" min="0.2" max="1" step="0.02" />
+            <input v-model.number="tableZoom" type="range" min="0.2" max="1" step="0.02"
+              @input="rememberTableZoom" />
           </label>
           <div ref="columnSettingsRef" class="column-settings-wrap">
             <button class="btn btn-secondary column-settings-btn" type="button" @click.stop="toggleColumnSettings">
@@ -1133,6 +1134,7 @@ const overlayTeleportTarget = computed(() => (
 ))
 let fullscreenDomMutationGuard = false
 let fullscreenDomMutationTimer = null
+let rememberedFullscreenZoom = null
 const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
@@ -2526,6 +2528,14 @@ const setAutoTableZoom = () => {
   tableZoom.value = calculateAutoTableZoom()
 }
 
+const applyRememberedOrAutoTableZoom = () => {
+  tableZoom.value = rememberedFullscreenZoom ?? calculateAutoTableZoom()
+}
+
+const rememberTableZoom = () => {
+  rememberedFullscreenZoom = tableZoom.value
+}
+
 const enterTableFullscreen = async () => {
   const fullscreenTarget = tableCardRef.value
   try {
@@ -2537,7 +2547,7 @@ const enterTableFullscreen = async () => {
   }
   tableFullscreen.value = true
   await nextTick()
-  setAutoTableZoom()
+  applyRememberedOrAutoTableZoom()
 }
 
 const beginFullscreenDomPreservation = () => {
@@ -2555,7 +2565,7 @@ const finishFullscreenDomPreservation = async (shouldPreserve) => {
   if (!shouldPreserve) return
   await nextTick()
   tableFullscreen.value = true
-  setAutoTableZoom()
+  applyRememberedOrAutoTableZoom()
   if (!document.fullscreenElement && tableCardRef.value?.requestFullscreen) {
     try {
       await tableCardRef.value.requestFullscreen()
@@ -2565,7 +2575,7 @@ const finishFullscreenDomPreservation = async (shouldPreserve) => {
   }
   await nextTick()
   tableFullscreen.value = true
-  setAutoTableZoom()
+  applyRememberedOrAutoTableZoom()
   fullscreenDomMutationTimer = window.setTimeout(() => {
     fullscreenDomMutationGuard = false
     fullscreenDomMutationTimer = null
@@ -2573,6 +2583,7 @@ const finishFullscreenDomPreservation = async (shouldPreserve) => {
 }
 
 const exitTableFullscreen = async () => {
+  rememberedFullscreenZoom = tableZoom.value
   fullscreenDomMutationGuard = false
   if (fullscreenDomMutationTimer) {
     clearTimeout(fullscreenDomMutationTimer)
@@ -2600,7 +2611,7 @@ const toggleTableFullscreen = () => {
 const handleTableFullscreenChange = () => {
   if (document.fullscreenElement === tableCardRef.value) {
     tableFullscreen.value = true
-    setAutoTableZoom()
+    applyRememberedOrAutoTableZoom()
     return
   }
   if (!document.fullscreenElement && tableFullscreen.value) {
@@ -2608,7 +2619,7 @@ const handleTableFullscreenChange = () => {
       tableFullscreen.value = true
       nextTick(() => {
         if (tableFullscreen.value) {
-          setAutoTableZoom()
+          applyRememberedOrAutoTableZoom()
         }
       })
       return
@@ -2800,7 +2811,7 @@ const statusClass = (status) => {
 const updateResponsiveState = () => {
   const nextIsMobile = window.matchMedia?.('(max-width: 768px)').matches ?? false
   if (tableFullscreen.value) {
-    setAutoTableZoom()
+    applyRememberedOrAutoTableZoom()
   }
   if (nextIsMobile === isMobileView.value) return
   isMobileView.value = nextIsMobile
