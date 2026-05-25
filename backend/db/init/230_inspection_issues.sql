@@ -45,7 +45,8 @@ CREATE TABLE issues (
     review_photo_path TEXT,                                                   -- 督导组复核照片路径
     audit_status TEXT NOT NULL DEFAULT 'pending',                             -- 审核状态：pending / approved / rejected
     audited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,               -- 审核人
-    audited_at TIMESTAMP                                                      -- 审核时间
+    audited_at TIMESTAMP,                                                     -- 审核时间
+    is_excellent BOOLEAN NOT NULL DEFAULT FALSE                               -- 是否优秀问题，否决问题不能标记
 );
 
 ALTER TABLE issues
@@ -65,6 +66,14 @@ ADD COLUMN IF NOT EXISTS audited_by INTEGER REFERENCES users(id) ON DELETE SET N
 
 ALTER TABLE issues
 ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP;
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS is_excellent BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE issues
+SET is_excellent = FALSE
+WHERE is_excellent IS NULL
+   OR COALESCE(audit_status, 'pending') = 'rejected';
 
 UPDATE issues i
 SET inspector_id = ins.inspector_id
@@ -94,3 +103,6 @@ ON issues (internal_standard_id);
 
 CREATE INDEX IF NOT EXISTS idx_issues_audit_status
 ON issues (audit_status);
+
+CREATE INDEX IF NOT EXISTS idx_issues_is_excellent
+ON issues (is_excellent);

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.2',
+    date: '2026-05-25',
+    title: '优秀问题星标',
+    summary: '巡检问题可以用星标标记优秀，筛选和导出更方便。',
+    items: [
+      '巡检问题列表新增优秀问题星标。',
+      '筛选面板支持按星标快速筛选。',
+      '审核否决的问题不能被标记为优秀。'
+    ]
+  },
+  {
     version: 'v2.1',
     date: '2026-05-25',
     title: '问题清单字段显示',

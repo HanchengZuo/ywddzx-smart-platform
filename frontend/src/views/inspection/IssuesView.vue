@@ -29,7 +29,15 @@
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
               <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
-              <span :class="statusClass(item.status)">{{ item.status }}</span>
+              <div class="mobile-card-title-actions">
+                <button class="excellent-star mobile" type="button"
+                  :class="{ active: item.is_excellent, locked: !canToggleExcellentIssue(item) }"
+                  :disabled="!canToggleExcellentIssue(item) || markingExcellentIssueId === item.id"
+                  :title="excellentStarTitle(item)" @click="toggleIssueExcellent(item)">
+                  ★
+                </button>
+                <span :class="statusClass(item.status)">{{ item.status }}</span>
+              </div>
             </div>
             <div class="mobile-card-code">
               <span>规范ID</span>
@@ -311,6 +319,23 @@
           </select>
         </div>
         <div class="filter-item">
+          <label>优秀问题</label>
+          <div class="excellent-filter-toggle" role="group" aria-label="优秀问题筛选">
+            <button type="button" :class="{ active: filters.excellent === '' }" title="全部问题"
+              @click="filters.excellent = ''">
+              全部
+            </button>
+            <button type="button" class="star-filter-btn" :class="{ active: filters.excellent === 'starred' }"
+              title="只看已点亮优秀问题" @click="filters.excellent = 'starred'">
+              ★
+            </button>
+            <button type="button" class="star-filter-btn muted" :class="{ active: filters.excellent === 'unstarred' }"
+              title="只看未点亮优秀问题" @click="filters.excellent = 'unstarred'">
+              ☆
+            </button>
+          </div>
+        </div>
+        <div class="filter-item">
           <label>审核结论</label>
           <select v-model="filters.auditStatus">
             <option value="">全部</option>
@@ -422,6 +447,7 @@
                 <th v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">问题状态</th>
                 <th v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">审核</th>
                 <th v-if="canManageIssues" class="nowrap operation-col">操作</th>
+                <th v-if="isIssueColumnVisible('excellent')" class="nowrap excellent-col">优秀</th>
               </tr>
             </thead>
             <tbody>
@@ -528,6 +554,13 @@
                     <span v-else-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
                     <span v-else-if="!hasIssueOperation(item)" class="locked-action">暂无可操作</span>
                   </div>
+                </td>
+                <td v-if="isIssueColumnVisible('excellent')" class="nowrap excellent-col">
+                  <button class="excellent-star" type="button" :class="{ active: item.is_excellent, locked: !canToggleExcellentIssue(item) }"
+                    :disabled="!canToggleExcellentIssue(item) || markingExcellentIssueId === item.id"
+                    :title="excellentStarTitle(item)" @click="toggleIssueExcellent(item)">
+                    ★
+                  </button>
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
@@ -1047,6 +1080,7 @@ const filters = ref({
   rectificationResult: '',
   reviewResult: '',
   status: '',
+  excellent: '',
   auditStatus: '',
   auditState: ''
 })
@@ -1081,6 +1115,7 @@ const listImagesReady = ref(false)
 let listImagesReadyTimer = null
 const deletingIssueId = ref(null)
 const auditingIssueId = ref(null)
+const markingExcellentIssueId = ref(null)
 const auditNotice = ref({
   visible: false,
   type: 'success',
@@ -1133,7 +1168,8 @@ const issueColumnDefinitions = [
   { key: 'review_note', label: '督导组复核说明', group: '整改复核', width: 210 },
   { key: 'review_photo', label: '督导组复核照片', group: '整改复核', width: 120 },
   { key: 'status', label: '问题状态', group: '状态操作', width: 104 },
-  { key: 'audit', label: '审核', group: '状态操作', width: 116 }
+  { key: 'audit', label: '审核', group: '状态操作', width: 116 },
+  { key: 'excellent', label: '优秀', group: '状态操作', width: 78 }
 ]
 const defaultIssueColumnVisibility = issueColumnDefinitions.reduce((result, column) => {
   result[column.key] = true
@@ -1141,6 +1177,7 @@ const defaultIssueColumnVisibility = issueColumnDefinitions.reduce((result, colu
 }, {})
 const compactIssueColumnKeys = new Set([
   'id',
+  'excellent',
   'time',
   'station',
   'inspector',
@@ -1234,6 +1271,7 @@ const exportFilterLabels = {
   rectificationResult: '站经理整改结果',
   reviewResult: '督导组复核结果',
   status: '问题状态',
+  excellent: '优秀问题',
   auditStatus: '审核结论',
   auditState: '审核状态'
 }
@@ -1262,6 +1300,8 @@ const filteredData = computed(() => {
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
+    const matchedExcellent = !filters.value.excellent ||
+      (filters.value.excellent === 'starred' ? Boolean(item.is_excellent) : !item.is_excellent)
     const matchedAuditStatus = !filters.value.auditStatus || normalizeAuditStatus(item) === filters.value.auditStatus
     const matchedAuditState = !filters.value.auditState ||
       (filters.value.auditState === 'pending'
@@ -1281,6 +1321,7 @@ const filteredData = computed(() => {
       matchedRectificationResult &&
       matchedReviewResult &&
       matchedStatus &&
+      matchedExcellent &&
       matchedAuditStatus &&
       matchedAuditState
     )
@@ -1303,13 +1344,21 @@ const activeFilterCount = computed(() => {
   return Object.values(filters.value).filter((value) => String(value || '').trim()).length
 })
 
+const formatExportFilterValue = (key, value) => {
+  if (key === 'excellent') {
+    if (value === 'starred') return '★'
+    if (value === 'unstarred') return '☆'
+  }
+  return value
+}
+
 const exportFilterChips = computed(() => {
   return Object.entries(exportDialog.value.filterSummary || {})
     .filter(([_key, value]) => String(value || '').trim())
     .map(([key, value]) => ({
       key,
       label: exportFilterLabels[key] || key,
-      value
+      value: formatExportFilterValue(key, value)
     }))
 })
 
@@ -1482,6 +1531,13 @@ const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
 const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
 const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
+const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
+const canToggleExcellentIssue = (item) => Boolean(item?.can_mark_excellent_issue) && normalizeAuditStatus(item) !== 'rejected'
+const excellentStarTitle = (item) => {
+  if (normalizeAuditStatus(item) === 'rejected') return '审核否决的问题不能标记为优秀'
+  if (!item?.can_mark_excellent_issue) return item?.is_excellent ? '优秀问题' : '暂无标记权限'
+  return item?.is_excellent ? '取消优秀问题标记' : '标记为优秀问题'
+}
 const hasIssueOperation = (item) => (
   canEditIssueRow(item) ||
   canUpdateRectificationPhotoRow(item) ||
@@ -1489,7 +1545,6 @@ const hasIssueOperation = (item) => (
   Boolean(issueOperationLockReason(item)) ||
   (isClosedIssue(item) && currentRole !== 'root')
 )
-const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
 const isIssueAuditPending = (item) => normalizeAuditStatus(item) === 'pending'
 const auditStatusLabel = (item) => {
   const status = normalizeAuditStatus(item)
@@ -1808,6 +1863,7 @@ const resetFilters = () => {
     rectificationResult: '',
     reviewResult: '',
     status: '',
+    excellent: '',
     auditStatus: '',
     auditState: ''
   }
@@ -1840,6 +1896,7 @@ const filterMyTodayIssues = () => {
     rectificationResult: '',
     reviewResult: '',
     status: '',
+    excellent: '',
     auditStatus: '',
     auditState: ''
   }
@@ -2418,6 +2475,32 @@ const auditIssue = async (item, status) => {
   }
 }
 
+const toggleIssueExcellent = async (item) => {
+  if (!item?.id || markingExcellentIssueId.value === item.id) return
+  if (!canToggleExcellentIssue(item)) {
+    showActionMessage(excellentStarTitle(item), 'error')
+    return
+  }
+
+  const nextExcellent = !item.is_excellent
+  try {
+    markingExcellentIssueId.value = item.id
+    const response = await axios.post(`/api/issues/${item.id}/excellent`, {
+      user_id: localStorage.getItem('user_id') || '',
+      is_excellent: nextExcellent
+    })
+    const updatedExcellent = Boolean(response.data?.is_excellent)
+    list.value = list.value.map((row) => (
+      row.id === item.id ? { ...row, is_excellent: updatedExcellent } : row
+    ))
+    showActionMessage(response.data?.message || (updatedExcellent ? '已点亮优秀问题。' : '已取消优秀问题标记。'), 'success')
+  } catch (error) {
+    showActionMessage(error?.response?.data?.error || '优秀问题标记失败。', 'error')
+  } finally {
+    markingExcellentIssueId.value = null
+  }
+}
+
 const calculateAutoTableZoom = () => {
   const tableWidth = issueTableMinWidth.value
   const viewportWidth = Math.max(window.innerWidth || tableWidth, 320)
@@ -2942,6 +3025,41 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.excellent-filter-toggle {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 0.9fr;
+  gap: 8px;
+}
+
+.excellent-filter-toggle button {
+  height: 40px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #fff;
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.excellent-filter-toggle button:hover,
+.excellent-filter-toggle button.active {
+  border-color: #fbbf24;
+  background: linear-gradient(135deg, #fffbeb 0%, #fff7ed 100%);
+  color: #b45309;
+  box-shadow: 0 10px 22px rgba(245, 158, 11, 0.12);
+}
+
+.excellent-filter-toggle .star-filter-btn {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.excellent-filter-toggle .star-filter-btn.muted {
+  color: #94a3b8;
+}
+
 .btn {
   height: 40px;
   padding: 0 16px;
@@ -3181,6 +3299,14 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.mobile-card-title-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .mobile-card-category {
@@ -3926,6 +4052,48 @@ onBeforeUnmount(() => {
   padding: 0;
   background: transparent;
   cursor: zoom-in;
+}
+
+.excellent-col {
+  min-width: 72px;
+}
+
+.excellent-star {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #cbd5e1;
+  font-size: 21px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.excellent-star:hover:not(:disabled),
+.excellent-star.active {
+  border-color: #f59e0b;
+  background: radial-gradient(circle at 35% 25%, #fff7c2 0%, #fef3c7 42%, #fff7ed 100%);
+  color: #d97706;
+  box-shadow: 0 8px 18px rgba(245, 158, 11, 0.2);
+  transform: translateY(-1px);
+}
+
+.excellent-star.locked {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.excellent-star.mobile {
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
+  font-size: 20px;
+  flex: 0 0 auto;
 }
 
 .pagination-bar {

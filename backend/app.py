@@ -2844,6 +2844,20 @@ def ensure_issue_inspector_schema(cur):
         ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP;
         """
     )
+    cur.execute(
+        """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS is_excellent BOOLEAN NOT NULL DEFAULT FALSE;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE issues
+        SET is_excellent = FALSE
+        WHERE is_excellent IS NULL
+           OR COALESCE(audit_status, 'pending') = 'rejected';
+        """
+    )
     cur.execute("SELECT to_regclass('public.inspections') AS table_name;")
     if cur.fetchone().get("table_name"):
         cur.execute(
@@ -2887,6 +2901,12 @@ def ensure_issue_inspector_schema(cur):
         """
         CREATE INDEX IF NOT EXISTS idx_issues_audit_status
         ON issues (audit_status);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issues_is_excellent
+        ON issues (is_excellent);
         """
     )
     ISSUE_INSPECTOR_SCHEMA_READY = True
@@ -3944,6 +3964,7 @@ def normalize_issue_row_for_response(
         data["audit_status"],
         "待审核",
     )
+    data["is_excellent"] = bool(data.get("is_excellent")) and data["audit_status"] != "rejected"
     if "status" in data:
         data["status"] = canonical_issue_status(data.get("status"))
         data["raw_status"] = data["status"]
@@ -3981,6 +4002,7 @@ def normalize_issue_row_for_response(
         not issue_mutation_locked and can_change_issue_inspector(user)
     )
     data["can_audit_issue"] = bool(can_explicit_audit and not inspection_signed)
+    data["can_mark_excellent_issue"] = bool(can_explicit_audit and data["audit_status"] != "rejected")
     if "status" in data:
         data["status"] = display_issue_status(data)
     data.pop("inspector_id", None)
@@ -4205,6 +4227,12 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                 i.internal_standard_detail_text,
                 i.standard_detail_text,
                 i.description,
+                CASE
+                    WHEN COALESCE(i.is_excellent, FALSE)
+                         AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+                    THEN '★'
+                    ELSE ''
+                END AS is_excellent,
                 i.rectification_result,
                 i.rectification_note,
                 i.review_result,
@@ -4252,6 +4280,7 @@ ISSUE_EXPORT_COLUMNS = [
     ("内部规范详情", "internal_standard_detail_text"),
     ("外部规范详情", "standard_detail_text"),
     ("问题描述", "description"),
+    ("优秀问题", "is_excellent"),
     ("问题照片", "issue_photo"),
     ("站经理整改结果", "rectification_result"),
     ("站点反馈整改说明", "rectification_note"),
@@ -12834,6 +12863,7 @@ def get_my_issues():
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
+                    COALESCE(i.is_excellent, FALSE) AS is_excellent,
                     i.audited_by,
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
                     ins.sign_status AS inspection_sign_status,
@@ -12891,6 +12921,7 @@ def get_my_issues():
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
+                    COALESCE(i.is_excellent, FALSE) AS is_excellent,
                     i.audited_by,
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
                     ins.sign_status AS inspection_sign_status,
@@ -13042,6 +13073,7 @@ def get_issues():
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
+                    COALESCE(i.is_excellent, FALSE) AS is_excellent,
                     i.audited_by,
                     audit_user.real_name AS audited_by_name,
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
@@ -13162,10 +13194,11 @@ def audit_issue(issue_id):
                 UPDATE issues
                 SET audit_status = %s,
                     audited_by = %s,
-                    audited_at = CURRENT_TIMESTAMP
+                    audited_at = CURRENT_TIMESTAMP,
+                    is_excellent = CASE WHEN %s = 'rejected' THEN FALSE ELSE is_excellent END
                 WHERE id = %s;
                 """,
-                (audit_status, user["id"], issue_id),
+                (audit_status, user["id"], audit_status, issue_id),
             )
             message = "该问题已审核通过。" if audit_status == "approved" else "该问题已审核否决，后续不参与记录统计和问题流转。"
 
@@ -13176,6 +13209,83 @@ def audit_issue(issue_id):
                 "message": message,
                 "audit_status": audit_status,
                 "audit_status_label": ISSUE_AUDIT_STATUS_LABELS.get(audit_status, "待审核"),
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/issues/<int:issue_id>/excellent", methods=["POST"])
+def update_issue_excellent(issue_id):
+    data = request.get_json(silent=True) or {}
+    user_id = get_authenticated_request_user_id(data.get("user_id"))
+    raw_is_excellent = data.get("is_excellent")
+    if isinstance(raw_is_excellent, bool):
+        is_excellent = raw_is_excellent
+    else:
+        is_excellent = str(raw_is_excellent).strip().lower() in {"1", "true", "yes", "on"}
+
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_audit_inspection_issues(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权标记优秀问题。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                i.id,
+                i.station_id,
+                COALESCE(i.audit_status, 'pending') AS audit_status
+            FROM issues i
+            WHERE i.id = %s
+            LIMIT 1;
+            """,
+            (issue_id,),
+        )
+        issue = cur.fetchone()
+        if not issue:
+            return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if normalize_issue_audit_status(issue.get("audit_status")) == "rejected" and is_excellent:
+            return jsonify({"success": False, "error": "审核否决的问题不能标记为优秀问题。"}), 400
+
+        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if not can_view_all and not (
+            can_view_own
+            and user.get("station_id")
+            and issue["station_id"] == user["station_id"]
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+
+        cur.execute(
+            """
+            UPDATE issues
+            SET is_excellent = %s
+            WHERE id = %s
+            RETURNING COALESCE(is_excellent, FALSE) AS is_excellent;
+            """,
+            (is_excellent, issue_id),
+        )
+        updated = cur.fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "已点亮优秀问题。" if updated["is_excellent"] else "已取消优秀问题标记。",
+                "is_excellent": bool(updated["is_excellent"]),
             }
         )
     except Exception as e:
