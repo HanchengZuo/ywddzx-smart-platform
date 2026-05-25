@@ -1,18 +1,5 @@
 <template>
   <div class="page-shell issues-page">
-    <transition name="toast-fade">
-      <div v-if="actionMessage" class="message-toast" :class="actionMessageType">{{ actionMessage }}</div>
-    </transition>
-    <transition name="audit-notice-fade">
-      <div v-if="auditNotice.visible" class="audit-center-notice" :class="auditNotice.type">
-        <div class="audit-center-card card-surface">
-          <div class="audit-center-icon">{{ auditNotice.type === 'success' ? '✓' : '!' }}</div>
-          <strong>{{ auditNotice.title }}</strong>
-          <p>{{ auditNotice.message }}</p>
-        </div>
-      </div>
-    </transition>
-
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
@@ -606,108 +593,113 @@
         </div>
       </div>
 
-      <div v-if="tableFullscreen && previewState.visible" class="image-modal fullscreen-preview-modal"
-        @click.self="closePreview">
-        <div class="image-modal-content">
+      <div ref="fullscreenOverlayHostRef" class="fullscreen-overlay-host"></div>
+    </div>
+
+    <Teleport :to="overlayTeleportTarget" :disabled="!tableFullscreen">
+      <transition name="toast-fade">
+        <div v-if="actionMessage" class="message-toast" :class="actionMessageType">{{ actionMessage }}</div>
+      </transition>
+      <transition name="audit-notice-fade">
+        <div v-if="auditNotice.visible" class="audit-center-notice" :class="auditNotice.type">
+          <div class="audit-center-card card-surface">
+            <div class="audit-center-icon">{{ auditNotice.type === 'success' ? '✓' : '!' }}</div>
+            <strong>{{ auditNotice.title }}</strong>
+            <p>{{ auditNotice.message }}</p>
+          </div>
+        </div>
+      </transition>
+
+      <div v-if="exportDialog.visible" class="image-modal">
+        <div class="image-modal-content issue-export-modal">
           <div class="image-modal-header">
-            <span>{{ previewState.title }}</span>
-            <button class="close-btn" type="button" @click="closePreview">×</button>
-          </div>
-          <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
-        </div>
-      </div>
-    </div>
-
-    <div v-if="exportDialog.visible" class="image-modal">
-      <div class="image-modal-content issue-export-modal">
-        <div class="image-modal-header">
-          <span>导出巡检问题数据</span>
-          <button class="close-btn" type="button" :disabled="exportDialog.submitting"
-            @click="closeExportDialog">×</button>
-        </div>
-
-        <div class="issue-export-body">
-          <div class="export-notice">
-            <div>
-              <strong>导出说明</strong>
-              <p>本次导出只包含当前筛选后的文字数据。问题照片、整改照片、复核照片会保留字段列名，但图片内容不导出。</p>
-            </div>
-            <span>Excel</span>
+            <span>导出巡检问题数据</span>
+            <button class="close-btn" type="button" :disabled="exportDialog.submitting"
+              @click="closeExportDialog">×</button>
           </div>
 
-          <div class="export-summary-grid">
-            <div class="export-summary-card primary">
-              <span>准备导出</span>
-              <strong>{{ exportDialog.selectedCount }}</strong>
-              <em>条巡检问题</em>
-            </div>
-            <div class="export-summary-card">
-              <span>筛选条件</span>
-              <strong>{{ exportFilterChips.length }}</strong>
-              <em>{{ exportFilterChips.length ? '项已应用' : '当前为全部数据' }}</em>
-            </div>
-            <div class="export-summary-card">
-              <span>保存期限</span>
-              <strong>7天</strong>
-              <em>到期自动清理</em>
-            </div>
-          </div>
-
-          <div class="export-filter-panel">
-            <div class="export-section-title">当前筛选结果</div>
-            <div v-if="exportFilterChips.length" class="export-filter-chips">
-              <span v-for="chip in exportFilterChips" :key="chip.key">{{ chip.label }}：{{ chip.value }}</span>
-            </div>
-            <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
-          </div>
-
-          <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status">
-            <div class="export-task-head">
+          <div class="issue-export-body">
+            <div class="export-notice">
               <div>
-                <span>任务状态</span>
-                <strong>{{ exportStatusLabel }}</strong>
+                <strong>导出说明</strong>
+                <p>本次导出只包含当前筛选后的文字数据。问题照片、整改照片、复核照片会保留字段列名，但图片内容不导出。</p>
               </div>
-              <em v-if="exportDialog.expiresAt">文件保留至 {{ exportDialog.expiresAt }}</em>
+              <span>Excel</span>
             </div>
-            <div class="export-progress">
-              <div class="export-progress-bar" :style="{ width: exportProgressWidth }"></div>
+
+            <div class="export-summary-grid">
+              <div class="export-summary-card primary">
+                <span>准备导出</span>
+                <strong>{{ exportDialog.selectedCount }}</strong>
+                <em>条巡检问题</em>
+              </div>
+              <div class="export-summary-card">
+                <span>筛选条件</span>
+                <strong>{{ exportFilterChips.length }}</strong>
+                <em>{{ exportFilterChips.length ? '项已应用' : '当前为全部数据' }}</em>
+              </div>
+              <div class="export-summary-card">
+                <span>保存期限</span>
+                <strong>7天</strong>
+                <em>到期自动清理</em>
+              </div>
             </div>
-            <p v-if="exportDialog.status === 'completed'">
-              Excel 文件已生成，共导出 {{ exportDialog.exportedCount }} 条数据，可以直接下载。
-            </p>
-            <p v-else-if="exportDialog.status === 'failed'" class="export-error-text">
-              {{ exportDialog.error || '导出失败，请稍后重试。' }}
-            </p>
-            <p v-else>系统正在后台整理数据并生成 Excel，数据量较大时请稍候。</p>
+
+            <div class="export-filter-panel">
+              <div class="export-section-title">当前筛选结果</div>
+              <div v-if="exportFilterChips.length" class="export-filter-chips">
+                <span v-for="chip in exportFilterChips" :key="chip.key">{{ chip.label }}：{{ chip.value }}</span>
+              </div>
+              <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
+            </div>
+
+            <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status">
+              <div class="export-task-head">
+                <div>
+                  <span>任务状态</span>
+                  <strong>{{ exportStatusLabel }}</strong>
+                </div>
+                <em v-if="exportDialog.expiresAt">文件保留至 {{ exportDialog.expiresAt }}</em>
+              </div>
+              <div class="export-progress">
+                <div class="export-progress-bar" :style="{ width: exportProgressWidth }"></div>
+              </div>
+              <p v-if="exportDialog.status === 'completed'">
+                Excel 文件已生成，共导出 {{ exportDialog.exportedCount }} 条数据，可以直接下载。
+              </p>
+              <p v-else-if="exportDialog.status === 'failed'" class="export-error-text">
+                {{ exportDialog.error || '导出失败，请稍后重试。' }}
+              </p>
+              <p v-else>系统正在后台整理数据并生成 Excel，数据量较大时请稍候。</p>
+            </div>
+
+            <div v-if="exportDialog.error && !exportDialog.taskId" class="form-error">{{ exportDialog.error }}</div>
           </div>
 
-          <div v-if="exportDialog.error && !exportDialog.taskId" class="form-error">{{ exportDialog.error }}</div>
-        </div>
-
-        <div class="issue-edit-actions export-actions">
-          <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting"
-            @click="closeExportDialog">
-            关闭
-          </button>
-          <button v-if="exportDialog.taskId && ['completed', 'failed'].includes(exportDialog.status)"
-            class="btn btn-secondary" type="button" :disabled="exportDialog.downloading"
-            @click="resetExportDialogForCurrentFilters">
-            重新按当前筛选导出
-          </button>
-          <button v-if="exportDialog.status !== 'completed'" class="btn btn-primary" type="button"
-            :disabled="exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running'"
-            @click="submitIssueExportTask">
-            {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ?
-              '生成中...'
-              : '提交导出任务' }}
-          </button>
-          <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
-            @click="downloadIssueExport">
-            {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
-          </button>
+          <div class="issue-edit-actions export-actions">
+            <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting"
+              @click="closeExportDialog">
+              关闭
+            </button>
+            <button v-if="exportDialog.taskId && ['completed', 'failed'].includes(exportDialog.status)"
+              class="btn btn-secondary" type="button" :disabled="exportDialog.downloading"
+              @click="resetExportDialogForCurrentFilters">
+              重新按当前筛选导出
+            </button>
+            <button v-if="exportDialog.status !== 'completed'" class="btn btn-primary" type="button"
+              :disabled="exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running'"
+              @click="submitIssueExportTask">
+              {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ?
+                '生成中...'
+                : '提交导出任务' }}
+            </button>
+            <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
+              @click="downloadIssueExport">
+              {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
 
     <div v-if="editDialog.visible" class="image-modal">
       <div class="image-modal-content issue-edit-modal">
@@ -976,7 +968,7 @@
       </div>
     </div>
 
-    <div v-if="!tableFullscreen && previewState.visible" class="image-modal" @click.self="closePreview">
+    <div v-if="previewState.visible" class="image-modal" @click.self="closePreview">
       <div class="image-modal-content">
         <div class="image-modal-header">
           <span>{{ previewState.title }}</span>
@@ -1023,6 +1015,7 @@
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1071,6 +1064,7 @@ const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const editStandardSelectRef = ref(null)
 const tableCardRef = ref(null)
+const fullscreenOverlayHostRef = ref(null)
 const columnSettingsRef = ref(null)
 
 const dropdownVisible = ref({
@@ -1099,6 +1093,9 @@ const auditNotice = ref({
 let auditNoticeTimer = null
 const tableFullscreen = ref(false)
 const tableZoom = ref(1)
+const overlayTeleportTarget = computed(() => (
+  tableFullscreen.value && fullscreenOverlayHostRef.value ? fullscreenOverlayHostRef.value : 'body'
+))
 const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
@@ -3532,6 +3529,32 @@ onBeforeUnmount(() => {
   zoom: var(--issue-table-zoom);
 }
 
+.fullscreen-overlay-host {
+  display: none;
+}
+
+.fullscreen-table-card .fullscreen-overlay-host {
+  position: absolute;
+  inset: 0;
+  z-index: 9000;
+  display: block;
+  pointer-events: none;
+}
+
+.fullscreen-overlay-host .image-modal,
+.fullscreen-overlay-host .audit-center-notice,
+.fullscreen-overlay-host .message-toast {
+  z-index: 9500;
+}
+
+.fullscreen-overlay-host .image-modal {
+  pointer-events: auto;
+}
+
+.fullscreen-overlay-host .message-toast {
+  pointer-events: none;
+}
+
 .table-scroll-wrap {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -3959,10 +3982,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   z-index: 1000;
   padding: 24px;
-}
-
-.fullscreen-preview-modal {
-  z-index: 9500;
 }
 
 .image-modal-content {
