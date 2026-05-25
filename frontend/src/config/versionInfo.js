@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.4',
+    date: '2026-05-25',
+    title: '巡检照片拼接编辑',
+    summary: '巡检登记支持多张照片拼接后提交。',
+    items: [
+      '问题照片最多可添加3张。',
+      '系统自动拼接成一张照片提交。',
+      '支持裁剪调整和画圈标注。'
+    ]
+  },
+  {
     version: 'v2.3',
     date: '2026-05-25',
     title: '人员出勤统计',
