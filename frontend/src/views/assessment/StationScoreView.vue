@@ -237,6 +237,7 @@
           <div>
             <span class="task-status-label">{{ exportStatusLabel }}</span>
             <strong>{{ exportDialog.fileName || '正在准备文件名' }}</strong>
+            <small v-if="exportDialog.fileSizeLabel">文件大小 {{ exportDialog.fileSizeLabel }}</small>
             <small v-if="exportDialog.expiresAt">保留至 {{ exportDialog.expiresAt }}</small>
           </div>
           <div class="task-progress-track">
@@ -334,6 +335,7 @@ const exportDialog = reactive({
   selectedCount: 0,
   exportedCount: 0,
   fileName: '',
+  fileSizeLabel: '',
   expiresAt: '',
   includePhotos: {
     issue_photo: false
@@ -634,6 +636,7 @@ const resetExportDialog = (mode) => {
   exportDialog.error = ''
   exportDialog.exportedCount = 0
   exportDialog.fileName = ''
+  exportDialog.fileSizeLabel = ''
   exportDialog.expiresAt = ''
   exportDialog.includePhotos = { issue_photo: false }
   exportDialog.selectedCount = mode === 'all'
@@ -678,6 +681,7 @@ const applyScoreExportTask = (task = {}) => {
   exportDialog.selectedCount = Number(task.selected_count ?? exportDialog.selectedCount) || 0
   exportDialog.exportedCount = Number(task.exported_count || 0)
   exportDialog.fileName = task.download_filename || exportDialog.fileName
+  exportDialog.fileSizeLabel = task.file_size_label || ''
   exportDialog.expiresAt = task.expires_at || exportDialog.expiresAt
   exportDialog.error = task.error_message || ''
   const includePhotos = task.export_options?.include_photos

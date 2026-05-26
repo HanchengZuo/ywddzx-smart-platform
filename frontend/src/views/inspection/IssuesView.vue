@@ -710,6 +710,7 @@
                   <span>任务状态</span>
                   <strong>{{ exportStatusLabel }}</strong>
                 </div>
+                <em v-if="exportDialog.fileSizeLabel">文件大小 {{ exportDialog.fileSizeLabel }}</em>
                 <em v-if="exportDialog.expiresAt">文件保留至 {{ exportDialog.expiresAt }}</em>
               </div>
               <div class="export-progress">
@@ -717,6 +718,7 @@
               </div>
               <p v-if="exportDialog.status === 'completed'">
                 Excel 文件已生成，共导出 {{ exportDialog.exportedCount }} 条数据，可以直接下载。
+                <template v-if="exportDialog.fileSizeLabel"> 文件大小：{{ exportDialog.fileSizeLabel }}。</template>
               </p>
               <p v-else-if="exportDialog.status === 'failed'" class="export-error-text">
                 {{ exportDialog.error || '导出失败，请稍后重试。' }}
@@ -1275,6 +1277,7 @@ const exportDialog = ref({
   selectedCount: 0,
   exportedCount: 0,
   fileName: '',
+  fileSizeLabel: '',
   expiresAt: '',
   filterSummary: {},
   includePhotos: {
@@ -1978,6 +1981,7 @@ const resetExportDialogForCurrentFilters = () => {
     selectedCount: filteredData.value.length,
     exportedCount: 0,
     fileName: '',
+    fileSizeLabel: '',
     expiresAt: '',
     filterSummary: buildCurrentExportFilterSummary(),
     includePhotos: createEmptyExportPhotoOptions()
@@ -2020,6 +2024,7 @@ const applyExportTask = (task = {}) => {
   exportDialog.value.selectedCount = Number(task.selected_count ?? exportDialog.value.selectedCount) || 0
   exportDialog.value.exportedCount = Number(task.exported_count || 0)
   exportDialog.value.fileName = task.download_filename || exportDialog.value.fileName
+  exportDialog.value.fileSizeLabel = task.file_size_label || ''
   exportDialog.value.expiresAt = task.expires_at || exportDialog.value.expiresAt
   exportDialog.value.filterSummary = task.filter_summary || exportDialog.value.filterSummary || {}
   exportDialog.value.includePhotos = normalizeExportPhotoOptions(task.export_options)

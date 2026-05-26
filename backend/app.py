@@ -722,6 +722,33 @@ def remove_storage_file(relative_path):
         pass
 
 
+def get_storage_file_size(relative_path):
+    target_path = resolve_storage_abs_path(relative_path)
+    if not target_path or not os.path.isfile(target_path):
+        return 0
+    try:
+        return os.path.getsize(target_path)
+    except OSError:
+        return 0
+
+
+def format_file_size(size_bytes):
+    try:
+        size = float(size_bytes or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size <= 0:
+        return ""
+    units = ["B", "KB", "MB", "GB"]
+    unit_index = 0
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(size)} {units[unit_index]}"
+    return f"{size:.1f} {units[unit_index]}"
+
+
 BACKUP_FREQUENCY_INTERVALS = {
     "off": None,
     "hourly": timedelta(hours=1),
@@ -4287,6 +4314,7 @@ def get_issue_export_task_for_user(cur, task_id, user):
 def serialize_issue_export_task(task):
     status = task.get("status")
     task_id = task.get("task_id")
+    file_size_bytes = get_storage_file_size(task.get("file_path")) if status == "completed" else 0
     return {
         "task_id": task_id,
         "status": status,
@@ -4296,6 +4324,8 @@ def serialize_issue_export_task(task):
         "export_options": task.get("export_options") or {},
         "download_filename": task.get("download_filename") or "",
         "download_url": f"/api/issues/export-tasks/{task_id}/download" if status == "completed" else "",
+        "file_size_bytes": file_size_bytes,
+        "file_size_label": format_file_size(file_size_bytes),
         "error_message": task.get("error_message") or "",
         "created_at": task.get("created_at") or "",
         "updated_at": task.get("updated_at") or "",
@@ -5602,6 +5632,7 @@ def get_station_score_export_task_for_user(cur, task_id, user):
 def serialize_station_score_export_task(task):
     status = task.get("status")
     task_id = task.get("task_id")
+    file_size_bytes = get_storage_file_size(task.get("file_path")) if status == "completed" else 0
     return {
         "task_id": task_id,
         "status": status,
@@ -5612,6 +5643,8 @@ def serialize_station_score_export_task(task):
         "export_options": task.get("export_options") or {},
         "download_filename": task.get("download_filename") or "",
         "download_url": station_score_export_download_url(task_id, status),
+        "file_size_bytes": file_size_bytes,
+        "file_size_label": format_file_size(file_size_bytes),
         "error_message": task.get("error_message") or "",
         "created_at": task.get("created_at") or "",
         "updated_at": task.get("updated_at") or "",
