@@ -656,7 +656,7 @@
             <div class="export-notice">
               <div>
                 <strong>导出说明</strong>
-                <p>本次导出只包含当前筛选后的文字数据。问题照片、整改照片、复核照片会保留字段列名，但图片内容不导出。</p>
+                <p>默认导出当前筛选后的文字数据。照片导出会明显增加生成时间和文件体积，仅授权用户可勾选，并会把对应照片嵌入 Excel 单元格。</p>
               </div>
               <span>Excel</span>
             </div>
@@ -685,6 +685,23 @@
                 <span v-for="chip in exportFilterChips" :key="chip.key">{{ chip.label }}：{{ chip.value }}</span>
               </div>
               <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
+            </div>
+
+            <div class="export-photo-panel">
+              <div class="export-section-title">照片导出选项</div>
+              <p>
+                照片会直接嵌入 Excel，对服务器和浏览器资源占用较高，建议只在确实需要留档追踪时勾选。
+                <span v-if="!canExportIssuePhotos">当前账号未获得“导出巡检照片”权限，只能导出文字数据。</span>
+              </p>
+              <div class="export-photo-options">
+                <label v-for="option in exportPhotoOptions" :key="option.key" class="export-photo-option"
+                  :class="{ disabled: !canExportIssuePhotos || Boolean(exportDialog.taskId) }">
+                  <input v-model="exportDialog.includePhotos[option.key]" type="checkbox"
+                    :disabled="!canExportIssuePhotos || Boolean(exportDialog.taskId)" />
+                  <span>{{ option.label }}</span>
+                  <em>{{ option.help }}</em>
+                </label>
+              </div>
             </div>
 
             <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status">
@@ -1259,9 +1276,20 @@ const exportDialog = ref({
   exportedCount: 0,
   fileName: '',
   expiresAt: '',
-  filterSummary: {}
+  filterSummary: {},
+  includePhotos: {
+    issue_photo: false,
+    rectification_photo: false,
+    review_photo: false
+  }
 })
 let exportPollTimer = null
+
+const exportPhotoOptions = [
+  { key: 'issue_photo', label: '导出问题照片', help: '现场登记时上传的问题照片' },
+  { key: 'rectification_photo', label: '导出整改照片', help: '站点提交的整改反馈照片' },
+  { key: 'review_photo', label: '导出复核照片', help: '督导组复核时上传的照片' }
+]
 
 const exportFilterLabels = {
   month: '检查月度',
@@ -1447,6 +1475,7 @@ const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPerm
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
 const canAuditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.audit_inspection_issues) || list.value.some((item) => item?.can_audit_issue))
 const canChangeIssueInspectors = computed(() => currentRole === 'root' || Boolean(localPermissions.value.change_issue_inspector) || list.value.some((item) => item?.can_change_issue_inspector))
+const canExportIssuePhotos = computed(() => currentRole === 'root' || Boolean(localPermissions.value.export_issue_photos))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
   canDeleteIssues.value ||
@@ -1922,6 +1951,21 @@ const buildCurrentExportFilterSummary = () => {
   )
 }
 
+const createEmptyExportPhotoOptions = () => ({
+  issue_photo: false,
+  rectification_photo: false,
+  review_photo: false
+})
+
+const normalizeExportPhotoOptions = (rawOptions = {}) => {
+  const includePhotos = rawOptions?.include_photos || rawOptions || {}
+  return {
+    issue_photo: Boolean(includePhotos.issue_photo),
+    rectification_photo: Boolean(includePhotos.rectification_photo),
+    review_photo: Boolean(includePhotos.review_photo)
+  }
+}
+
 const resetExportDialogForCurrentFilters = () => {
   stopExportPolling()
   exportDialog.value = {
@@ -1935,7 +1979,8 @@ const resetExportDialogForCurrentFilters = () => {
     exportedCount: 0,
     fileName: '',
     expiresAt: '',
-    filterSummary: buildCurrentExportFilterSummary()
+    filterSummary: buildCurrentExportFilterSummary(),
+    includePhotos: createEmptyExportPhotoOptions()
   }
 }
 
@@ -1977,6 +2022,7 @@ const applyExportTask = (task = {}) => {
   exportDialog.value.fileName = task.download_filename || exportDialog.value.fileName
   exportDialog.value.expiresAt = task.expires_at || exportDialog.value.expiresAt
   exportDialog.value.filterSummary = task.filter_summary || exportDialog.value.filterSummary || {}
+  exportDialog.value.includePhotos = normalizeExportPhotoOptions(task.export_options)
   exportDialog.value.error = task.error_message || ''
 }
 
@@ -2020,7 +2066,12 @@ const submitIssueExportTask = async () => {
     const response = await axios.post('/api/issues/export-tasks', {
       user_id: localStorage.getItem('user_id') || '',
       issue_ids: filteredData.value.map((item) => item.id),
-      filter_summary: buildCurrentExportFilterSummary()
+      filter_summary: buildCurrentExportFilterSummary(),
+      export_options: {
+        include_photos: canExportIssuePhotos.value
+          ? { ...exportDialog.value.includePhotos }
+          : createEmptyExportPhotoOptions()
+      }
     })
     applyExportTask(response.data?.task || {})
     startExportPolling()
@@ -4437,12 +4488,80 @@ onBeforeUnmount(() => {
 }
 
 .export-filter-panel,
+.export-photo-panel,
 .export-task-panel {
   margin-top: 14px;
   padding: 16px;
   border: 1px solid #dbe4ee;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.92);
+}
+
+.export-photo-panel p {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.export-photo-panel p span {
+  display: block;
+  margin-top: 4px;
+  color: #b45309;
+  font-weight: 900;
+}
+
+.export-photo-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.export-photo-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "check title"
+    "check help";
+  align-items: start;
+  column-gap: 9px;
+  row-gap: 4px;
+  min-height: 78px;
+  padding: 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 16px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.export-photo-option input {
+  grid-area: check;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: #2563eb;
+}
+
+.export-photo-option span {
+  grid-area: title;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.export-photo-option em {
+  grid-area: help;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.export-photo-option.disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .export-filter-chips {
@@ -5369,6 +5488,10 @@ onBeforeUnmount(() => {
   }
 
   .export-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .export-photo-options {
     grid-template-columns: 1fr;
   }
 

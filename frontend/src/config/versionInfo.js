@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.5',
+    date: '2026-05-26',
+    title: '巡检问题照片导出',
+    summary: '巡检问题导出可按需带出照片。',
+    items: [
+      '导出 Excel 可选择带问题、整改、复核照片。',
+      '照片会嵌入对应问题的单元格。',
+      '照片导出增加独立权限控制。'
+    ]
+  },
+  {
     version: 'v2.4',
     date: '2026-05-25',
     title: '巡检照片拼接编辑',

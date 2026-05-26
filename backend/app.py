@@ -171,6 +171,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False},
     },
     {
+        "key": "export_issue_photos",
+        "name": "导出巡检照片",
+        "category": "巡检问题列表",
+        "description": "导出巡检问题 Excel 时，可选择把问题照片、整改照片、复核照片嵌入表格。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_own_inspection_records",
         "name": "查看本站数据",
         "category": "巡检记录",
@@ -311,6 +318,10 @@ PERMISSION_ANY_DEPENDENCIES = {
     ),
     "change_issue_inspector": (
         "view_all_inspection_issues",
+    ),
+    "export_issue_photos": (
+        "view_all_inspection_issues",
+        "view_own_inspection_issues",
     ),
     "delete_inspection_records": (
         "view_all_inspection_records",
@@ -3866,6 +3877,10 @@ def can_change_issue_inspector(cur, user):
     return has_permission(cur, user, "change_issue_inspector")
 
 
+def can_export_issue_photos(cur, user):
+    return has_permission(cur, user, "export_issue_photos")
+
+
 def normalize_issue_audit_status(value):
     status = str(value or "pending").strip().lower()
     return status if status in ISSUE_AUDIT_STATUS_OPTIONS else "pending"
@@ -4038,6 +4053,7 @@ def ensure_issue_export_schema(cur):
             selected_count INTEGER NOT NULL DEFAULT 0,
             exported_count INTEGER NOT NULL DEFAULT 0,
             filter_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            export_options JSONB NOT NULL DEFAULT '{}'::jsonb,
             file_path TEXT,
             download_filename TEXT,
             error_message TEXT,
@@ -4046,6 +4062,12 @@ def ensure_issue_export_schema(cur):
             completed_at TIMESTAMP,
             expires_at TIMESTAMP NOT NULL
         );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE issue_export_tasks
+        ADD COLUMN IF NOT EXISTS export_options JSONB NOT NULL DEFAULT '{}'::jsonb;
         """
     )
     cur.execute(
@@ -4158,6 +4180,31 @@ def normalize_issue_export_filter_summary(raw_summary):
     }
 
 
+ISSUE_EXPORT_PHOTO_KEYS = {
+    "issue_photo",
+    "rectification_photo",
+    "review_photo",
+}
+
+
+def normalize_issue_export_options(raw_options):
+    if not isinstance(raw_options, dict):
+        raw_options = {}
+    raw_include_photos = raw_options.get("include_photos")
+    if not isinstance(raw_include_photos, dict):
+        raw_include_photos = {}
+    include_photos = {
+        key: bool(raw_include_photos.get(key))
+        for key in ISSUE_EXPORT_PHOTO_KEYS
+    }
+    return {"include_photos": include_photos}
+
+
+def issue_export_includes_photos(export_options):
+    include_photos = (export_options or {}).get("include_photos") or {}
+    return any(bool(include_photos.get(key)) for key in ISSUE_EXPORT_PHOTO_KEYS)
+
+
 def get_issue_export_task_for_user(cur, task_id, user):
     cur.execute(
         """
@@ -4168,6 +4215,7 @@ def get_issue_export_task_for_user(cur, task_id, user):
             selected_count,
             exported_count,
             filter_summary,
+            export_options,
             file_path,
             download_filename,
             error_message,
@@ -4198,6 +4246,7 @@ def serialize_issue_export_task(task):
         "selected_count": int(task.get("selected_count") or 0),
         "exported_count": int(task.get("exported_count") or 0),
         "filter_summary": task.get("filter_summary") or {},
+        "export_options": task.get("export_options") or {},
         "download_filename": task.get("download_filename") or "",
         "download_url": f"/api/issues/export-tasks/{task_id}/download" if status == "completed" else "",
         "error_message": task.get("error_message") or "",
@@ -4246,6 +4295,7 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                 i.internal_standard_detail_text,
                 i.standard_detail_text,
                 i.description,
+                i.photo_path AS issue_photo,
                 CASE
                     WHEN COALESCE(i.is_excellent, FALSE)
                          AND COALESCE(i.audit_status, 'pending') <> 'rejected'
@@ -4254,8 +4304,10 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                 END AS is_excellent,
                 i.rectification_result,
                 i.rectification_note,
+                i.rectification_photo_path AS rectification_photo,
                 i.review_result,
                 i.review_note,
+                i.review_photo_path AS review_photo,
                 CASE
                     WHEN COALESCE(i.audit_status, 'pending') = 'pending'
                     THEN '待审核'
@@ -4325,7 +4377,119 @@ def xlsx_text_cell(value):
     return f'<c t="inlineStr"><is><t xml:space="preserve">{xml_escape(text)}</t></is></c>'
 
 
-def write_issue_export_xlsx(file_path, rows):
+def selected_issue_export_photo_keys(export_options):
+    include_photos = (export_options or {}).get("include_photos") or {}
+    return {
+        key
+        for key in ISSUE_EXPORT_PHOTO_KEYS
+        if bool(include_photos.get(key))
+    }
+
+
+def build_issue_export_excel_image(image_path, max_width=150, max_height=110):
+    abs_path = resolve_storage_abs_path(image_path)
+    if not abs_path or not os.path.isfile(abs_path):
+        return None
+    try:
+        from openpyxl.drawing.image import Image as ExcelImage
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出照片。") from exc
+
+    try:
+        with Image.open(abs_path) as source_image:
+            width, height = source_image.size
+        if width <= 0 or height <= 0:
+            return None
+        scale = min(max_width / float(width), max_height / float(height), 1)
+        excel_image = ExcelImage(abs_path)
+        excel_image.width = max(1, int(width * scale))
+        excel_image.height = max(1, int(height * scale))
+        return excel_image
+    except Exception:
+        return None
+
+
+def write_issue_export_xlsx_with_images(file_path, rows, export_options):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出照片。") from exc
+
+    selected_photo_keys = selected_issue_export_photo_keys(export_options)
+    headers = [column[0] for column in ISSUE_EXPORT_COLUMNS]
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "巡检问题列表"
+    worksheet.freeze_panes = "A2"
+
+    header_fill = PatternFill("solid", fgColor="DCEBFF")
+    header_font = Font(bold=True, color="0F172A")
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+    wrap_alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    long_text_alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+    photo_column_indexes = {}
+
+    for column_index, (header, key) in enumerate(ISSUE_EXPORT_COLUMNS, start=1):
+        cell = worksheet.cell(row=1, column=column_index, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = wrap_alignment
+
+        width = 18
+        if key in {"internal_standard_detail_text", "standard_detail_text", "description", "rectification_note", "review_note"}:
+            width = 34
+        if key in ISSUE_EXPORT_PHOTO_KEYS:
+            photo_column_indexes[key] = column_index
+            width = 22 if key in selected_photo_keys else 16
+        worksheet.column_dimensions[excel_column_name(column_index)].width = width
+
+    for row_index, row in enumerate(rows, start=2):
+        row_has_image = False
+        for column_index, (_header, key) in enumerate(ISSUE_EXPORT_COLUMNS, start=1):
+            cell = worksheet.cell(row=row_index, column=column_index)
+            cell.border = thin_border
+            cell.alignment = long_text_alignment if key in {
+                "internal_standard_detail_text",
+                "standard_detail_text",
+                "description",
+                "rectification_note",
+                "review_note",
+            } else wrap_alignment
+
+            if key in ISSUE_EXPORT_PHOTO_KEYS:
+                cell.value = ""
+                if key in selected_photo_keys:
+                    excel_image = build_issue_export_excel_image(row.get(key))
+                    if excel_image:
+                        worksheet.add_image(excel_image, cell.coordinate)
+                        row_has_image = True
+                continue
+
+            cell.value = "" if row.get(key) is None else str(row.get(key))
+
+        if row_has_image:
+            worksheet.row_dimensions[row_index].height = 92
+
+    last_column = excel_column_name(len(ISSUE_EXPORT_COLUMNS))
+    worksheet.auto_filter.ref = f"A1:{last_column}1"
+    workbook.properties.title = "巡检问题列表导出"
+    workbook.properties.creator = "业务督导中心数智管理平台"
+    workbook.save(file_path)
+
+
+def write_issue_export_xlsx(file_path, rows, export_options=None):
+    if issue_export_includes_photos(export_options):
+        return write_issue_export_xlsx_with_images(file_path, rows, export_options)
+
     headers = [column[0] for column in ISSUE_EXPORT_COLUMNS]
     now = beijing_now().replace(microsecond=0).isoformat()
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -4418,7 +4582,8 @@ def write_issue_export_xlsx(file_path, rows):
                     value = "" if key in {"issue_photo", "rectification_photo", "review_photo"} else row.get(key)
                     cells.append(xlsx_text_cell(value))
                 sheet.write(f'<row r="{row_index}">{"".join(cells)}</row>'.encode("utf-8"))
-            sheet.write(b"</sheetData><autoFilter ref=\"A1:W1\"/></worksheet>")
+            last_column = excel_column_name(len(ISSUE_EXPORT_COLUMNS))
+            sheet.write(f'</sheetData><autoFilter ref="A1:{last_column}1"/></worksheet>'.encode("utf-8"))
 
 
 def mark_issue_export_task_failed(task_id, message):
@@ -4444,7 +4609,7 @@ def mark_issue_export_task_failed(task_id, message):
         close_db_resources(cur, conn)
 
 
-def run_issue_export_task(task_id, issue_ids, user_id):
+def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
     conn = None
     cur = None
     try:
@@ -4475,7 +4640,7 @@ def run_issue_export_task(task_id, issue_ids, user_id):
             safe_filename = f"inspection_issues_{task_id[:8]}.xlsx"
         abs_path = os.path.join(ISSUE_EXPORTS_STORAGE_DIR, safe_filename)
         relative_path = f"issue_exports/{safe_filename}"
-        write_issue_export_xlsx(abs_path, rows)
+        write_issue_export_xlsx(abs_path, rows, export_options)
         cur.execute(
             """
             UPDATE issue_export_tasks
@@ -4498,10 +4663,10 @@ def run_issue_export_task(task_id, issue_ids, user_id):
         close_db_resources(cur, conn)
 
 
-def start_issue_export_task(task_id, issue_ids, user_id):
+def start_issue_export_task(task_id, issue_ids, user_id, export_options=None):
     thread = threading.Thread(
         target=run_issue_export_task,
-        args=(task_id, issue_ids, user_id),
+        args=(task_id, issue_ids, user_id, export_options),
         daemon=True,
     )
     thread.start()
@@ -13613,6 +13778,7 @@ def create_issue_export_task():
     try:
         issue_ids = normalize_issue_export_ids(data.get("issue_ids"))
         filter_summary = normalize_issue_export_filter_summary(data.get("filter_summary"))
+        export_options = normalize_issue_export_options(data.get("export_options"))
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_export_schema(cur)
@@ -13621,6 +13787,8 @@ def create_issue_export_task():
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if issue_export_includes_photos(export_options) and not can_export_issue_photos(cur, user):
+            raise PermissionError("当前账号无权导出巡检照片，请联系 root 授权。")
 
         task_id = uuid.uuid4().hex
         now = beijing_now()
@@ -13634,10 +13802,11 @@ def create_issue_export_task():
                 selected_count,
                 exported_count,
                 filter_summary,
+                export_options,
                 download_filename,
                 expires_at
             )
-            VALUES (%s, %s, 'pending', %s, 0, %s::jsonb, %s, CURRENT_TIMESTAMP + INTERVAL '7 days')
+            VALUES (%s, %s, 'pending', %s, 0, %s::jsonb, %s::jsonb, %s, CURRENT_TIMESTAMP + INTERVAL '7 days')
             RETURNING
                 task_id,
                 created_by,
@@ -13645,6 +13814,7 @@ def create_issue_export_task():
                 selected_count,
                 exported_count,
                 filter_summary,
+                export_options,
                 file_path,
                 download_filename,
                 error_message,
@@ -13658,12 +13828,13 @@ def create_issue_export_task():
                 user["id"],
                 len(issue_ids),
                 json.dumps(filter_summary, ensure_ascii=False),
+                json.dumps(export_options, ensure_ascii=False),
                 download_filename,
             ),
         )
         task = cur.fetchone()
         conn.commit()
-        start_issue_export_task(task_id, issue_ids, user["id"])
+        start_issue_export_task(task_id, issue_ids, user["id"], export_options)
         return jsonify(
             {
                 "success": True,
