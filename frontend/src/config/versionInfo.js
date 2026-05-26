@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6',
+    date: '2026-05-26',
+    title: '站点评分上线',
+    summary: '考核系统新增按站点和检查表自动评分。',
+    items: [
+      '检查表字段可标记为可评分。',
+      '站点评分按月份自动统计扣分项。',
+      '授权人员可手动调整评分并记录操作人。'
+    ]
+  },
+  {
     version: 'v2.5',
     date: '2026-05-26',
     title: '巡检问题照片导出',

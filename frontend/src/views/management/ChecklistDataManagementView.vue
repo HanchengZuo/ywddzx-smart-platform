@@ -274,6 +274,10 @@
                     <input v-model="field.is_register_visible" type="checkbox" />
                     <span>可显示</span>
                   </label>
+                  <label class="mini-check">
+                    <input v-model="field.is_scorable" type="checkbox" />
+                    <span>可评分</span>
+                  </label>
                 </div>
                 <div class="field-action-group">
                   <button class="mini-icon-btn" type="button" @click="insertFieldBefore(index)">前插</button>
@@ -287,7 +291,7 @@
             </div>
 
             <div class="schema-note">
-              可筛选用于规范库筛选；可显示仅影响巡检登记规范搜索下拉展示。
+              可筛选用于规范库筛选；可显示仅影响巡检登记规范搜索下拉展示；可评分用于站点评分统计。
             </div>
           </div>
         </div>
@@ -394,6 +398,10 @@
                     <input v-model="field.is_register_visible" type="checkbox" />
                     <span>可显示</span>
                   </label>
+                  <label class="mini-check">
+                    <input v-model="field.is_scorable" type="checkbox" />
+                    <span>可评分</span>
+                  </label>
                 </div>
                 <div class="field-action-group">
                   <button class="mini-icon-btn" type="button" @click="insertEditFieldBefore(index)">前插</button>
@@ -407,7 +415,7 @@
             </div>
 
             <div class="schema-note">
-              可显示仅影响巡检登记规范搜索下拉展示，不改变规范库完整详情。
+              可显示仅影响巡检登记规范搜索下拉展示；可评分决定这张检查表是否进入站点评分。
             </div>
           </div>
         </div>
@@ -660,7 +668,8 @@ const createField = (field = {}, index = 1, tableCode = '') => ({
   field_key: field.field_key || createFieldKey(tableCode, index),
   field_label: field.field_label || '',
   is_filterable: field.is_filterable ?? true,
-  is_register_visible: field.is_register_visible ?? true
+  is_register_visible: field.is_register_visible ?? true,
+  is_scorable: field.is_scorable ?? false
 })
 
 const defaultFields = (tableCode) => [
@@ -800,7 +809,8 @@ const buildChecklistPayload = (source) => ({
     field_key: normalizeKey(field.field_key),
     field_label: field.field_label,
     is_filterable: Boolean(field.is_filterable),
-    is_register_visible: Boolean(field.is_register_visible)
+    is_register_visible: Boolean(field.is_register_visible),
+    is_scorable: Boolean(field.is_scorable)
   }))
 })
 

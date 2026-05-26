@@ -52,6 +52,7 @@ INSPECTION_ORIGINALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "inspection_origin
 TRAINING_MATERIALS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "training_materials")
 FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screenshots")
 ISSUE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issue_exports")
+STATION_SCORE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "station_score_exports")
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
@@ -248,6 +249,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": True, "station_manager": False},
     },
     {
+        "key": "adjust_station_scores",
+        "name": "手动调整站点评分",
+        "category": "站点评分",
+        "description": "在站点评分页面对系统自动评分进行人工调整。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+    },
+    {
         "key": "view_training",
         "name": "查看页面",
         "category": "督导组内部培训系统",
@@ -305,6 +313,7 @@ PERMISSION_EXCLUSIVE_GROUPS = [
 ]
 PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
+    "adjust_station_scores": "view_assessment",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -725,6 +734,8 @@ backup_scheduler_lock = threading.Lock()
 backup_job_lock = threading.Lock()
 issue_export_cleanup_lock = threading.Lock()
 issue_export_cleanup_last_run = 0
+station_score_export_cleanup_lock = threading.Lock()
+station_score_export_cleanup_last_run = 0
 
 
 def isoformat_or_none(value):
@@ -1364,6 +1375,7 @@ def get_required_storage_dirs():
         TRAINING_MATERIALS_STORAGE_DIR,
         FEEDBACK_SCREENSHOTS_STORAGE_DIR,
         ISSUE_EXPORTS_STORAGE_DIR,
+        STATION_SCORE_EXPORTS_STORAGE_DIR,
         DEFAULT_BACKUP_DIR,
     )
 
@@ -1850,6 +1862,7 @@ def normalize_checklist_field_rows(fields, table_code=None, allow_empty=False):
                 "is_filterable": normalize_boolean_flag(field.get("is_filterable"), True) if isinstance(field, dict) else True,
                 "is_register_visible": normalize_boolean_flag(field.get("is_register_visible"), True) if isinstance(field, dict) else True,
                 "is_long_text": normalize_boolean_flag(field.get("is_long_text"), False) if isinstance(field, dict) else False,
+                "is_scorable": normalize_boolean_flag(field.get("is_scorable"), False) if isinstance(field, dict) else False,
                 "sort_order": index,
             }
         )
@@ -2099,6 +2112,8 @@ def ensure_inspection_checklist_management_schema(cur):
             field_label TEXT NOT NULL,
             is_filterable BOOLEAN DEFAULT TRUE,
             is_register_visible BOOLEAN DEFAULT TRUE,
+            is_long_text BOOLEAN DEFAULT FALSE,
+            is_scorable BOOLEAN DEFAULT FALSE,
             sort_order INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -2124,6 +2139,18 @@ def ensure_inspection_checklist_management_schema(cur):
         """
         ALTER TABLE inspection_table_fields
         ADD COLUMN IF NOT EXISTS is_register_visible BOOLEAN DEFAULT TRUE;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_fields
+        ADD COLUMN IF NOT EXISTS is_long_text BOOLEAN DEFAULT FALSE;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_table_fields
+        ADD COLUMN IF NOT EXISTS is_scorable BOOLEAN DEFAULT FALSE;
         """
     )
     cur.execute(
@@ -2198,21 +2225,29 @@ def get_checklist_row_count(cur, physical_table_name):
 
 
 def get_management_checklist_fields(cur, inspection_table_id, include_public=False):
-    cur.execute(
-        """
-        SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'inspection_table_fields'
-              AND column_name = 'is_register_visible'
-        ) AS has_column;
-        """
-    )
-    has_register_visible_column = bool(cur.fetchone().get("has_column"))
+    def column_exists(column_name):
+        cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'inspection_table_fields'
+                  AND column_name = %s
+            ) AS has_column;
+            """,
+            (column_name,),
+        )
+        return bool(cur.fetchone().get("has_column"))
+
+    has_register_visible_column = column_exists("is_register_visible")
+    has_long_text_column = column_exists("is_long_text")
+    has_scorable_column = column_exists("is_scorable")
     register_visible_select = "is_register_visible" if has_register_visible_column else "TRUE AS is_register_visible"
+    long_text_select = "is_long_text" if has_long_text_column else "FALSE AS is_long_text"
+    scorable_select = "is_scorable" if has_scorable_column else "FALSE AS is_scorable"
     cur.execute(
-        f"""
+        """
         SELECT
             id,
             inspection_table_id,
@@ -2220,12 +2255,18 @@ def get_management_checklist_fields(cur, inspection_table_id, include_public=Fal
             field_label,
             is_filterable,
             {register_visible_select},
+            {long_text_select},
+            {scorable_select},
             sort_order,
             FALSE AS is_public
         FROM inspection_table_fields
         WHERE inspection_table_id = %s
         ORDER BY sort_order ASC, id ASC;
-        """,
+        """.format(
+            register_visible_select=register_visible_select,
+            long_text_select=long_text_select,
+            scorable_select=scorable_select,
+        ),
         (inspection_table_id,),
     )
     return cur.fetchall()
@@ -2319,14 +2360,18 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
                 field_label,
                 is_filterable,
                 is_register_visible,
+                is_long_text,
+                is_scorable,
                 sort_order
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (inspection_table_id, field_key)
             DO UPDATE SET
                 field_label = EXCLUDED.field_label,
                 is_filterable = EXCLUDED.is_filterable,
                 is_register_visible = EXCLUDED.is_register_visible,
+                is_long_text = EXCLUDED.is_long_text,
+                is_scorable = EXCLUDED.is_scorable,
                 sort_order = EXCLUDED.sort_order;
             """,
             (
@@ -2335,6 +2380,8 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
                 field["field_label"],
                 field["is_filterable"],
                 field["is_register_visible"],
+                field.get("is_long_text", False),
+                field.get("is_scorable", False),
                 field["sort_order"],
             ),
         )
@@ -4938,6 +4985,863 @@ def build_attendance_payload(rows, month, mode_filter):
     }
 
 
+def ensure_station_score_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_score_adjustments (
+            id SERIAL PRIMARY KEY,
+            station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+            inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id) ON DELETE CASCADE,
+            standard_id BIGINT NOT NULL,
+            score_month TEXT NOT NULL,
+            manual_score NUMERIC(8, 2) NOT NULL,
+            note TEXT,
+            adjusted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            adjusted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (station_id, inspection_table_id, standard_id, score_month)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_score_adjustments_month
+        ON station_score_adjustments (score_month);
+        """
+    )
+
+
+def round_score(value):
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def fetch_station_for_score(cur, station_id):
+    cur.execute(
+        """
+        SELECT id, station_name, region, hos_station_code
+        FROM stations
+        WHERE id = %s;
+        """,
+        (station_id,),
+    )
+    return cur.fetchone()
+
+
+def fetch_scorable_checklist_rows(cur):
+    cur.execute(
+        """
+        SELECT DISTINCT
+            t.id,
+            t.table_code,
+            t.table_name,
+            t.checklist_mode,
+            t.standard_id_base,
+            t.description,
+            t.is_active
+        FROM inspection_tables t
+        JOIN inspection_table_fields f ON f.inspection_table_id = t.id
+        WHERE t.is_active = TRUE
+          AND COALESCE(f.is_scorable, FALSE) = TRUE
+        ORDER BY t.id ASC;
+        """
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def fetch_station_score_issue_map(cur, station_id, month_start, next_month, table_ids):
+    if not table_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            picked.id,
+            picked.inspection_table_id,
+            picked.standard_id,
+            picked.internal_standard_id,
+            picked.internal_standard_detail_text,
+            picked.description,
+            picked.issue_photo,
+            picked.status,
+            picked.audit_status,
+            picked.created_at,
+            picked.inspection_date,
+            picked.inspector_name
+        FROM (
+            SELECT
+                i.id,
+                i.inspection_table_id,
+                i.standard_id,
+                i.internal_standard_id,
+                i.internal_standard_detail_text,
+                i.description,
+                i.photo_path AS issue_photo,
+                i.status,
+                COALESCE(i.audit_status, 'pending') AS audit_status,
+                TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS inspection_date,
+                COALESCE(issue_inspector.real_name, issue_inspector.username, '') AS inspector_name,
+                ROW_NUMBER() OVER (
+                    PARTITION BY i.inspection_table_id, i.standard_id
+                    ORDER BY RANDOM()
+                ) AS row_number
+            FROM issues i
+            JOIN inspections ins ON ins.id = i.inspection_id
+            LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
+            WHERE i.station_id = %s
+              AND ins.inspection_date >= %s
+              AND ins.inspection_date < %s
+              AND i.inspection_table_id = ANY(%s::int[])
+              AND COALESCE(i.audit_status, 'pending') = 'approved'
+        ) picked
+        WHERE picked.row_number = 1
+        ORDER BY picked.inspection_table_id ASC, picked.standard_id ASC, picked.id ASC;
+        """,
+        (station_id, month_start, next_month, table_ids),
+    )
+    issue_map = {}
+    for row in cur.fetchall():
+        key = (int(row["inspection_table_id"]), int(row["standard_id"]))
+        issue_map.setdefault(key, []).append(dict(row))
+    return issue_map
+
+
+def fetch_station_score_adjustment_map(cur, station_id, month):
+    cur.execute(
+        """
+        SELECT
+            a.id,
+            a.station_id,
+            a.inspection_table_id,
+            a.standard_id,
+            a.score_month,
+            a.manual_score,
+            a.note,
+            TO_CHAR(a.adjusted_at, 'YYYY-MM-DD HH24:MI') AS adjusted_at,
+            COALESCE(u.real_name, u.username, '') AS adjusted_by_name
+        FROM station_score_adjustments a
+        LEFT JOIN users u ON u.id = a.adjusted_by
+        WHERE a.station_id = %s
+          AND a.score_month = %s;
+        """,
+        (station_id, month),
+    )
+    result = {}
+    for row in cur.fetchall():
+        result[(int(row["inspection_table_id"]), int(row["standard_id"]))] = dict(row)
+    return result
+
+
+def build_station_score_payload(
+    cur,
+    station_id,
+    month,
+    month_start,
+    next_month,
+    user,
+    inspection_table_id=None,
+):
+    station = fetch_station_for_score(cur, station_id)
+    if not station:
+        raise LookupError("站点不存在。")
+
+    checklists = fetch_scorable_checklist_rows(cur)
+    if inspection_table_id:
+        checklists = [
+            checklist
+            for checklist in checklists
+            if int(checklist.get("id") or 0) == int(inspection_table_id)
+        ]
+    table_ids = [int(item["id"]) for item in checklists]
+    issue_map = fetch_station_score_issue_map(cur, station_id, month_start, next_month, table_ids)
+    adjustment_map = fetch_station_score_adjustment_map(cur, station_id, month)
+
+    table_payloads = []
+    summary = {
+        "table_count": 0,
+        "item_count": 0,
+        "issue_count": 0,
+        "deducted_item_count": 0,
+        "adjusted_item_count": 0,
+        "max_score": 0.0,
+        "auto_score": 0.0,
+        "final_score": 0.0,
+    }
+
+    for checklist in checklists:
+        fields = [dict(field) for field in get_management_checklist_fields(cur, checklist["id"], include_public=True)]
+        scorable_fields = [field for field in fields if normalize_boolean_flag(field.get("is_scorable"), False)]
+        if not scorable_fields:
+            continue
+        physical_table_name = get_physical_table_name_by_code(checklist["table_code"])
+        if not physical_table_name:
+            continue
+        ensure_checklist_field_columns(cur, physical_table_name, fields)
+        standard_rows = fetch_checklist_standard_rows(cur, physical_table_name, fields)
+        item_count = len(standard_rows)
+        max_score_per_item = 100 / item_count if item_count else 0
+
+        standards = []
+        table_issue_count = 0
+        table_deducted_count = 0
+        table_adjusted_count = 0
+        table_auto_score = 0.0
+        table_final_score = 0.0
+        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
+
+        for row in standard_rows:
+            standard_id = int(row["standard_id"])
+            key = (int(checklist["id"]), standard_id)
+            issues = issue_map.get(key, [])
+            adjustment = adjustment_map.get(key)
+            auto_score = 0.0 if issues else max_score_per_item
+            final_score = float(adjustment["manual_score"]) if adjustment else auto_score
+            score_fields = [
+                {
+                    "field_key": field["field_key"],
+                    "field_label": field["field_label"],
+                    "value": str(row.get(field["field_key"]) or "").strip() or "-",
+                }
+                for field in scorable_fields
+            ]
+            all_fields = [
+                {
+                    "field_key": field["field_key"],
+                    "field_label": field["field_label"],
+                    "value": str(row.get(field["field_key"]) or "").strip() or "-",
+                }
+                for field in fields
+            ]
+            standards.append(
+                {
+                    "standard_id": standard_id,
+                    "detail_text": build_standard_detail_text(field_meta, row),
+                    "score_fields": score_fields,
+                    "all_fields": all_fields,
+                    "issues": issues,
+                    "issue_count": len(issues),
+                    "is_deducted": bool(issues),
+                    "max_score": round_score(max_score_per_item),
+                    "auto_score": round_score(auto_score),
+                    "final_score": round_score(final_score),
+                    "has_manual_adjustment": bool(adjustment),
+                    "adjustment_note": adjustment.get("note") if adjustment else "",
+                    "adjusted_by_name": adjustment.get("adjusted_by_name") if adjustment else "",
+                    "adjusted_at": adjustment.get("adjusted_at") if adjustment else "",
+                }
+            )
+            table_issue_count += len(issues)
+            table_deducted_count += 1 if issues else 0
+            table_adjusted_count += 1 if adjustment else 0
+            table_auto_score += auto_score
+            table_final_score += final_score
+
+        table_payloads.append(
+            {
+                "id": checklist["id"],
+                "table_code": checklist["table_code"],
+                "table_name": checklist["table_name"],
+                "checklist_mode": normalize_checklist_mode(checklist.get("checklist_mode")),
+                "checklist_mode_label": "视频检查" if normalize_checklist_mode(checklist.get("checklist_mode")) == "online" else "现场检查",
+                "scorable_fields": [
+                    {
+                        "field_key": field["field_key"],
+                        "field_label": field["field_label"],
+                    }
+                    for field in scorable_fields
+                ],
+                "item_count": item_count,
+                "issue_count": table_issue_count,
+                "deducted_item_count": table_deducted_count,
+                "adjusted_item_count": table_adjusted_count,
+                "max_score": 100.0 if item_count else 0.0,
+                "auto_score": round_score(table_auto_score),
+                "final_score": round_score(table_final_score),
+                "standards": standards,
+            }
+        )
+
+        summary["table_count"] += 1
+        summary["item_count"] += item_count
+        summary["issue_count"] += table_issue_count
+        summary["deducted_item_count"] += table_deducted_count
+        summary["adjusted_item_count"] += table_adjusted_count
+        summary["max_score"] += 100.0 if item_count else 0.0
+        summary["auto_score"] += table_auto_score
+        summary["final_score"] += table_final_score
+
+    summary["auto_score"] = round_score(summary["auto_score"])
+    summary["final_score"] = round_score(summary["final_score"])
+    summary["max_score"] = round_score(summary["max_score"])
+
+    return {
+        "station": dict(station),
+        "month": month,
+        "can_adjust": can_adjust_station_scores(cur, user),
+        "summary": summary,
+        "tables": table_payloads,
+    }
+
+
+def safe_excel_sheet_title(value, fallback="站点评分"):
+    title = re.sub(r"[\[\]\*:/\\?]", "", str(value or "").strip())[:31]
+    return title or fallback
+
+
+def normalize_station_score_export_options(raw_options):
+    if not isinstance(raw_options, dict):
+        raw_options = {}
+    include_photos = raw_options.get("include_photos")
+    if not isinstance(include_photos, dict):
+        include_photos = {}
+    return {
+        "include_photos": {
+            "issue_photo": bool(include_photos.get("issue_photo")),
+        }
+    }
+
+
+def station_score_export_includes_issue_photos(export_options):
+    include_photos = (export_options or {}).get("include_photos") or {}
+    return bool(include_photos.get("issue_photo"))
+
+
+def write_station_score_export_xlsx(score_payload, export_options=None):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出站点评分。") from exc
+
+    output = BytesIO()
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+    include_issue_photos = station_score_export_includes_issue_photos(export_options)
+
+    header_fill = PatternFill("solid", fgColor="E7F0E7")
+    score_fill = PatternFill("solid", fgColor="F4F8EF")
+    deducted_fill = PatternFill("solid", fgColor="FFF0EA")
+    adjusted_fill = PatternFill("solid", fgColor="EAF6EF")
+    header_font = Font(bold=True, color="172033")
+    title_font = Font(bold=True, size=14, color="173D2C")
+    thin_border = Border(
+        left=Side(style="thin", color="CAD6CF"),
+        right=Side(style="thin", color="CAD6CF"),
+        top=Side(style="thin", color="CAD6CF"),
+        bottom=Side(style="thin", color="CAD6CF"),
+    )
+    center = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    left = Alignment(vertical="center", horizontal="left", wrap_text=True)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for table in score_payload.get("tables") or []:
+            sheet = workbook.create_sheet(safe_excel_sheet_title(table.get("table_name")))
+            fields = table.get("standards", [{}])[0].get("all_fields", []) if table.get("standards") else []
+            headers = ["外部规范ID", *[field.get("field_label") for field in fields], "问题描述", "问题照片", "评分"]
+            last_column = excel_column_name(len(headers))
+
+            sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+            title_cell = sheet.cell(row=1, column=1)
+            title_cell.value = (
+                f"{score_payload.get('station', {}).get('station_name', '')}"
+                f"｜{score_payload.get('month', '')}"
+                f"｜{table.get('table_name', '')}"
+                f"｜得分 {round_score(table.get('final_score'))}/{round_score(table.get('max_score'))}"
+            )
+            title_cell.font = title_font
+            title_cell.alignment = left
+
+            for column_index, header in enumerate(headers, start=1):
+                cell = sheet.cell(row=2, column=column_index, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = thin_border
+                cell.alignment = center
+                if header == "问题照片":
+                    sheet.column_dimensions[excel_column_name(column_index)].width = 26
+                elif header in {"问题描述"}:
+                    sheet.column_dimensions[excel_column_name(column_index)].width = 36
+                elif header == "评分":
+                    sheet.column_dimensions[excel_column_name(column_index)].width = 22
+                else:
+                    sheet.column_dimensions[excel_column_name(column_index)].width = 18
+
+            photo_column_index = len(headers) - 1
+            score_column_index = len(headers)
+            for row_index, standard in enumerate(table.get("standards") or [], start=3):
+                row_fill = deducted_fill if standard.get("is_deducted") else None
+                if standard.get("has_manual_adjustment"):
+                    row_fill = adjusted_fill
+
+                values = [standard.get("standard_id")]
+                values.extend(field.get("value") for field in standard.get("all_fields") or [])
+                issue_text = "\n".join(
+                    f"#{issue.get('id')} {issue.get('description') or '未填写问题描述'}"
+                    for issue in standard.get("issues") or []
+                )
+                score_text = (
+                    f"{round_score(standard.get('final_score'))}/{round_score(standard.get('max_score'))}"
+                    f"\n自动：{round_score(standard.get('auto_score'))}"
+                )
+                if standard.get("has_manual_adjustment"):
+                    score_text += (
+                        f"\n人工调整：{standard.get('adjusted_by_name') or '-'}"
+                        f"\n{standard.get('adjusted_at') or ''}"
+                    )
+                values.extend([issue_text, "", score_text])
+
+                for column_index, value in enumerate(values, start=1):
+                    cell = sheet.cell(row=row_index, column=column_index, value=value)
+                    cell.border = thin_border
+                    cell.alignment = left if column_index not in {1, score_column_index} else center
+                    if row_fill:
+                        cell.fill = row_fill
+                    if column_index == score_column_index:
+                        cell.fill = score_fill
+
+                excel_image = None
+                if include_issue_photos:
+                    photo_path = next(
+                        (
+                            issue.get("issue_photo")
+                            for issue in standard.get("issues") or []
+                            if issue.get("issue_photo")
+                        ),
+                        None,
+                    )
+                    excel_image = build_issue_export_excel_image(
+                        photo_path,
+                        max_width=190,
+                        max_height=120,
+                    )
+                if excel_image:
+                    sheet.add_image(excel_image, sheet.cell(row=row_index, column=photo_column_index).coordinate)
+                    sheet.row_dimensions[row_index].height = 92
+                elif len(issue_text) > 80:
+                    sheet.row_dimensions[row_index].height = 60
+
+            sheet.freeze_panes = "A3"
+            sheet.auto_filter.ref = f"A2:{last_column}2"
+
+        if not workbook.sheetnames:
+            sheet = workbook.create_sheet("站点评分")
+            sheet["A1"] = "暂无可导出的站点评分数据"
+
+        workbook.properties.title = "站点评分导出"
+        workbook.properties.creator = "业务督导中心数智管理平台"
+        workbook.save(output)
+
+    output.seek(0)
+    return output
+
+
+def safe_zip_path_part(value, fallback):
+    text = str(value or "").strip() or fallback
+    text = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", text)
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    return text or fallback
+
+
+def write_station_score_all_export_zip(score_payloads, month, export_options=None):
+    output = BytesIO()
+    used_paths = set()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for payload in score_payloads:
+            station = payload.get("station") or {}
+            region_name = safe_zip_path_part(station.get("region"), "未设置片区")
+            station_name = safe_zip_path_part(station.get("station_name"), f"站点{station.get('id') or ''}")
+            hos_code = safe_zip_path_part(station.get("hos_station_code"), "")
+            filename_parts = [station_name]
+            if hos_code:
+                filename_parts.append(hos_code)
+            filename_parts.append(month)
+            filename = "_".join(filename_parts) + ".xlsx"
+            zip_path = f"{region_name}/{filename}"
+            if zip_path in used_paths:
+                zip_path = f"{region_name}/{station_name}_{station.get('id') or uuid.uuid4().hex[:6]}_{month}.xlsx"
+            used_paths.add(zip_path)
+            workbook_stream = write_station_score_export_xlsx(payload, export_options)
+            archive.writestr(zip_path, workbook_stream.getvalue())
+    output.seek(0)
+    return output
+
+
+def ensure_station_score_export_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS station_score_export_tasks (
+            task_id TEXT PRIMARY KEY,
+            created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            export_mode TEXT NOT NULL DEFAULT 'single',
+            selected_count INTEGER NOT NULL DEFAULT 0,
+            exported_count INTEGER NOT NULL DEFAULT 0,
+            filter_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            export_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+            file_path TEXT,
+            download_filename TEXT,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_score_export_tasks_created_by
+        ON station_score_export_tasks (created_by, created_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_station_score_export_tasks_expires_at
+        ON station_score_export_tasks (expires_at);
+        """
+    )
+
+
+def cleanup_expired_station_score_exports(cur):
+    ensure_station_score_export_schema(cur)
+    cur.execute(
+        """
+        SELECT file_path
+        FROM station_score_export_tasks
+        WHERE expires_at < CURRENT_TIMESTAMP;
+        """
+    )
+    for row in cur.fetchall():
+        if row.get("file_path"):
+            remove_storage_file(row["file_path"])
+    cur.execute("DELETE FROM station_score_export_tasks WHERE expires_at < CURRENT_TIMESTAMP;")
+
+    os.makedirs(STATION_SCORE_EXPORTS_STORAGE_DIR, exist_ok=True)
+    cutoff = time.time() - ISSUE_EXPORT_RETENTION_DAYS * 24 * 60 * 60
+    storage_dir_abs = os.path.abspath(STATION_SCORE_EXPORTS_STORAGE_DIR)
+    for name in os.listdir(STATION_SCORE_EXPORTS_STORAGE_DIR):
+        path = os.path.abspath(os.path.join(STATION_SCORE_EXPORTS_STORAGE_DIR, name))
+        if os.path.commonpath([storage_dir_abs, path]) != storage_dir_abs:
+            continue
+        if os.path.isfile(path) and path.lower().endswith((".xlsx", ".zip")) and os.path.getmtime(path) < cutoff:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def maybe_cleanup_expired_station_score_exports():
+    global station_score_export_cleanup_last_run
+    now = time.time()
+    if now - station_score_export_cleanup_last_run < ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS:
+        return
+    if not station_score_export_cleanup_lock.acquire(blocking=False):
+        return
+
+    conn = None
+    cur = None
+    try:
+        if now - station_score_export_cleanup_last_run < ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS:
+            return
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cleanup_expired_station_score_exports(cur)
+        conn.commit()
+        station_score_export_cleanup_last_run = now
+    except Exception:
+        if conn:
+            conn.rollback()
+    finally:
+        close_db_resources(cur, conn)
+        station_score_export_cleanup_lock.release()
+
+
+def station_score_export_download_url(task_id, status):
+    return (
+        f"/api/assessment/station-scores/export-tasks/{task_id}/download"
+        if status == "completed"
+        else ""
+    )
+
+
+def get_station_score_export_task_for_user(cur, task_id, user):
+    cur.execute(
+        """
+        SELECT
+            task_id,
+            created_by,
+            status,
+            export_mode,
+            selected_count,
+            exported_count,
+            filter_summary,
+            export_options,
+            file_path,
+            download_filename,
+            error_message,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+            TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+            TO_CHAR(expires_at, 'YYYY-MM-DD HH24:MI') AS expires_at
+        FROM station_score_export_tasks
+        WHERE task_id = %s
+        LIMIT 1;
+        """,
+        (task_id,),
+    )
+    task = cur.fetchone()
+    if not task:
+        raise LookupError("导出任务不存在或已过期。")
+    if not is_root_user(user) and str(task["created_by"]) != str(user["id"]):
+        raise PermissionError("当前账号无权查看该导出任务。")
+    return task
+
+
+def serialize_station_score_export_task(task):
+    status = task.get("status")
+    task_id = task.get("task_id")
+    return {
+        "task_id": task_id,
+        "status": status,
+        "export_mode": task.get("export_mode") or "single",
+        "selected_count": int(task.get("selected_count") or 0),
+        "exported_count": int(task.get("exported_count") or 0),
+        "filter_summary": task.get("filter_summary") or {},
+        "export_options": task.get("export_options") or {},
+        "download_filename": task.get("download_filename") or "",
+        "download_url": station_score_export_download_url(task_id, status),
+        "error_message": task.get("error_message") or "",
+        "created_at": task.get("created_at") or "",
+        "updated_at": task.get("updated_at") or "",
+        "completed_at": task.get("completed_at") or "",
+        "expires_at": task.get("expires_at") or "",
+    }
+
+
+def build_station_score_export_filter_summary(
+    mode,
+    month,
+    station=None,
+    table=None,
+    station_count=0,
+):
+    summary = {
+        "mode": mode,
+        "month": month,
+    }
+    if station:
+        summary["station"] = station.get("station_name") or ""
+        summary["region"] = station.get("region") or ""
+        summary["hos_station_code"] = station.get("hos_station_code") or ""
+    if table:
+        summary["inspection_table"] = table.get("table_name") or ""
+        summary["checklist_mode"] = table.get("checklist_mode_label") or ""
+    if station_count:
+        summary["station_count"] = station_count
+    return summary
+
+
+def write_station_score_export_stream_to_file(stream, abs_path):
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    with open(abs_path, "wb") as target:
+        target.write(stream.getvalue())
+
+
+def mark_station_score_export_task_failed(task_id, message):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_score_export_schema(cur)
+        cur.execute(
+            """
+            UPDATE station_score_export_tasks
+            SET status = 'failed',
+                error_message = %s,
+                updated_at = CURRENT_TIMESTAMP,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (message, task_id),
+        )
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+
+def run_station_score_export_task(
+    task_id,
+    user_id,
+    mode,
+    month,
+    month_start,
+    next_month,
+    export_options=None,
+    station_id=None,
+    inspection_table_id=None,
+):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_issue_inspector_schema(cur)
+        ensure_station_score_schema(cur)
+        ensure_station_score_export_schema(cur)
+        cur.execute(
+            """
+            UPDATE station_score_export_tasks
+            SET status = 'running',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (task_id,),
+        )
+        conn.commit()
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("导出用户不存在。")
+        if not can_adjust_station_scores(cur, user):
+            raise PermissionError("当前账号无权导出站点评分。")
+
+        now = beijing_now()
+        if mode == "all":
+            cur.execute(
+                """
+                SELECT id
+                FROM stations
+                ORDER BY region NULLS LAST, station_name ASC, id ASC;
+                """,
+            )
+            station_ids = [int(row["id"]) for row in cur.fetchall()]
+            if not station_ids:
+                raise ValueError("当前没有可导出的站点。")
+            payloads = [
+                build_station_score_payload(cur, item_id, month, month_start, next_month, user)
+                for item_id in station_ids
+            ]
+            stream = write_station_score_all_export_zip(payloads, month, export_options)
+            download_filename = f"站点评分全部站点_{month}_{now.strftime('%Y%m%d_%H%M%S')}.zip"
+            safe_filename = secure_filename(download_filename) or f"station_scores_all_{task_id[:8]}.zip"
+            if not safe_filename.lower().endswith(".zip"):
+                safe_filename = f"{safe_filename}.zip"
+            exported_count = len(station_ids)
+        else:
+            payload = build_station_score_payload(
+                cur,
+                station_id,
+                month,
+                month_start,
+                next_month,
+                user,
+                inspection_table_id=inspection_table_id,
+            )
+            if not payload.get("tables"):
+                raise ValueError("当前站点和检查表暂无可导出的评分数据。")
+            table = payload["tables"][0]
+            stream = write_station_score_export_xlsx(payload, export_options)
+            station_name = payload.get("station", {}).get("station_name") or "站点"
+            table_name = table.get("table_name") or "检查表"
+            download_filename = (
+                f"站点评分_{station_name}_{table_name}_{month}_{now.strftime('%Y%m%d_%H%M%S')}.xlsx"
+            )
+            safe_filename = secure_filename(download_filename) or f"station_score_{task_id[:8]}.xlsx"
+            if not safe_filename.lower().endswith(".xlsx"):
+                safe_filename = f"{safe_filename}.xlsx"
+            exported_count = int(table.get("item_count") or 0)
+
+        abs_path = os.path.join(STATION_SCORE_EXPORTS_STORAGE_DIR, safe_filename)
+        relative_path = f"station_score_exports/{safe_filename}"
+        write_station_score_export_stream_to_file(stream, abs_path)
+        cur.execute(
+            """
+            UPDATE station_score_export_tasks
+            SET status = 'completed',
+                exported_count = %s,
+                file_path = %s,
+                download_filename = %s,
+                updated_at = CURRENT_TIMESTAMP,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s;
+            """,
+            (exported_count, relative_path, download_filename, task_id),
+        )
+        conn.commit()
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        mark_station_score_export_task_failed(task_id, str(exc))
+    finally:
+        close_db_resources(cur, conn)
+
+
+def start_station_score_export_task(
+    task_id,
+    user_id,
+    mode,
+    month,
+    month_start,
+    next_month,
+    export_options=None,
+    station_id=None,
+    inspection_table_id=None,
+):
+    thread = threading.Thread(
+        target=run_station_score_export_task,
+        args=(
+            task_id,
+            user_id,
+            mode,
+            month,
+            month_start,
+            next_month,
+            export_options,
+            station_id,
+            inspection_table_id,
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+
+def fetch_station_score_standard_context(cur, station_id, month, inspection_table_id, standard_id):
+    month_text, month_start, next_month = parse_attendance_month(month)
+    station = fetch_station_for_score(cur, station_id)
+    if not station:
+        raise LookupError("站点不存在。")
+    checklist = fetch_management_checklist(cur, inspection_table_id)
+    if not checklist or not checklist.get("is_active"):
+        raise LookupError("检查表不存在或未启用。")
+    fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
+    if not any(normalize_boolean_flag(field.get("is_scorable"), False) for field in fields):
+        raise ValueError("该检查表未配置可评分字段。")
+    physical_table_name = get_physical_table_name_by_code(checklist["table_code"])
+    if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+        raise ValueError("检查表规范数据不存在。")
+    ensure_checklist_field_columns(cur, physical_table_name, fields)
+    standard = fetch_standard_from_table(cur, physical_table_name, standard_id)
+    if not standard:
+        raise LookupError("外部规范不存在。")
+    item_count = get_checklist_row_count(cur, physical_table_name)
+    if item_count <= 0:
+        raise ValueError("该检查表暂无规范数据，不能调整评分。")
+    return {
+        "month": month_text,
+        "month_start": month_start,
+        "next_month": next_month,
+        "station": station,
+        "checklist": checklist,
+        "standard": standard,
+        "item_count": item_count,
+        "max_score": 100 / item_count,
+    }
+
+
 def normalize_optional_issue_result(value, field_label):
     normalized = canonical_issue_result(value)
     if not normalized:
@@ -4969,6 +5873,10 @@ def can_sign_inspection_records(_cur, user):
 
 def can_view_assessment(cur, user):
     return has_permission(cur, user, "view_assessment")
+
+
+def can_adjust_station_scores(cur, user):
+    return has_permission(cur, user, "adjust_station_scores")
 
 
 def can_view_own_certificates(cur, user):
@@ -14913,6 +15821,365 @@ def reopen_management_inspection_record(inspection_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/station-scores", methods=["GET"])
+def get_assessment_station_scores():
+    station_id = str(request.args.get("station_id", "")).strip()
+    if not station_id:
+        return jsonify({"success": False, "error": "请选择需要评分的站点。"}), 400
+    try:
+        station_id = int(station_id)
+        month, month_start, next_month = parse_attendance_month(request.args.get("month"))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_issue_inspector_schema(cur)
+        ensure_station_score_schema(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_assessment(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
+
+        payload = build_station_score_payload(cur, station_id, month, month_start, next_month, user)
+        return jsonify({"success": True, **payload})
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/station-scores/export-tasks", methods=["POST"])
+def create_assessment_station_score_export_task():
+    data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode") or "single").strip().lower()
+    if mode not in {"single", "all"}:
+        return jsonify({"success": False, "error": "导出范围参数不合法。"}), 400
+    try:
+        month, month_start, next_month = parse_attendance_month(data.get("month"))
+        station_id = int(data.get("station_id") or 0) if mode == "single" else None
+        inspection_table_id = int(data.get("inspection_table_id") or 0) if mode == "single" else None
+        if mode == "single" and (not station_id or not inspection_table_id):
+            raise ValueError("请选择需要导出的站点和检查表。")
+        export_options = normalize_station_score_export_options(data.get("export_options"))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_issue_inspector_schema(cur)
+        ensure_station_score_schema(cur)
+        ensure_station_score_export_schema(cur)
+        cleanup_expired_station_score_exports(cur)
+
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_adjust_station_scores(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权导出站点评分。"}), 403
+
+        if mode == "single":
+            payload = build_station_score_payload(
+                cur,
+                station_id,
+                month,
+                month_start,
+                next_month,
+                user,
+                inspection_table_id=inspection_table_id,
+            )
+            if not payload.get("tables"):
+                return jsonify({"success": False, "error": "当前站点和检查表暂无可导出的评分数据。"}), 404
+            station = payload.get("station") or {}
+            table = payload["tables"][0]
+            selected_count = int(table.get("item_count") or 0)
+            filter_summary = build_station_score_export_filter_summary(mode, month, station, table)
+            download_filename = f"站点评分_{station.get('station_name') or '站点'}_{table.get('table_name') or '检查表'}_{month}.xlsx"
+        else:
+            cur.execute("SELECT COUNT(*) AS station_count FROM stations;")
+            row = cur.fetchone()
+            selected_count = int(row.get("station_count") or 0)
+            if selected_count <= 0:
+                return jsonify({"success": False, "error": "当前没有可导出的站点。"}), 404
+            filter_summary = build_station_score_export_filter_summary(
+                mode,
+                month,
+                station_count=selected_count,
+            )
+            download_filename = f"站点评分全部站点_{month}.zip"
+
+        task_id = uuid.uuid4().hex
+        cur.execute(
+            """
+            INSERT INTO station_score_export_tasks (
+                task_id,
+                created_by,
+                status,
+                export_mode,
+                selected_count,
+                exported_count,
+                filter_summary,
+                export_options,
+                download_filename,
+                expires_at
+            )
+            VALUES (%s, %s, 'pending', %s, %s, 0, %s::jsonb, %s::jsonb, %s, CURRENT_TIMESTAMP + INTERVAL '7 days')
+            RETURNING
+                task_id,
+                created_by,
+                status,
+                export_mode,
+                selected_count,
+                exported_count,
+                filter_summary,
+                export_options,
+                file_path,
+                download_filename,
+                error_message,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+                TO_CHAR(expires_at, 'YYYY-MM-DD HH24:MI') AS expires_at;
+            """,
+            (
+                task_id,
+                user["id"],
+                mode,
+                selected_count,
+                json.dumps(filter_summary, ensure_ascii=False),
+                json.dumps(export_options, ensure_ascii=False),
+                download_filename,
+            ),
+        )
+        task = cur.fetchone()
+        conn.commit()
+        start_station_score_export_task(
+            task_id,
+            user["id"],
+            mode,
+            month,
+            month_start,
+            next_month,
+            export_options,
+            station_id=station_id,
+            inspection_table_id=inspection_table_id,
+        )
+        return jsonify(
+            {
+                "success": True,
+                "message": "导出任务已提交，系统正在后台生成文件。",
+                "task": serialize_station_score_export_task(task),
+            }
+        )
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/station-scores/export-tasks/<task_id>", methods=["GET"])
+def get_assessment_station_score_export_task(task_id):
+    conn = None
+    cur = None
+    try:
+        maybe_cleanup_expired_station_score_exports()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_score_export_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_adjust_station_scores(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看站点评分导出任务。"}), 403
+        task = get_station_score_export_task_for_user(cur, task_id, user)
+        return jsonify({"success": True, "task": serialize_station_score_export_task(task)})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/station-scores/export-tasks/<task_id>/download", methods=["GET"])
+def download_assessment_station_score_export_task(task_id):
+    conn = None
+    cur = None
+    try:
+        maybe_cleanup_expired_station_score_exports()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_score_export_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_adjust_station_scores(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权下载站点评分导出文件。"}), 403
+        task = get_station_score_export_task_for_user(cur, task_id, user)
+        if task["status"] != "completed":
+            return jsonify({"success": False, "error": "导出文件尚未生成完成。"}), 400
+        if not task.get("file_path"):
+            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
+        abs_path = resolve_storage_abs_path(task["file_path"])
+        if not abs_path or not os.path.isfile(abs_path):
+            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
+        filename = task.get("download_filename") or f"station_score_{task_id[:8]}"
+        mimetype = "application/zip" if str(filename).lower().endswith(".zip") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        response = send_file(
+            abs_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/station-scores/adjustment", methods=["PUT"])
+def save_assessment_station_score_adjustment():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        station_id = int(data.get("station_id") or 0)
+        inspection_table_id = int(data.get("inspection_table_id") or 0)
+        standard_id = int(data.get("standard_id") or 0)
+        month = str(data.get("month") or "").strip()
+        manual_score = float(data.get("manual_score"))
+        note = normalize_text(data.get("note"), 300)
+        if station_id <= 0 or inspection_table_id <= 0 or standard_id <= 0:
+            raise ValueError("评分调整参数不完整。")
+    except (TypeError, ValueError) as exc:
+        return jsonify({"success": False, "error": str(exc) or "评分调整参数不合法。"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        ensure_station_score_schema(cur)
+
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_assessment(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
+        if not can_adjust_station_scores(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权手动调整站点评分。"}), 403
+
+        context = fetch_station_score_standard_context(
+            cur,
+            station_id,
+            month,
+            inspection_table_id,
+            standard_id,
+        )
+        max_score = context["max_score"]
+        if manual_score < 0 or manual_score > max_score + 0.001:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": f"手动评分必须在 0 到 {round_score(max_score)} 之间。",
+                    }
+                ),
+                400,
+            )
+
+        cur.execute(
+            """
+            INSERT INTO station_score_adjustments (
+                station_id,
+                inspection_table_id,
+                standard_id,
+                score_month,
+                manual_score,
+                note,
+                adjusted_by,
+                adjusted_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (station_id, inspection_table_id, standard_id, score_month)
+            DO UPDATE SET
+                manual_score = EXCLUDED.manual_score,
+                note = EXCLUDED.note,
+                adjusted_by = EXCLUDED.adjusted_by,
+                adjusted_at = CURRENT_TIMESTAMP
+            RETURNING TO_CHAR(adjusted_at, 'YYYY-MM-DD HH24:MI') AS adjusted_at;
+            """,
+            (
+                station_id,
+                inspection_table_id,
+                standard_id,
+                context["month"],
+                round_score(manual_score),
+                note,
+                user["id"],
+            ),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "站点评分已调整。",
+                "manual_score": round_score(manual_score),
+                "adjusted_by_name": user.get("real_name") or user.get("username") or "",
+                "adjusted_at": row.get("adjusted_at") if row else "",
+            }
+        )
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as e:
         if conn:
             conn.rollback()

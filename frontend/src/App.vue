@@ -205,6 +205,12 @@
           <span class="nav-item-icon">勤</span>
           <span v-if="!sidebarCollapsed">人员出勤</span>
         </button>
+        <button class="nav-item"
+          :class="{ active: isActive('/assessment/station-score'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/assessment/station-score')" :title="sidebarCollapsed ? '站点评分' : ''">
+          <span class="nav-item-icon">分</span>
+          <span v-if="!sidebarCollapsed">站点评分</span>
+        </button>
       </div>
 
       <div v-if="canViewTrainingSection" class="menu-section">

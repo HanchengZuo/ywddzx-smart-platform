@@ -57,6 +57,10 @@ const routes = [
     component: () => import('../views/assessment/AttendanceView.vue')
   },
   {
+    path: '/assessment/station-score',
+    component: () => import('../views/assessment/StationScoreView.vue')
+  },
+  {
     path: '/training',
     component: () => import('../views/Training.vue')
   },
@@ -143,7 +147,7 @@ const canAccessPath = (path, role, permissions) => {
     )
   }
   if (path === '/inspection/my-issues') return ['supervisor', 'station_manager'].includes(role)
-  if (path === '/assessment' || path === '/assessment/attendance') return hasPermission(role, permissions, 'view_assessment')
+  if (path === '/assessment' || path === '/assessment/attendance' || path === '/assessment/station-score') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/training') return hasPermission(role, permissions, 'view_training')
   if (path === '/training/materials') return hasPermission(role, permissions, 'view_training_materials')
   if (path === '/vehicle') return role === 'supervisor'

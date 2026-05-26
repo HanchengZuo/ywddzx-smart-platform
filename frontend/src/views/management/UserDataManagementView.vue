@@ -373,7 +373,8 @@ const exclusivePermissionGroups = [
 ]
 
 const dependentPermissionMap = {
-  edit_own_certificates: 'view_own_certificates'
+  edit_own_certificates: 'view_own_certificates',
+  adjust_station_scores: 'view_assessment'
 }
 
 const anyDependentPermissionMap = {
