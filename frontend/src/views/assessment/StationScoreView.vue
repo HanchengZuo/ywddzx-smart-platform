@@ -222,6 +222,37 @@
             <span>{{ exportDialog.mode === 'all' ? '站点数量' : '规范数量' }}</span>
             <strong>{{ exportDialog.selectedCount }}</strong>
           </div>
+          <div v-if="exportDialog.mode === 'all'">
+            <span>检查表</span>
+            <strong>{{ selectedExportChecklistCount }}</strong>
+          </div>
+        </div>
+
+        <div v-if="exportDialog.mode === 'all'" class="export-checklist-panel">
+          <div class="export-panel-head">
+            <div>
+              <strong>导出检查表</strong>
+              <small>默认导出全部可评分检查表，也可以只选择一张或多张检查表。</small>
+            </div>
+            <div class="export-panel-actions">
+              <button type="button" :disabled="isScoreExportLocked" @click="selectAllExportChecklists">全选</button>
+              <button type="button" :disabled="isScoreExportLocked" @click="clearExportChecklists">清空</button>
+            </div>
+          </div>
+          <input v-model.trim="exportDialog.checklistSearch" class="export-checklist-search" type="search"
+            placeholder="搜索检查表名称" :disabled="isScoreExportLocked" />
+          <div class="export-checklist-options">
+            <label v-for="table in filteredExportChecklists" :key="table.id" class="export-checklist-option"
+              :class="{ active: exportDialog.selectedTableIds.includes(String(table.id)), disabled: isScoreExportLocked }">
+              <input type="checkbox" :checked="exportDialog.selectedTableIds.includes(String(table.id))"
+                :disabled="isScoreExportLocked" @change="toggleExportChecklist(table.id)" />
+              <span>
+                <strong>{{ table.table_name }}</strong>
+                <small>{{ table.checklist_mode_label || '未设置模式' }}</small>
+              </span>
+            </label>
+            <div v-if="!filteredExportChecklists.length" class="export-checklist-empty">没有匹配的可评分检查表</div>
+          </div>
         </div>
 
         <label class="photo-option-card">
@@ -245,6 +276,7 @@
           </div>
           <p v-if="exportDialog.error" class="export-error">{{ exportDialog.error }}</p>
         </div>
+        <p v-if="exportDialog.error && !exportDialog.taskId" class="export-error standalone">{{ exportDialog.error }}</p>
 
         <div class="dialog-actions">
           <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting" @click="closeScoreExportDialog">
@@ -292,6 +324,7 @@ const checklistSearch = ref('')
 const checklistDropdownVisible = ref(false)
 const checklistSelectRef = ref(null)
 const stations = ref([])
+const scorableChecklists = ref([])
 const loading = ref(false)
 const error = ref('')
 const message = reactive({ text: '', type: 'info' })
@@ -337,6 +370,8 @@ const exportDialog = reactive({
   fileName: '',
   fileSizeLabel: '',
   expiresAt: '',
+  checklistSearch: '',
+  selectedTableIds: [],
   includePhotos: {
     issue_photo: false
   }
@@ -402,6 +437,19 @@ const filteredChecklists = computed(() => {
     )
   })
 })
+
+const filteredExportChecklists = computed(() => {
+  return scorableChecklists.value.filter((table) => {
+    return matchesSmartSearch(
+      [table.table_name, table.checklist_mode_label, table.table_code],
+      exportDialog.checklistSearch
+    )
+  })
+})
+
+const selectedExportChecklistCount = computed(() => exportDialog.selectedTableIds.length)
+
+const isScoreExportLocked = computed(() => Boolean(exportDialog.taskId) || ['pending', 'running'].includes(exportDialog.status))
 
 const canExportScores = computed(() => {
   return currentRole === 'root' || Boolean(parsedPermissions.adjust_station_scores) || Boolean(scoreData.value.can_adjust)
@@ -599,6 +647,13 @@ const fetchStations = async () => {
   stations.value = Array.isArray(response.data) ? response.data : []
 }
 
+const fetchScorableChecklists = async () => {
+  const response = await axios.get('/api/assessment/station-scores/scorable-checklists', {
+    params: { _ts: Date.now() }
+  })
+  scorableChecklists.value = Array.isArray(response.data?.checklists) ? response.data.checklists : []
+}
+
 const fetchScores = async () => {
   if (!filters.stationId) {
     scoreData.value = emptyScoreData()
@@ -638,13 +693,17 @@ const resetExportDialog = (mode) => {
   exportDialog.fileName = ''
   exportDialog.fileSizeLabel = ''
   exportDialog.expiresAt = ''
+  exportDialog.checklistSearch = ''
+  exportDialog.selectedTableIds = mode === 'all'
+    ? scorableChecklists.value.map((table) => String(table.id))
+    : []
   exportDialog.includePhotos = { issue_photo: false }
   exportDialog.selectedCount = mode === 'all'
     ? stations.value.length
     : Number(visibleScoreTables.value[0]?.item_count || 0)
 }
 
-const openScoreExportDialog = (mode) => {
+const openScoreExportDialog = async (mode) => {
   if (!canExportScores.value) {
     setMessage('当前账号没有导出站点评分的权限。', 'error')
     return
@@ -657,7 +716,39 @@ const openScoreExportDialog = (mode) => {
     setMessage('暂无可导出的站点。', 'error')
     return
   }
+  if (mode === 'all' && !scorableChecklists.value.length) {
+    try {
+      await fetchScorableChecklists()
+    } catch (err) {
+      setMessage(err?.response?.data?.error || '可评分检查表加载失败。', 'error')
+      return
+    }
+  }
+  if (mode === 'all' && !scorableChecklists.value.length) {
+    setMessage('暂无可导出的可评分检查表。', 'error')
+    return
+  }
   resetExportDialog(mode)
+}
+
+const selectAllExportChecklists = () => {
+  if (isScoreExportLocked.value) return
+  exportDialog.selectedTableIds = scorableChecklists.value.map((table) => String(table.id))
+}
+
+const clearExportChecklists = () => {
+  if (isScoreExportLocked.value) return
+  exportDialog.selectedTableIds = []
+}
+
+const toggleExportChecklist = (tableId) => {
+  if (isScoreExportLocked.value) return
+  const normalizedId = String(tableId)
+  if (exportDialog.selectedTableIds.includes(normalizedId)) {
+    exportDialog.selectedTableIds = exportDialog.selectedTableIds.filter((item) => item !== normalizedId)
+    return
+  }
+  exportDialog.selectedTableIds = [...exportDialog.selectedTableIds, normalizedId]
 }
 
 const closeScoreExportDialog = () => {
@@ -734,6 +825,12 @@ const submitScoreExportTask = async () => {
     if (exportDialog.mode === 'single') {
       payload.station_id = filters.stationId
       payload.inspection_table_id = filters.inspectionTableId
+    } else {
+      if (!exportDialog.selectedTableIds.length) {
+        exportDialog.error = '请选择至少一张需要导出的检查表。'
+        return
+      }
+      payload.inspection_table_ids = exportDialog.selectedTableIds
     }
     const response = await axios.post('/api/assessment/station-scores/export-tasks', payload)
     applyScoreExportTask(response.data?.task || {})
@@ -820,7 +917,7 @@ const closePreview = () => {
 onMounted(async () => {
   document.addEventListener('click', closeStationDropdownOnOutsideClick)
   try {
-    await fetchStations()
+    await Promise.all([fetchStations(), fetchScorableChecklists()])
   } catch (err) {
     error.value = err?.response?.data?.error || '站点数据加载失败。'
   }
@@ -1453,6 +1550,128 @@ onBeforeUnmount(() => {
   gap: 3px;
 }
 
+.export-checklist-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #dfe9e2;
+  border-radius: 18px;
+  background: #f9fcfa;
+}
+
+.export-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.export-panel-head > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.export-panel-head small,
+.export-checklist-option small,
+.export-checklist-empty {
+  color: #697587;
+  font-size: 12px;
+}
+
+.export-panel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.export-panel-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: #24533d;
+  background: #eaf4ed;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.export-panel-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.export-checklist-search {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8dfd9;
+  border-radius: 14px;
+  padding: 9px 12px;
+  font: inherit;
+  outline: none;
+}
+
+.export-checklist-search:focus {
+  border-color: #2f7d5f;
+  box-shadow: 0 0 0 4px rgba(47, 125, 95, 0.12);
+}
+
+.export-checklist-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 230px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.export-checklist-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 62px;
+  padding: 10px;
+  border: 1px solid #dce7df;
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.export-checklist-option.active {
+  border-color: #2f7d5f;
+  background: #edf8f0;
+}
+
+.export-checklist-option.disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.export-checklist-option input {
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  accent-color: #2f7d5f;
+}
+
+.export-checklist-option span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.export-checklist-option strong {
+  color: #173d2c;
+  line-height: 1.35;
+}
+
+.export-checklist-empty {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border-radius: 14px;
+  background: #fff;
+  text-align: center;
+}
+
 .export-task-panel {
   display: grid;
   gap: 10px;
@@ -1496,6 +1715,14 @@ onBeforeUnmount(() => {
 .export-error {
   margin: 0;
   color: #ffd9d2;
+}
+
+.export-error.standalone {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  color: #a23d31;
+  background: #fff2ef;
 }
 
 @keyframes pulse {
@@ -1549,6 +1776,15 @@ onBeforeUnmount(() => {
 
   .export-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .export-panel-head,
+  .export-checklist-options {
+    grid-template-columns: 1fr;
+  }
+
+  .export-panel-head {
+    display: grid;
   }
 
   .export-actions,

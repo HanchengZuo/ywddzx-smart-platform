@@ -5080,6 +5080,25 @@ def fetch_scorable_checklist_rows(cur):
     return [dict(row) for row in cur.fetchall()]
 
 
+def normalize_station_score_table_ids(raw_table_ids):
+    if raw_table_ids in (None, "", []):
+        return []
+    if not isinstance(raw_table_ids, list):
+        raw_table_ids = [raw_table_ids]
+    normalized = []
+    seen = set()
+    for raw_id in raw_table_ids:
+        try:
+            table_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if table_id <= 0 or table_id in seen:
+            continue
+        seen.add(table_id)
+        normalized.append(table_id)
+    return normalized
+
+
 def fetch_station_score_issue_map(cur, station_id, month_start, next_month, table_ids):
     if not table_ids:
         return {}
@@ -5171,17 +5190,22 @@ def build_station_score_payload(
     next_month,
     user,
     inspection_table_id=None,
+    inspection_table_ids=None,
 ):
     station = fetch_station_for_score(cur, station_id)
     if not station:
         raise LookupError("站点不存在。")
 
-    checklists = fetch_scorable_checklist_rows(cur)
+    selected_table_ids = set(normalize_station_score_table_ids(inspection_table_ids))
     if inspection_table_id:
+        selected_table_ids.add(int(inspection_table_id))
+
+    checklists = fetch_scorable_checklist_rows(cur)
+    if selected_table_ids:
         checklists = [
             checklist
             for checklist in checklists
-            if int(checklist.get("id") or 0) == int(inspection_table_id)
+            if int(checklist.get("id") or 0) in selected_table_ids
         ]
     table_ids = [int(item["id"]) for item in checklists]
     issue_map = fetch_station_score_issue_map(cur, station_id, month_start, next_month, table_ids)
@@ -5659,6 +5683,7 @@ def build_station_score_export_filter_summary(
     station=None,
     table=None,
     station_count=0,
+    selected_tables=None,
 ):
     summary = {
         "mode": mode,
@@ -5671,6 +5696,13 @@ def build_station_score_export_filter_summary(
     if table:
         summary["inspection_table"] = table.get("table_name") or ""
         summary["checklist_mode"] = table.get("checklist_mode_label") or ""
+    if selected_tables is not None:
+        summary["inspection_tables"] = [
+            table.get("table_name") or ""
+            for table in selected_tables
+            if table.get("table_name")
+        ]
+        summary["inspection_table_count"] = len(selected_tables)
     if station_count:
         summary["station_count"] = station_count
     return summary
@@ -5715,6 +5747,7 @@ def run_station_score_export_task(
     export_options=None,
     station_id=None,
     inspection_table_id=None,
+    inspection_table_ids=None,
 ):
     conn = None
     cur = None
@@ -5755,7 +5788,15 @@ def run_station_score_export_task(
             if not station_ids:
                 raise ValueError("当前没有可导出的站点。")
             payloads = [
-                build_station_score_payload(cur, item_id, month, month_start, next_month, user)
+                build_station_score_payload(
+                    cur,
+                    item_id,
+                    month,
+                    month_start,
+                    next_month,
+                    user,
+                    inspection_table_ids=inspection_table_ids,
+                )
                 for item_id in station_ids
             ]
             stream = write_station_score_all_export_zip(payloads, month, export_options)
@@ -5823,6 +5864,7 @@ def start_station_score_export_task(
     export_options=None,
     station_id=None,
     inspection_table_id=None,
+    inspection_table_ids=None,
 ):
     thread = threading.Thread(
         target=run_station_score_export_task,
@@ -5836,6 +5878,7 @@ def start_station_score_export_task(
             export_options,
             station_id,
             inspection_table_id,
+            inspection_table_ids,
         ),
         daemon=True,
     )
@@ -15899,6 +15942,31 @@ def get_assessment_station_scores():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/assessment/station-scores/scorable-checklists", methods=["GET"])
+def get_assessment_station_score_scorable_checklists():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_assessment(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
+        checklists = []
+        for checklist in fetch_scorable_checklist_rows(cur):
+            checklist["checklist_mode"] = normalize_checklist_mode(checklist.get("checklist_mode"))
+            checklist["checklist_mode_label"] = "视频检查" if checklist["checklist_mode"] == "online" else "现场检查"
+            checklists.append(checklist)
+        return jsonify({"success": True, "checklists": checklists})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/assessment/station-scores/export-tasks", methods=["POST"])
 def create_assessment_station_score_export_task():
     data = request.get_json(silent=True) or {}
@@ -15909,6 +15977,7 @@ def create_assessment_station_score_export_task():
         month, month_start, next_month = parse_attendance_month(data.get("month"))
         station_id = int(data.get("station_id") or 0) if mode == "single" else None
         inspection_table_id = int(data.get("inspection_table_id") or 0) if mode == "single" else None
+        inspection_table_ids = normalize_station_score_table_ids(data.get("inspection_table_ids")) if mode == "all" else []
         if mode == "single" and (not station_id or not inspection_table_id):
             raise ValueError("请选择需要导出的站点和检查表。")
         export_options = normalize_station_score_export_options(data.get("export_options"))
@@ -15950,6 +16019,19 @@ def create_assessment_station_score_export_task():
             filter_summary = build_station_score_export_filter_summary(mode, month, station, table)
             download_filename = f"站点评分_{station.get('station_name') or '站点'}_{table.get('table_name') or '检查表'}_{month}.xlsx"
         else:
+            scorable_checklists = fetch_scorable_checklist_rows(cur)
+            scorable_ids = {int(item["id"]) for item in scorable_checklists}
+            if inspection_table_ids:
+                invalid_ids = [table_id for table_id in inspection_table_ids if table_id not in scorable_ids]
+                if invalid_ids:
+                    return jsonify({"success": False, "error": "选择的检查表不存在或未配置可评分字段。"}), 400
+            selected_checklists = [
+                item
+                for item in scorable_checklists
+                if not inspection_table_ids or int(item["id"]) in set(inspection_table_ids)
+            ]
+            if not selected_checklists:
+                return jsonify({"success": False, "error": "请选择至少一张可评分检查表。"}), 400
             cur.execute("SELECT COUNT(*) AS station_count FROM stations;")
             row = cur.fetchone()
             selected_count = int(row.get("station_count") or 0)
@@ -15959,6 +16041,7 @@ def create_assessment_station_score_export_task():
                 mode,
                 month,
                 station_count=selected_count,
+                selected_tables=selected_checklists,
             )
             download_filename = f"站点评分全部站点_{month}.zip"
 
@@ -16017,6 +16100,7 @@ def create_assessment_station_score_export_task():
             export_options,
             station_id=station_id,
             inspection_table_id=inspection_table_id,
+            inspection_table_ids=inspection_table_ids,
         )
         return jsonify(
             {
