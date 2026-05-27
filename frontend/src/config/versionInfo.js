@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.1',
+    date: '2026-05-27',
+    title: '巡检问题筛选和导出优化',
+    summary: '巡检问题列表筛选更灵活，导出表格更贴近检查表原格式。',
+    items: [
+      '问题列表支持按问题ID搜索。',
+      '站点、片区、检查人、检查表支持多选筛选。',
+      '导出 Excel 按检查表拆 Sheet，并把规范字段展开成多列。'
+    ]
+  },
+  {
     version: 'v2.6',
     date: '2026-05-26',
     title: '站点评分上线',

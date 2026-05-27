@@ -11,10 +11,10 @@ import threading
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from io import BytesIO
-from xml.sax.saxutils import escape as xml_escape
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
@@ -4367,6 +4367,7 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                 issue_inspector.real_name AS inspector,
                 issue_inspector.phone AS inspector_phone,
                 t.table_name AS inspection_table_name,
+                i.inspection_table_id,
                 i.internal_standard_id,
                 i.standard_id,
                 i.internal_standard_detail_text,
@@ -4412,7 +4413,7 @@ def fetch_issue_export_rows(cur, user, issue_ids):
     return cur.fetchall()
 
 
-ISSUE_EXPORT_COLUMNS = [
+ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD = [
     ("ID", "id"),
     ("检查月度", "month"),
     ("检查时间", "time"),
@@ -4424,9 +4425,11 @@ ISSUE_EXPORT_COLUMNS = [
     ("检查人员手机号", "inspector_phone"),
     ("检查表", "inspection_table_name"),
     ("内部规范ID", "internal_standard_id"),
-    ("外部规范ID", "standard_id"),
     ("内部规范详情", "internal_standard_detail_text"),
-    ("外部规范详情", "standard_detail_text"),
+    ("外部规范ID", "standard_id"),
+]
+
+ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("问题描述", "description"),
     ("优秀问题", "is_excellent"),
     ("问题照片", "issue_photo"),
@@ -4439,6 +4442,14 @@ ISSUE_EXPORT_COLUMNS = [
     ("问题状态", "status"),
 ]
 
+ISSUE_EXPORT_LONG_TEXT_KEYS = {
+    "internal_standard_detail_text",
+    "standard_detail_text",
+    "description",
+    "rectification_note",
+    "review_note",
+}
+
 
 def excel_column_name(index):
     name = ""
@@ -4446,12 +4457,6 @@ def excel_column_name(index):
         index, remainder = divmod(index - 1, 26)
         name = chr(65 + remainder) + name
     return name
-
-
-def xlsx_text_cell(value):
-    text = "" if value is None else str(value)
-    text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
-    return f'<c t="inlineStr"><is><t xml:space="preserve">{xml_escape(text)}</t></is></c>'
 
 
 def selected_issue_export_photo_keys(export_options):
@@ -4486,21 +4491,141 @@ def build_issue_export_excel_image(image_path, max_width=150, max_height=110):
         return None
 
 
-def write_issue_export_xlsx_with_images(file_path, rows, export_options):
+def parse_standard_detail_entries(detail_text):
+    entries = []
+    normalized_text = str(detail_text or "").replace("\\n", "\n")
+    for raw_line in normalized_text.split("\n"):
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        full_width_index = line.find("：")
+        raw_half_width_index = line.find(":")
+        half_width_index = (
+            raw_half_width_index
+            if raw_half_width_index > -1
+            and line[raw_half_width_index + 1: raw_half_width_index + 2] != "/"
+            else -1
+        )
+        separator_index = full_width_index if full_width_index > -1 else half_width_index
+        if separator_index >= 0:
+            label = line[:separator_index].strip()
+            if label and len(label) <= 48:
+                entries.append(
+                    {
+                        "label": label,
+                        "value": line[separator_index + 1:].strip() or "-",
+                    }
+                )
+                continue
+        if entries:
+            entries[-1]["value"] = f"{entries[-1]['value']}\n{line}".strip()
+        else:
+            entries.append({"label": "规范内容", "value": line})
+    return entries
+
+
+def parse_standard_detail_value_map(detail_text):
+    values = {}
+    for entry in parse_standard_detail_entries(detail_text):
+        label = entry["label"]
+        value = entry["value"] or "-"
+        if label in values and values[label] != value:
+            values[label] = f"{values[label]}\n{value}".strip()
+        else:
+            values[label] = value
+    return values
+
+
+def build_issue_export_table_field_map(cur, rows):
+    table_ids = []
+    seen = set()
+    for row in rows:
+        table_id = row.get("inspection_table_id")
+        if table_id is None or table_id in seen:
+            continue
+        seen.add(table_id)
+        table_ids.append(table_id)
+
+    field_map = {}
+    for table_id in table_ids:
+        field_map[table_id] = [
+            {
+                "field_key": field["field_key"],
+                "field_label": field["field_label"],
+                "sort_order": field.get("sort_order") or 0,
+            }
+            for field in get_management_checklist_fields(cur, table_id, include_public=True)
+        ]
+    return field_map
+
+
+def safe_excel_sheet_title(raw_title, used_titles):
+    base = re.sub(r"[\[\]\:\*\?\/\\]", "_", str(raw_title or "检查表").strip())
+    base = re.sub(r"\s+", " ", base).strip() or "检查表"
+    base = base[:31]
+    title = base
+    index = 2
+    while title in used_titles:
+        suffix = f"({index})"
+        title = f"{base[:31 - len(suffix)]}{suffix}"
+        index += 1
+    used_titles.add(title)
+    return title
+
+
+def group_issue_export_rows_by_table(rows):
+    grouped = OrderedDict()
+    for row in rows:
+        table_id = row.get("inspection_table_id")
+        table_name = row.get("inspection_table_name") or "未命名检查表"
+        group_key = table_id if table_id is not None else table_name
+        if group_key not in grouped:
+            grouped[group_key] = {
+                "table_id": table_id,
+                "table_name": table_name,
+                "rows": [],
+            }
+        grouped[group_key]["rows"].append(row)
+    return list(grouped.values())
+
+
+def build_issue_export_standard_field_columns(group, table_field_map):
+    table_id = group.get("table_id")
+    configured_fields = table_field_map.get(table_id, []) if table_id is not None else []
+    columns = []
+    seen_labels = set()
+    for field in configured_fields:
+        label = str(field.get("field_label") or "").strip()
+        if not label or label in seen_labels:
+            continue
+        columns.append({"label": label})
+        seen_labels.add(label)
+
+    # Keep old snapshot fields too. This protects exports when a checklist field
+    # was later renamed or removed after issues had already been recorded.
+    for row in group.get("rows", []):
+        for entry in parse_standard_detail_entries(row.get("standard_detail_text")):
+            label = entry["label"]
+            if label and label not in seen_labels:
+                columns.append({"label": label})
+                seen_labels.add(label)
+    return columns
+
+
+def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_map=None):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     except ImportError as exc:
-        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出照片。") from exc
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出 Excel。") from exc
 
+    table_field_map = table_field_map or {}
     selected_photo_keys = selected_issue_export_photo_keys(export_options)
-    headers = [column[0] for column in ISSUE_EXPORT_COLUMNS]
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "巡检问题列表"
-    worksheet.freeze_panes = "A2"
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
 
     header_fill = PatternFill("solid", fgColor="DCEBFF")
     header_font = Font(bold=True, color="0F172A")
@@ -4512,155 +4637,72 @@ def write_issue_export_xlsx_with_images(file_path, rows, export_options):
     )
     wrap_alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
     long_text_alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
-    photo_column_indexes = {}
 
-    for column_index, (header, key) in enumerate(ISSUE_EXPORT_COLUMNS, start=1):
-        cell = worksheet.cell(row=1, column=column_index, value=header)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.border = thin_border
-        cell.alignment = wrap_alignment
+    used_sheet_titles = set()
+    groups = group_issue_export_rows_by_table(rows)
+    for group in groups:
+        standard_field_columns = build_issue_export_standard_field_columns(group, table_field_map)
+        columns = [
+            *ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD,
+            *[(field["label"], f"external_field::{field['label']}") for field in standard_field_columns],
+            *ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD,
+        ]
+        worksheet = workbook.create_sheet(
+            title=safe_excel_sheet_title(group.get("table_name"), used_sheet_titles)
+        )
+        worksheet.freeze_panes = "A2"
 
-        width = 18
-        if key in {"internal_standard_detail_text", "standard_detail_text", "description", "rectification_note", "review_note"}:
-            width = 34
-        if key in ISSUE_EXPORT_PHOTO_KEYS:
-            photo_column_indexes[key] = column_index
-            width = 22 if key in selected_photo_keys else 16
-        worksheet.column_dimensions[excel_column_name(column_index)].width = width
-
-    for row_index, row in enumerate(rows, start=2):
-        row_has_image = False
-        for column_index, (_header, key) in enumerate(ISSUE_EXPORT_COLUMNS, start=1):
-            cell = worksheet.cell(row=row_index, column=column_index)
+        for column_index, (header, key) in enumerate(columns, start=1):
+            cell = worksheet.cell(row=1, column=column_index, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
             cell.border = thin_border
-            cell.alignment = long_text_alignment if key in {
-                "internal_standard_detail_text",
-                "standard_detail_text",
-                "description",
-                "rectification_note",
-                "review_note",
-            } else wrap_alignment
+            cell.alignment = wrap_alignment
 
+            width = 18
+            if key.startswith("external_field::"):
+                width = 22
+            if key in ISSUE_EXPORT_LONG_TEXT_KEYS or key in {"description", "rectification_note", "review_note"}:
+                width = 34
             if key in ISSUE_EXPORT_PHOTO_KEYS:
-                cell.value = ""
-                if key in selected_photo_keys:
-                    excel_image = build_issue_export_excel_image(row.get(key))
-                    if excel_image:
-                        worksheet.add_image(excel_image, cell.coordinate)
-                        row_has_image = True
-                continue
+                width = 22 if key in selected_photo_keys else 16
+            worksheet.column_dimensions[excel_column_name(column_index)].width = width
 
-            cell.value = "" if row.get(key) is None else str(row.get(key))
+        for row_index, row in enumerate(group.get("rows", []), start=2):
+            row_has_image = False
+            external_values = parse_standard_detail_value_map(row.get("standard_detail_text"))
+            for column_index, (_header, key) in enumerate(columns, start=1):
+                cell = worksheet.cell(row=row_index, column=column_index)
+                cell.border = thin_border
+                cell.alignment = long_text_alignment if (
+                    key in ISSUE_EXPORT_LONG_TEXT_KEYS or key.startswith("external_field::")
+                ) else wrap_alignment
 
-        if row_has_image:
-            worksheet.row_dimensions[row_index].height = 92
+                if key in ISSUE_EXPORT_PHOTO_KEYS:
+                    cell.value = ""
+                    if key in selected_photo_keys:
+                        excel_image = build_issue_export_excel_image(row.get(key))
+                        if excel_image:
+                            worksheet.add_image(excel_image, cell.coordinate)
+                            row_has_image = True
+                    continue
 
-    last_column = excel_column_name(len(ISSUE_EXPORT_COLUMNS))
-    worksheet.auto_filter.ref = f"A1:{last_column}1"
+                if key.startswith("external_field::"):
+                    label = key.split("::", 1)[1]
+                    cell.value = external_values.get(label, "-")
+                    continue
+
+                cell.value = "" if row.get(key) is None else str(row.get(key))
+
+            if row_has_image:
+                worksheet.row_dimensions[row_index].height = 92
+
+        last_column = excel_column_name(len(columns))
+        worksheet.auto_filter.ref = f"A1:{last_column}1"
+
     workbook.properties.title = "巡检问题列表导出"
     workbook.properties.creator = "业务督导中心数智管理平台"
     workbook.save(file_path)
-
-
-def write_issue_export_xlsx(file_path, rows, export_options=None):
-    if issue_export_includes_photos(export_options):
-        return write_issue_export_xlsx_with_images(file_path, rows, export_options)
-
-    headers = [column[0] for column in ISSUE_EXPORT_COLUMNS]
-    now = beijing_now().replace(microsecond=0).isoformat()
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-    with zipfile.ZipFile(file_path, "w", zipfile.ZIP_DEFLATED) as xlsx:
-        xlsx.writestr(
-            "[Content_Types].xml",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
-  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
-</Types>""",
-        )
-        xlsx.writestr(
-            "_rels/.rels",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
-</Relationships>""",
-        )
-        xlsx.writestr(
-            "xl/workbook.xml",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="巡检问题列表" sheetId="1" r:id="rId1"/></sheets>
-</workbook>""",
-        )
-        xlsx.writestr(
-            "xl/_rels/workbook.xml.rels",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>""",
-        )
-        xlsx.writestr(
-            "xl/styles.xml",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>
-  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
-  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
-  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
-</styleSheet>""",
-        )
-        xlsx.writestr(
-            "docProps/core.xml",
-            f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>巡检问题列表导出</dc:title>
-  <dc:creator>业务督导中心数智管理平台</dc:creator>
-  <dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">{now}</dcterms:modified>
-</cp:coreProperties>""",
-        )
-        xlsx.writestr(
-            "docProps/app.xml",
-            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
-  <Application>业务督导中心数智管理平台</Application>
-</Properties>""",
-        )
-
-        with xlsx.open("xl/worksheets/sheet1.xml", "w") as sheet:
-            sheet.write(
-                b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-                b'<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
-                b'<cols>'
-            )
-            for index, header in enumerate(headers, start=1):
-                width = 18
-                if header in {"内部规范详情", "外部规范详情", "问题描述", "站点反馈整改说明", "督导组复核说明"}:
-                    width = 34
-                sheet.write(f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'.encode("utf-8"))
-            sheet.write(b"</cols><sheetData>")
-            header_cells = "".join(xlsx_text_cell(header) for header in headers)
-            sheet.write(f'<row r="1">{header_cells}</row>'.encode("utf-8"))
-            for row_index, row in enumerate(rows, start=2):
-                cells = []
-                for _header, key in ISSUE_EXPORT_COLUMNS:
-                    value = "" if key in {"issue_photo", "rectification_photo", "review_photo"} else row.get(key)
-                    cells.append(xlsx_text_cell(value))
-                sheet.write(f'<row r="{row_index}">{"".join(cells)}</row>'.encode("utf-8"))
-            last_column = excel_column_name(len(ISSUE_EXPORT_COLUMNS))
-            sheet.write(f'</sheetData><autoFilter ref="A1:{last_column}1"/></worksheet>'.encode("utf-8"))
 
 
 def mark_issue_export_task_failed(task_id, message):
@@ -4709,6 +4751,7 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
         rows = fetch_issue_export_rows(cur, user, issue_ids)
         if not rows:
             raise ValueError("当前筛选结果中没有可导出的数据。")
+        table_field_map = build_issue_export_table_field_map(cur, rows)
 
         now = beijing_now()
         filename = f"巡检问题列表_{now.strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}.xlsx"
@@ -4717,7 +4760,7 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
             safe_filename = f"inspection_issues_{task_id[:8]}.xlsx"
         abs_path = os.path.join(ISSUE_EXPORTS_STORAGE_DIR, safe_filename)
         relative_path = f"issue_exports/{safe_filename}"
-        write_issue_export_xlsx(abs_path, rows, export_options)
+        write_issue_export_xlsx(abs_path, rows, export_options, table_field_map)
         cur.execute(
             """
             UPDATE issue_export_tasks
