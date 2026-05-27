@@ -4991,12 +4991,22 @@ def build_attendance_payload(rows, month, mode_filter):
                 "inspector_name": inspector_name,
                 "username": row.get("inspector_username") or "",
                 "phone": row.get("inspector_phone") or "",
+                "issue_count": 0,
+                "approved_issue_count": 0,
                 "attendance_dates": set(),
                 "inspection_ids": set(),
                 "stations_map": {},
                 "checklists_map": {},
                 "activity_days": {},
             },
+        )
+        person["issue_count"] = max(
+            int(person.get("issue_count") or 0),
+            int(row.get("issue_count") or 0),
+        )
+        person["approved_issue_count"] = max(
+            int(person.get("approved_issue_count") or 0),
+            int(row.get("approved_issue_count") or 0),
         )
         person["attendance_dates"].add(inspection_date)
         person["inspection_ids"].add(inspection_id)
@@ -5102,6 +5112,8 @@ def build_attendance_payload(rows, month, mode_filter):
                     "phone": person["phone"],
                     "attendance_days": len(person["attendance_dates"]),
                     "inspection_count": len(person["inspection_ids"]),
+                    "issue_count": int(person.get("issue_count") or 0),
+                    "approved_issue_count": int(person.get("approved_issue_count") or 0),
                     "station_count": len(person["stations_map"]),
                     "checklist_count": len(person["checklists_map"]),
                     "attendance_dates": sorted(person["attendance_dates"]),
@@ -16506,6 +16518,12 @@ def get_assessment_attendance():
         if mode_filter != "all":
             issue_mode_clause = "AND COALESCE(NULLIF(t.checklist_mode, ''), 'online') = %s"
             params.append(mode_filter)
+        issue_stats_params = [month_start, next_month]
+        issue_stats_mode_clause = ""
+        if mode_filter != "all":
+            issue_stats_mode_clause = "AND COALESCE(NULLIF(t.checklist_mode, ''), 'online') = %s"
+            issue_stats_params.append(mode_filter)
+        params.extend(issue_stats_params)
 
         cur.execute(
             f"""
@@ -16548,6 +16566,25 @@ def get_assessment_attendance():
                   AND i.inspector_id IS NOT NULL
                   AND COALESCE(i.audit_status, 'pending') <> 'rejected'
                   {issue_mode_clause}
+            ),
+            issue_stats AS (
+                SELECT
+                    COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+                    COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
+                    COUNT(i.id) AS issue_count,
+                    COUNT(i.id) FILTER (
+                        WHERE COALESCE(i.audit_status, 'pending') = 'approved'
+                    ) AS approved_issue_count
+                FROM issues i
+                JOIN inspections ins ON ins.id = i.inspection_id
+                JOIN inspection_tables t ON t.id = ins.inspection_table_id
+                WHERE ins.inspection_date >= %s
+                  AND ins.inspection_date < %s
+                  AND COALESCE(i.inspector_id, ins.inspector_id) IS NOT NULL
+                  {issue_stats_mode_clause}
+                GROUP BY
+                    COALESCE(i.inspector_id, ins.inspector_id),
+                    COALESCE(NULLIF(t.checklist_mode, ''), 'online')
             )
             SELECT DISTINCT
                 p.inspection_id,
@@ -16561,9 +16598,14 @@ def get_assessment_attendance():
                 p.inspector_id,
                 u.username AS inspector_username,
                 u.real_name AS inspector_name,
-                u.phone AS inspector_phone
+                u.phone AS inspector_phone,
+                COALESCE(st.issue_count, 0) AS issue_count,
+                COALESCE(st.approved_issue_count, 0) AS approved_issue_count
             FROM participant_rows p
             JOIN users u ON u.id = p.inspector_id
+            LEFT JOIN issue_stats st
+              ON st.inspector_id = p.inspector_id
+             AND st.checklist_mode = p.checklist_mode
             WHERE p.inspector_id IS NOT NULL
               AND p.checklist_mode IN ('online', 'offline')
             ORDER BY

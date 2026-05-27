@@ -80,6 +80,8 @@
                     <th>检查人</th>
                     <th>出勤天数</th>
                     <th>巡检记录</th>
+                    <th>巡检问题</th>
+                    <th>审核通过</th>
                     <th>去过站点</th>
                     <th>参与检查表</th>
                     <th>出勤日期</th>
@@ -95,6 +97,8 @@
                     </td>
                     <td><span class="number-pill">{{ person.attendance_days }}</span></td>
                     <td>{{ person.inspection_count }}</td>
+                    <td><span class="number-pill issue">{{ person.issue_count || 0 }}</span></td>
+                    <td><span class="number-pill approved">{{ person.approved_issue_count || 0 }}</span></td>
                     <td>
                       <div class="chip-list">
                         <button v-for="station in person.stations" :key="station.id" class="info-chip station-chip"
@@ -715,7 +719,7 @@ onMounted(fetchAttendance)
 
 .people-table {
   width: 100%;
-  min-width: 980px;
+  min-width: 1120px;
   border-collapse: separate;
   border-spacing: 0 8px;
 }
@@ -775,6 +779,14 @@ onMounted(fetchAttendance)
   background: #0f172a;
   color: #fff;
   font-weight: 900;
+}
+
+.number-pill.issue {
+  background: #1d4ed8;
+}
+
+.number-pill.approved {
+  background: #15803d;
 }
 
 .chip-list {

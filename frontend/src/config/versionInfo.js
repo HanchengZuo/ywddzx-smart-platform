@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.4',
+    date: '2026-05-27',
+    title: '人员出勤统计补充',
+    summary: '人员出勤页面补充每位检查人的问题统计。',
+    items: [
+      '每位检查人显示巡检问题数量。',
+      '每位检查人显示审核通过的问题数量。'
+    ]
+  },
+  {
     version: 'v2.6.3',
     date: '2026-05-27',
     title: '导出字段和首页性能优化',
