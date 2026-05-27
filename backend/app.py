@@ -4234,6 +4234,7 @@ def normalize_issue_export_filter_summary(raw_summary):
     if not isinstance(raw_summary, dict):
         return {}
     allowed_keys = {
+        "issueId",
         "month",
         "date",
         "region",
@@ -4246,6 +4247,9 @@ def normalize_issue_export_filter_summary(raw_summary):
         "rectificationResult",
         "reviewResult",
         "status",
+        "excellent",
+        "auditStatus",
+        "auditState",
     }
     return {
         key: str(value or "").strip()
@@ -4260,23 +4264,70 @@ ISSUE_EXPORT_PHOTO_KEYS = {
     "review_photo",
 }
 
+ISSUE_EXPORT_FIELD_KEYS = {
+    "id",
+    "month",
+    "time",
+    "region",
+    "station",
+    "station_manager",
+    "station_manager_phone",
+    "inspector",
+    "inspector_phone",
+    "inspection_table_name",
+    "internal_standard",
+    "external_standard",
+    "description",
+    "is_excellent",
+    "issue_photo",
+    "rectification_result",
+    "rectification_note",
+    "rectification_photo",
+    "review_result",
+    "review_note",
+    "review_photo",
+    "status",
+}
+
 
 def normalize_issue_export_options(raw_options):
     if not isinstance(raw_options, dict):
         raw_options = {}
+    raw_include_fields = raw_options.get("include_fields")
+    has_explicit_fields = isinstance(raw_include_fields, dict)
+    include_fields = {
+        key: bool(raw_include_fields.get(key))
+        for key in ISSUE_EXPORT_FIELD_KEYS
+    } if has_explicit_fields else {
+        key: True
+        for key in ISSUE_EXPORT_FIELD_KEYS
+    }
+
     raw_include_photos = raw_options.get("include_photos")
     if not isinstance(raw_include_photos, dict):
         raw_include_photos = {}
     include_photos = {
-        key: bool(raw_include_photos.get(key))
+        key: bool(raw_include_photos.get(key)) and bool(include_fields.get(key))
         for key in ISSUE_EXPORT_PHOTO_KEYS
     }
-    return {"include_photos": include_photos}
+    return {
+        "include_fields": include_fields,
+        "include_photos": include_photos,
+    }
 
 
 def issue_export_includes_photos(export_options):
     include_photos = (export_options or {}).get("include_photos") or {}
     return any(bool(include_photos.get(key)) for key in ISSUE_EXPORT_PHOTO_KEYS)
+
+
+def selected_issue_export_field_keys(export_options):
+    include_fields = (export_options or {}).get("include_fields") or {}
+    return {
+        key
+        for key in ISSUE_EXPORT_FIELD_KEYS
+        if bool(include_fields.get(key))
+    }
 
 
 def get_issue_export_task_for_user(cur, task_id, user):
@@ -4424,8 +4475,14 @@ ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD = [
     ("检查人员", "inspector"),
     ("检查人员手机号", "inspector_phone"),
     ("检查表", "inspection_table_name"),
+]
+
+ISSUE_EXPORT_INTERNAL_STANDARD_COLUMNS = [
     ("内部规范ID", "internal_standard_id"),
     ("内部规范详情", "internal_standard_detail_text"),
+]
+
+ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS = [
     ("外部规范ID", "standard_id"),
 ]
 
@@ -4620,6 +4677,9 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
         raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出 Excel。") from exc
 
     table_field_map = table_field_map or {}
+    selected_field_keys = selected_issue_export_field_keys(export_options)
+    if not selected_field_keys:
+        raise ValueError("请至少选择一个导出字段。")
     selected_photo_keys = selected_issue_export_photo_keys(export_options)
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -4641,12 +4701,32 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
     used_sheet_titles = set()
     groups = group_issue_export_rows_by_table(rows)
     for group in groups:
-        standard_field_columns = build_issue_export_standard_field_columns(group, table_field_map)
-        columns = [
-            *ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD,
-            *[(field["label"], f"external_field::{field['label']}") for field in standard_field_columns],
-            *ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD,
-        ]
+        standard_field_columns = (
+            build_issue_export_standard_field_columns(group, table_field_map)
+            if "external_standard" in selected_field_keys
+            else []
+        )
+        columns = []
+        columns.extend(
+            (header, key)
+            for header, key in ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD
+            if key in selected_field_keys
+        )
+        if "internal_standard" in selected_field_keys:
+            columns.extend(ISSUE_EXPORT_INTERNAL_STANDARD_COLUMNS)
+        if "external_standard" in selected_field_keys:
+            columns.extend(ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS)
+            columns.extend(
+                (field["label"], f"external_field::{field['label']}")
+                for field in standard_field_columns
+            )
+        columns.extend(
+            (header, key)
+            for header, key in ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD
+            if key in selected_field_keys
+        )
+        if not columns:
+            raise ValueError("请至少选择一个导出字段。")
         worksheet = workbook.create_sheet(
             title=safe_excel_sheet_title(group.get("table_name"), used_sheet_titles)
         )
@@ -14814,6 +14894,8 @@ def create_issue_export_task():
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not selected_issue_export_field_keys(export_options):
+            raise ValueError("请至少选择一个导出字段。")
         if issue_export_includes_photos(export_options) and not can_export_issue_photos(cur, user):
             raise PermissionError("当前账号无权导出巡检照片，请联系 root 授权。")
 

@@ -743,20 +743,37 @@
               <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
             </div>
 
-            <div class="export-photo-panel">
-              <div class="export-section-title">照片导出选项</div>
-              <p>
-                照片会直接嵌入 Excel，对服务器和浏览器资源占用较高，建议只在确实需要留档追踪时勾选。
-                <span v-if="!canExportIssuePhotos">当前账号未获得“导出巡检照片”权限，只能导出文字数据。</span>
-              </p>
-              <div class="export-photo-options">
-                <label v-for="option in exportPhotoOptions" :key="option.key" class="export-photo-option"
-                  :class="{ disabled: !canExportIssuePhotos || Boolean(exportDialog.taskId) }">
-                  <input v-model="exportDialog.includePhotos[option.key]" type="checkbox"
-                    :disabled="!canExportIssuePhotos || Boolean(exportDialog.taskId)" />
-                  <span>{{ option.label }}</span>
-                  <em>{{ option.help }}</em>
-                </label>
+            <div class="export-field-panel">
+              <div class="export-field-panel-head">
+                <div>
+                  <div class="export-section-title">导出字段选择</div>
+                  <p>
+                    默认勾选当前账号可导出的全部字段。内部规范和外部规范作为两个整体导出选项；外部规范会在 Excel 中按检查表原字段展开。
+                    <span v-if="!canExportIssuePhotos">当前账号未获得“导出巡检照片”权限，照片字段暂不可勾选。</span>
+                  </p>
+                </div>
+                <div class="export-field-actions">
+                  <span>已选 {{ selectedExportFieldCount }} 项</span>
+                  <button class="btn btn-secondary btn-sm" type="button" :disabled="Boolean(exportDialog.taskId)"
+                    @click="setAllExportFields(true)">一键全选</button>
+                  <button class="btn btn-secondary btn-sm" type="button" :disabled="Boolean(exportDialog.taskId)"
+                    @click="invertExportFields">一键反选</button>
+                </div>
+              </div>
+
+              <div class="export-field-groups">
+                <section v-for="group in exportFieldGroups" :key="group.title" class="export-field-group">
+                  <h4>{{ group.title }}</h4>
+                  <div class="export-field-options">
+                    <label v-for="option in group.options" :key="option.key" class="export-field-option"
+                      :class="{ disabled: !canSelectExportField(option), photo: option.photo }">
+                      <input v-model="exportDialog.includeFields[option.key]" type="checkbox"
+                        :disabled="!canSelectExportField(option)" />
+                      <span>{{ option.label }}</span>
+                      <em>{{ option.help }}</em>
+                    </label>
+                  </div>
+                </section>
               </div>
             </div>
 
@@ -1347,19 +1364,51 @@ const exportDialog = ref({
   fileSizeLabel: '',
   expiresAt: '',
   filterSummary: {},
-  includePhotos: {
-    issue_photo: false,
-    rectification_photo: false,
-    review_photo: false
-  }
+  includeFields: {}
 })
 let exportPollTimer = null
 
-const exportPhotoOptions = [
-  { key: 'issue_photo', label: '导出问题照片', help: '现场登记时上传的问题照片' },
-  { key: 'rectification_photo', label: '导出整改照片', help: '站点提交的整改反馈照片' },
-  { key: 'review_photo', label: '导出复核照片', help: '督导组复核时上传的照片' }
+const exportFieldGroups = [
+  {
+    title: '基础信息',
+    options: [
+      { key: 'id', label: 'ID', help: '问题唯一编号' },
+      { key: 'month', label: '检查月度', help: '问题所属月份' },
+      { key: 'time', label: '检查时间', help: '问题登记时间' },
+      { key: 'region', label: '站点所属地', help: '站点片区/归属地' },
+      { key: 'station', label: '站点名称', help: '问题所属站点' },
+      { key: 'station_manager', label: '站点负责人', help: '站点负责人姓名' },
+      { key: 'station_manager_phone', label: '负责人手机号', help: '站点负责人手机号' },
+      { key: 'inspector', label: '检查人员', help: '问题登记人' },
+      { key: 'inspector_phone', label: '检查人手机号', help: '检查人员手机号' },
+      { key: 'inspection_table_name', label: '检查表', help: '问题所属检查表' }
+    ]
+  },
+  {
+    title: '规范与问题',
+    options: [
+      { key: 'internal_standard', label: '内部规范', help: '内部规范ID和内部规范详情' },
+      { key: 'external_standard', label: '外部规范', help: '外部规范ID和检查表原字段' },
+      { key: 'description', label: '问题描述', help: '现场登记的问题说明' },
+      { key: 'is_excellent', label: '优秀问题', help: '是否点亮优秀标记' },
+      { key: 'issue_photo', label: '问题照片', help: '嵌入现场问题照片', photo: true },
+      { key: 'status', label: '问题状态', help: '当前流转状态' }
+    ]
+  },
+  {
+    title: '整改复核',
+    options: [
+      { key: 'rectification_result', label: '整改结果', help: '站经理整改判定' },
+      { key: 'rectification_note', label: '整改说明', help: '站点反馈整改说明' },
+      { key: 'rectification_photo', label: '整改照片', help: '嵌入站点整改照片', photo: true },
+      { key: 'review_result', label: '复核结果', help: '督导组复核判定' },
+      { key: 'review_note', label: '复核说明', help: '督导组复核说明' },
+      { key: 'review_photo', label: '复核照片', help: '嵌入督导复核照片', photo: true }
+    ]
+  }
 ]
+const exportFieldOptions = exportFieldGroups.flatMap((group) => group.options)
+const exportPhotoFieldKeys = ['issue_photo', 'rectification_photo', 'review_photo']
 
 const exportFilterLabels = {
   issueId: '问题ID',
@@ -2060,19 +2109,67 @@ const buildCurrentExportFilterSummary = () => {
   )
 }
 
-const createEmptyExportPhotoOptions = () => ({
-  issue_photo: false,
-  rectification_photo: false,
-  review_photo: false
-})
+const createDefaultExportFieldOptions = () => {
+  return Object.fromEntries(
+    exportFieldOptions.map((option) => [
+      option.key,
+      option.photo ? canExportIssuePhotos.value : true
+    ])
+  )
+}
 
-const normalizeExportPhotoOptions = (rawOptions = {}) => {
-  const includePhotos = rawOptions?.include_photos || rawOptions || {}
-  return {
-    issue_photo: Boolean(includePhotos.issue_photo),
-    rectification_photo: Boolean(includePhotos.rectification_photo),
-    review_photo: Boolean(includePhotos.review_photo)
+const normalizeExportFieldOptions = (rawOptions = {}) => {
+  const includeFields = rawOptions?.include_fields
+  const defaults = createDefaultExportFieldOptions()
+  if (!includeFields || typeof includeFields !== 'object') {
+    return defaults
   }
+  return Object.fromEntries(
+    exportFieldOptions.map((option) => [
+      option.key,
+      option.photo
+        ? Boolean(includeFields[option.key]) && canExportIssuePhotos.value
+        : Boolean(includeFields[option.key])
+    ])
+  )
+}
+
+const buildExportPhotoOptionsFromFields = () => {
+  return Object.fromEntries(
+    exportPhotoFieldKeys.map((key) => [
+      key,
+      canExportIssuePhotos.value && Boolean(exportDialog.value.includeFields[key])
+    ])
+  )
+}
+
+const canSelectExportField = (option) => {
+  if (exportDialog.value.taskId) return false
+  return !option.photo || canExportIssuePhotos.value
+}
+
+const selectedExportFieldCount = computed(() => (
+  exportFieldOptions.filter((option) => Boolean(exportDialog.value.includeFields[option.key])).length
+))
+
+const setAllExportFields = (checked) => {
+  exportDialog.value.includeFields = Object.fromEntries(
+    exportFieldOptions.map((option) => [
+      option.key,
+      canSelectExportField(option) ? checked : Boolean(exportDialog.value.includeFields[option.key])
+    ])
+  )
+}
+
+const invertExportFields = () => {
+  exportDialog.value.includeFields = Object.fromEntries(
+    exportFieldOptions.map((option) => [
+      option.key,
+      canSelectExportField(option)
+        ? !Boolean(exportDialog.value.includeFields[option.key])
+        : Boolean(exportDialog.value.includeFields[option.key])
+    ])
+  )
 }
 
 const resetExportDialogForCurrentFilters = () => {
@@ -2090,7 +2187,7 @@ const resetExportDialogForCurrentFilters = () => {
     fileSizeLabel: '',
     expiresAt: '',
     filterSummary: buildCurrentExportFilterSummary(),
-    includePhotos: createEmptyExportPhotoOptions()
+    includeFields: createDefaultExportFieldOptions()
   }
 }
 
@@ -2133,7 +2230,7 @@ const applyExportTask = (task = {}) => {
   exportDialog.value.fileSizeLabel = task.file_size_label || ''
   exportDialog.value.expiresAt = task.expires_at || exportDialog.value.expiresAt
   exportDialog.value.filterSummary = task.filter_summary || exportDialog.value.filterSummary || {}
-  exportDialog.value.includePhotos = normalizeExportPhotoOptions(task.export_options)
+  exportDialog.value.includeFields = normalizeExportFieldOptions(task.export_options)
   exportDialog.value.error = task.error_message || ''
 }
 
@@ -2171,6 +2268,10 @@ const submitIssueExportTask = async () => {
     exportDialog.value.error = '当前筛选结果为空，不能导出。'
     return
   }
+  if (!selectedExportFieldCount.value) {
+    exportDialog.value.error = '请至少选择一个导出字段。'
+    return
+  }
   try {
     exportDialog.value.submitting = true
     exportDialog.value.error = ''
@@ -2179,9 +2280,8 @@ const submitIssueExportTask = async () => {
       issue_ids: filteredData.value.map((item) => item.id),
       filter_summary: buildCurrentExportFilterSummary(),
       export_options: {
-        include_photos: canExportIssuePhotos.value
-          ? { ...exportDialog.value.includePhotos }
-          : createEmptyExportPhotoOptions()
+        include_fields: { ...exportDialog.value.includeFields },
+        include_photos: buildExportPhotoOptionsFromFields()
       }
     })
     applyExportTask(response.data?.task || {})
@@ -4754,7 +4854,7 @@ onBeforeUnmount(() => {
 }
 
 .export-filter-panel,
-.export-photo-panel,
+.export-field-panel,
 .export-task-panel {
   margin-top: 14px;
   padding: 16px;
@@ -4763,28 +4863,76 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.92);
 }
 
-.export-photo-panel p {
+.export-field-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.export-field-panel p {
   margin: 10px 0 0;
   color: #64748b;
   font-size: 13px;
   line-height: 1.8;
 }
 
-.export-photo-panel p span {
+.export-field-panel p span {
   display: block;
   margin-top: 4px;
   color: #b45309;
   font-weight: 900;
 }
 
-.export-photo-options {
+.export-field-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.export-field-actions span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.export-field-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.export-field-group {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.export-field-group h4 {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.export-field-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 12px;
 }
 
-.export-photo-option {
+.export-field-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas:
@@ -4793,15 +4941,20 @@ onBeforeUnmount(() => {
   align-items: start;
   column-gap: 9px;
   row-gap: 4px;
-  min-height: 78px;
+  min-height: 74px;
   padding: 12px;
   border: 1px solid #dbe4ee;
   border-radius: 16px;
-  background: #f8fafc;
+  background: #fff;
   cursor: pointer;
 }
 
-.export-photo-option input {
+.export-field-option.photo {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.export-field-option input {
   grid-area: check;
   width: 16px;
   height: 16px;
@@ -4809,14 +4962,14 @@ onBeforeUnmount(() => {
   accent-color: #2563eb;
 }
 
-.export-photo-option span {
+.export-field-option span {
   grid-area: title;
   color: #0f172a;
   font-size: 13px;
   font-weight: 950;
 }
 
-.export-photo-option em {
+.export-field-option em {
   grid-area: help;
   color: #64748b;
   font-size: 12px;
@@ -4825,7 +4978,7 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.export-photo-option.disabled {
+.export-field-option.disabled {
   cursor: not-allowed;
   opacity: 0.62;
 }
@@ -5757,7 +5910,16 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .export-photo-options {
+  .export-field-panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .export-field-actions {
+    justify-content: flex-start;
+  }
+
+  .export-field-options {
     grid-template-columns: 1fr;
   }
 

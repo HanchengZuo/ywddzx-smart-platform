@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.2',
+    date: '2026-05-27',
+    title: '巡检问题导出字段自选',
+    summary: '巡检问题导出可以自由选择需要带出的字段。',
+    items: [
+      '导出弹窗支持字段全选和反选。',
+      '内部规范和外部规范可分别选择导出。',
+      '照片字段继续按授权控制。'
+    ]
+  },
+  {
     version: 'v2.6.1',
     date: '2026-05-27',
     title: '巡检问题筛选和导出优化',
