@@ -1390,9 +1390,15 @@ const exportFieldGroups = [
       { key: 'internal_standard', label: '内部规范', help: '内部规范ID和内部规范详情' },
       { key: 'external_standard', label: '外部规范', help: '外部规范ID和检查表原字段' },
       { key: 'description', label: '问题描述', help: '现场登记的问题说明' },
-      { key: 'is_excellent', label: '优秀问题', help: '是否点亮优秀标记' },
-      { key: 'issue_photo', label: '问题照片', help: '嵌入现场问题照片', photo: true },
-      { key: 'status', label: '问题状态', help: '当前流转状态' }
+      { key: 'issue_photo', label: '问题照片', help: '嵌入现场问题照片', photo: true }
+    ]
+  },
+  {
+    title: '状态与审核',
+    options: [
+      { key: 'status', label: '问题状态', help: '待审核、待签名、待整改等流转状态' },
+      { key: 'audit_result', label: '审核结果', help: '通过或否决，未审核则留空' },
+      { key: 'is_excellent', label: '是否优秀', help: '是否点亮优秀问题标记' }
     ]
   },
   {

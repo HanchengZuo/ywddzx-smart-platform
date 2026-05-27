@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.3',
+    date: '2026-05-27',
+    title: '导出字段和首页性能优化',
+    summary: '补齐巡检问题导出字段，并优化首页站点地图加载。',
+    items: [
+      '巡检问题导出新增问题状态、审核结果、是否优秀。',
+      'AI调用统计授权后可正常访问。',
+      '站点地图首页加载更顺畅。'
+    ]
+  },
+  {
     version: 'v2.6.2',
     date: '2026-05-27',
     title: '巡检问题导出字段自选',

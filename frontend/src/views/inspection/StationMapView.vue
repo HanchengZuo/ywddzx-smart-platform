@@ -100,6 +100,13 @@
 
       <div class="map-frame" :class="{ fullscreen: isFullscreen }" ref="mapFrameRef">
         <div ref="mapContainer" class="map-container"></div>
+        <div v-if="!isMobileMapMode && (mapBooting || mapError)" class="map-loading-layer">
+          <div class="map-loading-card glass-panel">
+            <div v-if="!mapError" class="map-loading-spinner"></div>
+            <strong>{{ mapError ? '地图加载遇到问题' : '站点地图加载中' }}</strong>
+            <span>{{ mapError || '正在优先加载站点数据，地图会在页面稳定后自动呈现。' }}</span>
+          </div>
+        </div>
 
         <div class="map-overlay map-overlay-left">
           <div class="map-overlay-card glass-panel">
@@ -177,6 +184,8 @@ const SHANGHAI_CENTER = [121.4737, 31.2304]
 const mapContainer = ref(null)
 const mapFrameRef = ref(null)
 const loading = ref(false)
+const mapBooting = ref(false)
+const mapError = ref('')
 const isFullscreen = ref(false)
 const stations = ref([])
 const autoRotateEnabled = ref(true)
@@ -185,6 +194,8 @@ const eventFeed = ref([])
 const currentRole = ref('')
 const isMobileMapMode = ref(false)
 const MOBILE_MAP_QUERY = '(max-width: 900px)'
+const STATION_MAP_CACHE_KEY = 'station_map_cache_v1'
+const STATION_MAP_CACHE_TTL = 45 * 1000
 
 const resolveCurrentRole = () => {
   const directRole = localStorage.getItem('role') || localStorage.getItem('user_role') || ''
@@ -216,6 +227,7 @@ let infoWindowInstance = null
 let autoRotateTimer = null
 let eventFeedRefreshTimer = null
 let stationRefreshTimer = null
+let markerRenderToken = 0
 const prioritizedStations = computed(() => {
   return [...filteredStations.value]
     .filter((station) => !Number.isNaN(Number(station.longitude)) && !Number.isNaN(Number(station.latitude)))
@@ -227,6 +239,41 @@ const prioritizedStations = computed(() => {
 })
 
 const displayedEventFeed = computed(() => eventFeed.value.slice(0, 5))
+
+const waitForBrowserIdle = (timeout = 700) => {
+  if (typeof window === 'undefined') return Promise.resolve()
+  if ('requestIdleCallback' in window) {
+    return new Promise((resolve) => window.requestIdleCallback(resolve, { timeout }))
+  }
+  return new Promise((resolve) => window.setTimeout(resolve, Math.min(timeout, 320)))
+}
+
+const yieldToBrowserFrame = () => {
+  if (typeof window === 'undefined') return Promise.resolve()
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
+}
+
+const readCachedStations = () => {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(STATION_MAP_CACHE_KEY) || '{}')
+    if (!cached?.createdAt || !Array.isArray(cached.items)) return null
+    if (Date.now() - Number(cached.createdAt) > STATION_MAP_CACHE_TTL) return null
+    return cached.items
+  } catch (error) {
+    return null
+  }
+}
+
+const writeCachedStations = (items) => {
+  try {
+    sessionStorage.setItem(STATION_MAP_CACHE_KEY, JSON.stringify({
+      createdAt: Date.now(),
+      items
+    }))
+  } catch (error) {
+    // 缓存只是首屏加速手段，失败不影响页面功能。
+  }
+}
 
 const syncMobileMapMode = () => {
   if (typeof window === 'undefined' || !window.matchMedia) {
@@ -315,7 +362,7 @@ const startEventFeedRefresh = () => {
 
   eventFeedRefreshTimer = setInterval(() => {
     fetchEventFeed()
-  }, 3000)
+  }, 10000)
 }
 
 const stopEventFeedRefresh = () => {
@@ -333,7 +380,7 @@ const startStationRefresh = () => {
 
   stationRefreshTimer = setInterval(() => {
     fetchStations()
-  }, 15000)
+  }, 60000)
 }
 
 const stopStationRefresh = () => {
@@ -421,7 +468,22 @@ const syncAutoRotateTarget = () => {
   }
 }
 
-const fetchStations = async () => {
+const applyStationRows = (rows, { cache = true } = {}) => {
+  const nextRows = Array.isArray(rows) ? rows : []
+  stations.value = nextRows
+  if (cache) writeCachedStations(nextRows)
+  syncAutoRotateTarget()
+}
+
+const fetchStations = async (options = {}) => {
+  const preferCache = Boolean(options.preferCache)
+  if (preferCache && !stations.value.length) {
+    const cachedRows = readCachedStations()
+    if (cachedRows) {
+      applyStationRows(cachedRows, { cache: false })
+    }
+  }
+
   try {
     const response = await axios.get('/api/station-map', {
       params: {
@@ -429,11 +491,12 @@ const fetchStations = async () => {
         _ts: Date.now()
       }
     })
-    stations.value = response.data || []
-    syncAutoRotateTarget()
+    applyStationRows(response.data || [])
   } catch (error) {
     console.error(error)
-    stations.value = []
+    if (!stations.value.length) {
+      stations.value = []
+    }
   }
 }
 
@@ -572,6 +635,7 @@ const getMarkerColor = (station) => {
 }
 
 const clearMarkers = () => {
+  markerRenderToken += 1
   if (!mapInstance || !markers.length) return
   markers.forEach((marker) => mapInstance.remove(marker))
   markers = []
@@ -580,8 +644,12 @@ const clearMarkers = () => {
 const renderMarkers = async () => {
   if (!mapInstance || !window.AMap) return
 
+  const renderToken = ++markerRenderToken
   const AMap = window.AMap
-  clearMarkers()
+  if (markers.length) {
+    markers.forEach((marker) => mapInstance.remove(marker))
+    markers = []
+  }
 
   if (infoWindowInstance) {
     infoWindowInstance.close()
@@ -596,11 +664,17 @@ const renderMarkers = async () => {
 
   const positions = []
 
-  filteredStations.value.forEach((station) => {
+  for (const [index, station] of filteredStations.value.entries()) {
+    if (renderToken !== markerRenderToken) return
+    if (index > 0 && index % 35 === 0) {
+      await yieldToBrowserFrame()
+      if (renderToken !== markerRenderToken || !mapInstance) return
+    }
+
     const lng = Number(station.longitude)
     const lat = Number(station.latitude)
 
-    if (Number.isNaN(lng) || Number.isNaN(lat)) return
+    if (Number.isNaN(lng) || Number.isNaN(lat)) continue
 
     positions.push([lng, lat])
 
@@ -610,6 +684,9 @@ const renderMarkers = async () => {
     const pulseDuration = pendingRectification > 0 ? '1.35s' : pendingReview > 0 ? '1.8s' : '2.6s'
     const pulseOpacity = pendingRectification > 0 ? '0.34' : pendingReview > 0 ? '0.26' : '0.16'
     const pulseScale = pendingRectification > 0 ? '2.4' : pendingReview > 0 ? '2.0' : '1.7'
+    const pulseAnimation = pendingRectification > 0 || pendingReview > 0
+      ? `animation: mapPulse ${pulseDuration} ease-out infinite;`
+      : ''
 
     const marker = new AMap.Marker({
       position: [lng, lat],
@@ -630,7 +707,7 @@ const renderMarkers = async () => {
             border-radius: 999px;
             background: ${color};
             opacity: ${pulseOpacity};
-            animation: mapPulse ${pulseDuration} ease-out infinite;
+            ${pulseAnimation}
             transform-origin: center;
             box-shadow: 0 0 18px ${color};
             --pulse-scale: ${pulseScale};
@@ -688,16 +765,6 @@ const renderMarkers = async () => {
             overflow:hidden;
           ">
             <span style="
-              position:absolute;
-              top:0;
-              left:-60%;
-              width:40%;
-              height:100%;
-              background:linear-gradient(90deg, rgba(255,255,255,0), rgba(148,163,184,0.16), rgba(255,255,255,0));
-              transform:skewX(-22deg);
-              animation: labelScan 3.6s linear infinite;
-            "></span>
-            <span style="
               width:9px;
               height:9px;
               border-radius:999px;
@@ -722,7 +789,9 @@ const renderMarkers = async () => {
 
     mapInstance.add(marker)
     markers.push(marker)
-  })
+  }
+
+  if (renderToken !== markerRenderToken) return
 
   if (positions.length === 1) {
     mapInstance.setZoomAndCenter(13, positions[0])
@@ -735,25 +804,44 @@ const renderMarkers = async () => {
 }
 
 const initMap = async () => {
-  const AMap = await loadAmapScript()
+  if (mapInstance || mapBooting.value) return
 
-  mapInstance = new AMap.Map(mapContainer.value, {
-    zoom: 10.8,
-    center: SHANGHAI_CENTER,
-    resizeEnable: true
-  })
+  mapBooting.value = true
+  mapError.value = ''
 
-  await fetchStations()
-  await fetchEventFeed()
-  await renderMarkers()
-  startAutoRotate()
-  startEventFeedRefresh()
-  startStationRefresh()
+  try {
+    await Promise.all([
+      fetchStations({ preferCache: true }),
+      fetchEventFeed()
+    ])
+
+    await waitForBrowserIdle()
+    if (isMobileMapMode.value || !mapContainer.value) return
+
+    const AMap = await loadAmapScript()
+    await waitForBrowserIdle(450)
+
+    mapInstance = new AMap.Map(mapContainer.value, {
+      zoom: 10.8,
+      center: SHANGHAI_CENTER,
+      resizeEnable: true
+    })
+
+    await renderMarkers()
+    startAutoRotate()
+    startEventFeedRefresh()
+    startStationRefresh()
+  } catch (error) {
+    console.error(error)
+    mapError.value = '地图资源加载较慢，请稍后刷新或检查网络。'
+  } finally {
+    mapBooting.value = false
+  }
 }
 
 const initMobileEventView = async () => {
   await Promise.all([
-    fetchStations(),
+    fetchStations({ preferCache: true }),
     fetchEventFeed()
   ])
   startEventFeedRefresh()
@@ -1106,9 +1194,66 @@ onBeforeUnmount(() => {
   background: rgba(15, 23, 42, 0.18);
 }
 
+.map-loading-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(59, 130, 246, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.26), rgba(15, 23, 42, 0.1));
+}
+
+.map-loading-card {
+  width: min(320px, 100%);
+  padding: 20px 22px;
+  border-radius: 22px;
+  text-align: center;
+  color: #e2e8f0;
+}
+
+.map-loading-card strong,
+.map-loading-card span {
+  display: block;
+}
+
+.map-loading-card strong {
+  margin-top: 12px;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.map-loading-card span {
+  margin-top: 7px;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.map-loading-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border-radius: 999px;
+  border: 3px solid rgba(191, 219, 254, 0.32);
+  border-top-color: #bfdbfe;
+  animation: mapLoadingSpin 0.9s linear infinite;
+}
+
 .map-frame.fullscreen .map-container {
   height: calc(100vh - 32px);
   min-height: auto;
+}
+
+@keyframes mapLoadingSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes mapPulse {
@@ -1521,16 +1666,6 @@ onBeforeUnmount(() => {
   color: #ffedd5;
   background: rgba(120, 53, 15, 0.54);
   border-color: rgba(251, 191, 36, 0.42);
-}
-
-@keyframes labelScan {
-  0% {
-    left: -60%;
-  }
-
-  100% {
-    left: 130%;
-  }
 }
 
 .map-frame::after {

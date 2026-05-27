@@ -108,3 +108,9 @@ ON issues (audit_status);
 
 CREATE INDEX IF NOT EXISTS idx_issues_is_excellent
 ON issues (is_excellent);
+
+CREATE INDEX IF NOT EXISTS idx_issues_station_status_audit
+ON issues (station_id, status, audit_status);
+
+CREATE INDEX IF NOT EXISTS idx_issues_created_at
+ON issues (created_at DESC);

@@ -3004,6 +3004,18 @@ def ensure_issue_inspector_schema(cur):
         ON issues (is_excellent);
         """
     )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issues_station_status_audit
+        ON issues (station_id, status, audit_status);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_issues_created_at
+        ON issues (created_at DESC);
+        """
+    )
     ISSUE_INSPECTOR_SCHEMA_READY = True
 
 
@@ -3119,6 +3131,12 @@ def ensure_inspection_completion_schema(cur):
         """
         CREATE INDEX IF NOT EXISTS idx_inspections_station_table_month
         ON inspections (station_id, inspection_table_id, inspection_date);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspections_station_date
+        ON inspections (station_id, inspection_date DESC);
         """
     )
     cur.execute(
@@ -4279,6 +4297,7 @@ ISSUE_EXPORT_FIELD_KEYS = {
     "external_standard",
     "description",
     "is_excellent",
+    "audit_result",
     "issue_photo",
     "rectification_result",
     "rectification_note",
@@ -4431,6 +4450,11 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                     THEN '★'
                     ELSE ''
                 END AS is_excellent,
+                CASE
+                    WHEN COALESCE(i.audit_status, 'pending') = 'approved' THEN '通过'
+                    WHEN COALESCE(i.audit_status, 'pending') = 'rejected' THEN '否决'
+                    ELSE ''
+                END AS audit_result,
                 i.rectification_result,
                 i.rectification_note,
                 i.rectification_photo_path AS rectification_photo,
@@ -4488,7 +4512,8 @@ ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS = [
 
 ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("问题描述", "description"),
-    ("优秀问题", "is_excellent"),
+    ("是否优秀", "is_excellent"),
+    ("审核结果", "audit_result"),
     ("问题照片", "issue_photo"),
     ("站经理整改结果", "rectification_result"),
     ("站点反馈整改说明", "rectification_note"),
@@ -12346,6 +12371,14 @@ def get_station_map():
                     COUNT(*) FILTER (WHERE TRIM(COALESCE(status, '')) IN ('已闭环', '已整改')) AS closed_count
                 FROM issues
                 WHERE COALESCE(audit_status, 'pending') <> 'rejected'
+                  AND TRIM(COALESCE(status, '')) IN (
+                      '待整改',
+                      '未整改',
+                      '站经无法整改',
+                      '待复核',
+                      '已闭环',
+                      '已整改'
+                  )
                 GROUP BY station_id
             ),
             inspection_latest AS (
@@ -12437,6 +12470,7 @@ def get_event_feed():
             FROM issues i
             JOIN stations s ON s.id = i.station_id
             JOIN inspection_tables t ON t.id = i.inspection_table_id
+            WHERE COALESCE(i.audit_status, 'pending') <> 'rejected'
             ORDER BY sort_time DESC
             LIMIT 5;
             """

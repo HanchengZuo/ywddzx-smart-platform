@@ -24,3 +24,6 @@ CREATE TABLE inspections (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                           -- 创建时间
     CONSTRAINT chk_inspections_sign_status CHECK (sign_status IN ('待签名确认', '已签名确认'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_inspections_station_date
+ON inspections (station_id, inspection_date DESC);
