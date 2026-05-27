@@ -96,7 +96,7 @@
                       </div>
                     </td>
                     <td><span class="number-pill">{{ person.attendance_days }}</span></td>
-                    <td>{{ person.inspection_count }}</td>
+                    <td><span class="number-pill inspection">{{ person.inspection_count || 0 }}</span></td>
                     <td><span class="number-pill issue">{{ person.issue_count || 0 }}</span></td>
                     <td><span class="number-pill approved">{{ person.approved_issue_count || 0 }}</span></td>
                     <td>
@@ -783,6 +783,10 @@ onMounted(fetchAttendance)
 
 .number-pill.issue {
   background: #1d4ed8;
+}
+
+.number-pill.inspection {
+  background: #475569;
 }
 
 .number-pill.approved {
