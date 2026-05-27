@@ -43,9 +43,11 @@ CREATE TABLE issues (
     review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改
     review_note TEXT,                                                         -- 督导组复核说明
     review_photo_path TEXT,                                                   -- 督导组复核照片路径
+
     audit_status TEXT NOT NULL DEFAULT 'pending',                             -- 审核状态：pending / approved / rejected
     audited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,               -- 审核人
     audited_at TIMESTAMP,                                                     -- 审核时间
+    
     is_excellent BOOLEAN NOT NULL DEFAULT FALSE                               -- 是否优秀问题，否决问题不能标记
 );
 
