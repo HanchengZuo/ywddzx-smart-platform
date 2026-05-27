@@ -82,6 +82,7 @@
                     <th>巡检记录</th>
                     <th>巡检问题</th>
                     <th>审核通过</th>
+                    <th>站点数量</th>
                     <th>去过站点</th>
                     <th>参与检查表</th>
                     <th>出勤日期</th>
@@ -99,6 +100,7 @@
                     <td><span class="number-pill inspection">{{ person.inspection_count || 0 }}</span></td>
                     <td><span class="number-pill issue">{{ person.issue_count || 0 }}</span></td>
                     <td><span class="number-pill approved">{{ person.approved_issue_count || 0 }}</span></td>
+                    <td><span class="number-pill station">{{ person.station_count || 0 }}</span></td>
                     <td>
                       <div class="chip-list">
                         <button v-for="station in person.stations" :key="station.id" class="info-chip station-chip"
@@ -791,6 +793,10 @@ onMounted(fetchAttendance)
 
 .number-pill.approved {
   background: #15803d;
+}
+
+.number-pill.station {
+  background: #c2410c;
 }
 
 .chip-list {
