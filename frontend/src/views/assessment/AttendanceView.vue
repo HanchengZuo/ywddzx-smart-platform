@@ -14,8 +14,13 @@
 
     <section class="filter-card">
       <div class="filter-main">
-        <input v-model="filters.month" class="month-picker" type="month" aria-label="选择统计月份"
-          @change="fetchAttendance" />
+        <DateRangePicker
+          v-model:date-from="filters.dateFrom"
+          v-model:date-to="filters.dateTo"
+          placeholder="选择统计日期范围"
+          aria-label="选择统计日期范围"
+          @change="fetchAttendance"
+        />
 
         <div class="mode-switch" aria-label="检查方式">
           <button v-for="option in modeOptions" :key="option.value" type="button"
@@ -132,7 +137,7 @@
             <div v-else class="empty-panel">
               <div class="state-orb"></div>
               <h4>本月暂无{{ mode.label }}出勤数据</h4>
-              <p>可以切换月份或检查方式查看其他统计结果。</p>
+              <p>可以切换日期范围或检查方式查看其他统计结果。</p>
             </div>
           </article>
 
@@ -192,12 +197,23 @@
 <script setup>
 import axios from 'axios'
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import DateRangePicker from '@/components/DateRangePicker.vue'
 
-const getDefaultMonth = () => {
+const formatLocalDate = (value = new Date()) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getDefaultDateRange = () => {
   const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  return `${year}-${month}`
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return {
+    dateFrom: formatLocalDate(start),
+    dateTo: formatLocalDate(end)
+  }
 }
 
 const modeOptions = [
@@ -206,8 +222,10 @@ const modeOptions = [
   { value: 'offline', label: '现场检查', desc: '只看线下检查表' }
 ]
 
+const defaultDateRange = getDefaultDateRange()
 const filters = reactive({
-  month: getDefaultMonth(),
+  dateFrom: defaultDateRange.dateFrom,
+  dateTo: defaultDateRange.dateTo,
   mode: 'all'
 })
 
@@ -220,14 +238,18 @@ const focusedAttendance = ref({
 })
 const groupCardRefs = new Map()
 const attendanceData = ref({
-  month: filters.month,
+  month: '',
   mode: filters.mode,
   modes: []
 })
 
 const selectedMonthLabel = computed(() => {
-  const [year, month] = String(filters.month || '').split('-')
-  return year && month ? `${year}年${Number(month)}月` : '当前月份'
+  if (filters.dateFrom && filters.dateTo) {
+    return filters.dateFrom === filters.dateTo
+      ? filters.dateFrom
+      : `${filters.dateFrom} 至 ${filters.dateTo}`
+  }
+  return '当前日期范围'
 })
 
 const selectedModeLabel = computed(() => {
@@ -356,7 +378,8 @@ const fetchAttendance = async () => {
   try {
     const response = await axios.get('/api/assessment/attendance', {
       params: {
-        month: filters.month,
+        date_from: filters.dateFrom,
+        date_to: filters.dateTo,
         mode: filters.mode,
         _ts: Date.now()
       }
@@ -498,16 +521,15 @@ onMounted(fetchAttendance)
   flex: 1;
 }
 
-.month-picker {
-  align-self: stretch;
-  min-width: 190px;
-  border-radius: 14px;
-  border: 1px solid #cbd5e1;
-  padding: 0 14px;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 700;
-  background: #fff;
+.filter-main :deep(.date-range-picker) {
+  flex: 0 0 320px;
+  max-width: 360px;
+}
+
+.filter-main :deep(.date-range-trigger) {
+  min-height: 64px;
+  border-radius: 16px;
+  padding: 0 16px;
 }
 
 .mode-switch {
@@ -1016,6 +1038,11 @@ onMounted(fetchAttendance)
   .mode-summary {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-main :deep(.date-range-picker) {
+    flex: 0 0 auto;
+    max-width: none;
   }
 }
 

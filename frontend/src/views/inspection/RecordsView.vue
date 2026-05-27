@@ -29,9 +29,19 @@
       </div>
 
       <div class="filter-grid">
+        <div class="filter-item filter-item-month">
+          <label>巡检月度</label>
+          <input v-model="filters.month" type="month" @change="handleRecordMonthChange" />
+        </div>
         <div class="filter-item filter-item-date">
           <label>巡检日期</label>
-          <input v-model="filters.date" type="date" />
+          <DateRangePicker
+            v-model:date-from="filters.dateFrom"
+            v-model:date-to="filters.dateTo"
+            placeholder="选择巡检日期范围"
+            aria-label="选择巡检日期范围"
+            @change="handleRecordDateRangeChange"
+          />
         </div>
         <div class="filter-item filter-item-station">
           <label>站点</label>
@@ -115,19 +125,11 @@
           </div>
         </div>
         <div class="filter-item filter-item-result">
-          <label>结果</label>
+          <label>检查结果</label>
           <select v-model="filters.result">
             <option value="">全部</option>
             <option value="正常">正常</option>
             <option value="异常">异常</option>
-          </select>
-        </div>
-        <div class="filter-item filter-item-signature">
-          <label>站经理签名状态</label>
-          <select v-model="filters.signStatus">
-            <option value="">全部</option>
-            <option value="signed">已签名</option>
-            <option value="pending">待签名</option>
           </select>
         </div>
         <div class="filter-item filter-item-completion">
@@ -136,6 +138,14 @@
             <option value="">全部</option>
             <option value="completed">已确认完成</option>
             <option value="pending">待检查人确认</option>
+          </select>
+        </div>
+        <div class="filter-item filter-item-signature">
+          <label>站经理签名状态</label>
+          <select v-model="filters.signStatus">
+            <option value="">全部</option>
+            <option value="signed">已签名</option>
+            <option value="pending">待签名</option>
           </select>
         </div>
       </div>
@@ -315,7 +325,7 @@
                 <th>巡检日期</th>
                 <th>站点</th>
                 <th>检查表</th>
-                <th>结果</th>
+                <th>检查结果</th>
                 <th>发现问题数</th>
                 <th>本表问题</th>
                 <th>本表检查人完成确认</th>
@@ -679,9 +689,28 @@ import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick 
 import axios from 'axios'
 import SignaturePad from 'signature_pad'
 import { pinyin } from 'pinyin-pro'
+import DateRangePicker from '@/components/DateRangePicker.vue'
 
+const formatLocalDate = (value = new Date()) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getDefaultDateRange = () => {
+  const now = new Date()
+  return {
+    dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    dateTo: formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  }
+}
+
+const defaultDateRange = getDefaultDateRange()
 const filters = ref({
-  date: '',
+  month: '',
+  dateFrom: defaultDateRange.dateFrom,
+  dateTo: defaultDateRange.dateTo,
   station: [],
   inspectionTableName: [],
   inspector: [],
@@ -837,6 +866,16 @@ const matchesSelectedInspector = (record, selectedValues) => {
   return selected.some((item) => matchesSmartSearch(searchValues, item))
 }
 
+const getDatePart = (value) => String(value || '').slice(0, 10)
+
+const isDateInRange = (value, dateFrom, dateTo) => {
+  const current = getDatePart(value)
+  if (!current) return !dateFrom && !dateTo
+  if (dateFrom && current < dateFrom) return false
+  if (dateTo && current > dateTo) return false
+  return true
+}
+
 const getInspectionInspectorSearchValues = (record) => {
   const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
   const inspectorValues = inspectors.flatMap((item) => [
@@ -869,7 +908,8 @@ const getInspectionInspectorOptionValues = (record) => {
 
 const filteredData = computed(() => {
   return list.value.filter((item) => {
-    const matchedDate = !filters.value.date || item.date === filters.value.date
+    const matchedMonth = !filters.value.month || String(item.date || '').startsWith(filters.value.month)
+    const matchedDate = isDateInRange(item.date, filters.value.dateFrom, filters.value.dateTo)
     const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
     const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
     const matchedInspector = matchesSelectedInspector(item, filters.value.inspector)
@@ -877,7 +917,7 @@ const filteredData = computed(() => {
     const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
     const matchedCompletionStatus = !filters.value.completionStatus || getRecordCompletionFilterStatus(item) === filters.value.completionStatus
 
-    return matchedDate && matchedStation && matchedInspectionTableName && matchedInspector && matchedResult && matchedSignStatus && matchedCompletionStatus
+    return matchedMonth && matchedDate && matchedStation && matchedInspectionTableName && matchedInspector && matchedResult && matchedSignStatus && matchedCompletionStatus
   })
 })
 
@@ -891,7 +931,9 @@ const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(ins
 
 const activeFilterCount = computed(() => {
   return [
-    filters.value.date,
+    filters.value.month,
+    filters.value.dateFrom,
+    filters.value.dateTo,
     filters.value.result,
     filters.value.signStatus,
     filters.value.completionStatus,
@@ -1786,8 +1828,11 @@ const fetchInspections = async () => {
 }
 
 const resetFilters = () => {
+  const nextDefaultRange = getDefaultDateRange()
   filters.value = {
-    date: '',
+    month: '',
+    dateFrom: nextDefaultRange.dateFrom,
+    dateTo: nextDefaultRange.dateTo,
     station: [],
     inspectionTableName: [],
     inspector: [],
@@ -1803,13 +1848,6 @@ const resetFilters = () => {
   closeAllDropdowns()
 }
 
-const formatLocalDate = (value = new Date()) => {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 const filterMyTodayRecords = () => {
   const inspector = currentInspectorFilterValue.value
   if (!inspector) {
@@ -1817,7 +1855,9 @@ const filterMyTodayRecords = () => {
     return
   }
   filters.value = {
-    date: formatLocalDate(),
+    month: '',
+    dateFrom: formatLocalDate(),
+    dateTo: formatLocalDate(),
     station: [],
     inspectionTableName: [],
     inspector: [inspector],
@@ -1833,6 +1873,17 @@ const filterMyTodayRecords = () => {
   closeAllDropdowns()
   showMobileFilters.value = false
   showActionMessage('已筛选我今天的巡检记录。', 'success')
+}
+
+const handleRecordMonthChange = () => {
+  if (!filters.value.month) return
+  filters.value.dateFrom = ''
+  filters.value.dateTo = ''
+}
+
+const handleRecordDateRangeChange = () => {
+  if (!filters.value.dateFrom && !filters.value.dateTo) return
+  filters.value.month = ''
 }
 
 const goToPage = (targetPage) => {

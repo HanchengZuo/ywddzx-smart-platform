@@ -4,7 +4,7 @@
       <div>
         <div class="page-kicker">考核系统</div>
         <h2>站点评分</h2>
-        <p>按站点和月份读取可评分检查表，自动扣分并形成可导出的评分台账。</p>
+        <p>按站点和时间范围读取可评分检查表，自动扣分并形成可导出的评分台账。</p>
       </div>
       <div class="hero-score-card">
         <span>{{ selectedMonthLabel }}</span>
@@ -14,7 +14,13 @@
     </section>
 
     <section class="score-toolbar">
-      <input v-model="filters.month" class="month-picker" type="month" aria-label="选择评分月份" @change="fetchScores" />
+      <DateRangePicker
+        v-model:date-from="filters.dateFrom"
+        v-model:date-to="filters.dateTo"
+        placeholder="选择评分日期范围"
+        aria-label="选择评分日期范围"
+        @change="fetchScores"
+      />
 
       <div ref="stationSelectRef" class="station-search-select">
         <input v-model.trim="stationSearch" type="search" placeholder="搜索并选择站点名称" aria-label="搜索并选择站点名称"
@@ -74,7 +80,7 @@
     <div v-else-if="!filters.stationId" class="state-card">
       <div class="state-orb"></div>
       <h3>先选择一个站点</h3>
-      <p>选择站点和月份后，系统会自动计算各检查表得分。</p>
+      <p>选择站点和时间范围后，系统会自动计算各检查表得分。</p>
     </div>
 
     <div v-else-if="!scoreData.tables.length" class="state-card">
@@ -207,8 +213,8 @@
 
         <div class="export-summary-grid">
           <div>
-            <span>评分月份</span>
-            <strong>{{ filters.month }}</strong>
+            <span>评分时间</span>
+            <strong>{{ selectedMonthLabel }}</strong>
           </div>
           <div>
             <span>导出范围</span>
@@ -305,17 +311,39 @@
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import DateRangePicker from '@/components/DateRangePicker.vue'
 
-const getDefaultMonth = () => {
+const formatLocalDate = (value = new Date()) => {
   const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const target = value instanceof Date ? value : now
+  return [
+    target.getFullYear(),
+    String(target.getMonth() + 1).padStart(2, '0'),
+    String(target.getDate()).padStart(2, '0')
+  ].join('-')
 }
 
+const getDefaultDateRange = () => {
+  const now = new Date()
+  return {
+    dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    dateTo: formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  }
+}
+
+const defaultDateRange = getDefaultDateRange()
 const filters = reactive({
-  month: getDefaultMonth(),
+  dateFrom: defaultDateRange.dateFrom,
+  dateTo: defaultDateRange.dateTo,
   stationId: '',
   inspectionTableId: ''
 })
+
+const getScorePeriodKey = () => (
+  filters.dateFrom && filters.dateTo
+    ? `${filters.dateFrom}_${filters.dateTo}`
+    : ''
+)
 
 const stationSearch = ref('')
 const stationDropdownVisible = ref(false)
@@ -339,7 +367,7 @@ try {
 }
 
 const emptyScoreData = () => ({
-  month: filters.month,
+  month: getScorePeriodKey(),
   station: null,
   can_adjust: false,
   summary: {
@@ -395,8 +423,12 @@ const imagePreview = reactive({
 })
 
 const selectedMonthLabel = computed(() => {
-  const [year, month] = String(filters.month || '').split('-')
-  return year && month ? `${year}年${Number(month)}月` : '当前月份'
+  if (filters.dateFrom && filters.dateTo) {
+    return filters.dateFrom === filters.dateTo
+      ? filters.dateFrom
+      : `${filters.dateFrom} 至 ${filters.dateTo}`
+  }
+  return '当前时间范围'
 })
 
 const selectedStation = computed(() => {
@@ -665,7 +697,8 @@ const fetchScores = async () => {
     const response = await axios.get('/api/assessment/station-scores', {
       params: {
         station_id: filters.stationId,
-        month: filters.month
+        date_from: filters.dateFrom,
+        date_to: filters.dateTo
       }
     })
     scoreData.value = response.data
@@ -815,7 +848,8 @@ const submitScoreExportTask = async () => {
     exportDialog.error = ''
     const payload = {
       mode: exportDialog.mode,
-      month: filters.month,
+      date_from: filters.dateFrom,
+      date_to: filters.dateTo,
       export_options: {
         include_photos: {
           issue_photo: Boolean(exportDialog.includePhotos.issue_photo)
@@ -891,7 +925,9 @@ const saveAdjustment = async () => {
       station_id: adjustDialog.stationId,
       inspection_table_id: adjustDialog.inspectionTableId,
       standard_id: adjustDialog.standardId,
-      month: filters.month,
+      score_period: scoreData.value.month || getScorePeriodKey(),
+      date_from: filters.dateFrom,
+      date_to: filters.dateTo,
       manual_score: adjustDialog.manualScore
     })
     adjustDialog.visible = false
@@ -1002,14 +1038,21 @@ onBeforeUnmount(() => {
 
 .score-toolbar {
   display: grid;
-  grid-template-columns: 160px minmax(260px, 1fr) minmax(260px, 1fr) minmax(300px, auto);
+  grid-template-columns: minmax(280px, 0.9fr) minmax(260px, 1fr) minmax(260px, 1fr) minmax(300px, auto);
   gap: 12px;
   align-items: center;
   padding: 14px;
   border-radius: 22px;
 }
 
-.month-picker,
+.score-toolbar :deep(.date-range-trigger) {
+  min-height: 44px;
+  border-radius: 14px;
+  --date-range-border: #d8dfd9;
+  --date-range-focus: #2f7d5f;
+  --date-range-focus-shadow: rgba(47, 125, 95, 0.12);
+}
+
 .station-search-select input,
 .checklist-search-select input,
 .score-input-field input {
@@ -1024,7 +1067,6 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
-.month-picker:focus,
 .station-search-select input:focus,
 .checklist-search-select input:focus,
 .score-input-field input:focus {
@@ -1748,7 +1790,7 @@ onBeforeUnmount(() => {
   }
 
   .score-toolbar {
-    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 1fr) minmax(0, 1fr);
   }
 
   .export-actions {

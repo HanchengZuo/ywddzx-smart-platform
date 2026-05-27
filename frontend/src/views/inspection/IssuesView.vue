@@ -204,11 +204,17 @@
         </div>
         <div class="filter-item">
           <label>检查月度</label>
-          <input v-model="filters.month" type="month" />
+          <input v-model="filters.month" type="month" @change="handleIssueMonthChange" />
         </div>
         <div class="filter-item">
-          <label>检查时间（按天）</label>
-          <input v-model="filters.date" type="date" />
+          <label>检查时间范围</label>
+          <DateRangePicker
+            v-model:date-from="filters.dateFrom"
+            v-model:date-to="filters.dateTo"
+            placeholder="选择检查时间范围"
+            aria-label="选择检查时间范围"
+            @change="handleIssueDateRangeChange"
+          />
         </div>
 
         <div class="filter-item">
@@ -392,19 +398,19 @@
           </div>
         </div>
         <div class="filter-item">
-          <label>审核结论</label>
-          <select v-model="filters.auditStatus">
-            <option value="">全部</option>
-            <option value="approved">审核通过</option>
-            <option value="rejected">审核否决</option>
-          </select>
-        </div>
-        <div class="filter-item">
           <label>审核状态</label>
           <select v-model="filters.auditState">
             <option value="">全部</option>
             <option value="pending">待审核</option>
             <option value="done">已审核</option>
+          </select>
+        </div>
+        <div class="filter-item">
+          <label>审核结论</label>
+          <select v-model="filters.auditStatus">
+            <option value="">全部</option>
+            <option value="approved">审核通过</option>
+            <option value="rejected">审核否决</option>
           </select>
         </div>
       </div>
@@ -1162,11 +1168,13 @@ import {
   getStandardDetailPreview,
   parseStandardDetailText
 } from '@/utils/standardDetail'
+import DateRangePicker from '@/components/DateRangePicker.vue'
 
 const filters = ref({
   issueId: '',
   month: '',
-  date: '',
+  dateFrom: '',
+  dateTo: '',
   region: [],
   station: [],
   stationManager: '',
@@ -1419,7 +1427,8 @@ const exportPhotoFieldKeys = ['issue_photo', 'rectification_photo', 'review_phot
 const exportFilterLabels = {
   issueId: '问题ID',
   month: '检查月度',
-  date: '检查时间',
+  dateFrom: '检查开始日期',
+  dateTo: '检查结束日期',
   region: '站点所属地',
   station: '站点名称',
   stationManager: '站点负责人',
@@ -1457,11 +1466,21 @@ const matchesAnySelectedText = (value, selectedValues) => {
   return selected.some((item) => normalizedValue === normalizedKeyword(item).trim())
 }
 
+const getDatePart = (value) => String(value || '').slice(0, 10)
+
+const isDateInRange = (value, dateFrom, dateTo) => {
+  const current = getDatePart(value)
+  if (!current) return !dateFrom && !dateTo
+  if (dateFrom && current < dateFrom) return false
+  if (dateTo && current > dateTo) return false
+  return true
+}
+
 const filteredData = computed(() => {
   return list.value.filter((item) => {
     const matchedIssueId = !filters.value.issueId || String(item.id || '').includes(String(filters.value.issueId || '').trim())
     const matchedMonth = !filters.value.month || item.month === filters.value.month
-    const matchedDate = !filters.value.date || String(item.time || '').startsWith(filters.value.date)
+    const matchedDate = isDateInRange(item.time, filters.value.dateFrom, filters.value.dateTo)
     const matchedRegion = matchesAnySelectedText(item.region, filters.value.region)
     const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
     const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
@@ -2036,7 +2055,8 @@ const resetFilters = () => {
   filters.value = {
     issueId: '',
     month: '',
-    date: '',
+    dateFrom: '',
+    dateTo: '',
     region: [],
     station: [],
     stationManager: '',
@@ -2076,7 +2096,8 @@ const filterMyTodayIssues = () => {
   filters.value = {
     issueId: '',
     month: '',
-    date: formatLocalDate(),
+    dateFrom: formatLocalDate(),
+    dateTo: formatLocalDate(),
     region: [],
     station: [],
     stationManager: '',
@@ -2100,6 +2121,17 @@ const filterMyTodayIssues = () => {
   closeAllDropdowns()
   showMobileFilters.value = false
   showActionMessage('已筛选我今天检查的问题。', 'success')
+}
+
+const handleIssueMonthChange = () => {
+  if (!filters.value.month) return
+  filters.value.dateFrom = ''
+  filters.value.dateTo = ''
+}
+
+const handleIssueDateRangeChange = () => {
+  if (!filters.value.dateFrom && !filters.value.dateTo) return
+  filters.value.month = ''
 }
 
 const buildCurrentExportFilterSummary = () => {

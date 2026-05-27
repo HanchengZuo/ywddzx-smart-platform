@@ -54,13 +54,14 @@
         </div>
 
         <div class="filter-grid">
-          <label>
-            <span>开始日期</span>
-            <input v-model="filters.date_from" type="date" />
-          </label>
-          <label>
-            <span>结束日期</span>
-            <input v-model="filters.date_to" type="date" />
+          <label class="date-range-filter">
+            <span>调用时间范围</span>
+            <DateRangePicker
+              v-model:date-from="filters.date_from"
+              v-model:date-to="filters.date_to"
+              placeholder="选择调用时间范围"
+              aria-label="选择调用时间范围"
+            />
           </label>
           <label>
             <span>使用位置</span>
@@ -232,6 +233,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import DateRangePicker from '@/components/DateRangePicker.vue'
 
 const loading = ref(false)
 const error = ref('')
@@ -552,6 +554,10 @@ onMounted(fetchUsage)
   font-weight: 800;
 }
 
+.filter-grid .date-range-filter {
+  grid-column: span 2;
+}
+
 .filter-grid input,
 .filter-grid select {
   width: 100%;
@@ -569,6 +575,15 @@ onMounted(fetchUsage)
 .filter-grid select:focus {
   border-color: #14b8a6;
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.14);
+}
+
+.filter-grid :deep(.date-range-trigger) {
+  min-height: 42px;
+  border-radius: 14px;
+  background: #f8fbfc;
+  --date-range-border: #d8e3ea;
+  --date-range-focus: #14b8a6;
+  --date-range-focus-shadow: rgba(20, 184, 166, 0.14);
 }
 
 .insight-grid {
@@ -824,6 +839,10 @@ td small {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .filter-grid .date-range-filter {
+    grid-column: span 2;
+  }
+
   .pricing-card {
     grid-column: 1 / -1;
   }
@@ -841,6 +860,10 @@ td small {
   .insight-grid,
   .filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .filter-grid .date-range-filter {
+    grid-column: auto;
   }
 
   .page-header,

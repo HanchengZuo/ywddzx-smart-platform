@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.5',
+    date: '2026-05-27',
+    title: '筛选时间范围优化',
+    summary: '多个业务页面支持按起止日期筛选。',
+    items: [
+      '巡检问题、巡检记录和我的待办支持日期范围筛选。',
+      '人员出勤和站点评分支持自定义统计时间段。',
+      '巡检记录和审核筛选字段名称与位置更清晰。'
+    ]
+  },
+  {
     version: 'v2.6.4',
     date: '2026-05-27',
     title: '人员出勤统计补充',

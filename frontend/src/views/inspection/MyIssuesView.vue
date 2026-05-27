@@ -43,12 +43,18 @@
       <div class="filter-grid">
         <div class="filter-item">
           <label>检查月度</label>
-          <input v-model="filters.month" type="month" />
+          <input v-model="filters.month" type="month" @change="handleMyIssueMonthChange" />
         </div>
 
         <div class="filter-item">
-          <label>检查时间（按天）</label>
-          <input v-model="filters.date" type="date" />
+          <label>检查时间范围</label>
+          <DateRangePicker
+            v-model:date-from="filters.dateFrom"
+            v-model:date-to="filters.dateTo"
+            placeholder="选择检查时间范围"
+            aria-label="选择检查时间范围"
+            @change="handleMyIssueDateRangeChange"
+          />
         </div>
 
         <div class="filter-item">
@@ -513,6 +519,22 @@ import {
   getStandardDetailPreview,
   parseStandardDetailText
 } from '@/utils/standardDetail'
+import DateRangePicker from '@/components/DateRangePicker.vue'
+
+const formatLocalDate = (value = new Date()) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getDefaultDateRange = () => {
+  const now = new Date()
+  return {
+    dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    dateTo: formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  }
+}
 
 const isInspectionSigned = (item) => {
   const status = String(
@@ -545,9 +567,11 @@ const dropdownVisible = ref({
   station: false
 })
 
+const defaultDateRange = getDefaultDateRange()
 const filters = ref({
   month: '',
-  date: '',
+  dateFrom: defaultDateRange.dateFrom,
+  dateTo: defaultDateRange.dateTo,
   region: '',
   station: ''
 })
@@ -558,7 +582,7 @@ const showMobileFilters = ref(false)
 const filteredData = computed(() => {
   return issues.value.filter((item) => {
     const matchedMonth = !filters.value.month || String(item.month || '').startsWith(filters.value.month)
-    const matchedDate = !filters.value.date || String(item.time || '').startsWith(filters.value.date)
+    const matchedDate = isDateInRange(item.time, filters.value.dateFrom, filters.value.dateTo)
     const matchedRegion = !filters.value.region || normalizedKeyword(item.region).includes(normalizedKeyword(filters.value.region))
     const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
     return matchedMonth && matchedDate && matchedRegion && matchedStation
@@ -625,14 +649,37 @@ const filterOptionByKeyword = (options, keyword) => {
   return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
 }
 
+const getDatePart = (value) => String(value || '').slice(0, 10)
+
+const isDateInRange = (value, dateFrom, dateTo) => {
+  const current = getDatePart(value)
+  if (!current) return !dateFrom && !dateTo
+  if (dateFrom && current < dateFrom) return false
+  if (dateTo && current > dateTo) return false
+  return true
+}
+
 const resetFilters = () => {
+  const nextDefaultRange = getDefaultDateRange()
   filters.value = {
     month: '',
-    date: '',
+    dateFrom: nextDefaultRange.dateFrom,
+    dateTo: nextDefaultRange.dateTo,
     region: '',
     station: ''
   }
   closeAllDropdowns()
+}
+
+const handleMyIssueMonthChange = () => {
+  if (!filters.value.month) return
+  filters.value.dateFrom = ''
+  filters.value.dateTo = ''
+}
+
+const handleMyIssueDateRangeChange = () => {
+  if (!filters.value.dateFrom && !filters.value.dateTo) return
+  filters.value.month = ''
 }
 
 const prevPage = () => {

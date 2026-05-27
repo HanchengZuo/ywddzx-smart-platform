@@ -4927,6 +4927,31 @@ def parse_attendance_month(month_value):
     return month_text, month_start, next_month
 
 
+def parse_reporting_date_range(month_value=None, date_from_value=None, date_to_value=None):
+    date_from_text = str(date_from_value or "").strip()
+    date_to_text = str(date_to_value or "").strip()
+
+    if date_from_text or date_to_text:
+        try:
+            start_date = datetime.strptime(date_from_text, "%Y-%m-%d").date()
+            end_date = datetime.strptime(date_to_text, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("日期范围格式必须为 YYYY-MM-DD。") from exc
+        if start_date > end_date:
+            raise ValueError("开始日期不能晚于结束日期。")
+        period_key = (
+            start_date.strftime("%Y-%m")
+            if start_date.day == 1
+            and (end_date + timedelta(days=1)).day == 1
+            and start_date.year == end_date.year
+            and start_date.month == end_date.month
+            else f"{start_date.isoformat()}_{end_date.isoformat()}"
+        )
+        return period_key, start_date, end_date + timedelta(days=1)
+
+    return parse_attendance_month(month_value)
+
+
 def normalize_attendance_mode(mode_value):
     mode = str(mode_value or "all").strip().lower()
     if mode not in {"all", "online", "offline"}:
@@ -6045,8 +6070,16 @@ def start_station_score_export_task(
     thread.start()
 
 
-def fetch_station_score_standard_context(cur, station_id, month, inspection_table_id, standard_id):
-    month_text, month_start, next_month = parse_attendance_month(month)
+def fetch_station_score_standard_context(
+    cur,
+    station_id,
+    month,
+    inspection_table_id,
+    standard_id,
+    date_from=None,
+    date_to=None,
+):
+    month_text, month_start, next_month = parse_reporting_date_range(month, date_from, date_to)
     station = fetch_station_for_score(cur, station_id)
     if not station:
         raise LookupError("站点不存在。")
@@ -16096,7 +16129,11 @@ def get_assessment_station_scores():
         return jsonify({"success": False, "error": "请选择需要评分的站点。"}), 400
     try:
         station_id = int(station_id)
-        month, month_start, next_month = parse_attendance_month(request.args.get("month"))
+        month, month_start, next_month = parse_reporting_date_range(
+            request.args.get("month"),
+            request.args.get("date_from"),
+            request.args.get("date_to"),
+        )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
@@ -16158,7 +16195,11 @@ def create_assessment_station_score_export_task():
     if mode not in {"single", "all"}:
         return jsonify({"success": False, "error": "导出范围参数不合法。"}), 400
     try:
-        month, month_start, next_month = parse_attendance_month(data.get("month"))
+        month, month_start, next_month = parse_reporting_date_range(
+            data.get("month"),
+            data.get("date_from"),
+            data.get("date_to"),
+        )
         station_id = int(data.get("station_id") or 0) if mode == "single" else None
         inspection_table_id = int(data.get("inspection_table_id") or 0) if mode == "single" else None
         inspection_table_ids = normalize_station_score_table_ids(data.get("inspection_table_ids")) if mode == "all" else []
@@ -16390,7 +16431,7 @@ def save_assessment_station_score_adjustment():
         station_id = int(data.get("station_id") or 0)
         inspection_table_id = int(data.get("inspection_table_id") or 0)
         standard_id = int(data.get("standard_id") or 0)
-        month = str(data.get("month") or "").strip()
+        month = str(data.get("score_period") or data.get("month") or "").strip()
         manual_score = float(data.get("manual_score"))
         note = normalize_text(data.get("note"), 300)
         if station_id <= 0 or inspection_table_id <= 0 or standard_id <= 0:
@@ -16418,6 +16459,8 @@ def save_assessment_station_score_adjustment():
             month,
             inspection_table_id,
             standard_id,
+            data.get("date_from"),
+            data.get("date_to"),
         )
         max_score = context["max_score"]
         if manual_score < 0 or manual_score > max_score + 0.001:
@@ -16492,7 +16535,11 @@ def save_assessment_station_score_adjustment():
 @app.route("/api/assessment/attendance", methods=["GET"])
 def get_assessment_attendance():
     try:
-        month, month_start, next_month = parse_attendance_month(request.args.get("month"))
+        month, month_start, next_month = parse_reporting_date_range(
+            request.args.get("month"),
+            request.args.get("date_from"),
+            request.args.get("date_to"),
+        )
         mode_filter = normalize_attendance_mode(request.args.get("mode", "all"))
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
