@@ -56,5 +56,8 @@ CREATE INDEX IF NOT EXISTS idx_system_feedback_screenshots_feedback_id
 CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_feedback_id
     ON system_feedback_comments(feedback_id);
 
+CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_created_at
+    ON system_feedback_comments(created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_system_feedback_read_states_last_read
     ON system_feedback_read_states(last_read_at DESC);

@@ -6196,6 +6196,12 @@ def ensure_feedback_schema(cur):
     )
     cur.execute(
         """
+        CREATE INDEX IF NOT EXISTS idx_system_feedback_comments_created_at
+        ON system_feedback_comments(created_at DESC);
+        """
+    )
+    cur.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_system_feedback_read_states_last_read
         ON system_feedback_read_states(last_read_at DESC);
         """
@@ -6233,11 +6239,18 @@ def get_feedback_unread_count(cur, user_id):
     last_read_at = get_or_create_feedback_last_read_at(cur, user_id)
     cur.execute(
         """
-        SELECT COUNT(*) AS unread_count
-        FROM system_feedbacks
-        WHERE created_at > %s;
+        SELECT
+            (
+                SELECT COUNT(*)
+                FROM system_feedbacks
+                WHERE created_at > %s
+            ) + (
+                SELECT COUNT(*)
+                FROM system_feedback_comments
+                WHERE created_at > %s
+            ) AS unread_count;
         """,
-        (last_read_at,),
+        (last_read_at, last_read_at),
     )
     row = cur.fetchone()
     return int(row["unread_count"] or 0)
