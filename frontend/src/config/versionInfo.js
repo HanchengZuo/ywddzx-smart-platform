@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.6.6',
+    date: '2026-05-29',
+    title: '站点数据管理优化',
+    summary: '站点清单补充登录账号信息，并优化手机端查看。',
+    items: [
+      '站点数据管理显示站点登录用户名。',
+      '站点清单在手机端改为卡片式展示。',
+      '手机端筛选、分页和操作按钮更适配小屏幕。'
+    ]
+  },
+  {
     version: 'v2.6.5',
     date: '2026-05-27',
     title: '筛选时间范围优化',

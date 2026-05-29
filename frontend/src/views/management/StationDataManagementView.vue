@@ -212,7 +212,7 @@
           <div class="filter-bar">
             <label class="filter-field keyword-field">
               <span>关键词</span>
-              <input v-model.trim="filters.keyword" type="text" placeholder="站点名称、地址、负责人、HOS编码" />
+              <input v-model.trim="filters.keyword" type="text" placeholder="站点名称、地址、负责人、HOS编码、登录用户名" />
             </label>
 
             <label class="filter-field">
@@ -249,6 +249,7 @@
               <thead>
                 <tr>
                   <th>站点名称</th>
+                  <th>站点登录用户名</th>
                   <th>所属片区/归属地</th>
                   <th>站点类型</th>
                   <th>资产类型</th>
@@ -266,15 +267,23 @@
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="14" class="empty-cell">正在加载站点数据...</td>
+                  <td colspan="15" class="empty-cell">正在加载站点数据...</td>
                 </tr>
                 <tr v-else-if="!filteredStations.length">
-                  <td colspan="14" class="empty-cell">暂无匹配的站点数据。</td>
+                  <td colspan="15" class="empty-cell">暂无匹配的站点数据。</td>
                 </tr>
                 <tr v-for="station in pagedStations" :key="station.id" :class="{ active: editingId === station.id }">
                   <td>
                     <div class="table-title">{{ station.station_name }}</div>
                     <div class="table-sub">{{ station.address || '-' }}</div>
+                  </td>
+                  <td>
+                    <div v-if="getStationUsernames(station).length" class="username-chip-list">
+                      <span v-for="username in getStationUsernames(station)" :key="`${station.id}-${username}`" class="username-chip">
+                        {{ username }}
+                      </span>
+                    </div>
+                    <span v-else class="table-sub muted">未绑定</span>
                   </td>
                   <td>{{ station.region || '-' }}</td>
                   <td>{{ station.station_type || '-' }}</td>
@@ -303,6 +312,81 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <div class="mobile-station-list">
+            <div v-if="loading" class="mobile-empty-card">正在加载站点数据...</div>
+            <div v-else-if="!filteredStations.length" class="mobile-empty-card">暂无匹配的站点数据。</div>
+            <template v-else>
+              <article v-for="station in pagedStations" :key="`mobile-${station.id}`" class="mobile-station-card"
+                :class="{ active: editingId === station.id }">
+                <div class="mobile-card-head">
+                  <div>
+                    <h4>{{ station.station_name }}</h4>
+                    <p>{{ station.region || '未设置片区' }} · {{ station.station_type || '未设置类型' }}</p>
+                  </div>
+                  <span class="status-pill" :class="{ closed: station.status === '停业' }">{{ station.status || '-' }}</span>
+                </div>
+
+                <div class="mobile-account-block">
+                  <span>站点登录用户名</span>
+                  <div v-if="getStationUsernames(station).length" class="username-chip-list">
+                    <span v-for="username in getStationUsernames(station)" :key="`mobile-user-${station.id}-${username}`" class="username-chip">
+                      {{ username }}
+                    </span>
+                  </div>
+                  <strong v-else>未绑定站点账号</strong>
+                </div>
+
+                <div class="mobile-info-grid">
+                  <div>
+                    <span>HOS编码</span>
+                    <strong>{{ station.hos_station_code || '-' }}</strong>
+                  </div>
+                  <div>
+                    <span>资产类型</span>
+                    <strong>{{ normalizeAssetType(station.asset_type) }}</strong>
+                  </div>
+                  <div>
+                    <span>是否并表</span>
+                    <strong>{{ station.is_consolidated || '否' }}</strong>
+                  </div>
+                  <div>
+                    <span>上线3.0</span>
+                    <strong>{{ station.online_3_status || '未上线' }}</strong>
+                  </div>
+                  <div>
+                    <span>营运时间</span>
+                    <strong>{{ station.operating_hours || '-' }}</strong>
+                  </div>
+                  <div>
+                    <span>固定电话</span>
+                    <strong>{{ station.landline_phone || '-' }}</strong>
+                  </div>
+                </div>
+
+                <div class="mobile-contact-row">
+                  <span>负责人</span>
+                  <strong>{{ station.station_manager_name || '-' }}</strong>
+                  <em>{{ station.station_manager_phone || '-' }}</em>
+                </div>
+
+                <p class="mobile-address">{{ station.address || '未填写站点地址' }}</p>
+
+                <div class="mobile-meta-row">
+                  <span>创建 {{ station.created_at || '-' }}</span>
+                  <span>更新 {{ station.updated_at || '-' }}</span>
+                </div>
+
+                <div class="mobile-card-actions">
+                  <button class="btn btn-secondary btn-sm" type="button" @click="startEdit(station)">编辑</button>
+                  <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === station.id"
+                    @click="deleteStation(station)">
+                    {{ deletingId === station.id ? '删除中' : '删除' }}
+                  </button>
+                </div>
+              </article>
+            </template>
           </div>
 
           <div v-if="filteredStations.length" class="pagination-bar">
@@ -404,6 +488,13 @@ const normalizeAssetType = (assetType) => {
   return assetType || '-'
 }
 
+const getStationUsernames = (station) => {
+  return String(station?.station_usernames || '')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 const regionOptions = computed(() => {
   return Array.from(new Set(stations.value.map((station) => station.region).filter(Boolean))).sort((a, b) =>
     String(a).localeCompare(String(b), 'zh-Hans-CN')
@@ -420,7 +511,8 @@ const filteredStations = computed(() => {
       station.station_manager_name,
       station.station_manager_phone,
       station.hos_station_code,
-      station.landline_phone
+      station.landline_phone,
+      station.station_usernames
     ].join(' ').toLowerCase()
     const matchesKeyword = !keyword || text.includes(keyword)
     const matchesRegion = !filters.region || station.region === filters.region
@@ -912,7 +1004,7 @@ onBeforeUnmount(() => {
 }
 
 .station-table {
-  min-width: 1680px;
+  min-width: 1780px;
   width: 100%;
   border-collapse: collapse;
 }
@@ -948,6 +1040,189 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   white-space: normal;
+}
+
+.table-sub.muted {
+  display: inline-flex;
+  margin-top: 0;
+  color: #94a3b8;
+  font-weight: 800;
+}
+
+.username-chip-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.username-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.mobile-station-list {
+  display: none;
+}
+
+.mobile-empty-card,
+.mobile-station-card {
+  border: 1px solid #dbe4ee;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
+}
+
+.mobile-empty-card {
+  padding: 22px 16px;
+  text-align: center;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.mobile-station-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.mobile-station-card.active {
+  border-color: #93c5fd;
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 72%);
+}
+
+.mobile-card-head,
+.mobile-contact-row,
+.mobile-meta-row,
+.mobile-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mobile-card-head {
+  justify-content: space-between;
+}
+
+.mobile-card-head h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 17px;
+  font-weight: 950;
+}
+
+.mobile-card-head p,
+.mobile-address,
+.mobile-meta-row {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.status-pill.closed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.mobile-account-block {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.mobile-account-block > span,
+.mobile-info-grid span,
+.mobile-contact-row span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mobile-account-block > strong {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mobile-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mobile-info-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.mobile-info-grid strong,
+.mobile-contact-row strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.mobile-contact-row {
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+
+.mobile-contact-row em {
+  color: #9a3412;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.mobile-address {
+  padding: 0 2px;
+}
+
+.mobile-meta-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+
+.mobile-card-actions {
+  justify-content: flex-end;
+  padding-top: 2px;
 }
 
 .empty-cell {
@@ -1278,6 +1553,115 @@ label.btn {
 
   .form-section-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .page-shell {
+    gap: 14px;
+  }
+
+  .page-header {
+    flex-direction: column;
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .page-header h2 {
+    font-size: 28px;
+  }
+
+  .header-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .header-actions .btn,
+  .header-actions .file-action {
+    width: 100%;
+  }
+
+  .table-card,
+  .form-card {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .section-head,
+  .form-section-title,
+  .pagination-bar,
+  .pagination-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-bar,
+  .form-section-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-bar {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .form-section {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .form-field.span-2 {
+    grid-column: auto;
+  }
+
+  .operating-control {
+    grid-template-columns: 1fr;
+  }
+
+  .time-separator {
+    text-align: center;
+  }
+
+  .table-wrap {
+    display: none;
+  }
+
+  .mobile-station-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pagination-actions {
+    gap: 8px;
+  }
+
+  .page-size-field {
+    justify-content: space-between;
+  }
+
+  .pagination-actions .btn,
+  .pagination-actions .page-size-field,
+  .pagination-actions .page-indicator {
+    width: 100%;
+  }
+
+  .form-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .header-actions,
+  .mobile-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-card-head {
+    align-items: flex-start;
   }
 }
 </style>

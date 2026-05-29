@@ -10770,29 +10770,39 @@ def get_management_stations():
         cur.execute(
             """
             SELECT
-                id,
-                station_name,
-                region,
-                address,
-                longitude,
-                latitude,
-                station_manager_name,
-                station_manager_phone,
-                station_type,
+                s.id,
+                s.station_name,
+                s.region,
+                s.address,
+                s.longitude,
+                s.latitude,
+                s.station_manager_name,
+                s.station_manager_phone,
+                s.station_type,
                 CASE
-                    WHEN asset_type LIKE '%股权%' OR asset_type LIKE '%控股%' OR asset_type LIKE '%参股%' THEN '股权'
+                    WHEN s.asset_type LIKE '%股权%' OR s.asset_type LIKE '%控股%' OR s.asset_type LIKE '%参股%' THEN '股权'
                     ELSE '全资'
                 END AS asset_type,
-                COALESCE(is_consolidated, '否') AS is_consolidated,
-                COALESCE(online_3_status, '未上线') AS online_3_status,
-                hos_station_code,
-                landline_phone,
-                status,
-                operating_hours,
-                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-                TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-            FROM stations
-            ORDER BY id ASC;
+                COALESCE(s.is_consolidated, '否') AS is_consolidated,
+                COALESCE(s.online_3_status, '未上线') AS online_3_status,
+                s.hos_station_code,
+                s.landline_phone,
+                s.status,
+                s.operating_hours,
+                COALESCE(station_accounts.station_usernames, '') AS station_usernames,
+                TO_CHAR(s.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(s.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+            FROM stations s
+            LEFT JOIN (
+                SELECT
+                    station_id,
+                    STRING_AGG(username, ' ' ORDER BY username) AS station_usernames
+                FROM users
+                WHERE role = 'station_manager'
+                  AND station_id IS NOT NULL
+                GROUP BY station_id
+            ) station_accounts ON station_accounts.station_id = s.id
+            ORDER BY s.id ASC;
             """
         )
         rows = cur.fetchall()
