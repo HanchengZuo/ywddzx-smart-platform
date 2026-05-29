@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.7',
+    date: '2026-05-29',
+    title: '质安部权限和检查表范围优化',
+    summary: '新增质安部角色，并把检查表范围按页面独立配置。',
+    items: [
+      '新增质安部账号角色和默认可见页面。',
+      '巡检问题、巡检记录、巡检计划可分别限定检查表范围。',
+      '质安部默认只查看指定检查表的数据。'
+    ]
+  },
+  {
     version: 'v2.6.6',
     date: '2026-05-29',
     title: '站点数据管理优化',
