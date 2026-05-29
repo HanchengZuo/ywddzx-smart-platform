@@ -181,6 +181,56 @@
                     </span>
                   </label>
                 </div>
+
+                <div v-if="inspectionScopeConfigForCategory(group.category)" class="inspection-scope-panel"
+                  :class="{ disabled: isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) }">
+                  <div class="inspection-scope-head">
+                    <div>
+                      <strong>{{ inspectionScopeConfigForCategory(group.category).title }}</strong>
+                      <p>{{ inspectionScopeConfigForCategory(group.category).description }}</p>
+                    </div>
+                    <span>{{ selectedInspectionScopeSummary(inspectionScopeConfigForCategory(group.category).permissionKey) }}</span>
+                  </div>
+
+                  <div class="inspection-scope-actions">
+                    <button class="btn btn-secondary btn-sm" type="button"
+                      :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                      @click="applyQualitySafetyDefaultScope(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                      质安部默认
+                    </button>
+                    <button class="btn btn-secondary btn-sm" type="button"
+                      :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                      @click="selectAllInspectionTables(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                      全选
+                    </button>
+                    <button class="btn btn-secondary btn-sm" type="button"
+                      :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                      @click="clearInspectionTableScope(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                      清空
+                    </button>
+                  </div>
+
+                  <div class="inspection-scope-grid">
+                    <label v-for="table in inspectionTables" :key="`${group.category}-${table.id}`"
+                      class="inspection-scope-item"
+                      :class="{
+                        checked: isInspectionTableSelected(inspectionScopeConfigForCategory(group.category).permissionKey, table.id),
+                        disabled: isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)
+                      }">
+                      <input type="checkbox"
+                        :checked="isInspectionTableSelected(inspectionScopeConfigForCategory(group.category).permissionKey, table.id)"
+                        :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                        @change="toggleInspectionTableScope(inspectionScopeConfigForCategory(group.category).permissionKey, table.id, $event.target.checked)" />
+                      <span>
+                        <strong>{{ table.table_name }}</strong>
+                        <small>
+                          {{ table.checklist_mode_label || '检查表' }}
+                          <em v-if="table.is_quality_safety_default">质安部默认</em>
+                        </small>
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -340,6 +390,8 @@ const hasPermission = currentRole === 'root'
 
 const users = ref([])
 const stations = ref([])
+const inspectionTables = ref([])
+const qualitySafetyDefaultInspectionTableIds = ref([])
 const stationRegionFilter = ref('')
 const stationKeyword = ref('')
 const roles = ref([])
@@ -374,7 +426,7 @@ const exclusivePermissionGroups = [
 
 const dependentPermissionMap = {
   edit_own_certificates: 'view_own_certificates',
-  adjust_station_scores: 'view_assessment'
+  adjust_station_scores: 'view_station_scores'
 }
 
 const anyDependentPermissionMap = {
@@ -387,9 +439,49 @@ const anyDependentPermissionMap = {
   reset_inspection_signature: ['view_all_inspection_records']
 }
 
+const inspectionTableScopePermissionKeys = [
+  'limit_issue_inspection_table_scope',
+  'limit_record_inspection_table_scope',
+  'limit_plan_inspection_table_scope'
+]
+
+const inspectionScopeConfigs = {
+  '巡检问题列表': {
+    permissionKey: 'limit_issue_inspection_table_scope',
+    title: '巡检问题检查表范围',
+    description: '启用后，只限制巡检问题列表能看到哪些检查表的问题。'
+  },
+  '巡检记录': {
+    permissionKey: 'limit_record_inspection_table_scope',
+    title: '巡检记录检查表范围',
+    description: '启用后，只限制巡检记录能看到哪些检查表的记录。'
+  },
+  '巡检计划': {
+    permissionKey: 'limit_plan_inspection_table_scope',
+    title: '巡检计划检查表范围',
+    description: '启用后，只限制巡检计划能看到哪些检查表的计划。'
+  }
+}
+
+function createEmptyInspectionScopeMap() {
+  return Object.fromEntries(inspectionTableScopePermissionKeys.map((key) => [key, []]))
+}
+
+const normalizeInspectionScopeMap = (value) => {
+  const emptyMap = createEmptyInspectionScopeMap()
+  if (Array.isArray(value)) {
+    return Object.fromEntries(inspectionTableScopePermissionKeys.map((key) => [key, [...value]]))
+  }
+  if (!value || typeof value !== 'object') return emptyMap
+  return Object.fromEntries(inspectionTableScopePermissionKeys.map((key) => [
+    key,
+    Array.isArray(value[key]) ? [...value[key]] : []
+  ]))
+}
+
 const scopedPermissionLayouts = {
   '巡检问题列表': {
-    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues'],
+    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],
     actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector', 'export_issue_photos'],
     readonlyItems: [
       {
@@ -400,8 +492,12 @@ const scopedPermissionLayouts = {
     ]
   },
   '巡检记录': {
-    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records'],
+    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records', 'limit_record_inspection_table_scope'],
     actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
+  },
+  '巡检计划': {
+    scopeKeys: ['view_inspection_plans', 'limit_plan_inspection_table_scope'],
+    actionKeys: ['manage_inspection_plans']
   },
   '站点证照有效期管理': {
     scopeKeys: ['view_own_certificates', 'view_all_certificates'],
@@ -417,6 +513,7 @@ const createEmptyForm = () => ({
   real_name: '',
   phone: '',
   station_id: '',
+  inspection_table_scope_ids: createEmptyInspectionScopeMap(),
   permissions: {}
 })
 
@@ -524,6 +621,18 @@ const editableRoles = computed(() => {
 })
 
 const isEditingRoot = computed(() => Boolean(form.id && form.role === 'root'))
+const inspectionScopeConfigForCategory = (category) => inspectionScopeConfigs[category] || null
+const isInspectionScopeDisabled = (permissionKey) => (
+  form.role === 'root' || !form.permissions?.[permissionKey]
+)
+const selectedInspectionScopeSummary = (permissionKey) => {
+  if (form.role === 'root') return 'root 不受限制'
+  if (!form.permissions?.[permissionKey]) return '未启用'
+  const count = Array.isArray(form.inspection_table_scope_ids?.[permissionKey])
+    ? form.inspection_table_scope_ids[permissionKey].length
+    : 0
+  return count ? `已选择 ${count} 张` : '未选择检查表'
+}
 
 const roleLabel = (role) => {
   return roles.value.find((item) => item.value === role)?.label || role || '-'
@@ -622,10 +731,20 @@ const handlePermissionChange = (permissionKey) => {
     }
   })
   form.permissions = enforceExclusivePermissions(form.permissions, form.role)
+
+  if (
+    inspectionTableScopePermissionKeys.includes(permissionKey) &&
+    form.permissions[permissionKey] &&
+    form.role === 'quality_safety' &&
+    !form.inspection_table_scope_ids[permissionKey]?.length
+  ) {
+    form.inspection_table_scope_ids[permissionKey] = [...qualitySafetyDefaultInspectionTableIds.value]
+  }
 }
 
 const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
+  form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
   if (form.role !== 'station_manager') {
     form.station_id = ''
     stationRegionFilter.value = ''
@@ -633,9 +752,59 @@ const applyRoleDefaults = () => {
   }
 }
 
+const createRoleInspectionScopeMap = (role) => {
+  if (role !== 'quality_safety') return createEmptyInspectionScopeMap()
+  return Object.fromEntries(
+    inspectionTableScopePermissionKeys.map((key) => [key, [...qualitySafetyDefaultInspectionTableIds.value]])
+  )
+}
+
+const ensureInspectionScopeList = (permissionKey) => {
+  if (!form.inspection_table_scope_ids || typeof form.inspection_table_scope_ids !== 'object') {
+    form.inspection_table_scope_ids = createEmptyInspectionScopeMap()
+  }
+  if (!Array.isArray(form.inspection_table_scope_ids[permissionKey])) {
+    form.inspection_table_scope_ids[permissionKey] = []
+  }
+  return form.inspection_table_scope_ids[permissionKey]
+}
+
+const isInspectionTableSelected = (permissionKey, tableId) => {
+  return ensureInspectionScopeList(permissionKey).some((id) => String(id) === String(tableId))
+}
+
+const toggleInspectionTableScope = (permissionKey, tableId, checked) => {
+  if (isInspectionScopeDisabled(permissionKey)) return
+  const current = ensureInspectionScopeList(permissionKey)
+  const normalizedTableId = Number(tableId)
+  if (checked) {
+    if (!current.some((id) => String(id) === String(normalizedTableId))) {
+      form.inspection_table_scope_ids[permissionKey] = [...current, normalizedTableId]
+    }
+    return
+  }
+  form.inspection_table_scope_ids[permissionKey] = current.filter((id) => String(id) !== String(normalizedTableId))
+}
+
+const applyQualitySafetyDefaultScope = (permissionKey) => {
+  if (isInspectionScopeDisabled(permissionKey)) return
+  form.inspection_table_scope_ids[permissionKey] = [...qualitySafetyDefaultInspectionTableIds.value]
+}
+
+const selectAllInspectionTables = (permissionKey) => {
+  if (isInspectionScopeDisabled(permissionKey)) return
+  form.inspection_table_scope_ids[permissionKey] = inspectionTables.value.map((table) => table.id)
+}
+
+const clearInspectionTableScope = (permissionKey) => {
+  if (isInspectionScopeDisabled(permissionKey)) return
+  form.inspection_table_scope_ids[permissionKey] = []
+}
+
 const resetForm = (options = {}) => {
   Object.assign(form, createEmptyForm())
   form.permissions = buildDefaultPermissions(form.role)
+  form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
   stationRegionFilter.value = ''
   stationKeyword.value = ''
   formError.value = ''
@@ -657,6 +826,7 @@ const resetCreateTextFields = (options = {}) => {
     rememberedRole
   )
   const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
+  const rememberedScopeIds = normalizeInspectionScopeMap(form.inspection_table_scope_ids)
 
   Object.assign(form, {
     id: null,
@@ -666,6 +836,7 @@ const resetCreateTextFields = (options = {}) => {
     real_name: '',
     phone: '',
     station_id: rememberedStationId,
+    inspection_table_scope_ids: rememberedScopeIds,
     permissions: rememberedPermissions
   })
   stationKeyword.value = ''
@@ -690,6 +861,7 @@ const startEdit = (user) => {
     real_name: user.real_name || '',
     phone: user.phone || '',
     station_id: user.station_id || '',
+    inspection_table_scope_ids: normalizeInspectionScopeMap(user.inspection_table_scope_ids),
     permissions: enforceExclusivePermissions(user.permissions || {}, user.role || 'supervisor')
   })
   const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
@@ -725,10 +897,15 @@ const fetchUsers = async () => {
     })
     users.value = response.data?.users || []
     stations.value = response.data?.stations || []
+    inspectionTables.value = response.data?.inspection_tables || []
+    qualitySafetyDefaultInspectionTableIds.value = response.data?.quality_safety_default_inspection_table_ids || []
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
     if (!form.id && !Object.keys(form.permissions || {}).length) {
       form.permissions = buildDefaultPermissions(form.role)
+      if (form.role === 'quality_safety') {
+        form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
+      }
     }
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   } catch (error) {
@@ -816,6 +993,15 @@ const validateForm = () => {
   if (!form.role) return '请选择角色。'
   if (!form.real_name) return '请填写用户姓名。'
   if (form.role === 'station_manager' && !form.station_id) return '站点账号必须选择所属站点。'
+  if (
+    form.role !== 'root' &&
+    inspectionTables.value.length > 0 &&
+    inspectionTableScopePermissionKeys.some((key) => (
+      form.permissions?.[key] && !ensureInspectionScopeList(key).length
+    ))
+  ) {
+    return '已启用检查表范围限制，请至少为对应页面选择一张检查表。'
+  }
   return ''
 }
 
@@ -837,6 +1023,7 @@ const saveUser = async () => {
       real_name: form.real_name,
       phone: form.phone,
       station_id: form.station_id,
+      inspection_table_scope_ids: form.inspection_table_scope_ids,
       permissions: form.permissions
     }
     payload.permissions = enforceExclusivePermissions(payload.permissions, form.role)
@@ -1304,6 +1491,131 @@ onBeforeUnmount(() => {
   opacity: 0.62;
 }
 
+.inspection-scope-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 95% 12%, rgba(37, 99, 235, 0.12), transparent 28%),
+    linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.inspection-scope-panel.disabled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.inspection-scope-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.inspection-scope-head strong {
+  display: block;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.inspection-scope-head p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.inspection-scope-head > span {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.inspection-scope-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.inspection-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inspection-scope-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.inspection-scope-item:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.1);
+  transform: translateY(-1px);
+}
+
+.inspection-scope-item.checked {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.inspection-scope-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+  box-shadow: none;
+}
+
+.inspection-scope-item input {
+  margin-top: 4px;
+}
+
+.inspection-scope-item strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.inspection-scope-item small {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.inspection-scope-item em {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -1586,7 +1898,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1280px) {
-  .permission-groups {
+  .permission-groups,
+  .inspection-scope-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1603,9 +1916,14 @@ onBeforeUnmount(() => {
 @media (max-width: 980px) {
   .basic-form,
   .permission-groups,
+  .inspection-scope-grid,
   .station-picker-grid,
   .filter-bar {
     grid-template-columns: 1fr;
+  }
+
+  .inspection-scope-head {
+    flex-direction: column;
   }
 
   .station-picker-head {

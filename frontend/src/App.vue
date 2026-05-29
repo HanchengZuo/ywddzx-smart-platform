@@ -94,19 +94,17 @@
 
     <header class="mobile-topbar">
       <button class="mobile-menu-btn" type="button" @click="toggleMobileMenu">☰</button>
-      <div class="mobile-topbar-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') :
-        '业务督导中心' }}</div>
+      <div class="mobile-topbar-title">{{ sidebarTitle }}</div>
       <button class="btn btn-secondary btn-sm mobile-logout-btn" type="button" @click="handleLogout">退出</button>
     </header>
 
     <aside class="sidebar" :class="{ collapsed: sidebarCollapsed, 'mobile-open': mobileMenuOpen }">
       <div class="sidebar-top">
         <div class="sidebar-brand" v-if="!sidebarCollapsed">
-          <div class="logo-mark">{{ currentRole === 'station_manager' ? '站' : '督' }}</div>
+          <div class="logo-mark">{{ sidebarLogoText }}</div>
           <div class="logo-texts">
-            <div class="logo-title">{{ currentRole === 'station_manager' ? (authState.stationName || '站点账号') : '业务督导中心'
-              }}</div>
-            <div class="logo-subtitle">{{ currentRole === 'station_manager' ? '站点账号' : '数智管理平台' }}</div>
+            <div class="logo-title">{{ sidebarTitle }}</div>
+            <div class="logo-subtitle">{{ currentRoleLabel }}</div>
           </div>
         </div>
 
@@ -150,7 +148,7 @@
           <span v-if="!sidebarCollapsed">检查表原件库</span>
         </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
+        <button v-if="canViewMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/my-issues')"
           :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">
           <span class="nav-item-icon feedback-nav-icon">
@@ -192,20 +190,20 @@
         </button>
       </div>
 
-      <div v-if="canViewAssessment" class="menu-section">
+      <div v-if="canViewAssessmentSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">考核系统</div>
-        <button class="nav-item" :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }" type="button"
+        <button v-if="canViewAssessmentHome" class="nav-item" :class="{ active: isActive('/assessment'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/assessment')" :title="sidebarCollapsed ? '考核系统' : ''">
           <span class="nav-item-icon">考</span>
           <span v-if="!sidebarCollapsed">考核系统</span>
         </button>
-        <button class="nav-item"
+        <button v-if="canViewAttendance" class="nav-item"
           :class="{ active: isActive('/assessment/attendance'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/assessment/attendance')" :title="sidebarCollapsed ? '人员出勤' : ''">
           <span class="nav-item-icon">勤</span>
           <span v-if="!sidebarCollapsed">人员出勤</span>
         </button>
-        <button class="nav-item"
+        <button v-if="canViewStationScores" class="nav-item"
           :class="{ active: isActive('/assessment/station-score'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/assessment/station-score')" :title="sidebarCollapsed ? '站点评分' : ''">
           <span class="nav-item-icon">分</span>
@@ -229,7 +227,7 @@
         </button>
       </div>
 
-      <div v-if="currentRole !== 'station_manager'" class="menu-section">
+      <div v-if="canViewVehicle" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">车辆系统</div>
         <button class="nav-item" :class="{ active: isActive('/vehicle'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/vehicle')" :title="sidebarCollapsed ? '车辆管理系统' : ''">
@@ -523,6 +521,7 @@ const passwordRuleStatus = computed(() => {
 const isRoot = computed(() => authState.role === 'root')
 const isSupervisor = computed(() => authState.role === 'supervisor')
 const isStationManager = computed(() => authState.role === 'station_manager')
+const isQualitySafety = computed(() => authState.role === 'quality_safety')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
 const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections'))
@@ -546,10 +545,19 @@ const canViewCertificates = computed(() => (
   Boolean(localPermissions.value.view_own_certificates) ||
   Boolean(localPermissions.value.edit_own_certificates)
 ))
-const canViewAssessment = computed(() => hasPermissionKey('view_assessment'))
+const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment'))
+const canViewAttendance = computed(() => hasPermissionKey('view_attendance'))
+const canViewStationScores = computed(() => hasPermissionKey('view_station_scores'))
+const canViewAssessmentSection = computed(() => (
+  canViewAssessmentHome.value ||
+  canViewAttendance.value ||
+  canViewStationScores.value
+))
 const canViewTrainingInternal = computed(() => hasPermissionKey('view_training'))
 const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials'))
 const canViewTrainingSection = computed(() => canViewTrainingInternal.value || canViewTrainingMaterials.value)
+const canViewMyIssues = computed(() => isSupervisor.value || isStationManager.value)
+const canViewVehicle = computed(() => isRoot.value || isSupervisor.value)
 const canManageUsers = computed(() => isRoot.value)
 const canManageStations = computed(() => hasPermissionKey('manage_stations'))
 const canManageChecklists = computed(() => hasPermissionKey('manage_checklists'))
@@ -568,7 +576,19 @@ const canViewManagementSection = computed(() => (
 ))
 const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
-  return authState.role === 'supervisor' ? '督导组账号' : '站点账号'
+  if (authState.role === 'supervisor') return '督导组账号'
+  if (authState.role === 'quality_safety') return '质安部账号'
+  return '站点账号'
+})
+const sidebarTitle = computed(() => {
+  if (isStationManager.value) return authState.stationName || '站点账号'
+  if (isQualitySafety.value) return '质安部工作台'
+  return '业务督导中心'
+})
+const sidebarLogoText = computed(() => {
+  if (isStationManager.value) return '站'
+  if (isQualitySafety.value) return '质'
+  return '督'
 })
 const sessionRemainingLabel = computed(() => {
   const totalSeconds = Math.max(0, Number(sessionNotice.secondsRemaining) || 0)
@@ -918,6 +938,8 @@ const resolveHomePath = (user) => {
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     return '/inspection/certificates'
   }
+  if (permissions.view_attendance) return '/assessment/attendance'
+  if (permissions.view_station_scores) return '/assessment/station-score'
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
   if (permissions.view_training_materials) return '/training/materials'

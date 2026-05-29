@@ -148,7 +148,9 @@ const canAccessPath = (path, role, permissions) => {
     )
   }
   if (path === '/inspection/my-issues') return ['supervisor', 'station_manager'].includes(role)
-  if (path === '/assessment' || path === '/assessment/attendance' || path === '/assessment/station-score') return hasPermission(role, permissions, 'view_assessment')
+  if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
+  if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
+  if (path === '/assessment/station-score') return hasPermission(role, permissions, 'view_station_scores')
   if (path === '/training') return hasPermission(role, permissions, 'view_training')
   if (path === '/training/materials') return hasPermission(role, permissions, 'view_training_materials')
   if (path === '/vehicle') return role === 'supervisor'
@@ -168,6 +170,8 @@ const resolveFallbackPath = (role, permissions) => {
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     return '/inspection/certificates'
   }
+  if (permissions.view_attendance) return '/assessment/attendance'
+  if (permissions.view_station_scores) return '/assessment/station-score'
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
   if (permissions.view_training_materials) return '/training/materials'

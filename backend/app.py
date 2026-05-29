@@ -92,217 +92,275 @@ def acquire_schema_migration_lock(cur):
     cur.execute("SELECT pg_advisory_xact_lock(%s);", (SCHEMA_MIGRATION_LOCK_KEY,))
 
 # === Permission constants ===
-ROLE_OPTIONS = {"root", "supervisor", "station_manager"}
+ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety"}
+ROLE_LABELS = {
+    "root": "系统管理员",
+    "supervisor": "督导组账号",
+    "station_manager": "站点账号",
+    "quality_safety": "质安部账号",
+}
+QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
+    ("计量稽查检查表", "online"),
+    ("计量稽查检查表", "offline"),
+    ("加油站环境无异味管理检查表", "offline"),
+    ("加油站质量安全环保检查表", "online"),
+    ("加油站质量安全环保检查表", "offline"),
+]
+INSPECTION_TABLE_SCOPE_PERMISSION_KEYS = (
+    "limit_issue_inspection_table_scope",
+    "limit_record_inspection_table_scope",
+    "limit_plan_inspection_table_scope",
+)
+INSPECTION_TABLE_SCOPE_CONTEXT_MAP = {
+    "issues": "limit_issue_inspection_table_scope",
+    "records": "limit_record_inspection_table_scope",
+    "plans": "limit_plan_inspection_table_scope",
+}
 PERMISSION_CATALOG = [
     {
         "key": "view_station_map",
         "name": "查看页面",
         "category": "站点地图",
         "description": "访问地图中心的站点地图页面。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "submit_inspections",
         "name": "录入巡检问题",
         "category": "巡检登记",
         "description": "访问巡检登记页面，并提交巡检记录和问题。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_inspection_standards",
         "name": "查看页面",
         "category": "巡检规范库",
         "description": "访问业务督导中心自建的内部巡检规范库。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": True},
+        "defaults": {"root": True, "supervisor": True, "station_manager": True, "quality_safety": True},
     },
     {
         "key": "view_checklist_originals",
         "name": "查看页面",
         "category": "检查表原件库",
         "description": "查看各检查表原始 PDF 文件。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": True},
+        "defaults": {"root": True, "supervisor": True, "station_manager": True, "quality_safety": True},
     },
     {
         "key": "manage_checklist_originals",
         "name": "上传/更新 PDF",
         "category": "检查表原件库",
         "description": "上传检查表原始 PDF，或替换为新版 PDF。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "limit_issue_inspection_table_scope",
+        "name": "限定检查表范围",
+        "category": "巡检问题列表",
+        "description": "启用后，巡检问题列表只显示选定检查表的问题数据。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "view_own_inspection_issues",
         "name": "查看本站数据",
         "category": "巡检问题列表",
         "description": "只查看当前账号所属站点的巡检问题数据。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
     },
     {
         "key": "view_all_inspection_issues",
         "name": "查看全部站点数据",
         "category": "巡检问题列表",
         "description": "查看所有站点的巡检问题数据。与“查看本站数据”二选一。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "edit_inspection_issues",
         "name": "编辑所选范围内问题",
         "category": "巡检问题列表",
         "description": "在已选择的本站/全部站点范围内，编辑巡检问题；已闭环问题仍只有 root 可改。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "delete_inspection_issues",
         "name": "删除所选范围内问题",
         "category": "巡检问题列表",
         "description": "在已选择的本站/全部站点范围内删除巡检问题，并自动回算关联记录与计划状态。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "audit_inspection_issues",
         "name": "审核巡检问题",
         "category": "巡检问题列表",
         "description": "对巡检问题判定审核通过或否决；否决后不参与巡检记录统计和问题流转。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "change_issue_inspector",
         "name": "调整问题检查人归属",
         "category": "巡检问题列表",
         "description": "把单条巡检问题改挂到其他具备巡检登记能力的检查人名下。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "export_issue_photos",
         "name": "导出巡检照片",
         "category": "巡检问题列表",
         "description": "导出巡检问题 Excel 时，可选择把问题照片、整改照片、复核照片嵌入表格。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_own_inspection_records",
         "name": "查看本站数据",
         "category": "巡检记录",
         "description": "只查看当前账号所属站点的巡检记录数据。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
     },
     {
         "key": "view_all_inspection_records",
         "name": "查看全部站点数据",
         "category": "巡检记录",
         "description": "查看所有站点的巡检记录数据。与“查看本站数据”二选一。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "limit_record_inspection_table_scope",
+        "name": "限定检查表范围",
+        "category": "巡检记录",
+        "description": "启用后，巡检记录只显示选定检查表的记录数据。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "delete_inspection_records",
         "name": "删除巡检记录",
         "category": "巡检记录",
         "description": "在已选择的站点范围内删除巡检记录，并同步删除本记录下的问题。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "reset_inspection_signature",
         "name": "重置站经理签名",
         "category": "巡检记录",
         "description": "重置已完成的站经理签名，并将本记录下的问题退回待审核。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_inspection_plans",
         "name": "查看页面",
         "category": "巡检计划",
         "description": "访问巡检计划页面和计划完成情况。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "limit_plan_inspection_table_scope",
+        "name": "限定检查表范围",
+        "category": "巡检计划",
+        "description": "启用后，巡检计划只显示选定检查表的计划数据。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "manage_inspection_plans",
         "name": "管理巡检计划",
         "category": "巡检计划",
         "description": "新建、编辑、删除检查表巡检计划。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_own_certificates",
         "name": "查看本站数据",
         "category": "站点证照有效期管理",
         "description": "查看当前账号所属站点的证照有效期和到期提醒。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
     },
     {
         "key": "edit_own_certificates",
         "name": "编辑本站证照",
         "category": "站点证照有效期管理",
         "description": "仅在选择“查看本站数据”时可用，用于录入、修改、删除当前账号所属站点证照。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True},
+        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
     },
     {
         "key": "view_all_certificates",
         "name": "查看全部站点数据",
         "category": "站点证照有效期管理",
         "description": "查看所有站点的证照有效期和到期提醒。与“查看本站数据”二选一。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "view_assessment",
         "name": "查看页面",
         "category": "考核系统",
         "description": "访问考核系统页面。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "view_attendance",
+        "name": "查看人员出勤",
+        "category": "人员出勤",
+        "description": "访问考核系统里的人员出勤统计页面。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "view_station_scores",
+        "name": "查看站点评分",
+        "category": "站点评分",
+        "description": "访问考核系统里的站点评分页面。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "adjust_station_scores",
         "name": "手动调整站点评分",
         "category": "站点评分",
         "description": "在站点评分页面对系统自动评分进行人工调整。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_training",
         "name": "查看页面",
         "category": "督导组内部培训系统",
         "description": "访问督导组内部培训系统页面。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_training_materials",
         "name": "查看页面",
         "category": "培训材料库",
         "description": "访问培训材料库并查看材料目录与预览。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "upload_training_materials",
         "name": "上传/更新自己的材料",
         "category": "培训材料库",
         "description": "上传培训材料，并编辑或删除自己上传的材料。",
-        "defaults": {"root": True, "supervisor": True, "station_manager": False},
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "manage_stations",
         "name": "管理站点数据",
         "category": "站点数据管理",
         "description": "访问站点数据管理页面，并新增、编辑、删除、导入导出站点主数据。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "manage_checklists",
         "name": "管理检查表数据",
         "category": "检查表数据管理",
         "description": "访问检查表数据管理页面，并维护外部检查表、字段结构和外部规范数据。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "manage_internal_standards",
         "name": "管理内部巡检规范",
         "category": "巡检规范库数据管理",
         "description": "访问巡检规范库数据管理页面，并维护内部规范字段配置和外部规范挂载关系。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "manage_ai_usage",
         "name": "查看 AI 调用统计",
         "category": "AI调用统计",
         "description": "查看系统内 DeepSeek AI 调用次数、使用位置、字符量、估算 token 和费用。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False},
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
 ]
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
@@ -313,7 +371,7 @@ PERMISSION_EXCLUSIVE_GROUPS = [
 ]
 PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
-    "adjust_station_scores": "view_assessment",
+    "adjust_station_scores": "view_station_scores",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -3578,6 +3636,96 @@ def ensure_user_security_schema(cur):
         );
         """
     )
+    cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
+    if cur.fetchone()["table_ref"]:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_inspection_table_scopes (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scope_key TEXT NOT NULL,
+                inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id) ON DELETE CASCADE,
+                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, scope_key, inspection_table_id)
+            );
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE user_inspection_table_scopes
+            ADD COLUMN IF NOT EXISTS scope_key TEXT;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE user_inspection_table_scopes
+            DROP CONSTRAINT IF EXISTS user_inspection_table_scopes_pkey;
+            """
+        )
+        cur.execute(
+            """
+            UPDATE user_inspection_table_scopes
+            SET scope_key = 'limit_issue_inspection_table_scope'
+            WHERE NULLIF(TRIM(COALESCE(scope_key, '')), '') IS NULL;
+            """
+        )
+        for scope_key in (
+            "limit_record_inspection_table_scope",
+            "limit_plan_inspection_table_scope",
+        ):
+            cur.execute(
+                """
+                INSERT INTO user_inspection_table_scopes (
+                    user_id,
+                    scope_key,
+                    inspection_table_id,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    source.user_id,
+                    %s,
+                    source.inspection_table_id,
+                    source.updated_by,
+                    source.created_at,
+                    source.updated_at
+                FROM user_inspection_table_scopes source
+                WHERE source.scope_key = 'limit_issue_inspection_table_scope'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM user_inspection_table_scopes target
+                      WHERE target.user_id = source.user_id
+                        AND target.scope_key = %s
+                        AND target.inspection_table_id = source.inspection_table_id
+                  );
+                """,
+                (scope_key, scope_key),
+            )
+        cur.execute(
+            """
+            DELETE FROM user_inspection_table_scopes a
+            USING user_inspection_table_scopes b
+            WHERE a.ctid < b.ctid
+              AND a.user_id = b.user_id
+              AND a.scope_key = b.scope_key
+              AND a.inspection_table_id = b.inspection_table_id;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE user_inspection_table_scopes
+            ALTER COLUMN scope_key SET NOT NULL;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE user_inspection_table_scopes
+            ADD CONSTRAINT user_inspection_table_scopes_pkey
+            PRIMARY KEY (user_id, scope_key, inspection_table_id);
+            """
+        )
 
 
 def ensure_ai_usage_schema(cur):
@@ -3860,6 +4008,10 @@ def is_station_manager(user):
     return bool(user and user.get("role") == "station_manager")
 
 
+def is_quality_safety_user(user):
+    return bool(user and user.get("role") == "quality_safety")
+
+
 def role_default_permission(role, permission_key):
     for item in PERMISSION_CATALOG:
         if item["key"] == permission_key:
@@ -3900,7 +4052,131 @@ def get_permission_overrides(cur, user_id):
         """,
         (user_id,),
     )
-    return {row["permission_key"]: bool(row["is_allowed"]) for row in cur.fetchall()}
+    overrides = {row["permission_key"]: bool(row["is_allowed"]) for row in cur.fetchall()}
+    legacy_scope_value = overrides.pop("limit_inspection_table_scope", None)
+    if legacy_scope_value is not None:
+        for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
+            overrides.setdefault(scope_key, bool(legacy_scope_value))
+    return overrides
+
+
+def normalize_checklist_scope_name(value):
+    return (
+        str(value or "")
+        .replace("（视频）", "")
+        .replace("(视频)", "")
+        .replace("（现场）", "")
+        .replace("(现场)", "")
+        .strip()
+    )
+
+
+def get_quality_safety_default_inspection_table_ids(cur):
+    cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return []
+    cur.execute(
+        """
+        SELECT id, table_name, checklist_mode
+        FROM inspection_tables
+        WHERE is_active = TRUE;
+        """
+    )
+    target_pairs = {
+        (normalize_checklist_scope_name(table_name), checklist_mode)
+        for table_name, checklist_mode in QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE
+    }
+    result = []
+    for row in cur.fetchall():
+        row_pair = (
+            normalize_checklist_scope_name(row["table_name"]),
+            normalize_checklist_mode(row.get("checklist_mode")),
+        )
+        if row_pair in target_pairs:
+            result.append(row["id"])
+    return result
+
+
+def normalize_inspection_table_scope_key(scope_key):
+    value = str(scope_key or "").strip()
+    if value not in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
+        raise ValueError("检查表范围类型不正确。")
+    return value
+
+
+def get_user_inspection_table_scope_overrides(cur, user_id, scope_key=None):
+    ensure_user_security_schema(cur)
+    cur.execute("SELECT to_regclass('user_inspection_table_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return {} if scope_key is None else []
+
+    if scope_key is None:
+        cur.execute(
+            """
+            SELECT scope_key, inspection_table_id
+            FROM user_inspection_table_scopes
+            WHERE user_id = %s
+            ORDER BY scope_key ASC, inspection_table_id ASC;
+            """,
+            (user_id,),
+        )
+        result = {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+        for row in cur.fetchall():
+            key = row["scope_key"]
+            if key in result:
+                result[key].append(row["inspection_table_id"])
+        return result
+
+    normalized_scope_key = normalize_inspection_table_scope_key(scope_key)
+    cur.execute(
+        """
+        SELECT inspection_table_id
+        FROM user_inspection_table_scopes
+        WHERE user_id = %s
+          AND scope_key = %s
+        ORDER BY inspection_table_id ASC;
+        """,
+        (user_id, normalized_scope_key),
+    )
+    return [row["inspection_table_id"] for row in cur.fetchall()]
+
+
+def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=None):
+    if not user or is_root_user(user):
+        return None
+
+    normalized_scope_key = normalize_inspection_table_scope_key(scope_key)
+    effective_permissions = permissions or get_effective_permissions(cur, user)
+    if not effective_permissions.get(normalized_scope_key):
+        return None
+
+    scope_ids = get_user_inspection_table_scope_overrides(cur, user["id"], normalized_scope_key)
+    if scope_ids:
+        return set(scope_ids)
+    if is_quality_safety_user(user):
+        return set(get_quality_safety_default_inspection_table_ids(cur))
+    return set()
+
+
+def append_inspection_table_scope_filter(cur, user, where_clauses, params, column_sql, scope_key, permissions=None):
+    scope_ids = get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions)
+    if scope_ids is None:
+        return True
+    if not scope_ids:
+        return False
+    where_clauses.append(f"{column_sql} = ANY(%s)")
+    params.append(list(scope_ids))
+    return True
+
+
+def is_inspection_table_allowed_for_user(cur, user, inspection_table_id, scope_key, permissions=None):
+    scope_ids = get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions)
+    if scope_ids is None:
+        return True
+    try:
+        return int(inspection_table_id) in scope_ids
+    except (TypeError, ValueError):
+        return False
 
 
 def get_effective_permissions(cur, user):
@@ -4422,6 +4698,16 @@ def fetch_issue_export_rows(cur, user, issue_ids):
     else:
         where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
         params.append(user["id"])
+
+    if not append_inspection_table_scope_filter(
+        cur,
+        user,
+        where_parts,
+        params,
+        "i.inspection_table_id",
+        "limit_issue_inspection_table_scope",
+    ):
+        return []
 
     cur.execute(
         sql.SQL(
@@ -6144,6 +6430,14 @@ def can_view_assessment(cur, user):
     return has_permission(cur, user, "view_assessment")
 
 
+def can_view_attendance(cur, user):
+    return has_permission(cur, user, "view_attendance")
+
+
+def can_view_station_scores(cur, user):
+    return has_permission(cur, user, "view_station_scores")
+
+
 def can_adjust_station_scores(cur, user):
     return has_permission(cur, user, "adjust_station_scores")
 
@@ -6686,7 +6980,7 @@ def normalize_user_backup_id(value):
 def normalize_user_role(value):
     role = normalize_text(value)
     if role not in ROLE_OPTIONS:
-        raise ValueError("用户角色只能选择：root、supervisor、station_manager。")
+        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety。")
     return role
 
 
@@ -6742,9 +7036,50 @@ def normalize_permission_updates(raw_permissions):
     return updates
 
 
+def normalize_single_inspection_table_scope_ids(raw_scope_ids):
+    if raw_scope_ids in (None, ""):
+        return []
+    if not isinstance(raw_scope_ids, list):
+        raise ValueError("检查表范围配置格式不正确。")
+
+    scope_ids = []
+    seen = set()
+    for raw_id in raw_scope_ids:
+        try:
+            table_id = int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("检查表范围中存在无效检查表。") from exc
+        if table_id <= 0 or table_id in seen:
+            continue
+        seen.add(table_id)
+        scope_ids.append(table_id)
+    return scope_ids
+
+
+def normalize_inspection_table_scope_updates(raw_scope_ids):
+    if raw_scope_ids in (None, ""):
+        return {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+
+    if isinstance(raw_scope_ids, list):
+        # 兼容旧备份：原来一套范围同时作用于问题、记录和计划。
+        legacy_ids = normalize_single_inspection_table_scope_ids(raw_scope_ids)
+        return {key: list(legacy_ids) for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+
+    if not isinstance(raw_scope_ids, dict):
+        raise ValueError("检查表范围配置格式不正确。")
+
+    scope_map = {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+    for key, value in raw_scope_ids.items():
+        if key not in scope_map:
+            continue
+        scope_map[key] = normalize_single_inspection_table_scope_ids(value)
+    return scope_map
+
+
 def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
     if is_root_user(target_user):
         cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user["id"],))
+        cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
         return
 
     permissions = enforce_exclusive_permissions(permissions, target_user.get("role"))
@@ -6768,6 +7103,59 @@ def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
             """,
             (target_user["id"], permission_key, is_allowed, actor_user_id),
         )
+
+
+def apply_user_inspection_table_scope_updates(cur, target_user, scope_map, actor_user_id):
+    if is_root_user(target_user):
+        cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
+        return
+
+    normalized_scope_map = normalize_inspection_table_scope_updates(scope_map)
+    all_scope_ids = sorted(
+        {
+            table_id
+            for scope_ids in normalized_scope_map.values()
+            for table_id in scope_ids
+        }
+    )
+    cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
+    if not all_scope_ids:
+        return
+
+    cur.execute(
+        """
+        SELECT id
+        FROM inspection_tables
+        WHERE id = ANY(%s)
+          AND is_active = TRUE;
+        """,
+        (all_scope_ids,),
+    )
+    valid_ids = {row["id"] for row in cur.fetchall()}
+    invalid_ids = [table_id for table_id in all_scope_ids if table_id not in valid_ids]
+    if invalid_ids:
+        raise ValueError("检查表范围中包含不存在或未启用的检查表。")
+
+    for scope_key, scope_ids in normalized_scope_map.items():
+        for table_id in scope_ids:
+            cur.execute(
+                """
+                INSERT INTO user_inspection_table_scopes (
+                    user_id,
+                    scope_key,
+                    inspection_table_id,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, scope_key, inspection_table_id)
+                DO UPDATE SET
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (target_user["id"], scope_key, table_id, actor_user_id),
+            )
 
 
 def can_manage_checklist_originals(cur, user):
@@ -7187,6 +7575,16 @@ def get_inspection_plan_configs():
             where_clauses.append("pc.period_key = %s")
             params.append(period_key)
 
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "pc.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": True, "items": []})
+
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
@@ -7318,6 +7716,13 @@ def get_inspection_plan_config_detail(plan_config_id):
 
         if not config_row:
             return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            config_row["inspection_table_id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
         cur.execute(
             """
@@ -7432,6 +7837,13 @@ def save_inspection_plan_config_stations(plan_config_id):
 
         if not config_row:
             return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            config_row["inspection_table_id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权维护该检查表的巡检计划。"}), 403
 
         station_ids = []
         normalized_items = []
@@ -9261,6 +9673,7 @@ def get_management_users():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         conn.commit()
         require_management_user(cur, user_id, "manage_users")
@@ -9284,7 +9697,8 @@ def get_management_users():
                 CASE u.role
                     WHEN 'root' THEN 1
                     WHEN 'supervisor' THEN 2
-                    ELSE 3
+                    WHEN 'quality_safety' THEN 3
+                    ELSE 4
                 END,
                 u.id ASC;
             """
@@ -9309,6 +9723,14 @@ def get_management_users():
                     "updated_at": row["updated_at"],
                     "permission_overrides": overrides,
                     "permissions": permissions,
+                    "inspection_table_scope_ids": {
+                        scope_key: list(
+                            get_effective_inspection_table_scope_ids(cur, row, scope_key, permissions) or []
+                        )
+                        if permissions.get(scope_key)
+                        else []
+                        for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS
+                    },
                 }
             )
 
@@ -9321,16 +9743,37 @@ def get_management_users():
         )
         stations = cur.fetchall()
 
+        cur.execute(
+            """
+            SELECT id, table_name, checklist_mode
+            FROM inspection_tables
+            WHERE is_active = TRUE
+            ORDER BY id ASC;
+            """
+        )
+        inspection_table_rows = cur.fetchall()
+        quality_default_table_ids = set(get_quality_safety_default_inspection_table_ids(cur))
+        inspection_tables = [
+            {
+                **dict(row),
+                "checklist_mode_label": "视频检查"
+                if normalize_checklist_mode(row.get("checklist_mode")) == "online"
+                else "现场检查",
+                "is_quality_safety_default": row["id"] in quality_default_table_ids,
+            }
+            for row in inspection_table_rows
+        ]
+
         return jsonify(
             {
                 "success": True,
                 "users": users,
                 "stations": stations,
-                "roles": [
-                    {"value": "root", "label": "系统管理员"},
-                    {"value": "supervisor", "label": "督导组账号"},
-                    {"value": "station_manager", "label": "站点账号"},
+                "inspection_tables": inspection_tables,
+                "quality_safety_default_inspection_table_ids": [
+                    row["id"] for row in inspection_tables if row["is_quality_safety_default"]
                 ],
+                "roles": [{"value": key, "label": label} for key, label in ROLE_LABELS.items()],
                 "permissions": PERMISSION_CATALOG,
             }
         )
@@ -9353,6 +9796,7 @@ def export_management_users():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         conn.commit()
         require_management_user(cur, user_id, "manage_users")
@@ -9377,7 +9821,8 @@ def export_management_users():
                 CASE u.role
                     WHEN 'root' THEN 1
                     WHEN 'supervisor' THEN 2
-                    ELSE 3
+                    WHEN 'quality_safety' THEN 3
+                    ELSE 4
                 END,
                 u.id ASC;
             """
@@ -9401,6 +9846,7 @@ def export_management_users():
                     "must_change_password": row["password"] == DEFAULT_INITIAL_PASSWORD,
                     "permission_overrides": get_permission_overrides(cur, row["id"]),
                     "permissions": get_effective_permissions(cur, row),
+                    "inspection_table_scope_ids": get_user_inspection_table_scope_overrides(cur, row["id"]),
                 }
             )
 
@@ -9457,6 +9903,9 @@ def import_management_users():
                 raw_permissions = raw_user.get("permission_overrides")
             user_data["user_id"] = normalize_user_backup_id(raw_user.get("id"))
             user_data["permissions"] = normalize_permission_updates(raw_permissions)
+            user_data["inspection_table_scope_ids"] = normalize_inspection_table_scope_updates(
+                raw_user.get("inspection_table_scope_ids")
+            )
             user_data["created_at"] = normalize_text(raw_user.get("created_at")) or None
             user_data["updated_at"] = normalize_text(raw_user.get("updated_at")) or None
             user_payloads.append(user_data)
@@ -9466,6 +9915,7 @@ def import_management_users():
 
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
 
@@ -9508,6 +9958,7 @@ def import_management_users():
                 )
                 target_user_id = cur.fetchone()["id"]
                 cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
+                cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user_id,))
                 imported_count += 1
                 restored_root_count += 1
                 continue
@@ -9639,6 +10090,12 @@ def import_management_users():
             }
             cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
             apply_user_permission_updates(cur, target_user, user_data["permissions"], actor["id"])
+            apply_user_inspection_table_scope_updates(
+                cur,
+                target_user,
+                user_data["inspection_table_scope_ids"],
+                actor["id"],
+            )
             imported_count += 1
 
         cur.execute(
@@ -9697,8 +10154,10 @@ def create_management_user():
         if user_data["role"] == "root":
             return jsonify({"success": False, "error": "系统管理员账号为内置账号，不能通过页面新增。"}), 400
         permissions = normalize_permission_updates(data.get("permissions"))
+        scope_ids = normalize_inspection_table_scope_updates(data.get("inspection_table_scope_ids"))
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
 
@@ -9728,6 +10187,7 @@ def create_management_user():
         )
         created_user = cur.fetchone()
         apply_user_permission_updates(cur, created_user, permissions, actor["id"])
+        apply_user_inspection_table_scope_updates(cur, created_user, scope_ids, actor["id"])
         conn.commit()
         return jsonify({"success": True, "message": "用户已新增。", "id": created_user["id"]})
     except PermissionError as exc:
@@ -9762,8 +10222,10 @@ def update_management_user(target_user_id):
     try:
         user_data = build_management_user_payload(data, is_create=False)
         permissions = normalize_permission_updates(data.get("permissions"))
+        scope_ids = normalize_inspection_table_scope_updates(data.get("inspection_table_scope_ids"))
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
 
@@ -9834,6 +10296,7 @@ def update_management_user(target_user_id):
             )
         updated_user = cur.fetchone()
         apply_user_permission_updates(cur, updated_user, permissions, actor["id"])
+        apply_user_inspection_table_scope_updates(cur, updated_user, scope_ids, actor["id"])
         conn.commit()
         return jsonify({"success": True, "message": "用户已更新。"})
     except PermissionError as exc:
@@ -13071,6 +13534,8 @@ def upload_inspection_table_original_pdf(inspection_table_id):
 # 新增 inspection-tables API
 @app.route("/api/inspection-tables")
 def get_inspection_tables():
+    user_id = str(request.args.get("user_id", "")).strip()
+    scope_context = str(request.args.get("scope", "")).strip()
     conn = None
     cur = None
     try:
@@ -13078,8 +13543,28 @@ def get_inspection_tables():
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         conn.commit()
+
+        where_clauses = ["is_active = TRUE"]
+        params = []
+        if user_id:
+            user = get_user_by_id(cur, user_id)
+            if not user:
+                return jsonify({"success": False, "error": "用户不存在。"}), 404
+            scope_permission_key = INSPECTION_TABLE_SCOPE_CONTEXT_MAP.get(scope_context)
+            if scope_permission_key:
+                if not append_inspection_table_scope_filter(
+                    cur,
+                    user,
+                    where_clauses,
+                    params,
+                    "id",
+                    scope_permission_key,
+                ):
+                    return jsonify([])
+
         cur.execute(
-            """
+            sql.SQL(
+                """
             SELECT
                 id,
                 table_code,
@@ -13089,9 +13574,11 @@ def get_inspection_tables():
                 description,
                 is_active
             FROM inspection_tables
-            WHERE is_active = TRUE
+            WHERE {where_clause}
             ORDER BY id;
             """
+            ).format(where_clause=sql.SQL(" AND ").join(sql.SQL(part) for part in where_clauses)),
+            params,
         )
         rows = cur.fetchall()
         return jsonify(rows)
@@ -13337,6 +13824,13 @@ def get_inspection_plan_overview():
                 jsonify({"success": False, "error": "未找到对应的巡检计划配置。"}),
                 404,
             )
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            config_row["inspection_table_id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
         cur.execute(
             """
@@ -14681,7 +15175,7 @@ def get_issues():
         conn.commit()
 
         user = None
-        where_clause = ""
+        where_clauses = []
         params = []
 
         if user_id:
@@ -14705,14 +15199,26 @@ def get_issues():
             pass
         elif can_view_own:
             if not user["station_id"]:
-                where_clause = "WHERE COALESCE(i.inspector_id, ins.inspector_id) = %s"
+                where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
                 params.append(user["id"])
             else:
-                where_clause = "WHERE i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s"
+                where_clauses.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
                 params.extend([user["station_id"], user["id"]])
         else:
-            where_clause = "WHERE COALESCE(i.inspector_id, ins.inspector_id) = %s"
+            where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
             params.append(user["id"])
+
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "i.inspection_table_id",
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify([])
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         can_explicit_edit = can_edit_inspection_issues(cur, user)
         can_explicit_delete = can_delete_inspection_issues(cur, user)
@@ -14828,6 +15334,7 @@ def audit_issue(issue_id):
                 i.id,
                 i.station_id,
                 i.inspection_id,
+                i.inspection_table_id,
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
                 ins.sign_status AS inspection_sign_status,
@@ -14856,6 +15363,13 @@ def audit_issue(issue_id):
             and issue["station_id"] == user["station_id"]
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            issue["inspection_table_id"],
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
 
         if audit_status == "pending":
             cur.execute(
@@ -14928,6 +15442,7 @@ def update_issue_excellent(issue_id):
             SELECT
                 i.id,
                 i.station_id,
+                i.inspection_table_id,
                 COALESCE(i.audit_status, 'pending') AS audit_status
             FROM issues i
             WHERE i.id = %s
@@ -14950,6 +15465,13 @@ def update_issue_excellent(issue_id):
             and issue["station_id"] == user["station_id"]
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            issue["inspection_table_id"],
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
 
         cur.execute(
             """
@@ -15000,6 +15522,9 @@ def create_issue_export_task():
             raise ValueError("请至少选择一个导出字段。")
         if issue_export_includes_photos(export_options) and not can_export_issue_photos(cur, user):
             raise PermissionError("当前账号无权导出巡检照片，请联系 root 授权。")
+        visible_issue_rows = fetch_issue_export_rows(cur, user, issue_ids)
+        if len({row["id"] for row in visible_issue_rows}) != len(set(issue_ids)):
+            raise PermissionError("导出数据中包含当前账号无权查看的问题，请刷新列表后重新选择。")
 
         task_id = uuid.uuid4().hex
         now = beijing_now()
@@ -15281,6 +15806,13 @@ def update_issue(issue_id):
             and issue["station_id"] == user["station_id"]
         ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            issue["inspection_table_id"],
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
 
         target_inspector_id = int(issue["inspector_id"])
         inspector_changed = False
@@ -15344,6 +15876,13 @@ def update_issue(issue_id):
                 "external",
                 standard_id=standard_id or issue.get("standard_id"),
             )
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            target_standard["inspection_table_id"],
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权把问题调整到该检查表。"}), 403
 
         target_inspection_id = get_or_create_issue_edit_inspection(
             cur,
@@ -15450,6 +15989,7 @@ def delete_issue(issue_id):
                 i.id,
                 i.inspection_id,
                 i.station_id,
+                i.inspection_table_id,
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
                 i.rectification_result,
@@ -15498,6 +16038,13 @@ def delete_issue(issue_id):
             and issue["station_id"] == user["station_id"]
         ) and not issue_created_by_user(user, issue):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检问题。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            issue["inspection_table_id"],
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
 
         cur.execute("DELETE FROM issues WHERE id = %s;", (issue_id,))
         sync_inspection_primary_inspector(cur, issue["inspection_id"])
@@ -15568,6 +16115,13 @@ def create_inspection_plan_config():
 
         if not inspection_table["is_active"]:
             return jsonify({"success": False, "error": "检查表未启用。"}), 400
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            inspection_table_id,
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权维护该检查表的巡检计划。"}), 403
 
         cur.execute(
             """
@@ -15689,6 +16243,13 @@ def update_inspection_plan_config(plan_config_id):
 
         if not current_row:
             return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            current_row["inspection_table_id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权维护该检查表的巡检计划。"}), 403
 
         new_coverage_type = coverage_type or current_row["coverage_type"]
         new_period_key = period_key or current_row["period_key"]
@@ -15803,7 +16364,7 @@ def delete_inspection_plan_config(plan_config_id):
 
         cur.execute(
             """
-            SELECT id
+            SELECT id, inspection_table_id
             FROM inspection_plan_configs
             WHERE id = %s
             LIMIT 1;
@@ -15814,6 +16375,13 @@ def delete_inspection_plan_config(plan_config_id):
 
         if not current_row:
             return jsonify({"success": False, "error": "巡检计划配置不存在。"}), 404
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            current_row["inspection_table_id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权维护该检查表的巡检计划。"}), 403
 
         cur.execute(
             "DELETE FROM inspection_plan_configs WHERE id = %s;",
@@ -16160,7 +16728,7 @@ def get_assessment_station_scores():
         user = get_user_by_id(cur, g.current_user["id"])
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_view_assessment(cur, user):
+        if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
 
         payload = build_station_score_payload(cur, station_id, month, month_start, next_month, user)
@@ -16184,7 +16752,7 @@ def get_assessment_station_score_scorable_checklists():
         user = get_user_by_id(cur, g.current_user["id"])
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_view_assessment(cur, user):
+        if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
         checklists = []
         for checklist in fetch_scorable_checklist_rows(cur):
@@ -16458,7 +17026,7 @@ def save_assessment_station_score_adjustment():
         user = get_user_by_id(cur, g.current_user["id"])
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_view_assessment(cur, user):
+        if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
         if not can_adjust_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权手动调整站点评分。"}), 403
@@ -16562,7 +17130,7 @@ def get_assessment_attendance():
         user = get_user_by_id(cur, g.current_user["id"])
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_view_assessment(cur, user):
+        if not can_view_attendance(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看人员出勤统计。"}), 403
 
         base_mode_clause = ""
@@ -16705,7 +17273,7 @@ def get_inspections():
         conn.commit()
 
         user = None
-        where_clause = ""
+        where_clauses = []
         params = []
 
         if user_id:
@@ -16733,10 +17301,22 @@ def get_inspections():
         elif can_view_own:
             if not user["station_id"]:
                 return jsonify([])
-            where_clause = "WHERE ins.station_id = %s"
+            where_clauses.append("ins.station_id = %s")
             params.append(user["station_id"])
         else:
             return jsonify({"success": False, "error": "当前账号无权查看巡检记录。"}), 403
+
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "ins.inspection_table_id",
+            "limit_record_inspection_table_scope",
+        ):
+            return jsonify([])
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         cur.execute(
             sql.SQL(
@@ -16939,6 +17519,13 @@ def delete_inspection_record(inspection_id):
             and inspection["station_id"] == user["station_id"]
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该巡检记录。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            inspection["inspection_table_id"],
+            "limit_record_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的巡检记录。"}), 403
 
         if inspection.get("station_manager_signature_path"):
             files_to_remove.add(inspection["station_manager_signature_path"])
@@ -17068,6 +17655,7 @@ def get_inspection_issues(inspection_id):
             SELECT
                 ins.id,
                 ins.station_id,
+                ins.inspection_table_id,
                 ins.batch_id,
                 TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS inspection_date,
                 TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
@@ -17156,6 +17744,13 @@ def get_inspection_issues(inspection_id):
             return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
         if not can_view_all and not can_view_own and not is_inspector:
             return jsonify({"success": False, "error": "无权查看该检查表内容。"}), 403
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            inspection["inspection_table_id"],
+            "limit_record_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权查看该检查表内容。"}), 403
 
         cur.execute(
             """

@@ -2234,7 +2234,10 @@ const normalizeTaskBoardRowsToRealtimePeriod = () => {
 
 const fetchInspectionTablesCatalog = async () => {
     try {
-        const payload = await requestJson('/api/inspection-tables')
+        const query = currentUserId
+            ? `?user_id=${encodeURIComponent(currentUserId)}&scope=plans`
+            : ''
+        const payload = await requestJson(`/api/inspection-tables${query}`)
         const items = normalizeResponseList(payload)
         inspectionTablesCatalog.value = items
             .map((item) => ({
