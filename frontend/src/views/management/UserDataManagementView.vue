@@ -194,9 +194,9 @@
 
                   <div class="inspection-scope-actions">
                     <button class="btn btn-secondary btn-sm" type="button"
-                      :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
-                      @click="applyQualitySafetyDefaultScope(inspectionScopeConfigForCategory(group.category).permissionKey)">
-                      质安部默认
+                      :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) || !hasRoleDefaultInspectionScope(form.role)"
+                      @click="applyRoleDefaultScope(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                      {{ roleDefaultScopeActionLabel }}
                     </button>
                     <button class="btn btn-secondary btn-sm" type="button"
                       :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
@@ -225,7 +225,9 @@
                         <strong>{{ table.table_name }}</strong>
                         <small>
                           {{ table.checklist_mode_label || '检查表' }}
-                          <em v-if="table.is_quality_safety_default">质安部默认</em>
+                          <em v-for="label in table.default_scope_role_labels || []" :key="label">
+                            {{ defaultScopeBadgeLabel(label) }}
+                          </em>
                         </small>
                       </span>
                     </label>
@@ -391,7 +393,7 @@ const hasPermission = currentRole === 'root'
 const users = ref([])
 const stations = ref([])
 const inspectionTables = ref([])
-const qualitySafetyDefaultInspectionTableIds = ref([])
+const roleDefaultInspectionTableScopeIds = ref({})
 const stationRegionFilter = ref('')
 const stationKeyword = ref('')
 const roles = ref([])
@@ -622,6 +624,17 @@ const editableRoles = computed(() => {
 
 const isEditingRoot = computed(() => Boolean(form.id && form.role === 'root'))
 const inspectionScopeConfigForCategory = (category) => inspectionScopeConfigs[category] || null
+const getRoleDefaultInspectionTableIds = (role = form.role) => {
+  const ids = roleDefaultInspectionTableScopeIds.value?.[role]
+  return Array.isArray(ids) ? ids : []
+}
+const hasRoleDefaultInspectionScope = (role = form.role) => getRoleDefaultInspectionTableIds(role).length > 0
+const roleDefaultScopeActionLabel = computed(() => {
+  const label = roleLabel(form.role)
+  if (!label || label === form.role) return '部门默认'
+  return `${label.replace(/账号$/, '')}默认`
+})
+const defaultScopeBadgeLabel = (label) => `${String(label || '').replace(/账号$/, '')}默认`
 const isInspectionScopeDisabled = (permissionKey) => (
   form.role === 'root' || !form.permissions?.[permissionKey]
 )
@@ -735,10 +748,10 @@ const handlePermissionChange = (permissionKey) => {
   if (
     inspectionTableScopePermissionKeys.includes(permissionKey) &&
     form.permissions[permissionKey] &&
-    form.role === 'quality_safety' &&
+    hasRoleDefaultInspectionScope(form.role) &&
     !form.inspection_table_scope_ids[permissionKey]?.length
   ) {
-    form.inspection_table_scope_ids[permissionKey] = [...qualitySafetyDefaultInspectionTableIds.value]
+    form.inspection_table_scope_ids[permissionKey] = [...getRoleDefaultInspectionTableIds(form.role)]
   }
 }
 
@@ -753,9 +766,10 @@ const applyRoleDefaults = () => {
 }
 
 const createRoleInspectionScopeMap = (role) => {
-  if (role !== 'quality_safety') return createEmptyInspectionScopeMap()
+  const defaultIds = getRoleDefaultInspectionTableIds(role)
+  if (!defaultIds.length) return createEmptyInspectionScopeMap()
   return Object.fromEntries(
-    inspectionTableScopePermissionKeys.map((key) => [key, [...qualitySafetyDefaultInspectionTableIds.value]])
+    inspectionTableScopePermissionKeys.map((key) => [key, [...defaultIds]])
   )
 }
 
@@ -786,9 +800,9 @@ const toggleInspectionTableScope = (permissionKey, tableId, checked) => {
   form.inspection_table_scope_ids[permissionKey] = current.filter((id) => String(id) !== String(normalizedTableId))
 }
 
-const applyQualitySafetyDefaultScope = (permissionKey) => {
+const applyRoleDefaultScope = (permissionKey) => {
   if (isInspectionScopeDisabled(permissionKey)) return
-  form.inspection_table_scope_ids[permissionKey] = [...qualitySafetyDefaultInspectionTableIds.value]
+  form.inspection_table_scope_ids[permissionKey] = [...getRoleDefaultInspectionTableIds(form.role)]
 }
 
 const selectAllInspectionTables = (permissionKey) => {
@@ -898,12 +912,15 @@ const fetchUsers = async () => {
     users.value = response.data?.users || []
     stations.value = response.data?.stations || []
     inspectionTables.value = response.data?.inspection_tables || []
-    qualitySafetyDefaultInspectionTableIds.value = response.data?.quality_safety_default_inspection_table_ids || []
+    roleDefaultInspectionTableScopeIds.value = response.data?.role_default_inspection_table_scope_ids || {
+      quality_safety: response.data?.quality_safety_default_inspection_table_ids || [],
+      development_plan: response.data?.development_plan_default_inspection_table_ids || []
+    }
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
     if (!form.id && !Object.keys(form.permissions || {}).length) {
       form.permissions = buildDefaultPermissions(form.role)
-      if (form.role === 'quality_safety') {
+      if (hasRoleDefaultInspectionScope(form.role)) {
         form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
       }
     }

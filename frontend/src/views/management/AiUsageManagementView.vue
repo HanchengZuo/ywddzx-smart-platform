@@ -372,6 +372,7 @@ const roleLabel = (role) => {
   if (role === 'supervisor') return '督导组'
   if (role === 'station_manager') return '站点账号'
   if (role === 'quality_safety') return '质安部'
+  if (role === 'development_plan') return '发展计划部'
   return role || '-'
 }
 

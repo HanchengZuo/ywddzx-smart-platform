@@ -92,12 +92,13 @@ def acquire_schema_migration_lock(cur):
     cur.execute("SELECT pg_advisory_xact_lock(%s);", (SCHEMA_MIGRATION_LOCK_KEY,))
 
 # === Permission constants ===
-ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety"}
+ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan"}
 ROLE_LABELS = {
     "root": "系统管理员",
     "supervisor": "督导组账号",
     "station_manager": "站点账号",
     "quality_safety": "质安部账号",
+    "development_plan": "发展计划部账号",
 }
 QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
     ("计量稽查检查表", "online"),
@@ -106,6 +107,13 @@ QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
     ("加油站质量安全环保检查表", "online"),
     ("加油站质量安全环保检查表", "offline"),
 ]
+DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE = [
+    ("加油站设备设施检查表", "offline"),
+]
+ROLE_DEFAULT_CHECKLIST_SCOPES = {
+    "quality_safety": QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE,
+    "development_plan": DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE,
+}
 INSPECTION_TABLE_SCOPE_PERMISSION_KEYS = (
     "limit_issue_inspection_table_scope",
     "limit_record_inspection_table_scope",
@@ -363,6 +371,10 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
 ]
+for permission_item in PERMISSION_CATALOG:
+    defaults = permission_item.setdefault("defaults", {})
+    defaults.setdefault("development_plan", bool(defaults.get("quality_safety", False)))
+
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
     ("view_own_inspection_issues", "view_all_inspection_issues"),
@@ -4012,6 +4024,10 @@ def is_quality_safety_user(user):
     return bool(user and user.get("role") == "quality_safety")
 
 
+def has_role_default_checklist_scope(user):
+    return bool(user and user.get("role") in ROLE_DEFAULT_CHECKLIST_SCOPES)
+
+
 def role_default_permission(role, permission_key):
     for item in PERMISSION_CATALOG:
         if item["key"] == permission_key:
@@ -4071,7 +4087,10 @@ def normalize_checklist_scope_name(value):
     )
 
 
-def get_quality_safety_default_inspection_table_ids(cur):
+def get_role_default_inspection_table_ids(cur, role):
+    checklist_scope = ROLE_DEFAULT_CHECKLIST_SCOPES.get(role)
+    if not checklist_scope:
+        return []
     cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
     if not cur.fetchone()["table_ref"]:
         return []
@@ -4084,7 +4103,7 @@ def get_quality_safety_default_inspection_table_ids(cur):
     )
     target_pairs = {
         (normalize_checklist_scope_name(table_name), checklist_mode)
-        for table_name, checklist_mode in QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE
+        for table_name, checklist_mode in checklist_scope
     }
     result = []
     for row in cur.fetchall():
@@ -4095,6 +4114,10 @@ def get_quality_safety_default_inspection_table_ids(cur):
         if row_pair in target_pairs:
             result.append(row["id"])
     return result
+
+
+def get_quality_safety_default_inspection_table_ids(cur):
+    return get_role_default_inspection_table_ids(cur, "quality_safety")
 
 
 def normalize_inspection_table_scope_key(scope_key):
@@ -4153,8 +4176,8 @@ def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=N
     scope_ids = get_user_inspection_table_scope_overrides(cur, user["id"], normalized_scope_key)
     if scope_ids:
         return set(scope_ids)
-    if is_quality_safety_user(user):
-        return set(get_quality_safety_default_inspection_table_ids(cur))
+    if has_role_default_checklist_scope(user):
+        return set(get_role_default_inspection_table_ids(cur, user.get("role")))
     return set()
 
 
@@ -6980,7 +7003,7 @@ def normalize_user_backup_id(value):
 def normalize_user_role(value):
     role = normalize_text(value)
     if role not in ROLE_OPTIONS:
-        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety。")
+        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan。")
     return role
 
 
@@ -9698,7 +9721,8 @@ def get_management_users():
                     WHEN 'root' THEN 1
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
-                    ELSE 4
+                    WHEN 'development_plan' THEN 4
+                    ELSE 5
                 END,
                 u.id ASC;
             """
@@ -9752,17 +9776,30 @@ def get_management_users():
             """
         )
         inspection_table_rows = cur.fetchall()
-        quality_default_table_ids = set(get_quality_safety_default_inspection_table_ids(cur))
+        role_default_table_id_map = {
+            role: set(get_role_default_inspection_table_ids(cur, role))
+            for role in ROLE_DEFAULT_CHECKLIST_SCOPES
+        }
         inspection_tables = [
             {
                 **dict(row),
                 "checklist_mode_label": "视频检查"
                 if normalize_checklist_mode(row.get("checklist_mode")) == "online"
                 else "现场检查",
-                "is_quality_safety_default": row["id"] in quality_default_table_ids,
+                "is_quality_safety_default": row["id"] in role_default_table_id_map.get("quality_safety", set()),
+                "is_development_plan_default": row["id"] in role_default_table_id_map.get("development_plan", set()),
+                "default_scope_role_labels": [
+                    ROLE_LABELS.get(role, role)
+                    for role, table_ids in role_default_table_id_map.items()
+                    if row["id"] in table_ids
+                ],
             }
             for row in inspection_table_rows
         ]
+        role_default_inspection_table_scope_ids = {
+            role: sorted(table_ids)
+            for role, table_ids in role_default_table_id_map.items()
+        }
 
         return jsonify(
             {
@@ -9773,6 +9810,10 @@ def get_management_users():
                 "quality_safety_default_inspection_table_ids": [
                     row["id"] for row in inspection_tables if row["is_quality_safety_default"]
                 ],
+                "development_plan_default_inspection_table_ids": [
+                    row["id"] for row in inspection_tables if row["is_development_plan_default"]
+                ],
+                "role_default_inspection_table_scope_ids": role_default_inspection_table_scope_ids,
                 "roles": [{"value": key, "label": label} for key, label in ROLE_LABELS.items()],
                 "permissions": PERMISSION_CATALOG,
             }
@@ -9822,7 +9863,8 @@ def export_management_users():
                     WHEN 'root' THEN 1
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
-                    ELSE 4
+                    WHEN 'development_plan' THEN 4
+                    ELSE 5
                 END,
                 u.id ASC;
             """
