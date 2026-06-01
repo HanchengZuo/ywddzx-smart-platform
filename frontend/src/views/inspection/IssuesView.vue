@@ -140,6 +140,7 @@
             </button>
             <span v-if="issueOperationLockReason(item)" class="locked-action">{{ issueOperationLockReason(item)
               }}</span>
+            <span v-else-if="issueAuditLockReason(item)" class="locked-action">{{ issueAuditLockReason(item) }}</span>
             <span v-else-if="isClosedIssue(item) && currentRole !== 'root'" class="locked-action">已闭环锁定</span>
             <span v-else-if="!canAuditIssueRow(item) && !hasIssueOperation(item)" class="locked-action">暂无可操作</span>
           </div>
@@ -594,6 +595,8 @@
                     <template v-else>
                       <span v-if="!isIssueAuditPending(item)" :class="auditStatusClass(item)">{{
                         auditStatusLabel(item) }}</span>
+                      <span v-else-if="issueAuditLockReason(item)" class="audit-lock-reason">{{
+                        issueAuditLockReason(item) }}</span>
                       <span v-else class="audit-empty">-</span>
                     </template>
                   </div>
@@ -1733,6 +1736,7 @@ const canOpenIssueEditDialog = (item) => canEditIssueRow(item) || canChangeIssue
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
 const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
 const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
+const issueAuditLockReason = (item = {}) => String(item?.audit_lock_reason || '').trim()
 const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
 const canToggleExcellentIssue = (item) => Boolean(item?.can_mark_excellent_issue) && normalizeAuditStatus(item) !== 'rejected'
 const excellentStarTitle = (item) => {
@@ -4369,6 +4373,23 @@ onBeforeUnmount(() => {
   color: #cbd5e1;
   font-size: 13px;
   font-weight: 900;
+}
+
+.audit-lock-reason {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .audit-status-chip.approved {

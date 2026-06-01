@@ -4361,6 +4361,10 @@ def is_issue_inspection_signed(issue):
     )
 
 
+def is_issue_inspection_completion_done(issue):
+    return (issue or {}).get("inspection_completion_status") == INSPECTION_COMPLETION_DONE
+
+
 def display_issue_status(issue):
     status = canonical_issue_status((issue or {}).get("status"))
     if is_issue_audit_pending(issue):
@@ -4396,8 +4400,10 @@ def normalize_issue_row_for_response(
     creator_can_modify = can_user_use_creator_issue_controls(user, data)
     closed = is_closed_issue_status(data.get("status"))
     inspection_signed = is_issue_inspection_signed(data)
+    inspection_completion_done = is_issue_inspection_completion_done(data)
     issue_mutation_locked = inspection_signed
     data["inspection_signed"] = bool(inspection_signed)
+    data["inspection_completion_done"] = bool(inspection_completion_done)
     data["inspection_locked"] = bool(issue_mutation_locked)
     if inspection_signed:
         data["operation_lock_reason"] = "已签字不可操作"
@@ -4426,7 +4432,17 @@ def normalize_issue_row_for_response(
         and can_explicit_change_inspector
         and (is_root_user(user) or not closed)
     )
-    data["can_audit_issue"] = bool(can_explicit_audit and not inspection_signed)
+    audit_locked_by_completion = not inspection_completion_done
+    data["audit_lock_reason"] = (
+        "待本表检查人完成确认"
+        if can_explicit_audit and audit_locked_by_completion and not inspection_signed
+        else ""
+    )
+    data["can_audit_issue"] = bool(
+        can_explicit_audit
+        and not inspection_signed
+        and inspection_completion_done
+    )
     data["can_mark_excellent_issue"] = bool(can_explicit_audit and data["audit_status"] != "rejected")
     if "status" in data:
         data["status"] = display_issue_status(data)
@@ -15364,6 +15380,7 @@ def audit_issue(issue_id):
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
@@ -15396,6 +15413,8 @@ def audit_issue(issue_id):
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
         if is_issue_inspection_signed(issue):
             return jsonify({"success": False, "error": "该问题所属检查表已完成站经理签字确认，不能继续审核。"}), 403
+        if not is_issue_inspection_completion_done(issue):
+            return jsonify({"success": False, "error": "该问题所属巡检记录尚未完成“本表检查人完成确认”，暂不能审核。"}), 400
 
         can_view_all = can_view_all_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)

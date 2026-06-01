@@ -42,22 +42,6 @@
 
       <div class="filter-grid">
         <div class="filter-item">
-          <label>检查月度</label>
-          <input v-model="filters.month" type="month" @change="handleMyIssueMonthChange" />
-        </div>
-
-        <div class="filter-item">
-          <label>检查时间范围</label>
-          <DateRangePicker
-            v-model:date-from="filters.dateFrom"
-            v-model:date-to="filters.dateTo"
-            placeholder="选择检查时间范围"
-            aria-label="选择检查时间范围"
-            @change="handleMyIssueDateRangeChange"
-          />
-        </div>
-
-        <div class="filter-item">
           <label>站点所属地</label>
           <div class="search-select" ref="regionSelectRef">
             <input v-model="filters.region" placeholder="搜索或选择站点所属地" @focus="openFilterDropdown('region')"
@@ -209,78 +193,119 @@
     </div>
 
     <div class="table-card card-surface">
+      <div class="table-card-head">
+        <div>
+          <div class="filter-kicker">待办清单</div>
+          <h3>问题字段显示</h3>
+        </div>
+        <div ref="columnSettingsRef" class="column-settings-wrap">
+          <button class="btn btn-secondary column-settings-btn" type="button" @click.stop="toggleColumnSettings">
+            字段显示 {{ visibleMyIssueColumns.length }}/{{ myIssueColumnDefinitions.length }}
+          </button>
+          <div v-if="columnSettingsOpen" class="column-settings-panel card-surface" @click.stop>
+            <div class="column-settings-header">
+              <div>
+                <strong>字段显示设置</strong>
+                <p>隐藏暂时不看的字段，待办数据不会受影响。</p>
+              </div>
+              <button class="close-btn" type="button" @click="columnSettingsOpen = false">×</button>
+            </div>
+            <div class="column-settings-actions">
+              <button class="btn btn-primary btn-sm" type="button" @click="showAllMyIssueColumns">全部显示</button>
+              <button class="btn btn-secondary btn-sm" type="button" @click="applyDefaultMyIssueColumns">默认字段</button>
+              <button class="btn btn-secondary btn-sm" type="button" @click="resetMyIssueColumns">恢复默认</button>
+            </div>
+            <div class="column-settings-groups">
+              <section v-for="group in groupedMyIssueColumns" :key="group.name" class="column-settings-group">
+                <div class="column-settings-group-title">{{ group.name }}</div>
+                <label v-for="column in group.columns" :key="column.key" class="column-toggle-item"
+                  :class="{ active: isMyIssueColumnVisible(column.key) }">
+                  <input type="checkbox" :checked="isMyIssueColumnVisible(column.key)"
+                    @change="toggleMyIssueColumn(column.key)" />
+                  <span>{{ column.label }}</span>
+                </label>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="table-scroll-wrap">
         <div class="table-scroll">
           <table class="issues-table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>站点</th>
-
-                <th>检查表</th>
-                <th v-if="currentRole === 'station_manager'">检查表签名状态</th>
-                <th>规范ID</th>
-                <th>规范详情</th>
-                <th>问题描述</th>
-
-                <th>问题照片</th>
-                <template v-if="isSupervisorLike">
-                  <th>站经理整改结果</th>
-                  <th>站点反馈整改说明</th>
-                  <th>站点反馈整改照片</th>
-                  <th>督导组复核照片</th>
-                </template>
-                <th class="nowrap-col">问题状态</th>
-                <th class="nowrap-col action-col">操作</th>
+                <th v-if="isMyIssueColumnVisible('id')">ID</th>
+                <th v-if="isMyIssueColumnVisible('month')">检查月度</th>
+                <th v-if="isMyIssueColumnVisible('time')">检查时间</th>
+                <th v-if="isMyIssueColumnVisible('issue_category')">巡检问题类别</th>
+                <th v-if="isMyIssueColumnVisible('region')">站点所属地</th>
+                <th v-if="isMyIssueColumnVisible('station')">站点</th>
+                <th v-if="isMyIssueColumnVisible('inspection_table_name')">检查表</th>
+                <th v-if="isMyIssueColumnVisible('inspection_sign_status')">检查表签名状态</th>
+                <th v-if="isMyIssueColumnVisible('standard_id')">规范ID</th>
+                <th v-if="isMyIssueColumnVisible('standard_detail')">规范详情</th>
+                <th v-if="isMyIssueColumnVisible('description')">问题描述</th>
+                <th v-if="isMyIssueColumnVisible('issue_photo')">问题照片</th>
+                <th v-if="isMyIssueColumnVisible('rectification_result')">站经理整改结果</th>
+                <th v-if="isMyIssueColumnVisible('rectification_note')">站点反馈整改说明</th>
+                <th v-if="isMyIssueColumnVisible('rectification_photo')">站点反馈整改照片</th>
+                <th v-if="isMyIssueColumnVisible('review_result')">督导组复核结果</th>
+                <th v-if="isMyIssueColumnVisible('review_note')">督导组复核说明</th>
+                <th v-if="isMyIssueColumnVisible('review_photo')">督导组复核照片</th>
+                <th v-if="isMyIssueColumnVisible('status')" class="nowrap-col">问题状态</th>
+                <th v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in paginatedData" :key="item.id">
-                <td>{{ item.id }}</td>
-                <td>{{ item.station }}</td>
-
-                <td>{{ item.inspection_table_name || '暂无' }}</td>
-                <td v-if="currentRole === 'station_manager'">
+                <td v-if="isMyIssueColumnVisible('id')">{{ item.id }}</td>
+                <td v-if="isMyIssueColumnVisible('month')">{{ item.month || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('time')" class="nowrap-col">{{ item.time || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('issue_category')">{{ myIssueCategoryLabel(item) }}</td>
+                <td v-if="isMyIssueColumnVisible('region')">{{ item.region || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('station')">{{ item.station }}</td>
+                <td v-if="isMyIssueColumnVisible('inspection_table_name')">{{ item.inspection_table_name || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('inspection_sign_status')">
                   <span :class="isInspectionSigned(item) ? 'status-tag success' : 'status-tag warning'">
                     {{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}
                   </span>
                 </td>
-                <td>{{ item.standard_id || '暂无' }}</td>
-                <td class="standard-detail-cell">
+                <td v-if="isMyIssueColumnVisible('standard_id')">{{ item.standard_id || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('standard_detail')" class="standard-detail-cell">
                   <div class="standard-detail-box">
                     <div class="standard-detail-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
                     }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
                   </div>
                 </td>
-                <td class="long-text">{{ item.description }}</td>
-                <td>
+                <td v-if="isMyIssueColumnVisible('description')" class="long-text">{{ item.description }}</td>
+                <td v-if="isMyIssueColumnVisible('issue_photo')">
                   <button class="image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
                     <img :src="resolveImage(item.issue_photo)" class="thumb" alt="问题照片" />
                   </button>
                 </td>
-                <template v-if="isSupervisorLike">
-                  <td>{{ item.rectification_result || '暂无' }}</td>
-                  <td class="long-text">{{ item.rectification_note || '暂无' }}</td>
-                  <td>
-                    <button v-if="item.rectification_photo" class="image-btn" type="button"
-                      @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
-                      <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
-                    </button>
-                    <span v-else>暂无</span>
-                  </td>
-                  <td>
-                    <button v-if="item.review_photo" class="image-btn" type="button"
-                      @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
-                      <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
-                    </button>
-                    <span v-else>暂无</span>
-                  </td>
-                </template>
-                <td class="nowrap-col">
+                <td v-if="isMyIssueColumnVisible('rectification_result')">{{ item.rectification_result || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('rectification_note')" class="long-text">{{ item.rectification_note || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('rectification_photo')">
+                  <button v-if="item.rectification_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
+                    <img :src="resolveImage(item.rectification_photo)" class="thumb" alt="站点反馈整改照片" />
+                  </button>
+                  <span v-else>暂无</span>
+                </td>
+                <td v-if="isMyIssueColumnVisible('review_result')">{{ item.review_result || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('review_note')" class="long-text">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('review_photo')">
+                  <button v-if="item.review_photo" class="image-btn" type="button"
+                    @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
+                    <img :src="resolveImage(item.review_photo)" class="thumb" alt="督导组复核照片" />
+                  </button>
+                  <span v-else>暂无</span>
+                </td>
+                <td v-if="isMyIssueColumnVisible('status')" class="nowrap-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
                 </td>
-                <td class="nowrap-col action-col">
+                <td v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">
                   <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
                     :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
                     {{ currentRole === 'station_manager' ? '提交整改' : '提交复核' }}
@@ -291,7 +316,7 @@
                 </td>
               </tr>
               <tr v-if="!loading && paginatedData.length === 0">
-                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">
+                <td :colspan="myIssueTableColspan" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb"></div>
                     <div class="empty-state-kicker">{{ currentRole === 'station_manager' ? '暂无整改任务' : '暂无复核任务' }}</div>
@@ -302,7 +327,7 @@
                 </td>
               </tr>
               <tr v-if="loading">
-                <td :colspan="isSupervisorLike ? 12 : 9" class="empty-row">
+                <td :colspan="myIssueTableColspan" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb loading"></div>
                     <div class="empty-state-kicker">同步中</div>
@@ -519,22 +544,6 @@ import {
   getStandardDetailPreview,
   parseStandardDetailText
 } from '@/utils/standardDetail'
-import DateRangePicker from '@/components/DateRangePicker.vue'
-
-const formatLocalDate = (value = new Date()) => {
-  const year = value.getFullYear()
-  const month = String(value.getMonth() + 1).padStart(2, '0')
-  const day = String(value.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-const getDefaultDateRange = () => {
-  const now = new Date()
-  return {
-    dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),
-    dateTo: formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-  }
-}
 
 const isInspectionSigned = (item) => {
   const status = String(
@@ -561,32 +570,107 @@ const submittingAction = ref(false)
 const issues = ref([])
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
+const columnSettingsRef = ref(null)
 
 const dropdownVisible = ref({
   region: false,
   station: false
 })
 
-const defaultDateRange = getDefaultDateRange()
 const filters = ref({
-  month: '',
-  dateFrom: defaultDateRange.dateFrom,
-  dateTo: defaultDateRange.dateTo,
   region: '',
   station: ''
 })
 
 const isMobileView = ref(false)
 const showMobileFilters = ref(false)
+const columnSettingsOpen = ref(false)
+
+const MY_ISSUES_COLUMNS_STORAGE_KEY = 'my_issues_visible_columns_v1'
+const myIssueColumnDefinitions = [
+  { key: 'id', label: 'ID', group: '基础信息' },
+  { key: 'month', label: '检查月度', group: '基础信息' },
+  { key: 'time', label: '检查时间', group: '基础信息' },
+  { key: 'issue_category', label: '巡检问题类别', group: '基础信息' },
+  { key: 'region', label: '站点所属地', group: '基础信息' },
+  { key: 'station', label: '站点', group: '基础信息' },
+  { key: 'inspection_table_name', label: '检查表', group: '规范问题' },
+  { key: 'inspection_sign_status', label: '检查表签名状态', group: '规范问题' },
+  { key: 'standard_id', label: '规范ID', group: '规范问题' },
+  { key: 'standard_detail', label: '规范详情', group: '规范问题' },
+  { key: 'description', label: '问题描述', group: '规范问题' },
+  { key: 'issue_photo', label: '问题照片', group: '规范问题' },
+  { key: 'rectification_result', label: '站经理整改结果', group: '整改复核' },
+  { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核' },
+  { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核' },
+  { key: 'review_result', label: '督导组复核结果', group: '整改复核' },
+  { key: 'review_note', label: '督导组复核说明', group: '整改复核' },
+  { key: 'review_photo', label: '督导组复核照片', group: '整改复核' },
+  { key: 'status', label: '问题状态', group: '状态操作' },
+  { key: 'action', label: '操作', group: '状态操作' }
+]
+const defaultMyIssueColumnKeys = new Set([
+  'id',
+  'time',
+  'station',
+  'inspection_table_name',
+  'standard_id',
+  'standard_detail',
+  'description',
+  'issue_photo',
+  'rectification_result',
+  'rectification_note',
+  'rectification_photo',
+  'review_photo',
+  'status',
+  'action'
+])
+
+const buildDefaultMyIssueColumnVisibility = () => Object.fromEntries(
+  myIssueColumnDefinitions.map((column) => [column.key, defaultMyIssueColumnKeys.has(column.key)])
+)
+
+const loadMyIssueColumnVisibility = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MY_ISSUES_COLUMNS_STORAGE_KEY) || '{}')
+    return Object.fromEntries(
+      myIssueColumnDefinitions.map((column) => [
+        column.key,
+        typeof parsed[column.key] === 'boolean'
+          ? parsed[column.key]
+          : defaultMyIssueColumnKeys.has(column.key)
+      ])
+    )
+  } catch (error) {
+    return buildDefaultMyIssueColumnVisibility()
+  }
+}
+
+const myIssueColumnVisibility = ref(loadMyIssueColumnVisibility())
 
 const filteredData = computed(() => {
   return issues.value.filter((item) => {
-    const matchedMonth = !filters.value.month || String(item.month || '').startsWith(filters.value.month)
-    const matchedDate = isDateInRange(item.time, filters.value.dateFrom, filters.value.dateTo)
     const matchedRegion = !filters.value.region || normalizedKeyword(item.region).includes(normalizedKeyword(filters.value.region))
     const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
-    return matchedMonth && matchedDate && matchedRegion && matchedStation
+    return matchedRegion && matchedStation
   })
+})
+
+const visibleMyIssueColumns = computed(() => (
+  myIssueColumnDefinitions.filter((column) => myIssueColumnVisibility.value[column.key])
+))
+const myIssueTableColspan = computed(() => Math.max(1, visibleMyIssueColumns.value.length))
+const groupedMyIssueColumns = computed(() => {
+  const groups = []
+  myIssueColumnDefinitions.forEach((column) => {
+    let group = groups.find((item) => item.name === column.group)
+    if (!group) {
+      group = { name: column.group, columns: [] }
+      groups.push(group)
+    }
+    group.columns.push(column)
+  })
+  return groups
 })
 
 const regionOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.region)))
@@ -649,37 +733,58 @@ const filterOptionByKeyword = (options, keyword) => {
   return options.filter((item) => !normalized || normalizedKeyword(item).includes(normalized))
 }
 
-const getDatePart = (value) => String(value || '').slice(0, 10)
+const saveMyIssueColumnVisibility = () => {
+  localStorage.setItem(MY_ISSUES_COLUMNS_STORAGE_KEY, JSON.stringify(myIssueColumnVisibility.value))
+}
 
-const isDateInRange = (value, dateFrom, dateTo) => {
-  const current = getDatePart(value)
-  if (!current) return !dateFrom && !dateTo
-  if (dateFrom && current < dateFrom) return false
-  if (dateTo && current > dateTo) return false
-  return true
+const isMyIssueColumnVisible = (key) => myIssueColumnVisibility.value[key] !== false
+
+const toggleMyIssueColumn = (key) => {
+  myIssueColumnVisibility.value = {
+    ...myIssueColumnVisibility.value,
+    [key]: !isMyIssueColumnVisible(key)
+  }
+
+  if (visibleMyIssueColumns.value.length === 0) {
+    myIssueColumnVisibility.value = {
+      ...myIssueColumnVisibility.value,
+      [key]: true
+    }
+  }
+
+  saveMyIssueColumnVisibility()
+}
+
+const showAllMyIssueColumns = () => {
+  myIssueColumnVisibility.value = Object.fromEntries(
+    myIssueColumnDefinitions.map((column) => [column.key, true])
+  )
+  saveMyIssueColumnVisibility()
+}
+
+const applyDefaultMyIssueColumns = () => {
+  myIssueColumnVisibility.value = buildDefaultMyIssueColumnVisibility()
+  saveMyIssueColumnVisibility()
+}
+
+const resetMyIssueColumns = () => {
+  applyDefaultMyIssueColumns()
+}
+
+const toggleColumnSettings = () => {
+  columnSettingsOpen.value = !columnSettingsOpen.value
+}
+
+const myIssueCategoryLabel = () => {
+  return currentRole.value === 'station_manager' ? '待整改问题' : '待复核问题'
 }
 
 const resetFilters = () => {
-  const nextDefaultRange = getDefaultDateRange()
   filters.value = {
-    month: '',
-    dateFrom: nextDefaultRange.dateFrom,
-    dateTo: nextDefaultRange.dateTo,
     region: '',
     station: ''
   }
   closeAllDropdowns()
-}
-
-const handleMyIssueMonthChange = () => {
-  if (!filters.value.month) return
-  filters.value.dateFrom = ''
-  filters.value.dateTo = ''
-}
-
-const handleMyIssueDateRangeChange = () => {
-  if (!filters.value.dateFrom && !filters.value.dateTo) return
-  filters.value.month = ''
 }
 
 const prevPage = () => {
@@ -767,6 +872,9 @@ const handleClickOutside = (event) => {
   }
   if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
     dropdownVisible.value.station = false
+  }
+  if (columnSettingsRef.value && !columnSettingsRef.value.contains(event.target)) {
+    columnSettingsOpen.value = false
   }
 }
 
@@ -1147,7 +1255,7 @@ onBeforeUnmount(() => {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
   gap: 16px;
 }
 
@@ -1524,6 +1632,132 @@ onBeforeUnmount(() => {
   }
 }
 
+.table-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.table-card-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.column-settings-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.column-settings-btn {
+  min-width: 148px;
+  font-weight: 800;
+}
+
+.column-settings-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 50;
+  width: min(720px, calc(100vw - 48px));
+  padding: 18px;
+  border-radius: 20px;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.16);
+}
+
+.column-settings-panel::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  right: 34px;
+  width: 14px;
+  height: 14px;
+  transform: rotate(45deg);
+  background: #fff;
+  border-left: 1px solid #dbe4ee;
+  border-top: 1px solid #dbe4ee;
+}
+
+.column-settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.column-settings-header strong {
+  display: block;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.column-settings-header p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.column-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.column-settings-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.column-settings-group {
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.column-settings-group-title {
+  margin-bottom: 10px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.column-toggle-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.column-toggle-item:hover {
+  background: #eef6ff;
+}
+
+.column-toggle-item.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
+.column-toggle-item input {
+  accent-color: #2563eb;
+}
+
 .table-scroll-wrap {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -1536,8 +1770,8 @@ onBeforeUnmount(() => {
 }
 
 .issues-table {
-  width: 100%;
-  min-width: 1680px;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
 }
 

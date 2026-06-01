@@ -15,6 +15,28 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.8.1',
+    date: '2026-06-01',
+    title: '待办问题显示优化',
+    summary: '我的待复核和待整改不再按时间限制显示。',
+    items: [
+      '去除检查月度和检查时间范围筛选。',
+      '待办问题默认只显示常用处理字段。',
+      '新增字段显示设置，可按需显示巡检问题类别等字段。'
+    ]
+  },
+  {
+    version: 'v2.8',
+    date: '2026-06-01',
+    title: '巡检审核前置条件优化',
+    summary: '检查表未确认完成前，问题暂不能审核。',
+    items: [
+      '本表检查人完成确认后，才允许审核本表问题。',
+      '系统自动确认完成后，也会自动进入可审核状态。',
+      '问题列表会提示等待检查人完成确认。'
+    ]
+  },
+  {
     version: 'v2.7',
     date: '2026-05-29',
     title: '部门权限和检查表范围优化',
