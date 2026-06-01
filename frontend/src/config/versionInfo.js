@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.9',
+    date: '2026-06-01',
+    title: '数据库迁移机制升级',
+    summary: '系统改为自动执行数据库迁移，部署更稳。',
+    items: [
+      '后端启动时自动应用最新数据库迁移。',
+      '新数据库不再需要手动执行初始化 SQL。',
+      '已有数据库会自动作为迁移基线继续使用。'
+    ]
+  },
+  {
     version: 'v2.8.1',
     date: '2026-06-01',
     title: '待办问题显示优化',

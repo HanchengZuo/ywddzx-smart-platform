@@ -1,0 +1,5 @@
+Flask-Migrate/Alembic migration directory.
+
+The backend container runs `flask --app app db upgrade` automatically before
+starting Flask, so a rebuilt docker compose deployment applies the latest
+database migrations without manually executing SQL files.

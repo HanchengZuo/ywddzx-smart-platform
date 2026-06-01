@@ -13,11 +13,14 @@ import uuid
 import zipfile
 from collections import OrderedDict
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 from io import BytesIO
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -36,6 +39,8 @@ app.config["SECRET_KEY"] = os.environ.get(
     os.environ.get("SECRET_KEY", "ywddzx-smart-platform-dev-secret"),
 )
 CORS(app)
+db = SQLAlchemy()
+migrate = Migrate()
 
 BASE_DIR = os.path.dirname(__file__)
 STORAGE_ROOT = os.path.join(BASE_DIR, "storage")
@@ -554,6 +559,22 @@ def get_db_config():
         "user": os.environ.get("DB_USER", "postgres"),
         "password": os.environ.get("DB_PASSWORD", "postgres"),
     }
+
+
+def get_sqlalchemy_database_uri():
+    db_config = get_db_config()
+    user = quote_plus(db_config["user"])
+    password = quote_plus(db_config["password"])
+    host = db_config["host"]
+    port = db_config["port"]
+    dbname = quote_plus(db_config["dbname"])
+    return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
+
+
+app.config["SQLALCHEMY_DATABASE_URI"] = get_sqlalchemy_database_uri()
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db.init_app(app)
+migrate.init_app(app, db)
 
 
 def get_db_connection():

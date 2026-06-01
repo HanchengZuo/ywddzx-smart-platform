@@ -13,7 +13,6 @@ services:
       - "5434:5432"
     volumes:
       - ywddzx_pgdata:/var/lib/postgresql/data
-      - ./backend/db/init:/docker-entrypoint-initdb.d
 
   backend:
     build: ./backend
