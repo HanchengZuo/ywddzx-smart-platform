@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.9.4',
+    date: '2026-06-01',
+    title: '巡检记录列表优化',
+    summary: '巡检记录列表更容易区分不同站点。',
+    items: [
+      '不同站点之间增加更明显的视觉分隔。',
+      '站点和日期合并单元格显示更醒目。',
+      '检查人确认和站经理签字内容统一居中显示。'
+    ]
+  },
+  {
     version: 'v2.9.3',
     date: '2026-06-01',
     title: '编辑问题照片增强',

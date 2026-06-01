@@ -333,12 +333,37 @@
               </tr>
             </thead>
             <tbody>
-              <template v-for="batch in paginatedInspectionGroups" :key="batch.batchKey">
-                <tr v-for="(record, index) in batch.records" :key="record.id">
-                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-main-cell">{{
-                    batch.date }}</td>
-                  <td v-if="index === 0" :rowspan="batch.rowspan" class="batch-merged-cell batch-main-cell">{{
-                    batch.station }}</td>
+              <template v-for="(batch, batchIndex) in paginatedInspectionGroups" :key="batch.batchKey">
+                <tr v-if="shouldShowStationDivider(batch, batchIndex)" :key="`${batch.batchKey}-station-divider`"
+                  class="station-divider-row">
+                  <td colspan="8">
+                    <div class="station-divider-content">
+                      <div class="station-divider-main">
+                        <span class="station-divider-dot"></span>
+                        <strong>{{ batch.station || '未命名站点' }}</strong>
+                      </div>
+                      <div class="station-divider-meta">
+                        <span>{{ batch.date }}</span>
+                        <span>{{ batch.rowspan }} 张检查表</span>
+                        <span>问题 {{ batch.batchIssueCount }}</span>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-for="(record, index) in batch.records" :key="record.id"
+                  :class="getRecordTableRowClasses(index)">
+                  <td v-if="index === 0" :rowspan="batch.rowspan"
+                    class="batch-merged-cell batch-main-cell batch-date-cell">
+                    <div class="batch-date-content">
+                      <span class="batch-date-text">{{ batch.date }}</span>
+                    </div>
+                  </td>
+                  <td v-if="index === 0" :rowspan="batch.rowspan"
+                    class="batch-merged-cell batch-main-cell batch-station-cell">
+                    <div class="batch-station-content">
+                      <strong class="batch-station-name">{{ batch.station }}</strong>
+                    </div>
+                  </td>
                   <td class="long-text">{{ record.inspection_table_name || '暂无' }}</td>
                   <td>
                     <span :class="statusClass(record.result)">{{ record.result }}</span>
@@ -364,11 +389,11 @@
                       <div class="signature-status-badge success">已确认完成</div>
                       <div class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
                     </div>
-	                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
-	                      type="button" :disabled="completingInspectionId === record.id"
-	                      @click="completeInspectionRecord(record)">
-	                      {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
-	                    </button>
+                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
+                      type="button" :disabled="completingInspectionId === record.id"
+                      @click="completeInspectionRecord(record)">
+                      {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
+                    </button>
                     <span v-else class="signature-status-badge pending">待检查人确认</span>
                   </td>
 
@@ -392,18 +417,18 @@
                       </span>
                     </div>
 
-	                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
-	                      type="button" @click="openSignatureDialog(record)">
-	                      站经理签字
-	                    </button>
+                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
+                      type="button" @click="openSignatureDialog(record)">
+                      站经理签字
+                    </button>
 
-	                    <div v-else-if="shouldShowSignatureProgress(record)" class="signature-progress-box">
-	                      <div class="signature-status-badge pending">{{ getSignatureProgressTitle(record) }}</div>
-	                      <p class="signature-progress-copy">
-	                        <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
-	                      </p>
-	                      <div v-if="getTotalIssueCount(record) > 0" class="signature-progress-track">
-	                        <span :style="{ width: getSignatureProgressWidth(record) }"></span>
+                    <div v-else-if="shouldShowSignatureProgress(record)" class="signature-progress-box">
+                      <div class="signature-status-badge pending">{{ getSignatureProgressTitle(record) }}</div>
+                      <p class="signature-progress-copy">
+                        <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
+                      </p>
+                      <div v-if="getTotalIssueCount(record) > 0" class="signature-progress-track">
+                        <span :style="{ width: getSignatureProgressWidth(record) }"></span>
                       </div>
                     </div>
 
@@ -1768,6 +1793,16 @@ const paginatedInspectionGroups = computed(() => {
   return groupedInspectionGroups.value.slice(start, start + pageSize.value)
 })
 
+const shouldShowStationDivider = (batch, batchIndex) => {
+  if (batchIndex === 0) return true
+  const previousBatch = paginatedInspectionGroups.value[batchIndex - 1]
+  return previousBatch?.station !== batch?.station
+}
+
+const getRecordTableRowClasses = (rowIndex) => ({
+  'batch-group-start-row': rowIndex === 0
+})
+
 watch([filters, pageSize], () => {
   page.value = 1
 }, { deep: true })
@@ -2787,6 +2822,86 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.records-table tbody tr {
+  transition: background 0.18s ease;
+}
+
+.records-table tbody tr:not(.station-divider-row):hover td {
+  background: #f8fbff;
+}
+
+.station-divider-row td {
+  padding: 10px 0 0;
+  border: 0;
+  background: #fff;
+}
+
+.station-divider-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px 10px 12px;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 4px solid #93c5fd;
+  background: linear-gradient(90deg, #f8fbff 0%, #f8fafc 100%);
+}
+
+.station-divider-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.station-divider-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  flex-shrink: 0;
+}
+
+.station-divider-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-divider-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.station-divider-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding-left: 9px;
+  border-left: 1px solid #dbe4ee;
+}
+
+.station-divider-meta span:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.batch-group-start-row > td {
+  border-top-color: #dbe4ee;
+}
+
 .long-text {
   min-width: 220px;
   white-space: normal;
@@ -2801,14 +2916,57 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: #0f172a;
   vertical-align: middle;
-  text-align: left;
+  text-align: center;
+}
+
+.batch-date-cell {
+  min-width: 122px;
+}
+
+.batch-station-cell {
+  min-width: 168px;
+}
+
+.batch-date-content,
+.batch-station-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 58px;
+  text-align: center;
+}
+
+.batch-date-text,
+.batch-station-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.batch-date-text {
+  color: #475569;
+  font-weight: 800;
+}
+
+.batch-station-name {
+  padding: 6px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  font-size: 15px;
+  font-weight: 900;
 }
 
 .batch-action-cell,
 .batch-completion-cell,
 .batch-signature-cell {
   vertical-align: middle;
-  text-align: center;
+  text-align: center !important;
 }
 
 .batch-action-cell {
@@ -2817,14 +2975,19 @@ onBeforeUnmount(() => {
 
 .batch-completion-cell {
   min-width: 168px;
+  padding: 10px 12px;
 }
 
 .batch-signature-cell {
   min-width: 218px;
+  padding: 10px 12px;
 }
 
 .batch-completion-cell > *,
 .batch-signature-cell > * {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
   margin-right: auto;
 }
@@ -2832,6 +2995,13 @@ onBeforeUnmount(() => {
 .batch-completion-cell .btn,
 .batch-signature-cell .btn {
   justify-content: center;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.batch-completion-cell > .signature-status-badge,
+.batch-signature-cell > .signature-status-badge {
+  width: fit-content;
 }
 
 .completion-preview-box {
@@ -2854,10 +3024,11 @@ onBeforeUnmount(() => {
 }
 
 .signature-signed-wrap {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  width: 100%;
   text-align: center;
 }
 
