@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.9.2',
+    date: '2026-06-01',
+    title: '整改复核时间记录',
+    summary: '整改和复核提交时间会自动保存。',
+    items: [
+      '站点提交整改时自动记录整改时间。',
+      '督导提交复核时自动记录复核时间。',
+      '问题列表、巡检记录和导出文件会显示这两个时间。'
+    ]
+  },
+  {
     version: 'v2.9.1',
     date: '2026-06-01',
     title: '已审核问题编辑规则优化',
