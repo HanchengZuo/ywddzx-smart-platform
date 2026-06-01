@@ -939,7 +939,7 @@
               class="issue-edit-field issue-edit-field-wide upload-follow-anchor">
               <span>问题照片</span>
               <div class="upload-card issue-edit-upload-card">
-                <input id="edit-issue-photo-upload" class="upload-input" type="file" accept="image/*"
+                <input id="edit-issue-photo-upload" class="upload-input" type="file" accept="image/*" multiple
                   @change="handleIssuePhotoChange" />
                 <input id="edit-issue-photo-camera" class="upload-input" type="file" accept="image/*"
                   capture="environment" @change="handleIssuePhotoChange" />
@@ -952,14 +952,15 @@
                   <div class="upload-icon">↑</div>
                   <div class="upload-title">
                     <span class="desktop-upload-title">选择或拖拽新的问题照片</span>
-                    <span class="mobile-upload-title">选择或更换问题照片</span>
+                    <span class="mobile-upload-title">选择或添加问题照片</span>
                   </div>
                   <div class="upload-desc">
-                    不选择新照片则保留原照片；桌面端可拖拽图片，也可复制图片后在此处粘贴上传。
+                    不选择新照片则保留原照片；最多添加3张，系统会自动拼接成一张照片提交。
+                    <span class="desktop-drop-hint">桌面端可拖拽多张图片，也可复制图片后在此处粘贴上传。</span>
                   </div>
                   <div class="upload-trigger-group">
                     <label for="edit-issue-photo-camera" class="upload-trigger upload-trigger-secondary"
-                      @click.stop>拍照上传</label>
+                      @click.stop>拍照添加</label>
                     <label for="edit-issue-photo-upload" class="upload-trigger" @click.stop>相册选择</label>
                   </div>
                 </div>
@@ -979,13 +980,27 @@
                     </div>
                   </div>
                   <div v-if="editDialog.issuePhotoPreview" class="image-preview-panel">
-                    <img :src="editDialog.issuePhotoPreview" alt="新的问题照片预览" class="image-preview-thumb" />
+                    <button class="image-preview-thumb-btn" type="button"
+                      @click="preview(editDialog.issuePhotoPreview, '新的问题照片预览')">
+                      <img :src="editDialog.issuePhotoPreview" alt="新的问题照片预览" class="image-preview-thumb" />
+                    </button>
                     <div class="image-preview-meta">
-                      <div class="image-preview-title">已选择新问题照片</div>
-                      <div class="image-preview-name">{{ editDialog.issuePhotoFile?.name || '已上传图片' }}</div>
+                      <div class="image-preview-title">最终提交照片</div>
+                      <div class="image-preview-name">
+                        {{ editIssueSourcePhotos.length > 1 ? `已由 ${editIssueSourcePhotos.length} 张照片拼接生成` :
+                          editDialog.issuePhotoFile?.name || '已上传图片' }}
+                      </div>
+                      <div v-if="editIssueSourcePhotos.length" class="source-photo-strip">
+                        <span v-for="photo in editIssueSourcePhotos" :key="photo.id" class="source-photo-chip">
+                          <img :src="photo.url" :alt="photo.name" />
+                          <button type="button" @click="removeEditIssueSourcePhoto(photo.id)">×</button>
+                        </span>
+                      </div>
                       <div class="image-preview-actions">
-                        <label for="edit-issue-photo-camera" class="btn btn-light image-action-btn">重新拍照</label>
-                        <label for="edit-issue-photo-upload" class="btn btn-light image-action-btn">相册重选</label>
+                        <button v-if="editIssueSourcePhotos.length" class="btn btn-secondary image-action-btn"
+                          type="button" @click="openEditIssuePhotoEditor">图片编辑</button>
+                        <label for="edit-issue-photo-camera" class="btn btn-light image-action-btn">继续拍照</label>
+                        <label for="edit-issue-photo-upload" class="btn btn-light image-action-btn">继续添加</label>
                         <button class="btn btn-secondary image-action-btn" type="button"
                           @click="clearIssuePhoto">移除图片</button>
                       </div>
@@ -1117,6 +1132,87 @@
         <img :src="previewState.url" :style="previewImageStyle" :alt="previewState.title || '图片预览'" />
       </div>
     </div>
+
+    <div v-if="editIssuePhotoEditor.visible" class="photo-editor-overlay">
+      <div class="photo-editor-dialog">
+        <div class="photo-editor-head">
+          <div>
+            <span>问题照片编辑</span>
+            <h3>拼接、调换、裁剪和标注</h3>
+          </div>
+          <button class="photo-editor-close" type="button" @click="closeEditIssuePhotoEditor">×</button>
+        </div>
+
+        <div class="photo-editor-body">
+          <aside class="photo-editor-side">
+            <div class="editor-tool-group">
+              <button type="button" :class="{ active: editIssuePhotoEditor.tool === 'crop' }"
+                @click="editIssuePhotoEditor.tool = 'crop'">
+                裁剪调整
+              </button>
+              <button type="button" :class="{ active: editIssuePhotoEditor.tool === 'swap' }"
+                @click="editIssuePhotoEditor.tool = 'swap'">
+                调换位置
+              </button>
+              <button type="button" :class="{ active: editIssuePhotoEditor.tool === 'circle' }"
+                @click="editIssuePhotoEditor.tool = 'circle'">
+                画圈标注
+              </button>
+            </div>
+
+            <div class="editor-tip">
+              <template v-if="editIssuePhotoEditor.tool === 'crop'">
+                选择下方图片后，在画布中拖动可调整裁剪位置，也可用缩放条放大图片。
+              </template>
+              <template v-else-if="editIssuePhotoEditor.tool === 'swap'">
+                在画布中按住一张照片拖到另一个框，两张照片会调换位置。
+              </template>
+              <template v-else>
+                在画布上按住并拖动即可画圈，适合标出问题位置。
+              </template>
+            </div>
+
+            <div class="editor-source-list">
+              <button v-for="photo in editIssueSourcePhotos" :key="photo.id" type="button"
+                :class="{ active: editIssuePhotoEditor.selectedPhotoId === photo.id }"
+                @click="selectEditIssueEditorPhoto(photo.id)">
+                <img :src="photo.url" :alt="photo.name" />
+                <span>{{ photo.name }}</span>
+              </button>
+            </div>
+
+            <label v-if="editIssuePhotoEditor.tool === 'crop' && selectedEditIssuePhotoEditorItem"
+              class="editor-range">
+              <span>图片缩放 {{ Math.round(selectedEditIssuePhotoEditorItem.scale * 100) }}%</span>
+              <input v-model.number="selectedEditIssuePhotoEditorItem.scale" type="range" min="1" max="3" step="0.05"
+                @input="handleEditIssueEditorScaleChange" />
+            </label>
+
+            <div class="editor-actions-stack">
+              <button class="btn btn-light" type="button" @click="resetEditIssuePhotoComposition">自动重新拼接</button>
+              <button class="btn btn-light" type="button" :disabled="!editIssuePhotoComposition.circles.length"
+                @click="undoEditIssueEditorCircle">撤销画圈</button>
+            </div>
+          </aside>
+
+          <main class="photo-editor-canvas-wrap">
+            <canvas ref="editIssuePhotoEditorCanvasRef" class="photo-editor-canvas"
+              @pointerdown="handleEditIssueEditorPointerDown" @pointermove="handleEditIssueEditorPointerMove"
+              @pointerup="handleEditIssueEditorPointerUp" @pointercancel="handleEditIssueEditorPointerUp"
+              @pointerleave="handleEditIssueEditorPointerLeave"></canvas>
+          </main>
+        </div>
+
+        <div class="photo-editor-foot">
+          <button class="btn btn-secondary" type="button" @click="closeEditIssuePhotoEditor">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="editIssuePhotoEditor.saving"
+            @click="saveEditIssuePhotoEditor">
+            {{ editIssuePhotoEditor.saving ? '生成中...' : '保存拼接照片' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="standardDetailState.visible" class="image-modal" @click.self="closeStandardDetail">
       <div class="image-modal-content standard-detail-modal">
         <div class="image-modal-header">
@@ -1165,14 +1261,23 @@ import axios from 'axios'
 import {
   clearFileInput,
   clearFileInputsById,
-  getImageFileFromClipboardEvent,
-  getImageFileFromDataTransfer,
+  getImageFilesFromClipboardEvent,
+  getImageFilesFromDataTransfer,
+  getImageFilesFromFileList,
   hasImageInDataTransfer,
   isDesktopImageDropEnabled,
+  loadImageFromFile,
+  prepareImageFile,
   prepareImagePreview,
   revokeObjectUrl,
   scrollImageUploadIntoView
 } from '@/utils/imageUpload'
+import {
+  clampCompositionItemOffset,
+  createAutoIssuePhotoComposition,
+  exportIssuePhotoCompositionFile,
+  renderIssuePhotoComposition
+} from '@/utils/imageComposer'
 import {
   getStandardDetailPreview,
   parseStandardDetailText
@@ -1337,6 +1442,18 @@ const inspectorUserOptions = ref([])
 const inspectorUserLoading = ref(false)
 const editIssuePhotoDragActive = ref(false)
 const editIssuePhotoUploadSectionRef = ref(null)
+const editIssueSourcePhotos = ref([])
+const editIssuePhotoComposition = ref({ width: 1200, height: 800, items: [], circles: [] })
+const editIssuePhotoEditorCanvasRef = ref(null)
+const editIssuePhotoEditor = ref({
+  visible: false,
+  tool: 'crop',
+  selectedPhotoId: '',
+  swapTargetPhotoId: '',
+  saving: false,
+  pointer: null,
+  draftCircle: null
+})
 let editIssuePhotoDragDepth = 0
 
 const editDialog = ref({
@@ -2410,6 +2527,19 @@ const createIssueEditForm = (item = {}) => ({
   review_note: item.review_note || ''
 })
 
+const selectedEditIssuePhotoEditorItem = computed(() => {
+  return (editIssuePhotoComposition.value.items || []).find(
+    (item) => item.photoId === editIssuePhotoEditor.value.selectedPhotoId
+  ) || null
+})
+
+const getEditIssuePhotoById = (photoId) => editIssueSourcePhotos.value.find((photo) => photo.id === photoId)
+
+const revokeEditIssueSourcePhotos = () => {
+  editIssueSourcePhotos.value.forEach((photo) => revokeObjectUrl(photo.url))
+  editIssueSourcePhotos.value = []
+}
+
 const revokeIssuePhotoPreview = () => {
   revokeObjectUrl(editDialog.value.issuePhotoPreview)
 }
@@ -2427,6 +2557,7 @@ const syncEditStandardSearch = () => {
 
 const openEditDialog = async (item) => {
   revokeIssuePhotoPreview()
+  revokeEditIssueSourcePhotos()
   editDialog.value = {
     visible: true,
     saving: false,
@@ -2441,6 +2572,16 @@ const openEditDialog = async (item) => {
   editStandardDropdownVisible.value = false
   editIssuePhotoDragActive.value = false
   editIssuePhotoDragDepth = 0
+  editIssuePhotoComposition.value = { width: 1200, height: 800, items: [], circles: [] }
+  editIssuePhotoEditor.value = {
+    visible: false,
+    tool: 'crop',
+    selectedPhotoId: '',
+    swapTargetPhotoId: '',
+    saving: false,
+    pointer: null,
+    draftCircle: null
+  }
   const preloadTasks = []
   if (item?.can_edit_issue) preloadTasks.push(fetchEditStandardReferenceData())
   if (item?.can_change_issue_inspector) preloadTasks.push(fetchInspectorUserOptions())
@@ -2451,10 +2592,13 @@ const openEditDialog = async (item) => {
 const closeEditDialog = () => {
   if (editDialog.value.saving) return
   revokeIssuePhotoPreview()
+  revokeEditIssueSourcePhotos()
   clearFileInputsById(['edit-issue-photo-upload', 'edit-issue-photo-camera'])
   editStandardDropdownVisible.value = false
   editIssuePhotoDragActive.value = false
   editIssuePhotoDragDepth = 0
+  closeEditIssuePhotoEditor(true)
+  editIssuePhotoComposition.value = { width: 1200, height: 800, items: [], circles: [] }
   editDialog.value = {
     visible: false,
     saving: false,
@@ -2468,28 +2612,6 @@ const closeEditDialog = () => {
   }
 }
 
-const processIssuePhotoFile = async (file) => {
-  revokeIssuePhotoPreview()
-  if (!file) {
-    editDialog.value.issuePhotoFile = null
-    editDialog.value.issuePhotoPreview = ''
-    return false
-  }
-
-  try {
-    const prepared = await prepareImagePreview(file)
-    editDialog.value.issuePhotoFile = prepared.file
-    editDialog.value.issuePhotoPreview = prepared.previewUrl
-    editDialog.value.error = ''
-    return true
-  } catch (error) {
-    editDialog.value.issuePhotoFile = null
-    editDialog.value.issuePhotoPreview = ''
-    editDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
-    return false
-  }
-}
-
 const scrollToEditIssuePhotoUpload = async () => {
   await nextTick()
   scrollImageUploadIntoView(editIssuePhotoUploadSectionRef.value, {
@@ -2498,11 +2620,97 @@ const scrollToEditIssuePhotoUpload = async () => {
   })
 }
 
-const handleIssuePhotoChange = async (event) => {
-  await processIssuePhotoFile(event.target.files?.[0])
-  if (!editDialog.value.issuePhotoFile) {
-    clearFileInput(event)
+const setFinalEditIssuePhotoFile = async (file) => {
+  const preparedFile = await prepareImageFile(file)
+  editDialog.value.issuePhotoFile = preparedFile
+  revokeIssuePhotoPreview()
+  editDialog.value.issuePhotoPreview = URL.createObjectURL(preparedFile)
+  editDialog.value.error = ''
+}
+
+const redrawEditIssuePhotoEditor = () => {
+  renderIssuePhotoComposition(editIssuePhotoEditorCanvasRef.value, editIssueSourcePhotos.value, editIssuePhotoComposition.value, {
+    selectedPhotoId: editIssuePhotoEditor.value.tool === 'crop' ? editIssuePhotoEditor.value.selectedPhotoId : '',
+    swapSourcePhotoId: editIssuePhotoEditor.value.pointer?.type === 'swap' ? editIssuePhotoEditor.value.pointer.sourcePhotoId : '',
+    swapTargetPhotoId: editIssuePhotoEditor.value.tool === 'swap' ? editIssuePhotoEditor.value.swapTargetPhotoId : '',
+    draftCircle: editIssuePhotoEditor.value.draftCircle
+  })
+}
+
+const generateEditIssueCompositePhoto = async (options = {}) => {
+  if (!editIssueSourcePhotos.value.length) return false
+  const outputFile = await exportIssuePhotoCompositionFile(
+    editIssueSourcePhotos.value,
+    editIssuePhotoComposition.value,
+    `edited-issue-${editDialog.value.issue?.id || Date.now()}.jpg`
+  )
+  await setFinalEditIssuePhotoFile(outputFile)
+  if (!options.keepEditorCanvas) {
+    await nextTick()
   }
+  return true
+}
+
+const resetEditIssuePhotoComposition = async () => {
+  editIssuePhotoComposition.value = createAutoIssuePhotoComposition(editIssueSourcePhotos.value)
+  editIssuePhotoEditor.value.selectedPhotoId = editIssueSourcePhotos.value[0]?.id || ''
+  editIssuePhotoEditor.value.swapTargetPhotoId = ''
+  editIssuePhotoEditor.value.draftCircle = null
+  await nextTick()
+  redrawEditIssuePhotoEditor()
+  await generateEditIssueCompositePhoto({ keepEditorCanvas: true })
+}
+
+const processEditIssueSelectedImages = async (files = []) => {
+  const incomingFiles = Array.from(files || []).filter(Boolean)
+  if (!incomingFiles.length) return false
+
+  const remainingCount = Math.max(0, 3 - editIssueSourcePhotos.value.length)
+  if (remainingCount <= 0) {
+    editDialog.value.error = '问题照片最多只能添加3张。'
+    return false
+  }
+
+  const filesToProcess = incomingFiles.slice(0, remainingCount)
+  const addedPhotos = []
+  try {
+    for (const file of filesToProcess) {
+      const preparedFile = await prepareImageFile(file)
+      const img = await loadImageFromFile(preparedFile)
+      addedPhotos.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file: preparedFile,
+        url: URL.createObjectURL(preparedFile),
+        img,
+        name: preparedFile.name || file.name || '问题照片'
+      })
+    }
+
+    editIssueSourcePhotos.value = [...editIssueSourcePhotos.value, ...addedPhotos].slice(0, 3)
+    editIssuePhotoComposition.value = createAutoIssuePhotoComposition(editIssueSourcePhotos.value)
+    editIssuePhotoEditor.value.selectedPhotoId = editIssueSourcePhotos.value[0]?.id || ''
+    editIssuePhotoEditor.value.swapTargetPhotoId = ''
+    editIssuePhotoEditor.value.draftCircle = null
+    await generateEditIssueCompositePhoto()
+    editDialog.value.error = incomingFiles.length > remainingCount
+      ? '最多添加3张问题照片，已自动忽略超出的图片。'
+      : ''
+    return true
+  } catch (error) {
+    addedPhotos.forEach((photo) => revokeObjectUrl(photo.url))
+    editDialog.value.issuePhotoFile = null
+    revokeIssuePhotoPreview()
+    editDialog.value.issuePhotoPreview = ''
+    editDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
+    return false
+  }
+}
+
+const handleIssuePhotoChange = async (event) => {
+  const files = getImageFilesFromFileList(event.target.files || [])
+  if (!files.length) return
+  await processEditIssueSelectedImages(files)
+  clearFileInput(event)
 }
 
 const openEditIssuePhotoPicker = () => {
@@ -2533,24 +2741,24 @@ const handleEditIssuePhotoDrop = async (event) => {
   if (!isDesktopImageDropEnabled()) return
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  const file = getImageFileFromDataTransfer(event.dataTransfer)
-  if (!file) {
+  const files = getImageFilesFromDataTransfer(event.dataTransfer)
+  if (!files.length) {
     editDialog.value.error = '请拖入图片文件。'
     return
   }
-  await processIssuePhotoFile(file)
+  await processEditIssueSelectedImages(files)
 }
 
 const handleEditIssuePhotoPaste = async (event) => {
-  const file = getImageFileFromClipboardEvent(event)
-  if (!file) {
+  const files = getImageFilesFromClipboardEvent(event)
+  if (!files.length) {
     editDialog.value.error = '剪贴板里没有可上传的图片。'
     return
   }
   event.preventDefault()
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  const uploaded = await processIssuePhotoFile(file)
+  const uploaded = await processEditIssueSelectedImages(files)
   if (uploaded) {
     await scrollToEditIssuePhotoUpload()
   }
@@ -2559,24 +2767,228 @@ const handleEditIssuePhotoPaste = async (event) => {
 const handleWindowEditIssuePhotoPaste = async (event) => {
   if (event.defaultPrevented || !editDialog.value.visible) return
   if (!canEditDialogIssueContent.value) return
-  const file = getImageFileFromClipboardEvent(event)
-  if (!file) return
+  const files = getImageFilesFromClipboardEvent(event)
+  if (!files.length) return
   event.preventDefault()
   editIssuePhotoDragDepth = 0
   editIssuePhotoDragActive.value = false
-  const uploaded = await processIssuePhotoFile(file)
+  const uploaded = await processEditIssueSelectedImages(files)
   if (uploaded) {
     await scrollToEditIssuePhotoUpload()
   }
 }
 
 const clearIssuePhoto = () => {
+  closeEditIssuePhotoEditor(true)
   editDialog.value.issuePhotoFile = null
   revokeIssuePhotoPreview()
   editDialog.value.issuePhotoPreview = ''
+  revokeEditIssueSourcePhotos()
+  editIssuePhotoComposition.value = { width: 1200, height: 800, items: [], circles: [] }
   editIssuePhotoDragActive.value = false
   editIssuePhotoDragDepth = 0
   clearFileInputsById(['edit-issue-photo-upload', 'edit-issue-photo-camera'])
+}
+
+const removeEditIssueSourcePhoto = async (photoId) => {
+  const target = getEditIssuePhotoById(photoId)
+  if (target) revokeObjectUrl(target.url)
+  editIssueSourcePhotos.value = editIssueSourcePhotos.value.filter((photo) => photo.id !== photoId)
+  if (!editIssueSourcePhotos.value.length) {
+    clearIssuePhoto()
+    return
+  }
+  await resetEditIssuePhotoComposition()
+}
+
+const selectEditIssueEditorPhoto = (photoId) => {
+  editIssuePhotoEditor.value.selectedPhotoId = photoId
+  editIssuePhotoEditor.value.tool = 'crop'
+  nextTick(redrawEditIssuePhotoEditor)
+}
+
+const openEditIssuePhotoEditor = async () => {
+  if (!editIssueSourcePhotos.value.length) return
+  editIssuePhotoEditor.value.visible = true
+  editIssuePhotoEditor.value.tool = 'crop'
+  editIssuePhotoEditor.value.selectedPhotoId = editIssuePhotoEditor.value.selectedPhotoId || editIssueSourcePhotos.value[0]?.id || ''
+  editIssuePhotoEditor.value.swapTargetPhotoId = ''
+  editIssuePhotoEditor.value.pointer = null
+  editIssuePhotoEditor.value.draftCircle = null
+  await nextTick()
+  redrawEditIssuePhotoEditor()
+}
+
+function closeEditIssuePhotoEditor(force = false) {
+  if (editIssuePhotoEditor.value.saving && !force) return
+  editIssuePhotoEditor.value.visible = false
+  editIssuePhotoEditor.value.pointer = null
+  editIssuePhotoEditor.value.draftCircle = null
+  editIssuePhotoEditor.value.swapTargetPhotoId = ''
+}
+
+const getEditIssueEditorCanvasPoint = (event) => {
+  const canvas = editIssuePhotoEditorCanvasRef.value
+  const rect = canvas?.getBoundingClientRect()
+  if (!canvas || !rect) return null
+  return {
+    x: (event.clientX - rect.left) * (canvas.width / rect.width),
+    y: (event.clientY - rect.top) * (canvas.height / rect.height)
+  }
+}
+
+const findEditIssueCompositionItemAtPoint = (point) => {
+  if (!point) return null
+  return [...(editIssuePhotoComposition.value.items || [])].reverse().find((item) => (
+    point.x >= item.x &&
+    point.x <= item.x + item.w &&
+    point.y >= item.y &&
+    point.y <= item.y + item.h
+  )) || null
+}
+
+const handleEditIssueEditorPointerDown = (event) => {
+  const point = getEditIssueEditorCanvasPoint(event)
+  if (!point) return
+  editIssuePhotoEditorCanvasRef.value?.setPointerCapture?.(event.pointerId)
+
+  if (editIssuePhotoEditor.value.tool === 'circle') {
+    editIssuePhotoEditor.value.pointer = { type: 'circle', startX: point.x, startY: point.y }
+    editIssuePhotoEditor.value.draftCircle = { x: point.x, y: point.y, r: 1, color: '#ef4444', lineWidth: 8 }
+    redrawEditIssuePhotoEditor()
+    return
+  }
+
+  const item = findEditIssueCompositionItemAtPoint(point)
+  if (!item) return
+  editIssuePhotoEditor.value.selectedPhotoId = item.photoId
+
+  if (editIssuePhotoEditor.value.tool === 'swap') {
+    editIssuePhotoEditor.value.swapTargetPhotoId = item.photoId
+    editIssuePhotoEditor.value.pointer = {
+      type: 'swap',
+      sourcePhotoId: item.photoId
+    }
+    redrawEditIssuePhotoEditor()
+    return
+  }
+
+  editIssuePhotoEditor.value.pointer = {
+    type: 'crop',
+    startX: point.x,
+    startY: point.y,
+    itemPhotoId: item.photoId,
+    startOffsetX: item.offsetX || 0,
+    startOffsetY: item.offsetY || 0
+  }
+  redrawEditIssuePhotoEditor()
+}
+
+const handleEditIssueEditorPointerMove = (event) => {
+  const pointer = editIssuePhotoEditor.value.pointer
+  if (!pointer) return
+  const point = getEditIssueEditorCanvasPoint(event)
+  if (!point) return
+
+  if (pointer.type === 'circle') {
+    const dx = point.x - pointer.startX
+    const dy = point.y - pointer.startY
+    editIssuePhotoEditor.value.draftCircle = {
+      x: pointer.startX,
+      y: pointer.startY,
+      r: Math.max(1, Math.sqrt(dx * dx + dy * dy)),
+      color: '#ef4444',
+      lineWidth: 8
+    }
+    redrawEditIssuePhotoEditor()
+    return
+  }
+
+  if (pointer.type === 'swap') {
+    const targetItem = findEditIssueCompositionItemAtPoint(point)
+    editIssuePhotoEditor.value.swapTargetPhotoId = targetItem?.photoId || ''
+    redrawEditIssuePhotoEditor()
+    return
+  }
+
+  const item = (editIssuePhotoComposition.value.items || []).find((entry) => entry.photoId === pointer.itemPhotoId)
+  const photo = getEditIssuePhotoById(pointer.itemPhotoId)
+  if (!item || !photo) return
+  item.offsetX = pointer.startOffsetX + point.x - pointer.startX
+  item.offsetY = pointer.startOffsetY + point.y - pointer.startY
+  clampCompositionItemOffset(item, photo)
+  redrawEditIssuePhotoEditor()
+}
+
+const handleEditIssueEditorPointerUp = async () => {
+  const pointer = editIssuePhotoEditor.value.pointer
+  if (!pointer) return
+
+  if (pointer.type === 'circle' && editIssuePhotoEditor.value.draftCircle?.r > 8) {
+    editIssuePhotoComposition.value.circles = [
+      ...(editIssuePhotoComposition.value.circles || []),
+      { ...editIssuePhotoEditor.value.draftCircle }
+    ]
+  }
+
+  if (pointer.type === 'swap') {
+    const sourceItem = (editIssuePhotoComposition.value.items || []).find((entry) => entry.photoId === pointer.sourcePhotoId)
+    const targetItem = (editIssuePhotoComposition.value.items || []).find((entry) => entry.photoId === editIssuePhotoEditor.value.swapTargetPhotoId)
+    if (sourceItem && targetItem && sourceItem !== targetItem) {
+      const sourcePhotoId = sourceItem.photoId
+      sourceItem.photoId = targetItem.photoId
+      targetItem.photoId = sourcePhotoId
+      ;[sourceItem, targetItem].forEach((item) => {
+        item.scale = 1
+        item.offsetX = 0
+        item.offsetY = 0
+      })
+      editIssuePhotoEditor.value.selectedPhotoId = sourcePhotoId
+    }
+  }
+
+  editIssuePhotoEditor.value.pointer = null
+  editIssuePhotoEditor.value.draftCircle = null
+  editIssuePhotoEditor.value.swapTargetPhotoId = ''
+  redrawEditIssuePhotoEditor()
+  await generateEditIssueCompositePhoto({ keepEditorCanvas: true })
+}
+
+const handleEditIssueEditorPointerLeave = (event) => {
+  if (!editIssuePhotoEditor.value.pointer) return
+  if (event.buttons === 0) {
+    handleEditIssueEditorPointerUp()
+  }
+}
+
+const handleEditIssueEditorScaleChange = async () => {
+  const item = selectedEditIssuePhotoEditorItem.value
+  const photo = getEditIssuePhotoById(item?.photoId)
+  if (item && photo) {
+    clampCompositionItemOffset(item, photo)
+  }
+  redrawEditIssuePhotoEditor()
+  await generateEditIssueCompositePhoto({ keepEditorCanvas: true })
+}
+
+const undoEditIssueEditorCircle = async () => {
+  editIssuePhotoComposition.value.circles = (editIssuePhotoComposition.value.circles || []).slice(0, -1)
+  redrawEditIssuePhotoEditor()
+  await generateEditIssueCompositePhoto({ keepEditorCanvas: true })
+}
+
+const saveEditIssuePhotoEditor = async () => {
+  try {
+    editIssuePhotoEditor.value.saving = true
+    await generateEditIssueCompositePhoto({ keepEditorCanvas: true })
+    editIssuePhotoEditor.value.saving = false
+    closeEditIssuePhotoEditor(true)
+    editDialog.value.error = ''
+  } catch (error) {
+    editDialog.value.error = error?.message || '拼接照片生成失败，请稍后重试。'
+  } finally {
+    editIssuePhotoEditor.value.saving = false
+  }
 }
 
 const openEditStandardDropdown = () => {
@@ -3178,6 +3590,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', handleTableFullscreenChange)
   stopExportPolling()
   revokeIssuePhotoPreview()
+  revokeEditIssueSourcePhotos()
+  closeEditIssuePhotoEditor(true)
   revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
@@ -4263,13 +4677,15 @@ onBeforeUnmount(() => {
 
 .fullscreen-overlay-host .image-modal,
 .fullscreen-overlay-host .issue-photo-preview-overlay,
+.fullscreen-overlay-host .photo-editor-overlay,
 .fullscreen-overlay-host .audit-center-notice,
 .fullscreen-overlay-host .message-toast {
   z-index: 9500;
 }
 
 .fullscreen-overlay-host .image-modal,
-.fullscreen-overlay-host .issue-photo-preview-overlay {
+.fullscreen-overlay-host .issue-photo-preview-overlay,
+.fullscreen-overlay-host .photo-editor-overlay {
   pointer-events: auto;
 }
 
@@ -4797,6 +5213,310 @@ onBeforeUnmount(() => {
   transform-origin: center center;
   transition: transform 0.12s ease-out;
   will-change: transform;
+}
+
+.image-preview-thumb-btn {
+  display: block;
+  flex-shrink: 0;
+  width: 94px;
+  height: 94px;
+  padding: 0;
+  border: none;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f8fafc;
+  cursor: zoom-in;
+}
+
+.image-preview-thumb-btn .image-preview-thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.desktop-drop-hint {
+  display: block;
+  margin-top: 4px;
+  color: #2563eb;
+  font-weight: 700;
+}
+
+.source-photo-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 2px 0 4px;
+  overflow-x: auto;
+}
+
+.source-photo-chip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 72px;
+  height: 54px;
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #f8fafc;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.source-photo-chip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.source-photo-chip button {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 8px 14px rgba(239, 68, 68, 0.28);
+}
+
+.photo-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(96, 165, 250, 0.22), transparent 28%),
+    rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.photo-editor-dialog {
+  width: min(1280px, calc(100vw - 24px));
+  height: min(96vh, 980px);
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 34px 80px rgba(15, 23, 42, 0.36);
+}
+
+.photo-editor-head,
+.photo-editor-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #f1f5f9 100%);
+}
+
+.photo-editor-head span {
+  display: inline-flex;
+  margin-bottom: 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.photo-editor-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.photo-editor-close {
+  width: 38px;
+  height: 38px;
+  border: 1px solid #dbe4ee;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.photo-editor-close:hover {
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.photo-editor-body {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.photo-editor-side {
+  min-height: 0;
+  padding: 18px;
+  overflow-y: auto;
+  border-right: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.editor-tool-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.editor-tool-group button,
+.editor-source-list button {
+  border: 1px solid #dbe4ee;
+  border-radius: 12px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.editor-tool-group button {
+  min-height: 42px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.editor-tool-group button.active,
+.editor-source-list button.active {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: #eff6ff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+}
+
+.editor-tip {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.editor-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.editor-source-list button {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 8px;
+  text-align: left;
+}
+
+.editor-source-list img {
+  width: 58px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #e2e8f0;
+}
+
+.editor-source-list span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-range {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.editor-range input {
+  width: 100%;
+  accent-color: #2563eb;
+}
+
+.editor-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.photo-editor-canvas-wrap {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 20px 22px 26px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(203, 213, 225, 0.24) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(203, 213, 225, 0.24) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(203, 213, 225, 0.24) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(203, 213, 225, 0.24) 75%),
+    #eef2f7;
+  background-position: 0 0, 0 14px, 14px -14px, -14px 0;
+  background-size: 28px 28px;
+}
+
+.photo-editor-canvas {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  height: auto;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+  cursor: grab;
+  touch-action: none;
+}
+
+.photo-editor-canvas:active {
+  cursor: grabbing;
+}
+
+.photo-editor-foot {
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 0;
 }
 
 .image-modal-content {
@@ -6031,6 +6751,10 @@ onBeforeUnmount(() => {
     font-size: 12px;
   }
 
+  .desktop-drop-hint {
+    display: none;
+  }
+
   .upload-trigger-group,
   .image-preview-actions {
     width: 100%;
@@ -6051,6 +6775,119 @@ onBeforeUnmount(() => {
     width: 100%;
     height: auto;
     aspect-ratio: 4 / 3;
+  }
+
+  .image-preview-thumb-btn {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+  }
+
+  .source-photo-strip {
+    padding-bottom: 8px;
+  }
+
+  .source-photo-chip {
+    width: 66px;
+    height: 50px;
+  }
+
+  .photo-editor-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .photo-editor-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .photo-editor-head,
+  .photo-editor-foot {
+    padding: 14px;
+  }
+
+  .photo-editor-head h3 {
+    font-size: 18px;
+  }
+
+  .photo-editor-close {
+    width: 36px;
+    height: 36px;
+  }
+
+  .photo-editor-body {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .photo-editor-side {
+    flex: 0 0 auto;
+    padding: 14px;
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+    overflow: visible;
+  }
+
+  .editor-tip {
+    margin-top: 10px;
+    padding: 10px;
+    font-size: 12px;
+  }
+
+  .editor-source-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .editor-source-list button {
+    grid-template-columns: 52px 88px;
+    flex: 0 0 auto;
+    width: 154px;
+  }
+
+  .editor-source-list img {
+    width: 52px;
+    height: 40px;
+  }
+
+  .editor-tool-group button {
+    min-height: 40px;
+    font-size: 12px;
+    padding: 0 8px;
+  }
+
+  .editor-actions-stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .photo-editor-canvas-wrap {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding: 12px 12px 18px;
+    align-items: flex-start;
+    justify-content: center;
+    overflow: visible;
+  }
+
+  .photo-editor-canvas {
+    width: min(100%, 720px);
+    max-height: none;
+    border-radius: 14px;
+  }
+
+  .photo-editor-foot {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
   }
 
   .issue-edit-actions {

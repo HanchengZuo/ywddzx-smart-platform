@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.9.3',
+    date: '2026-06-01',
+    title: '编辑问题照片增强',
+    summary: '编辑巡检问题时也能使用照片拼接和标注。',
+    items: [
+      '问题列表编辑弹窗支持多张照片拼接。',
+      '编辑问题照片可裁剪、调换位置和画圈标注。',
+      '拖拽、粘贴、拍照和相册选择体验保持一致。'
+    ]
+  },
+  {
     version: 'v2.9.2',
     date: '2026-06-01',
     title: '整改复核时间记录',
