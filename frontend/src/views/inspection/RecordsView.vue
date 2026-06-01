@@ -2801,6 +2801,7 @@ onBeforeUnmount(() => {
 }
 
 .batch-action-cell,
+.batch-completion-cell,
 .batch-signature-cell {
   vertical-align: middle;
   text-align: center;
@@ -2810,15 +2811,42 @@ onBeforeUnmount(() => {
   min-width: 132px;
 }
 
+.batch-completion-cell {
+  min-width: 168px;
+}
+
 .batch-signature-cell {
   min-width: 218px;
+}
+
+.batch-completion-cell > *,
+.batch-signature-cell > * {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.batch-completion-cell .btn,
+.batch-signature-cell .btn {
+  justify-content: center;
+}
+
+.completion-preview-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 220px;
+  text-align: center;
 }
 
 .signature-preview-box {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  text-align: center;
 }
 
 .signature-signed-wrap {
@@ -2826,6 +2854,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 10px;
+  text-align: center;
 }
 
 .signature-reset-btn {
@@ -2888,6 +2917,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #64748b;
   line-height: 1.6;
+  text-align: center;
 }
 
 .signature-status-badge {
@@ -2900,6 +2930,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.4;
+  text-align: center;
 }
 
 .signature-status-badge.success {
