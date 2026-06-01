@@ -3038,6 +3038,18 @@ def ensure_issue_inspector_schema(cur):
     )
     cur.execute(
         """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS rectification_at TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE issues
+        ADD COLUMN IF NOT EXISTS review_at TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
         UPDATE issues
         SET is_excellent = FALSE
         WHERE is_excellent IS NULL
@@ -4649,9 +4661,11 @@ ISSUE_EXPORT_FIELD_KEYS = {
     "issue_photo",
     "rectification_result",
     "rectification_note",
+    "rectification_at",
     "rectification_photo",
     "review_result",
     "review_note",
+    "review_at",
     "review_photo",
     "status",
 }
@@ -4815,9 +4829,11 @@ def fetch_issue_export_rows(cur, user, issue_ids):
                 END AS audit_result,
                 i.rectification_result,
                 i.rectification_note,
+                TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
                 i.rectification_photo_path AS rectification_photo,
                 i.review_result,
                 i.review_note,
+                TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
                 i.review_photo_path AS review_photo,
                 CASE
                     WHEN COALESCE(i.audit_status, 'pending') = 'pending'
@@ -4875,9 +4891,11 @@ ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
     ("问题照片", "issue_photo"),
     ("站经理整改结果", "rectification_result"),
     ("站点反馈整改说明", "rectification_note"),
+    ("整改时间", "rectification_at"),
     ("站点反馈整改照片", "rectification_photo"),
     ("督导组复核结果", "review_result"),
     ("督导组复核说明", "review_note"),
+    ("复核时间", "review_at"),
     ("督导组复核照片", "review_photo"),
     ("问题状态", "status"),
 ]
@@ -15105,9 +15123,11 @@ def get_my_issues():
                     i.photo_path AS issue_photo,
                     i.rectification_result,
                     i.rectification_note,
+                    TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
                     i.rectification_photo_path AS rectification_photo,
                     i.review_result,
                     i.review_note,
+                    TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
@@ -15169,9 +15189,11 @@ def get_my_issues():
                     i.photo_path AS issue_photo,
                     i.rectification_result,
                     i.rectification_note,
+                    TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
                     i.rectification_photo_path AS rectification_photo,
                     i.review_result,
                     i.review_note,
+                    TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
@@ -15340,9 +15362,11 @@ def get_issues():
                     i.photo_path AS issue_photo,
                     i.rectification_result,
                     i.rectification_note,
+                    TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
                     i.rectification_photo_path AS rectification_photo,
                     i.review_result,
                     i.review_note,
+                    TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
                     i.review_photo_path AS review_photo,
                     i.status,
                     COALESCE(i.audit_status, 'pending') AS audit_status,
@@ -15832,8 +15856,10 @@ def update_issue(issue_id):
                 COALESCE(i.audit_status, 'pending') AS audit_status,
                 i.rectification_result,
                 i.rectification_note,
+                i.rectification_at,
                 i.review_result,
                 i.review_note,
+                i.review_at,
                 COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                 ins.inspection_date,
                 ins.batch_id,
@@ -15993,6 +16019,18 @@ def update_issue(issue_id):
             if can_edit_issue_content and issue_photo and issue_photo.filename
             else None
         )
+        previous_has_rectification_record = bool(
+            normalize_issue_result_for_response(issue.get("rectification_result"))
+            or issue.get("rectification_note")
+        )
+        previous_has_review_record = bool(
+            normalize_issue_result_for_response(issue.get("review_result"))
+            or issue.get("review_note")
+        )
+        has_rectification_record = bool(rectification_result or rectification_note)
+        has_review_record = bool(review_result or review_note)
+        should_start_rectification_at = has_rectification_record and not previous_has_rectification_record
+        should_start_review_at = has_review_record and not previous_has_review_record
 
         cur.execute(
             """
@@ -16008,8 +16046,18 @@ def update_issue(issue_id):
                 status = %s,
                 rectification_result = %s,
                 rectification_note = %s,
+                rectification_at = CASE
+                    WHEN NOT %s THEN NULL
+                    WHEN %s THEN CURRENT_TIMESTAMP
+                    ELSE rectification_at
+                END,
                 review_result = %s,
                 review_note = %s,
+                review_at = CASE
+                    WHEN NOT %s THEN NULL
+                    WHEN %s THEN CURRENT_TIMESTAMP
+                    ELSE review_at
+                END,
                 photo_path = COALESCE(%s, photo_path)
             WHERE id = %s;
             """,
@@ -16025,8 +16073,12 @@ def update_issue(issue_id):
                 status,
                 rectification_result,
                 rectification_note,
+                has_rectification_record,
+                should_start_rectification_at,
                 review_result,
                 review_note,
+                has_review_record,
+                should_start_review_at,
                 new_photo_path,
                 issue_id,
             ),
@@ -17870,9 +17922,11 @@ def get_inspection_issues(inspection_id):
                 i.photo_path AS issue_photo,
                 i.rectification_result,
                 i.rectification_note,
+                TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
                 i.rectification_photo_path AS rectification_photo,
                 i.review_result,
                 i.review_note,
+                TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
                 i.review_photo_path AS review_photo,
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
@@ -17943,6 +17997,7 @@ def submit_rectification(issue_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         cur.execute(
             """
@@ -18028,6 +18083,7 @@ def submit_rectification(issue_id):
                 UPDATE issues
                 SET rectification_result = %s,
                     rectification_note = %s,
+                    rectification_at = CURRENT_TIMESTAMP,
                     rectification_photo_path = %s,
                     status = '待复核'
                 WHERE id = %s;
@@ -18045,6 +18101,7 @@ def submit_rectification(issue_id):
                 UPDATE issues
                 SET rectification_result = %s,
                     rectification_note = %s,
+                    rectification_at = CURRENT_TIMESTAMP,
                     status = '待复核'
                 WHERE id = %s;
                 """,
@@ -18182,6 +18239,7 @@ def submit_review(issue_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
 
         cur.execute(
             """
@@ -18240,6 +18298,7 @@ def submit_review(issue_id):
             UPDATE issues
             SET review_result = %s,
                 review_note = %s,
+                review_at = CURRENT_TIMESTAMP,
                 review_photo_path = %s,
                 status = %s
             WHERE id = %s;

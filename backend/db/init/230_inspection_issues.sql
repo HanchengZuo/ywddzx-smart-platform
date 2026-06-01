@@ -38,10 +38,12 @@ CREATE TABLE issues (
 
     rectification_result TEXT,                                                -- 站点整改结果：已整改 / 站经无法整改
     rectification_note TEXT,                                                  -- 站点整改说明
+    rectification_at TIMESTAMP,                                               -- 站点提交整改时间
     rectification_photo_path TEXT,                                            -- 站点整改照片路径
 
     review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改
     review_note TEXT,                                                         -- 督导组复核说明
+    review_at TIMESTAMP,                                                      -- 督导组提交复核时间
     review_photo_path TEXT,                                                   -- 督导组复核照片路径
 
     audit_status TEXT NOT NULL DEFAULT 'pending',                             -- 审核状态：pending / approved / rejected
@@ -71,6 +73,12 @@ ADD COLUMN IF NOT EXISTS audited_at TIMESTAMP;
 
 ALTER TABLE issues
 ADD COLUMN IF NOT EXISTS is_excellent BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS rectification_at TIMESTAMP;
+
+ALTER TABLE issues
+ADD COLUMN IF NOT EXISTS review_at TIMESTAMP;
 
 UPDATE issues
 SET is_excellent = FALSE

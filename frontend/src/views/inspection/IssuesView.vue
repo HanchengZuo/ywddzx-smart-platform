@@ -76,10 +76,12 @@
               <span>整改说明</span>
               <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
             </div>
+            <div class="mobile-card-row"><span>整改时间</span><strong>{{ item.rectification_at || '暂无' }}</strong></div>
             <div class="mobile-card-row mobile-card-row-top">
               <span>复核说明</span>
               <div class="mobile-card-text">{{ item.review_note || '暂无' }}</div>
             </div>
+            <div class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at || '暂无' }}</strong></div>
           </div>
 
           <div class="mobile-card-images">
@@ -504,9 +506,11 @@
                 <th v-if="isIssueColumnVisible('issue_photo')" class="nowrap">问题照片</th>
                 <th v-if="isIssueColumnVisible('rectification_result')" class="nowrap">站经理整改结果</th>
                 <th v-if="isIssueColumnVisible('rectification_note')" class="nowrap">站点反馈整改说明</th>
+                <th v-if="isIssueColumnVisible('rectification_at')" class="nowrap">整改时间</th>
                 <th v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">站点反馈整改照片</th>
                 <th v-if="isIssueColumnVisible('review_result')" class="nowrap">督导组复核结果</th>
                 <th v-if="isIssueColumnVisible('review_note')" class="nowrap">督导组复核说明</th>
+                <th v-if="isIssueColumnVisible('review_at')" class="nowrap">复核时间</th>
                 <th v-if="isIssueColumnVisible('review_photo')" class="nowrap">督导组复核照片</th>
                 <th v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">问题状态</th>
                 <th v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">审核</th>
@@ -554,6 +558,7 @@
                 </td>
                 <td v-if="isIssueColumnVisible('rectification_result')" class="nowrap">{{ item.rectification_result || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('rectification_note')" class="nowrap">{{ item.rectification_note || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('rectification_at')" class="nowrap">{{ item.rectification_at || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('rectification_photo')" class="nowrap">
                   <button v-if="item.rectification_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
@@ -565,6 +570,7 @@
                 </td>
                 <td v-if="isIssueColumnVisible('review_result')" class="nowrap">{{ item.review_result || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('review_note')" class="nowrap">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('review_at')" class="nowrap">{{ item.review_at || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('review_photo')" class="nowrap">
                   <button v-if="item.review_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
@@ -1282,9 +1288,11 @@ const issueColumnDefinitions = [
   { key: 'issue_photo', label: '问题照片', group: '规范问题', width: 104 },
   { key: 'rectification_result', label: '站经理整改结果', group: '整改复核', width: 136 },
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核', width: 210 },
+  { key: 'rectification_at', label: '整改时间', group: '整改复核', width: 148 },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核', width: 120 },
   { key: 'review_result', label: '督导组复核结果', group: '整改复核', width: 136 },
   { key: 'review_note', label: '督导组复核说明', group: '整改复核', width: 210 },
+  { key: 'review_at', label: '复核时间', group: '整改复核', width: 148 },
   { key: 'review_photo', label: '督导组复核照片', group: '整改复核', width: 120 },
   { key: 'status', label: '问题状态', group: '状态操作', width: 104 },
   { key: 'audit', label: '审核', group: '状态操作', width: 116 },
@@ -1417,9 +1425,11 @@ const exportFieldGroups = [
     options: [
       { key: 'rectification_result', label: '整改结果', help: '站经理整改判定' },
       { key: 'rectification_note', label: '整改说明', help: '站点反馈整改说明' },
+      { key: 'rectification_at', label: '整改时间', help: '站点提交整改的时间' },
       { key: 'rectification_photo', label: '整改照片', help: '嵌入站点整改照片', photo: true },
       { key: 'review_result', label: '复核结果', help: '督导组复核判定' },
       { key: 'review_note', label: '复核说明', help: '督导组复核说明' },
+      { key: 'review_at', label: '复核时间', help: '督导组提交复核的时间' },
       { key: 'review_photo', label: '复核照片', help: '嵌入督导复核照片', photo: true }
     ]
   }

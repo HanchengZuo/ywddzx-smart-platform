@@ -137,7 +137,9 @@
                 <span>整改说明</span>
                 <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
               </div>
+              <div class="mobile-card-row"><span>整改时间</span><strong>{{ item.rectification_at || '暂无' }}</strong></div>
             </template>
+            <div v-if="item.review_at" class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at }}</strong></div>
           </div>
 
           <div class="mobile-card-images">
@@ -248,9 +250,11 @@
                 <th v-if="isMyIssueColumnVisible('issue_photo')">问题照片</th>
                 <th v-if="isMyIssueColumnVisible('rectification_result')">站经理整改结果</th>
                 <th v-if="isMyIssueColumnVisible('rectification_note')">站点反馈整改说明</th>
+                <th v-if="isMyIssueColumnVisible('rectification_at')">整改时间</th>
                 <th v-if="isMyIssueColumnVisible('rectification_photo')">站点反馈整改照片</th>
                 <th v-if="isMyIssueColumnVisible('review_result')">督导组复核结果</th>
                 <th v-if="isMyIssueColumnVisible('review_note')">督导组复核说明</th>
+                <th v-if="isMyIssueColumnVisible('review_at')">复核时间</th>
                 <th v-if="isMyIssueColumnVisible('review_photo')">督导组复核照片</th>
                 <th v-if="isMyIssueColumnVisible('status')" class="nowrap-col">问题状态</th>
                 <th v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">操作</th>
@@ -286,6 +290,7 @@
                 </td>
                 <td v-if="isMyIssueColumnVisible('rectification_result')">{{ item.rectification_result || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('rectification_note')" class="long-text">{{ item.rectification_note || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('rectification_at')" class="nowrap-col">{{ item.rectification_at || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('rectification_photo')">
                   <button v-if="item.rectification_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.rectification_photo), '站点反馈整改照片')">
@@ -295,6 +300,7 @@
                 </td>
                 <td v-if="isMyIssueColumnVisible('review_result')">{{ item.review_result || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('review_note')" class="long-text">{{ item.review_note || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('review_at')" class="nowrap-col">{{ item.review_at || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('review_photo')">
                   <button v-if="item.review_photo" class="image-btn" type="button"
                     @click="preview(resolveImage(item.review_photo), '督导组复核照片')">
@@ -602,9 +608,11 @@ const myIssueColumnDefinitions = [
   { key: 'issue_photo', label: '问题照片', group: '规范问题' },
   { key: 'rectification_result', label: '站经理整改结果', group: '整改复核' },
   { key: 'rectification_note', label: '站点反馈整改说明', group: '整改复核' },
+  { key: 'rectification_at', label: '整改时间', group: '整改复核' },
   { key: 'rectification_photo', label: '站点反馈整改照片', group: '整改复核' },
   { key: 'review_result', label: '督导组复核结果', group: '整改复核' },
   { key: 'review_note', label: '督导组复核说明', group: '整改复核' },
+  { key: 'review_at', label: '复核时间', group: '整改复核' },
   { key: 'review_photo', label: '督导组复核照片', group: '整改复核' },
   { key: 'status', label: '问题状态', group: '状态操作' },
   { key: 'action', label: '操作', group: '状态操作' }
@@ -620,6 +628,7 @@ const defaultMyIssueColumnKeys = new Set([
   'issue_photo',
   'rectification_result',
   'rectification_note',
+  'rectification_at',
   'rectification_photo',
   'review_photo',
   'status',

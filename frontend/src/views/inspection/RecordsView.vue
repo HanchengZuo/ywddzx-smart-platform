@@ -647,11 +647,13 @@
               <div class="batch-issue-section">
                 <span>整改情况</span>
                 <p>{{ issue.rectification_result || '暂无整改结果' }}</p>
+                <p>整改时间：{{ issue.rectification_at || '暂无' }}</p>
                 <p v-if="issue.rectification_note">{{ issue.rectification_note }}</p>
               </div>
               <div class="batch-issue-section">
                 <span>督导复核</span>
                 <p>{{ issue.review_result || '暂无复核结果' }}</p>
+                <p>复核时间：{{ issue.review_at || '暂无' }}</p>
                 <p v-if="issue.review_note">{{ issue.review_note }}</p>
               </div>
 
@@ -1160,7 +1162,9 @@ const buildBatchDetailExportHtml = async () => {
           ${exportInfoItem('检查人', getInspectorLabel(issue))}
           ${exportInfoItem('规范ID', issue.standard_id)}
           ${exportInfoItem('整改结果', issue.rectification_result)}
+          ${exportInfoItem('整改时间', issue.rectification_at)}
           ${exportInfoItem('复核结果', issue.review_result)}
+          ${exportInfoItem('复核时间', issue.review_at)}
         </div>
         <div class="text-block">
           <h3>引用规范</h3>
