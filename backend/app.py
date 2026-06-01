@@ -4339,8 +4339,10 @@ def issue_station_rectification_started(issue):
 
 
 def can_user_use_creator_issue_controls(user, issue):
-    return issue_created_by_user(user, issue) and not issue_station_rectification_started(
-        issue
+    return (
+        issue_created_by_user(user, issue)
+        and is_issue_audit_pending(issue)
+        and not issue_station_rectification_started(issue)
     )
 
 
@@ -4423,11 +4425,21 @@ def normalize_issue_row_for_response(
     inspection_signed = is_issue_inspection_signed(data)
     inspection_completion_done = is_issue_inspection_completion_done(data)
     issue_mutation_locked = inspection_signed
+    creator_audit_locked = (
+        issue_created_by_user(user, data)
+        and not is_issue_audit_pending(data)
+        and not is_root_user(user)
+        and not can_explicit_edit
+        and not can_explicit_delete
+        and not can_explicit_change_inspector
+    )
     data["inspection_signed"] = bool(inspection_signed)
     data["inspection_completion_done"] = bool(inspection_completion_done)
     data["inspection_locked"] = bool(issue_mutation_locked)
     if inspection_signed:
         data["operation_lock_reason"] = "已签字不可操作"
+    elif creator_audit_locked:
+        data["operation_lock_reason"] = "已审核，需重新判定后才能编辑删除"
     else:
         data["operation_lock_reason"] = ""
     data["can_edit_issue_workflow"] = bool(
@@ -15859,6 +15871,9 @@ def update_issue(issue_id):
         can_explicit_edit = can_edit_inspection_issues(cur, user)
         can_explicit_change_inspector = can_change_issue_inspector(cur, user)
         creator_can_modify = can_user_use_creator_issue_controls(user, issue)
+        creator_audit_locked = issue_created_by_user(user, issue) and not is_issue_audit_pending(issue)
+        if creator_audit_locked and not can_explicit_edit and not can_explicit_change_inspector:
+            return jsonify({"success": False, "error": "该问题已审核，需审核人员重新判定为待审核后才能编辑。"}), 403
         if not can_explicit_edit and not creator_can_modify and not can_explicit_change_inspector:
             return jsonify({"success": False, "error": "当前账号无权编辑巡检问题。"}), 403
 
@@ -16109,6 +16124,9 @@ def delete_issue(issue_id):
 
         can_explicit_delete = can_delete_inspection_issues(cur, user)
         creator_can_modify = can_user_use_creator_issue_controls(user, issue)
+        creator_audit_locked = issue_created_by_user(user, issue) and not is_issue_audit_pending(issue)
+        if creator_audit_locked and not can_explicit_delete:
+            return jsonify({"success": False, "error": "该问题已审核，需审核人员重新判定为待审核后才能删除。"}), 403
         if not can_explicit_delete and not creator_can_modify:
             return jsonify({"success": False, "error": "当前账号无权删除巡检问题。"}), 403
 

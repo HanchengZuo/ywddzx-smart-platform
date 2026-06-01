@@ -1651,7 +1651,8 @@ const canManageIssues = computed(() => (
     item?.can_edit_issue ||
     item?.can_delete_issue ||
     item?.can_update_rectification_photo ||
-    item?.can_change_issue_inspector
+    item?.can_change_issue_inspector ||
+    item?.operation_lock_reason
   ))
 ))
 const visibleIssueColumns = computed(() => issueColumnDefinitions.filter((column) => issueColumnVisibility.value[column.key] !== false))

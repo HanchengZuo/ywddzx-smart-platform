@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v2.9.1',
+    date: '2026-06-01',
+    title: '已审核问题编辑规则优化',
+    summary: '问题审核后，上传人不能再编辑或删除。',
+    items: [
+      '自己提交的问题一旦审核，就会锁定编辑和删除。',
+      '审核人员重新判定为待审核后，上传人可再次修改。',
+      '问题列表会提示已审核锁定原因。'
+    ]
+  },
+  {
     version: 'v2.9',
     date: '2026-06-01',
     title: '数据库迁移机制升级',
