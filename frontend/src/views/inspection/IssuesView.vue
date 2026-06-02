@@ -54,7 +54,7 @@
             <div class="mobile-card-row"><span>站点</span><strong>{{ item.station }}</strong></div>
             <div class="mobile-card-row"><span>所属地</span><strong>{{ item.region }}</strong></div>
             <div class="mobile-card-row"><span>站点负责人</span><strong>{{ item.station_manager }}</strong></div>
-            <div class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
+            <div v-if="!hideInspectorContactInfo" class="mobile-card-row"><span>检查人员</span><strong>{{ item.inspector }}</strong></div>
             <div v-if="!isIssueAuditPending(item)" class="mobile-card-row"><span>审核结论</span><strong
                 :class="auditStatusClass(item)">{{
               auditStatusLabel(item) }}</strong></div>
@@ -291,7 +291,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div v-if="!hideInspectorContactInfo" class="filter-item">
           <label>检查人员</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -1614,7 +1614,7 @@ const filteredData = computed(() => {
     const matchedRegion = matchesAnySelectedText(item.region, filters.value.region)
     const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
     const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
-    const matchedInspector = matchesAnySelectedText(item.inspector, filters.value.inspector)
+    const matchedInspector = hideInspectorContactInfo.value || matchesAnySelectedText(item.inspector, filters.value.inspector)
     const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
     const matchedStandardId = !filters.value.standardId || normalizedKeyword(getStandardIdSearchText(item)).includes(normalizedKeyword(filters.value.standardId))
     const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
@@ -1663,7 +1663,8 @@ const filteredInspectorOptions = computed(() => filterOptionByKeyword(inspectorO
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
 
 const activeFilterCount = computed(() => {
-  return Object.values(filters.value).reduce((count, value) => {
+  return Object.entries(filters.value).reduce((count, [key, value]) => {
+    if (hideInspectorContactInfo.value && key === 'inspector') return count
     if (Array.isArray(value)) {
       return count + value.filter((item) => String(item || '').trim()).length
     }
@@ -1770,6 +1771,7 @@ const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPe
 const canAuditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.audit_inspection_issues) || list.value.some((item) => item?.can_audit_issue))
 const canChangeIssueInspectors = computed(() => currentRole === 'root' || Boolean(localPermissions.value.change_issue_inspector) || list.value.some((item) => item?.can_change_issue_inspector))
 const canExportIssuePhotos = computed(() => currentRole === 'root' || Boolean(localPermissions.value.export_issue_photos))
+const hideInspectorContactInfo = computed(() => currentRole !== 'root' && Boolean(localPermissions.value.hide_inspector_contact_info))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
   canDeleteIssues.value ||
@@ -1782,12 +1784,14 @@ const canManageIssues = computed(() => (
     item?.operation_lock_reason
   ))
 ))
-const visibleIssueColumns = computed(() => issueColumnDefinitions.filter((column) => issueColumnVisibility.value[column.key] !== false))
+const hiddenInspectorColumnKeys = new Set(['inspector', 'inspector_phone'])
+const visibleIssueColumns = computed(() => issueColumnDefinitions.filter((column) => isIssueColumnVisible(column.key)))
 const canEditDialogIssueContent = computed(() => Boolean(editDialog.value.issue?.can_edit_issue))
 const canChangeDialogIssueInspector = computed(() => Boolean(editDialog.value.issue?.can_change_issue_inspector))
 const groupedIssueColumns = computed(() => {
   const groupMap = new Map()
   issueColumnDefinitions.forEach((column) => {
+    if (hideInspectorContactInfo.value && hiddenInspectorColumnKeys.has(column.key)) return
     if (!groupMap.has(column.group)) {
       groupMap.set(column.group, [])
     }
@@ -1802,7 +1806,10 @@ const issueTableMinWidth = computed(() => {
 })
 const issueTableColspan = computed(() => visibleIssueColumns.value.length + (canManageIssues.value ? 1 : 0))
 
-const isIssueColumnVisible = (key) => issueColumnVisibility.value[key] !== false
+const isIssueColumnVisible = (key) => {
+  if (hideInspectorContactInfo.value && hiddenInspectorColumnKeys.has(key)) return false
+  return issueColumnVisibility.value[key] !== false
+}
 
 const saveIssueColumnVisibility = () => {
   localStorage.setItem(ISSUE_COLUMNS_STORAGE_KEY, JSON.stringify(issueColumnVisibility.value))
@@ -1820,6 +1827,7 @@ const setIssueColumnVisibility = (nextVisibility, message = '') => {
 }
 
 const toggleIssueColumn = (key) => {
+  if (hideInspectorContactInfo.value && hiddenInspectorColumnKeys.has(key)) return
   const nextVisible = !isIssueColumnVisible(key)
   if (!nextVisible && visibleIssueColumns.value.length <= 1) {
     showActionMessage('至少保留一个字段显示。', 'error')
@@ -2283,7 +2291,9 @@ const createDefaultExportFieldOptions = () => {
   return Object.fromEntries(
     exportFieldOptions.map((option) => [
       option.key,
-      option.photo ? canExportIssuePhotos.value : true
+      hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value
+        ? false
+        : option.photo ? canExportIssuePhotos.value : true
     ])
   )
 }
@@ -2297,7 +2307,9 @@ const normalizeExportFieldOptions = (rawOptions = {}) => {
   return Object.fromEntries(
     exportFieldOptions.map((option) => [
       option.key,
-      option.photo
+      hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value
+        ? false
+        : option.photo
         ? Boolean(includeFields[option.key]) && canExportIssuePhotos.value
         : Boolean(includeFields[option.key])
     ])
@@ -2315,6 +2327,7 @@ const buildExportPhotoOptionsFromFields = () => {
 
 const canSelectExportField = (option) => {
   if (exportDialog.value.taskId) return false
+  if (hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value) return false
   return !option.photo || canExportIssuePhotos.value
 }
 

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.2',
+    date: '2026-06-02',
+    title: '权限流转升级',
+    summary: '待审核问题不再流转给站点和片区账号，角色权限支持通用模板。',
+    items: [
+      '站点和片区账号看不到待审核问题。',
+      '检查人信息可按权限隐藏。',
+      '新增角色通用权限模板，个人权限仍优先生效。'
+    ]
+  },
+  {
     version: 'v3.1',
     date: '2026-06-02',
     title: '站点数据管理增强',

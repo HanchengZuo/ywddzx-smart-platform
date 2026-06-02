@@ -97,7 +97,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item filter-item-inspector">
+        <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector">
           <label>检查人</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -594,7 +594,7 @@
             <div class="batch-detail-meta">
               <span>巡检日期：{{ getInspectionDate(batchDetail.inspection) }}</span>
               <span>站点：{{ getInspectionStation(batchDetail.inspection) }}</span>
-              <span>检查人：{{ batchDetailInspectorLabel }}</span>
+              <span v-if="!hideInspectorContactInfo">检查人：{{ batchDetailInspectorLabel }}</span>
               <span>问题数：{{ batchDetail.issues.length || 0 }}</span>
             </div>
           </div>
@@ -646,7 +646,7 @@
               </div>
 
               <div class="batch-issue-meta-grid">
-                <div>
+                <div v-if="!hideInspectorContactInfo">
                   <span>检查人</span>
                   <strong>{{ getInspectorLabel(issue) }}</strong>
                 </div>
@@ -769,7 +769,15 @@ const list = shallowRef([])
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
+let parsedPermissions = {}
+try {
+  parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch (error) {
+  parsedPermissions = {}
+}
+const localPermissions = ref(parsedPermissions)
 const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
+const hideInspectorContactInfo = computed(() => currentRole.value !== 'root' && Boolean(localPermissions.value.hide_inspector_contact_info))
 const deletingInspectionId = ref(null)
 const completingInspectionId = ref(null)
 const resettingSignatureId = ref(null)
@@ -887,6 +895,7 @@ const matchesAnySelectedText = (value, selectedValues) => {
 }
 
 const matchesSelectedInspector = (record, selectedValues) => {
+  if (hideInspectorContactInfo.value) return true
   const selected = Array.isArray(selectedValues) ? selectedValues : []
   if (!selected.length) return true
   const searchValues = getInspectionInspectorSearchValues(record)
@@ -904,6 +913,7 @@ const isDateInRange = (value, dateFrom, dateTo) => {
 }
 
 const getInspectionInspectorSearchValues = (record) => {
+  if (hideInspectorContactInfo.value) return []
   const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
   const inspectorValues = inspectors.flatMap((item) => [
     item.real_name,
@@ -921,6 +931,7 @@ const getInspectionInspectorSearchValues = (record) => {
 }
 
 const getInspectionInspectorOptionValues = (record) => {
+  if (hideInspectorContactInfo.value) return []
   const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
   if (inspectors.length) {
     return inspectors
@@ -966,7 +977,7 @@ const activeFilterCount = computed(() => {
     filters.value.completionStatus,
     ...filters.value.station,
     ...filters.value.inspectionTableName,
-    ...filters.value.inspector
+    ...(hideInspectorContactInfo.value ? [] : filters.value.inspector)
   ].filter((value) => String(value || '').trim()).length
 })
 
@@ -1052,6 +1063,7 @@ const getInspectionDate = (inspection) => inspection?.inspection_date || inspect
 const getInspectionStation = (inspection) => inspection?.station_name || inspection?.station || '-'
 
 const getInspectorLabel = (inspection) => {
+  if (hideInspectorContactInfo.value) return '-'
   if (!inspection) return '-'
   if (Array.isArray(inspection.inspectors) && inspection.inspectors.length) {
     return inspection.inspectors
@@ -1184,7 +1196,7 @@ const buildBatchDetailExportHtml = async () => {
         </div>
         <div class="info-grid compact">
           ${exportInfoItem('登记时间', issue.created_at)}
-          ${exportInfoItem('检查人', getInspectorLabel(issue))}
+          ${hideInspectorContactInfo.value ? '' : exportInfoItem('检查人', getInspectorLabel(issue))}
           ${exportInfoItem('规范ID', issue.standard_id)}
           ${exportInfoItem('整改结果', issue.rectification_result)}
           ${exportInfoItem('整改时间', issue.rectification_at)}
@@ -1384,7 +1396,7 @@ const buildBatchDetailExportHtml = async () => {
           <div class="subline">导出时间：${escapeHtml(formatLocalDateTime())}</div>
           <div class="info-grid">
             ${exportInfoItem('巡检日期', getInspectionDate(inspection))}
-            ${exportInfoItem('检查人', getInspectorLabel(inspection))}
+            ${hideInspectorContactInfo.value ? '' : exportInfoItem('检查人', getInspectorLabel(inspection))}
             ${exportInfoItem('站点', getInspectionStation(inspection))}
             ${exportInfoItem('所属片区', inspection.station_region)}
             ${exportInfoItem('站点地址', inspection.station_address)}

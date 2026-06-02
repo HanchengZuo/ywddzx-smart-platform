@@ -7,6 +7,9 @@
         <p class="page-desc">维护系统用户、角色、所属站点和可操作权限。root 默认拥有全部权限，其他用户可在这里单独开关。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
+        <button class="btn btn-primary" type="button" :disabled="loading" @click="openRolePermissionDialog">
+          角色通用权限
+        </button>
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchUsers">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
@@ -363,6 +366,7 @@
                   <div class="permission-summary">
                     <span v-if="user.role === 'root'" class="permission-chip strong">全部权限</span>
                     <template v-else>
+                      <span v-if="user.has_permission_overrides" class="permission-chip personalized">个性化权限</span>
                       <span v-for="item in enabledPermissionLabels(user).slice(0, 3)" :key="item"
                         class="permission-chip">{{ item }}</span>
                       <span v-if="enabledPermissionLabels(user).length > 3" class="permission-chip muted">
@@ -414,6 +418,188 @@
         </div>
       </section>
     </template>
+
+    <div v-if="rolePermissionDialog.visible" class="modal-backdrop" @click.self="closeRolePermissionDialog">
+      <div class="role-permission-modal card-surface">
+        <div class="modal-head">
+          <div>
+            <div class="section-kicker">角色通用权限</div>
+            <h3>配置角色默认权限模板</h3>
+            <p>这里保存的是角色通用权限。已有个性化权限的用户仍按个人配置生效，不会被角色模板覆盖。</p>
+          </div>
+          <button class="close-btn" type="button" @click="closeRolePermissionDialog">×</button>
+        </div>
+
+        <div class="role-template-toolbar">
+          <label class="form-field">
+            <span>选择角色</span>
+            <select v-model="rolePermissionDialog.role" @change="loadRoleTemplatePermissions">
+              <option v-for="role in roleTemplateRoles" :key="role.value" :value="role.value">{{ role.label }}</option>
+            </select>
+          </label>
+          <div class="role-template-note">
+            <strong>{{ roleLabel(rolePermissionDialog.role) }}</strong>
+            <span>这里统一配置页面权限、检查表范围和片区范围；单个用户若另有个性化配置，会优先生效。</span>
+          </div>
+        </div>
+
+        <div class="permission-groups role-template-groups">
+          <div v-for="group in roleTemplatePermissionGroups" :key="`role-${group.category}`" class="permission-group">
+            <div class="permission-group-title">
+              <span>{{ group.category }}</span>
+              <em v-if="group.hasScopedLayout">角色默认</em>
+            </div>
+
+            <div v-if="group.scopeItems.length" class="permission-section">
+              <div class="permission-section-label">1 数据范围</div>
+              <label v-for="permission in group.scopeItems" :key="permission.key" class="permission-item permission-item-scope"
+                :class="{ disabled: isRolePermissionDisabled(permission.key) }">
+                <input v-model="rolePermissionDialog.permissions[permission.key]" type="checkbox"
+                  :disabled="isRolePermissionDisabled(permission.key)"
+                  @change="handleRolePermissionChange(permission.key)" />
+                <span>
+                  <strong>{{ permission.name }}</strong>
+                  <small>{{ permission.description }}</small>
+                </span>
+              </label>
+            </div>
+
+            <div v-if="group.actionItems.length" class="permission-section">
+              <div class="permission-section-label">2 范围内操作</div>
+              <label v-for="permission in group.actionItems" :key="permission.key" class="permission-item permission-item-action"
+                :class="{ disabled: isRolePermissionDisabled(permission.key) }">
+                <input v-model="rolePermissionDialog.permissions[permission.key]" type="checkbox"
+                  :disabled="isRolePermissionDisabled(permission.key)"
+                  @change="handleRolePermissionChange(permission.key)" />
+                <span>
+                  <strong>{{ permission.name }}</strong>
+                  <small>{{ permission.description }}</small>
+                </span>
+              </label>
+            </div>
+
+            <div v-if="group.regularItems.length" class="permission-section">
+              <div v-if="group.hasScopedLayout" class="permission-section-label">其他权限</div>
+              <label v-for="permission in group.regularItems" :key="permission.key" class="permission-item"
+                :class="{ disabled: isRolePermissionDisabled(permission.key) }">
+                <input v-model="rolePermissionDialog.permissions[permission.key]" type="checkbox"
+                  :disabled="isRolePermissionDisabled(permission.key)"
+                  @change="handleRolePermissionChange(permission.key)" />
+                <span>
+                  <strong>{{ permission.name }}</strong>
+                  <small>{{ permission.description }}</small>
+                </span>
+              </label>
+            </div>
+
+            <div v-if="inspectionScopeConfigForCategory(group.category)" class="inspection-scope-panel role-scope-panel"
+              :class="{ disabled: isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) }">
+              <div class="inspection-scope-head">
+                <div>
+                  <strong>{{ inspectionScopeConfigForCategory(group.category).title }}</strong>
+                  <p>{{ inspectionScopeConfigForCategory(group.category).description }}</p>
+                </div>
+                <span>{{ selectedRoleInspectionScopeSummary(inspectionScopeConfigForCategory(group.category).permissionKey) }}</span>
+              </div>
+
+              <div class="inspection-scope-actions">
+                <button class="btn btn-secondary btn-sm" type="button"
+                  :disabled="isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) || !hasRoleDefaultInspectionScope(rolePermissionDialog.role)"
+                  @click="applyRoleDefaultScopeForTemplate(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                  {{ roleTemplateDefaultScopeActionLabel }}
+                </button>
+                <button class="btn btn-secondary btn-sm" type="button"
+                  :disabled="isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                  @click="selectAllRoleInspectionTables(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                  全选
+                </button>
+                <button class="btn btn-secondary btn-sm" type="button"
+                  :disabled="isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                  @click="clearRoleInspectionTableScope(inspectionScopeConfigForCategory(group.category).permissionKey)">
+                  清空
+                </button>
+              </div>
+
+              <div class="inspection-scope-grid">
+                <label v-for="table in inspectionTables" :key="`role-${group.category}-${table.id}`"
+                  class="inspection-scope-item"
+                  :class="{
+                    checked: isRoleInspectionTableSelected(inspectionScopeConfigForCategory(group.category).permissionKey, table.id),
+                    disabled: isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)
+                  }">
+                  <input type="checkbox"
+                    :checked="isRoleInspectionTableSelected(inspectionScopeConfigForCategory(group.category).permissionKey, table.id)"
+                    :disabled="isRoleInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey)"
+                    @change="toggleRoleInspectionTableScope(inspectionScopeConfigForCategory(group.category).permissionKey, table.id, $event.target.checked)" />
+                  <span>
+                    <strong>{{ table.table_name }}</strong>
+                    <small>
+                      {{ table.checklist_mode_label || '检查表' }}
+                      <em v-for="label in table.default_scope_role_labels || []" :key="label">
+                        {{ defaultScopeBadgeLabel(label) }}
+                      </em>
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div v-if="stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel role-scope-panel"
+              :class="{ disabled: isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey) }">
+              <div class="inspection-scope-head">
+                <div>
+                  <strong>{{ stationRegionScopeConfigForCategory(group.category).title }}</strong>
+                  <p>{{ stationRegionScopeConfigForCategory(group.category).description }}</p>
+                </div>
+                <span>{{ selectedRoleStationRegionScopeSummary(stationRegionScopeConfigForCategory(group.category).permissionKey) }}</span>
+              </div>
+
+              <div class="inspection-scope-actions">
+                <button class="btn btn-secondary btn-sm" type="button"
+                  :disabled="isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                  @click="selectAllRoleStationRegions(stationRegionScopeConfigForCategory(group.category).permissionKey)">
+                  全选片区
+                </button>
+                <button class="btn btn-secondary btn-sm" type="button"
+                  :disabled="isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                  @click="clearRoleStationRegionScope(stationRegionScopeConfigForCategory(group.category).permissionKey)">
+                  清空
+                </button>
+              </div>
+
+              <div class="inspection-scope-grid region-scope-grid">
+                <label v-for="region in stationRegionOptions" :key="`role-${group.category}-${region}`"
+                  class="inspection-scope-item region-scope-item"
+                  :class="{
+                    checked: isRoleStationRegionSelected(stationRegionScopeConfigForCategory(group.category).permissionKey, region),
+                    disabled: isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)
+                  }">
+                  <input type="checkbox"
+                    :checked="isRoleStationRegionSelected(stationRegionScopeConfigForCategory(group.category).permissionKey, region)"
+                    :disabled="isRoleStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                    @change="toggleRoleStationRegionScope(stationRegionScopeConfigForCategory(group.category).permissionKey, region, $event.target.checked)" />
+                  <span>
+                    <strong>{{ region }}</strong>
+                    <small>{{ stationCountByRegion(region) }} 个站点</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="rolePermissionDialog.error" class="form-error">{{ rolePermissionDialog.error }}</div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" type="button" @click="resetRoleTemplateToSystemDefaults">
+            恢复系统默认
+          </button>
+          <button class="btn btn-secondary" type="button" @click="closeRolePermissionDialog">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving" @click="saveRolePermissions">
+            {{ rolePermissionDialog.saving ? '保存中...' : '保存角色通用权限' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -436,6 +622,10 @@ const users = ref([])
 const stations = ref([])
 const inspectionTables = ref([])
 const roleDefaultInspectionTableScopeIds = ref({})
+const rolePermissionOverrides = ref({})
+const roleEffectivePermissions = ref({})
+const roleInspectionTableScopeIds = ref({})
+const roleStationRegionScopeValues = ref({})
 const stationRegionFilter = ref('')
 const stationKeyword = ref('')
 const roles = ref([])
@@ -605,7 +795,17 @@ const createEmptyForm = () => ({
 
 const form = reactive(createEmptyForm())
 
-const groupedPermissions = computed(() => {
+const rolePermissionDialog = reactive({
+  visible: false,
+  role: 'supervisor',
+  permissions: {},
+  inspection_table_scope_ids: createEmptyInspectionScopeMap(),
+  station_region_scope_values: createEmptyStationRegionScopeMap(),
+  saving: false,
+  error: ''
+})
+
+const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
   const groups = []
   permissions.value.forEach((permission) => {
     let group = groups.find((item) => item.category === permission.category)
@@ -634,7 +834,7 @@ const groupedPermissions = computed(() => {
 
     const scopeKeys = new Set(layout.scopeKeys || [])
     const actionKeys = new Set(layout.actionKeys || [])
-    const readonlyItems = form.role === 'supervisor' ? (layout.readonlyItems || []) : []
+    const readonlyItems = includeReadonlyItems && role === 'supervisor' ? (layout.readonlyItems || []) : []
     return {
       ...group,
       hasScopedLayout: true,
@@ -644,7 +844,11 @@ const groupedPermissions = computed(() => {
       regularItems: group.items.filter((item) => !scopeKeys.has(item.key) && !actionKeys.has(item.key))
     }
   })
-})
+}
+
+const groupedPermissions = computed(() => buildPermissionGroupsFor(form.role, true))
+const roleTemplatePermissionGroups = computed(() => buildPermissionGroupsFor(rolePermissionDialog.role, false))
+const roleTemplateRoles = computed(() => roles.value.filter((item) => item.value !== 'root'))
 
 const stationRegionOptions = computed(() => {
   return Array.from(
@@ -724,6 +928,11 @@ const roleDefaultScopeActionLabel = computed(() => {
   if (!label || label === form.role) return '部门默认'
   return `${label.replace(/账号$/, '')}默认`
 })
+const roleTemplateDefaultScopeActionLabel = computed(() => {
+  const label = roleLabel(rolePermissionDialog.role)
+  if (!label || label === rolePermissionDialog.role) return '角色默认'
+  return `${label.replace(/账号$/, '')}默认`
+})
 const defaultScopeBadgeLabel = (label) => `${String(label || '').replace(/账号$/, '')}默认`
 const isInspectionScopeDisabled = (permissionKey) => (
   form.role === 'root' || !form.permissions?.[permissionKey]
@@ -773,12 +982,21 @@ const defaultPermissionValue = (permission, role) => {
   return Boolean(permission.defaults?.[role])
 }
 
-const buildDefaultPermissions = (role) => {
+const buildSystemDefaultPermissions = (role) => {
   const defaults = Object.fromEntries(permissions.value.map((permission) => [
     permission.key,
     defaultPermissionValue(permission, role)
   ]))
   return enforceExclusivePermissions(defaults, role)
+}
+
+const buildDefaultPermissions = (role) => {
+  if (role === 'root') return buildSystemDefaultPermissions(role)
+  const roleTemplate = roleEffectivePermissions.value?.[role]
+  if (roleTemplate && Object.keys(roleTemplate).length) {
+    return enforceExclusivePermissions({ ...roleTemplate }, role)
+  }
+  return buildSystemDefaultPermissions(role)
 }
 
 const enforceExclusivePermissions = (permissionMap, role = form.role) => {
@@ -816,6 +1034,17 @@ const isPermissionDisabled = (permissionKey) => {
   if (parentKey && !form.permissions[parentKey]) return true
   const parentKeys = anyDependentPermissionMap[permissionKey]
   return Boolean(parentKeys && !parentKeys.some((key) => form.permissions[key]))
+}
+
+const isPermissionDisabledForMap = (permissionMap, permissionKey) => {
+  const parentKey = dependentPermissionMap[permissionKey]
+  if (parentKey && !permissionMap?.[parentKey]) return true
+  const parentKeys = anyDependentPermissionMap[permissionKey]
+  return Boolean(parentKeys && !parentKeys.some((key) => permissionMap?.[key]))
+}
+
+const isRolePermissionDisabled = (permissionKey) => {
+  return isPermissionDisabledForMap(rolePermissionDialog.permissions, permissionKey)
 }
 
 const handlePermissionChange = (permissionKey) => {
@@ -858,6 +1087,51 @@ const handlePermissionChange = (permissionKey) => {
   }
 }
 
+const handleRolePermissionChange = (permissionKey) => {
+  if (rolePermissionDialog.permissions[permissionKey]) {
+    exclusivePermissionGroups.forEach((group) => {
+      if (!group.includes(permissionKey)) return
+      group
+        .filter((key) => key !== permissionKey)
+        .forEach((key) => {
+          rolePermissionDialog.permissions[key] = false
+        })
+    })
+  }
+
+  Object.entries(dependentPermissionMap).forEach(([childKey, parentKey]) => {
+    if (permissionKey === parentKey && !rolePermissionDialog.permissions[parentKey]) {
+      rolePermissionDialog.permissions[childKey] = false
+    }
+    if (permissionKey === childKey && rolePermissionDialog.permissions[childKey] && !rolePermissionDialog.permissions[parentKey]) {
+      rolePermissionDialog.permissions[childKey] = false
+    }
+  })
+  Object.entries(anyDependentPermissionMap).forEach(([childKey, parentKeys]) => {
+    if (parentKeys.includes(permissionKey) && !parentKeys.some((key) => rolePermissionDialog.permissions[key])) {
+      rolePermissionDialog.permissions[childKey] = false
+    }
+    if (permissionKey === childKey && rolePermissionDialog.permissions[childKey] && !parentKeys.some((key) => rolePermissionDialog.permissions[key])) {
+      rolePermissionDialog.permissions[childKey] = false
+    }
+  })
+  rolePermissionDialog.permissions = enforceExclusivePermissions(
+    rolePermissionDialog.permissions,
+    rolePermissionDialog.role
+  )
+
+  if (
+    inspectionTableScopePermissionKeys.includes(permissionKey) &&
+    rolePermissionDialog.permissions[permissionKey] &&
+    hasRoleDefaultInspectionScope(rolePermissionDialog.role) &&
+    !rolePermissionDialog.inspection_table_scope_ids[permissionKey]?.length
+  ) {
+    rolePermissionDialog.inspection_table_scope_ids[permissionKey] = [
+      ...getRoleDefaultInspectionTableIds(rolePermissionDialog.role)
+    ]
+  }
+}
+
 const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
@@ -869,12 +1143,123 @@ const applyRoleDefaults = () => {
   }
 }
 
+const loadRoleTemplatePermissions = () => {
+  rolePermissionDialog.permissions = buildDefaultPermissions(rolePermissionDialog.role)
+  rolePermissionDialog.inspection_table_scope_ids = buildRoleTemplateInspectionScopeMap(rolePermissionDialog.role)
+  rolePermissionDialog.station_region_scope_values = buildRoleTemplateStationRegionScopeMap(rolePermissionDialog.role)
+  rolePermissionDialog.error = ''
+}
+
+const openRolePermissionDialog = () => {
+  const firstRole = roleTemplateRoles.value.find((item) => item.value === rolePermissionDialog.role) || roleTemplateRoles.value[0]
+  rolePermissionDialog.role = firstRole?.value || 'supervisor'
+  loadRoleTemplatePermissions()
+  rolePermissionDialog.visible = true
+}
+
+const closeRolePermissionDialog = () => {
+  if (rolePermissionDialog.saving) return
+  rolePermissionDialog.visible = false
+  rolePermissionDialog.error = ''
+}
+
+const resetRoleTemplateToSystemDefaults = () => {
+  rolePermissionDialog.permissions = buildSystemDefaultPermissions(rolePermissionDialog.role)
+  rolePermissionDialog.inspection_table_scope_ids = createRoleInspectionScopeMap(rolePermissionDialog.role)
+  rolePermissionDialog.station_region_scope_values = createEmptyStationRegionScopeMap()
+  rolePermissionDialog.error = ''
+}
+
+const validateRoleTemplate = () => {
+  if (
+    inspectionTables.value.length > 0 &&
+    inspectionTableScopePermissionKeys.some((key) => (
+      rolePermissionDialog.permissions?.[key] && !ensureRoleInspectionScopeList(key).length
+    ))
+  ) {
+    return '已启用检查表范围限制，请至少为对应页面选择一张检查表。'
+  }
+  if (
+    stationRegionScopePermissionKeys.some((key) => (
+      rolePermissionDialog.permissions?.[key] && !ensureRoleStationRegionScopeList(key).length
+    ))
+  ) {
+    return '已启用片区范围限制，请至少为对应页面选择一个所属片区/归属地。'
+  }
+  return ''
+}
+
+const saveRolePermissions = async () => {
+  try {
+    const validationMessage = validateRoleTemplate()
+    if (validationMessage) {
+      rolePermissionDialog.error = validationMessage
+      setMessage(validationMessage, 'error')
+      return
+    }
+    rolePermissionDialog.saving = true
+    rolePermissionDialog.error = ''
+    const payloadPermissions = enforceExclusivePermissions(
+      { ...(rolePermissionDialog.permissions || {}) },
+      rolePermissionDialog.role
+    )
+    const response = await axios.put(`/api/management/role-permissions/${rolePermissionDialog.role}`, {
+      user_id: currentUserId,
+      permissions: payloadPermissions,
+      inspection_table_scope_ids: rolePermissionDialog.inspection_table_scope_ids,
+      station_region_scope_values: rolePermissionDialog.station_region_scope_values
+    })
+    rolePermissionOverrides.value = {
+      ...rolePermissionOverrides.value,
+      [rolePermissionDialog.role]: response.data?.role_permission_overrides || {}
+    }
+    roleEffectivePermissions.value = {
+      ...roleEffectivePermissions.value,
+      [rolePermissionDialog.role]: response.data?.role_effective_permissions || payloadPermissions
+    }
+    roleInspectionTableScopeIds.value = {
+      ...roleInspectionTableScopeIds.value,
+      [rolePermissionDialog.role]: normalizeInspectionScopeMap(response.data?.role_inspection_table_scope_ids)
+    }
+    roleStationRegionScopeValues.value = {
+      ...roleStationRegionScopeValues.value,
+      [rolePermissionDialog.role]: normalizeStationRegionScopeMap(response.data?.role_station_region_scope_values)
+    }
+    rolePermissionDialog.permissions = buildDefaultPermissions(rolePermissionDialog.role)
+    rolePermissionDialog.inspection_table_scope_ids = buildRoleTemplateInspectionScopeMap(rolePermissionDialog.role)
+    rolePermissionDialog.station_region_scope_values = buildRoleTemplateStationRegionScopeMap(rolePermissionDialog.role)
+    setMessage(response.data?.message || '角色通用权限已保存。', 'success')
+    await fetchUsers()
+  } catch (error) {
+    rolePermissionDialog.error = error?.response?.data?.error || '角色通用权限保存失败。'
+    setMessage(rolePermissionDialog.error, 'error')
+  } finally {
+    rolePermissionDialog.saving = false
+  }
+}
+
 const createRoleInspectionScopeMap = (role) => {
   const defaultIds = getRoleDefaultInspectionTableIds(role)
   if (!defaultIds.length) return createEmptyInspectionScopeMap()
   return Object.fromEntries(
     inspectionTableScopePermissionKeys.map((key) => [key, [...defaultIds]])
   )
+}
+
+const buildRoleTemplateInspectionScopeMap = (role) => {
+  const roleScopeMap = roleInspectionTableScopeIds.value?.[role]
+  if (roleScopeMap && typeof roleScopeMap === 'object') {
+    return normalizeInspectionScopeMap(roleScopeMap)
+  }
+  return createRoleInspectionScopeMap(role)
+}
+
+const buildRoleTemplateStationRegionScopeMap = (role) => {
+  const roleScopeMap = roleStationRegionScopeValues.value?.[role]
+  if (roleScopeMap && typeof roleScopeMap === 'object') {
+    return normalizeStationRegionScopeMap(roleScopeMap)
+  }
+  return createEmptyStationRegionScopeMap()
 }
 
 const ensureInspectionScopeList = (permissionKey) => {
@@ -897,8 +1282,47 @@ const ensureStationRegionScopeList = (permissionKey) => {
   return form.station_region_scope_values[permissionKey]
 }
 
+const ensureRoleInspectionScopeList = (permissionKey) => {
+  if (!rolePermissionDialog.inspection_table_scope_ids || typeof rolePermissionDialog.inspection_table_scope_ids !== 'object') {
+    rolePermissionDialog.inspection_table_scope_ids = createEmptyInspectionScopeMap()
+  }
+  if (!Array.isArray(rolePermissionDialog.inspection_table_scope_ids[permissionKey])) {
+    rolePermissionDialog.inspection_table_scope_ids[permissionKey] = []
+  }
+  return rolePermissionDialog.inspection_table_scope_ids[permissionKey]
+}
+
+const ensureRoleStationRegionScopeList = (permissionKey) => {
+  if (!rolePermissionDialog.station_region_scope_values || typeof rolePermissionDialog.station_region_scope_values !== 'object') {
+    rolePermissionDialog.station_region_scope_values = createEmptyStationRegionScopeMap()
+  }
+  if (!Array.isArray(rolePermissionDialog.station_region_scope_values[permissionKey])) {
+    rolePermissionDialog.station_region_scope_values[permissionKey] = []
+  }
+  return rolePermissionDialog.station_region_scope_values[permissionKey]
+}
+
+const isRoleInspectionScopeDisabled = (permissionKey) => !rolePermissionDialog.permissions?.[permissionKey]
+const isRoleStationRegionScopeDisabled = (permissionKey) => !rolePermissionDialog.permissions?.[permissionKey]
+
+const selectedRoleInspectionScopeSummary = (permissionKey) => {
+  if (!rolePermissionDialog.permissions?.[permissionKey]) return '未启用'
+  const count = ensureRoleInspectionScopeList(permissionKey).length
+  return count ? `已选择 ${count} 张` : '未选择检查表'
+}
+
+const selectedRoleStationRegionScopeSummary = (permissionKey) => {
+  if (!rolePermissionDialog.permissions?.[permissionKey]) return '未启用'
+  const count = ensureRoleStationRegionScopeList(permissionKey).length
+  return count ? `已选择 ${count} 个片区` : '未选择片区'
+}
+
 const isInspectionTableSelected = (permissionKey, tableId) => {
   return ensureInspectionScopeList(permissionKey).some((id) => String(id) === String(tableId))
+}
+
+const isRoleInspectionTableSelected = (permissionKey, tableId) => {
+  return ensureRoleInspectionScopeList(permissionKey).some((id) => String(id) === String(tableId))
 }
 
 const toggleInspectionTableScope = (permissionKey, tableId, checked) => {
@@ -914,9 +1338,29 @@ const toggleInspectionTableScope = (permissionKey, tableId, checked) => {
   form.inspection_table_scope_ids[permissionKey] = current.filter((id) => String(id) !== String(normalizedTableId))
 }
 
+const toggleRoleInspectionTableScope = (permissionKey, tableId, checked) => {
+  if (isRoleInspectionScopeDisabled(permissionKey)) return
+  const current = ensureRoleInspectionScopeList(permissionKey)
+  const normalizedTableId = Number(tableId)
+  if (checked) {
+    if (!current.some((id) => String(id) === String(normalizedTableId))) {
+      rolePermissionDialog.inspection_table_scope_ids[permissionKey] = [...current, normalizedTableId]
+    }
+    return
+  }
+  rolePermissionDialog.inspection_table_scope_ids[permissionKey] = current.filter((id) => String(id) !== String(normalizedTableId))
+}
+
 const applyRoleDefaultScope = (permissionKey) => {
   if (isInspectionScopeDisabled(permissionKey)) return
   form.inspection_table_scope_ids[permissionKey] = [...getRoleDefaultInspectionTableIds(form.role)]
+}
+
+const applyRoleDefaultScopeForTemplate = (permissionKey) => {
+  if (isRoleInspectionScopeDisabled(permissionKey)) return
+  rolePermissionDialog.inspection_table_scope_ids[permissionKey] = [
+    ...getRoleDefaultInspectionTableIds(rolePermissionDialog.role)
+  ]
 }
 
 const selectAllInspectionTables = (permissionKey) => {
@@ -924,13 +1368,27 @@ const selectAllInspectionTables = (permissionKey) => {
   form.inspection_table_scope_ids[permissionKey] = inspectionTables.value.map((table) => table.id)
 }
 
+const selectAllRoleInspectionTables = (permissionKey) => {
+  if (isRoleInspectionScopeDisabled(permissionKey)) return
+  rolePermissionDialog.inspection_table_scope_ids[permissionKey] = inspectionTables.value.map((table) => table.id)
+}
+
 const clearInspectionTableScope = (permissionKey) => {
   if (isInspectionScopeDisabled(permissionKey)) return
   form.inspection_table_scope_ids[permissionKey] = []
 }
 
+const clearRoleInspectionTableScope = (permissionKey) => {
+  if (isRoleInspectionScopeDisabled(permissionKey)) return
+  rolePermissionDialog.inspection_table_scope_ids[permissionKey] = []
+}
+
 const isStationRegionSelected = (permissionKey, region) => {
   return ensureStationRegionScopeList(permissionKey).some((value) => value === region)
+}
+
+const isRoleStationRegionSelected = (permissionKey, region) => {
+  return ensureRoleStationRegionScopeList(permissionKey).some((value) => value === region)
 }
 
 const toggleStationRegionScope = (permissionKey, region, checked) => {
@@ -945,14 +1403,36 @@ const toggleStationRegionScope = (permissionKey, region, checked) => {
   form.station_region_scope_values[permissionKey] = current.filter((value) => value !== region)
 }
 
+const toggleRoleStationRegionScope = (permissionKey, region, checked) => {
+  if (isRoleStationRegionScopeDisabled(permissionKey)) return
+  const current = ensureRoleStationRegionScopeList(permissionKey)
+  if (checked) {
+    if (!current.includes(region)) {
+      rolePermissionDialog.station_region_scope_values[permissionKey] = [...current, region]
+    }
+    return
+  }
+  rolePermissionDialog.station_region_scope_values[permissionKey] = current.filter((value) => value !== region)
+}
+
 const selectAllStationRegions = (permissionKey) => {
   if (isStationRegionScopeDisabled(permissionKey)) return
   form.station_region_scope_values[permissionKey] = [...stationRegionOptions.value]
 }
 
+const selectAllRoleStationRegions = (permissionKey) => {
+  if (isRoleStationRegionScopeDisabled(permissionKey)) return
+  rolePermissionDialog.station_region_scope_values[permissionKey] = [...stationRegionOptions.value]
+}
+
 const clearStationRegionScope = (permissionKey) => {
   if (isStationRegionScopeDisabled(permissionKey)) return
   form.station_region_scope_values[permissionKey] = []
+}
+
+const clearRoleStationRegionScope = (permissionKey) => {
+  if (isRoleStationRegionScopeDisabled(permissionKey)) return
+  rolePermissionDialog.station_region_scope_values[permissionKey] = []
 }
 
 const resetForm = (options = {}) => {
@@ -1062,6 +1542,13 @@ const fetchUsers = async () => {
     }
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
+    rolePermissionOverrides.value = response.data?.role_permission_overrides || {}
+    roleEffectivePermissions.value = response.data?.role_effective_permissions || {}
+    roleInspectionTableScopeIds.value = response.data?.role_inspection_table_scope_ids || {}
+    roleStationRegionScopeValues.value = response.data?.role_station_region_scope_values || {}
+    if (rolePermissionDialog.visible) {
+      loadRoleTemplatePermissions()
+    }
     if (!form.id && !Object.keys(form.permissions || {}).length) {
       form.permissions = buildDefaultPermissions(form.role)
       if (hasRoleDefaultInspectionScope(form.role)) {
@@ -1875,6 +2362,12 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.permission-chip.personalized {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
 .empty-cell {
   text-align: center;
   color: #64748b;
@@ -2087,6 +2580,107 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(15, 23, 42, 0.46);
+  backdrop-filter: blur(8px);
+}
+
+.role-permission-modal {
+  width: min(1180px, calc(100vw - 48px));
+  max-height: min(86vh, 920px);
+  padding: 24px;
+  overflow: auto;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.modal-head p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.close-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 22px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.role-template-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.role-template-note {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.role-template-note strong {
+  color: #1d4ed8;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.role-template-note span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.role-template-groups {
+  max-height: 56vh;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 @media (max-width: 1280px) {
   .permission-groups,
   .inspection-scope-grid {
@@ -2129,6 +2723,27 @@ onBeforeUnmount(() => {
   .pagination-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .modal-backdrop {
+    padding: 14px;
+    align-items: flex-start;
+  }
+
+  .role-permission-modal {
+    width: 100%;
+    max-height: calc(100vh - 28px);
+    padding: 18px;
+  }
+
+  .modal-head,
+  .role-template-toolbar {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
   }
 }
 </style>

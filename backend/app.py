@@ -235,6 +235,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "hide_inspector_contact_info",
+        "name": "隐藏检查人信息",
+        "category": "巡检信息显示",
+        "description": "勾选后，巡检问题列表和巡检记录不显示检查人姓名与检查人员手机号。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": True, "quality_safety": False},
+    },
+    {
         "key": "view_own_inspection_records",
         "name": "查看本站数据",
         "category": "巡检记录",
@@ -424,6 +431,7 @@ AREA_ACCOUNT_PERMISSION_OVERRIDES = {
     "limit_issue_station_region_scope": True,
     "limit_record_station_region_scope": True,
     "limit_plan_station_region_scope": True,
+    "hide_inspector_contact_info": True,
 }
 for permission_item in PERMISSION_CATALOG:
     if permission_item["key"] in AREA_ACCOUNT_PERMISSION_OVERRIDES:
@@ -3731,6 +3739,19 @@ def ensure_user_security_schema(cur):
         );
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS role_permissions (
+            role TEXT NOT NULL,
+            permission_key TEXT NOT NULL,
+            is_allowed BOOLEAN NOT NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (role, permission_key)
+        );
+        """
+    )
     cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
     if cur.fetchone()["table_ref"]:
         cur.execute(
@@ -3821,6 +3842,19 @@ def ensure_user_security_schema(cur):
             PRIMARY KEY (user_id, scope_key, inspection_table_id);
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS role_inspection_table_scopes (
+                role TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                inspection_table_id INTEGER NOT NULL REFERENCES inspection_tables(id) ON DELETE CASCADE,
+                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (role, scope_key, inspection_table_id)
+            );
+            """
+        )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS user_station_region_scopes (
@@ -3831,6 +3865,19 @@ def ensure_user_security_schema(cur):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, scope_key, station_region)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS role_station_region_scopes (
+            role TEXT NOT NULL,
+            scope_key TEXT NOT NULL,
+            station_region TEXT NOT NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (role, scope_key, station_region)
         );
         """
     )
@@ -4172,6 +4219,79 @@ def get_permission_overrides(cur, user_id):
     return overrides
 
 
+def get_role_permission_overrides(cur, role):
+    ensure_user_security_schema(cur)
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
+        return {}
+    cur.execute(
+        """
+        SELECT permission_key, is_allowed
+        FROM role_permissions
+        WHERE role = %s;
+        """,
+        (normalized_role,),
+    )
+    return {row["permission_key"]: bool(row["is_allowed"]) for row in cur.fetchall()}
+
+
+def get_role_permission_overrides_map(cur):
+    ensure_user_security_schema(cur)
+    cur.execute(
+        """
+        SELECT role, permission_key, is_allowed
+        FROM role_permissions
+        ORDER BY role ASC, permission_key ASC;
+        """
+    )
+    result = {role: {} for role in ROLE_OPTIONS if role != "root"}
+    for row in cur.fetchall():
+        role = row["role"]
+        if role in result:
+            result[role][row["permission_key"]] = bool(row["is_allowed"])
+    return result
+
+
+def build_role_effective_permissions(cur, role):
+    if role == "root":
+        return {item["key"]: True for item in PERMISSION_CATALOG}
+    role_overrides = get_role_permission_overrides(cur, role)
+    permissions = {
+        item["key"]: role_overrides.get(item["key"], role_default_permission(role, item["key"]))
+        for item in PERMISSION_CATALOG
+    }
+    return enforce_exclusive_permissions(permissions, role)
+
+
+def apply_role_permission_updates(cur, role, permissions, actor_user_id):
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS:
+        raise ValueError("角色类型不正确。")
+    if normalized_role == "root":
+        raise ValueError("root 固定拥有全部权限，不需要配置角色通用权限。")
+    normalized_permissions = enforce_exclusive_permissions(
+        normalize_permission_updates(permissions),
+        normalized_role,
+    )
+    cur.execute("DELETE FROM role_permissions WHERE role = %s;", (normalized_role,))
+    for permission_key, is_allowed in normalized_permissions.items():
+        cur.execute(
+            """
+            INSERT INTO role_permissions (
+                role,
+                permission_key,
+                is_allowed,
+                updated_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """,
+            (normalized_role, permission_key, is_allowed, actor_user_id),
+        )
+    return normalized_permissions
+
+
 def normalize_checklist_scope_name(value):
     return (
         str(value or "")
@@ -4260,6 +4380,99 @@ def get_user_inspection_table_scope_overrides(cur, user_id, scope_key=None):
     return [row["inspection_table_id"] for row in cur.fetchall()]
 
 
+def get_role_inspection_table_scope_overrides(cur, role, scope_key=None):
+    ensure_user_security_schema(cur)
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
+        return {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS} if scope_key is None else []
+    cur.execute("SELECT to_regclass('role_inspection_table_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS} if scope_key is None else []
+
+    if scope_key is None:
+        cur.execute(
+            """
+            SELECT scope_key, inspection_table_id
+            FROM role_inspection_table_scopes
+            WHERE role = %s
+            ORDER BY scope_key ASC, inspection_table_id ASC;
+            """,
+            (normalized_role,),
+        )
+        result = {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+        for row in cur.fetchall():
+            key = row["scope_key"]
+            if key in result:
+                result[key].append(row["inspection_table_id"])
+        return result
+
+    normalized_scope_key = normalize_inspection_table_scope_key(scope_key)
+    cur.execute(
+        """
+        SELECT inspection_table_id
+        FROM role_inspection_table_scopes
+        WHERE role = %s
+          AND scope_key = %s
+        ORDER BY inspection_table_id ASC;
+        """,
+        (normalized_role, normalized_scope_key),
+    )
+    return [row["inspection_table_id"] for row in cur.fetchall()]
+
+
+def get_role_inspection_table_scope_overrides_map(cur):
+    ensure_user_security_schema(cur)
+    result = {
+        role: {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+        for role in ROLE_OPTIONS
+        if role != "root"
+    }
+    cur.execute("SELECT to_regclass('role_inspection_table_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return result
+    cur.execute(
+        """
+        SELECT role, scope_key, inspection_table_id
+        FROM role_inspection_table_scopes
+        ORDER BY role ASC, scope_key ASC, inspection_table_id ASC;
+        """
+    )
+    for row in cur.fetchall():
+        role = row["role"]
+        scope_key = row["scope_key"]
+        if role in result and scope_key in result[role]:
+            result[role][scope_key].append(row["inspection_table_id"])
+    return result
+
+
+def build_role_effective_inspection_table_scope_map(cur, role, permissions=None):
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
+        return {key: [] for key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+    effective_permissions = permissions or build_role_effective_permissions(cur, normalized_role)
+    role_scope_map = get_role_inspection_table_scope_overrides(cur, normalized_role)
+    default_scope_ids = get_role_default_inspection_table_ids(cur, normalized_role)
+    result = {}
+    for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
+        if not effective_permissions.get(scope_key):
+            result[scope_key] = []
+        elif role_scope_map.get(scope_key):
+            result[scope_key] = list(role_scope_map[scope_key])
+        elif default_scope_ids:
+            result[scope_key] = list(default_scope_ids)
+        else:
+            result[scope_key] = []
+    return result
+
+
+def build_role_effective_inspection_table_scope_map_all(cur):
+    return {
+        role: build_role_effective_inspection_table_scope_map(cur, role)
+        for role in ROLE_OPTIONS
+        if role != "root"
+    }
+
+
 def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=None):
     if not user or is_root_user(user):
         return None
@@ -4272,6 +4485,9 @@ def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=N
     scope_ids = get_user_inspection_table_scope_overrides(cur, user["id"], normalized_scope_key)
     if scope_ids:
         return set(scope_ids)
+    role_scope_ids = get_role_inspection_table_scope_overrides(cur, user.get("role"), normalized_scope_key)
+    if role_scope_ids:
+        return set(role_scope_ids)
     if has_role_default_checklist_scope(user):
         return set(get_role_default_inspection_table_ids(cur, user.get("role")))
     return set()
@@ -4347,6 +4563,91 @@ def get_user_station_region_scope_overrides(cur, user_id, scope_key=None):
     return [normalize_station_region_value(row["station_region"]) for row in cur.fetchall()]
 
 
+def get_role_station_region_scope_overrides(cur, role, scope_key=None):
+    ensure_user_security_schema(cur)
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
+        return {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS} if scope_key is None else []
+    cur.execute("SELECT to_regclass('role_station_region_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS} if scope_key is None else []
+
+    if scope_key is None:
+        cur.execute(
+            """
+            SELECT scope_key, station_region
+            FROM role_station_region_scopes
+            WHERE role = %s
+            ORDER BY scope_key ASC, station_region ASC;
+            """,
+            (normalized_role,),
+        )
+        result = {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+        for row in cur.fetchall():
+            key = row["scope_key"]
+            if key in result:
+                result[key].append(normalize_station_region_value(row["station_region"]))
+        return result
+
+    normalized_scope_key = normalize_station_region_scope_key(scope_key)
+    cur.execute(
+        """
+        SELECT station_region
+        FROM role_station_region_scopes
+        WHERE role = %s
+          AND scope_key = %s
+        ORDER BY station_region ASC;
+        """,
+        (normalized_role, normalized_scope_key),
+    )
+    return [normalize_station_region_value(row["station_region"]) for row in cur.fetchall()]
+
+
+def get_role_station_region_scope_overrides_map(cur):
+    ensure_user_security_schema(cur)
+    result = {
+        role: {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+        for role in ROLE_OPTIONS
+        if role != "root"
+    }
+    cur.execute("SELECT to_regclass('role_station_region_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return result
+    cur.execute(
+        """
+        SELECT role, scope_key, station_region
+        FROM role_station_region_scopes
+        ORDER BY role ASC, scope_key ASC, station_region ASC;
+        """
+    )
+    for row in cur.fetchall():
+        role = row["role"]
+        scope_key = row["scope_key"]
+        if role in result and scope_key in result[role]:
+            result[role][scope_key].append(normalize_station_region_value(row["station_region"]))
+    return result
+
+
+def build_role_effective_station_region_scope_map(cur, role, permissions=None):
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS or normalized_role == "root":
+        return {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+    effective_permissions = permissions or build_role_effective_permissions(cur, normalized_role)
+    role_scope_map = get_role_station_region_scope_overrides(cur, normalized_role)
+    result = {}
+    for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS:
+        result[scope_key] = sorted(role_scope_map.get(scope_key, [])) if effective_permissions.get(scope_key) else []
+    return result
+
+
+def build_role_effective_station_region_scope_map_all(cur):
+    return {
+        role: build_role_effective_station_region_scope_map(cur, role)
+        for role in ROLE_OPTIONS
+        if role != "root"
+    }
+
+
 def get_effective_station_region_scope_values(cur, user, scope_key, permissions=None):
     if not user or is_root_user(user):
         return None
@@ -4357,6 +4658,11 @@ def get_effective_station_region_scope_values(cur, user, scope_key, permissions=
         return None
 
     scope_values = get_user_station_region_scope_overrides(cur, user["id"], normalized_scope_key)
+    if scope_values:
+        return set(scope_values)
+    role_scope_values = get_role_station_region_scope_overrides(cur, user.get("role"), normalized_scope_key)
+    if role_scope_values:
+        return set(role_scope_values)
     return set(scope_values)
 
 
@@ -4385,10 +4691,11 @@ def get_effective_permissions(cur, user):
     if is_root_user(user):
         return {item["key"]: True for item in PERMISSION_CATALOG}
 
-    overrides = get_permission_overrides(cur, user["id"])
     role = user.get("role")
+    role_permissions = build_role_effective_permissions(cur, role)
+    overrides = get_permission_overrides(cur, user["id"])
     permissions = {
-        item["key"]: overrides.get(item["key"], role_default_permission(role, item["key"]))
+        item["key"]: overrides.get(item["key"], role_permissions.get(item["key"], False))
         for item in PERMISSION_CATALOG
     }
     return enforce_exclusive_permissions(permissions, role)
@@ -4402,6 +4709,33 @@ def has_permission(cur, user, permission_key):
     if not user:
         return False
     return bool(get_effective_permissions(cur, user).get(permission_key))
+
+
+def should_hide_inspector_contact_info(cur, user):
+    return bool(user and not is_root_user(user) and has_permission(cur, user, "hide_inspector_contact_info"))
+
+
+def should_hide_pending_audit_flow_for_user(user):
+    return bool(user and user.get("role") in ("station_manager", "area_account"))
+
+
+def append_pending_audit_issue_visibility_filter(user, where_clauses):
+    if should_hide_pending_audit_flow_for_user(user):
+        where_clauses.append("COALESCE(i.audit_status, 'pending') <> 'pending'")
+
+
+def append_pending_audit_inspection_visibility_filter(user, where_clauses):
+    if should_hide_pending_audit_flow_for_user(user):
+        where_clauses.append(
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM issues pending_issue
+                WHERE pending_issue.inspection_id = ins.id
+                  AND COALESCE(pending_issue.audit_status, 'pending') = 'pending'
+            )
+            """
+        )
 
 
 def can_manage_plan(cur, user):
@@ -4563,6 +4897,7 @@ def normalize_issue_row_for_response(
     can_explicit_delete=False,
     can_explicit_audit=False,
     can_explicit_change_inspector=None,
+    hide_inspector_contact_info=False,
 ):
     data = dict(row)
     data["inspector_user_id"] = data.get("inspector_id")
@@ -4638,6 +4973,10 @@ def normalize_issue_row_for_response(
     data["can_mark_excellent_issue"] = bool(can_explicit_audit and data["audit_status"] != "rejected")
     if "status" in data:
         data["status"] = display_issue_status(data)
+    if hide_inspector_contact_info:
+        for key in ("inspector", "inspector_name", "inspector_username", "inspector_phone"):
+            if key in data:
+                data[key] = ""
     data.pop("inspector_id", None)
     return data
 
@@ -4950,6 +5289,8 @@ def fetch_issue_export_rows(cur, user, issue_ids):
         "limit_issue_station_region_scope",
     ):
         return []
+    append_pending_audit_issue_visibility_filter(user, where_parts)
+    hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
 
     cur.execute(
         sql.SQL(
@@ -5015,7 +5356,16 @@ def fetch_issue_export_rows(cur, user, issue_ids):
         ).format(where_clause=sql.SQL(" AND ").join(sql.SQL(part) for part in where_parts)),
         params,
     )
-    return cur.fetchall()
+    rows = cur.fetchall()
+    if hide_inspector_contact:
+        sanitized_rows = []
+        for row in rows:
+            data = dict(row)
+            data["inspector"] = ""
+            data["inspector_phone"] = ""
+            sanitized_rows.append(data)
+        return sanitized_rows
+    return rows
 
 
 ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD = [
@@ -7356,7 +7706,9 @@ def parse_user_backup_json(file_storage):
     if not users:
         raise ValueError("用户备份文件中没有可导入的用户。")
 
-    return users
+    if isinstance(payload, dict):
+        return payload
+    return {"users": users}
 
 
 def normalize_station_backup_id(value):
@@ -7601,6 +7953,66 @@ def apply_user_inspection_table_scope_updates(cur, target_user, scope_map, actor
             )
 
 
+def apply_role_inspection_table_scope_updates(cur, role, scope_map, actor_user_id):
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS:
+        raise ValueError("角色类型不正确。")
+    if normalized_role == "root":
+        cur.execute("DELETE FROM role_inspection_table_scopes WHERE role = %s;", (normalized_role,))
+        return
+
+    normalized_scope_map = normalize_inspection_table_scope_updates(scope_map)
+    all_scope_ids = sorted(
+        {
+            table_id
+            for scope_ids in normalized_scope_map.values()
+            for table_id in scope_ids
+        }
+    )
+    cur.execute("DELETE FROM role_inspection_table_scopes WHERE role = %s;", (normalized_role,))
+    if not all_scope_ids:
+        return
+
+    cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        raise ValueError("检查表范围需要先完成检查表数据初始化。")
+
+    cur.execute(
+        """
+        SELECT id
+        FROM inspection_tables
+        WHERE id = ANY(%s)
+          AND is_active = TRUE;
+        """,
+        (all_scope_ids,),
+    )
+    valid_ids = {row["id"] for row in cur.fetchall()}
+    invalid_ids = [table_id for table_id in all_scope_ids if table_id not in valid_ids]
+    if invalid_ids:
+        raise ValueError("角色检查表范围中包含不存在或未启用的检查表。")
+
+    for scope_key, scope_ids in normalized_scope_map.items():
+        for table_id in scope_ids:
+            cur.execute(
+                """
+                INSERT INTO role_inspection_table_scopes (
+                    role,
+                    scope_key,
+                    inspection_table_id,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (role, scope_key, inspection_table_id)
+                DO UPDATE SET
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (normalized_role, scope_key, table_id, actor_user_id),
+            )
+
+
 def apply_user_station_region_scope_updates(cur, target_user, scope_map, actor_user_id):
     if is_root_user(target_user):
         cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user["id"],))
@@ -7648,6 +8060,59 @@ def apply_user_station_region_scope_updates(cur, target_user, scope_map, actor_u
                     updated_at = CURRENT_TIMESTAMP;
                 """,
                 (target_user["id"], scope_key, region, actor_user_id),
+            )
+
+
+def apply_role_station_region_scope_updates(cur, role, scope_map, actor_user_id):
+    normalized_role = normalize_text(role)
+    if normalized_role not in ROLE_OPTIONS:
+        raise ValueError("角色类型不正确。")
+    if normalized_role == "root":
+        cur.execute("DELETE FROM role_station_region_scopes WHERE role = %s;", (normalized_role,))
+        return
+
+    normalized_scope_map = normalize_station_region_scope_updates(scope_map)
+    all_scope_values = sorted(
+        {
+            region
+            for scope_values in normalized_scope_map.values()
+            for region in scope_values
+        }
+    )
+    cur.execute("DELETE FROM role_station_region_scopes WHERE role = %s;", (normalized_role,))
+    if not all_scope_values:
+        return
+
+    cur.execute(
+        """
+        SELECT DISTINCT COALESCE(NULLIF(TRIM(region), ''), '未填写片区') AS station_region
+        FROM stations;
+        """
+    )
+    valid_regions = {normalize_station_region_value(row["station_region"]) for row in cur.fetchall()}
+    invalid_regions = [region for region in all_scope_values if region not in valid_regions]
+    if invalid_regions:
+        raise ValueError("角色片区范围中包含不存在的所属片区/归属地。")
+
+    for scope_key, scope_values in normalized_scope_map.items():
+        for region in scope_values:
+            cur.execute(
+                """
+                INSERT INTO role_station_region_scopes (
+                    role,
+                    scope_key,
+                    station_region,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (role, scope_key, station_region)
+                DO UPDATE SET
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (normalized_role, scope_key, region, actor_user_id),
             )
 
 
@@ -10259,6 +10724,7 @@ def get_management_users():
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "permission_overrides": overrides,
+                    "has_permission_overrides": bool(overrides),
                     "permissions": permissions,
                     "inspection_table_scope_ids": {
                         scope_key: list(
@@ -10321,6 +10787,14 @@ def get_management_users():
             role: sorted(table_ids)
             for role, table_ids in role_default_table_id_map.items()
         }
+        role_permission_overrides = get_role_permission_overrides_map(cur)
+        role_effective_permissions = {
+            role: build_role_effective_permissions(cur, role)
+            for role in ROLE_OPTIONS
+            if role != "root"
+        }
+        role_inspection_table_scope_ids = build_role_effective_inspection_table_scope_map_all(cur)
+        role_station_region_scope_values = build_role_effective_station_region_scope_map_all(cur)
 
         return jsonify(
             {
@@ -10335,6 +10809,10 @@ def get_management_users():
                     row["id"] for row in inspection_tables if row["is_development_plan_default"]
                 ],
                 "role_default_inspection_table_scope_ids": role_default_inspection_table_scope_ids,
+                "role_permission_overrides": role_permission_overrides,
+                "role_effective_permissions": role_effective_permissions,
+                "role_inspection_table_scope_ids": role_inspection_table_scope_ids,
+                "role_station_region_scope_values": role_station_region_scope_values,
                 "roles": [{"value": key, "label": label} for key, label in ROLE_LABELS.items()],
                 "permissions": PERMISSION_CATALOG,
             }
@@ -10344,6 +10822,81 @@ def get_management_users():
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/role-permissions/<role>", methods=["PUT"])
+def update_management_role_permissions(role):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+        normalized_role = normalize_user_role(role)
+        if normalized_role == "root":
+            return jsonify({"success": False, "error": "root 固定拥有全部权限，不需要配置角色通用权限。"}), 400
+
+        applied_permissions = apply_role_permission_updates(
+            cur,
+            normalized_role,
+            data.get("permissions"),
+            actor["id"],
+        )
+        apply_role_inspection_table_scope_updates(
+            cur,
+            normalized_role,
+            data.get("inspection_table_scope_ids"),
+            actor["id"],
+        )
+        apply_role_station_region_scope_updates(
+            cur,
+            normalized_role,
+            data.get("station_region_scope_values"),
+            actor["id"],
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"{ROLE_LABELS.get(normalized_role, normalized_role)}通用权限已保存；用户个性化权限不会被覆盖。",
+                "role": normalized_role,
+                "permissions": applied_permissions,
+                "role_permission_overrides": get_role_permission_overrides(cur, normalized_role),
+                "role_effective_permissions": build_role_effective_permissions(cur, normalized_role),
+                "role_inspection_table_scope_ids": build_role_effective_inspection_table_scope_map(
+                    cur,
+                    normalized_role,
+                    applied_permissions,
+                ),
+                "role_station_region_scope_values": build_role_effective_station_region_scope_map(
+                    cur,
+                    normalized_role,
+                    applied_permissions,
+                ),
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
@@ -10424,6 +10977,9 @@ def export_management_users():
                 "includes_passwords": True,
                 "password_backup_mode": "database_current_value",
                 "default_password_policy": "password == 123456 triggers forced password change on next login",
+                "role_permission_overrides": get_role_permission_overrides_map(cur),
+                "role_inspection_table_scope_ids": get_role_inspection_table_scope_overrides_map(cur),
+                "role_station_region_scope_values": get_role_station_region_scope_overrides_map(cur),
                 "users": users,
             }
         )
@@ -10449,7 +11005,11 @@ def import_management_users():
     cur = None
 
     try:
-        raw_users = parse_user_backup_json(backup_file)
+        backup_payload = parse_user_backup_json(backup_file)
+        raw_users = backup_payload.get("users") or []
+        raw_role_permissions = backup_payload.get("role_permission_overrides") or {}
+        raw_role_inspection_scopes = backup_payload.get("role_inspection_table_scope_ids") or {}
+        raw_role_region_scopes = backup_payload.get("role_station_region_scope_values") or {}
         user_payloads = []
         skipped_builtin_count = 0
         for raw_user in raw_users:
@@ -10486,6 +11046,24 @@ def import_management_users():
         ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
+
+        if isinstance(raw_role_permissions, dict):
+            for role, role_permissions in raw_role_permissions.items():
+                normalized_role = normalize_text(role)
+                if normalized_role in ROLE_OPTIONS and normalized_role != "root":
+                    apply_role_permission_updates(cur, normalized_role, role_permissions, actor["id"])
+                    apply_role_inspection_table_scope_updates(
+                        cur,
+                        normalized_role,
+                        raw_role_inspection_scopes.get(normalized_role) if isinstance(raw_role_inspection_scopes, dict) else None,
+                        actor["id"],
+                    )
+                    apply_role_station_region_scope_updates(
+                        cur,
+                        normalized_role,
+                        raw_role_region_scopes.get(normalized_role) if isinstance(raw_role_region_scopes, dict) else None,
+                        actor["id"],
+                    )
 
         imported_count = 0
         restored_root_count = 0
@@ -15742,7 +16320,7 @@ def get_my_issues():
                 WHERE i.station_id = %s
                   AND i.status = '待整改'
                   AND ins.sign_status = '已签名确认'
-                  AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+                  AND COALESCE(i.audit_status, 'pending') = 'approved'
                 ORDER BY i.id DESC;
                 """,
                 (user["station_id"],),
@@ -15853,7 +16431,7 @@ def get_my_pending_rectification_count():
             WHERE i.station_id = %s
               AND i.status = '待整改'
               AND ins.sign_status = '已签名确认'
-              AND COALESCE(i.audit_status, 'pending') <> 'rejected';
+              AND COALESCE(i.audit_status, 'pending') = 'approved';
             """,
             (current_user["station_id"],),
         )
@@ -15935,6 +16513,7 @@ def get_issues():
             "limit_issue_station_region_scope",
         ):
             return jsonify([])
+        append_pending_audit_issue_visibility_filter(user, where_clauses)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -15942,6 +16521,7 @@ def get_issues():
         can_explicit_delete = can_delete_inspection_issues(cur, user)
         can_explicit_audit = can_audit_inspection_issues(cur, user)
         can_explicit_change_inspector = can_change_issue_inspector(cur, user)
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
 
         cur.execute(
             sql.SQL(
@@ -16007,6 +16587,7 @@ def get_issues():
                     can_explicit_delete,
                     can_explicit_audit,
                     can_explicit_change_inspector,
+                    hide_inspector_contact,
                 )
                 for row in rows
             ]
@@ -18117,8 +18698,10 @@ def get_inspections():
             "limit_record_station_region_scope",
         ):
             return jsonify([])
+        append_pending_audit_inspection_visibility_filter(user, where_clauses)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
 
         cur.execute(
             sql.SQL(
@@ -18226,6 +18809,9 @@ def get_inspections():
             [
                 {
                     **dict(row),
+                    "inspector_names": "" if hide_inspector_contact else row.get("inspector_names"),
+                    "inspector_search_text": "" if hide_inspector_contact else row.get("inspector_search_text"),
+                    "inspectors": [] if hide_inspector_contact else row.get("inspectors", []),
                     "can_delete_record": bool(can_delete_records),
                     "can_reset_signature": bool(
                         can_reset_signature
@@ -18568,6 +19154,27 @@ def get_inspection_issues(inspection_id):
             "limit_record_station_region_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该片区内容。"}), 403
+        if should_hide_pending_audit_flow_for_user(user):
+            cur.execute(
+                """
+                SELECT COUNT(*) AS pending_audit_count
+                FROM issues
+                WHERE inspection_id = %s
+                  AND COALESCE(audit_status, 'pending') = 'pending';
+                """,
+                (inspection_id,),
+            )
+            pending_audit_count = int(cur.fetchone()["pending_audit_count"] or 0)
+            if pending_audit_count > 0:
+                return jsonify({"success": False, "error": "该巡检记录仍有待审核问题，暂不可查看。"}), 403
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        if hide_inspector_contact:
+            inspection["inspectors"] = []
+            inspection["inspector_names"] = ""
+            inspection["inspector_id"] = None
+            inspection["inspector_username"] = ""
+            inspection["inspector_name"] = ""
+            inspection["inspector_phone"] = ""
 
         cur.execute(
             """
@@ -18612,7 +19219,14 @@ def get_inspection_issues(inspection_id):
             """,
             (inspection_id,),
         )
-        issues = [normalize_issue_row_for_response(row, user) for row in cur.fetchall()]
+        issues = [
+            normalize_issue_row_for_response(
+                row,
+                user,
+                hide_inspector_contact_info=hide_inspector_contact,
+            )
+            for row in cur.fetchall()
+        ]
 
         return jsonify(
             {

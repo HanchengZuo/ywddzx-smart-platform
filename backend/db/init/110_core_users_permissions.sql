@@ -38,3 +38,13 @@ CREATE TABLE user_permissions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                      -- 更新时间
     PRIMARY KEY (user_id, permission_key)
 );
+
+CREATE TABLE role_permissions (
+    role TEXT NOT NULL,                                                   -- 角色标识
+    permission_key TEXT NOT NULL,                                         -- 权限标识
+    is_allowed BOOLEAN NOT NULL,                                          -- 是否允许
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,           -- 最后维护人
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                       -- 创建时间
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                       -- 更新时间
+    PRIMARY KEY (role, permission_key)
+);
