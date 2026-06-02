@@ -2615,16 +2615,18 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  padding: 20px;
   background: rgba(15, 23, 42, 0.46);
   backdrop-filter: blur(8px);
 }
 
 .role-permission-modal {
-  width: min(1180px, calc(100vw - 48px));
-  max-height: min(86vh, 920px);
+  display: flex;
+  flex-direction: column;
+  width: min(1440px, calc(100vw - 40px));
+  max-height: min(92vh, 980px);
   padding: 24px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .modal-head {
@@ -2696,17 +2698,91 @@ onBeforeUnmount(() => {
 }
 
 .role-template-groups {
-  max-height: 56vh;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
-  padding-right: 4px;
+  padding: 4px 8px 4px 2px;
+}
+
+.role-template-groups .permission-group {
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 98% 0%, rgba(37, 99, 235, 0.08), transparent 24%),
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.role-template-groups .permission-group-title {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 15px;
+}
+
+.role-template-groups .permission-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.role-template-groups .permission-section + .permission-section {
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.role-template-groups .permission-section-label {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.role-template-groups .permission-item {
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.role-template-groups .permission-section .permission-item:first-of-type {
+  border-top: 1px solid #e2e8f0;
+}
+
+.role-template-groups .permission-item-action {
+  padding-left: 12px;
+  border-left: 4px solid #bfdbfe;
+}
+
+.role-template-groups .role-scope-panel {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.role-template-groups .inspection-scope-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  max-height: 300px;
+  overflow: auto;
+  padding: 2px 4px 2px 0;
+}
+
+.role-template-groups .region-scope-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-height: 220px;
 }
 
 .modal-actions {
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
 }
 
 @media (max-width: 1280px) {
