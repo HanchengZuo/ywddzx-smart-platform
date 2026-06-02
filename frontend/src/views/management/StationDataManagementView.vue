@@ -830,16 +830,32 @@ const fetchStations = async () => {
 
 const getDownloadFileName = (disposition) => {
   const value = String(disposition || '')
-  const matched = value.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i)
-  const filename = decodeURIComponent(matched?.[1] || matched?.[2] || '')
+  const utf8Matched = value.match(/filename\*=UTF-8''([^;]+)/i)
+  const fallbackMatched = value.match(/filename="?([^";]+)"?/i)
+  const filename = decodeURIComponent(utf8Matched?.[1] || fallbackMatched?.[1] || '')
   return filename || `ywddzx_stations_backup_${new Date().toISOString().slice(0, 10)}.json`
 }
 
 const getExcelDownloadFileName = (disposition) => {
   const value = String(disposition || '')
-  const matched = value.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i)
-  const filename = decodeURIComponent(matched?.[1] || matched?.[2] || '')
+  const utf8Matched = value.match(/filename\*=UTF-8''([^;]+)/i)
+  const fallbackMatched = value.match(/filename="?([^";]+)"?/i)
+  const filename = decodeURIComponent(utf8Matched?.[1] || fallbackMatched?.[1] || '')
   return filename || `站点数据导出_${new Date().toISOString().slice(0, 10)}.xlsx`
+}
+
+const getResponseErrorMessage = async (error, fallback) => {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text()
+      const payload = JSON.parse(text || '{}')
+      return payload.error || payload.message || fallback
+    } catch (_error) {
+      return fallback
+    }
+  }
+  return data?.error || data?.message || fallback
 }
 
 const openStationExportDialog = () => {
@@ -902,7 +918,7 @@ const exportStationData = async () => {
     stationExportDialog.visible = false
     setMessage('站点数据 Excel 已生成。', 'success')
   } catch (error) {
-    stationExportDialog.error = error?.response?.data?.error || '站点数据导出失败，请稍后重试。'
+    stationExportDialog.error = await getResponseErrorMessage(error, '站点数据导出失败，请稍后重试。')
   } finally {
     exportingData.value = false
   }
@@ -929,7 +945,7 @@ const exportStations = async () => {
     window.URL.revokeObjectURL(blobUrl)
     setMessage('站点数据备份文件已生成。', 'success')
   } catch (error) {
-    setMessage('站点数据导出失败，请稍后重试。', 'error')
+    setMessage(await getResponseErrorMessage(error, '站点数据导出失败，请稍后重试。'), 'error')
   } finally {
     exporting.value = false
   }

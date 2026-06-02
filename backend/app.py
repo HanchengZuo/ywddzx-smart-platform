@@ -7221,7 +7221,7 @@ def fetch_station_export_rows(cur, station_ids=None):
             s.station_manager_phone,
             s.station_type,
             CASE
-                WHEN s.asset_type LIKE '%股权%' OR s.asset_type LIKE '%控股%' OR s.asset_type LIKE '%参股%' THEN '股权'
+                WHEN s.asset_type LIKE '%%股权%%' OR s.asset_type LIKE '%%控股%%' OR s.asset_type LIKE '%%参股%%' THEN '股权'
                 ELSE '全资'
             END AS asset_type,
             COALESCE(s.is_consolidated, '否') AS is_consolidated,
