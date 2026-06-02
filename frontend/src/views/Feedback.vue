@@ -373,7 +373,8 @@ const roleLabel = (role) => {
     supervisor: '督导组',
     station_manager: '站点账号',
     quality_safety: '质安部',
-    development_plan: '发展计划部'
+    development_plan: '发展计划部',
+    area_account: '片区账号'
   }
   return map[role] || role || '未知角色'
 }

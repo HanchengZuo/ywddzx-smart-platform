@@ -233,6 +233,48 @@
                     </label>
                   </div>
                 </div>
+
+                <div v-if="stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel"
+                  :class="{ disabled: isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey) }">
+                  <div class="inspection-scope-head">
+                    <div>
+                      <strong>{{ stationRegionScopeConfigForCategory(group.category).title }}</strong>
+                      <p>{{ stationRegionScopeConfigForCategory(group.category).description }}</p>
+                    </div>
+                    <span>{{ selectedStationRegionScopeSummary(stationRegionScopeConfigForCategory(group.category).permissionKey) }}</span>
+                  </div>
+
+                  <div class="inspection-scope-actions">
+                    <button class="btn btn-secondary btn-sm" type="button"
+                      :disabled="isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                      @click="selectAllStationRegions(stationRegionScopeConfigForCategory(group.category).permissionKey)">
+                      全选片区
+                    </button>
+                    <button class="btn btn-secondary btn-sm" type="button"
+                      :disabled="isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                      @click="clearStationRegionScope(stationRegionScopeConfigForCategory(group.category).permissionKey)">
+                      清空
+                    </button>
+                  </div>
+
+                  <div class="inspection-scope-grid region-scope-grid">
+                    <label v-for="region in stationRegionOptions" :key="`${group.category}-${region}`"
+                      class="inspection-scope-item region-scope-item"
+                      :class="{
+                        checked: isStationRegionSelected(stationRegionScopeConfigForCategory(group.category).permissionKey, region),
+                        disabled: isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)
+                      }">
+                      <input type="checkbox"
+                        :checked="isStationRegionSelected(stationRegionScopeConfigForCategory(group.category).permissionKey, region)"
+                        :disabled="isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
+                        @change="toggleStationRegionScope(stationRegionScopeConfigForCategory(group.category).permissionKey, region, $event.target.checked)" />
+                      <span>
+                        <strong>{{ region }}</strong>
+                        <small>{{ stationCountByRegion(region) }} 个站点</small>
+                      </span>
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -447,6 +489,12 @@ const inspectionTableScopePermissionKeys = [
   'limit_plan_inspection_table_scope'
 ]
 
+const stationRegionScopePermissionKeys = [
+  'limit_issue_station_region_scope',
+  'limit_record_station_region_scope',
+  'limit_plan_station_region_scope'
+]
+
 const inspectionScopeConfigs = {
   '巡检问题列表': {
     permissionKey: 'limit_issue_inspection_table_scope',
@@ -465,8 +513,30 @@ const inspectionScopeConfigs = {
   }
 }
 
+const stationRegionScopeConfigs = {
+  '巡检问题列表': {
+    permissionKey: 'limit_issue_station_region_scope',
+    title: '巡检问题片区范围',
+    description: '启用后，只限制巡检问题列表能看到哪些片区/归属地的站点问题。'
+  },
+  '巡检记录': {
+    permissionKey: 'limit_record_station_region_scope',
+    title: '巡检记录片区范围',
+    description: '启用后，只限制巡检记录能看到哪些片区/归属地的站点记录。'
+  },
+  '巡检计划': {
+    permissionKey: 'limit_plan_station_region_scope',
+    title: '巡检计划片区范围',
+    description: '启用后，只统计和展示选定片区/归属地内站点的巡检计划。'
+  }
+}
+
 function createEmptyInspectionScopeMap() {
   return Object.fromEntries(inspectionTableScopePermissionKeys.map((key) => [key, []]))
+}
+
+function createEmptyStationRegionScopeMap() {
+  return Object.fromEntries(stationRegionScopePermissionKeys.map((key) => [key, []]))
 }
 
 const normalizeInspectionScopeMap = (value) => {
@@ -481,9 +551,21 @@ const normalizeInspectionScopeMap = (value) => {
   ]))
 }
 
+const normalizeStationRegionScopeMap = (value) => {
+  const emptyMap = createEmptyStationRegionScopeMap()
+  if (Array.isArray(value)) {
+    return Object.fromEntries(stationRegionScopePermissionKeys.map((key) => [key, [...value]]))
+  }
+  if (!value || typeof value !== 'object') return emptyMap
+  return Object.fromEntries(stationRegionScopePermissionKeys.map((key) => [
+    key,
+    Array.isArray(value[key]) ? [...value[key]] : []
+  ]))
+}
+
 const scopedPermissionLayouts = {
   '巡检问题列表': {
-    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],
+    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope', 'limit_issue_station_region_scope'],
     actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector', 'export_issue_photos'],
     readonlyItems: [
       {
@@ -494,11 +576,11 @@ const scopedPermissionLayouts = {
     ]
   },
   '巡检记录': {
-    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records', 'limit_record_inspection_table_scope'],
+    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records', 'limit_record_inspection_table_scope', 'limit_record_station_region_scope'],
     actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
   },
   '巡检计划': {
-    scopeKeys: ['view_inspection_plans', 'limit_plan_inspection_table_scope'],
+    scopeKeys: ['view_inspection_plans', 'limit_plan_inspection_table_scope', 'limit_plan_station_region_scope'],
     actionKeys: ['manage_inspection_plans']
   },
   '站点证照有效期管理': {
@@ -516,6 +598,7 @@ const createEmptyForm = () => ({
   phone: '',
   station_id: '',
   inspection_table_scope_ids: createEmptyInspectionScopeMap(),
+  station_region_scope_values: createEmptyStationRegionScopeMap(),
   permissions: {}
 })
 
@@ -567,6 +650,11 @@ const stationRegionOptions = computed(() => {
     new Set(stations.value.map((station) => station.region || '未填写片区'))
   ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
 })
+
+const stationCountByRegion = (region) => {
+  const normalizedRegion = region || '未填写片区'
+  return stations.value.filter((station) => (station.region || '未填写片区') === normalizedRegion).length
+}
 
 const filteredStations = computed(() => {
   const keyword = stationKeyword.value.trim().toLowerCase()
@@ -624,6 +712,7 @@ const editableRoles = computed(() => {
 
 const isEditingRoot = computed(() => Boolean(form.id && form.role === 'root'))
 const inspectionScopeConfigForCategory = (category) => inspectionScopeConfigs[category] || null
+const stationRegionScopeConfigForCategory = (category) => stationRegionScopeConfigs[category] || null
 const getRoleDefaultInspectionTableIds = (role = form.role) => {
   const ids = roleDefaultInspectionTableScopeIds.value?.[role]
   return Array.isArray(ids) ? ids : []
@@ -638,6 +727,9 @@ const defaultScopeBadgeLabel = (label) => `${String(label || '').replace(/账号
 const isInspectionScopeDisabled = (permissionKey) => (
   form.role === 'root' || !form.permissions?.[permissionKey]
 )
+const isStationRegionScopeDisabled = (permissionKey) => (
+  form.role === 'root' || !form.permissions?.[permissionKey]
+)
 const selectedInspectionScopeSummary = (permissionKey) => {
   if (form.role === 'root') return 'root 不受限制'
   if (!form.permissions?.[permissionKey]) return '未启用'
@@ -645,6 +737,14 @@ const selectedInspectionScopeSummary = (permissionKey) => {
     ? form.inspection_table_scope_ids[permissionKey].length
     : 0
   return count ? `已选择 ${count} 张` : '未选择检查表'
+}
+const selectedStationRegionScopeSummary = (permissionKey) => {
+  if (form.role === 'root') return 'root 不受限制'
+  if (!form.permissions?.[permissionKey]) return '未启用'
+  const count = Array.isArray(form.station_region_scope_values?.[permissionKey])
+    ? form.station_region_scope_values[permissionKey].length
+    : 0
+  return count ? `已选择 ${count} 个片区` : '未选择片区'
 }
 
 const roleLabel = (role) => {
@@ -758,6 +858,7 @@ const handlePermissionChange = (permissionKey) => {
 const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
+  form.station_region_scope_values = createEmptyStationRegionScopeMap()
   if (form.role !== 'station_manager') {
     form.station_id = ''
     stationRegionFilter.value = ''
@@ -781,6 +882,16 @@ const ensureInspectionScopeList = (permissionKey) => {
     form.inspection_table_scope_ids[permissionKey] = []
   }
   return form.inspection_table_scope_ids[permissionKey]
+}
+
+const ensureStationRegionScopeList = (permissionKey) => {
+  if (!form.station_region_scope_values || typeof form.station_region_scope_values !== 'object') {
+    form.station_region_scope_values = createEmptyStationRegionScopeMap()
+  }
+  if (!Array.isArray(form.station_region_scope_values[permissionKey])) {
+    form.station_region_scope_values[permissionKey] = []
+  }
+  return form.station_region_scope_values[permissionKey]
 }
 
 const isInspectionTableSelected = (permissionKey, tableId) => {
@@ -815,10 +926,37 @@ const clearInspectionTableScope = (permissionKey) => {
   form.inspection_table_scope_ids[permissionKey] = []
 }
 
+const isStationRegionSelected = (permissionKey, region) => {
+  return ensureStationRegionScopeList(permissionKey).some((value) => value === region)
+}
+
+const toggleStationRegionScope = (permissionKey, region, checked) => {
+  if (isStationRegionScopeDisabled(permissionKey)) return
+  const current = ensureStationRegionScopeList(permissionKey)
+  if (checked) {
+    if (!current.includes(region)) {
+      form.station_region_scope_values[permissionKey] = [...current, region]
+    }
+    return
+  }
+  form.station_region_scope_values[permissionKey] = current.filter((value) => value !== region)
+}
+
+const selectAllStationRegions = (permissionKey) => {
+  if (isStationRegionScopeDisabled(permissionKey)) return
+  form.station_region_scope_values[permissionKey] = [...stationRegionOptions.value]
+}
+
+const clearStationRegionScope = (permissionKey) => {
+  if (isStationRegionScopeDisabled(permissionKey)) return
+  form.station_region_scope_values[permissionKey] = []
+}
+
 const resetForm = (options = {}) => {
   Object.assign(form, createEmptyForm())
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
+  form.station_region_scope_values = createEmptyStationRegionScopeMap()
   stationRegionFilter.value = ''
   stationKeyword.value = ''
   formError.value = ''
@@ -841,6 +979,7 @@ const resetCreateTextFields = (options = {}) => {
   )
   const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
   const rememberedScopeIds = normalizeInspectionScopeMap(form.inspection_table_scope_ids)
+  const rememberedRegionScopeValues = normalizeStationRegionScopeMap(form.station_region_scope_values)
 
   Object.assign(form, {
     id: null,
@@ -851,6 +990,7 @@ const resetCreateTextFields = (options = {}) => {
     phone: '',
     station_id: rememberedStationId,
     inspection_table_scope_ids: rememberedScopeIds,
+    station_region_scope_values: rememberedRegionScopeValues,
     permissions: rememberedPermissions
   })
   stationKeyword.value = ''
@@ -876,6 +1016,7 @@ const startEdit = (user) => {
     phone: user.phone || '',
     station_id: user.station_id || '',
     inspection_table_scope_ids: normalizeInspectionScopeMap(user.inspection_table_scope_ids),
+    station_region_scope_values: normalizeStationRegionScopeMap(user.station_region_scope_values),
     permissions: enforceExclusivePermissions(user.permissions || {}, user.role || 'supervisor')
   })
   const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
@@ -1019,6 +1160,14 @@ const validateForm = () => {
   ) {
     return '已启用检查表范围限制，请至少为对应页面选择一张检查表。'
   }
+  if (
+    form.role !== 'root' &&
+    stationRegionScopePermissionKeys.some((key) => (
+      form.permissions?.[key] && !ensureStationRegionScopeList(key).length
+    ))
+  ) {
+    return '已启用片区范围限制，请至少为对应页面选择一个所属片区/归属地。'
+  }
   return ''
 }
 
@@ -1041,6 +1190,7 @@ const saveUser = async () => {
       phone: form.phone,
       station_id: form.station_id,
       inspection_table_scope_ids: form.inspection_table_scope_ids,
+      station_region_scope_values: form.station_region_scope_values,
       permissions: form.permissions
     }
     payload.permissions = enforceExclusivePermissions(payload.permissions, form.role)
@@ -1523,6 +1673,13 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
+.region-scope-panel {
+  border-color: #bbf7d0;
+  background:
+    radial-gradient(circle at 95% 12%, rgba(22, 163, 74, 0.12), transparent 28%),
+    linear-gradient(135deg, #ffffff 0%, #f7fef9 100%);
+}
+
 .inspection-scope-head {
   display: flex;
   align-items: flex-start;
@@ -1631,6 +1788,19 @@ onBeforeUnmount(() => {
   color: #15803d;
   font-style: normal;
   font-weight: 900;
+}
+
+.region-scope-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.region-scope-item {
+  min-height: 64px;
+}
+
+.region-scope-item.checked {
+  border-color: #16a34a;
+  background: #f0fdf4;
 }
 
 .table-wrap {

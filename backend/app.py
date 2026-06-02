@@ -97,13 +97,14 @@ def acquire_schema_migration_lock(cur):
     cur.execute("SELECT pg_advisory_xact_lock(%s);", (SCHEMA_MIGRATION_LOCK_KEY,))
 
 # === Permission constants ===
-ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan"}
+ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan", "area_account"}
 ROLE_LABELS = {
     "root": "系统管理员",
     "supervisor": "督导组账号",
     "station_manager": "站点账号",
     "quality_safety": "质安部账号",
     "development_plan": "发展计划部账号",
+    "area_account": "片区账号",
 }
 QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
     ("计量稽查检查表", "online"),
@@ -129,6 +130,11 @@ INSPECTION_TABLE_SCOPE_CONTEXT_MAP = {
     "records": "limit_record_inspection_table_scope",
     "plans": "limit_plan_inspection_table_scope",
 }
+STATION_REGION_SCOPE_PERMISSION_KEYS = (
+    "limit_issue_station_region_scope",
+    "limit_record_station_region_scope",
+    "limit_plan_station_region_scope",
+)
 PERMISSION_CATALOG = [
     {
         "key": "view_station_map",
@@ -171,6 +177,13 @@ PERMISSION_CATALOG = [
         "category": "巡检问题列表",
         "description": "启用后，巡检问题列表只显示选定检查表的问题数据。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "limit_issue_station_region_scope",
+        "name": "限定片区范围",
+        "category": "巡检问题列表",
+        "description": "启用后，巡检问题列表只显示选定片区/归属地的站点问题。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "view_own_inspection_issues",
@@ -243,6 +256,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
     },
     {
+        "key": "limit_record_station_region_scope",
+        "name": "限定片区范围",
+        "category": "巡检记录",
+        "description": "启用后，巡检记录只显示选定片区/归属地的站点记录。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
         "key": "delete_inspection_records",
         "name": "删除巡检记录",
         "category": "巡检记录",
@@ -269,6 +289,13 @@ PERMISSION_CATALOG = [
         "category": "巡检计划",
         "description": "启用后，巡检计划只显示选定检查表的计划数据。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "limit_plan_station_region_scope",
+        "name": "限定片区范围",
+        "category": "巡检计划",
+        "description": "启用后，巡检计划只统计和展示选定片区/归属地的站点计划。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "manage_inspection_plans",
@@ -379,6 +406,19 @@ PERMISSION_CATALOG = [
 for permission_item in PERMISSION_CATALOG:
     defaults = permission_item.setdefault("defaults", {})
     defaults.setdefault("development_plan", bool(defaults.get("quality_safety", False)))
+    defaults.setdefault("area_account", bool(defaults.get("quality_safety", False)))
+
+AREA_ACCOUNT_PERMISSION_OVERRIDES = {
+    "limit_issue_inspection_table_scope": False,
+    "limit_record_inspection_table_scope": False,
+    "limit_plan_inspection_table_scope": False,
+    "limit_issue_station_region_scope": True,
+    "limit_record_station_region_scope": True,
+    "limit_plan_station_region_scope": True,
+}
+for permission_item in PERMISSION_CATALOG:
+    if permission_item["key"] in AREA_ACCOUNT_PERMISSION_OVERRIDES:
+        permission_item["defaults"]["area_account"] = AREA_ACCOUNT_PERMISSION_OVERRIDES[permission_item["key"]]
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
@@ -3771,6 +3811,19 @@ def ensure_user_security_schema(cur):
             PRIMARY KEY (user_id, scope_key, inspection_table_id);
             """
         )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_station_region_scopes (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            scope_key TEXT NOT NULL,
+            station_region TEXT NOT NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, scope_key, station_region)
+        );
+        """
+    )
 
 
 def ensure_ai_usage_schema(cur):
@@ -4233,6 +4286,86 @@ def is_inspection_table_allowed_for_user(cur, user, inspection_table_id, scope_k
         return int(inspection_table_id) in scope_ids
     except (TypeError, ValueError):
         return False
+
+
+def normalize_station_region_scope_key(scope_key):
+    value = str(scope_key or "").strip()
+    if value not in STATION_REGION_SCOPE_PERMISSION_KEYS:
+        raise ValueError("片区范围类型不正确。")
+    return value
+
+
+def normalize_station_region_value(value):
+    text = normalize_text(value, 120)
+    return text or "未填写片区"
+
+
+def get_user_station_region_scope_overrides(cur, user_id, scope_key=None):
+    ensure_user_security_schema(cur)
+    cur.execute("SELECT to_regclass('user_station_region_scopes') AS table_ref;")
+    if not cur.fetchone()["table_ref"]:
+        return {} if scope_key is None else []
+
+    if scope_key is None:
+        cur.execute(
+            """
+            SELECT scope_key, station_region
+            FROM user_station_region_scopes
+            WHERE user_id = %s
+            ORDER BY scope_key ASC, station_region ASC;
+            """,
+            (user_id,),
+        )
+        result = {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+        for row in cur.fetchall():
+            key = row["scope_key"]
+            if key in result:
+                result[key].append(normalize_station_region_value(row["station_region"]))
+        return result
+
+    normalized_scope_key = normalize_station_region_scope_key(scope_key)
+    cur.execute(
+        """
+        SELECT station_region
+        FROM user_station_region_scopes
+        WHERE user_id = %s
+          AND scope_key = %s
+        ORDER BY station_region ASC;
+        """,
+        (user_id, normalized_scope_key),
+    )
+    return [normalize_station_region_value(row["station_region"]) for row in cur.fetchall()]
+
+
+def get_effective_station_region_scope_values(cur, user, scope_key, permissions=None):
+    if not user or is_root_user(user):
+        return None
+
+    normalized_scope_key = normalize_station_region_scope_key(scope_key)
+    effective_permissions = permissions or get_effective_permissions(cur, user)
+    if not effective_permissions.get(normalized_scope_key):
+        return None
+
+    scope_values = get_user_station_region_scope_overrides(cur, user["id"], normalized_scope_key)
+    return set(scope_values)
+
+
+def append_station_region_scope_filter(cur, user, where_clauses, params, column_sql, scope_key, permissions=None):
+    scope_values = get_effective_station_region_scope_values(cur, user, scope_key, permissions)
+    if scope_values is None:
+        return True
+    if not scope_values:
+        return False
+    where_clauses.append(f"COALESCE(NULLIF(TRIM({column_sql}), ''), '未填写片区') = ANY(%s)")
+    params.append(list(scope_values))
+    return True
+
+
+def is_station_region_allowed_for_user(cur, user, station_region, scope_key, permissions=None):
+    scope_values = get_effective_station_region_scope_values(cur, user, scope_key, permissions)
+    if scope_values is None:
+        return True
+    return normalize_station_region_value(station_region) in scope_values
 
 
 def get_effective_permissions(cur, user):
@@ -4792,6 +4925,15 @@ def fetch_issue_export_rows(cur, user, issue_ids):
         params,
         "i.inspection_table_id",
         "limit_issue_inspection_table_scope",
+    ):
+        return []
+    if not append_station_region_scope_filter(
+        cur,
+        user,
+        where_parts,
+        params,
+        "s.region",
+        "limit_issue_station_region_scope",
     ):
         return []
 
@@ -7070,7 +7212,7 @@ def normalize_user_backup_id(value):
 def normalize_user_role(value):
     role = normalize_text(value)
     if role not in ROLE_OPTIONS:
-        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan。")
+        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan、area_account。")
     return role
 
 
@@ -7166,10 +7308,47 @@ def normalize_inspection_table_scope_updates(raw_scope_ids):
     return scope_map
 
 
+def normalize_single_station_region_scope_values(raw_scope_values):
+    if raw_scope_values in (None, ""):
+        return []
+    if not isinstance(raw_scope_values, list):
+        raise ValueError("片区范围配置格式不正确。")
+
+    scope_values = []
+    seen = set()
+    for raw_value in raw_scope_values:
+        region = normalize_station_region_value(raw_value)
+        if region in seen:
+            continue
+        seen.add(region)
+        scope_values.append(region)
+    return scope_values
+
+
+def normalize_station_region_scope_updates(raw_scope_values):
+    if raw_scope_values in (None, ""):
+        return {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+
+    if isinstance(raw_scope_values, list):
+        legacy_values = normalize_single_station_region_scope_values(raw_scope_values)
+        return {key: list(legacy_values) for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+
+    if not isinstance(raw_scope_values, dict):
+        raise ValueError("片区范围配置格式不正确。")
+
+    scope_map = {key: [] for key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+    for key, value in raw_scope_values.items():
+        if key not in scope_map:
+            continue
+        scope_map[key] = normalize_single_station_region_scope_values(value)
+    return scope_map
+
+
 def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
     if is_root_user(target_user):
         cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user["id"],))
         cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
+        cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user["id"],))
         return
 
     permissions = enforce_exclusive_permissions(permissions, target_user.get("role"))
@@ -7245,6 +7424,56 @@ def apply_user_inspection_table_scope_updates(cur, target_user, scope_map, actor
                     updated_at = CURRENT_TIMESTAMP;
                 """,
                 (target_user["id"], scope_key, table_id, actor_user_id),
+            )
+
+
+def apply_user_station_region_scope_updates(cur, target_user, scope_map, actor_user_id):
+    if is_root_user(target_user):
+        cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user["id"],))
+        return
+
+    normalized_scope_map = normalize_station_region_scope_updates(scope_map)
+    all_scope_values = sorted(
+        {
+            region
+            for scope_values in normalized_scope_map.values()
+            for region in scope_values
+        }
+    )
+    cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user["id"],))
+    if not all_scope_values:
+        return
+
+    cur.execute(
+        """
+        SELECT DISTINCT COALESCE(NULLIF(TRIM(region), ''), '未填写片区') AS station_region
+        FROM stations;
+        """
+    )
+    valid_regions = {normalize_station_region_value(row["station_region"]) for row in cur.fetchall()}
+    invalid_regions = [region for region in all_scope_values if region not in valid_regions]
+    if invalid_regions:
+        raise ValueError("片区范围中包含不存在的所属片区/归属地。")
+
+    for scope_key, scope_values in normalized_scope_map.items():
+        for region in scope_values:
+            cur.execute(
+                """
+                INSERT INTO user_station_region_scopes (
+                    user_id,
+                    scope_key,
+                    station_region,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, scope_key, station_region)
+                DO UPDATE SET
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (target_user["id"], scope_key, region, actor_user_id),
             )
 
 
@@ -7674,6 +7903,15 @@ def get_inspection_plan_configs():
             "limit_plan_inspection_table_scope",
         ):
             return jsonify({"success": True, "items": []})
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "ps.region",
+            "limit_plan_station_region_scope",
+        ):
+            return jsonify({"success": True, "items": []})
 
         where_sql = ""
         if where_clauses:
@@ -7702,6 +7940,7 @@ def get_inspection_plan_configs():
                 JOIN users creator ON pc.created_by = creator.id
                 LEFT JOIN users updater ON pc.updated_by = updater.id
                 LEFT JOIN inspection_plan_station_items psi ON psi.plan_config_id = pc.id
+                LEFT JOIN stations ps ON ps.id = psi.station_id
                 {where_sql}
                 GROUP BY
                     pc.id,
@@ -7814,8 +8053,22 @@ def get_inspection_plan_config_detail(plan_config_id):
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
-        cur.execute(
-            """
+        station_where_clauses = ["psi.plan_config_id = %s"]
+        station_params = [plan_config_id]
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            station_where_clauses,
+            station_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        ):
+            station_rows = []
+        else:
+            station_where_sql = " AND ".join(station_where_clauses)
+            cur.execute(
+                sql.SQL(
+                    """
             SELECT
                 psi.id,
                 psi.station_id,
@@ -7829,12 +8082,13 @@ def get_inspection_plan_config_detail(plan_config_id):
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
-            WHERE psi.plan_config_id = %s
+            WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,
-            (plan_config_id,),
-        )
-        station_rows = cur.fetchall()
+                ).format(station_where_sql=sql.SQL(station_where_sql)),
+                station_params,
+            )
+            station_rows = cur.fetchall()
 
         included_count = sum(1 for row in station_rows if row["is_included"])
         completed_count = sum(
@@ -9600,16 +9854,19 @@ def reset_inspection_signature(inspection_id):
         cur.execute(
             """
             SELECT
-                id,
-                station_id,
-                sign_status,
-                station_manager_signed_name,
-                station_manager_signature_path,
-                station_manager_signed_at,
-                inspector_completion_status,
-                inspector_completion_source
-            FROM inspections
-            WHERE id = %s
+                ins.id,
+                ins.station_id,
+                s.region AS station_region,
+                ins.inspection_table_id,
+                ins.sign_status,
+                ins.station_manager_signed_name,
+                ins.station_manager_signature_path,
+                ins.station_manager_signed_at,
+                ins.inspector_completion_status,
+                ins.inspector_completion_source
+            FROM inspections ins
+            JOIN stations s ON s.id = ins.station_id
+            WHERE ins.id = %s
             LIMIT 1;
             """,
             (inspection_id,),
@@ -9617,6 +9874,20 @@ def reset_inspection_signature(inspection_id):
         inspection = cur.fetchone()
         if not inspection:
             return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            inspection["inspection_table_id"],
+            "limit_record_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的巡检记录。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            inspection.get("station_region"),
+            "limit_record_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的巡检记录。"}), 403
 
         if inspection.get("sign_status") != "已签名确认" and not (
             inspection.get("station_manager_signature_path")
@@ -9789,7 +10060,8 @@ def get_management_users():
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
-                    ELSE 5
+                    WHEN 'area_account' THEN 5
+                    ELSE 6
                 END,
                 u.id ASC;
             """
@@ -9821,6 +10093,14 @@ def get_management_users():
                         if permissions.get(scope_key)
                         else []
                         for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS
+                    },
+                    "station_region_scope_values": {
+                        scope_key: sorted(
+                            get_effective_station_region_scope_values(cur, row, scope_key, permissions) or []
+                        )
+                        if permissions.get(scope_key)
+                        else []
+                        for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS
                     },
                 }
             )
@@ -9931,7 +10211,8 @@ def export_management_users():
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
-                    ELSE 5
+                    WHEN 'area_account' THEN 5
+                    ELSE 6
                 END,
                 u.id ASC;
             """
@@ -9956,6 +10237,7 @@ def export_management_users():
                     "permission_overrides": get_permission_overrides(cur, row["id"]),
                     "permissions": get_effective_permissions(cur, row),
                     "inspection_table_scope_ids": get_user_inspection_table_scope_overrides(cur, row["id"]),
+                    "station_region_scope_values": get_user_station_region_scope_overrides(cur, row["id"]),
                 }
             )
 
@@ -10015,6 +10297,9 @@ def import_management_users():
             user_data["inspection_table_scope_ids"] = normalize_inspection_table_scope_updates(
                 raw_user.get("inspection_table_scope_ids")
             )
+            user_data["station_region_scope_values"] = normalize_station_region_scope_updates(
+                raw_user.get("station_region_scope_values")
+            )
             user_data["created_at"] = normalize_text(raw_user.get("created_at")) or None
             user_data["updated_at"] = normalize_text(raw_user.get("updated_at")) or None
             user_payloads.append(user_data)
@@ -10068,6 +10353,7 @@ def import_management_users():
                 target_user_id = cur.fetchone()["id"]
                 cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
                 cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user_id,))
+                cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user_id,))
                 imported_count += 1
                 restored_root_count += 1
                 continue
@@ -10205,6 +10491,12 @@ def import_management_users():
                 user_data["inspection_table_scope_ids"],
                 actor["id"],
             )
+            apply_user_station_region_scope_updates(
+                cur,
+                target_user,
+                user_data["station_region_scope_values"],
+                actor["id"],
+            )
             imported_count += 1
 
         cur.execute(
@@ -10264,6 +10556,7 @@ def create_management_user():
             return jsonify({"success": False, "error": "系统管理员账号为内置账号，不能通过页面新增。"}), 400
         permissions = normalize_permission_updates(data.get("permissions"))
         scope_ids = normalize_inspection_table_scope_updates(data.get("inspection_table_scope_ids"))
+        region_scope_values = normalize_station_region_scope_updates(data.get("station_region_scope_values"))
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
@@ -10297,6 +10590,7 @@ def create_management_user():
         created_user = cur.fetchone()
         apply_user_permission_updates(cur, created_user, permissions, actor["id"])
         apply_user_inspection_table_scope_updates(cur, created_user, scope_ids, actor["id"])
+        apply_user_station_region_scope_updates(cur, created_user, region_scope_values, actor["id"])
         conn.commit()
         return jsonify({"success": True, "message": "用户已新增。", "id": created_user["id"]})
     except PermissionError as exc:
@@ -10332,6 +10626,7 @@ def update_management_user(target_user_id):
         user_data = build_management_user_payload(data, is_create=False)
         permissions = normalize_permission_updates(data.get("permissions"))
         scope_ids = normalize_inspection_table_scope_updates(data.get("inspection_table_scope_ids"))
+        region_scope_values = normalize_station_region_scope_updates(data.get("station_region_scope_values"))
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
@@ -10406,6 +10701,7 @@ def update_management_user(target_user_id):
         updated_user = cur.fetchone()
         apply_user_permission_updates(cur, updated_user, permissions, actor["id"])
         apply_user_inspection_table_scope_updates(cur, updated_user, scope_ids, actor["id"])
+        apply_user_station_region_scope_updates(cur, updated_user, region_scope_values, actor["id"])
         conn.commit()
         return jsonify({"success": True, "message": "用户已更新。"})
     except PermissionError as exc:
@@ -13941,8 +14237,22 @@ def get_inspection_plan_overview():
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
-        cur.execute(
-            """
+        station_where_clauses = ["psi.plan_config_id = %s"]
+        station_params = [config_row["id"]]
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            station_where_clauses,
+            station_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        ):
+            station_rows = []
+        else:
+            station_where_sql = " AND ".join(station_where_clauses)
+            cur.execute(
+                sql.SQL(
+                    """
             SELECT
                 psi.id,
                 psi.station_id,
@@ -13956,12 +14266,13 @@ def get_inspection_plan_overview():
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
-            WHERE psi.plan_config_id = %s
+            WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,
-            (config_row["id"],),
-        )
-        station_rows = cur.fetchall()
+                ).format(station_where_sql=sql.SQL(station_where_sql)),
+                station_params,
+            )
+            station_rows = cur.fetchall()
 
         included_count = sum(1 for row in station_rows if row["is_included"])
         completed_count = sum(
@@ -15330,6 +15641,15 @@ def get_issues():
             "limit_issue_inspection_table_scope",
         ):
             return jsonify([])
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify([])
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -15449,6 +15769,7 @@ def audit_issue(issue_id):
             SELECT
                 i.id,
                 i.station_id,
+                s.region AS station_region,
                 i.inspection_id,
                 i.inspection_table_id,
                 i.status,
@@ -15460,6 +15781,7 @@ def audit_issue(issue_id):
                 ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON ins.id = i.inspection_id
+            JOIN stations s ON s.id = i.station_id
             WHERE i.id = %s
             LIMIT 1;
             """,
@@ -15488,6 +15810,13 @@ def audit_issue(issue_id):
             "limit_issue_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            issue.get("station_region"),
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的问题。"}), 403
 
         if audit_status == "pending":
             cur.execute(
@@ -15560,9 +15889,11 @@ def update_issue_excellent(issue_id):
             SELECT
                 i.id,
                 i.station_id,
+                s.region AS station_region,
                 i.inspection_table_id,
                 COALESCE(i.audit_status, 'pending') AS audit_status
             FROM issues i
+            JOIN stations s ON s.id = i.station_id
             WHERE i.id = %s
             LIMIT 1;
             """,
@@ -15590,6 +15921,13 @@ def update_issue_excellent(issue_id):
             "limit_issue_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            issue.get("station_region"),
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的问题。"}), 403
 
         cur.execute(
             """
@@ -15846,6 +16184,7 @@ def update_issue(issue_id):
                 i.id,
                 i.inspection_id,
                 i.station_id,
+                s.region AS station_region,
                 i.inspection_table_id,
                 i.standard_id,
                 i.standard_detail_text,
@@ -15870,6 +16209,7 @@ def update_issue(issue_id):
                 ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON s.id = i.station_id
             WHERE i.id = %s
             LIMIT 1;
             """,
@@ -15936,6 +16276,13 @@ def update_issue(issue_id):
             "limit_issue_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            issue.get("station_region"),
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的问题。"}), 403
 
         target_inspector_id = int(issue["inspector_id"])
         inspector_changed = False
@@ -16138,6 +16485,7 @@ def delete_issue(issue_id):
                 i.id,
                 i.inspection_id,
                 i.station_id,
+                s.region AS station_region,
                 i.inspection_table_id,
                 i.status,
                 COALESCE(i.audit_status, 'pending') AS audit_status,
@@ -16150,6 +16498,7 @@ def delete_issue(issue_id):
                 ins.inspector_completion_status AS inspection_completion_status
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON s.id = i.station_id
             WHERE i.id = %s
             LIMIT 1;
             """,
@@ -16197,6 +16546,13 @@ def delete_issue(issue_id):
             "limit_issue_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该检查表的问题。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            issue.get("station_region"),
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的问题。"}), 403
 
         cur.execute("DELETE FROM issues WHERE id = %s;", (issue_id,))
         sync_inspection_primary_inspector(cur, issue["inspection_id"])
@@ -17467,6 +17823,15 @@ def get_inspections():
             "limit_record_inspection_table_scope",
         ):
             return jsonify([])
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_record_station_region_scope",
+        ):
+            return jsonify([])
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -17645,6 +18010,7 @@ def delete_inspection_record(inspection_id):
                 ins.id,
                 ins.batch_id,
                 ins.station_id,
+                s.region AS station_region,
                 ins.inspection_table_id,
                 ins.inspection_date,
                 ins.station_manager_signature_path,
@@ -17678,6 +18044,13 @@ def delete_inspection_record(inspection_id):
             "limit_record_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该检查表的巡检记录。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            inspection.get("station_region"),
+            "limit_record_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的巡检记录。"}), 403
 
         if inspection.get("station_manager_signature_path"):
             files_to_remove.add(inspection["station_manager_signature_path"])
@@ -17903,6 +18276,13 @@ def get_inspection_issues(inspection_id):
             "limit_record_inspection_table_scope",
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表内容。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            inspection.get("station_region"),
+            "limit_record_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权查看该片区内容。"}), 403
 
         cur.execute(
             """

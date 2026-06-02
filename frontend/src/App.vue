@@ -523,6 +523,7 @@ const isSupervisor = computed(() => authState.role === 'supervisor')
 const isStationManager = computed(() => authState.role === 'station_manager')
 const isQualitySafety = computed(() => authState.role === 'quality_safety')
 const isDevelopmentPlan = computed(() => authState.role === 'development_plan')
+const isAreaAccount = computed(() => authState.role === 'area_account')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
 const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections'))
@@ -580,12 +581,14 @@ const currentRoleLabel = computed(() => {
   if (authState.role === 'supervisor') return '督导组账号'
   if (authState.role === 'quality_safety') return '质安部账号'
   if (authState.role === 'development_plan') return '发展计划部账号'
+  if (authState.role === 'area_account') return '片区账号'
   return '站点账号'
 })
 const sidebarTitle = computed(() => {
   if (isStationManager.value) return authState.stationName || '站点账号'
   if (isQualitySafety.value) return '质安部工作台'
   if (isDevelopmentPlan.value) return '发展计划部工作台'
+  if (isAreaAccount.value) return '片区工作台'
   return '业务督导中心'
 })
 const sidebarLogoText = computed(() => {

@@ -15,13 +15,24 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.0',
+    date: '2026-06-02',
+    title: '片区账号上线',
+    summary: '新增按片区查看数据的部门账号。',
+    items: [
+      '新增片区账号角色。',
+      '巡检问题、巡检记录和巡检计划可按片区分配数据范围。',
+      '用户备份会保留片区权限配置。'
+    ]
+  },
+  {
     version: 'v2.9.4',
     date: '2026-06-01',
     title: '巡检记录列表优化',
     summary: '巡检记录列表更容易区分不同站点。',
     items: [
-      '不同站点之间增加更明显的视觉分隔。',
-      '站点和日期合并单元格显示更醒目。',
+      '不同站点之间增加轻量分组提示。',
+      '表格分组样式更克制，阅读不突兀。',
       '检查人确认和站经理签字内容统一居中显示。'
     ]
   },
