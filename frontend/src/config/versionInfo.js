@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.1',
+    date: '2026-06-02',
+    title: '站点数据管理增强',
+    summary: '站点数据可按字段导出，站点账号可授权重置密码。',
+    items: [
+      '站点数据导出可自由选择字段。',
+      '默认导出站点名称、登录用户名和所属片区。',
+      '新增站点账号密码重置权限。'
+    ]
+  },
+  {
     version: 'v3.0',
     date: '2026-06-02',
     title: '片区账号上线',

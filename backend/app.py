@@ -382,6 +382,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "reset_station_account_password",
+        "name": "重置站点账号密码",
+        "category": "站点数据管理",
+        "description": "在站点数据管理页面把绑定站点账号的密码重置为 123456。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
         "key": "manage_checklists",
         "name": "管理检查表数据",
         "category": "检查表数据管理",
@@ -429,6 +436,7 @@ PERMISSION_EXCLUSIVE_GROUPS = [
 PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
     "adjust_station_scores": "view_station_scores",
+    "reset_station_account_password": "manage_stations",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -7129,6 +7137,162 @@ def build_station_payload(data):
     }
 
 
+STATION_DATA_EXPORT_FIELDS = [
+    {"key": "station_name", "label": "站点名称", "width": 24},
+    {"key": "station_usernames", "label": "站点登录用户名", "width": 22},
+    {"key": "region", "label": "所属片区/归属地", "width": 22},
+    {"key": "address", "label": "站点地址", "width": 36},
+    {"key": "longitude", "label": "经度", "width": 16},
+    {"key": "latitude", "label": "纬度", "width": 16},
+    {"key": "station_manager_name", "label": "站点负责人姓名", "width": 18},
+    {"key": "station_manager_phone", "label": "站点负责人手机号", "width": 20},
+    {"key": "station_type", "label": "站点类型", "width": 14},
+    {"key": "asset_type", "label": "资产类型", "width": 14},
+    {"key": "is_consolidated", "label": "是否并表", "width": 14},
+    {"key": "online_3_status", "label": "是否上线3.0", "width": 18},
+    {"key": "hos_station_code", "label": "HOS加油站编码", "width": 18},
+    {"key": "landline_phone", "label": "固定电话", "width": 18},
+    {"key": "status", "label": "站点状态", "width": 14},
+    {"key": "operating_hours", "label": "营运时间", "width": 16},
+    {"key": "created_at", "label": "创建时间", "width": 20},
+    {"key": "updated_at", "label": "更新时间", "width": 20},
+]
+STATION_DATA_EXPORT_FIELD_MAP = {field["key"]: field for field in STATION_DATA_EXPORT_FIELDS}
+DEFAULT_STATION_DATA_EXPORT_FIELD_KEYS = ["station_name", "station_usernames", "region"]
+
+
+def normalize_station_export_field_keys(raw_field_keys):
+    if not isinstance(raw_field_keys, list):
+        raw_field_keys = DEFAULT_STATION_DATA_EXPORT_FIELD_KEYS
+    selected_keys = []
+    for raw_key in raw_field_keys:
+        key = str(raw_key or "").strip()
+        if key in STATION_DATA_EXPORT_FIELD_MAP and key not in selected_keys:
+            selected_keys.append(key)
+    if not selected_keys:
+        raise ValueError("请至少选择一个导出字段。")
+    return selected_keys
+
+
+def normalize_station_export_ids(raw_ids):
+    if not isinstance(raw_ids, list):
+        return []
+    station_ids = []
+    seen = set()
+    for raw_id in raw_ids:
+        try:
+            station_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if station_id <= 0 or station_id in seen:
+            continue
+        station_ids.append(station_id)
+        seen.add(station_id)
+    return station_ids
+
+
+def fetch_station_export_rows(cur, station_ids=None):
+    where_clause = ""
+    params = []
+    if station_ids:
+        where_clause = "WHERE s.id = ANY(%s)"
+        params.append(station_ids)
+
+    cur.execute(
+        f"""
+        SELECT
+            s.id,
+            s.station_name,
+            s.region,
+            s.address,
+            s.longitude::TEXT AS longitude,
+            s.latitude::TEXT AS latitude,
+            s.station_manager_name,
+            s.station_manager_phone,
+            s.station_type,
+            CASE
+                WHEN s.asset_type LIKE '%股权%' OR s.asset_type LIKE '%控股%' OR s.asset_type LIKE '%参股%' THEN '股权'
+                ELSE '全资'
+            END AS asset_type,
+            COALESCE(s.is_consolidated, '否') AS is_consolidated,
+            COALESCE(s.online_3_status, '未上线') AS online_3_status,
+            s.hos_station_code,
+            s.landline_phone,
+            COALESCE(s.status, '营业中') AS status,
+            COALESCE(s.operating_hours, '24小时') AS operating_hours,
+            COALESCE(station_accounts.station_usernames, '') AS station_usernames,
+            TO_CHAR(s.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(s.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM stations s
+        LEFT JOIN (
+            SELECT
+                station_id,
+                STRING_AGG(username, ' ' ORDER BY username) AS station_usernames
+            FROM users
+            WHERE role = 'station_manager'
+              AND station_id IS NOT NULL
+            GROUP BY station_id
+        ) station_accounts ON station_accounts.station_id = s.id
+        {where_clause}
+        ORDER BY s.id ASC;
+        """,
+        params,
+    )
+    return cur.fetchall()
+
+
+def build_station_data_export_workbook(rows, selected_field_keys):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出 Excel。") from exc
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "站点数据"
+    worksheet.freeze_panes = "A2"
+
+    header_fill = PatternFill("solid", fgColor="DCEBFF")
+    header_font = Font(bold=True, color="0F172A")
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+    center_alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    text_alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+
+    for column_index, field_key in enumerate(selected_field_keys, start=1):
+        field = STATION_DATA_EXPORT_FIELD_MAP[field_key]
+        cell = worksheet.cell(row=1, column=column_index, value=field["label"])
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = center_alignment
+        worksheet.column_dimensions[excel_column_name(column_index)].width = field.get("width") or 18
+
+    for row_index, row in enumerate(rows, start=2):
+        for column_index, field_key in enumerate(selected_field_keys, start=1):
+            cell = worksheet.cell(row=row_index, column=column_index)
+            cell.border = thin_border
+            cell.alignment = text_alignment if field_key in {"address", "station_usernames"} else center_alignment
+            value = row.get(field_key)
+            cell.value = "" if value is None else str(value)
+
+    if selected_field_keys:
+        last_column = excel_column_name(len(selected_field_keys))
+        worksheet.auto_filter.ref = f"A1:{last_column}1"
+
+    workbook.properties.title = "站点数据导出"
+    workbook.properties.creator = "业务督导中心数智管理平台"
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
+
+
 def parse_station_backup_json(file_storage):
     if not file_storage or not file_storage.filename:
         raise ValueError("请选择需要导入的站点备份文件。")
@@ -11762,6 +11926,51 @@ def export_management_stations():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/management/stations/export-data", methods=["POST"])
+def export_management_stations_data():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        selected_field_keys = normalize_station_export_field_keys(data.get("field_keys"))
+        station_ids = normalize_station_export_ids(data.get("station_ids"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_stations")
+
+        rows = fetch_station_export_rows(cur, station_ids)
+        if not rows:
+            return jsonify({"success": False, "error": "当前筛选结果为空，不能导出。"}), 400
+
+        output = build_station_data_export_workbook(rows, selected_field_keys)
+        now = beijing_now()
+        filename = f"站点数据导出_{now.strftime('%Y%m%d_%H%M%S')}.xlsx"
+        response = send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/stations/import", methods=["POST"])
 def import_management_stations():
     user_id = str(request.form.get("user_id", "")).strip()
@@ -11957,6 +12166,72 @@ def import_management_stations():
                 ),
                 400,
             )
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/stations/<int:station_id>/reset-password", methods=["POST"])
+def reset_management_station_account_password(station_id):
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_station_management_columns(cur)
+        require_management_user(cur, user_id, "reset_station_account_password")
+
+        cur.execute(
+            """
+            SELECT id, station_name
+            FROM stations
+            WHERE id = %s;
+            """,
+            (station_id,),
+        )
+        station = cur.fetchone()
+        if not station:
+            return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        cur.execute(
+            """
+            UPDATE users
+            SET password = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE role = 'station_manager'
+              AND station_id = %s
+            RETURNING username, real_name;
+            """,
+            (DEFAULT_INITIAL_PASSWORD, station_id),
+        )
+        accounts = cur.fetchall()
+        if not accounts:
+            return jsonify({"success": False, "error": "该站点暂无绑定站点账号。"}), 400
+
+        conn.commit()
+        usernames = [account["username"] for account in accounts if account.get("username")]
+        return jsonify(
+            {
+                "success": True,
+                "message": f"已将【{station['station_name']}】绑定站点账号密码重置为 123456，下次登录需重新设置密码。",
+                "reset_count": len(accounts),
+                "usernames": usernames,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)
