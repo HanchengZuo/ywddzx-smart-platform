@@ -463,8 +463,8 @@ const editorCardRef = ref(null)
 const tableCardRef = ref(null)
 
 const exclusivePermissionGroups = [
-  ['view_own_inspection_issues', 'view_all_inspection_issues'],
-  ['view_own_inspection_records', 'view_all_inspection_records'],
+  ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues'],
+  ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records'],
   ['view_own_certificates', 'view_all_certificates']
 ]
 
@@ -517,18 +517,18 @@ const inspectionScopeConfigs = {
 const stationRegionScopeConfigs = {
   '巡检问题列表': {
     permissionKey: 'limit_issue_station_region_scope',
-    title: '巡检问题片区范围',
-    description: '启用后，只限制巡检问题列表能看到哪些片区/归属地的站点问题。'
+    title: '巡检问题片区站点范围',
+    description: '选择“查看片区站点数据”后，在这里指定可查看哪些片区/归属地的站点问题。'
   },
   '巡检记录': {
     permissionKey: 'limit_record_station_region_scope',
-    title: '巡检记录片区范围',
-    description: '启用后，只限制巡检记录能看到哪些片区/归属地的站点记录。'
+    title: '巡检记录片区站点范围',
+    description: '选择“查看片区站点数据”后，在这里指定可查看哪些片区/归属地的站点记录。'
   },
   '巡检计划': {
     permissionKey: 'limit_plan_station_region_scope',
-    title: '巡检计划片区范围',
-    description: '启用后，只统计和展示选定片区/归属地内站点的巡检计划。'
+    title: '巡检计划片区站点范围',
+    description: '选择“查看片区站点数据”后，只统计和展示选定片区/归属地内站点的巡检计划。'
   }
 }
 
@@ -566,7 +566,7 @@ const normalizeStationRegionScopeMap = (value) => {
 
 const scopedPermissionLayouts = {
   '巡检问题列表': {
-    scopeKeys: ['view_own_inspection_issues', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope', 'limit_issue_station_region_scope'],
+    scopeKeys: ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],
     actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector', 'export_issue_photos'],
     readonlyItems: [
       {
@@ -577,7 +577,7 @@ const scopedPermissionLayouts = {
     ]
   },
   '巡检记录': {
-    scopeKeys: ['view_own_inspection_records', 'view_all_inspection_records', 'limit_record_inspection_table_scope', 'limit_record_station_region_scope'],
+    scopeKeys: ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records', 'limit_record_inspection_table_scope'],
     actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
   },
   '巡检计划': {
@@ -785,16 +785,18 @@ const enforceExclusivePermissions = (permissionMap, role = form.role) => {
   const nextPermissions = { ...(permissionMap || {}) }
   if (role === 'root') return nextPermissions
 
-  exclusivePermissionGroups.forEach(([ownKey, allKey]) => {
-    if (!nextPermissions[ownKey] || !nextPermissions[allKey]) return
-    const allPermission = permissions.value.find((item) => item.key === allKey)
-    const ownPermission = permissions.value.find((item) => item.key === ownKey)
-    const preferAll = Boolean(allPermission?.defaults?.[role]) && !Boolean(ownPermission?.defaults?.[role])
-    if (preferAll) {
-      nextPermissions[ownKey] = false
-    } else {
-      nextPermissions[allKey] = false
-    }
+  exclusivePermissionGroups.forEach((group) => {
+    const activeKeys = group.filter((key) => nextPermissions[key])
+    if (activeKeys.length <= 1) return
+
+    const defaultActiveKeys = activeKeys.filter((key) => {
+      const permission = permissions.value.find((item) => item.key === key)
+      return Boolean(permission?.defaults?.[role])
+    })
+    const keepKey = defaultActiveKeys.length === 1 ? defaultActiveKeys[0] : activeKeys[0]
+    activeKeys.forEach((key) => {
+      nextPermissions[key] = key === keepKey
+    })
   })
   Object.entries(dependentPermissionMap).forEach(([childKey, parentKey]) => {
     if (nextPermissions[childKey] && !nextPermissions[parentKey]) {

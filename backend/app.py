@@ -180,9 +180,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "limit_issue_station_region_scope",
-        "name": "限定片区范围",
+        "name": "查看片区站点数据",
         "category": "巡检问题列表",
-        "description": "启用后，巡检问题列表只显示选定片区/归属地的站点问题。",
+        "description": "只查看选定片区/归属地的站点问题数据。与“查看本站数据”“查看全部站点数据”三选一。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -196,7 +196,7 @@ PERMISSION_CATALOG = [
         "key": "view_all_inspection_issues",
         "name": "查看全部站点数据",
         "category": "巡检问题列表",
-        "description": "查看所有站点的巡检问题数据。与“查看本站数据”二选一。",
+        "description": "查看所有站点的巡检问题数据。与“查看本站数据”“查看片区站点数据”三选一。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
@@ -245,7 +245,7 @@ PERMISSION_CATALOG = [
         "key": "view_all_inspection_records",
         "name": "查看全部站点数据",
         "category": "巡检记录",
-        "description": "查看所有站点的巡检记录数据。与“查看本站数据”二选一。",
+        "description": "查看所有站点的巡检记录数据。与“查看本站数据”“查看片区站点数据”三选一。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
@@ -257,9 +257,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "limit_record_station_region_scope",
-        "name": "限定片区范围",
+        "name": "查看片区站点数据",
         "category": "巡检记录",
-        "description": "启用后，巡检记录只显示选定片区/归属地的站点记录。",
+        "description": "只查看选定片区/归属地的站点记录数据。与“查看本站数据”“查看全部站点数据”三选一。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -292,9 +292,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "limit_plan_station_region_scope",
-        "name": "限定片区范围",
+        "name": "查看片区站点数据",
         "category": "巡检计划",
-        "description": "启用后，巡检计划只统计和展示选定片区/归属地的站点计划。",
+        "description": "只统计和展示选定片区/归属地内站点的巡检计划。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -416,6 +416,8 @@ for permission_item in PERMISSION_CATALOG:
     defaults.setdefault("area_account", bool(defaults.get("quality_safety", False)))
 
 AREA_ACCOUNT_PERMISSION_OVERRIDES = {
+    "view_all_inspection_issues": False,
+    "view_all_inspection_records": False,
     "limit_issue_inspection_table_scope": False,
     "limit_record_inspection_table_scope": False,
     "limit_plan_inspection_table_scope": False,
@@ -429,8 +431,8 @@ for permission_item in PERMISSION_CATALOG:
 
 PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
-    ("view_own_inspection_issues", "view_all_inspection_issues"),
-    ("view_own_inspection_records", "view_all_inspection_records"),
+    ("view_own_inspection_issues", "limit_issue_station_region_scope", "view_all_inspection_issues"),
+    ("view_own_inspection_records", "limit_record_station_region_scope", "view_all_inspection_records"),
     ("view_own_certificates", "view_all_certificates"),
 ]
 PERMISSION_DEPENDENCIES = {
@@ -4131,15 +4133,15 @@ def role_default_permission(role, permission_key):
 
 def enforce_exclusive_permissions(permission_map, role=None):
     normalized = dict(permission_map or {})
-    for own_key, all_key in PERMISSION_EXCLUSIVE_GROUPS:
-        if not normalized.get(own_key) or not normalized.get(all_key):
+    for exclusive_keys in PERMISSION_EXCLUSIVE_GROUPS:
+        active_keys = [key for key in exclusive_keys if normalized.get(key)]
+        if len(active_keys) <= 1:
             continue
 
-        prefer_all = role_default_permission(role, all_key) and not role_default_permission(role, own_key)
-        if prefer_all:
-            normalized[own_key] = False
-        else:
-            normalized[all_key] = False
+        default_active_keys = [key for key in active_keys if role_default_permission(role, key)]
+        keep_key = default_active_keys[0] if len(default_active_keys) == 1 else active_keys[0]
+        for key in active_keys:
+            normalized[key] = key == keep_key
 
     for child_key, parent_key in PERMISSION_DEPENDENCIES.items():
         if normalized.get(child_key) and not normalized.get(parent_key):
@@ -4420,6 +4422,10 @@ def can_view_checklist_originals(cur, user):
 
 def can_view_all_inspection_issues(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_all_inspection_issues"))
+
+
+def can_view_region_inspection_issues(cur, user):
+    return bool(get_effective_permissions(cur, user).get("limit_issue_station_region_scope"))
 
 
 def can_view_own_inspection_issues(cur, user):
@@ -4911,7 +4917,7 @@ def fetch_issue_export_rows(cur, user, issue_ids):
     where_parts = ["i.id = ANY(%s)"]
     params = [issue_ids]
 
-    can_view_all = can_view_all_inspection_issues(cur, user)
+    can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
     can_view_own = can_view_own_inspection_issues(cur, user)
     if can_view_all:
         pass
@@ -6648,6 +6654,10 @@ def normalize_optional_issue_result(value, field_label):
 
 def can_view_all_inspection_records(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_all_inspection_records"))
+
+
+def can_view_region_inspection_records(cur, user):
+    return bool(get_effective_permissions(cur, user).get("limit_record_station_region_scope"))
 
 
 def can_view_own_inspection_records(cur, user):
@@ -15892,7 +15902,7 @@ def get_issues():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if can_view_all:
             pass
@@ -16070,7 +16080,7 @@ def audit_issue(issue_id):
         if not is_issue_inspection_completion_done(issue):
             return jsonify({"success": False, "error": "该问题所属巡检记录尚未完成“本表检查人完成确认”，暂不能审核。"}), 400
 
-        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
@@ -16181,7 +16191,7 @@ def update_issue_excellent(issue_id):
         if normalize_issue_audit_status(issue.get("audit_status")) == "rejected" and is_excellent:
             return jsonify({"success": False, "error": "审核否决的问题不能标记为优秀问题。"}), 400
 
-        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
@@ -16536,7 +16546,7 @@ def update_issue(issue_id):
                     400,
                 )
 
-        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
@@ -16806,7 +16816,7 @@ def delete_issue(issue_id):
         if not can_explicit_delete and not creator_can_modify:
             return jsonify({"success": False, "error": "当前账号无权删除巡检问题。"}), 403
 
-        can_view_all = can_view_all_inspection_issues(cur, user)
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
         if not can_view_all and not (
             can_view_own
@@ -18074,7 +18084,7 @@ def get_inspections():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_all = can_view_all_inspection_records(cur, user) or can_view_region_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
         can_delete_records = can_delete_inspection_records(cur, user)
         can_sign_records = can_sign_inspection_records(cur, user)
@@ -18304,7 +18314,7 @@ def delete_inspection_record(inspection_id):
         if not inspection:
             return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
 
-        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_all = can_view_all_inspection_records(cur, user) or can_view_region_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
         if not can_view_all and not (
             can_view_own
@@ -18496,7 +18506,7 @@ def get_inspection_issues(inspection_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        can_view_all = can_view_all_inspection_records(cur, user)
+        can_view_all = can_view_all_inspection_records(cur, user) or can_view_region_inspection_records(cur, user)
         can_view_own = can_view_own_inspection_records(cur, user)
         cur.execute(
             """

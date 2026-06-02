@@ -532,12 +532,14 @@ const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklis
 const canViewIssues = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_inspection_issues) ||
+  Boolean(localPermissions.value.limit_issue_station_region_scope) ||
   Boolean(localPermissions.value.view_own_inspection_issues) ||
   Boolean(localPermissions.value.submit_inspections)
 ))
 const canViewRecords = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_inspection_records) ||
+  Boolean(localPermissions.value.limit_record_station_region_scope) ||
   Boolean(localPermissions.value.view_own_inspection_records)
 ))
 const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans'))
@@ -939,8 +941,8 @@ const resolveHomePath = (user) => {
   if (permissions.submit_inspections) return '/inspection/register'
   if (permissions.view_inspection_standards) return '/inspection/standards'
   if (permissions.view_checklist_originals) return '/inspection/checklist-originals'
-  if (permissions.view_all_inspection_issues || permissions.view_own_inspection_issues) return '/inspection/issues'
-  if (permissions.view_all_inspection_records || permissions.view_own_inspection_records) return '/inspection/records'
+  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) return '/inspection/issues'
+  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) return '/inspection/records'
   if (permissions.view_inspection_plans) return '/inspection/plan'
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     return '/inspection/certificates'

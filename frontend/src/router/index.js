@@ -132,12 +132,17 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/inspection/issues') {
     return Boolean(
       permissions.view_all_inspection_issues ||
+      permissions.limit_issue_station_region_scope ||
       permissions.view_own_inspection_issues ||
       permissions.submit_inspections
     )
   }
   if (path === '/inspection/records') {
-    return Boolean(permissions.view_all_inspection_records || permissions.view_own_inspection_records)
+    return Boolean(
+      permissions.view_all_inspection_records ||
+      permissions.limit_record_station_region_scope ||
+      permissions.view_own_inspection_records
+    )
   }
   if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_plans')
   if (path === '/inspection/certificates') {
@@ -164,8 +169,8 @@ const resolveFallbackPath = (role, permissions) => {
   if (permissions.submit_inspections) return '/inspection/register'
   if (permissions.view_inspection_standards) return '/inspection/standards'
   if (permissions.view_checklist_originals) return '/inspection/checklist-originals'
-  if (permissions.view_all_inspection_issues || permissions.view_own_inspection_issues) return '/inspection/issues'
-  if (permissions.view_all_inspection_records || permissions.view_own_inspection_records) return '/inspection/records'
+  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) return '/inspection/issues'
+  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) return '/inspection/records'
   if (permissions.view_inspection_plans) return '/inspection/plan'
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     return '/inspection/certificates'
