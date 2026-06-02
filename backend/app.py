@@ -10711,6 +10711,13 @@ def get_management_users():
         for row in rows:
             overrides = get_permission_overrides(cur, row["id"])
             permissions = get_effective_permissions(cur, row)
+            inspection_scope_overrides = get_user_inspection_table_scope_overrides(cur, row["id"])
+            station_region_scope_overrides = get_user_station_region_scope_overrides(cur, row["id"])
+            has_personalized_config = bool(
+                overrides
+                or any(inspection_scope_overrides.get(scope_key) for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS)
+                or any(station_region_scope_overrides.get(scope_key) for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS)
+            )
             users.append(
                 {
                     "id": row["id"],
@@ -10724,7 +10731,7 @@ def get_management_users():
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "permission_overrides": overrides,
-                    "has_permission_overrides": bool(overrides),
+                    "has_permission_overrides": has_personalized_config,
                     "permissions": permissions,
                     "inspection_table_scope_ids": {
                         scope_key: list(
@@ -10894,6 +10901,67 @@ def update_management_role_permissions(role):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/users/reset-permissions-to-role-defaults", methods=["POST"])
+def reset_all_user_permissions_to_role_defaults():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) AS affected_user_count
+            FROM (
+                SELECT user_id FROM user_permissions
+                UNION
+                SELECT user_id FROM user_inspection_table_scopes
+                UNION
+                SELECT user_id FROM user_station_region_scopes
+            ) affected_users;
+            """
+        )
+        affected_user_count = int(cur.fetchone()["affected_user_count"] or 0)
+
+        cur.execute("DELETE FROM user_permissions;")
+        deleted_permission_count = cur.rowcount
+        cur.execute("DELETE FROM user_inspection_table_scopes;")
+        deleted_table_scope_count = cur.rowcount
+        cur.execute("DELETE FROM user_station_region_scopes;")
+        deleted_region_scope_count = cur.rowcount
+        conn.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": f"已重置 {affected_user_count} 个用户的个性化权限，所有用户将按角色通用权限生效。",
+                "affected_user_count": affected_user_count,
+                "deleted_permission_count": deleted_permission_count,
+                "deleted_table_scope_count": deleted_table_scope_count,
+                "deleted_region_scope_count": deleted_region_scope_count,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
     except Exception as e:
         if conn:
             conn.rollback()

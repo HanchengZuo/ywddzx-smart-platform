@@ -10,6 +10,9 @@
         <button class="btn btn-primary" type="button" :disabled="loading" @click="openRolePermissionDialog">
           角色通用权限
         </button>
+        <button class="btn btn-danger" type="button" :disabled="resettingPermissions" @click="resetAllUserPermissions">
+          {{ resettingPermissions ? '重置中...' : '一键重置权限' }}
+        </button>
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchUsers">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
@@ -634,6 +637,7 @@ const loading = ref(false)
 const saving = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
+const resettingPermissions = ref(false)
 const deletingId = ref(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -1632,6 +1636,30 @@ const importUsers = async (event) => {
     setMessage(error?.response?.data?.error || '用户数据导入失败。', 'error')
   } finally {
     importing.value = false
+  }
+}
+
+const resetAllUserPermissions = async () => {
+  const confirmed = window.confirm(
+    '确定要把所有用户的权限重置为角色通用权限吗？\n\n这会清空所有用户的个性化权限、个性化检查表范围和个性化片区范围；角色通用权限模板本身不会被修改。'
+  )
+  if (!confirmed) return
+
+  try {
+    resettingPermissions.value = true
+    setMessage('')
+    const response = await axios.post('/api/management/users/reset-permissions-to-role-defaults', {
+      user_id: currentUserId
+    })
+    setMessage(response.data?.message || '所有用户权限已重置为角色通用权限。', 'success')
+    if (form.id) {
+      resetForm({ keepMessage: true })
+    }
+    await fetchUsers()
+  } catch (error) {
+    setMessage(error?.response?.data?.error || '一键重置权限失败，请稍后重试。', 'error')
+  } finally {
+    resettingPermissions.value = false
   }
 }
 
