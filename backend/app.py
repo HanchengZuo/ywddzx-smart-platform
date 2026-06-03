@@ -9605,6 +9605,7 @@ def save_inspection_plan_config_stations(plan_config_id):
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
+        current_user_id = int(user["id"])
 
         if not can_manage_plan(cur, user):
             return (
@@ -9799,8 +9800,8 @@ def save_inspection_plan_config_stations(plan_config_id):
                     %s,
                     %s,
                     %s,
-                    CASE WHEN %s IS NULL THEN NULL ELSE %s END,
-                    CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+                    CASE WHEN %s::integer IS NULL THEN NULL ELSE %s::integer END,
+                    CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
                     'pending',
                     NULL,
                     NULL,
@@ -9835,7 +9836,11 @@ def save_inspection_plan_config_stations(plan_config_id):
                             THEN inspection_plan_station_items.assigned_at
                         WHEN EXCLUDED.is_included = FALSE
                             THEN NULL
-                        WHEN EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                        WHEN EXCLUDED.assigned_inspector_id IS NOT NULL
+                             AND (
+                                EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                                OR inspection_plan_station_items.assigned_at IS NULL
+                             )
                             THEN CURRENT_TIMESTAMP
                         ELSE inspection_plan_station_items.assigned_at
                     END,
@@ -9863,7 +9868,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                     item["is_included"],
                     item["assigned_inspector_id"],
                     item["assigned_inspector_id"],
-                    user_id,
+                    current_user_id,
                     item["assigned_inspector_id"],
                     item["note"],
                 ),
@@ -9876,7 +9881,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s;
             """,
-            (user_id, plan_config_id),
+            (current_user_id, plan_config_id),
         )
 
         sync_plan_station_items_completion_by_history(cur, plan_config_id)
@@ -9937,6 +9942,289 @@ def get_inspection_plan_inspectors():
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 401
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/board")
+def get_inspection_plan_assignment_board():
+    user_id = str(request.args.get("user_id", "")).strip()
+    assigned_date = str(request.args.get("assigned_date", "")).strip()
+    assigned_month = str(request.args.get("assigned_month", "")).strip()
+    calendar_month = str(request.args.get("calendar_month", "")).strip()
+    assigned_from = str(request.args.get("assigned_from", "")).strip()
+    assigned_to = str(request.args.get("assigned_to", "")).strip()
+    assigned_inspector_filter = str(request.args.get("assigned_inspector_filter", "all")).strip()
+    completion_status = str(request.args.get("completion_status", "all")).strip()
+
+    conn = None
+    cur = None
+
+    try:
+        try:
+            current_user = get_current_request_user()
+        except PermissionError:
+            current_user = None
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        user = current_user or (get_user_by_id(cur, user_id) if user_id else None)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_inspection_plans"):
+            return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
+
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        cur.execute(
+            """
+            UPDATE inspection_plan_station_items psi
+            SET assigned_at = COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at, CURRENT_TIMESTAMP),
+                assigned_by = COALESCE(psi.assigned_by, pc.updated_by),
+                updated_at = CURRENT_TIMESTAMP
+            FROM inspection_plan_configs pc
+            WHERE pc.id = psi.plan_config_id
+              AND psi.assigned_inspector_id IS NOT NULL
+              AND psi.is_included = TRUE
+              AND psi.assigned_at IS NULL;
+            """
+        )
+        cur.execute(
+            """
+            SELECT DISTINCT psi.plan_config_id
+            FROM inspection_plan_station_items psi
+            WHERE psi.assigned_inspector_id IS NOT NULL;
+            """
+        )
+        for row in cur.fetchall():
+            sync_plan_station_items_completion_by_history(cur, row["plan_config_id"])
+        conn.commit()
+
+        where_clauses = [
+            "psi.assigned_inspector_id IS NOT NULL",
+            "psi.is_included = TRUE",
+            "pc.status = 'active'",
+        ]
+        params = []
+
+        if assigned_date:
+            where_clauses.append("COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at)::date = %s::date")
+            params.append(assigned_date)
+        elif assigned_month:
+            where_clauses.append("TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM') = %s")
+            params.append(assigned_month)
+        else:
+            if assigned_from:
+                where_clauses.append("COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at)::date >= %s::date")
+                params.append(assigned_from)
+            if assigned_to:
+                where_clauses.append("COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at)::date <= %s::date")
+                params.append(assigned_to)
+
+        if assigned_inspector_filter and assigned_inspector_filter != "all":
+            try:
+                inspector_id_value = int(assigned_inspector_filter)
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "检查人参数不正确。"}), 400
+            where_clauses.append("psi.assigned_inspector_id = %s")
+            params.append(inspector_id_value)
+
+        if completion_status in {"pending", "completed"}:
+            where_clauses.append("psi.completion_status = %s")
+            params.append(completion_status)
+        elif completion_status != "all":
+            return jsonify({"success": False, "error": "完成状态参数不正确。"}), 400
+
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "pc.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        ):
+            return jsonify({"success": True, "items": [], "summary": {"total": 0, "completed": 0, "pending": 0}})
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        ):
+            return jsonify({"success": True, "items": [], "summary": {"total": 0, "completed": 0, "pending": 0}})
+
+        calendar_where_clauses = [
+            "psi.assigned_inspector_id IS NOT NULL",
+            "psi.is_included = TRUE",
+            "pc.status = 'active'",
+        ]
+        calendar_params = []
+        if calendar_month:
+            calendar_where_clauses.append("TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM') = %s")
+            calendar_params.append(calendar_month)
+        if assigned_inspector_filter and assigned_inspector_filter != "all":
+            calendar_where_clauses.append("psi.assigned_inspector_id = %s")
+            calendar_params.append(inspector_id_value)
+        if append_inspection_table_scope_filter(
+            cur,
+            user,
+            calendar_where_clauses,
+            calendar_params,
+            "pc.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        ) and append_station_region_scope_filter(
+            cur,
+            user,
+            calendar_where_clauses,
+            calendar_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        ):
+            calendar_where_sql = " AND ".join(calendar_where_clauses)
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM-DD') AS assigned_date,
+                        COUNT(*) AS total_count,
+                        COUNT(*) FILTER (WHERE psi.completion_status = 'completed') AS completed_count,
+                        COUNT(*) FILTER (WHERE psi.completion_status <> 'completed') AS pending_count
+                    FROM inspection_plan_station_items psi
+                    JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+                    JOIN stations s ON s.id = psi.station_id
+                    WHERE {calendar_where_sql}
+                    GROUP BY assigned_date
+                    ORDER BY assigned_date DESC;
+                    """
+                ).format(calendar_where_sql=sql.SQL(calendar_where_sql)),
+                calendar_params,
+            )
+            calendar_days = [
+                {
+                    "date": row["assigned_date"],
+                    "total": int(row["total_count"] or 0),
+                    "completed": int(row["completed_count"] or 0),
+                    "pending": int(row["pending_count"] or 0),
+                    "status": "completed" if int(row["pending_count"] or 0) == 0 else "pending",
+                }
+                for row in cur.fetchall()
+            ]
+        else:
+            calendar_days = []
+
+        where_sql = " AND ".join(where_clauses)
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    psi.id,
+                    psi.plan_config_id,
+                    psi.station_id,
+                    s.station_name,
+                    COALESCE(s.region, '') AS region,
+                    pc.inspection_table_id,
+                    it.table_name AS inspection_table_name,
+                    COALESCE(NULLIF(it.checklist_mode, ''), 'online') AS checklist_mode,
+                    pc.coverage_type,
+                    pc.period_key,
+                    psi.assigned_inspector_id,
+                    assigned_user.username AS assigned_inspector_username,
+                    assigned_user.real_name AS assigned_inspector_name,
+                    assigned_user.phone AS assigned_inspector_phone,
+                    TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM-DD') AS assigned_date,
+                    TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM-DD HH24:MI') AS assigned_at,
+                    assigner.username AS assigned_by_username,
+                    assigner.real_name AS assigned_by_name,
+                    psi.completion_status,
+                    TO_CHAR(psi.completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
+                    psi.completed_inspection_id,
+                    psi.note
+                FROM inspection_plan_station_items psi
+                JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+                JOIN inspection_tables it ON it.id = pc.inspection_table_id
+                JOIN stations s ON s.id = psi.station_id
+                JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
+                LEFT JOIN users assigner ON assigner.id = psi.assigned_by
+                WHERE {where_sql}
+                ORDER BY
+                    COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at) DESC,
+                    assigned_user.real_name NULLS LAST,
+                    assigned_user.username,
+                    s.region,
+                    s.station_name,
+                    it.table_name;
+                """
+            ).format(where_sql=sql.SQL(where_sql)),
+            params,
+        )
+
+        items = []
+        completed_count = 0
+        pending_count = 0
+        inspector_options_map = {}
+        for row in cur.fetchall():
+            is_completed = row["completion_status"] == "completed"
+            if is_completed:
+                completed_count += 1
+            else:
+                pending_count += 1
+            mode = normalize_checklist_mode(row.get("checklist_mode"))
+            inspector_name = row["assigned_inspector_name"] or row["assigned_inspector_username"]
+            inspector_options_map[row["assigned_inspector_id"]] = {
+                "id": row["assigned_inspector_id"],
+                "name": inspector_name,
+            }
+            items.append(
+                {
+                    "id": row["id"],
+                    "plan_config_id": row["plan_config_id"],
+                    "station_id": row["station_id"],
+                    "station_name": row["station_name"],
+                    "region": row["region"],
+                    "inspection_table_id": row["inspection_table_id"],
+                    "inspection_table_name": row["inspection_table_name"],
+                    "checklist_mode": mode,
+                    "checklist_mode_label": "视频检查" if mode == "online" else "现场检查",
+                    "coverage_type": row["coverage_type"],
+                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(row["coverage_type"], row["coverage_type"]),
+                    "period_key": row["period_key"],
+                    "assigned_inspector_id": row["assigned_inspector_id"],
+                    "assigned_inspector_name": inspector_name,
+                    "assigned_inspector_phone": row["assigned_inspector_phone"],
+                    "assigned_date": row["assigned_date"],
+                    "assigned_at": row["assigned_at"],
+                    "assigned_by_name": row["assigned_by_name"] or row["assigned_by_username"] or "",
+                    "completion_status": row["completion_status"],
+                    "completion_status_label": "已完成" if is_completed else "未完成",
+                    "completed_at": row["completed_at"],
+                    "completed_inspection_id": row["completed_inspection_id"],
+                    "note": row["note"],
+                }
+            )
+
+        inspector_options = sorted(
+            inspector_options_map.values(),
+            key=lambda item: str(item.get("name") or ""),
+        )
+        return jsonify(
+            {
+                "success": True,
+                "items": items,
+                "inspectors": inspector_options,
+                "summary": {
+                    "total": len(items),
+                    "completed": completed_count,
+                    "pending": pending_count,
+                },
+                "calendar": calendar_days,
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         close_db_resources(cur, conn)

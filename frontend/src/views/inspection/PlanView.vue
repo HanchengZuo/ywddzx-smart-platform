@@ -125,6 +125,181 @@
                         </div>
                     </div>
 
+                    <div class="card-surface section-card assignment-board-card">
+                        <div class="section-head assignment-board-head">
+                            <div>
+                                <div class="section-kicker">派工看板</div>
+                                <h3>每日任务分配完成情况</h3>
+                                <p class="section-desc">按分配时间查看任务派给了谁、完成了哪些、还剩哪些。</p>
+                            </div>
+                            <button class="ghost-btn" type="button" @click="fetchAssignmentBoard">
+                                刷新看板
+                            </button>
+                        </div>
+
+                        <div class="assignment-filter-grid">
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">分配日期</label>
+                                    <span :class="['overview-inline-tag', assignmentSelectedDateStatusClass]">
+                                        {{ assignmentSelectedDateStatusLabel }}
+                                    </span>
+                                </div>
+                                <div class="assignment-date-input-row">
+                                    <input class="month-picker-select planner-table-select" type="date"
+                                        v-model="assignmentBoardFilters.date" />
+                                    <button class="ghost-btn mini-action-btn" type="button" @click="setAssignmentBoardToday">
+                                        今天
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">检查人</label>
+                                    <span class="overview-inline-tag info">{{ assignmentBoardInspectorLabel }}</span>
+                                </div>
+                                <select class="month-picker-select planner-table-select"
+                                    v-model="assignmentBoardFilters.inspectorId">
+                                    <option value="all">全部检查人</option>
+                                    <option v-for="inspector in assignmentBoardInspectorOptions" :key="inspector.id"
+                                        :value="String(inspector.id)">
+                                        {{ inspector.name }}
+                                    </option>
+                                </select>
+                            </div>
+
+                            <div class="overview-field">
+                                <div class="overview-field-head">
+                                    <label class="field-label">完成状态</label>
+                                    <span class="overview-inline-tag neutral">{{ assignmentBoardStatusLabel }}</span>
+                                </div>
+                                <select class="month-picker-select planner-table-select"
+                                    v-model="assignmentBoardFilters.completionStatus">
+                                    <option value="all">全部状态</option>
+                                    <option value="pending">未完成</option>
+                                    <option value="completed">已完成</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="assignment-calendar-strip">
+                            <button v-for="day in assignmentBoardCalendarDays" :key="day.date" type="button"
+                                :class="['assignment-date-chip', day.status === 'completed' ? 'completed' : 'pending', { active: day.date === assignmentBoardFilters.date }]"
+                                @click="assignmentBoardFilters.date = day.date">
+                                <strong>{{ formatAssignmentDayLabel(day.date) }}</strong>
+                                <span>{{ day.pending > 0 ? `未完成 ${day.pending}` : '全部完成' }}</span>
+                            </button>
+                            <div v-if="!assignmentBoardCalendarDays.length" class="assignment-calendar-empty">
+                                当前月份暂无派工日期。
+                            </div>
+                        </div>
+
+                        <div class="overview-summary-bar assignment-summary-bar">
+                            <span class="plan-status-chip neutral">分配任务：{{ assignmentBoardSummary.total }}</span>
+                            <span class="plan-status-chip editable">已完成：{{ assignmentBoardSummary.completed }}</span>
+                            <span class="plan-status-chip readonly">未完成：{{ assignmentBoardSummary.pending }}</span>
+                            <span class="plan-status-chip info">分配日期：{{ assignmentBoardGroups.length }} 天</span>
+                        </div>
+
+                        <div v-if="isLoadingAssignmentBoard" class="table-empty-cell assignment-empty">
+                            派工看板加载中...
+                        </div>
+                        <div v-else-if="!assignmentBoardGroups.length" class="table-empty-cell assignment-empty">
+                            当前筛选条件下暂无已分配任务。
+                        </div>
+                        <div v-else class="assignment-day-list">
+                            <section v-for="group in assignmentBoardGroups" :key="group.date" class="assignment-day-card">
+                                <div class="assignment-day-head">
+                                    <div>
+                                        <div class="assignment-date">{{ group.date }}</div>
+                                        <div class="assignment-day-sub">当天共分配 {{ group.total }} 项任务</div>
+                                    </div>
+                                    <div class="assignment-day-tags">
+                                        <span class="status-chip success">已完成 {{ group.completed }}</span>
+                                        <span class="status-chip warning">未完成 {{ group.pending }}</span>
+                                    </div>
+                                </div>
+
+                                <div class="table-wrap assignment-table-wrap">
+                                    <table class="plan-table assignment-table">
+                                        <thead>
+                                            <tr>
+                                                <th>分配时间</th>
+                                                <th>检查人</th>
+                                                <th>站点</th>
+                                                <th>检查表</th>
+                                                <th>计划周期</th>
+                                                <th>完成状态</th>
+                                                <th>完成时间</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="task in group.items" :key="task.id">
+                                                <td>{{ task.assigned_at || '-' }}</td>
+                                                <td>
+                                                    <div class="table-title">{{ task.assigned_inspector_name || '-' }}</div>
+                                                    <div v-if="task.assigned_inspector_phone" class="table-sub">
+                                                        {{ task.assigned_inspector_phone }}
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <div class="table-title">{{ task.station_name || '-' }}</div>
+                                                    <div class="table-sub">{{ task.region || '未分配片区' }}</div>
+                                                </td>
+                                                <td>
+                                                    <div class="table-title">{{ task.inspection_table_name || '-' }}</div>
+                                                    <div class="table-sub">{{ task.checklist_mode_label || '-' }}</div>
+                                                </td>
+                                                <td>{{ task.period_key || '-' }}</td>
+                                                <td>
+                                                    <span :class="task.completion_status === 'completed' ? 'status-chip success' : 'status-chip warning'">
+                                                        {{ task.completion_status_label || '-' }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ task.completed_at || '-' }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="assignment-mobile-list">
+                                    <div v-for="task in group.items" :key="'mobile-assignment-' + task.id"
+                                        class="assignment-mobile-card">
+                                        <div class="mobile-card-head">
+                                            <div class="mobile-card-title-wrap">
+                                                <div class="mobile-card-kicker">{{ task.assigned_at || '-' }}</div>
+                                                <div class="mobile-card-title">{{ task.station_name || '-' }}</div>
+                                                <div class="mobile-card-meta">{{ task.region || '未分配片区' }}</div>
+                                            </div>
+                                            <span :class="task.completion_status === 'completed' ? 'status-chip success' : 'status-chip warning'">
+                                                {{ task.completion_status_label || '-' }}
+                                            </span>
+                                        </div>
+                                        <div class="mobile-card-grid">
+                                            <div class="mobile-card-row">
+                                                <span>检查人</span>
+                                                <strong>{{ task.assigned_inspector_name || '-' }}</strong>
+                                            </div>
+                                            <div class="mobile-card-row">
+                                                <span>检查表</span>
+                                                <strong>{{ task.inspection_table_name || '-' }}</strong>
+                                            </div>
+                                            <div class="mobile-card-row">
+                                                <span>计划周期</span>
+                                                <strong>{{ task.period_key || '-' }}</strong>
+                                            </div>
+                                            <div class="mobile-card-row">
+                                                <span>完成时间</span>
+                                                <strong>{{ task.completed_at || '-' }}</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
                     <div class="card-surface section-card">
                         <div class="section-head">
                             <div>
@@ -1444,6 +1619,162 @@ const resetHistoryFilters = () => {
     }
 }
 
+const getTodayDateValue = () => {
+    const now = new Date()
+    return `${now.getFullYear()}-${padDatePart(now.getMonth() + 1)}-${padDatePart(now.getDate())}`
+}
+
+const assignmentBoardRows = ref([])
+const assignmentBoardInspectorOptions = ref([])
+const assignmentBoardCalendarDays = ref([])
+const assignmentBoardSummary = ref({
+    total: 0,
+    completed: 0,
+    pending: 0
+})
+const isLoadingAssignmentBoard = ref(false)
+const assignmentBoardFilters = ref({
+    date: getTodayDateValue(),
+    inspectorId: 'all',
+    completionStatus: 'all'
+})
+
+const assignmentBoardCalendarMonth = computed(() => {
+    return String(assignmentBoardFilters.value.date || getTodayDateValue()).slice(0, 7)
+})
+
+const assignmentBoardInspectorLabel = computed(() => {
+    if (assignmentBoardFilters.value.inspectorId === 'all') return '全部'
+    const matched = assignmentBoardInspectorOptions.value.find(
+        (item) => String(item.id) === String(assignmentBoardFilters.value.inspectorId)
+    )
+    return matched?.name || '已选择'
+})
+
+const assignmentBoardStatusLabel = computed(() => {
+    if (assignmentBoardFilters.value.completionStatus === 'completed') return '已完成'
+    if (assignmentBoardFilters.value.completionStatus === 'pending') return '未完成'
+    return '全部'
+})
+
+const selectedAssignmentDay = computed(() => {
+    return assignmentBoardCalendarDays.value.find((item) => item.date === assignmentBoardFilters.value.date) || null
+})
+
+const assignmentSelectedDateStatusLabel = computed(() => {
+    if (!assignmentBoardFilters.value.date) return '请选择日期'
+    if (!selectedAssignmentDay.value) return '当天暂无任务'
+    return selectedAssignmentDay.value.pending > 0
+        ? `还有 ${selectedAssignmentDay.value.pending} 项未完成`
+        : '当天全部完成'
+})
+
+const assignmentSelectedDateStatusClass = computed(() => {
+    if (!selectedAssignmentDay.value) return 'neutral'
+    return selectedAssignmentDay.value.pending > 0 ? 'danger' : 'success'
+})
+
+const formatAssignmentDayLabel = (dateText) => {
+    const parts = String(dateText || '').split('-')
+    if (parts.length !== 3) return dateText || '-'
+    return `${Number(parts[1])}.${Number(parts[2])}`
+}
+
+const setAssignmentBoardToday = () => {
+    assignmentBoardFilters.value.date = getTodayDateValue()
+}
+
+const assignmentBoardGroups = computed(() => {
+    const groupMap = new Map()
+    assignmentBoardRows.value.forEach((item) => {
+        const date = item.assigned_date || '未记录日期'
+        if (!groupMap.has(date)) {
+            groupMap.set(date, {
+                date,
+                items: [],
+                total: 0,
+                completed: 0,
+                pending: 0
+            })
+        }
+        const group = groupMap.get(date)
+        group.items.push(item)
+        group.total += 1
+        if (item.completion_status === 'completed') {
+            group.completed += 1
+        } else {
+            group.pending += 1
+        }
+    })
+    return Array.from(groupMap.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)))
+})
+
+const mergeAssignmentInspectorOptions = (incomingOptions = []) => {
+    const optionMap = new Map()
+    planInspectors.value.forEach((item) => {
+        if (!item?.id) return
+        optionMap.set(String(item.id), {
+            id: item.id,
+            name: item.display_name || item.real_name || item.username || `用户${item.id}`
+        })
+    })
+    assignmentBoardInspectorOptions.value.forEach((item) => {
+        if (!item?.id) return
+        optionMap.set(String(item.id), {
+            id: item.id,
+            name: item.name || `用户${item.id}`
+        })
+    })
+    incomingOptions.forEach((item) => {
+        if (!item?.id) return
+        optionMap.set(String(item.id), {
+            id: item.id,
+            name: item.name || item.display_name || item.real_name || item.username || `用户${item.id}`
+        })
+    })
+    return Array.from(optionMap.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'))
+}
+
+const fetchAssignmentBoard = async () => {
+    if (!hasPermission || !currentUserId) {
+        assignmentBoardRows.value = []
+        assignmentBoardInspectorOptions.value = []
+        assignmentBoardSummary.value = { total: 0, completed: 0, pending: 0 }
+        return
+    }
+
+    isLoadingAssignmentBoard.value = true
+    try {
+        const params = new URLSearchParams({
+            completion_status: assignmentBoardFilters.value.completionStatus || 'all',
+            assigned_inspector_filter: assignmentBoardFilters.value.inspectorId || 'all',
+            calendar_month: assignmentBoardCalendarMonth.value
+        })
+        if (assignmentBoardFilters.value.date) {
+            params.set('assigned_date', assignmentBoardFilters.value.date)
+        }
+        const payload = await requestJson(`/api/inspection-plan-assignments/board?${params.toString()}`)
+        assignmentBoardRows.value = normalizeResponseList(payload)
+        assignmentBoardCalendarDays.value = Array.isArray(payload.calendar) ? payload.calendar : []
+        assignmentBoardInspectorOptions.value = mergeAssignmentInspectorOptions(
+            Array.isArray(payload.inspectors) ? payload.inspectors : []
+        )
+        assignmentBoardSummary.value = {
+            total: Number(payload.summary?.total || 0),
+            completed: Number(payload.summary?.completed || 0),
+            pending: Number(payload.summary?.pending || 0)
+        }
+    } catch (error) {
+        assignmentBoardRows.value = []
+        assignmentBoardCalendarDays.value = []
+        assignmentBoardInspectorOptions.value = []
+        assignmentBoardSummary.value = { total: 0, completed: 0, pending: 0 }
+        console.error('加载巡检计划派工看板失败：', error)
+    } finally {
+        isLoadingAssignmentBoard.value = false
+    }
+}
+
 const managedPlanRows = computed(() => {
     return [...planConfigList.value].sort((a, b) => {
         const aTime = parsePlanDate(a.created_at)?.getTime() || 0
@@ -2578,7 +2909,7 @@ const refreshPlanViews = async () => {
             overviewSelectedPeriod.value = options[0] || getRealtimePeriodKey(overviewSelectedTable.value.coverageType)
         }
     }
-    await Promise.all([loadOverviewData(), loadSelectedTemplateStations()])
+    await Promise.all([loadOverviewData(), loadSelectedTemplateStations(), fetchAssignmentBoard()])
 }
 
 const openManagePlansDialog = () => {
@@ -2719,7 +3050,6 @@ const savePlanDetail = async () => {
 
     try {
         const periodKey = getPeriodKey(row)
-        const isCreatingPlan = !row.planConfigId
         let planConfigId = row.planConfigId
 
         if (planConfigId) {
@@ -2767,6 +3097,7 @@ const savePlanDetail = async () => {
         if (!planConfigId) {
             throw new Error('未能获取计划配置ID，无法保存站点明细。')
         }
+        row.planConfigId = planConfigId
 
         await requestJson(`/api/inspection-plan-configs/${planConfigId}/stations`, {
             method: 'PUT',
@@ -2775,7 +3106,7 @@ const savePlanDetail = async () => {
                 stations: detailDialog.value.rows.map((item) => ({
                     station_id: item.station_id,
                     is_included: Boolean(item.planned),
-                    assigned_inspector_id: !isCreatingPlan && item.planned ? (item.assignedInspectorId || null) : null,
+                    assigned_inspector_id: item.planned ? (item.assignedInspectorId || null) : null,
                     note: item.note || ''
                 }))
             })
@@ -2786,7 +3117,8 @@ const savePlanDetail = async () => {
         if (targetRow) {
             overviewSelectedTableName.value = targetRow.name
         }
-        await Promise.all([loadOverviewData(), loadSelectedTemplateStations()])
+        await Promise.all([loadOverviewData(), loadSelectedTemplateStations(), fetchAssignmentBoard()])
+        window.dispatchEvent(new Event('plan-assignment-pending-refresh'))
         window.alert(`已保存【${row.name || '当前检查表'}】的计划配置。`)
         closePlanDetail()
     } catch (error) {
@@ -2821,6 +3153,17 @@ watch(filteredDetailRows, () => {
 })
 
 watch(
+    () => [
+        assignmentBoardFilters.value.date,
+        assignmentBoardFilters.value.inspectorId,
+        assignmentBoardFilters.value.completionStatus
+    ],
+    () => {
+        fetchAssignmentBoard()
+    }
+)
+
+watch(
     () => [overviewRows.value.length, overviewCurrentPage.value, activeOverviewFilterMenu.value],
     () => {
         refreshActiveOverviewFilterPopoverPosition()
@@ -2847,7 +3190,7 @@ onMounted(async () => {
             const options = overviewConfiguredPeriodOptions.value
             overviewSelectedPeriod.value = options[0] || getRealtimePeriodKey(overviewSelectedTable.value.coverageType)
         }
-        await Promise.all([loadOverviewData(), loadSelectedTemplateStations()])
+        await Promise.all([loadOverviewData(), loadSelectedTemplateStations(), fetchAssignmentBoard()])
     } catch (error) {
         console.error('加载巡检计划页面失败：', error)
     }
@@ -3166,6 +3509,194 @@ onBeforeUnmount(() => {
     margin-bottom: 16px;
 }
 
+.section-desc {
+    margin: 6px 0 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.8;
+}
+
+.assignment-board-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.assignment-board-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(circle at 92% 12%, rgba(37, 99, 235, 0.1), transparent 26%),
+        linear-gradient(180deg, rgba(248, 250, 252, 0.82), transparent 42%);
+}
+
+.assignment-board-card>* {
+    position: relative;
+}
+
+.assignment-filter-grid {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) minmax(180px, 0.8fr);
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.assignment-date-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.assignment-calendar-strip {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 4px 0 16px;
+    margin-bottom: 2px;
+}
+
+.assignment-date-chip {
+    flex: 0 0 auto;
+    min-width: 92px;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 10px 12px;
+    background: #fff;
+    color: #334155;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.assignment-date-chip strong {
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: 900;
+}
+
+.assignment-date-chip span {
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.assignment-date-chip.completed {
+    border-color: #bbf7d0;
+    background: #ecfdf5;
+    color: #15803d;
+}
+
+.assignment-date-chip.pending {
+    border-color: #fecaca;
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.assignment-date-chip.active {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+    transform: translateY(-1px);
+}
+
+.assignment-calendar-empty {
+    width: 100%;
+    padding: 12px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.85);
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.assignment-summary-bar {
+    margin-bottom: 18px;
+}
+
+.assignment-empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.9);
+}
+
+.assignment-day-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.assignment-day-card {
+    padding: 16px;
+    border: 1px solid #dbe4ee;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.07);
+}
+
+.assignment-day-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.assignment-date {
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1.3;
+}
+
+.assignment-day-sub {
+    margin-top: 5px;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.assignment-day-tags {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.assignment-table {
+    min-width: 1080px;
+}
+
+.assignment-table th,
+.assignment-table td {
+    text-align: center;
+}
+
+.assignment-table .table-title,
+.assignment-table .table-sub {
+    text-align: center;
+}
+
+.assignment-mobile-list {
+    display: none;
+}
+
+.assignment-mobile-card {
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.assignment-mobile-card+.assignment-mobile-card {
+    margin-top: 12px;
+}
+
 .history-plan-table {
     min-width: 980px;
 }
@@ -3207,6 +3738,16 @@ onBeforeUnmount(() => {
 .overview-inline-tag.neutral {
     background: #f1f5f9;
     color: #475569;
+}
+
+.overview-inline-tag.success {
+    background: #ecfdf5;
+    color: #15803d;
+}
+
+.overview-inline-tag.danger {
+    background: #fef2f2;
+    color: #dc2626;
 }
 
 .overview-summary-bar {
@@ -4261,6 +4802,10 @@ onBeforeUnmount(() => {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .assignment-filter-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .manage-plan-form-grid {
         grid-template-columns: 1fr;
     }
@@ -4316,6 +4861,7 @@ onBeforeUnmount(() => {
     }
 
     .task-board-table-wrap,
+    .assignment-table-wrap,
     .history-table-wrap,
     .station-overview-table-wrap,
     .manage-plan-table-wrap,
@@ -4351,6 +4897,29 @@ onBeforeUnmount(() => {
 
     .mobile-card-actions {
         grid-template-columns: 1fr;
+    }
+
+    .assignment-filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .assignment-day-card {
+        padding: 14px;
+        border-radius: 18px;
+    }
+
+    .assignment-day-head {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .assignment-day-tags {
+        justify-content: flex-start;
+    }
+
+    .assignment-mobile-list {
+        display: block;
     }
 
     .mobile-progress-head {

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.4.1',
+    date: '2026-06-03',
+    title: '派工看板修复',
+    summary: '巡检计划派工看板可以正常看到已分配任务。',
+    items: [
+      '修复派工看板看不到任务的问题。',
+      '自动补齐任务分配时间。',
+      '看板默认展示当天派工任务，并用红绿标记每天完成情况。'
+    ]
+  },
+  {
     version: 'v3.4',
     date: '2026-06-03',
     title: '巡检计划派任务',
