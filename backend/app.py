@@ -499,6 +499,9 @@ INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin", "signature", "admin_
 DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
 DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
 INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
+INSPECTION_CHECKLIST_MANAGEMENT_SCHEMA_READY = False
+USER_SECURITY_SCHEMA_READY = False
+STATION_MANAGEMENT_SCHEMA_READY = False
 ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
 INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
@@ -2244,6 +2247,10 @@ def ensure_checklist_standard_id_bases(cur):
 
 
 def ensure_inspection_checklist_management_schema(cur):
+    global INSPECTION_CHECKLIST_MANAGEMENT_SCHEMA_READY
+    if INSPECTION_CHECKLIST_MANAGEMENT_SCHEMA_READY:
+        return
+
     acquire_schema_migration_lock(cur)
     cur.execute(
         """
@@ -2374,6 +2381,7 @@ def ensure_inspection_checklist_management_schema(cur):
         END $$;
         """
     )
+    INSPECTION_CHECKLIST_MANAGEMENT_SCHEMA_READY = True
 
 
 def ensure_checklist_physical_table(cur, physical_table_name):
@@ -3846,6 +3854,10 @@ def get_user_by_id(cur, user_id):
 
 
 def ensure_user_security_schema(cur):
+    global USER_SECURITY_SCHEMA_READY
+    if USER_SECURITY_SCHEMA_READY:
+        return
+
     cur.execute(
         """
         INSERT INTO users (username, password, role, real_name, phone, station_id)
@@ -4009,6 +4021,7 @@ def ensure_user_security_schema(cur):
         );
         """
     )
+    USER_SECURITY_SCHEMA_READY = True
 
 
 def ensure_ai_usage_schema(cur):
@@ -8237,6 +8250,10 @@ def normalize_operating_hours(value):
 
 
 def ensure_station_management_columns(cur):
+    global STATION_MANAGEMENT_SCHEMA_READY
+    if STATION_MANAGEMENT_SCHEMA_READY:
+        return
+
     cur.execute(
         """
         ALTER TABLE stations
@@ -8299,6 +8316,7 @@ def ensure_station_management_columns(cur):
         WHERE asset_type IS NULL OR asset_type NOT IN ('全资', '股权');
         """
     )
+    STATION_MANAGEMENT_SCHEMA_READY = True
 
 
 def require_management_user(cur, user_id, permission_key):
@@ -12117,10 +12135,26 @@ def get_stations():
     conn = None
     cur = None
     try:
+        scope = str(request.args.get("scope", "")).strip().lower()
+        light = str(request.args.get("light", "")).strip().lower() in {"1", "true", "yes"}
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
         conn.commit()
+        if light or scope in {"plan", "light"}:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    station_name,
+                    region,
+                    COALESCE(monitoring_status, '运行中') AS monitoring_status
+                FROM stations
+                ORDER BY id;
+                """
+            )
+            return jsonify(cur.fetchall())
+
         cur.execute(
             """
             SELECT
@@ -12216,18 +12250,129 @@ def get_management_users():
             """
         )
         rows = cur.fetchall()
+        user_ids = [row["id"] for row in rows]
+
+        permission_override_map = {user_id: {} for user_id in user_ids}
+        if user_ids:
+            cur.execute(
+                """
+                SELECT user_id, permission_key, is_allowed
+                FROM user_permissions
+                WHERE user_id = ANY(%s);
+                """,
+                (user_ids,),
+            )
+            for permission_row in cur.fetchall():
+                target = permission_override_map.setdefault(permission_row["user_id"], {})
+                permission_key = permission_row["permission_key"]
+                if permission_key == "limit_inspection_table_scope":
+                    for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
+                        target.setdefault(scope_key, bool(permission_row["is_allowed"]))
+                else:
+                    target[permission_key] = bool(permission_row["is_allowed"])
+
+        inspection_scope_override_map = {
+            user_id: {scope_key: [] for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS}
+            for user_id in user_ids
+        }
+        if user_ids:
+            cur.execute(
+                """
+                SELECT user_id, scope_key, inspection_table_id
+                FROM user_inspection_table_scopes
+                WHERE user_id = ANY(%s)
+                ORDER BY user_id ASC, scope_key ASC, inspection_table_id ASC;
+                """,
+                (user_ids,),
+            )
+            for scope_row in cur.fetchall():
+                user_scope_map = inspection_scope_override_map.setdefault(
+                    scope_row["user_id"],
+                    {scope_key: [] for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS},
+                )
+                scope_key = scope_row["scope_key"]
+                if scope_key in user_scope_map:
+                    user_scope_map[scope_key].append(scope_row["inspection_table_id"])
+
+        station_region_scope_override_map = {
+            user_id: {scope_key: [] for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS}
+            for user_id in user_ids
+        }
+        if user_ids:
+            cur.execute(
+                """
+                SELECT user_id, scope_key, station_region
+                FROM user_station_region_scopes
+                WHERE user_id = ANY(%s)
+                ORDER BY user_id ASC, scope_key ASC, station_region ASC;
+                """,
+                (user_ids,),
+            )
+            for scope_row in cur.fetchall():
+                user_scope_map = station_region_scope_override_map.setdefault(
+                    scope_row["user_id"],
+                    {scope_key: [] for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS},
+                )
+                scope_key = scope_row["scope_key"]
+                if scope_key in user_scope_map:
+                    user_scope_map[scope_key].append(
+                        normalize_station_region_value(scope_row["station_region"])
+                    )
+
+        role_permission_overrides = get_role_permission_overrides_map(cur)
+        role_effective_permissions = {
+            role: build_role_effective_permissions(cur, role)
+            for role in ROLE_OPTIONS
+            if role != "root"
+        }
+        role_inspection_table_scope_ids = build_role_effective_inspection_table_scope_map_all(cur)
+        role_station_region_scope_values = build_role_effective_station_region_scope_map_all(cur)
+        role_default_table_id_map = {
+            role: set(get_role_default_inspection_table_ids(cur, role))
+            for role in ROLE_DEFAULT_CHECKLIST_SCOPES
+        }
 
         users = []
         for row in rows:
-            overrides = get_permission_overrides(cur, row["id"])
-            permissions = get_effective_permissions(cur, row)
-            inspection_scope_overrides = get_user_inspection_table_scope_overrides(cur, row["id"])
-            station_region_scope_overrides = get_user_station_region_scope_overrides(cur, row["id"])
+            overrides = permission_override_map.get(row["id"], {})
+            if is_root_user(row):
+                permissions = {item["key"]: True for item in PERMISSION_CATALOG}
+            else:
+                role_permissions = role_effective_permissions.get(row["role"], {})
+                permissions = {
+                    item["key"]: overrides.get(item["key"], role_permissions.get(item["key"], False))
+                    for item in PERMISSION_CATALOG
+                }
+                permissions = enforce_exclusive_permissions(permissions, row["role"])
+            inspection_scope_overrides = inspection_scope_override_map.get(row["id"], {})
+            station_region_scope_overrides = station_region_scope_override_map.get(row["id"], {})
             has_personalized_config = bool(
                 overrides
                 or any(inspection_scope_overrides.get(scope_key) for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS)
                 or any(station_region_scope_overrides.get(scope_key) for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS)
             )
+            inspection_table_scope_ids = {}
+            for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS:
+                if not permissions.get(scope_key):
+                    inspection_table_scope_ids[scope_key] = []
+                elif inspection_scope_overrides.get(scope_key):
+                    inspection_table_scope_ids[scope_key] = list(inspection_scope_overrides[scope_key])
+                elif role_inspection_table_scope_ids.get(row["role"], {}).get(scope_key):
+                    inspection_table_scope_ids[scope_key] = list(role_inspection_table_scope_ids[row["role"]][scope_key])
+                elif has_role_default_checklist_scope(row):
+                    inspection_table_scope_ids[scope_key] = list(role_default_table_id_map.get(row["role"], set()))
+                else:
+                    inspection_table_scope_ids[scope_key] = []
+            station_region_scope_values = {}
+            for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS:
+                if not permissions.get(scope_key):
+                    station_region_scope_values[scope_key] = []
+                elif station_region_scope_overrides.get(scope_key):
+                    station_region_scope_values[scope_key] = sorted(station_region_scope_overrides[scope_key])
+                elif role_station_region_scope_values.get(row["role"], {}).get(scope_key):
+                    station_region_scope_values[scope_key] = sorted(role_station_region_scope_values[row["role"]][scope_key])
+                else:
+                    station_region_scope_values[scope_key] = []
             users.append(
                 {
                     "id": row["id"],
@@ -12243,22 +12388,8 @@ def get_management_users():
                     "permission_overrides": overrides,
                     "has_permission_overrides": has_personalized_config,
                     "permissions": permissions,
-                    "inspection_table_scope_ids": {
-                        scope_key: list(
-                            get_effective_inspection_table_scope_ids(cur, row, scope_key, permissions) or []
-                        )
-                        if permissions.get(scope_key)
-                        else []
-                        for scope_key in INSPECTION_TABLE_SCOPE_PERMISSION_KEYS
-                    },
-                    "station_region_scope_values": {
-                        scope_key: sorted(
-                            get_effective_station_region_scope_values(cur, row, scope_key, permissions) or []
-                        )
-                        if permissions.get(scope_key)
-                        else []
-                        for scope_key in STATION_REGION_SCOPE_PERMISSION_KEYS
-                    },
+                    "inspection_table_scope_ids": inspection_table_scope_ids,
+                    "station_region_scope_values": station_region_scope_values,
                 }
             )
 
@@ -12280,10 +12411,6 @@ def get_management_users():
             """
         )
         inspection_table_rows = cur.fetchall()
-        role_default_table_id_map = {
-            role: set(get_role_default_inspection_table_ids(cur, role))
-            for role in ROLE_DEFAULT_CHECKLIST_SCOPES
-        }
         inspection_tables = [
             {
                 **dict(row),
@@ -12304,15 +12431,6 @@ def get_management_users():
             role: sorted(table_ids)
             for role, table_ids in role_default_table_id_map.items()
         }
-        role_permission_overrides = get_role_permission_overrides_map(cur)
-        role_effective_permissions = {
-            role: build_role_effective_permissions(cur, role)
-            for role in ROLE_OPTIONS
-            if role != "root"
-        }
-        role_inspection_table_scope_ids = build_role_effective_inspection_table_scope_map_all(cur)
-        role_station_region_scope_values = build_role_effective_station_region_scope_map_all(cur)
-
         return jsonify(
             {
                 "success": True,

@@ -1,5 +1,17 @@
 <template>
     <div class="page-shell">
+        <teleport to="body">
+            <div v-if="planSavingLock.visible" class="plan-saving-backdrop">
+                <div class="plan-saving-panel card-surface">
+                    <div class="plan-saving-spinner"></div>
+                    <div>
+                        <strong>{{ planSavingLock.title }}</strong>
+                        <p>{{ planSavingLock.message }}</p>
+                    </div>
+                </div>
+            </div>
+        </teleport>
+
         <div class="page-header card-surface">
             <div>
                 <div class="page-kicker">巡检计划</div>
@@ -199,7 +211,7 @@
                             <span class="plan-status-chip neutral">分配任务：{{ assignmentBoardSummary.total }}</span>
                             <span class="plan-status-chip editable">已完成：{{ assignmentBoardSummary.completed }}</span>
                             <span class="plan-status-chip readonly">未完成：{{ assignmentBoardSummary.pending }}</span>
-                            <span class="plan-status-chip info">分配日期：{{ assignmentBoardGroups.length }} 天</span>
+                            <span class="plan-status-chip info">当前页：{{ assignmentBoardCurrentPage }} / {{ assignmentBoardTotalPages }}</span>
                         </div>
 
                         <div v-if="isLoadingAssignmentBoard" class="table-empty-cell assignment-empty">
@@ -297,6 +309,66 @@
                                     </div>
                                 </div>
                             </section>
+                            <div v-if="assignmentBoardRows.length" class="assignment-pagination-bar">
+                                <div class="assignment-pagination-summary">
+                                    共 {{ assignmentBoardRows.length }} 项任务，显示第 {{ assignmentBoardPageStart }}-{{ assignmentBoardPageEnd }} 项
+                                </div>
+                                <div class="assignment-pagination-controls">
+                                    <label class="assignment-page-size-control">
+                                        <span>每页</span>
+                                        <select v-model.number="assignmentBoardPageSize">
+                                            <option :value="10">10</option>
+                                            <option :value="20">20</option>
+                                            <option :value="50">50</option>
+                                            <option :value="100">100</option>
+                                        </select>
+                                    </label>
+                                    <div class="assignment-pagination-nav">
+                                        <button class="ghost-btn pagination-mini-btn" type="button"
+                                            :disabled="assignmentBoardCurrentPage <= 1"
+                                            @click="goToAssignmentBoardPage(1)">
+                                            首页
+                                        </button>
+                                        <button class="ghost-btn pagination-mini-btn" type="button"
+                                            :disabled="assignmentBoardCurrentPage <= 1"
+                                            @click="goToAssignmentBoardPage(assignmentBoardCurrentPage - 1)">
+                                            上一页
+                                        </button>
+                                    </div>
+                                    <div class="assignment-page-list" aria-label="派工看板页码">
+                                        <template v-for="item in assignmentBoardVisiblePageItems" :key="item.key">
+                                            <span v-if="item.type === 'ellipsis'" class="assignment-page-ellipsis">...</span>
+                                            <button v-else class="assignment-page-btn"
+                                                :class="{ active: item.value === assignmentBoardCurrentPage }"
+                                                type="button" @click="goToAssignmentBoardPage(item.value)">
+                                                {{ item.value }}
+                                            </button>
+                                        </template>
+                                    </div>
+                                    <div class="assignment-pagination-nav">
+                                        <button class="ghost-btn pagination-mini-btn" type="button"
+                                            :disabled="assignmentBoardCurrentPage >= assignmentBoardTotalPages"
+                                            @click="goToAssignmentBoardPage(assignmentBoardCurrentPage + 1)">
+                                            下一页
+                                        </button>
+                                        <button class="ghost-btn pagination-mini-btn" type="button"
+                                            :disabled="assignmentBoardCurrentPage >= assignmentBoardTotalPages"
+                                            @click="goToAssignmentBoardPage(assignmentBoardTotalPages)">
+                                            末页
+                                        </button>
+                                    </div>
+                                    <div class="assignment-page-jump">
+                                        <span>跳至</span>
+                                        <input v-model="assignmentBoardPageJumpInput" type="number" min="1"
+                                            :max="assignmentBoardTotalPages" :placeholder="`1-${assignmentBoardTotalPages}`"
+                                            @keyup.enter="jumpToAssignmentBoardPage" />
+                                        <button class="primary-btn pagination-mini-btn" type="button"
+                                            @click="jumpToAssignmentBoardPage">
+                                            跳转
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -1169,6 +1241,20 @@
                     </div>
                 </div>
 
+                <div class="detail-search-panel">
+                    <div class="detail-search-copy">
+                        <span>站点定位</span>
+                        <strong>输入站点名称快速筛选当前计划明细</strong>
+                    </div>
+                    <div class="detail-search-box">
+                        <input v-model.trim="detailStationKeyword" type="search" placeholder="搜索站点名称，例如：华辉、虹梅南路" />
+                        <button v-if="detailStationKeyword" class="ghost-btn mini-action-btn" type="button"
+                            @click="detailStationKeyword = ''">
+                            清空
+                        </button>
+                    </div>
+                </div>
+
                 <div class="table-wrap detail-station-table-wrap">
                     <table class="plan-detail-table">
                         <thead>
@@ -1384,11 +1470,11 @@
                 </div>
 
                 <div class="plan-dialog-actions">
-                    <button class="ghost-btn" type="button" :disabled="!isPlanManager" @click="markAllPlanned">
+                    <button class="ghost-btn" type="button" :disabled="!isPlanManager || isSavingPlanDetail" @click="markAllPlanned">
                         自动纳入未完成站点
                     </button>
-                    <button class="primary-btn" type="button" :disabled="!isPlanManager" @click="savePlanDetail">
-                        {{ isPlanManager ? '保存本检查表计划' : '当前账号不可编辑' }}
+                    <button class="primary-btn" type="button" :disabled="!isPlanManager || isSavingPlanDetail" @click="savePlanDetail">
+                        {{ isPlanManager ? (isSavingPlanDetail ? '保存中...' : '保存本检查表计划') : '当前账号不可编辑' }}
                     </button>
                 </div>
                 <teleport to="body">
@@ -1504,6 +1590,12 @@ const overviewRowsState = ref([])
 const selectedTemplateStationsState = ref([])
 const isLoadingOverview = ref(false)
 const isLoadingTaskBoard = ref(false)
+const isSavingPlanDetail = ref(false)
+const planSavingLock = ref({
+    visible: false,
+    title: '正在保存巡检计划',
+    message: '系统正在写入站点明细和派工信息，请稍候。'
+})
 const manageDialog = ref({
     visible: false
 })
@@ -1638,6 +1730,9 @@ const assignmentBoardFilters = ref({
     inspectorId: 'all',
     completionStatus: 'all'
 })
+const assignmentBoardCurrentPage = ref(1)
+const assignmentBoardPageSize = ref(10)
+const assignmentBoardPageJumpInput = ref('')
 
 const assignmentBoardCalendarMonth = computed(() => {
     return String(assignmentBoardFilters.value.date || getTodayDateValue()).slice(0, 7)
@@ -1684,9 +1779,43 @@ const setAssignmentBoardToday = () => {
     assignmentBoardFilters.value.date = getTodayDateValue()
 }
 
-const assignmentBoardGroups = computed(() => {
+const buildVisiblePageItems = (total, current) => {
+    if (total <= 7) {
+        return Array.from({ length: total }, (_, index) => {
+            const value = index + 1
+            return { type: 'page', value, key: `page-${value}` }
+        })
+    }
+
+    const pages = new Set([1, total, current, current - 1, current + 1])
+    if (current <= 3) {
+        pages.add(2)
+        pages.add(3)
+        pages.add(4)
+    }
+    if (current >= total - 2) {
+        pages.add(total - 1)
+        pages.add(total - 2)
+        pages.add(total - 3)
+    }
+
+    const sortedPages = [...pages]
+        .filter((value) => value >= 1 && value <= total)
+        .sort((a, b) => a - b)
+    const result = []
+    sortedPages.forEach((value, index) => {
+        const previous = sortedPages[index - 1]
+        if (index > 0 && value - previous > 1) {
+            result.push({ type: 'ellipsis', key: `ellipsis-${previous}-${value}` })
+        }
+        result.push({ type: 'page', value, key: `page-${value}` })
+    })
+    return result
+}
+
+const groupAssignmentRowsByDate = (rows = []) => {
     const groupMap = new Map()
-    assignmentBoardRows.value.forEach((item) => {
+    rows.forEach((item) => {
         const date = item.assigned_date || '未记录日期'
         if (!groupMap.has(date)) {
             groupMap.set(date, {
@@ -1707,7 +1836,45 @@ const assignmentBoardGroups = computed(() => {
         }
     })
     return Array.from(groupMap.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)))
+}
+
+const assignmentBoardTotalPages = computed(() => {
+    return Math.max(1, Math.ceil(assignmentBoardRows.value.length / assignmentBoardPageSize.value))
 })
+
+const assignmentBoardPageStart = computed(() => {
+    return assignmentBoardRows.value.length
+        ? (assignmentBoardCurrentPage.value - 1) * assignmentBoardPageSize.value + 1
+        : 0
+})
+
+const assignmentBoardPageEnd = computed(() => {
+    return Math.min(assignmentBoardCurrentPage.value * assignmentBoardPageSize.value, assignmentBoardRows.value.length)
+})
+
+const pagedAssignmentBoardRows = computed(() => {
+    const start = (assignmentBoardCurrentPage.value - 1) * assignmentBoardPageSize.value
+    return assignmentBoardRows.value.slice(start, start + assignmentBoardPageSize.value)
+})
+
+const assignmentBoardGroups = computed(() => {
+    return groupAssignmentRowsByDate(pagedAssignmentBoardRows.value)
+})
+
+const assignmentBoardVisiblePageItems = computed(() => {
+    return buildVisiblePageItems(assignmentBoardTotalPages.value, assignmentBoardCurrentPage.value)
+})
+
+const goToAssignmentBoardPage = (targetPage) => {
+    const normalizedPage = Number.parseInt(targetPage, 10)
+    if (!Number.isFinite(normalizedPage)) return
+    assignmentBoardCurrentPage.value = Math.min(Math.max(normalizedPage, 1), assignmentBoardTotalPages.value)
+}
+
+const jumpToAssignmentBoardPage = () => {
+    goToAssignmentBoardPage(assignmentBoardPageJumpInput.value)
+    assignmentBoardPageJumpInput.value = ''
+}
 
 const mergeAssignmentInspectorOptions = (incomingOptions = []) => {
     const optionMap = new Map()
@@ -1755,6 +1922,7 @@ const fetchAssignmentBoard = async () => {
         }
         const payload = await requestJson(`/api/inspection-plan-assignments/board?${params.toString()}`)
         assignmentBoardRows.value = normalizeResponseList(payload)
+        assignmentBoardCurrentPage.value = 1
         assignmentBoardCalendarDays.value = Array.isArray(payload.calendar) ? payload.calendar : []
         assignmentBoardInspectorOptions.value = mergeAssignmentInspectorOptions(
             Array.isArray(payload.inspectors) ? payload.inspectors : []
@@ -1766,6 +1934,7 @@ const fetchAssignmentBoard = async () => {
         }
     } catch (error) {
         assignmentBoardRows.value = []
+        assignmentBoardCurrentPage.value = 1
         assignmentBoardCalendarDays.value = []
         assignmentBoardInspectorOptions.value = []
         assignmentBoardSummary.value = { total: 0, completed: 0, pending: 0 }
@@ -2376,6 +2545,7 @@ const planDetailDialog = {
 const detailDialog = ref({ ...planDetailDialog })
 const detailPageSize = 12
 const detailCurrentPage = ref(1)
+const detailStationKeyword = ref('')
 
 const detailAreaFilter = ref('all')
 const detailPlannedFilter = ref('all')
@@ -2426,6 +2596,11 @@ const isStationPlanToggleDisabled = (station) => {
 
 const filteredDetailRows = computed(() => {
     let rows = detailDialog.value.rows || []
+    const keyword = detailStationKeyword.value.trim().toLowerCase()
+
+    if (keyword) {
+        rows = rows.filter((item) => String(item.name || '').toLowerCase().includes(keyword))
+    }
 
     if (detailAreaFilter.value !== 'all' && detailAreaFilterSet.value.length > 0) {
         rows = rows.filter((item) => detailAreaFilterSet.value.includes(item.area))
@@ -2693,7 +2868,7 @@ const fetchInspectionTablesCatalog = async () => {
 
 const fetchAllStationsCatalog = async () => {
     try {
-        const payload = await requestJson('/api/stations')
+        const payload = await requestJson('/api/stations?scope=plan')
         const items = normalizeResponseList(payload)
         allStationsCatalog.value = items
             .map((item) => ({
@@ -2977,6 +3152,7 @@ const openPlanDetail = async (row) => {
     detailAreaFilterSet.value = []
     detailPlannedFilterSet.value = []
     detailDoneFilterSet.value = []
+    detailStationKeyword.value = ''
     activeFilterMenu.value = null
     activeDetailFilterAnchorEl.value = null
     filterPopoverStyle.value = {}
@@ -3028,6 +3204,7 @@ const closePlanDetail = () => {
     detailAreaFilterSet.value = []
     detailPlannedFilterSet.value = []
     detailDoneFilterSet.value = []
+    detailStationKeyword.value = ''
     activeFilterMenu.value = null
     activeDetailFilterAnchorEl.value = null
     filterPopoverStyle.value = {}
@@ -3040,6 +3217,7 @@ const closePlanDetail = () => {
 
 const savePlanDetail = async () => {
     if (!isPlanManager) return
+    if (isSavingPlanDetail.value) return
     const row = detailDialog.value.row
     if (!row?.inspectionTableId) {
         window.alert('当前检查表缺少 inspection_table_id，无法保存计划。')
@@ -3047,6 +3225,13 @@ const savePlanDetail = async () => {
     }
 
     if (!confirmCoverageReplacementIfNeeded(row)) return
+
+    isSavingPlanDetail.value = true
+    planSavingLock.value = {
+        visible: true,
+        title: row.planConfigId ? '正在保存巡检计划' : '正在新建巡检计划',
+        message: '系统正在写入站点计划、检查人分配和完成状态，请不要重复点击。'
+    }
 
     try {
         const periodKey = getPeriodKey(row)
@@ -3113,16 +3298,22 @@ const savePlanDetail = async () => {
         })
 
         await fetchPlanConfigs()
-        const targetRow = planRows.value.find((item) => item.name === row.name)
+        const targetRow = planRows.value.find((item) => item.inspectionTableId === row.inspectionTableId)
         if (targetRow) {
             overviewSelectedTableName.value = targetRow.name
         }
-        await Promise.all([loadOverviewData(), loadSelectedTemplateStations(), fetchAssignmentBoard()])
+        await Promise.all([
+            loadOverviewData(),
+            fetchAssignmentBoard()
+        ])
         window.dispatchEvent(new Event('plan-assignment-pending-refresh'))
         window.alert(`已保存【${row.name || '当前检查表'}】的计划配置。`)
         closePlanDetail()
     } catch (error) {
         window.alert(error.message || '保存计划配置失败。')
+    } finally {
+        isSavingPlanDetail.value = false
+        planSavingLock.value.visible = false
     }
 }
 
@@ -3162,6 +3353,16 @@ watch(
         fetchAssignmentBoard()
     }
 )
+
+watch(assignmentBoardPageSize, () => {
+    assignmentBoardCurrentPage.value = 1
+})
+
+watch(assignmentBoardTotalPages, (total) => {
+    if (assignmentBoardCurrentPage.value > total) {
+        assignmentBoardCurrentPage.value = total
+    }
+})
 
 watch(
     () => [overviewRows.value.length, overviewCurrentPage.value, activeOverviewFilterMenu.value],
@@ -4353,6 +4554,204 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
 }
 
+.plan-saving-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.42);
+    backdrop-filter: blur(8px);
+}
+
+.plan-saving-panel {
+    width: min(420px, 100%);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 22px;
+    border-radius: 24px;
+    box-shadow: 0 26px 70px rgba(15, 23, 42, 0.28);
+}
+
+.plan-saving-panel strong {
+    display: block;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.plan-saving-panel p {
+    margin: 6px 0 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.plan-saving-spinner {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    border: 5px solid #dbeafe;
+    border-top-color: #2563eb;
+    animation: plan-spin 0.8s linear infinite;
+}
+
+@keyframes plan-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.detail-search-panel {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.3fr);
+    gap: 14px;
+    align-items: center;
+    padding: 14px;
+    margin-bottom: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+}
+
+.detail-search-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.detail-search-copy span {
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+}
+
+.detail-search-copy strong {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.detail-search-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.detail-search-box input {
+    width: 100%;
+    height: 42px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    padding: 0 14px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 14px;
+    outline: none;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.04);
+}
+
+.detail-search-box input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.assignment-pagination-bar {
+    margin-top: 16px;
+    padding: 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    background: #f8fafc;
+}
+
+.assignment-pagination-summary {
+    color: #475569;
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 12px;
+}
+
+.assignment-pagination-controls,
+.assignment-page-size-control,
+.assignment-pagination-nav,
+.assignment-page-list,
+.assignment-page-jump {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.assignment-page-size-control span,
+.assignment-page-jump span {
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.assignment-page-size-control select,
+.assignment-page-jump input {
+    height: 36px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    padding: 0 10px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 13px;
+}
+
+.assignment-page-jump input {
+    width: 72px;
+    text-align: center;
+}
+
+.pagination-mini-btn {
+    min-width: 64px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 900;
+}
+
+.assignment-page-list {
+    padding: 4px;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #fff;
+}
+
+.assignment-page-btn {
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.assignment-page-btn.active {
+    background: #2563eb;
+    color: #fff;
+    box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22);
+}
+
+.assignment-page-ellipsis {
+    min-width: 24px;
+    text-align: center;
+    color: #94a3b8;
+    font-weight: 900;
+}
+
 .plan-checkbox-wrap {
     display: inline-flex;
     align-items: center;
@@ -5063,6 +5462,34 @@ onBeforeUnmount(() => {
     .table-pagination-actions {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .detail-search-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .detail-search-box {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .assignment-pagination-controls,
+    .assignment-pagination-nav,
+    .assignment-page-jump {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .assignment-page-list {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+    }
+
+    .assignment-page-size-control {
+        width: 100%;
+        justify-content: space-between;
     }
 }
 </style>
