@@ -18,6 +18,8 @@ CREATE TABLE stations (
     is_consolidated TEXT DEFAULT '否' CHECK (is_consolidated IN ('是', '否')), -- 是否并表，仅允许：是 / 否
     online_3_status TEXT DEFAULT '未上线'
         CHECK (online_3_status IN ('上线', '上线参股模式', '未上线')),         -- 是否上线3.0
+    monitoring_status TEXT NOT NULL DEFAULT '运行中'
+        CHECK (monitoring_status IN ('运行中', '未运行')),                    -- 监控状态，仅允许：运行中 / 未运行
     hos_station_code TEXT UNIQUE NOT NULL,                                    -- HOS加油站编码，站点主数据唯一标识，例如：PQ04
     landline_phone TEXT,                                                     -- 固定电话，例如：021-67220331
     status TEXT DEFAULT '营业中' CHECK (status IN ('营业中', '停业')),        -- 站点状态，仅允许：营业中 / 停业

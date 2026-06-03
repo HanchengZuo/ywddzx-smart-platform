@@ -242,6 +242,14 @@
                 </label>
 
                 <label class="form-field">
+                  <span>监控状态</span>
+                  <select v-model="form.monitoring_status">
+                    <option value="运行中">运行中</option>
+                    <option value="未运行">未运行</option>
+                  </select>
+                </label>
+
+                <label class="form-field">
                   <span>站点状态</span>
                   <select v-model="form.status">
                     <option value="营业中">营业中</option>
@@ -324,6 +332,15 @@
               </select>
             </label>
 
+            <label class="filter-field">
+              <span>监控状态</span>
+              <select v-model="filters.monitoring_status">
+                <option value="">全部监控</option>
+                <option value="运行中">运行中</option>
+                <option value="未运行">未运行</option>
+              </select>
+            </label>
+
             <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
           </div>
 
@@ -338,6 +355,7 @@
                   <th>资产类型</th>
                   <th>是否并表</th>
                   <th>是否上线3.0</th>
+                  <th>监控状态</th>
                   <th>HOS编码</th>
                   <th>固定电话</th>
                   <th>站点状态</th>
@@ -350,10 +368,10 @@
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="15" class="empty-cell">正在加载站点数据...</td>
+                  <td colspan="16" class="empty-cell">正在加载站点数据...</td>
                 </tr>
                 <tr v-else-if="!filteredStations.length">
-                  <td colspan="15" class="empty-cell">暂无匹配的站点数据。</td>
+                  <td colspan="16" class="empty-cell">暂无匹配的站点数据。</td>
                 </tr>
                 <tr v-for="station in pagedStations" :key="station.id" :class="{ active: editingId === station.id }">
                   <td>
@@ -373,6 +391,11 @@
                   <td>{{ normalizeAssetType(station.asset_type) }}</td>
                   <td>{{ station.is_consolidated || '否' }}</td>
                   <td>{{ station.online_3_status || '未上线' }}</td>
+                  <td>
+                    <span class="status-pill monitor" :class="{ offline: station.monitoring_status === '未运行' }">
+                      {{ station.monitoring_status || '运行中' }}
+                    </span>
+                  </td>
                   <td>{{ station.hos_station_code || '-' }}</td>
                   <td>{{ station.landline_phone || '-' }}</td>
                   <td>{{ station.status || '-' }}</td>
@@ -442,6 +465,10 @@
                   <div>
                     <span>上线3.0</span>
                     <strong>{{ station.online_3_status || '未上线' }}</strong>
+                  </div>
+                  <div>
+                    <span>监控状态</span>
+                    <strong>{{ station.monitoring_status || '运行中' }}</strong>
                   </div>
                   <div>
                     <span>营运时间</span>
@@ -555,7 +582,8 @@ const filters = reactive({
   keyword: '',
   region: '',
   station_type: '',
-  status: ''
+  status: '',
+  monitoring_status: ''
 })
 
 const createEmptyForm = () => ({
@@ -570,6 +598,7 @@ const createEmptyForm = () => ({
   asset_type: '全资',
   is_consolidated: '否',
   online_3_status: '未上线',
+  monitoring_status: '运行中',
   hos_station_code: '',
   landline_phone: '',
   status: '营业中',
@@ -604,6 +633,7 @@ const stationExportFieldGroups = [
       { key: 'asset_type', label: '资产类型', help: '全资或股权' },
       { key: 'is_consolidated', label: '是否并表', help: '是否纳入并表范围' },
       { key: 'online_3_status', label: '是否上线3.0', help: '3.0 系统上线状态' },
+      { key: 'monitoring_status', label: '监控状态', help: '站点视频监控是否运行' },
       { key: 'status', label: '站点状态', help: '营业中或停业' },
       { key: 'operating_hours', label: '营运时间', help: '统一格式的营业时间' }
     ]
@@ -665,7 +695,8 @@ const filteredStations = computed(() => {
     const matchesRegion = !filters.region || station.region === filters.region
     const matchesType = !filters.station_type || station.station_type === filters.station_type
     const matchesStatus = !filters.status || station.status === filters.status
-    return matchesKeyword && matchesRegion && matchesType && matchesStatus
+    const matchesMonitoring = !filters.monitoring_status || (station.monitoring_status || '运行中') === filters.monitoring_status
+    return matchesKeyword && matchesRegion && matchesType && matchesStatus && matchesMonitoring
   })
 })
 
@@ -771,7 +802,8 @@ const resetFilters = () => {
     keyword: '',
     region: '',
     station_type: '',
-    status: ''
+    status: '',
+    monitoring_status: ''
   })
 }
 
@@ -787,6 +819,7 @@ const normalizeStationForForm = (station) => ({
   asset_type: normalizeAssetType(station.asset_type) === '股权' ? '股权' : '全资',
   is_consolidated: station.is_consolidated || '否',
   online_3_status: station.online_3_status || '未上线',
+  monitoring_status: station.monitoring_status || '运行中',
   hos_station_code: station.hos_station_code || '',
   landline_phone: station.landline_phone || '',
   status: station.status || '营业中',
@@ -1014,6 +1047,7 @@ const validateForm = () => {
   if (!form.asset_type) return '请选择资产类型。'
   if (!form.is_consolidated) return '请选择是否并表。'
   if (!form.online_3_status) return '请选择是否上线3.0。'
+  if (!form.monitoring_status) return '请选择监控状态。'
   if (!form.status) return '请选择站点状态。'
   if (operatingMode.value === 'custom' && operatingStart.value === operatingEnd.value) return '营运时间的开始时间和结束时间不能相同。'
   return ''
@@ -1416,6 +1450,16 @@ onBeforeUnmount(() => {
 .status-pill.closed {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.status-pill.monitor {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-pill.monitor.offline {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .mobile-account-block {

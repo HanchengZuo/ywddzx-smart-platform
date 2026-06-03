@@ -26,6 +26,9 @@ CREATE TABLE inspection_plan_station_items (
     station_id INTEGER NOT NULL REFERENCES stations(id),                          -- 站点ID
 
     is_included BOOLEAN NOT NULL DEFAULT TRUE,                                    -- 是否纳入当前计划
+    assigned_inspector_id INTEGER REFERENCES users(id) ON DELETE SET NULL,        -- 当前周期分配的检查人
+    assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,                  -- 分配操作人
+    assigned_at TIMESTAMP,                                                        -- 分配时间
     completion_status TEXT NOT NULL DEFAULT 'pending',                            -- 完成状态：pending / completed
     completed_inspection_id INTEGER REFERENCES inspections(id),                   -- 完成该计划对应的巡检主记录ID
     completed_at TIMESTAMP,                                                       -- 计划完成时间
@@ -48,6 +51,9 @@ CREATE INDEX idx_inspection_plan_station_items_plan_config_id
 
 CREATE INDEX idx_inspection_plan_station_items_station_id
     ON inspection_plan_station_items(station_id);
+
+CREATE INDEX idx_inspection_plan_station_items_assigned_inspector_id
+    ON inspection_plan_station_items(assigned_inspector_id);
 
 CREATE INDEX idx_inspection_plan_station_items_completion_status
     ON inspection_plan_station_items(completion_status);

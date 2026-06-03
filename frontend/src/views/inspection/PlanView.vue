@@ -1042,6 +1042,12 @@
                                 </th>
 
                                 <th>
+                                    <div class="table-header-inline">
+                                        <span class="table-header-title">分配检查人</span>
+                                    </div>
+                                </th>
+
+                                <th>
                                     <div class="table-header-inline table-header-inline-filterable">
                                         <span class="table-header-title">当前周期是否完成</span>
 
@@ -1073,12 +1079,32 @@
                                 <td>{{ station.area }}</td>
                                 <td>
                                     <label class="plan-checkbox-wrap"
-                                        :class="{ disabled: !isPlanManager || station.done }">
+                                        :class="{ disabled: !isPlanManager || station.done || isStationPlanToggleDisabled(station) }">
                                         <input type="checkbox" :checked="station.planned"
-                                            :disabled="!isPlanManager || station.done"
+                                            :disabled="!isPlanManager || station.done || isStationPlanToggleDisabled(station)"
                                             @change="toggleStationPlan(station)" />
                                         <span>{{ station.planned ? '已纳入' : '未纳入' }}</span>
                                     </label>
+                                    <div v-if="isStationMonitoringBlocked(station)" class="table-sub warning-text">
+                                        无监控，视频检查不可纳入
+                                    </div>
+                                </td>
+                                <td>
+                                    <select v-if="canAssignPlanInspectors" class="inspector-assign-select"
+                                        v-model="station.assignedInspectorId"
+                                        :disabled="station.done || !station.planned">
+                                        <option value="">暂不分配</option>
+                                        <option v-for="inspector in planInspectors" :key="inspector.id"
+                                            :value="String(inspector.id)">
+                                            {{ inspector.display_name }}
+                                        </option>
+                                    </select>
+                                    <div v-else-if="detailDialog.row?.planConfigId">
+                                        <strong>{{ getStationAssignedInspectorName(station) }}</strong>
+                                        <div v-if="station.assignedAt" class="table-sub">分配 {{ station.assignedAt }}</div>
+                                    </div>
+                                    <div v-else class="table-sub muted">新建保存后可分配检查人</div>
+                                    <div v-if="station.done" class="table-sub muted">已完成任务不可调整</div>
                                 </td>
                                 <td>
                                     <span :class="station.done ? 'status-chip success' : 'status-chip warning'">
@@ -1088,7 +1114,7 @@
                                 <td>{{ station.doneDate || '-' }}</td>
                             </tr>
                             <tr v-if="!filteredDetailRows.length">
-                                <td colspan="5" class="table-empty-cell">当前计划下暂无站点明细数据。</td>
+                                <td colspan="6" class="table-empty-cell">当前计划下暂无站点明细数据。</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1130,13 +1156,36 @@
                                     <span>纳入计划</span>
                                     <strong>{{ station.planned ? '已纳入' : '未纳入' }}</strong>
                                 </div>
+                                <div class="mobile-card-row">
+                                    <span>分配检查人</span>
+                                    <strong>{{ getStationAssignedInspectorName(station) }}</strong>
+                                </div>
+                                <div v-if="isStationMonitoringBlocked(station)" class="mobile-card-row mobile-card-row-full warning-text">
+                                    <span>监控状态</span>
+                                    <strong>无监控，视频检查不可纳入计划</strong>
+                                </div>
                             </div>
 
-                            <label v-if="isPlanManager" class="mobile-plan-toggle" :class="{ disabled: station.done }">
-                                <input type="checkbox" :checked="station.planned" :disabled="station.done"
+                            <label v-if="isPlanManager" class="mobile-plan-toggle"
+                                :class="{ disabled: station.done || isStationPlanToggleDisabled(station) }">
+                                <input type="checkbox" :checked="station.planned"
+                                    :disabled="station.done || isStationPlanToggleDisabled(station)"
                                     @change="toggleStationPlan(station)" />
                                 <span>{{ station.done ? '已完成站点不可调整' : '调整是否纳入当前计划' }}</span>
                             </label>
+                            <div v-if="canAssignPlanInspectors" class="mobile-inspector-assign">
+                                <span>分配检查人</span>
+                                <select v-model="station.assignedInspectorId" :disabled="station.done || !station.planned">
+                                    <option value="">暂不分配</option>
+                                    <option v-for="inspector in planInspectors" :key="`mobile-inspector-${inspector.id}`"
+                                        :value="String(inspector.id)">
+                                        {{ inspector.display_name }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div v-else-if="isPlanManager && !detailDialog.row?.planConfigId" class="mobile-card-note">
+                                新建保存后可分配检查人。
+                            </div>
                             <div v-else class="mobile-card-note">
                                 当前账号仅可查看计划详情。
                             </div>
@@ -1261,6 +1310,8 @@ const createPlanRowFromTable = (table) => ({
     planConfigId: null,
     status: 'active',
     name: table?.table_name || table?.name || '未命名检查表',
+    checklistMode: table?.checklist_mode || 'online',
+    checklistModeLabel: table?.checklist_mode_label || (table?.checklist_mode === 'offline' ? '现场检查' : '视频检查'),
     scope: inferScopeByName(table?.table_name || table?.name),
     coverageType: 'monthly',
     periodConfig: { month: '2026年4月', quarter: '2026年第二季度', year: '2026年' },
@@ -1273,6 +1324,7 @@ const inspectionTablesCatalog = ref([])
 const planRows = ref([])
 const planConfigList = ref([])
 const allStationsCatalog = ref([])
+const planInspectors = ref([])
 const overviewRowsState = ref([])
 const selectedTemplateStationsState = ref([])
 const isLoadingOverview = ref(false)
@@ -1529,6 +1581,8 @@ const mapPlanConfigToPlanRow = (item) => ({
     planConfigId: item?.id ?? null,
     status: 'active',
     name: item?.inspection_table_name || '未命名检查表',
+    checklistMode: item?.checklist_mode || 'online',
+    checklistModeLabel: item?.checklist_mode_label || (item?.checklist_mode === 'offline' ? '现场检查' : '视频检查'),
     scope: inferScopeByName(item?.inspection_table_name),
     coverageType: item?.coverage_type || 'monthly',
     periodConfig: parsePeriodConfig(item?.coverage_type || 'monthly', item?.period_key),
@@ -2016,6 +2070,28 @@ const handleGlobalClickCloseFilterMenu = () => {
 const detailDialogPlanCount = computed(() => detailDialog.value.rows.filter((item) => item.planned).length)
 const detailDialogDoneCount = computed(() => detailDialog.value.rows.filter((item) => item.done).length)
 const detailDialogPendingCount = computed(() => detailDialog.value.rows.filter((item) => item.planned && !item.done).length)
+const isDetailOnlinePlan = computed(() => {
+    const mode = detailDialog.value.row?.checklistMode || detailDialog.value.row?.checklist_mode || 'online'
+    return mode !== 'offline'
+})
+const canAssignPlanInspectors = computed(() => Boolean(isPlanManager && detailDialog.value.row?.planConfigId))
+
+const getInspectorDisplayNameById = (inspectorId) => {
+    const matched = planInspectors.value.find((item) => String(item.id) === String(inspectorId || ''))
+    return matched?.display_name || ''
+}
+
+const getStationAssignedInspectorName = (station) => {
+    return getInspectorDisplayNameById(station?.assignedInspectorId) || station?.assignedInspectorName || '未分配'
+}
+
+const isStationMonitoringBlocked = (station) => {
+    return Boolean(isDetailOnlinePlan.value && station?.monitoringStatus === '未运行')
+}
+
+const isStationPlanToggleDisabled = (station) => {
+    return Boolean(isStationMonitoringBlocked(station) && !station?.planned)
+}
 
 const filteredDetailRows = computed(() => {
     let rows = detailDialog.value.rows || []
@@ -2153,15 +2229,31 @@ const toggleDoneFilter = (value) => {
 
 const toggleStationPlan = (station) => {
     if (!isPlanManager || station.done) return
-    station.planned = !station.planned
+    const nextPlanned = !station.planned
+    if (nextPlanned && isStationMonitoringBlocked(station)) {
+        window.alert('该站点没有监控，目前是建立视频检查任务，无法勾选该站点。')
+        return
+    }
+    station.planned = nextPlanned
+    if (!nextPlanned) {
+        station.assignedInspectorId = ''
+    }
 }
 
 const markAllPlanned = () => {
     if (!isPlanManager) return
+    let skippedMonitoringCount = 0
     detailDialog.value.rows = detailDialog.value.rows.map((item) => {
         if (item.done) return { ...item }
+        if (isStationMonitoringBlocked(item)) {
+            skippedMonitoringCount += 1
+            return { ...item, planned: false, assignedInspectorId: '' }
+        }
         return { ...item, planned: true }
     })
+    if (skippedMonitoringCount > 0) {
+        window.alert(`已自动纳入可安排站点；${skippedMonitoringCount} 个站点监控未运行，视频检查任务无法纳入。`)
+    }
 }
 
 const normalizeResponseList = (payload) => {
@@ -2217,6 +2309,8 @@ const requestJson = async (url, options = {}) => {
 const applyPlanConfigToRow = (row, item) => {
     row.planConfigId = item.id || null
     row.inspectionTableId = item.inspection_table_id || row.inspectionTableId || null
+    row.checklistMode = item.checklist_mode || row.checklistMode || 'online'
+    row.checklistModeLabel = item.checklist_mode_label || (row.checklistMode === 'offline' ? '现场检查' : '视频检查')
     row.coverageType = item.coverage_type || row.coverageType
     row.periodConfig = parsePeriodConfig(item.coverage_type || row.coverageType, item.period_key)
     row.status = item.status || row.status
@@ -2243,6 +2337,8 @@ const fetchInspectionTablesCatalog = async () => {
             .map((item) => ({
                 id: item.id,
                 table_name: item.table_name || item.name,
+                checklist_mode: item.checklist_mode || 'online',
+                checklist_mode_label: item.checklist_mode_label || (item.checklist_mode === 'offline' ? '现场检查' : '视频检查'),
                 is_active: item.is_active
             }))
             .filter((item) => item.id && item.table_name && item.is_active !== false)
@@ -2273,14 +2369,37 @@ const fetchAllStationsCatalog = async () => {
                 station_id: item.id ?? item.station_id,
                 name: item.station_name || item.name,
                 area: item.region || item.area || '-',
+                monitoringStatus: item.monitoring_status || '运行中',
                 planned: false,
                 done: false,
                 doneDate: '-',
+                assignedInspectorId: '',
+                assignedInspectorName: '',
+                assignedAt: '',
                 note: null
             }))
             .filter((item) => item.station_id && item.name)
     } catch {
         allStationsCatalog.value = []
+    }
+}
+
+const fetchPlanInspectors = async () => {
+    if (!isPlanManager) {
+        planInspectors.value = []
+        return
+    }
+    try {
+        const payload = await requestJson('/api/inspection-plan-inspectors')
+        planInspectors.value = normalizeResponseList(payload).map((item) => ({
+            id: item.id,
+            username: item.username,
+            real_name: item.real_name,
+            phone: item.phone,
+            display_name: item.display_name || item.real_name || item.username || `用户${item.id}`
+        }))
+    } catch {
+        planInspectors.value = []
     }
 }
 
@@ -2359,9 +2478,14 @@ const mapOverviewStationRow = (item) => ({
     station_id: item.station_id,
     name: item.station_name,
     area: item.region || '-',
+    monitoringStatus: item.monitoring_status || '运行中',
     planned: Boolean(item.is_included),
     done: item.completion_status === 'completed',
     doneDate: item.completed_at || '-',
+    assignedInspectorId: item.assigned_inspector_id ? String(item.assigned_inspector_id) : '',
+    assignedInspectorName: item.assigned_inspector_name || item.assigned_inspector_username || '',
+    assignedInspectorPhone: item.assigned_inspector_phone || '',
+    assignedAt: item.assigned_at || '',
     note: item.note || null
 })
 
@@ -2537,6 +2661,8 @@ const openPlanDetail = async (row) => {
             const item = payload.item || {}
             dialogRow.planConfigId = item.id || row.planConfigId
             dialogRow.inspectionTableId = item.inspection_table_id || row.inspectionTableId
+            dialogRow.checklistMode = item.checklist_mode || row.checklistMode || 'online'
+            dialogRow.checklistModeLabel = item.checklist_mode_label || (dialogRow.checklistMode === 'offline' ? '现场检查' : '视频检查')
             dialogRow.coverageType = item.coverage_type || row.coverageType
             dialogRow.periodConfig = parsePeriodConfig(item.coverage_type || row.coverageType, item.period_key)
             dialogRow.status = item.status || row.status
@@ -2593,6 +2719,7 @@ const savePlanDetail = async () => {
 
     try {
         const periodKey = getPeriodKey(row)
+        const isCreatingPlan = !row.planConfigId
         let planConfigId = row.planConfigId
 
         if (planConfigId) {
@@ -2648,6 +2775,7 @@ const savePlanDetail = async () => {
                 stations: detailDialog.value.rows.map((item) => ({
                     station_id: item.station_id,
                     is_included: Boolean(item.planned),
+                    assigned_inspector_id: !isCreatingPlan && item.planned ? (item.assignedInspectorId || null) : null,
                     note: item.note || ''
                 }))
             })
@@ -2713,7 +2841,7 @@ onMounted(async () => {
     document.addEventListener('scroll', refreshActiveOverviewFilterPopoverPosition, true)
     document.addEventListener('scroll', refreshActiveDetailFilterPopoverPosition, true)
     try {
-        await Promise.all([fetchInspectionTablesCatalog(), fetchAllStationsCatalog()])
+        await Promise.all([fetchInspectionTablesCatalog(), fetchAllStationsCatalog(), fetchPlanInspectors()])
         await fetchPlanConfigs()
         if (overviewSelectedTable.value) {
             const options = overviewConfiguredPeriodOptions.value
@@ -3627,6 +3755,7 @@ onBeforeUnmount(() => {
 
 .plan-detail-table {
     width: 100%;
+    min-width: 920px;
     border-collapse: separate;
     border-spacing: 0;
 }
@@ -3704,6 +3833,29 @@ onBeforeUnmount(() => {
 
 .plan-checkbox-wrap.disabled input[type="checkbox"] {
     cursor: not-allowed;
+}
+
+.inspector-assign-select {
+    width: 168px;
+    max-width: 100%;
+    height: 36px;
+    border: 1px solid #dbe4ee;
+    border-radius: 12px;
+    padding: 0 10px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.inspector-assign-select:disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+}
+
+.warning-text {
+    color: #c2410c !important;
 }
 
 .table-header-inline {
@@ -3941,6 +4093,40 @@ onBeforeUnmount(() => {
     border: 1px solid #e2e8f0;
     border-radius: 14px;
     background: #f8fafc;
+}
+
+.mobile-inspector-assign {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 15px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mobile-inspector-assign span {
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.mobile-inspector-assign select {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #dbe4ee;
+    border-radius: 12px;
+    padding: 0 12px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.mobile-inspector-assign select:disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
 }
 
 .mobile-progress-head {

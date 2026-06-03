@@ -491,6 +491,7 @@ STATION_TYPE_OPTIONS = {"加油站", "充电站"}
 STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
 STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
+STATION_MONITORING_STATUS_OPTIONS = {"运行中", "未运行"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
 INSPECTION_COMPLETION_PENDING = "待检查人确认"
 INSPECTION_COMPLETION_DONE = "已确认完成"
@@ -8139,6 +8140,20 @@ def ensure_station_management_columns(cur):
     cur.execute(
         """
         ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS monitoring_status TEXT NOT NULL DEFAULT '运行中';
+        """
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET monitoring_status = '运行中'
+        WHERE monitoring_status IS NULL
+           OR monitoring_status NOT IN ('运行中', '未运行');
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
         ADD COLUMN IF NOT EXISTS hos_station_code TEXT;
         """
     )
@@ -8218,6 +8233,12 @@ def build_station_payload(data):
         "是否上线3.0",
         "未上线",
     )
+    monitoring_status = validate_option(
+        data.get("monitoring_status"),
+        STATION_MONITORING_STATUS_OPTIONS,
+        "监控状态",
+        "运行中",
+    )
     status = validate_option(
         data.get("status"),
         STATION_STATUS_OPTIONS,
@@ -8237,6 +8258,7 @@ def build_station_payload(data):
         "asset_type": asset_type,
         "is_consolidated": is_consolidated,
         "online_3_status": online_3_status,
+        "monitoring_status": monitoring_status,
         "hos_station_code": normalize_hos_station_code(data.get("hos_station_code")),
         "landline_phone": normalize_text(data.get("landline_phone"), 40) or None,
         "status": status,
@@ -8257,6 +8279,7 @@ STATION_DATA_EXPORT_FIELDS = [
     {"key": "asset_type", "label": "资产类型", "width": 14},
     {"key": "is_consolidated", "label": "是否并表", "width": 14},
     {"key": "online_3_status", "label": "是否上线3.0", "width": 18},
+    {"key": "monitoring_status", "label": "监控状态", "width": 14},
     {"key": "hos_station_code", "label": "HOS加油站编码", "width": 18},
     {"key": "landline_phone", "label": "固定电话", "width": 18},
     {"key": "status", "label": "站点状态", "width": 14},
@@ -8323,6 +8346,7 @@ def fetch_station_export_rows(cur, station_ids=None):
             END AS asset_type,
             COALESCE(s.is_consolidated, '否') AS is_consolidated,
             COALESCE(s.online_3_status, '未上线') AS online_3_status,
+            COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
             s.hos_station_code,
             s.landline_phone,
             COALESCE(s.status, '营业中') AS status,
@@ -9127,6 +9151,7 @@ def get_period_date_range(coverage_type, period_key):
 
 
 def sync_plan_station_items_completion_by_history(cur, plan_config_id):
+    ensure_inspection_completion_schema(cur)
     cur.execute(
         """
         SELECT id, inspection_table_id, coverage_type, period_key
@@ -9155,7 +9180,7 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
             END,
             completed_inspection_id = matched.inspection_id,
             completed_at = CASE
-                WHEN matched.inspection_id IS NOT NULL THEN COALESCE(matched.inspection_created_at, CURRENT_TIMESTAMP)
+                WHEN matched.inspection_id IS NOT NULL THEN COALESCE(matched.inspection_completed_at, matched.inspection_updated_at, matched.inspection_created_at, CURRENT_TIMESTAMP)
                 ELSE NULL
             END,
             updated_at = CURRENT_TIMESTAMP
@@ -9163,16 +9188,26 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
             SELECT
                 psi_inner.id AS psi_id,
                 matched_ins.id AS inspection_id,
+                matched_ins.inspector_completed_at AS inspection_completed_at,
+                matched_ins.updated_at AS inspection_updated_at,
                 matched_ins.created_at AS inspection_created_at
             FROM inspection_plan_station_items psi_inner
             LEFT JOIN LATERAL (
-                SELECT ins.id, ins.created_at
+                SELECT
+                    ins.id,
+                    ins.inspector_completed_at,
+                    ins.updated_at,
+                    ins.created_at
                 FROM inspections ins
                 WHERE ins.station_id = psi_inner.station_id
                   AND ins.inspection_table_id = %s
                   AND ins.inspection_date >= %s
                   AND ins.inspection_date < %s
-                ORDER BY ins.inspection_date DESC, ins.id DESC
+                  AND ins.inspector_completion_status = %s
+                ORDER BY
+                    COALESCE(ins.inspector_completed_at, ins.updated_at, ins.created_at) DESC,
+                    ins.inspection_date DESC,
+                    ins.id DESC
                 LIMIT 1
             ) AS matched_ins ON TRUE
             WHERE psi_inner.plan_config_id = %s
@@ -9184,6 +9219,7 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
             plan_config["inspection_table_id"],
             start_date,
             end_date,
+            INSPECTION_COMPLETION_DONE,
             plan_config_id,
         ),
     )
@@ -9218,28 +9254,24 @@ def mark_related_plan_items_completed(
 
         cur.execute(
             """
-            UPDATE inspection_plan_station_items psi
-            SET completion_status = 'completed',
-                completed_inspection_id = %s,
-                completed_at = %s,
-                updated_at = CURRENT_TIMESTAMP
+            SELECT pc.id
             FROM inspection_plan_configs pc
-            WHERE psi.plan_config_id = pc.id
-              AND pc.inspection_table_id = %s
+            JOIN inspection_plan_station_items psi ON psi.plan_config_id = pc.id
+            WHERE pc.inspection_table_id = %s
               AND pc.coverage_type = %s
               AND pc.period_key = %s
               AND psi.station_id = %s
               AND psi.is_included = TRUE;
             """,
             (
-                inspection_id,
-                beijing_now(),
                 inspection_table_id,
                 coverage_type,
                 period_key,
                 station_id,
             ),
         )
+        for row in cur.fetchall():
+            sync_plan_station_items_completion_by_history(cur, row["id"])
 
 
 # === Inspection Plan Configs API ===
@@ -9264,6 +9296,13 @@ def get_inspection_plan_configs():
             return jsonify({"success": False, "error": "用户不存在。"}), 404
         if not has_permission(cur, user, "view_inspection_plans"):
             return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
+
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        cur.execute("SELECT id FROM inspection_plan_configs;")
+        for plan_row in cur.fetchall():
+            sync_plan_station_items_completion_by_history(cur, plan_row["id"])
+        conn.commit()
 
         where_clauses = []
         params = []
@@ -9310,6 +9349,7 @@ def get_inspection_plan_configs():
                     pc.id,
                     pc.inspection_table_id,
                     it.table_name AS inspection_table_name,
+                    it.checklist_mode,
                     pc.coverage_type,
                     pc.period_key,
                     pc.status,
@@ -9332,6 +9372,7 @@ def get_inspection_plan_configs():
                     pc.id,
                     pc.inspection_table_id,
                     it.table_name,
+                    it.checklist_mode,
                     pc.coverage_type,
                     pc.period_key,
                     pc.status,
@@ -9362,6 +9403,8 @@ def get_inspection_plan_configs():
                     "id": row["id"],
                     "inspection_table_id": row["inspection_table_id"],
                     "inspection_table_name": row["inspection_table_name"],
+                    "checklist_mode": normalize_checklist_mode(row.get("checklist_mode")),
+                    "checklist_mode_label": "视频检查" if normalize_checklist_mode(row.get("checklist_mode")) == "online" else "现场检查",
                     "coverage_type": row["coverage_type"],
                     "coverage_type_label": COVERAGE_TYPE_LABELS.get(
                         row["coverage_type"], row["coverage_type"]
@@ -9410,6 +9453,7 @@ def get_inspection_plan_config_detail(plan_config_id):
                 pc.id,
                 pc.inspection_table_id,
                 it.table_name AS inspection_table_name,
+                it.checklist_mode,
                 pc.coverage_type,
                 pc.period_key,
                 pc.status,
@@ -9439,6 +9483,11 @@ def get_inspection_plan_config_detail(plan_config_id):
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        sync_plan_station_items_completion_by_history(cur, plan_config_id)
+        conn.commit()
+
         station_where_clauses = ["psi.plan_config_id = %s"]
         station_params = [plan_config_id]
         if not append_station_region_scope_filter(
@@ -9461,13 +9510,20 @@ def get_inspection_plan_config_detail(plan_config_id):
                 s.station_name,
                 s.region,
                 s.address,
+                COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 psi.is_included,
+                psi.assigned_inspector_id,
+                assigned_user.username AS assigned_inspector_username,
+                assigned_user.real_name AS assigned_inspector_name,
+                assigned_user.phone AS assigned_inspector_phone,
+                TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
                 psi.completion_status,
                 psi.completed_inspection_id,
                 TO_CHAR(psi.completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
+            LEFT JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
             WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,
@@ -9498,6 +9554,8 @@ def get_inspection_plan_config_detail(plan_config_id):
                     "id": config_row["id"],
                     "inspection_table_id": config_row["inspection_table_id"],
                     "inspection_table_name": config_row["inspection_table_name"],
+                    "checklist_mode": normalize_checklist_mode(config_row.get("checklist_mode")),
+                    "checklist_mode_label": "视频检查" if normalize_checklist_mode(config_row.get("checklist_mode")) == "online" else "现场检查",
                     "coverage_type": config_row["coverage_type"],
                     "coverage_type_label": COVERAGE_TYPE_LABELS.get(
                         config_row["coverage_type"], config_row["coverage_type"]
@@ -9556,9 +9614,13 @@ def save_inspection_plan_config_stations(plan_config_id):
 
         cur.execute(
             """
-            SELECT id, inspection_table_id
-            FROM inspection_plan_configs
-            WHERE id = %s
+            SELECT
+                pc.id,
+                pc.inspection_table_id,
+                COALESCE(NULLIF(it.checklist_mode, ''), 'online') AS checklist_mode
+            FROM inspection_plan_configs pc
+            JOIN inspection_tables it ON it.id = pc.inspection_table_id
+            WHERE pc.id = %s
             LIMIT 1;
             """,
             (plan_config_id,),
@@ -9577,6 +9639,8 @@ def save_inspection_plan_config_stations(plan_config_id):
 
         station_ids = []
         normalized_items = []
+        seen_station_ids = set()
+        inspector_ids = []
         for item in stations:
             if not isinstance(item, dict):
                 return (
@@ -9587,6 +9651,7 @@ def save_inspection_plan_config_stations(plan_config_id):
             station_id = item.get("station_id")
             is_included = bool(item.get("is_included", True))
             note = str(item.get("note", "")).strip() or None
+            assigned_inspector_id = item.get("assigned_inspector_id")
 
             if not station_id:
                 return (
@@ -9598,27 +9663,52 @@ def save_inspection_plan_config_stations(plan_config_id):
                     ),
                     400,
                 )
+            try:
+                station_id = int(station_id)
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "stations 中存在非法 station_id。"}), 400
+            if station_id in seen_station_ids:
+                return jsonify({"success": False, "error": "stations 中存在重复站点。"}), 400
+            seen_station_ids.add(station_id)
+
+            if assigned_inspector_id in ("", None):
+                assigned_inspector_id = None
+            else:
+                try:
+                    assigned_inspector_id = int(assigned_inspector_id)
+                except (TypeError, ValueError):
+                    return jsonify({"success": False, "error": "检查人参数不正确。"}), 400
+                if assigned_inspector_id <= 0:
+                    assigned_inspector_id = None
+            if assigned_inspector_id and assigned_inspector_id not in inspector_ids:
+                inspector_ids.append(assigned_inspector_id)
 
             station_ids.append(station_id)
             normalized_items.append(
                 {
                     "station_id": station_id,
                     "is_included": is_included,
+                    "assigned_inspector_id": assigned_inspector_id if is_included else None,
                     "note": note,
                 }
             )
 
+        station_map = {}
         if station_ids:
             cur.execute(
                 """
-                SELECT id
+                SELECT
+                    id,
+                    station_name,
+                    COALESCE(monitoring_status, '运行中') AS monitoring_status
                 FROM stations
                 WHERE id = ANY(%s);
                 """,
                 (station_ids,),
             )
             existing_station_rows = cur.fetchall()
-            existing_station_ids = {row["id"] for row in existing_station_rows}
+            station_map = {row["id"]: row for row in existing_station_rows}
+            existing_station_ids = set(station_map)
             missing_station_ids = [
                 sid for sid in station_ids if sid not in existing_station_ids
             ]
@@ -9633,10 +9723,60 @@ def save_inspection_plan_config_stations(plan_config_id):
                     400,
                 )
 
-        cur.execute(
-            "DELETE FROM inspection_plan_station_items WHERE plan_config_id = %s;",
-            (plan_config_id,),
-        )
+        is_online_plan = normalize_checklist_mode(config_row.get("checklist_mode")) == "online"
+        blocked_station_names = [
+            station_map[item["station_id"]]["station_name"]
+            for item in normalized_items
+            if is_online_plan
+            and item["is_included"]
+            and station_map.get(item["station_id"])
+            and station_map[item["station_id"]].get("monitoring_status") == "未运行"
+        ]
+        if blocked_station_names:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "以下站点没有监控，目前是建立视频检查任务，无法勾选纳入计划："
+                        + "、".join(blocked_station_names),
+                    }
+                ),
+                400,
+            )
+
+        if inspector_ids:
+            cur.execute(
+                """
+                SELECT id
+                FROM users
+                WHERE id = ANY(%s)
+                  AND role = 'supervisor';
+                """,
+                (inspector_ids,),
+            )
+            existing_inspector_ids = {row["id"] for row in cur.fetchall()}
+            missing_inspector_ids = [
+                inspector_id
+                for inspector_id in inspector_ids
+                if inspector_id not in existing_inspector_ids
+            ]
+            if missing_inspector_ids:
+                return jsonify({"success": False, "error": "只能分配给督导组角色账号。"}), 400
+
+        if station_ids:
+            cur.execute(
+                """
+                DELETE FROM inspection_plan_station_items
+                WHERE plan_config_id = %s
+                  AND NOT (station_id = ANY(%s));
+                """,
+                (plan_config_id, station_ids),
+            )
+        else:
+            cur.execute(
+                "DELETE FROM inspection_plan_station_items WHERE plan_config_id = %s;",
+                (plan_config_id,),
+            )
 
         for item in normalized_items:
             cur.execute(
@@ -9645,18 +9785,86 @@ def save_inspection_plan_config_stations(plan_config_id):
                     plan_config_id,
                     station_id,
                     is_included,
+                    assigned_inspector_id,
+                    assigned_by,
+                    assigned_at,
                     completion_status,
                     completed_inspection_id,
                     completed_at,
                     note,
                     updated_at
                 )
-                VALUES (%s, %s, %s, 'pending', NULL, NULL, %s, CURRENT_TIMESTAMP);
+                VALUES (
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    CASE WHEN %s IS NULL THEN NULL ELSE %s END,
+                    CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
+                    'pending',
+                    NULL,
+                    NULL,
+                    %s,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (plan_config_id, station_id)
+                DO UPDATE SET
+                    is_included = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.is_included
+                        ELSE EXCLUDED.is_included
+                    END,
+                    assigned_inspector_id = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.assigned_inspector_id
+                        WHEN EXCLUDED.is_included = FALSE
+                            THEN NULL
+                        ELSE EXCLUDED.assigned_inspector_id
+                    END,
+                    assigned_by = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.assigned_by
+                        WHEN EXCLUDED.is_included = FALSE
+                            THEN NULL
+                        WHEN EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                            THEN EXCLUDED.assigned_by
+                        ELSE inspection_plan_station_items.assigned_by
+                    END,
+                    assigned_at = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.assigned_at
+                        WHEN EXCLUDED.is_included = FALSE
+                            THEN NULL
+                        WHEN EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                            THEN CURRENT_TIMESTAMP
+                        ELSE inspection_plan_station_items.assigned_at
+                    END,
+                    completion_status = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.completion_status
+                        ELSE 'pending'
+                    END,
+                    completed_inspection_id = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.completed_inspection_id
+                        ELSE NULL
+                    END,
+                    completed_at = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.completed_at
+                        ELSE NULL
+                    END,
+                    note = EXCLUDED.note,
+                    updated_at = CURRENT_TIMESTAMP;
                 """,
                 (
                     plan_config_id,
                     item["station_id"],
                     item["is_included"],
+                    item["assigned_inspector_id"],
+                    item["assigned_inspector_id"],
+                    user_id,
+                    item["assigned_inspector_id"],
                     item["note"],
                 ),
             )
@@ -9678,6 +9886,154 @@ def save_inspection_plan_config_stations(plan_config_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-inspectors")
+def get_inspection_plan_inspectors():
+    conn = None
+    cur = None
+
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if not can_manage_plan(cur, current_user):
+            return jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                username,
+                real_name,
+                phone
+            FROM users
+            WHERE role = 'supervisor'
+            ORDER BY COALESCE(NULLIF(real_name, ''), username), id ASC;
+            """
+        )
+        return jsonify(
+            {
+                "success": True,
+                "items": [
+                    {
+                        "id": row["id"],
+                        "username": row["username"],
+                        "real_name": row["real_name"],
+                        "phone": row["phone"],
+                        "display_name": row["real_name"] or row["username"],
+                    }
+                    for row in cur.fetchall()
+                ],
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/my-pending")
+def get_my_pending_inspection_plan_assignments():
+    conn = None
+    cur = None
+
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+
+        if not has_permission(cur, current_user, "submit_inspections"):
+            return jsonify({"success": True, "pending_count": 0, "items": []})
+
+        cur.execute(
+            """
+            SELECT DISTINCT psi.plan_config_id
+            FROM inspection_plan_station_items psi
+            JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+            WHERE psi.assigned_inspector_id = %s
+              AND psi.is_included = TRUE
+              AND pc.status = 'active';
+            """,
+            (current_user["id"],),
+        )
+        for row in cur.fetchall():
+            sync_plan_station_items_completion_by_history(cur, row["plan_config_id"])
+        conn.commit()
+
+        cur.execute(
+            """
+            SELECT
+                psi.id,
+                psi.plan_config_id,
+                psi.station_id,
+                s.station_name,
+                COALESCE(s.region, '') AS region,
+                pc.inspection_table_id,
+                t.table_name AS inspection_table_name,
+                COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
+                pc.coverage_type,
+                pc.period_key,
+                TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
+                psi.note
+            FROM inspection_plan_station_items psi
+            JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+            JOIN inspection_tables t ON t.id = pc.inspection_table_id
+            JOIN stations s ON s.id = psi.station_id
+            WHERE psi.assigned_inspector_id = %s
+              AND psi.is_included = TRUE
+              AND psi.completion_status = 'pending'
+              AND pc.status = 'active'
+            ORDER BY
+                pc.updated_at DESC,
+                pc.id DESC,
+                COALESCE(s.region, ''),
+                s.station_name;
+            """,
+            (current_user["id"],),
+        )
+        items = []
+        for row in cur.fetchall():
+            mode = normalize_checklist_mode(row.get("checklist_mode"))
+            items.append(
+                {
+                    "id": row["id"],
+                    "plan_config_id": row["plan_config_id"],
+                    "station_id": row["station_id"],
+                    "station_name": row["station_name"],
+                    "region": row["region"],
+                    "inspection_table_id": row["inspection_table_id"],
+                    "inspection_table_name": row["inspection_table_name"],
+                    "checklist_mode": mode,
+                    "checklist_mode_label": "视频检查" if mode == "online" else "现场检查",
+                    "coverage_type": row["coverage_type"],
+                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(row["coverage_type"], row["coverage_type"]),
+                    "period_key": row["period_key"],
+                    "assigned_at": row["assigned_at"],
+                    "note": row["note"],
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "pending_count": len(items),
+                "items": items,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
     except Exception as e:
         if conn:
             conn.rollback()
@@ -11375,8 +11731,9 @@ def get_stations():
                     WHEN s.asset_type LIKE '%股权%' OR s.asset_type LIKE '%控股%' OR s.asset_type LIKE '%参股%' THEN '股权'
                     ELSE '全资'
                 END AS asset_type,
-                s.is_consolidated,
-                s.online_3_status,
+                COALESCE(s.is_consolidated, '否') AS is_consolidated,
+                COALESCE(s.online_3_status, '未上线') AS online_3_status,
+                COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 s.hos_station_code,
                 s.landline_phone,
                 s.status,
@@ -13220,6 +13577,7 @@ def get_management_stations():
                 END AS asset_type,
                 COALESCE(s.is_consolidated, '否') AS is_consolidated,
                 COALESCE(s.online_3_status, '未上线') AS online_3_status,
+                COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 s.hos_station_code,
                 s.landline_phone,
                 s.status,
@@ -13250,6 +13608,7 @@ def get_management_stations():
                     "asset_types": ["全资", "股权"],
                     "is_consolidated": ["是", "否"],
                     "online_3_statuses": ["上线", "上线参股模式", "未上线"],
+                    "monitoring_statuses": ["运行中", "未运行"],
                     "statuses": ["营业中", "停业"],
                 },
             }
@@ -13295,6 +13654,7 @@ def export_management_stations():
                 END AS asset_type,
                 COALESCE(is_consolidated, '否') AS is_consolidated,
                 COALESCE(online_3_status, '未上线') AS online_3_status,
+                COALESCE(monitoring_status, '运行中') AS monitoring_status,
                 hos_station_code,
                 landline_phone,
                 COALESCE(status, '营业中') AS status,
@@ -13416,6 +13776,7 @@ def import_management_stations():
                         asset_type,
                         is_consolidated,
                         online_3_status,
+                        monitoring_status,
                         hos_station_code,
                         landline_phone,
                         status,
@@ -13436,6 +13797,7 @@ def import_management_stations():
                         %(asset_type)s,
                         %(is_consolidated)s,
                         %(online_3_status)s,
+                        %(monitoring_status)s,
                         %(hos_station_code)s,
                         %(landline_phone)s,
                         %(status)s,
@@ -13456,6 +13818,7 @@ def import_management_stations():
                         asset_type = EXCLUDED.asset_type,
                         is_consolidated = EXCLUDED.is_consolidated,
                         online_3_status = EXCLUDED.online_3_status,
+                        monitoring_status = EXCLUDED.monitoring_status,
                         hos_station_code = EXCLUDED.hos_station_code,
                         landline_phone = EXCLUDED.landline_phone,
                         status = EXCLUDED.status,
@@ -13479,6 +13842,7 @@ def import_management_stations():
                         asset_type,
                         is_consolidated,
                         online_3_status,
+                        monitoring_status,
                         hos_station_code,
                         landline_phone,
                         status,
@@ -13498,6 +13862,7 @@ def import_management_stations():
                         %(asset_type)s,
                         %(is_consolidated)s,
                         %(online_3_status)s,
+                        %(monitoring_status)s,
                         %(hos_station_code)s,
                         %(landline_phone)s,
                         %(status)s,
@@ -13517,6 +13882,7 @@ def import_management_stations():
                         asset_type = EXCLUDED.asset_type,
                         is_consolidated = EXCLUDED.is_consolidated,
                         online_3_status = EXCLUDED.online_3_status,
+                        monitoring_status = EXCLUDED.monitoring_status,
                         hos_station_code = EXCLUDED.hos_station_code,
                         landline_phone = EXCLUDED.landline_phone,
                         status = EXCLUDED.status,
@@ -13668,6 +14034,7 @@ def create_management_station():
                 asset_type,
                 is_consolidated,
                 online_3_status,
+                monitoring_status,
                 hos_station_code,
                 landline_phone,
                 status,
@@ -13687,6 +14054,7 @@ def create_management_station():
                 %(asset_type)s,
                 %(is_consolidated)s,
                 %(online_3_status)s,
+                %(monitoring_status)s,
                 %(hos_station_code)s,
                 %(landline_phone)s,
                 %(status)s,
@@ -13752,6 +14120,7 @@ def update_management_station(station_id):
                 asset_type = %(asset_type)s,
                 is_consolidated = %(is_consolidated)s,
                 online_3_status = %(online_3_status)s,
+                monitoring_status = %(monitoring_status)s,
                 hos_station_code = %(hos_station_code)s,
                 landline_phone = %(landline_phone)s,
                 status = %(status)s,
@@ -15881,6 +16250,7 @@ def get_inspection_plan_overview():
                 pc.id,
                 pc.inspection_table_id,
                 it.table_name AS inspection_table_name,
+                it.checklist_mode,
                 pc.coverage_type,
                 pc.period_key,
                 pc.status,
@@ -15915,6 +16285,11 @@ def get_inspection_plan_overview():
         ):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
+        ensure_inspection_completion_schema(cur)
+        auto_complete_overdue_inspections(cur)
+        sync_plan_station_items_completion_by_history(cur, config_row["id"])
+        conn.commit()
+
         station_where_clauses = ["psi.plan_config_id = %s"]
         station_params = [config_row["id"]]
         if not append_station_region_scope_filter(
@@ -15937,13 +16312,20 @@ def get_inspection_plan_overview():
                 s.station_name,
                 s.region,
                 s.address,
+                COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 psi.is_included,
+                psi.assigned_inspector_id,
+                assigned_user.username AS assigned_inspector_username,
+                assigned_user.real_name AS assigned_inspector_name,
+                assigned_user.phone AS assigned_inspector_phone,
+                TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
                 psi.completion_status,
                 psi.completed_inspection_id,
                 TO_CHAR(psi.completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
+            LEFT JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
             WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,
@@ -15974,6 +16356,8 @@ def get_inspection_plan_overview():
                     "id": config_row["id"],
                     "inspection_table_id": config_row["inspection_table_id"],
                     "inspection_table_name": config_row["inspection_table_name"],
+                    "checklist_mode": normalize_checklist_mode(config_row.get("checklist_mode")),
+                    "checklist_mode_label": "视频检查" if normalize_checklist_mode(config_row.get("checklist_mode")) == "online" else "现场检查",
                     "coverage_type": config_row["coverage_type"],
                     "coverage_type_label": COVERAGE_TYPE_LABELS.get(
                         config_row["coverage_type"], config_row["coverage_type"]
@@ -18634,6 +19018,7 @@ def complete_inspection_by_inspector(inspection_id):
                 ins.id,
                 ins.station_id,
                 ins.inspection_table_id,
+                ins.inspection_date,
                 ins.inspector_completion_status,
                 s.station_name,
                 t.table_name
@@ -18656,6 +19041,13 @@ def complete_inspection_by_inspector(inspection_id):
             return jsonify({"success": False, "error": "只有参与该检查表录入的检查人员可以确认完成。"}), 403
 
         complete_inspection_record(cur, inspection_id, user_id, "manual")
+        mark_related_plan_items_completed(
+            cur,
+            inspection["station_id"],
+            inspection["inspection_table_id"],
+            inspection_id,
+            inspection["inspection_date"],
+        )
         conn.commit()
         return jsonify(
             {

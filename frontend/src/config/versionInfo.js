@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.4',
+    date: '2026-06-03',
+    title: '巡检计划派任务',
+    summary: '巡检计划可以按站点分配检查人，检查人可看到自己的待办任务。',
+    items: [
+      '站点数据新增监控状态。',
+      '视频检查计划不会纳入监控未运行站点。',
+      '巡检计划支持给站点任务分配检查人，并在顶部显示待办任务。'
+    ]
+  },
+  {
     version: 'v3.3',
     date: '2026-06-02',
     title: '成员互评上线',
