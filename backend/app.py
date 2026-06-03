@@ -501,6 +501,7 @@ DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
 INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
 ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
+INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -3367,6 +3368,117 @@ def ensure_inspection_completion_schema(cur):
     if connection:
         connection.commit()
     INSPECTION_COMPLETION_SCHEMA_READY = True
+
+
+def ensure_inspection_plan_assignment_schema(cur):
+    global INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY
+    if INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY:
+        return
+
+    acquire_schema_migration_lock(cur)
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD COLUMN IF NOT EXISTS monitoring_status TEXT NOT NULL DEFAULT '运行中';
+        """
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET monitoring_status = '运行中'
+        WHERE monitoring_status IS NULL
+           OR monitoring_status NOT IN ('运行中', '未运行');
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'stations_monitoring_status_check'
+            ) THEN
+                ALTER TABLE stations
+                ADD CONSTRAINT stations_monitoring_status_check
+                CHECK (monitoring_status IN ('运行中', '未运行'));
+            END IF;
+        END
+        $$;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_plan_station_items
+        ADD COLUMN IF NOT EXISTS assigned_inspector_id INTEGER;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_plan_station_items
+        ADD COLUMN IF NOT EXISTS assigned_by INTEGER;
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_plan_station_items
+        ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP;
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_attribute a
+                  ON a.attrelid = c.conrelid
+                 AND a.attnum = ANY(c.conkey)
+                WHERE c.contype = 'f'
+                  AND c.conrelid = 'inspection_plan_station_items'::regclass
+                  AND a.attname = 'assigned_inspector_id'
+            ) THEN
+                ALTER TABLE inspection_plan_station_items
+                ADD CONSTRAINT fk_inspection_plan_items_assigned_inspector
+                FOREIGN KEY (assigned_inspector_id) REFERENCES users(id) ON DELETE SET NULL;
+            END IF;
+        END
+        $$;
+        """
+    )
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_attribute a
+                  ON a.attrelid = c.conrelid
+                 AND a.attnum = ANY(c.conkey)
+                WHERE c.contype = 'f'
+                  AND c.conrelid = 'inspection_plan_station_items'::regclass
+                  AND a.attname = 'assigned_by'
+            ) THEN
+                ALTER TABLE inspection_plan_station_items
+                ADD CONSTRAINT fk_inspection_plan_items_assigned_by
+                FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL;
+            END IF;
+        END
+        $$;
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspection_plan_station_items_assigned_inspector_id
+        ON inspection_plan_station_items(assigned_inspector_id);
+        """
+    )
+    connection = getattr(cur, "connection", None)
+    if connection:
+        connection.commit()
+    INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = True
 
 
 def serialize_inspection_completion_config(row=None):
@@ -9298,6 +9410,7 @@ def get_inspection_plan_configs():
             return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
 
         ensure_inspection_completion_schema(cur)
+        ensure_inspection_plan_assignment_schema(cur)
         auto_complete_overdue_inspections(cur)
         cur.execute("SELECT id FROM inspection_plan_configs;")
         for plan_row in cur.fetchall():
@@ -9484,6 +9597,7 @@ def get_inspection_plan_config_detail(plan_config_id):
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
         ensure_inspection_completion_schema(cur)
+        ensure_inspection_plan_assignment_schema(cur)
         auto_complete_overdue_inspections(cur)
         sync_plan_station_items_completion_by_history(cur, plan_config_id)
         conn.commit()
@@ -9612,6 +9726,8 @@ def save_inspection_plan_config_stations(plan_config_id):
                 jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}),
                 403,
             )
+
+        ensure_inspection_plan_assignment_schema(cur)
 
         cur.execute(
             """
@@ -9977,6 +10093,7 @@ def get_inspection_plan_assignment_board():
             return jsonify({"success": False, "error": "当前账号无权查看巡检计划。"}), 403
 
         ensure_inspection_completion_schema(cur)
+        ensure_inspection_plan_assignment_schema(cur)
         auto_complete_overdue_inspections(cur)
         cur.execute(
             """
@@ -10240,6 +10357,7 @@ def get_my_pending_inspection_plan_assignments():
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_inspection_completion_schema(cur)
+        ensure_inspection_plan_assignment_schema(cur)
         auto_complete_overdue_inspections(cur)
 
         if not has_permission(cur, current_user, "submit_inspections"):
@@ -16574,6 +16692,7 @@ def get_inspection_plan_overview():
             return jsonify({"success": False, "error": "当前账号无权查看该检查表的巡检计划。"}), 403
 
         ensure_inspection_completion_schema(cur)
+        ensure_inspection_plan_assignment_schema(cur)
         auto_complete_overdue_inspections(cur)
         sync_plan_station_items_completion_by_history(cur, config_row["id"])
         conn.commit()
