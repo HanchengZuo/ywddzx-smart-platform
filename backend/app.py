@@ -361,6 +361,20 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "view_peer_reviews",
+        "name": "查看成员互评",
+        "category": "成员互评",
+        "description": "访问考核系统里的成员互评页面，参与填写并查看自己的评价记录。",
+        "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "manage_peer_review_tasks",
+        "name": "管理成员互评任务",
+        "category": "成员互评",
+        "description": "配置互评模板、发起互评任务，并查看所有人的评价内容和完成情况。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
         "key": "view_training",
         "name": "查看页面",
         "category": "督导组内部培训系统",
@@ -447,6 +461,7 @@ PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
     "adjust_station_scores": "view_station_scores",
     "reset_station_account_password": "manage_stations",
+    "manage_peer_review_tasks": "view_peer_reviews",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -7040,6 +7055,738 @@ def can_view_station_scores(cur, user):
 
 def can_adjust_station_scores(cur, user):
     return has_permission(cur, user, "adjust_station_scores")
+
+
+def can_view_peer_reviews(cur, user):
+    return has_permission(cur, user, "view_peer_reviews")
+
+
+def can_manage_peer_review_tasks(cur, user):
+    return has_permission(cur, user, "manage_peer_review_tasks")
+
+
+def ensure_peer_review_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_templates (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            default_deadline_at TIMESTAMP,
+            show_participation BOOLEAN NOT NULL DEFAULT TRUE,
+            show_reviewer BOOLEAN NOT NULL DEFAULT TRUE,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_template_items (
+            id SERIAL PRIMARY KEY,
+            template_id INTEGER NOT NULL REFERENCES peer_review_templates(id) ON DELETE CASCADE,
+            item_type TEXT NOT NULL DEFAULT 'score',
+            title TEXT NOT NULL,
+            description TEXT,
+            max_score INTEGER NOT NULL DEFAULT 5,
+            sort_order INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_template_participants (
+            template_id INTEGER NOT NULL REFERENCES peer_review_templates(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (template_id, user_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_template_reviewees (
+            template_id INTEGER NOT NULL REFERENCES peer_review_templates(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (template_id, user_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_tasks (
+            id SERIAL PRIMARY KEY,
+            template_id INTEGER REFERENCES peer_review_templates(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            deadline_at TIMESTAMP,
+            show_participation BOOLEAN NOT NULL DEFAULT TRUE,
+            show_reviewer BOOLEAN NOT NULL DEFAULT TRUE,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_task_items (
+            id SERIAL PRIMARY KEY,
+            task_id INTEGER NOT NULL REFERENCES peer_review_tasks(id) ON DELETE CASCADE,
+            source_template_item_id INTEGER REFERENCES peer_review_template_items(id) ON DELETE SET NULL,
+            item_type TEXT NOT NULL DEFAULT 'score',
+            title TEXT NOT NULL,
+            description TEXT,
+            max_score INTEGER NOT NULL DEFAULT 5,
+            sort_order INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_task_participants (
+            task_id INTEGER NOT NULL REFERENCES peer_review_tasks(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (task_id, user_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_task_reviewees (
+            task_id INTEGER NOT NULL REFERENCES peer_review_tasks(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (task_id, user_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_responses (
+            id SERIAL PRIMARY KEY,
+            task_id INTEGER NOT NULL REFERENCES peer_review_tasks(id) ON DELETE CASCADE,
+            reviewer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            reviewee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (task_id, reviewer_id, reviewee_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_review_response_items (
+            id SERIAL PRIMARY KEY,
+            response_id INTEGER NOT NULL REFERENCES peer_review_responses(id) ON DELETE CASCADE,
+            task_item_id INTEGER NOT NULL REFERENCES peer_review_task_items(id) ON DELETE CASCADE,
+            item_type TEXT NOT NULL DEFAULT 'score',
+            score_value INTEGER,
+            text_value TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (response_id, task_item_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_peer_review_tasks_status_deadline
+        ON peer_review_tasks (status, deadline_at);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_peer_review_responses_task_reviewer
+        ON peer_review_responses (task_id, reviewer_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_peer_review_responses_task_reviewee
+        ON peer_review_responses (task_id, reviewee_id);
+        """
+    )
+
+
+def normalize_peer_review_item_type(value):
+    item_type = str(value or "score").strip().lower()
+    return item_type if item_type in {"score", "text"} else "score"
+
+
+def normalize_peer_review_status(value):
+    status = str(value or "active").strip().lower()
+    return status if status in {"active", "closed"} else "active"
+
+
+def normalize_peer_review_id_list(raw_values):
+    if raw_values in (None, ""):
+        return []
+    if not isinstance(raw_values, list):
+        raw_values = [raw_values]
+    result = []
+    seen = set()
+    for raw_value in raw_values:
+        try:
+            item_id = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if item_id <= 0 or item_id in seen:
+            continue
+        seen.add(item_id)
+        result.append(item_id)
+    return result
+
+
+def normalize_peer_review_deadline(value):
+    text = normalize_text(value, 40)
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            if fmt == "%Y-%m-%d":
+                parsed = parsed.replace(hour=23, minute=59)
+            return parsed
+        except ValueError:
+            continue
+    raise ValueError("截止时间格式不正确。")
+
+
+def normalize_peer_review_items(raw_items):
+    if not isinstance(raw_items, list) or not raw_items:
+        raise ValueError("请至少配置一个评价项目。")
+    items = []
+    for index, raw_item in enumerate(raw_items, start=1):
+        if not isinstance(raw_item, dict):
+            continue
+        title = normalize_text(raw_item.get("title"), 120)
+        if not title:
+            continue
+        item_type = normalize_peer_review_item_type(raw_item.get("item_type"))
+        try:
+            max_score = int(raw_item.get("max_score") or 5)
+        except (TypeError, ValueError):
+            max_score = 5
+        max_score = min(max(max_score, 1), 10)
+        items.append(
+            {
+                "id": raw_item.get("id"),
+                "item_type": item_type,
+                "title": title,
+                "description": normalize_text(raw_item.get("description"), 300),
+                "max_score": max_score if item_type == "score" else 0,
+                "sort_order": index,
+            }
+        )
+    if not items:
+        raise ValueError("请至少配置一个有效评价项目。")
+    return items
+
+
+def fetch_peer_review_people(cur):
+    cur.execute(
+        """
+        SELECT id, username, real_name, role, phone
+        FROM users
+        WHERE role <> 'root'
+        ORDER BY
+            CASE role
+                WHEN 'supervisor' THEN 1
+                WHEN 'quality_safety' THEN 2
+                WHEN 'development_plan' THEN 3
+                WHEN 'area_account' THEN 4
+                WHEN 'station_manager' THEN 5
+                ELSE 9
+            END,
+            real_name ASC,
+            username ASC;
+        """
+    )
+    return [
+        {
+            "id": row["id"],
+            "username": row["username"],
+            "real_name": row["real_name"],
+            "display_name": row.get("real_name") or row.get("username") or f"用户{row['id']}",
+            "role": row["role"],
+            "phone": row["phone"],
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def get_peer_review_user_map(cur):
+    return {int(user["id"]): user for user in fetch_peer_review_people(cur)}
+
+
+def validate_peer_review_user_ids(cur, user_ids, field_label):
+    normalized_ids = normalize_peer_review_id_list(user_ids)
+    if not normalized_ids:
+        raise ValueError(f"请至少选择{field_label}。")
+    user_map = get_peer_review_user_map(cur)
+    invalid_ids = [user_id for user_id in normalized_ids if user_id not in user_map]
+    if invalid_ids:
+        raise ValueError(f"{field_label}中包含不存在或不可参与的用户。")
+    return normalized_ids
+
+
+def serialize_peer_review_template(cur, template_id):
+    cur.execute(
+        """
+        SELECT
+            t.id,
+            t.title,
+            t.description,
+            TO_CHAR(t.default_deadline_at, 'YYYY-MM-DD"T"HH24:MI') AS default_deadline_at,
+            t.show_participation,
+            t.show_reviewer,
+            t.is_active,
+            COALESCE(u.real_name, u.username, '') AS created_by_name,
+            TO_CHAR(t.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(t.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM peer_review_templates t
+        LEFT JOIN users u ON u.id = t.created_by
+        WHERE t.id = %s;
+        """,
+        (template_id,),
+    )
+    template = cur.fetchone()
+    if not template:
+        raise LookupError("互评模板不存在。")
+    payload = dict(template)
+    cur.execute(
+        """
+        SELECT id, item_type, title, description, max_score, sort_order
+        FROM peer_review_template_items
+        WHERE template_id = %s
+        ORDER BY sort_order ASC, id ASC;
+        """,
+        (template_id,),
+    )
+    payload["items"] = [dict(row) for row in cur.fetchall()]
+    cur.execute(
+        "SELECT user_id FROM peer_review_template_participants WHERE template_id = %s ORDER BY user_id ASC;",
+        (template_id,),
+    )
+    payload["participant_ids"] = [row["user_id"] for row in cur.fetchall()]
+    cur.execute(
+        "SELECT user_id FROM peer_review_template_reviewees WHERE template_id = %s ORDER BY user_id ASC;",
+        (template_id,),
+    )
+    payload["reviewee_ids"] = [row["user_id"] for row in cur.fetchall()]
+    return payload
+
+
+def upsert_peer_review_template(cur, data, actor, template_id=None):
+    title = normalize_text(data.get("title"), 120)
+    if not title:
+        raise ValueError("请填写互评任务标题。")
+    description = normalize_text(data.get("description"), 1000)
+    default_deadline_at = normalize_peer_review_deadline(data.get("default_deadline_at") or data.get("deadline_at"))
+    show_participation = normalize_boolean_flag(data.get("show_participation"), True)
+    show_reviewer = normalize_boolean_flag(data.get("show_reviewer"), True)
+    items = normalize_peer_review_items(data.get("items"))
+    participant_ids = validate_peer_review_user_ids(cur, data.get("participant_ids"), "填写人员")
+    reviewee_ids = validate_peer_review_user_ids(cur, data.get("reviewee_ids"), "被评人")
+
+    if template_id:
+        cur.execute(
+            """
+            UPDATE peer_review_templates
+            SET title = %s,
+                description = %s,
+                default_deadline_at = %s,
+                show_participation = %s,
+                show_reviewer = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id;
+            """,
+            (title, description, default_deadline_at, show_participation, show_reviewer, template_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise LookupError("互评模板不存在。")
+        target_template_id = row["id"]
+        cur.execute("DELETE FROM peer_review_template_items WHERE template_id = %s;", (target_template_id,))
+        cur.execute("DELETE FROM peer_review_template_participants WHERE template_id = %s;", (target_template_id,))
+        cur.execute("DELETE FROM peer_review_template_reviewees WHERE template_id = %s;", (target_template_id,))
+    else:
+        cur.execute(
+            """
+            INSERT INTO peer_review_templates (
+                title,
+                description,
+                default_deadline_at,
+                show_participation,
+                show_reviewer,
+                created_by,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id;
+            """,
+            (title, description, default_deadline_at, show_participation, show_reviewer, actor["id"]),
+        )
+        target_template_id = cur.fetchone()["id"]
+
+    for item in items:
+        cur.execute(
+            """
+            INSERT INTO peer_review_template_items (
+                template_id,
+                item_type,
+                title,
+                description,
+                max_score,
+                sort_order,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """,
+            (
+                target_template_id,
+                item["item_type"],
+                item["title"],
+                item["description"],
+                item["max_score"],
+                item["sort_order"],
+            ),
+        )
+    for participant_id in participant_ids:
+        cur.execute(
+            "INSERT INTO peer_review_template_participants (template_id, user_id) VALUES (%s, %s);",
+            (target_template_id, participant_id),
+        )
+    for reviewee_id in reviewee_ids:
+        cur.execute(
+            "INSERT INTO peer_review_template_reviewees (template_id, user_id) VALUES (%s, %s);",
+            (target_template_id, reviewee_id),
+        )
+    return serialize_peer_review_template(cur, target_template_id)
+
+
+def create_peer_review_task_from_template(cur, data, actor):
+    template_id = int(data.get("template_id") or 0)
+    if template_id <= 0:
+        raise ValueError("请选择需要发起的互评模板。")
+    template = serialize_peer_review_template(cur, template_id)
+    if not template.get("is_active"):
+        raise ValueError("该互评模板已停用，不能继续发起任务。")
+    title = normalize_text(data.get("title"), 120) or template["title"]
+    description = normalize_text(data.get("description"), 1000) or template.get("description") or ""
+    deadline_at = normalize_peer_review_deadline(data.get("deadline_at") or template.get("default_deadline_at"))
+    show_participation = normalize_boolean_flag(data.get("show_participation"), bool(template.get("show_participation")))
+    show_reviewer = normalize_boolean_flag(data.get("show_reviewer"), bool(template.get("show_reviewer")))
+    participant_ids = validate_peer_review_user_ids(
+        cur,
+        data.get("participant_ids") or template.get("participant_ids"),
+        "填写人员",
+    )
+    reviewee_ids = validate_peer_review_user_ids(
+        cur,
+        data.get("reviewee_ids") or template.get("reviewee_ids"),
+        "被评人",
+    )
+    items = normalize_peer_review_items(data.get("items") or template.get("items"))
+
+    cur.execute(
+        """
+        INSERT INTO peer_review_tasks (
+            template_id,
+            title,
+            description,
+            deadline_at,
+            show_participation,
+            show_reviewer,
+            status,
+            created_by,
+            created_at,
+            updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, 'active', %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id;
+        """,
+        (template_id, title, description, deadline_at, show_participation, show_reviewer, actor["id"]),
+    )
+    task_id = cur.fetchone()["id"]
+    source_items = template.get("items") or []
+    for index, item in enumerate(items):
+        source_id = item.get("id") or (source_items[index].get("id") if index < len(source_items) else None)
+        cur.execute(
+            """
+            INSERT INTO peer_review_task_items (
+                task_id,
+                source_template_item_id,
+                item_type,
+                title,
+                description,
+                max_score,
+                sort_order,
+                created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
+            """,
+            (
+                task_id,
+                source_id,
+                item["item_type"],
+                item["title"],
+                item["description"],
+                item["max_score"],
+                item["sort_order"],
+            ),
+        )
+    for participant_id in participant_ids:
+        cur.execute("INSERT INTO peer_review_task_participants (task_id, user_id) VALUES (%s, %s);", (task_id, participant_id))
+    for reviewee_id in reviewee_ids:
+        cur.execute("INSERT INTO peer_review_task_reviewees (task_id, user_id) VALUES (%s, %s);", (task_id, reviewee_id))
+    return task_id
+
+
+def get_peer_review_task_rows(cur, user, can_manage):
+    if can_manage:
+        cur.execute(
+            """
+            SELECT
+                t.*,
+                TO_CHAR(t.deadline_at, 'YYYY-MM-DD HH24:MI') AS deadline_label,
+                TO_CHAR(t.created_at, 'YYYY-MM-DD HH24:MI') AS created_at_label,
+                COALESCE(u.real_name, u.username, '') AS created_by_name
+            FROM peer_review_tasks t
+            LEFT JOIN users u ON u.id = t.created_by
+            ORDER BY t.created_at DESC, t.id DESC;
+            """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT
+                t.*,
+                TO_CHAR(t.deadline_at, 'YYYY-MM-DD HH24:MI') AS deadline_label,
+                TO_CHAR(t.created_at, 'YYYY-MM-DD HH24:MI') AS created_at_label,
+                COALESCE(u.real_name, u.username, '') AS created_by_name
+            FROM peer_review_tasks t
+            JOIN peer_review_task_participants p ON p.task_id = t.id
+            LEFT JOIN users u ON u.id = t.created_by
+            WHERE p.user_id = %s
+            ORDER BY t.created_at DESC, t.id DESC;
+            """,
+            (user["id"],),
+        )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def fetch_peer_review_task_people_maps(cur, task_ids, table_name):
+    if not task_ids:
+        return {}
+    if table_name not in {"peer_review_task_participants", "peer_review_task_reviewees"}:
+        return {task_id: [] for task_id in task_ids}
+    column_name = "task_id"
+    cur.execute(
+        f"""
+        SELECT
+            r.{column_name},
+            u.id,
+            u.username,
+            u.real_name,
+            u.role
+        FROM {table_name} r
+        JOIN users u ON u.id = r.user_id
+        WHERE r.{column_name} = ANY(%s)
+        ORDER BY u.real_name ASC, u.username ASC;
+        """,
+        (task_ids,),
+    )
+    result = {task_id: [] for task_id in task_ids}
+    for row in cur.fetchall():
+        task_id = row[column_name]
+        result.setdefault(task_id, []).append(
+            {
+                "id": row["id"],
+                "username": row["username"],
+                "real_name": row["real_name"],
+                "display_name": row.get("real_name") or row.get("username") or f"用户{row['id']}",
+                "role": row["role"],
+            }
+        )
+    return result
+
+
+def fetch_peer_review_task_items_map(cur, task_ids):
+    if not task_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT id, task_id, item_type, title, description, max_score, sort_order
+        FROM peer_review_task_items
+        WHERE task_id = ANY(%s)
+        ORDER BY task_id ASC, sort_order ASC, id ASC;
+        """,
+        (task_ids,),
+    )
+    result = {task_id: [] for task_id in task_ids}
+    for row in cur.fetchall():
+        result.setdefault(row["task_id"], []).append(dict(row))
+    return result
+
+
+def fetch_peer_review_responses_map(cur, task_ids, user, can_manage):
+    if not task_ids:
+        return {}
+    if can_manage:
+        cur.execute(
+            """
+            SELECT
+                r.id,
+                r.task_id,
+                r.reviewer_id,
+                r.reviewee_id,
+                TO_CHAR(r.submitted_at, 'YYYY-MM-DD HH24:MI') AS submitted_at,
+                TO_CHAR(r.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                COALESCE(reviewer.real_name, reviewer.username, '') AS reviewer_name,
+                COALESCE(reviewee.real_name, reviewee.username, '') AS reviewee_name
+            FROM peer_review_responses r
+            JOIN users reviewer ON reviewer.id = r.reviewer_id
+            JOIN users reviewee ON reviewee.id = r.reviewee_id
+            WHERE r.task_id = ANY(%s)
+            ORDER BY r.task_id ASC, r.submitted_at DESC, r.id DESC;
+            """,
+            (task_ids,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT
+                r.id,
+                r.task_id,
+                r.reviewer_id,
+                r.reviewee_id,
+                TO_CHAR(r.submitted_at, 'YYYY-MM-DD HH24:MI') AS submitted_at,
+                TO_CHAR(r.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                COALESCE(reviewer.real_name, reviewer.username, '') AS reviewer_name,
+                COALESCE(reviewee.real_name, reviewee.username, '') AS reviewee_name
+            FROM peer_review_responses r
+            JOIN users reviewer ON reviewer.id = r.reviewer_id
+            JOIN users reviewee ON reviewee.id = r.reviewee_id
+            WHERE r.task_id = ANY(%s)
+              AND r.reviewer_id = %s
+            ORDER BY r.task_id ASC, r.submitted_at DESC, r.id DESC;
+            """,
+            (task_ids, user["id"]),
+        )
+    responses = [dict(row) for row in cur.fetchall()]
+    response_ids = [row["id"] for row in responses]
+    item_map = {response_id: [] for response_id in response_ids}
+    if response_ids:
+        cur.execute(
+            """
+            SELECT
+                ri.response_id,
+                ri.task_item_id,
+                ri.item_type,
+                ri.score_value,
+                ri.text_value,
+                ti.title,
+                ti.max_score,
+                ti.sort_order
+            FROM peer_review_response_items ri
+            JOIN peer_review_task_items ti ON ti.id = ri.task_item_id
+            WHERE ri.response_id = ANY(%s)
+            ORDER BY ti.sort_order ASC, ti.id ASC;
+            """,
+            (response_ids,),
+        )
+        for row in cur.fetchall():
+            item_map.setdefault(row["response_id"], []).append(dict(row))
+    result = {task_id: [] for task_id in task_ids}
+    for response in responses:
+        response["items"] = item_map.get(response["id"], [])
+        result.setdefault(response["task_id"], []).append(response)
+    return result
+
+
+def build_peer_review_dashboard(cur, user, can_manage):
+    task_rows = get_peer_review_task_rows(cur, user, can_manage)
+    task_ids = [row["id"] for row in task_rows]
+    participants_map = fetch_peer_review_task_people_maps(cur, task_ids, "peer_review_task_participants")
+    reviewees_map = fetch_peer_review_task_people_maps(cur, task_ids, "peer_review_task_reviewees")
+    items_map = fetch_peer_review_task_items_map(cur, task_ids)
+    all_response_map = fetch_peer_review_responses_map(cur, task_ids, user, True)
+    visible_response_map = all_response_map if can_manage else fetch_peer_review_responses_map(cur, task_ids, user, False)
+
+    tasks = []
+    for row in task_rows:
+        task_id = row["id"]
+        participants = participants_map.get(task_id, [])
+        reviewees = reviewees_map.get(task_id, [])
+        items = items_map.get(task_id, [])
+        all_responses = all_response_map.get(task_id, [])
+        visible_responses = visible_response_map.get(task_id, [])
+        participant_ids = [person["id"] for person in participants]
+        reviewee_ids = [person["id"] for person in reviewees]
+        response_pairs = {(response["reviewer_id"], response["reviewee_id"]) for response in all_responses}
+        completed_participants = []
+        pending_participants = []
+        for participant in participants:
+            expected_reviewees = [reviewee_id for reviewee_id in reviewee_ids if reviewee_id != participant["id"]]
+            completed_count = len([reviewee_id for reviewee_id in expected_reviewees if (participant["id"], reviewee_id) in response_pairs])
+            is_completed = bool(expected_reviewees) and completed_count >= len(expected_reviewees)
+            if is_completed:
+                completed_participants.append(participant)
+            else:
+                pending_participants.append(participant)
+        current_expected_reviewees = [reviewee for reviewee in reviewees if reviewee["id"] != user["id"]]
+        my_completed_reviewee_ids = {
+            response["reviewee_id"]
+            for response in all_responses
+            if response["reviewer_id"] == user["id"]
+        }
+        my_pending_reviewees = [
+            reviewee
+            for reviewee in current_expected_reviewees
+            if reviewee["id"] not in my_completed_reviewee_ids
+        ] if user["id"] in participant_ids else []
+        task_status = normalize_peer_review_status(row.get("status"))
+        deadline_at = row.get("deadline_at")
+        is_expired = bool(deadline_at and deadline_at < datetime.now())
+
+        tasks.append(
+            {
+                "id": task_id,
+                "template_id": row.get("template_id"),
+                "title": row.get("title"),
+                "description": row.get("description") or "",
+                "deadline_at": row.get("deadline_label") or "",
+                "show_participation": bool(row.get("show_participation")),
+                "show_reviewer": bool(row.get("show_reviewer")),
+                "status": task_status,
+                "is_expired": is_expired,
+                "created_by_name": row.get("created_by_name") or "",
+                "created_at": row.get("created_at_label") or "",
+                "items": items,
+                "participants": participants,
+                "reviewees": reviewees,
+                "progress": {
+                    "participant_count": len(participants),
+                    "completed_count": len(completed_participants),
+                    "completed_participants": completed_participants if bool(row.get("show_participation")) or can_manage else [],
+                    "pending_participants": pending_participants if bool(row.get("show_participation")) or can_manage else [],
+                },
+                "my_pending_reviewees": my_pending_reviewees,
+                "my_completed_count": len(my_completed_reviewee_ids),
+                "responses": visible_responses,
+                "can_submit": bool(user["id"] in participant_ids and task_status == "active" and not is_expired),
+            }
+        )
+    return tasks
 
 
 def can_view_own_certificates(cur, user):
@@ -16481,7 +17228,11 @@ def get_my_issues():
 @app.route("/api/my-issues/pending-rectification-count", methods=["GET"])
 def get_my_pending_rectification_count():
     current_user = get_current_request_user()
-    if not is_station_manager(current_user) or not current_user.get("station_id"):
+    if (
+        not is_station_manager(current_user)
+        and not is_root_user(current_user)
+        and current_user.get("role") != "supervisor"
+    ):
         return jsonify({"success": True, "pending_count": 0})
 
     conn = None
@@ -16491,18 +17242,31 @@ def get_my_pending_rectification_count():
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
-        cur.execute(
-            """
-            SELECT COUNT(*) AS pending_count
-            FROM issues i
-            JOIN inspections ins ON i.inspection_id = ins.id
-            WHERE i.station_id = %s
-              AND i.status = '待整改'
-              AND ins.sign_status = '已签名确认'
-              AND COALESCE(i.audit_status, 'pending') = 'approved';
-            """,
-            (current_user["station_id"],),
-        )
+        if is_station_manager(current_user):
+            if not current_user.get("station_id"):
+                conn.commit()
+                return jsonify({"success": True, "pending_count": 0})
+            cur.execute(
+                """
+                SELECT COUNT(*) AS pending_count
+                FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
+                WHERE i.station_id = %s
+                  AND i.status = '待整改'
+                  AND ins.sign_status = '已签名确认'
+                  AND COALESCE(i.audit_status, 'pending') = 'approved';
+                """,
+                (current_user["station_id"],),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS pending_count
+                FROM issues i
+                WHERE i.status = '待复核'
+                  AND COALESCE(i.audit_status, 'pending') <> 'rejected';
+                """
+            )
         row = cur.fetchone()
         conn.commit()
         return jsonify({"success": True, "pending_count": int(row["pending_count"] or 0)})
@@ -18134,6 +18898,463 @@ def reopen_management_inspection_record(inspection_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews", methods=["GET"])
+def get_assessment_peer_reviews():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_peer_reviews(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权查看成员互评。"}), 403
+
+        can_manage = can_manage_peer_review_tasks(cur, user)
+        templates = []
+        people = fetch_peer_review_people(cur) if can_manage else []
+        if can_manage:
+            cur.execute(
+                """
+                SELECT id
+                FROM peer_review_templates
+                WHERE is_active = TRUE
+                ORDER BY updated_at DESC, id DESC;
+                """
+            )
+            templates = [serialize_peer_review_template(cur, row["id"]) for row in cur.fetchall()]
+
+        return jsonify(
+            {
+                "success": True,
+                "can_manage": can_manage,
+                "current_user": {
+                    "id": user["id"],
+                    "username": user["username"],
+                    "real_name": user["real_name"],
+                    "display_name": user.get("real_name") or user.get("username") or "",
+                },
+                "people": people,
+                "templates": templates,
+                "tasks": build_peer_review_dashboard(cur, user, can_manage),
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/pending-count", methods=["GET"])
+def get_assessment_peer_review_pending_count():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        conn.commit()
+
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user or not can_view_peer_reviews(cur, user):
+            return jsonify({"success": True, "pending_count": 0})
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT t.id) AS pending_count
+            FROM peer_review_tasks t
+            JOIN peer_review_task_participants p ON p.task_id = t.id
+            JOIN peer_review_task_reviewees r ON r.task_id = t.id
+            LEFT JOIN peer_review_responses resp
+              ON resp.task_id = t.id
+             AND resp.reviewer_id = p.user_id
+             AND resp.reviewee_id = r.user_id
+            WHERE p.user_id = %s
+              AND r.user_id <> %s
+              AND resp.id IS NULL
+              AND COALESCE(t.status, 'active') = 'active'
+              AND (t.deadline_at IS NULL OR t.deadline_at >= CURRENT_TIMESTAMP);
+            """,
+            (user["id"], user["id"]),
+        )
+        row = cur.fetchone()
+        return jsonify({"success": True, "pending_count": int(row["pending_count"] or 0)})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/templates", methods=["POST"])
+def create_assessment_peer_review_template():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权管理成员互评任务。"}), 403
+        template = upsert_peer_review_template(cur, data, user)
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评模板已创建。", "template": template})
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/templates/<int:template_id>", methods=["PUT"])
+def update_assessment_peer_review_template(template_id):
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权管理成员互评任务。"}), 403
+        template = upsert_peer_review_template(cur, data, user, template_id)
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评模板已保存。", "template": template})
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/templates/<int:template_id>", methods=["DELETE"])
+def delete_assessment_peer_review_template(template_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权管理成员互评任务。"}), 403
+        cur.execute(
+            """
+            DELETE FROM peer_review_templates
+            WHERE id = %s
+            RETURNING id;
+            """,
+            (template_id,),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "成员互评模板不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评模板已删除，历史任务不受影响。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/tasks", methods=["POST"])
+def create_assessment_peer_review_task():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权发起成员互评任务。"}), 403
+        task_id = create_peer_review_task_from_template(cur, data, user)
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评任务已发起。", "task_id": task_id})
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/tasks/<int:task_id>/status", methods=["PUT"])
+def update_assessment_peer_review_task_status(task_id):
+    data = request.get_json(silent=True) or {}
+    status = normalize_peer_review_status(data.get("status"))
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权管理成员互评任务。"}), 403
+        cur.execute(
+            """
+            UPDATE peer_review_tasks
+            SET status = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id;
+            """,
+            (status, task_id),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "成员互评任务不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评任务状态已更新。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/tasks/<int:task_id>", methods=["DELETE"])
+def delete_assessment_peer_review_task(task_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_manage_peer_review_tasks(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权删除成员互评任务。"}), 403
+        cur.execute(
+            """
+            DELETE FROM peer_review_tasks
+            WHERE id = %s
+            RETURNING id;
+            """,
+            (task_id,),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "成员互评任务不存在。"}), 404
+        conn.commit()
+        return jsonify({"success": True, "message": "成员互评任务已删除。"})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/assessment/peer-reviews/responses", methods=["POST"])
+def submit_assessment_peer_review_response():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        task_id = int(data.get("task_id") or 0)
+        reviewee_id = int(data.get("reviewee_id") or 0)
+        answers = data.get("answers") if isinstance(data.get("answers"), list) else []
+        if task_id <= 0 or reviewee_id <= 0:
+            raise ValueError("评价提交参数不完整。")
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_peer_review_schema(cur)
+        user = get_user_by_id(cur, g.current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_view_peer_reviews(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权提交成员互评。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, status, deadline_at
+            FROM peer_review_tasks
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (task_id,),
+        )
+        task = cur.fetchone()
+        if not task:
+            return jsonify({"success": False, "error": "成员互评任务不存在。"}), 404
+        if normalize_peer_review_status(task.get("status")) != "active":
+            return jsonify({"success": False, "error": "该互评任务已关闭，不能继续填写。"}), 400
+        if task.get("deadline_at") and task["deadline_at"] < datetime.now():
+            return jsonify({"success": False, "error": "该互评任务已超过截止时间。"}), 400
+        if int(user["id"]) == reviewee_id:
+            return jsonify({"success": False, "error": "成员互评不支持评价自己。"}), 400
+
+        cur.execute(
+            "SELECT 1 FROM peer_review_task_participants WHERE task_id = %s AND user_id = %s;",
+            (task_id, user["id"]),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "当前账号不是该任务的填写人员。"}), 403
+        cur.execute(
+            "SELECT 1 FROM peer_review_task_reviewees WHERE task_id = %s AND user_id = %s;",
+            (task_id, reviewee_id),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "该人员不是本任务的被评人。"}), 400
+        cur.execute(
+            """
+            SELECT id, item_type, title, max_score
+            FROM peer_review_task_items
+            WHERE task_id = %s
+            ORDER BY sort_order ASC, id ASC;
+            """,
+            (task_id,),
+        )
+        task_items = [dict(row) for row in cur.fetchall()]
+        if not task_items:
+            return jsonify({"success": False, "error": "该任务没有可填写的评价项目。"}), 400
+        answer_map = {}
+        for answer in answers:
+            if not isinstance(answer, dict):
+                continue
+            try:
+                answer_map[int(answer.get("task_item_id") or 0)] = answer
+            except (TypeError, ValueError):
+                continue
+
+        normalized_answers = []
+        for item in task_items:
+            answer = answer_map.get(int(item["id"])) or {}
+            if normalize_peer_review_item_type(item.get("item_type")) == "score":
+                try:
+                    score_value = int(answer.get("score_value") or 0)
+                except (TypeError, ValueError):
+                    score_value = 0
+                max_score = int(item.get("max_score") or 5)
+                if score_value < 1 or score_value > max_score:
+                    raise ValueError(f"请为“{item['title']}”选择 1-{max_score} 分。")
+                normalized_answers.append(
+                    {
+                        "task_item_id": item["id"],
+                        "item_type": "score",
+                        "score_value": score_value,
+                        "text_value": "",
+                    }
+                )
+            else:
+                text_value = normalize_text(answer.get("text_value"), 2000)
+                if not text_value:
+                    raise ValueError(f"请填写“{item['title']}”。")
+                normalized_answers.append(
+                    {
+                        "task_item_id": item["id"],
+                        "item_type": "text",
+                        "score_value": None,
+                        "text_value": text_value,
+                    }
+                )
+
+        cur.execute(
+            """
+            INSERT INTO peer_review_responses (
+                task_id,
+                reviewer_id,
+                reviewee_id,
+                submitted_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (task_id, reviewer_id, reviewee_id)
+            DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id;
+            """,
+            (task_id, user["id"], reviewee_id),
+        )
+        response_id = cur.fetchone()["id"]
+        cur.execute("DELETE FROM peer_review_response_items WHERE response_id = %s;", (response_id,))
+        for answer in normalized_answers:
+            cur.execute(
+                """
+                INSERT INTO peer_review_response_items (
+                    response_id,
+                    task_item_id,
+                    item_type,
+                    score_value,
+                    text_value,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                """,
+                (
+                    response_id,
+                    answer["task_item_id"],
+                    answer["item_type"],
+                    answer["score_value"],
+                    answer["text_value"],
+                ),
+            )
+        conn.commit()
+        return jsonify({"success": True, "message": "评价已提交。", "response_id": response_id})
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as e:
         if conn:
             conn.rollback()

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.3',
+    date: '2026-06-02',
+    title: '成员互评上线',
+    summary: '考核系统新增成员互评任务和填写功能。',
+    items: [
+      '新增成员互评页面。',
+      '支持互评模板复用和任务发起。',
+      '普通用户只看自己的评价记录，管理人员可查看全部完成情况。'
+    ]
+  },
+  {
     version: 'v3.2',
     date: '2026-06-02',
     title: '权限流转升级',

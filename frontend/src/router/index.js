@@ -61,6 +61,10 @@ const routes = [
     component: () => import('../views/assessment/StationScoreView.vue')
   },
   {
+    path: '/assessment/peer-review',
+    component: () => import('../views/assessment/PeerReviewView.vue')
+  },
+  {
     path: '/training',
     component: () => import('../views/Training.vue')
   },
@@ -156,6 +160,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
   if (path === '/assessment/station-score') return hasPermission(role, permissions, 'view_station_scores')
+  if (path === '/assessment/peer-review') return hasPermission(role, permissions, 'view_peer_reviews')
   if (path === '/training') return hasPermission(role, permissions, 'view_training')
   if (path === '/training/materials') return hasPermission(role, permissions, 'view_training_materials')
   if (path === '/vehicle') return role === 'supervisor'
@@ -177,6 +182,7 @@ const resolveFallbackPath = (role, permissions) => {
   }
   if (permissions.view_attendance) return '/assessment/attendance'
   if (permissions.view_station_scores) return '/assessment/station-score'
+  if (permissions.view_peer_reviews) return '/assessment/peer-review'
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
   if (permissions.view_training_materials) return '/training/materials'

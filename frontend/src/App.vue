@@ -209,6 +209,15 @@
           <span class="nav-item-icon">分</span>
           <span v-if="!sidebarCollapsed">站点评分</span>
         </button>
+        <button v-if="canViewPeerReviews" class="nav-item"
+          :class="{ active: isActive('/assessment/peer-review'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/assessment/peer-review')" :title="sidebarCollapsed ? '成员互评' : ''">
+          <span class="nav-item-icon feedback-nav-icon">
+            评
+            <span v-if="peerReviewPendingCount > 0" class="feedback-unread-badge">{{ peerReviewPendingDisplay }}</span>
+          </span>
+          <span v-if="!sidebarCollapsed">成员互评</span>
+        </button>
       </div>
 
       <div v-if="canViewTrainingSection" class="menu-section">
@@ -453,6 +462,7 @@ const sessionCheckIntervalMs = 60 * 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
+const PEER_REVIEW_PENDING_REFRESH_EVENT = 'peer-review-pending-refresh'
 let sessionMonitorTimer = null
 let dismissedSessionWarningToken = ''
 
@@ -466,9 +476,11 @@ const sessionNotice = reactive({
 const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
+const peerReviewPendingCount = ref(0)
 let feedbackUnreadRequestId = 0
 let inspectionSignPendingRequestId = 0
 let myPendingRectificationRequestId = 0
+let peerReviewPendingRequestId = 0
 
 const parseStoredPermissions = () => {
   try {
@@ -552,10 +564,12 @@ const canViewCertificates = computed(() => (
 const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment'))
 const canViewAttendance = computed(() => hasPermissionKey('view_attendance'))
 const canViewStationScores = computed(() => hasPermissionKey('view_station_scores'))
+const canViewPeerReviews = computed(() => hasPermissionKey('view_peer_reviews'))
 const canViewAssessmentSection = computed(() => (
   canViewAssessmentHome.value ||
   canViewAttendance.value ||
-  canViewStationScores.value
+  canViewStationScores.value ||
+  canViewPeerReviews.value
 ))
 const canViewTrainingInternal = computed(() => hasPermissionKey('view_training'))
 const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials'))
@@ -621,6 +635,10 @@ const inspectionSignPendingDisplay = computed(() => {
 })
 const myPendingRectificationDisplay = computed(() => {
   const count = Number(myPendingRectificationCount.value) || 0
+  return count > 99 ? '99+' : String(count)
+})
+const peerReviewPendingDisplay = computed(() => {
+  const count = Number(peerReviewPendingCount.value) || 0
   return count > 99 ? '99+' : String(count)
 })
 
@@ -772,6 +790,7 @@ const handleAuthStorageChange = (event) => {
     syncFeedbackUnreadForRoute()
     syncInspectionSignPendingForRoute()
     syncMyPendingRectificationForRoute()
+    syncPeerReviewPendingForRoute()
   }
 }
 
@@ -818,7 +837,11 @@ const refreshInspectionSignPendingCount = async () => {
 }
 
 const refreshMyPendingRectificationCount = async () => {
-  if (isLoginPage.value || authState.role !== 'station_manager' || !isUsableAuthToken(getStoredAuthToken())) {
+  if (
+    isLoginPage.value ||
+    !canViewMyIssues.value ||
+    !isUsableAuthToken(getStoredAuthToken())
+  ) {
     myPendingRectificationCount.value = 0
     return
   }
@@ -831,7 +854,30 @@ const refreshMyPendingRectificationCount = async () => {
     myPendingRectificationCount.value = Number(response.data?.pending_count || 0)
   } catch (error) {
     if (error?.response?.status && error.response.status !== 401) {
-      console.warn('我的待整改问题数量读取失败。', error)
+      console.warn('我的待办问题数量读取失败。', error)
+    }
+  }
+}
+
+const refreshPeerReviewPendingCount = async () => {
+  if (
+    isLoginPage.value ||
+    !canViewPeerReviews.value ||
+    !isUsableAuthToken(getStoredAuthToken())
+  ) {
+    peerReviewPendingCount.value = 0
+    return
+  }
+  const requestId = ++peerReviewPendingRequestId
+  try {
+    const response = await axios.get('/api/assessment/peer-reviews/pending-count', {
+      params: { _ts: Date.now() }
+    })
+    if (requestId !== peerReviewPendingRequestId) return
+    peerReviewPendingCount.value = Number(response.data?.pending_count || 0)
+  } catch (error) {
+    if (error?.response?.status && error.response.status !== 401) {
+      console.warn('成员互评待填写数量读取失败。', error)
     }
   }
 }
@@ -871,11 +917,16 @@ const syncMyPendingRectificationForRoute = () => {
   refreshMyPendingRectificationCount()
 }
 
+const syncPeerReviewPendingForRoute = () => {
+  refreshPeerReviewPendingCount()
+}
+
 const handleWindowFocus = () => {
   runSessionMonitor()
   syncFeedbackUnreadForRoute()
   syncInspectionSignPendingForRoute()
   syncMyPendingRectificationForRoute()
+  syncPeerReviewPendingForRoute()
 }
 
 const handleInspectionSignPendingRefresh = () => {
@@ -884,6 +935,10 @@ const handleInspectionSignPendingRefresh = () => {
 
 const handleMyPendingRectificationRefresh = () => {
   syncMyPendingRectificationForRoute()
+}
+
+const handlePeerReviewPendingRefresh = () => {
+  syncPeerReviewPendingForRoute()
 }
 
 watch(
@@ -896,11 +951,13 @@ watch(
       feedbackUnreadCount.value = 0
       inspectionSignPendingCount.value = 0
       myPendingRectificationCount.value = 0
+      peerReviewPendingCount.value = 0
     } else {
       window.setTimeout(runSessionMonitor, 0)
       window.setTimeout(syncFeedbackUnreadForRoute, 0)
       window.setTimeout(syncInspectionSignPendingForRoute, 0)
       window.setTimeout(syncMyPendingRectificationForRoute, 0)
+      window.setTimeout(syncPeerReviewPendingForRoute, 0)
     }
   },
   { immediate: true }
@@ -912,11 +969,13 @@ onMounted(() => {
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
+  window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
   runSessionMonitor()
   syncFeedbackUnreadForRoute()
   syncInspectionSignPendingForRoute()
   syncMyPendingRectificationForRoute()
+  syncPeerReviewPendingForRoute()
 })
 
 onBeforeUnmount(() => {
@@ -925,6 +984,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
+  window.removeEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null
@@ -949,6 +1009,7 @@ const resolveHomePath = (user) => {
   }
   if (permissions.view_attendance) return '/assessment/attendance'
   if (permissions.view_station_scores) return '/assessment/station-score'
+  if (permissions.view_peer_reviews) return '/assessment/peer-review'
   if (permissions.view_assessment) return '/assessment'
   if (permissions.view_training) return '/training'
   if (permissions.view_training_materials) return '/training/materials'

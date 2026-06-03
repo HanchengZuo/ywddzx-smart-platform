@@ -34,6 +34,7 @@ INIT_SQL_FILES = [
     "700_system_feedback.sql",
     "710_ai_usage_logs.sql",
     "720_assessment_station_scores.sql",
+    "730_assessment_peer_reviews.sql",
 ]
 
 
