@@ -9,6 +9,7 @@
       <div class="header-badges">
         <span class="status-pill info">检查表 {{ checklistItems.length }}</span>
         <span class="status-pill success">已上传 {{ uploadedCount }}</span>
+        <span class="status-pill standard-count">外部规范 {{ externalStandardCount }}</span>
         <span v-if="canManage && !isMobileView" class="status-pill manager">可维护原件</span>
       </div>
     </div>
@@ -282,6 +283,7 @@ const detectMobileViewport = () => {
 const isMobileView = ref(detectMobileViewport())
 
 const uploadedCount = computed(() => checklistItems.value.filter((item) => item.has_pdf).length)
+const externalStandardCount = computed(() => externalStandards.value.length)
 
 const activeItem = computed(() => {
   return checklistItems.value.find((item) => String(item.inspection_table_id) === String(activeTableId.value)) ||
@@ -623,6 +625,11 @@ onBeforeUnmount(() => {
 .status-pill.success {
   background: #ecfdf5;
   color: #15803d;
+}
+
+.status-pill.standard-count {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .status-pill.neutral {
