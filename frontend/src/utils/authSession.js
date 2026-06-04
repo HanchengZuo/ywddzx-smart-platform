@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { forceFrontendUpgradeReload, isFrontendVersionExpiredResponse } from './frontendVersion'
 
 const AUTH_STORAGE_KEYS = [
   'auth_token',
@@ -191,6 +192,9 @@ export const configureAxiosAuth = () => {
     (error) => {
       const status = error?.response?.status
       const url = String(error?.config?.url || '')
+      if (isFrontendVersionExpiredResponse(error)) {
+        forceFrontendUpgradeReload(error?.response?.data?.message || '系统已更新，正在刷新页面...')
+      }
       if (status === 401 && !url.includes('/api/login')) {
         notifyAuthSessionExpired(error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE)
       }

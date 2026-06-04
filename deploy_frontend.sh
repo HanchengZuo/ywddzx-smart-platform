@@ -20,4 +20,5 @@ rm -rf /var/www/ywddzx/*
 echo "📂 拷贝新文件..."
 cp -r dist/* /var/www/ywddzx/
 
+echo "ℹ️ 如线上使用 Nginx，请确认 server 配置已 include deploy/nginx/ywddzx-cache.conf，确保 index.html 不被缓存。"
 echo "✅ 前端部署完成！"

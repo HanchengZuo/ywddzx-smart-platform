@@ -2,6 +2,7 @@ from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -79,6 +80,21 @@ AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
 )
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
+FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.1").strip() or "3.4.1"
+FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
+FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
+AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
+AUTH_TOKEN_CACHE_MAX_ENTRIES = max(128, int(os.environ.get("AUTH_TOKEN_CACHE_MAX_ENTRIES", "2048")))
+LEGACY_FRONTEND_API_PATHS = {
+    "/api/feedbacks/unread-count",
+    "/api/assessment/peer-reviews/pending-count",
+    "/api/my-issues/pending-rectification-count",
+    "/api/inspection-plan-assignments/my-pending",
+}
+QUIET_ACCESS_LOG_PATHS = LEGACY_FRONTEND_API_PATHS | {
+    "/api/auth/me",
+    "/api/notifications/summary",
+}
 
 
 CHECKLIST_PHYSICAL_TABLE_PREFIX = "inspection_table_"
@@ -95,6 +111,30 @@ RESERVED_CHECKLIST_FIELD_KEYS = {
 
 def acquire_schema_migration_lock(cur):
     cur.execute("SELECT pg_advisory_xact_lock(%s);", (SCHEMA_MIGRATION_LOCK_KEY,))
+
+
+def frontend_version_expired_response():
+    response = jsonify(
+        {
+            "success": False,
+            "code": FRONTEND_VERSION_EXPIRED_CODE,
+            "message": FRONTEND_VERSION_EXPIRED_MESSAGE,
+        }
+    )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Clear-Site-Data"] = '"cache", "storage"'
+    return response, 426
+
+
+class QuietAccessLogFilter(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage()
+        return not any(path in message for path in QUIET_ACCESS_LOG_PATHS)
+
+
+logging.getLogger("werkzeug").addFilter(QuietAccessLogFilter())
 
 # === Permission constants ===
 ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan", "area_account"}
@@ -507,6 +547,10 @@ INSPECTION_COMPLETION_SCHEMA_READY = False
 INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
 FEEDBACK_SCHEMA_READY = False
 PLAN_COMPLETION_SYNC_LOCK_NAMESPACE = 2026060401
+auth_token_cache_lock = threading.Lock()
+auth_token_cache = {}
+auth_me_response_cache_lock = threading.Lock()
+auth_me_response_cache = {}
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -1823,6 +1867,110 @@ def extract_bearer_token():
     return ""
 
 
+def get_auth_cache_key(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def prune_auth_token_cache_locked(now):
+    if len(auth_token_cache) <= AUTH_TOKEN_CACHE_MAX_ENTRIES:
+        return
+    expired_keys = [
+        key
+        for key, item in auth_token_cache.items()
+        if now - item.get("cached_at", 0) >= AUTH_SERVER_CACHE_TTL_SECONDS
+        or int(item.get("payload", {}).get("exp") or 0) <= now
+    ]
+    for key in expired_keys:
+        auth_token_cache.pop(key, None)
+    if len(auth_token_cache) <= AUTH_TOKEN_CACHE_MAX_ENTRIES:
+        return
+    sorted_items = sorted(auth_token_cache.items(), key=lambda item: item[1].get("cached_at", 0))
+    for key, _ in sorted_items[: max(1, len(auth_token_cache) - AUTH_TOKEN_CACHE_MAX_ENTRIES)]:
+        auth_token_cache.pop(key, None)
+
+
+def get_cached_auth_token_user(token, payload, now):
+    cache_key = get_auth_cache_key(token)
+    with auth_token_cache_lock:
+        cached = auth_token_cache.get(cache_key)
+        if not cached:
+            return None
+        if cached.get("user_id") != payload.get("uid"):
+            auth_token_cache.pop(cache_key, None)
+            return None
+        if now - cached.get("cached_at", 0) >= AUTH_SERVER_CACHE_TTL_SECONDS:
+            auth_token_cache.pop(cache_key, None)
+            return None
+        if int(cached.get("payload", {}).get("exp") or 0) <= now:
+            auth_token_cache.pop(cache_key, None)
+            return None
+        return dict(cached["user"]), dict(cached["payload"])
+
+
+def set_cached_auth_token_user(token, user, payload):
+    now = current_epoch_seconds()
+    cache_key = get_auth_cache_key(token)
+    with auth_token_cache_lock:
+        prune_auth_token_cache_locked(now)
+        auth_token_cache[cache_key] = {
+            "user_id": int(user["id"]),
+            "user": dict(user),
+            "payload": dict(payload),
+            "cached_at": now,
+        }
+
+
+def get_auth_me_cache_key(user_id, token):
+    return f"{user_id}:{get_auth_cache_key(token)}"
+
+
+def get_cached_auth_me_payload(user_id, token):
+    now = current_epoch_seconds()
+    cache_key = get_auth_me_cache_key(user_id, token)
+    with auth_me_response_cache_lock:
+        cached = auth_me_response_cache.get(cache_key)
+        if not cached:
+            return None
+        if now - cached.get("cached_at", 0) >= AUTH_SERVER_CACHE_TTL_SECONDS:
+            auth_me_response_cache.pop(cache_key, None)
+            return None
+        return dict(cached["payload"])
+
+
+def set_cached_auth_me_payload(user_id, token, payload):
+    cache_key = get_auth_me_cache_key(user_id, token)
+    with auth_me_response_cache_lock:
+        auth_me_response_cache[cache_key] = {
+            "payload": dict(payload),
+            "cached_at": current_epoch_seconds(),
+        }
+
+
+def invalidate_auth_caches_for_user(user_id=None):
+    target_user_id = None
+    try:
+        target_user_id = int(user_id) if user_id is not None else None
+    except (TypeError, ValueError):
+        target_user_id = None
+
+    with auth_token_cache_lock:
+        if target_user_id is None:
+            auth_token_cache.clear()
+        else:
+            for key in list(auth_token_cache.keys()):
+                if auth_token_cache[key].get("user_id") == target_user_id:
+                    auth_token_cache.pop(key, None)
+
+    with auth_me_response_cache_lock:
+        if target_user_id is None:
+            auth_me_response_cache.clear()
+        else:
+            prefix = f"{target_user_id}:"
+            for key in list(auth_me_response_cache.keys()):
+                if key.startswith(prefix):
+                    auth_me_response_cache.pop(key, None)
+
+
 def verify_auth_token(token):
     try:
         payload = get_auth_serializer().loads(token)
@@ -1838,8 +1986,13 @@ def verify_auth_token(token):
     except (TypeError, ValueError) as exc:
         raise PermissionError("登录已过期，请重新登录。") from exc
 
-    if expires_at <= current_epoch_seconds():
+    now = current_epoch_seconds()
+    if expires_at <= now:
         raise PermissionError("登录已过期，请重新登录。")
+
+    cached_auth = get_cached_auth_token_user(token, payload, now)
+    if cached_auth:
+        return cached_auth
 
     conn = None
     cur = None
@@ -1858,7 +2011,8 @@ def verify_auth_token(token):
         raise PermissionError("登录已过期，请重新登录。")
     if payload.get("pwd") != get_password_fingerprint(user.get("password")):
         raise PermissionError("登录已过期，请重新登录。")
-    return user, payload
+    set_cached_auth_token_user(token, user, payload)
+    return dict(user), dict(payload)
 
 
 def normalize_identity_for_compare(value):
@@ -1896,10 +2050,13 @@ def iter_request_identity_values():
 def is_public_api_path(path):
     if not path.startswith("/api/"):
         return True
+    if path in LEGACY_FRONTEND_API_PATHS:
+        return True
     return path in {
         "/api/health",
         "/api/db-test",
         "/api/login",
+        "/api/version",
     }
 
 
@@ -10618,87 +10775,7 @@ def get_my_pending_inspection_plan_assignment_count():
 
 @app.route("/api/inspection-plan-assignments/my-pending")
 def get_my_pending_inspection_plan_assignments():
-    conn = None
-    cur = None
-
-    try:
-        current_user = get_current_request_user()
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_inspection_completion_schema(cur)
-        ensure_inspection_plan_assignment_schema(cur)
-
-        if not has_permission(cur, current_user, "submit_inspections"):
-            return jsonify({"success": True, "pending_count": 0, "items": []})
-
-        cur.execute(
-            """
-            SELECT
-                psi.id,
-                psi.plan_config_id,
-                psi.station_id,
-                s.station_name,
-                COALESCE(s.region, '') AS region,
-                pc.inspection_table_id,
-                t.table_name AS inspection_table_name,
-                COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
-                pc.coverage_type,
-                pc.period_key,
-                TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
-                psi.note
-            FROM inspection_plan_station_items psi
-            JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
-            JOIN inspection_tables t ON t.id = pc.inspection_table_id
-            JOIN stations s ON s.id = psi.station_id
-            WHERE psi.assigned_inspector_id = %s
-              AND psi.is_included = TRUE
-              AND psi.completion_status = 'pending'
-              AND pc.status = 'active'
-            ORDER BY
-                pc.updated_at DESC,
-                pc.id DESC,
-                COALESCE(s.region, ''),
-                s.station_name;
-            """,
-            (current_user["id"],),
-        )
-        items = []
-        for row in cur.fetchall():
-            mode = normalize_checklist_mode(row.get("checklist_mode"))
-            items.append(
-                {
-                    "id": row["id"],
-                    "plan_config_id": row["plan_config_id"],
-                    "station_id": row["station_id"],
-                    "station_name": row["station_name"],
-                    "region": row["region"],
-                    "inspection_table_id": row["inspection_table_id"],
-                    "inspection_table_name": row["inspection_table_name"],
-                    "checklist_mode": mode,
-                    "checklist_mode_label": "视频检查" if mode == "online" else "现场检查",
-                    "coverage_type": row["coverage_type"],
-                    "coverage_type_label": COVERAGE_TYPE_LABELS.get(row["coverage_type"], row["coverage_type"]),
-                    "period_key": row["period_key"],
-                    "assigned_at": row["assigned_at"],
-                    "note": row["note"],
-                }
-            )
-
-        return jsonify(
-            {
-                "success": True,
-                "pending_count": len(items),
-                "items": items,
-            }
-        )
-    except PermissionError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 401
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return frontend_version_expired_response()
 
 
 # Inspection batch support
@@ -11837,6 +11914,15 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/version")
+def get_frontend_version():
+    response = jsonify({"version": FRONTEND_APP_VERSION})
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.route("/api/db-test")
 def db_test():
     try:
@@ -11948,6 +12034,12 @@ def login():
 
 @app.route("/api/auth/me", methods=["GET"])
 def get_authenticated_user():
+    token = extract_bearer_token()
+    cached_payload = get_cached_auth_me_payload(g.current_user["id"], token)
+    if cached_payload:
+        cached_payload["expires_in"] = get_auth_payload_expires_in(getattr(g, "auth_payload", {}))
+        return jsonify(cached_payload)
+
     conn = None
     cur = None
     try:
@@ -11957,14 +12049,14 @@ def get_authenticated_user():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        return jsonify(
-            {
-                "success": True,
-                "token": extract_bearer_token(),
-                "expires_in": get_auth_payload_expires_in(getattr(g, "auth_payload", {})),
-                "user": build_auth_user_payload(cur, user),
-            }
-        )
+        response_payload = {
+            "success": True,
+            "token": token,
+            "expires_in": get_auth_payload_expires_in(getattr(g, "auth_payload", {})),
+            "user": build_auth_user_payload(cur, user),
+        }
+        set_cached_auth_me_payload(user["id"], token, response_payload)
+        return jsonify(response_payload)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
@@ -12030,6 +12122,7 @@ def change_own_password():
             (validated_password, user_id),
         )
         conn.commit()
+        invalidate_auth_caches_for_user(user_id)
 
         updated_user = fetch_auth_user_by_id(cur, user_id)
         token = create_auth_token(updated_user)
@@ -13386,6 +13479,7 @@ def update_management_user(target_user_id):
         apply_user_inspection_table_scope_updates(cur, updated_user, scope_ids, actor["id"])
         apply_user_station_region_scope_updates(cur, updated_user, region_scope_values, actor["id"])
         conn.commit()
+        invalidate_auth_caches_for_user(target_user_id)
         return jsonify({"success": True, "message": "用户已更新。"})
     except PermissionError as exc:
         if conn:
@@ -13461,23 +13555,7 @@ def delete_management_user(target_user_id):
 
 @app.route("/api/feedbacks/unread-count", methods=["GET"])
 def get_system_feedback_unread_count():
-    current_user = get_current_request_user()
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_feedback_schema(cur)
-        unread_count = get_feedback_unread_count(cur, current_user["id"])
-        conn.commit()
-        return jsonify({"success": True, "unread_count": unread_count})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return frontend_version_expired_response()
 
 
 @app.route("/api/feedbacks/mark-read", methods=["POST"])
@@ -14731,7 +14809,7 @@ def reset_management_station_account_password(station_id):
                 updated_at = CURRENT_TIMESTAMP
             WHERE role = 'station_manager'
               AND station_id = %s
-            RETURNING username, real_name;
+            RETURNING id, username, real_name;
             """,
             (DEFAULT_INITIAL_PASSWORD, station_id),
         )
@@ -14740,6 +14818,8 @@ def reset_management_station_account_password(station_id):
             return jsonify({"success": False, "error": "该站点暂无绑定站点账号。"}), 400
 
         conn.commit()
+        for account in accounts:
+            invalidate_auth_caches_for_user(account.get("id"))
         usernames = [account["username"] for account in accounts if account.get("username")]
         return jsonify(
             {
@@ -18368,55 +18448,7 @@ def get_my_issues():
 
 @app.route("/api/my-issues/pending-rectification-count", methods=["GET"])
 def get_my_pending_rectification_count():
-    current_user = get_current_request_user()
-    if (
-        not is_station_manager(current_user)
-        and not is_root_user(current_user)
-        and current_user.get("role") != "supervisor"
-    ):
-        return jsonify({"success": True, "pending_count": 0})
-
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_issue_inspector_schema(cur)
-        ensure_inspection_completion_schema(cur)
-        if is_station_manager(current_user):
-            if not current_user.get("station_id"):
-                conn.commit()
-                return jsonify({"success": True, "pending_count": 0})
-            cur.execute(
-                """
-                SELECT COUNT(*) AS pending_count
-                FROM issues i
-                JOIN inspections ins ON i.inspection_id = ins.id
-                WHERE i.station_id = %s
-                  AND i.status = '待整改'
-                  AND ins.sign_status = '已签名确认'
-                  AND COALESCE(i.audit_status, 'pending') = 'approved';
-                """,
-                (current_user["station_id"],),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT COUNT(*) AS pending_count
-                FROM issues i
-                WHERE i.status = '待复核'
-                  AND COALESCE(i.audit_status, 'pending') <> 'rejected';
-                """
-            )
-        row = cur.fetchone()
-        conn.commit()
-        return jsonify({"success": True, "pending_count": int(row["pending_count"] or 0)})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return frontend_version_expired_response()
 
 
 @app.route("/api/issues")
@@ -20110,44 +20142,7 @@ def get_assessment_peer_reviews():
 
 @app.route("/api/assessment/peer-reviews/pending-count", methods=["GET"])
 def get_assessment_peer_review_pending_count():
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_peer_review_schema(cur)
-        conn.commit()
-
-        user = get_user_by_id(cur, g.current_user["id"])
-        if not user or not can_view_peer_reviews(cur, user):
-            return jsonify({"success": True, "pending_count": 0})
-
-        cur.execute(
-            """
-            SELECT COUNT(DISTINCT t.id) AS pending_count
-            FROM peer_review_tasks t
-            JOIN peer_review_task_participants p ON p.task_id = t.id
-            JOIN peer_review_task_reviewees r ON r.task_id = t.id
-            LEFT JOIN peer_review_responses resp
-              ON resp.task_id = t.id
-             AND resp.reviewer_id = p.user_id
-             AND resp.reviewee_id = r.user_id
-            WHERE p.user_id = %s
-              AND r.user_id <> %s
-              AND resp.id IS NULL
-              AND COALESCE(t.status, 'active') = 'active'
-              AND (t.deadline_at IS NULL OR t.deadline_at >= CURRENT_TIMESTAMP);
-            """,
-            (user["id"], user["id"]),
-        )
-        row = cur.fetchone()
-        return jsonify({"success": True, "pending_count": int(row["pending_count"] or 0)})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return frontend_version_expired_response()
 
 
 @app.route("/api/assessment/peer-reviews/templates", methods=["POST"])
