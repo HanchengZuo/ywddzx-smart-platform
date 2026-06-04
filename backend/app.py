@@ -94,7 +94,11 @@ SERVER_ONLINE_USERS_PATH = os.environ.get(
     "SERVER_ONLINE_USERS_PATH",
     "/tmp/ywddzx_online_users.json",
 )
-SERVER_ONLINE_USER_TTL_SECONDS = max(60, int(os.environ.get("SERVER_ONLINE_USER_TTL_SECONDS", "300")))
+SERVER_ONLINE_USER_TTL_SECONDS = max(60, int(os.environ.get("SERVER_ONLINE_USER_TTL_SECONDS", "90")))
+SERVER_ONLINE_TOUCH_INTERVAL_SECONDS = max(
+    5,
+    int(os.environ.get("SERVER_ONLINE_TOUCH_INTERVAL_SECONDS", "15")),
+)
 LEGACY_FRONTEND_API_PATHS = {
     "/api/feedbacks/unread-count",
     "/api/assessment/peer-reviews/pending-count",
@@ -231,8 +235,30 @@ def swap_server_resource_sample(current_sample):
         return fallback_previous
 
 
-def update_online_user_count(user_id):
-    current_user_id = str(user_id or "").strip()
+def build_online_user_entry(user, now=None):
+    now = now or time.time()
+    user_id = str((user or {}).get("id") or "").strip()
+    role = str((user or {}).get("role") or "").strip()
+    display_name = (
+        normalize_text((user or {}).get("real_name"), 80)
+        or normalize_text((user or {}).get("username"), 80)
+        or f"用户{user_id}"
+    )
+    return {
+        "id": user_id,
+        "username": normalize_text((user or {}).get("username"), 80),
+        "real_name": normalize_text((user or {}).get("real_name"), 80),
+        "display_name": display_name,
+        "role": role,
+        "role_label": ROLE_LABELS.get(role, role or "未知角色"),
+        "station_name": normalize_text((user or {}).get("station_name"), 120),
+        "region": normalize_text((user or {}).get("region"), 120),
+        "last_seen": now,
+        "last_seen_label": datetime.fromtimestamp(now, BEIJING_TZ).strftime("%H:%M:%S"),
+    }
+
+
+def get_online_users_snapshot(current_user=None, include_users=False, touch=False):
     now = time.time()
     with server_online_users_lock:
         try:
@@ -245,25 +271,84 @@ def update_online_user_count(user_id):
                     online_users = {}
 
                 cutoff = now - SERVER_ONLINE_USER_TTL_SECONDS
-                online_users = {
-                    str(user_key): float(last_seen)
-                    for user_key, last_seen in online_users.items()
-                    if str(user_key).strip()
-                    and isinstance(last_seen, (int, float))
-                    and float(last_seen) >= cutoff
-                }
-                if current_user_id:
-                    online_users[current_user_id] = now
+                pruned_users = {}
+                for user_key, entry in online_users.items():
+                    if not str(user_key).strip() or not isinstance(entry, dict):
+                        continue
+                    try:
+                        last_seen = float(entry.get("last_seen") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if last_seen < cutoff:
+                        continue
+                    normalized_entry = dict(entry)
+                    normalized_entry["id"] = str(normalized_entry.get("id") or user_key)
+                    normalized_entry["last_seen"] = last_seen
+                    normalized_entry["last_seen_label"] = datetime.fromtimestamp(
+                        last_seen,
+                        BEIJING_TZ,
+                    ).strftime("%H:%M:%S")
+                    pruned_users[str(user_key)] = normalized_entry
+                online_users = pruned_users
+
+                current_user_id = str((current_user or {}).get("id") or "").strip()
+                if touch and current_user_id:
+                    online_users[current_user_id] = build_online_user_entry(current_user, now)
 
                 online_file.seek(0)
                 online_file.truncate()
                 json.dump(online_users, online_file)
                 online_file.flush()
-                os.fsync(online_file.fileno())
                 fcntl.flock(online_file.fileno(), fcntl.LOCK_UN)
-                return len(online_users)
+                users = sorted(
+                    online_users.values(),
+                    key=lambda item: float(item.get("last_seen") or 0),
+                    reverse=True,
+                )
+                if not include_users:
+                    users = []
+                return {"count": len(online_users), "users": users}
         except Exception:
-            return 0
+            return {"count": 0, "users": []}
+
+
+def touch_online_user_presence(user):
+    if not user:
+        return
+    user_id = str(user.get("id") or "").strip()
+    if not user_id:
+        return
+    now = time.time()
+    with server_online_touch_lock:
+        last_touch = float(server_online_touch_cache.get(user_id) or 0)
+        if now - last_touch < SERVER_ONLINE_TOUCH_INTERVAL_SECONDS:
+            return
+        server_online_touch_cache[user_id] = now
+    get_online_users_snapshot(user, include_users=False, touch=True)
+
+
+def remove_online_user_presence(user_id):
+    user_key = str(user_id or "").strip()
+    if not user_key:
+        return
+    with server_online_users_lock:
+        try:
+            with open(SERVER_ONLINE_USERS_PATH, "a+", encoding="utf-8") as online_file:
+                fcntl.flock(online_file.fileno(), fcntl.LOCK_EX)
+                online_file.seek(0)
+                raw_payload = online_file.read().strip()
+                online_users = json.loads(raw_payload) if raw_payload else {}
+                if not isinstance(online_users, dict):
+                    online_users = {}
+                if user_key in online_users:
+                    online_users.pop(user_key, None)
+                    online_file.seek(0)
+                    online_file.truncate()
+                    json.dump(online_users, online_file)
+                    online_file.flush()
+                fcntl.flock(online_file.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            return
 
 
 def build_server_resource_snapshot():
@@ -303,13 +388,20 @@ def build_server_resource_snapshot():
     if interval > 0 and previous.get("rx_bytes") is not None and previous.get("tx_bytes") is not None:
         rx_kbps = max(0, (net_bytes["rx_bytes"] - previous["rx_bytes"]) / 1024 / interval)
         tx_kbps = max(0, (net_bytes["tx_bytes"] - previous["tx_bytes"]) / 1024 / interval)
+    current_user = getattr(g, "current_user", None)
+    online_snapshot = get_online_users_snapshot(
+        current_user,
+        include_users=is_root_user(current_user),
+        touch=True,
+    )
 
     return {
         "cpu_percent": cpu_percent,
         "cpu_core_count": os.cpu_count() or 0,
         "network_rx_kbps": round(rx_kbps, 1),
         "network_tx_kbps": round(tx_kbps, 1),
-        "online_user_count": update_online_user_count(getattr(g, "current_user", {}).get("id")),
+        "online_user_count": online_snapshot["count"],
+        "online_users": online_snapshot["users"],
         "sampled_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         **memory_info,
     }
@@ -738,6 +830,8 @@ server_resource_last_sample = {
     "tx_bytes": None,
 }
 server_online_users_lock = threading.Lock()
+server_online_touch_lock = threading.Lock()
+server_online_touch_cache = {}
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -2267,6 +2361,7 @@ def require_signed_api_token():
 
     g.current_user = user
     g.auth_payload = payload
+    touch_online_user_presence(user)
     current_user_id = normalize_identity_for_compare(user["id"])
     for key, value in iter_request_identity_values():
         requested_user_id = normalize_identity_for_compare(value)
@@ -12204,6 +12299,7 @@ def login():
             )
 
         token = create_auth_token(user)
+        touch_online_user_presence(user)
         return jsonify(
             {
                 "success": True,
@@ -12224,6 +12320,12 @@ def login():
         )
     finally:
         close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout_authenticated_user():
+    remove_online_user_presence(g.current_user.get("id"))
+    return jsonify({"success": True})
 
 
 @app.route("/api/auth/me", methods=["GET"])

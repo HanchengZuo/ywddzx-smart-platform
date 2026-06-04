@@ -327,7 +327,7 @@
         </div>
 
         <div class="header-user-area">
-          <div class="server-resource-card" :class="serverResourceHealthClass" :title="serverResourceTooltip">
+          <div class="server-resource-card" :class="serverResourceHealthClass" :title="canViewOnlineUsers ? '' : serverResourceTooltip">
             <div class="server-resource-head">
               <span class="server-resource-dot"></span>
               <span>服务器</span>
@@ -345,9 +345,26 @@
                 <em>网速 MB/s</em>
                 <strong>{{ serverNetworkLabel }}</strong>
               </span>
-              <span class="server-resource-metric server-resource-online">
+              <span class="server-resource-metric server-resource-online" :class="{ interactive: canViewOnlineUsers }">
                 <em>在线</em>
                 <strong>{{ serverOnlineLabel }}</strong>
+                <div v-if="canViewOnlineUsers" class="server-online-popover">
+                  <div class="server-online-popover-head">
+                    <strong>当前在线用户</strong>
+                    <span>{{ serverOnlineUsers.length }} 人</span>
+                  </div>
+                  <div v-if="serverOnlineUsers.length" class="server-online-list">
+                    <div v-for="user in serverOnlineUsers" :key="`online-${user.id}`" class="server-online-item">
+                      <div class="server-online-avatar">{{ getOnlineUserInitial(user) }}</div>
+                      <div class="server-online-main">
+                        <strong>{{ user.display_name || user.username || `用户${user.id}` }}</strong>
+                        <span>{{ user.role_label || user.role || '未知角色' }} · {{ user.last_seen_label || '-' }}</span>
+                        <em>{{ [user.station_name, user.region].filter(Boolean).join(' · ') || '未绑定站点' }}</em>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="server-online-empty">暂无在线用户详情</div>
+                </div>
               </span>
             </div>
           </div>
@@ -563,6 +580,7 @@ const serverResourceState = reactive({
   networkRxKbps: 0,
   networkTxKbps: 0,
   onlineUserCount: 0,
+  onlineUsers: [],
   sampledAt: ''
 })
 
@@ -744,6 +762,10 @@ const serverNetworkLabel = computed(() => (
   `↓${formatNetworkSpeed(serverResourceState.networkRxKbps)} ↑${formatNetworkSpeed(serverResourceState.networkTxKbps)}`
 ))
 const serverOnlineLabel = computed(() => `${Number(serverResourceState.onlineUserCount || 0)}人`)
+const canViewOnlineUsers = computed(() => isRoot.value)
+const serverOnlineUsers = computed(() => (
+  Array.isArray(serverResourceState.onlineUsers) ? serverResourceState.onlineUsers : []
+))
 const mobileServerResourceLabel = computed(() => `CPU ${serverCpuLabel.value} · MEM ${serverMemoryLabel.value}`)
 const serverResourceTooltip = computed(() => {
   const memoryDetail = (
@@ -766,6 +788,11 @@ const serverResourceHealthClass = computed(() => {
   if (peak >= 70) return 'resource-warning'
   return 'resource-good'
 })
+
+const getOnlineUserInitial = (user) => {
+  const label = String(user?.display_name || user?.real_name || user?.username || user?.id || '?').trim()
+  return label.slice(0, 1).toUpperCase()
+}
 
 const syncAuthState = () => {
   authState.token = localStorage.getItem('auth_token') || ''
@@ -1015,6 +1042,7 @@ const resetServerResourceState = () => {
   serverResourceState.networkRxKbps = 0
   serverResourceState.networkTxKbps = 0
   serverResourceState.onlineUserCount = 0
+  serverResourceState.onlineUsers = []
   serverResourceState.sampledAt = ''
   serverResourceFetchedAt = 0
 }
@@ -1028,6 +1056,7 @@ const applyServerResourceState = (payload = {}) => {
   serverResourceState.networkRxKbps = Number(payload.network_rx_kbps || 0)
   serverResourceState.networkTxKbps = Number(payload.network_tx_kbps || 0)
   serverResourceState.onlineUserCount = Number(payload.online_user_count || 0)
+  serverResourceState.onlineUsers = Array.isArray(payload.online_users) ? payload.online_users : []
   serverResourceState.sampledAt = payload.sampled_at || ''
 }
 
@@ -1295,7 +1324,15 @@ const handleLogin = async () => {
   }
 }
 
-const handleLogout = () => {
+const handleLogout = async () => {
+  const token = getStoredAuthToken()
+  if (isUsableAuthToken(token)) {
+    try {
+      await axios.post('/api/auth/logout', {}, { timeout: 1200 })
+    } catch (error) {
+      // 退出登录不能被在线状态清理失败阻断。
+    }
+  }
   clearAuthSession()
   resetSessionNotice()
   resetPasswordChangeForm()
@@ -2556,8 +2593,152 @@ textarea:focus {
 }
 
 .server-resource-online {
+  position: relative;
   padding-left: 7px;
   border-left: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.server-resource-online.interactive {
+  cursor: default;
+}
+
+.server-resource-online.interactive strong {
+  color: #1d4ed8;
+}
+
+.server-online-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: -8px;
+  z-index: 1900;
+  width: min(340px, calc(100vw - 28px));
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(147, 197, 253, 0.55);
+  box-shadow: 0 24px 62px rgba(15, 23, 42, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: all 0.16s ease;
+}
+
+.server-resource-online.interactive:hover .server-online-popover,
+.server-resource-online.interactive:focus-within .server-online-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.server-online-popover::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  right: 20px;
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg);
+  background: #fff;
+  border-left: 1px solid rgba(147, 197, 253, 0.55);
+  border-top: 1px solid rgba(147, 197, 253, 0.55);
+}
+
+.server-online-popover-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dbeafe;
+}
+
+.server-online-popover-head strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.server-online-popover-head span {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.server-online-list {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: min(420px, 56vh);
+  overflow: auto;
+  padding: 12px 2px 0;
+}
+
+.server-online-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #eff6ff, #ffffff);
+  border: 1px solid rgba(191, 219, 254, 0.72);
+}
+
+.server-online-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #2563eb, #06b6d4);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.server-online-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.server-online-main strong,
+.server-online-main span,
+.server-online-main em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-online-main strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.server-online-main span,
+.server-online-main em {
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.server-online-empty {
+  position: relative;
+  z-index: 1;
+  padding: 16px 10px 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
 }
 
 .resource-good .server-resource-dot {
