@@ -27,3 +27,15 @@ CREATE TABLE inspections (
 
 CREATE INDEX IF NOT EXISTS idx_inspections_station_date
 ON inspections (station_id, inspection_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_date_id
+ON inspections (inspection_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_inspector_date_id
+ON inspections (inspector_id, inspection_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_table_date_id
+ON inspections (inspection_table_id, inspection_date DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_inspections_sign_status_date
+ON inspections (sign_status, inspection_date DESC);

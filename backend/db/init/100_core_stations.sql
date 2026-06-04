@@ -27,3 +27,6 @@ CREATE TABLE stations (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                         -- 创建时间
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP                          -- 更新时间
 );
+
+CREATE INDEX IF NOT EXISTS idx_stations_region_id
+ON stations (region, id);

@@ -158,7 +158,7 @@
         </div>
         <div class="filter-main-actions">
           <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-          <button class="btn btn-secondary" type="button" @click="fetchInspections" :disabled="loading">
+          <button class="btn btn-secondary" type="button" @click="fetchInspections({ forceOptions: true })" :disabled="loading">
             {{ loading ? '刷新中...' : '刷新数据' }}
           </button>
         </div>
@@ -277,8 +277,8 @@
         </div>
       </div>
 
-      <div v-if="!loading && groupedInspectionGroups.length" class="pagination-bar mobile-pagination-bar card-surface">
-        <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
+      <div v-if="!loading && totalRecords" class="pagination-bar mobile-pagination-bar card-surface">
+        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
             <label>每页显示</label>
@@ -464,7 +464,7 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ groupedInspectionGroups.length }} 组巡检记录</div>
+        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
             <label>每页显示</label>
@@ -766,6 +766,13 @@ const dropdownVisible = ref({
 })
 
 const list = shallowRef([])
+const totalRecords = ref(0)
+const filterOptions = ref({
+  stations: [],
+  inspectionTables: [],
+  inspectors: []
+})
+const filterOptionsLoaded = ref(false)
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -827,6 +834,9 @@ const pageSize = ref(5)
 const pageJumpInput = ref('')
 const recordImagesReady = ref(false)
 let recordImagesReadyTimer = null
+let inspectionFetchTimer = null
+let inspectionFetchSequence = 0
+let suppressNextPageFetch = false
 
 const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
 
@@ -944,24 +954,23 @@ const getInspectionInspectorOptionValues = (record) => {
     .filter(Boolean)
 }
 
-const filteredData = computed(() => {
-  return list.value.filter((item) => {
-    const matchedMonth = !filters.value.month || String(item.date || '').startsWith(filters.value.month)
-    const matchedDate = isDateInRange(item.date, filters.value.dateFrom, filters.value.dateTo)
-    const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
-    const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
-    const matchedInspector = matchesSelectedInspector(item, filters.value.inspector)
-    const matchedResult = !filters.value.result || item.result === filters.value.result
-    const matchedSignStatus = !filters.value.signStatus || getRecordSignFilterStatus(item) === filters.value.signStatus
-    const matchedCompletionStatus = !filters.value.completionStatus || getRecordCompletionFilterStatus(item) === filters.value.completionStatus
+const filteredData = computed(() => list.value)
 
-    return matchedMonth && matchedDate && matchedStation && matchedInspectionTableName && matchedInspector && matchedResult && matchedSignStatus && matchedCompletionStatus
-  })
-})
-
-const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
-const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
-const inspectorOptions = computed(() => uniqueSortedOptions(list.value.flatMap(getInspectionInspectorOptionValues)))
+const stationOptions = computed(() => uniqueSortedOptions(
+  filterOptions.value.stations.length
+    ? filterOptions.value.stations
+    : list.value.map((item) => item.station)
+))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(
+  filterOptions.value.inspectionTables.length
+    ? filterOptions.value.inspectionTables
+    : list.value.map((item) => item.inspection_table_name)
+))
+const inspectorOptions = computed(() => uniqueSortedOptions(
+  filterOptions.value.inspectors.length
+    ? filterOptions.value.inspectors
+    : list.value.flatMap(getInspectionInspectorOptionValues)
+))
 
 const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filterSearch.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
@@ -1759,7 +1768,7 @@ const submitInspectionSignature = async () => {
   }
 }
 
-const totalPage = computed(() => Math.max(1, Math.ceil(groupedInspectionGroups.value.length / pageSize.value)))
+const totalPage = computed(() => Math.max(1, Math.ceil(totalRecords.value / pageSize.value)))
 
 const visiblePageItems = computed(() => {
   const total = totalPage.value
@@ -1800,10 +1809,7 @@ const visiblePageItems = computed(() => {
   return result
 })
 
-const paginatedInspectionGroups = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return groupedInspectionGroups.value.slice(start, start + pageSize.value)
-})
+const paginatedInspectionGroups = computed(() => groupedInspectionGroups.value)
 
 const shouldShowStationDivider = (batch, batchIndex) => {
   if (batchIndex === 0) return true
@@ -1815,9 +1821,28 @@ const getRecordTableRowClasses = (rowIndex) => ({
   'batch-group-start-row': rowIndex === 0
 })
 
+const scheduleFetchInspections = () => {
+  if (inspectionFetchTimer) {
+    clearTimeout(inspectionFetchTimer)
+  }
+  inspectionFetchTimer = window.setTimeout(() => {
+    inspectionFetchTimer = null
+    fetchInspections()
+  }, 120)
+}
+
 watch([filters, pageSize], () => {
   page.value = 1
+  scheduleFetchInspections()
 }, { deep: true })
+
+watch(page, () => {
+  if (suppressNextPageFetch) {
+    suppressNextPageFetch = false
+    return
+  }
+  scheduleFetchInspections()
+})
 
 watch(totalPage, (value) => {
   if (page.value > value) {
@@ -1861,20 +1886,64 @@ watch(
   }
 )
 
-const fetchInspections = async () => {
+const serializeMultiFilter = (value) => JSON.stringify(Array.isArray(value) ? value : [])
+
+const fetchInspections = async (options = {}) => {
+  const sequence = ++inspectionFetchSequence
   try {
     loading.value = true
     const userId = localStorage.getItem('user_id') || ''
     const response = await axios.get('/api/inspections', {
       params: {
-        user_id: userId
+        user_id: userId,
+        page: page.value,
+        page_size: pageSize.value,
+        include_options: options?.forceOptions || !filterOptionsLoaded.value ? 1 : 0,
+        month: filters.value.month,
+        date_from: filters.value.dateFrom,
+        date_to: filters.value.dateTo,
+        stations: serializeMultiFilter(filters.value.station),
+        inspection_tables: serializeMultiFilter(filters.value.inspectionTableName),
+        inspectors: serializeMultiFilter(filters.value.inspector),
+        result: filters.value.result,
+        sign_status: filters.value.signStatus,
+        completion_status: filters.value.completionStatus
       }
     })
-    list.value = response.data || []
+    if (sequence !== inspectionFetchSequence) return
+
+    const payload = response.data || {}
+    if (Array.isArray(payload)) {
+      list.value = payload
+      totalRecords.value = payload.length
+      return
+    }
+
+    list.value = Array.isArray(payload.items) ? payload.items : []
+    totalRecords.value = Number(payload.total || 0)
+
+    if (payload.filter_options) {
+      filterOptions.value = {
+        stations: Array.isArray(payload.filter_options.stations) ? payload.filter_options.stations : [],
+        inspectionTables: Array.isArray(payload.filter_options.inspection_tables) ? payload.filter_options.inspection_tables : [],
+        inspectors: Array.isArray(payload.filter_options.inspectors) ? payload.filter_options.inspectors : []
+      }
+      filterOptionsLoaded.value = true
+    }
+
+    const serverPage = Number(payload.page || page.value)
+    if (Number.isFinite(serverPage) && serverPage >= 1 && serverPage !== page.value) {
+      suppressNextPageFetch = true
+      page.value = serverPage
+    }
   } catch (error) {
+    if (sequence !== inspectionFetchSequence) return
     list.value = []
+    totalRecords.value = 0
   } finally {
-    loading.value = false
+    if (sequence === inspectionFetchSequence) {
+      loading.value = false
+    }
   }
 }
 
@@ -2035,6 +2104,10 @@ onBeforeUnmount(() => {
   }
   if (recordImagesReadyTimer) {
     clearTimeout(recordImagesReadyTimer)
+  }
+  if (inspectionFetchTimer) {
+    clearTimeout(inspectionFetchTimer)
+    inspectionFetchTimer = null
   }
   if (signaturePadInstance.value) {
     signaturePadInstance.value.off()

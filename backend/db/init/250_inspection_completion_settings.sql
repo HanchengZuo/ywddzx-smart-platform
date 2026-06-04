@@ -54,6 +54,9 @@ ON inspections (station_id, inspection_table_id, inspection_date);
 CREATE INDEX IF NOT EXISTS idx_inspections_completion_status
 ON inspections (inspector_completion_status, inspection_date);
 
+CREATE INDEX IF NOT EXISTS idx_inspections_completion_status_date_desc
+ON inspections (inspector_completion_status, inspection_date DESC);
+
 CREATE TABLE IF NOT EXISTS inspection_completion_settings (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
     auto_complete_enabled BOOLEAN NOT NULL DEFAULT TRUE,

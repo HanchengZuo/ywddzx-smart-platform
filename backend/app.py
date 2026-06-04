@@ -21218,22 +21218,90 @@ def get_assessment_attendance():
 # 新增巡检记录接口
 @app.route("/api/inspections")
 def get_inspections():
+    def parse_request_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     user_id = str(request.args.get("user_id", "")).strip()
+    page = max(parse_request_int(request.args.get("page"), 1), 1)
+    page_size = max(1, min(parse_request_int(request.args.get("page_size"), 20), 100))
+    include_options = str(request.args.get("include_options", "")).strip().lower() in ("1", "true", "yes")
 
     conn = None
     cur = None
+
+    def parse_list_arg(*names):
+        values = []
+        for name in names:
+            for raw_value in request.args.getlist(name):
+                text = str(raw_value or "").strip()
+                if not text:
+                    continue
+                parsed_items = None
+                if text.startswith("["):
+                    try:
+                        parsed_json = json.loads(text)
+                        if isinstance(parsed_json, list):
+                            parsed_items = parsed_json
+                    except Exception:
+                        parsed_items = None
+                if parsed_items is None:
+                    if "|||" in text:
+                        parsed_items = text.split("|||")
+                    elif "," in text:
+                        parsed_items = text.split(",")
+                    else:
+                        parsed_items = [text]
+                values.extend(str(item or "").strip() for item in parsed_items)
+
+        result = []
+        seen = set()
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def normalize_date_arg(value):
+        text = str(value or "").strip()
+        return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+
+    def get_month_bounds(value):
+        text = str(value or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}", text):
+            return "", ""
+        month_start = datetime.strptime(f"{text}-01", "%Y-%m-%d").date()
+        next_month = (
+            month_start.replace(year=month_start.year + 1, month=1)
+            if month_start.month == 12
+            else month_start.replace(month=month_start.month + 1)
+        )
+        return month_start.isoformat(), (next_month - timedelta(days=1)).isoformat()
+
+    def empty_page_payload(filter_options=None):
+        return {
+            "success": True,
+            "items": [],
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 1,
+            "filter_options": filter_options or {},
+        }
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_inspector_schema(cur)
         ensure_inspection_completion_schema(cur)
-        auto_complete_overdue_inspections(cur)
         conn.commit()
 
         user = None
-        where_clauses = []
-        params = []
+        base_where_clauses = []
+        base_params = []
 
         if user_id:
             cur.execute(
@@ -21259,49 +21327,230 @@ def get_inspections():
             pass
         elif can_view_own:
             if not user["station_id"]:
-                return jsonify([])
-            where_clauses.append("ins.station_id = %s")
-            params.append(user["station_id"])
+                return jsonify(empty_page_payload())
+            base_where_clauses.append("ins.station_id = %s")
+            base_params.append(user["station_id"])
         else:
             return jsonify({"success": False, "error": "当前账号无权查看巡检记录。"}), 403
 
         if not append_inspection_table_scope_filter(
             cur,
             user,
-            where_clauses,
-            params,
+            base_where_clauses,
+            base_params,
             "ins.inspection_table_id",
             "limit_record_inspection_table_scope",
         ):
-            return jsonify([])
+            return jsonify(empty_page_payload())
         if not append_station_region_scope_filter(
             cur,
             user,
-            where_clauses,
-            params,
+            base_where_clauses,
+            base_params,
             "s.region",
             "limit_record_station_region_scope",
         ):
-            return jsonify([])
-        append_pending_audit_inspection_visibility_filter(user, where_clauses)
-
-        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            return jsonify(empty_page_payload())
+        append_pending_audit_inspection_visibility_filter(user, base_where_clauses)
         hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
 
-        cur.execute(
-            sql.SQL(
+        where_clauses = list(base_where_clauses)
+        params = list(base_params)
+        month_from, month_to = get_month_bounds(request.args.get("month"))
+        date_from = month_from or normalize_date_arg(request.args.get("date_from"))
+        date_to = month_to or normalize_date_arg(request.args.get("date_to"))
+        selected_stations = parse_list_arg("stations", "station")
+        selected_tables = parse_list_arg("inspection_tables", "inspection_table_name", "tables")
+        selected_inspectors = [] if hide_inspector_contact else parse_list_arg("inspectors", "inspector")
+        result_filter = str(request.args.get("result", "")).strip()
+        sign_filter = str(request.args.get("sign_status", "")).strip()
+        completion_filter = str(request.args.get("completion_status", "")).strip()
+
+        if date_from:
+            where_clauses.append("ins.inspection_date >= %s")
+            params.append(date_from)
+        if date_to:
+            where_clauses.append("ins.inspection_date <= %s")
+            params.append(date_to)
+        if selected_stations:
+            where_clauses.append("s.station_name = ANY(%s)")
+            params.append(selected_stations)
+        if selected_tables:
+            where_clauses.append("t.table_name = ANY(%s)")
+            params.append(selected_tables)
+        if selected_inspectors:
+            where_clauses.append(
                 """
+                (
+                    EXISTS (
+                        SELECT 1
+                        FROM users inspector_filter_user
+                        WHERE inspector_filter_user.id = ins.inspector_id
+                          AND (
+                              COALESCE(inspector_filter_user.real_name, '') = ANY(%s)
+                              OR COALESCE(inspector_filter_user.username, '') = ANY(%s)
+                              OR COALESCE(inspector_filter_user.phone, '') = ANY(%s)
+                          )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM issues inspector_filter_issue
+                        JOIN users inspector_filter_issue_user
+                          ON inspector_filter_issue_user.id = inspector_filter_issue.inspector_id
+                        WHERE inspector_filter_issue.inspection_id = ins.id
+                          AND inspector_filter_issue.inspector_id IS NOT NULL
+                          AND COALESCE(inspector_filter_issue.audit_status, 'pending') <> 'rejected'
+                          AND (
+                              COALESCE(inspector_filter_issue_user.real_name, '') = ANY(%s)
+                              OR COALESCE(inspector_filter_issue_user.username, '') = ANY(%s)
+                              OR COALESCE(inspector_filter_issue_user.phone, '') = ANY(%s)
+                          )
+                    )
+                )
+                """
+            )
+            params.extend([selected_inspectors] * 6)
+        if result_filter == "异常":
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM issues result_issue
+                    WHERE result_issue.inspection_id = ins.id
+                      AND COALESCE(result_issue.audit_status, 'pending') <> 'rejected'
+                )
+                """
+            )
+        elif result_filter == "正常":
+            where_clauses.append(
+                """
+                NOT EXISTS (
+                    SELECT 1
+                    FROM issues result_issue
+                    WHERE result_issue.inspection_id = ins.id
+                      AND COALESCE(result_issue.audit_status, 'pending') <> 'rejected'
+                )
+                """
+            )
+        if sign_filter == "signed":
+            where_clauses.append("COALESCE(ins.sign_status, '待签名确认') = '已签名确认'")
+        elif sign_filter == "pending":
+            where_clauses.append("COALESCE(ins.sign_status, '待签名确认') <> '已签名确认'")
+        if completion_filter == "completed":
+            where_clauses.append("COALESCE(ins.inspector_completion_status, '待检查人确认') = %s")
+            params.append(INSPECTION_COMPLETION_DONE)
+        elif completion_filter == "pending":
+            where_clauses.append("COALESCE(ins.inspector_completion_status, '待检查人确认') <> %s")
+            params.append(INSPECTION_COMPLETION_DONE)
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        filter_options = {}
+        if include_options:
+            station_option_clauses = []
+            station_option_params = []
+            if not can_view_all and can_view_own and user.get("station_id"):
+                station_option_clauses.append("id = %s")
+                station_option_params.append(user["station_id"])
+            else:
+                region_scope_values = get_effective_station_region_scope_values(
+                    cur, user, "limit_record_station_region_scope"
+                )
+                if region_scope_values is not None:
+                    if not region_scope_values:
+                        station_option_clauses.append("FALSE")
+                    else:
+                        station_option_clauses.append(
+                            "COALESCE(NULLIF(TRIM(region), ''), '未填写片区') = ANY(%s)"
+                        )
+                        station_option_params.append(list(region_scope_values))
+            station_option_where = (
+                f"WHERE {' AND '.join(station_option_clauses)}"
+                if station_option_clauses
+                else ""
+            )
+            cur.execute(
+                f"""
+                SELECT station_name
+                FROM stations
+                {station_option_where}
+                ORDER BY station_name ASC;
+                """,
+                station_option_params,
+            )
+            filter_options["stations"] = [
+                row["station_name"] for row in cur.fetchall() if row.get("station_name")
+            ]
+
+            table_option_clauses = ["COALESCE(is_active, TRUE) = TRUE"]
+            table_option_params = []
+            table_scope_ids = get_effective_inspection_table_scope_ids(
+                cur, user, "limit_record_inspection_table_scope"
+            )
+            if table_scope_ids is not None:
+                if not table_scope_ids:
+                    table_option_clauses.append("FALSE")
+                else:
+                    table_option_clauses.append("id = ANY(%s)")
+                    table_option_params.append(list(table_scope_ids))
+            table_option_where = f"WHERE {' AND '.join(table_option_clauses)}"
+            cur.execute(
+                f"""
+                SELECT table_name
+                FROM inspection_tables
+                {table_option_where}
+                ORDER BY table_name ASC;
+                """,
+                table_option_params,
+            )
+            filter_options["inspection_tables"] = [
+                row["table_name"] for row in cur.fetchall() if row.get("table_name")
+            ]
+            if hide_inspector_contact:
+                filter_options["inspectors"] = []
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT
+                        COALESCE(NULLIF(TRIM(real_name), ''), NULLIF(TRIM(username), ''), NULLIF(TRIM(phone), ''), id::text) AS label
+                    FROM users
+                    WHERE role IN ('root', 'supervisor')
+                    ORDER BY label ASC;
+                    """
+                )
+                filter_options["inspectors"] = [
+                    row["label"] for row in cur.fetchall() if row.get("label")
+                ]
+
+        cur.execute(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM inspections ins
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            {where_clause};
+            """,
+            params,
+        )
+        total = int((cur.fetchone() or {}).get("total") or 0)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        effective_page = min(page, total_pages)
+        offset = (effective_page - 1) * page_size
+
+        cur.execute(
+            f"""
+            WITH filtered_ids AS (
+                SELECT ins.id
+                FROM inspections ins
+                JOIN stations s ON ins.station_id = s.id
+                JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                {where_clause}
+                ORDER BY ins.inspection_date DESC, ins.id DESC
+                LIMIT %s OFFSET %s
+            ),
+            issue_stats AS (
                 SELECT
-                    ins.id AS id,
-                    ins.batch_id AS batch_id,
-                    ins.station_id AS station_id,
-                    TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
-                    s.station_name AS station,
-                    t.table_name AS inspection_table_name,
-                    CASE
-                        WHEN COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') <> 'rejected') > 0 THEN '异常'
-                        ELSE '正常'
-                    END AS result,
+                    i.inspection_id,
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') <> 'rejected') AS issue_count,
                     COUNT(i.id) AS total_issue_count,
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') = 'pending') AS pending_audit_count,
@@ -21310,123 +21559,143 @@ def get_inspections():
                         WHERE NULLIF(TRIM(COALESCE(i.rectification_result, '')), '') IS NOT NULL
                            OR NULLIF(TRIM(COALESCE(i.rectification_note, '')), '') IS NOT NULL
                            OR NULLIF(TRIM(COALESCE(i.rectification_photo_path, '')), '') IS NOT NULL
-                    ) AS rectified_issue_count,
-                    ins.sign_status,
-                    ins.station_manager_signed_name,
-                    ins.station_manager_signature_path,
-                    TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
-                    ins.inspector_completion_status,
-                    ins.inspector_completion_source,
-                    TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
-                    completed_user.username AS inspector_completed_by_username,
-                    completed_user.real_name AS inspector_completed_by_name,
-                    (
-                        SELECT STRING_AGG(
-                            DISTINCT COALESCE(participant.real_name, participant.username, participant.phone, participant.id::text),
-                            '、'
-                        )
-                        FROM (
-                            SELECT ins_part.inspector_id AS inspector_id
-                            FROM inspections ins_part
-                            WHERE ins_part.id = ins.id
-                            UNION
-                            SELECT issue_part.inspector_id AS inspector_id
-                            FROM issues issue_part
-                            WHERE issue_part.inspection_id = ins.id
-                              AND issue_part.inspector_id IS NOT NULL
-                              AND COALESCE(issue_part.audit_status, 'pending') <> 'rejected'
-                        ) participant_ids
-                        JOIN users participant ON participant.id = participant_ids.inspector_id
+                    ) AS rectified_issue_count
+                FROM issues i
+                JOIN filtered_ids fid ON fid.id = i.inspection_id
+                GROUP BY i.inspection_id
+            ),
+            participant_rows AS (
+                SELECT fid.id AS inspection_id, ins.inspector_id AS inspector_id
+                FROM filtered_ids fid
+                JOIN inspections ins ON ins.id = fid.id
+                WHERE ins.inspector_id IS NOT NULL
+                UNION
+                SELECT fid.id AS inspection_id, issue_part.inspector_id AS inspector_id
+                FROM filtered_ids fid
+                JOIN issues issue_part ON issue_part.inspection_id = fid.id
+                WHERE issue_part.inspector_id IS NOT NULL
+                  AND COALESCE(issue_part.audit_status, 'pending') <> 'rejected'
+            ),
+            participant_stats AS (
+                SELECT
+                    pr.inspection_id,
+                    STRING_AGG(
+                        DISTINCT COALESCE(participant.real_name, participant.username, participant.phone, participant.id::text),
+                        '、'
                     ) AS inspector_names,
-                    (
-                        SELECT STRING_AGG(
-                            DISTINCT CONCAT_WS(' ', participant.real_name, participant.username, participant.phone),
-                            ' '
-                        )
-                        FROM (
-                            SELECT ins_part.inspector_id AS inspector_id
-                            FROM inspections ins_part
-                            WHERE ins_part.id = ins.id
-                            UNION
-                            SELECT issue_part.inspector_id AS inspector_id
-                            FROM issues issue_part
-                            WHERE issue_part.inspection_id = ins.id
-                              AND issue_part.inspector_id IS NOT NULL
-                              AND COALESCE(issue_part.audit_status, 'pending') <> 'rejected'
-                        ) participant_ids
-                        JOIN users participant ON participant.id = participant_ids.inspector_id
+                    STRING_AGG(
+                        DISTINCT CONCAT_WS(' ', participant.real_name, participant.username, participant.phone),
+                        ' '
                     ) AS inspector_search_text,
-                    BOOL_OR(
-                        ins.inspector_id = %s
-                        OR (
-                            i.inspector_id = %s
-                            AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+                    JSONB_AGG(
+                        DISTINCT JSONB_BUILD_OBJECT(
+                            'id', participant.id,
+                            'username', participant.username,
+                            'real_name', participant.real_name,
+                            'phone', participant.phone
                         )
-                    ) AS current_user_participated
-                FROM inspections ins
-                JOIN stations s ON ins.station_id = s.id
-                JOIN inspection_tables t ON ins.inspection_table_id = t.id
-                LEFT JOIN users completed_user ON completed_user.id = ins.inspector_completed_by
-                LEFT JOIN issues i ON ins.id = i.inspection_id
-                {where_clause}
-                GROUP BY
-                    ins.id,
-                    ins.batch_id,
-                    ins.inspection_date,
-                    s.station_name,
-                    t.table_name,
-                    ins.sign_status,
-                    ins.station_manager_signed_name,
-                    ins.station_manager_signature_path,
-                    ins.station_manager_signed_at,
-                    ins.inspector_completion_status,
-                    ins.inspector_completion_source,
-                    ins.inspector_completed_at,
-                    completed_user.username,
-                    completed_user.real_name
-                ORDER BY ins.inspection_date DESC, ins.id DESC;
-                """
-            ).format(where_clause=sql.SQL(where_clause)),
-            [user["id"], user["id"], *params],
+                    ) FILTER (WHERE participant.id IS NOT NULL) AS inspectors
+                FROM participant_rows pr
+                JOIN users participant ON participant.id = pr.inspector_id
+                GROUP BY pr.inspection_id
+            )
+            SELECT
+                ins.id AS id,
+                ins.batch_id AS batch_id,
+                ins.station_id AS station_id,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
+                s.station_name AS station,
+                t.table_name AS inspection_table_name,
+                CASE
+                    WHEN COALESCE(issue_stats.issue_count, 0) > 0 THEN '异常'
+                    ELSE '正常'
+                END AS result,
+                COALESCE(issue_stats.issue_count, 0) AS issue_count,
+                COALESCE(issue_stats.total_issue_count, 0) AS total_issue_count,
+                COALESCE(issue_stats.pending_audit_count, 0) AS pending_audit_count,
+                COALESCE(issue_stats.audited_issue_count, 0) AS audited_issue_count,
+                COALESCE(issue_stats.rectified_issue_count, 0) AS rectified_issue_count,
+                ins.sign_status,
+                ins.station_manager_signed_name,
+                ins.station_manager_signature_path,
+                TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+                ins.inspector_completion_status,
+                ins.inspector_completion_source,
+                TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
+                completed_user.username AS inspector_completed_by_username,
+                completed_user.real_name AS inspector_completed_by_name,
+                participant_stats.inspector_names,
+                participant_stats.inspector_search_text,
+                COALESCE(participant_stats.inspectors, '[]'::jsonb) AS inspectors,
+                EXISTS (
+                    SELECT 1
+                    FROM participant_rows current_participant
+                    WHERE current_participant.inspection_id = ins.id
+                      AND current_participant.inspector_id = %s
+                ) AS current_user_participated
+            FROM filtered_ids fid
+            JOIN inspections ins ON ins.id = fid.id
+            JOIN stations s ON ins.station_id = s.id
+            JOIN inspection_tables t ON ins.inspection_table_id = t.id
+            LEFT JOIN users completed_user ON completed_user.id = ins.inspector_completed_by
+            LEFT JOIN issue_stats ON issue_stats.inspection_id = ins.id
+            LEFT JOIN participant_stats ON participant_stats.inspection_id = ins.id
+            ORDER BY ins.inspection_date DESC, ins.id DESC;
+            """,
+            [*params, page_size, offset, user["id"]],
         )
         rows = cur.fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            inspectors = item.get("inspectors") or []
+            if isinstance(inspectors, str):
+                try:
+                    inspectors = json.loads(inspectors)
+                except Exception:
+                    inspectors = []
+            item["inspector_names"] = "" if hide_inspector_contact else item.get("inspector_names")
+            item["inspector_search_text"] = "" if hide_inspector_contact else item.get("inspector_search_text")
+            item["inspectors"] = [] if hide_inspector_contact else inspectors
+            item["can_delete_record"] = bool(can_delete_records)
+            item["can_reset_signature"] = bool(
+                can_reset_signature
+                and item.get("sign_status") == "已签名确认"
+                and int(item.get("rectified_issue_count") or 0) == 0
+            )
+            item["reset_signature_lock_reason"] = (
+                "已有站经理整改，不能重置签名。"
+                if int(item.get("rectified_issue_count") or 0) > 0
+                else ""
+            )
+            item["can_sign_record"] = bool(
+                is_station_manager(user)
+                and can_sign_records
+                and item.get("sign_status") != "已签名确认"
+                and user.get("station_id")
+                and item.get("station_id") == user.get("station_id")
+                and int(item.get("pending_audit_count") or 0) == 0
+            )
+            item["can_complete_record"] = bool(
+                is_supervisor_like(user)
+                and item.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE
+                and item.get("current_user_participated")
+            )
+            item["inspector_completion_source_label"] = inspection_completion_source_label(
+                item.get("inspector_completion_source")
+            )
+            items.append(item)
+
         return jsonify(
-            [
-                {
-                    **dict(row),
-                    "inspector_names": "" if hide_inspector_contact else row.get("inspector_names"),
-                    "inspector_search_text": "" if hide_inspector_contact else row.get("inspector_search_text"),
-                    "inspectors": [] if hide_inspector_contact else row.get("inspectors", []),
-                    "can_delete_record": bool(can_delete_records),
-                    "can_reset_signature": bool(
-                        can_reset_signature
-                        and row.get("sign_status") == "已签名确认"
-                        and int(row.get("rectified_issue_count") or 0) == 0
-                    ),
-                    "reset_signature_lock_reason": (
-                        "已有站经理整改，不能重置签名。"
-                        if int(row.get("rectified_issue_count") or 0) > 0
-                        else ""
-                    ),
-                    "can_sign_record": bool(
-                        is_station_manager(user)
-                        and can_sign_records
-                        and row.get("sign_status") != "已签名确认"
-                        and user.get("station_id")
-                        and row.get("station_id") == user.get("station_id")
-                        and int(row.get("pending_audit_count") or 0) == 0
-                    ),
-                    "can_complete_record": bool(
-                        is_supervisor_like(user)
-                        and row.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE
-                        and row.get("current_user_participated")
-                    ),
-                    "inspector_completion_source_label": inspection_completion_source_label(
-                        row.get("inspector_completion_source")
-                    ),
-                }
-                for row in rows
-            ]
+            {
+                "success": True,
+                "items": items,
+                "total": total,
+                "page": effective_page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "filter_options": filter_options,
+            }
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

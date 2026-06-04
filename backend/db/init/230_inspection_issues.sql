@@ -122,3 +122,12 @@ ON issues (station_id, status, audit_status);
 
 CREATE INDEX IF NOT EXISTS idx_issues_created_at
 ON issues (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_issues_inspection_id
+ON issues (inspection_id);
+
+CREATE INDEX IF NOT EXISTS idx_issues_inspection_audit_status
+ON issues (inspection_id, audit_status);
+
+CREATE INDEX IF NOT EXISTS idx_issues_inspection_inspector_id
+ON issues (inspection_id, inspector_id);
