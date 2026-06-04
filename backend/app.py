@@ -505,6 +505,7 @@ STATION_MANAGEMENT_SCHEMA_READY = False
 ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
 INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
+FEEDBACK_SCHEMA_READY = False
 PLAN_COMPLETION_SYNC_LOCK_NAMESPACE = 2026060401
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
@@ -7949,6 +7950,9 @@ def normalize_text(value, max_length=None):
 
 
 def ensure_feedback_schema(cur):
+    global FEEDBACK_SCHEMA_READY
+    if FEEDBACK_SCHEMA_READY:
+        return
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS system_feedbacks (
@@ -8044,6 +8048,7 @@ def ensure_feedback_schema(cur):
         ON system_feedback_read_states(last_read_at DESC);
         """
     )
+    FEEDBACK_SCHEMA_READY = True
 
 
 def get_or_create_feedback_last_read_at(cur, user_id):
@@ -10372,6 +10377,237 @@ def get_inspection_plan_assignment_board():
                 "calendar": calendar_days,
             }
         )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def get_inspection_sign_pending_count_for_user(cur, user):
+    if not is_station_manager(user) or not user.get("station_id"):
+        return 0
+    ensure_issue_inspector_schema(cur)
+    ensure_inspection_completion_schema(cur)
+    if not can_sign_inspection_records(cur, user):
+        return 0
+    cur.execute(
+        """
+        SELECT COUNT(*) AS pending_count
+        FROM inspections ins
+        WHERE ins.station_id = %s
+          AND COALESCE(ins.sign_status, '待签名确认') <> '已签名确认'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM issues i
+              WHERE i.inspection_id = ins.id
+                AND COALESCE(i.audit_status, 'pending') = 'pending'
+          );
+        """,
+        (user["station_id"],),
+    )
+    return int(cur.fetchone()["pending_count"] or 0)
+
+
+def get_my_pending_rectification_count_for_user(cur, user):
+    if (
+        not is_station_manager(user)
+        and not is_root_user(user)
+        and user.get("role") != "supervisor"
+    ):
+        return 0
+
+    ensure_issue_inspector_schema(cur)
+    ensure_inspection_completion_schema(cur)
+    if is_station_manager(user):
+        if not user.get("station_id"):
+            return 0
+        cur.execute(
+            """
+            SELECT COUNT(*) AS pending_count
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            WHERE i.station_id = %s
+              AND i.status = '待整改'
+              AND ins.sign_status = '已签名确认'
+              AND COALESCE(i.audit_status, 'pending') = 'approved';
+            """,
+            (user["station_id"],),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS pending_count
+            FROM issues i
+            WHERE i.status = '待复核'
+              AND COALESCE(i.audit_status, 'pending') <> 'rejected';
+            """
+        )
+    return int(cur.fetchone()["pending_count"] or 0)
+
+
+def get_peer_review_pending_count_for_user(cur, user):
+    ensure_peer_review_schema(cur)
+    if not user or not can_view_peer_reviews(cur, user):
+        return 0
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT t.id) AS pending_count
+        FROM peer_review_tasks t
+        JOIN peer_review_task_participants p ON p.task_id = t.id
+        JOIN peer_review_task_reviewees r ON r.task_id = t.id
+        LEFT JOIN peer_review_responses resp
+          ON resp.task_id = t.id
+         AND resp.reviewer_id = p.user_id
+         AND resp.reviewee_id = r.user_id
+        WHERE p.user_id = %s
+          AND r.user_id <> %s
+          AND resp.id IS NULL
+          AND COALESCE(t.status, 'active') = 'active'
+          AND (t.deadline_at IS NULL OR t.deadline_at >= CURRENT_TIMESTAMP);
+        """,
+        (user["id"], user["id"]),
+    )
+    return int(cur.fetchone()["pending_count"] or 0)
+
+
+def get_plan_assignment_pending_summary_for_user(cur, user, include_items=False, item_limit=8):
+    ensure_inspection_completion_schema(cur)
+    ensure_inspection_plan_assignment_schema(cur)
+    if not has_permission(cur, user, "submit_inspections"):
+        return {"pending_count": 0, "items": []}
+
+    cur.execute(
+        """
+        SELECT COUNT(*) AS pending_count
+        FROM inspection_plan_station_items psi
+        JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+        WHERE psi.assigned_inspector_id = %s
+          AND psi.is_included = TRUE
+          AND psi.completion_status = 'pending'
+          AND pc.status = 'active';
+        """,
+        (user["id"],),
+    )
+    pending_count = int(cur.fetchone()["pending_count"] or 0)
+    if not include_items or pending_count <= 0:
+        return {"pending_count": pending_count, "items": []}
+
+    cur.execute(
+        """
+        SELECT
+            psi.id,
+            psi.plan_config_id,
+            psi.station_id,
+            s.station_name,
+            COALESCE(s.region, '') AS region,
+            pc.inspection_table_id,
+            t.table_name AS inspection_table_name,
+            COALESCE(NULLIF(t.checklist_mode, ''), 'online') AS checklist_mode,
+            pc.coverage_type,
+            pc.period_key,
+            TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
+            psi.note
+        FROM inspection_plan_station_items psi
+        JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
+        JOIN inspection_tables t ON t.id = pc.inspection_table_id
+        JOIN stations s ON s.id = psi.station_id
+        WHERE psi.assigned_inspector_id = %s
+          AND psi.is_included = TRUE
+          AND psi.completion_status = 'pending'
+          AND pc.status = 'active'
+        ORDER BY
+            pc.updated_at DESC,
+            pc.id DESC,
+            COALESCE(s.region, ''),
+            s.station_name
+        LIMIT %s;
+        """,
+        (user["id"], max(1, int(item_limit or 8))),
+    )
+    items = []
+    for row in cur.fetchall():
+        mode = normalize_checklist_mode(row.get("checklist_mode"))
+        items.append(
+            {
+                "id": row["id"],
+                "plan_config_id": row["plan_config_id"],
+                "station_id": row["station_id"],
+                "station_name": row["station_name"],
+                "region": row["region"],
+                "inspection_table_id": row["inspection_table_id"],
+                "inspection_table_name": row["inspection_table_name"],
+                "checklist_mode": mode,
+                "checklist_mode_label": "视频检查" if mode == "online" else "现场检查",
+                "coverage_type": row["coverage_type"],
+                "coverage_type_label": COVERAGE_TYPE_LABELS.get(row["coverage_type"], row["coverage_type"]),
+                "period_key": row["period_key"],
+                "assigned_at": row["assigned_at"],
+                "note": row["note"],
+            }
+        )
+    return {"pending_count": pending_count, "items": items}
+
+
+@app.route("/api/notifications/summary", methods=["GET"])
+def get_notification_summary():
+    current_user = get_current_request_user()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_feedback_schema(cur)
+        feedback_unread_count = get_feedback_unread_count(cur, current_user["id"])
+        inspection_sign_pending_count = get_inspection_sign_pending_count_for_user(cur, current_user)
+        my_pending_rectification_count = get_my_pending_rectification_count_for_user(cur, current_user)
+        peer_review_pending_count = get_peer_review_pending_count_for_user(cur, current_user)
+        plan_assignment_summary = get_plan_assignment_pending_summary_for_user(
+            cur,
+            current_user,
+            include_items=True,
+            item_limit=8,
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "feedback_unread_count": feedback_unread_count,
+                "inspection_sign_pending_count": inspection_sign_pending_count,
+                "my_pending_rectification_count": my_pending_rectification_count,
+                "peer_review_pending_count": peer_review_pending_count,
+                "plan_assignment_pending_count": plan_assignment_summary["pending_count"],
+                "plan_assignment_pending_items": plan_assignment_summary["items"],
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/my-pending-count")
+def get_my_pending_inspection_plan_assignment_count():
+    conn = None
+    cur = None
+
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        summary = get_plan_assignment_pending_summary_for_user(
+            cur,
+            current_user,
+            include_items=False,
+        )
+        conn.commit()
+        return jsonify({"success": True, "pending_count": summary["pending_count"]})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
     except Exception as e:
         if conn:
             conn.rollback()

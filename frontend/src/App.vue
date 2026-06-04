@@ -465,7 +465,8 @@ import {
   getStoredAuthToken,
   isUsableAuthToken,
   storeAuthSession,
-  syncAxiosAuthHeader
+  syncAxiosAuthHeader,
+  verifyAuthSession
 } from './utils/authSession'
 
 const router = useRouter()
@@ -491,6 +492,8 @@ const mobileMenuOpen = ref(false)
 const loginVersionModalOpen = ref(false)
 const defaultInitialPassword = '123456'
 const sessionCheckIntervalMs = 60 * 1000
+const notificationRefreshIntervalMs = 60 * 1000
+const notificationCacheTtlMs = 15 * 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
@@ -512,11 +515,11 @@ const myPendingRectificationCount = ref(0)
 const peerReviewPendingCount = ref(0)
 const planAssignmentPendingCount = ref(0)
 const planAssignmentPendingItems = ref([])
-let feedbackUnreadRequestId = 0
-let inspectionSignPendingRequestId = 0
-let myPendingRectificationRequestId = 0
-let peerReviewPendingRequestId = 0
-let planAssignmentPendingRequestId = 0
+let notificationSummaryTimer = null
+let notificationSummaryInFlight = null
+let notificationSummaryFetchedAt = 0
+let feedbackMarkReadInFlight = null
+let feedbackMarkedReadAt = 0
 
 const parseStoredPermissions = () => {
   try {
@@ -755,10 +758,14 @@ const verifySessionSilently = async () => {
   sessionNotice.checking = true
 
   try {
-    const response = await axios.get('/api/auth/me')
-    const user = response.data?.user
-    const refreshedToken = response.data?.token || token
-    const expiresIn = Number(response.data?.expires_in || 0)
+    const result = await verifyAuthSession()
+    if (!result.ok) {
+      showSessionExpired(result.error || '登录已过期，请重新登录。')
+      return
+    }
+    const user = result.user
+    const refreshedToken = result.token || token
+    const expiresIn = Number(result.expiresIn || 0)
     if (user && refreshedToken) {
       storeAuthSession(user, refreshedToken, expiresIn)
       syncAuthState()
@@ -827,193 +834,114 @@ const handleAuthStorageChange = (event) => {
   if (isLoginPage.value) return
   if (isUsableAuthToken(getStoredAuthToken())) {
     verifySessionSilently()
-    syncFeedbackUnreadForRoute()
-    syncInspectionSignPendingForRoute()
-    syncMyPendingRectificationForRoute()
-    syncPeerReviewPendingForRoute()
-    syncPlanAssignmentPendingForRoute()
+    refreshNotificationSummary({ force: true })
   }
 }
 
-const refreshFeedbackUnreadCount = async () => {
+const resetNotificationCounts = () => {
+  feedbackUnreadCount.value = 0
+  inspectionSignPendingCount.value = 0
+  myPendingRectificationCount.value = 0
+  peerReviewPendingCount.value = 0
+  planAssignmentPendingCount.value = 0
+  planAssignmentPendingItems.value = []
+  notificationSummaryFetchedAt = 0
+}
+
+const applyNotificationSummary = (payload = {}) => {
+  feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
+  inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
+  myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
+  peerReviewPendingCount.value = Number(payload.peer_review_pending_count || 0)
+  planAssignmentPendingCount.value = Number(payload.plan_assignment_pending_count || 0)
+  planAssignmentPendingItems.value = Array.isArray(payload.plan_assignment_pending_items)
+    ? payload.plan_assignment_pending_items
+    : []
+}
+
+const markFeedbackRead = async ({ force = false } = {}) => {
   if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
     feedbackUnreadCount.value = 0
     return
   }
-  const requestId = ++feedbackUnreadRequestId
-  try {
-    const response = await axios.get('/api/feedbacks/unread-count', {
-      params: { _ts: Date.now() }
-    })
-    if (requestId !== feedbackUnreadRequestId) return
-    feedbackUnreadCount.value = Number(response.data?.unread_count || 0)
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('系统反馈未读数量读取失败。', error)
-    }
-  }
-}
-
-const refreshInspectionSignPendingCount = async () => {
-  if (
-    isLoginPage.value ||
-    authState.role !== 'station_manager' ||
-    !isUsableAuthToken(getStoredAuthToken())
-  ) {
-    inspectionSignPendingCount.value = 0
+  const now = Date.now()
+  if (!force && now - feedbackMarkedReadAt < 10 * 1000) {
+    feedbackUnreadCount.value = 0
     return
   }
-  const requestId = ++inspectionSignPendingRequestId
-  try {
-    const response = await axios.get('/api/inspections/sign-pending-count', {
-      params: { _ts: Date.now() }
-    })
-    if (requestId !== inspectionSignPendingRequestId) return
-    inspectionSignPendingCount.value = Number(response.data?.pending_count || 0)
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('巡检记录待签数量读取失败。', error)
-    }
-  }
-}
-
-const refreshMyPendingRectificationCount = async () => {
-  if (
-    isLoginPage.value ||
-    !canViewMyIssues.value ||
-    !isUsableAuthToken(getStoredAuthToken())
-  ) {
-    myPendingRectificationCount.value = 0
+  if (feedbackMarkReadInFlight) {
+    await feedbackMarkReadInFlight
+    feedbackUnreadCount.value = 0
     return
   }
-  const requestId = ++myPendingRectificationRequestId
-  try {
-    const response = await axios.get('/api/my-issues/pending-rectification-count', {
-      params: { _ts: Date.now() }
+
+  feedbackMarkReadInFlight = axios.post('/api/feedbacks/mark-read', {})
+    .then(() => {
+      feedbackUnreadCount.value = 0
+      feedbackMarkedReadAt = Date.now()
+      notificationSummaryFetchedAt = 0
     })
-    if (requestId !== myPendingRectificationRequestId) return
-    myPendingRectificationCount.value = Number(response.data?.pending_count || 0)
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('我的待办问题数量读取失败。', error)
-    }
-  }
+    .catch((error) => {
+      if (error?.response?.status && error.response.status !== 401) {
+        console.warn('系统反馈已读状态更新失败。', error)
+      }
+    })
+    .finally(() => {
+      feedbackMarkReadInFlight = null
+    })
+  await feedbackMarkReadInFlight
 }
 
-const refreshPeerReviewPendingCount = async () => {
-  if (
-    isLoginPage.value ||
-    !canViewPeerReviews.value ||
-    !isUsableAuthToken(getStoredAuthToken())
-  ) {
-    peerReviewPendingCount.value = 0
-    return
-  }
-  const requestId = ++peerReviewPendingRequestId
-  try {
-    const response = await axios.get('/api/assessment/peer-reviews/pending-count', {
-      params: { _ts: Date.now() }
-    })
-    if (requestId !== peerReviewPendingRequestId) return
-    peerReviewPendingCount.value = Number(response.data?.pending_count || 0)
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('成员互评待填写数量读取失败。', error)
-    }
-  }
-}
-
-const refreshPlanAssignmentPendingCount = async () => {
-  if (
-    isLoginPage.value ||
-    !hasPermissionKey('submit_inspections') ||
-    !isUsableAuthToken(getStoredAuthToken())
-  ) {
-    planAssignmentPendingCount.value = 0
-    planAssignmentPendingItems.value = []
-    return
-  }
-  const requestId = ++planAssignmentPendingRequestId
-  try {
-    const response = await axios.get('/api/inspection-plan-assignments/my-pending', {
-      params: { _ts: Date.now() }
-    })
-    if (requestId !== planAssignmentPendingRequestId) return
-    planAssignmentPendingCount.value = Number(response.data?.pending_count || 0)
-    planAssignmentPendingItems.value = Array.isArray(response.data?.items) ? response.data.items : []
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('巡检计划待办任务读取失败。', error)
-    }
-  }
-}
-
-const markFeedbackRead = async () => {
+const refreshNotificationSummary = async ({ force = false, markFeedback = route.path === '/feedback' } = {}) => {
   if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
-    feedbackUnreadCount.value = 0
+    resetNotificationCounts()
     return
   }
-  try {
-    await axios.post('/api/feedbacks/mark-read', {})
-    feedbackUnreadCount.value = 0
-  } catch (error) {
-    if (error?.response?.status && error.response.status !== 401) {
-      console.warn('系统反馈已读状态更新失败。', error)
-    }
+
+  if (markFeedback) {
+    await markFeedbackRead({ force })
   }
-}
 
-const syncFeedbackUnreadForRoute = () => {
-  if (isLoginPage.value) {
-    feedbackUnreadCount.value = 0
-    return
-  }
-  if (route.path === '/feedback') {
-    markFeedbackRead()
-    return
-  }
-  refreshFeedbackUnreadCount()
-}
+  const now = Date.now()
+  if (!force && now - notificationSummaryFetchedAt < notificationCacheTtlMs) return
+  if (notificationSummaryInFlight) return notificationSummaryInFlight
 
-const syncInspectionSignPendingForRoute = () => {
-  refreshInspectionSignPendingCount()
-}
-
-const syncMyPendingRectificationForRoute = () => {
-  refreshMyPendingRectificationCount()
-}
-
-const syncPeerReviewPendingForRoute = () => {
-  refreshPeerReviewPendingCount()
-}
-
-const syncPlanAssignmentPendingForRoute = () => {
-  refreshPlanAssignmentPendingCount()
+  notificationSummaryInFlight = axios.get('/api/notifications/summary')
+    .then((response) => {
+      applyNotificationSummary(response.data || {})
+      if (markFeedback) feedbackUnreadCount.value = 0
+      notificationSummaryFetchedAt = Date.now()
+    })
+    .catch((error) => {
+      if (error?.response?.status && error.response.status !== 401) {
+        console.warn('顶部待办数量读取失败。', error)
+      }
+    })
+    .finally(() => {
+      notificationSummaryInFlight = null
+    })
+  return notificationSummaryInFlight
 }
 
 const handleWindowFocus = () => {
   runSessionMonitor()
-  syncFeedbackUnreadForRoute()
-  syncInspectionSignPendingForRoute()
-  syncMyPendingRectificationForRoute()
-  syncPeerReviewPendingForRoute()
-  syncPlanAssignmentPendingForRoute()
+  refreshNotificationSummary()
 }
 
 const handleInspectionSignPendingRefresh = () => {
-  syncInspectionSignPendingForRoute()
+  refreshNotificationSummary({ force: true })
 }
 
 const handleMyPendingRectificationRefresh = () => {
-  syncMyPendingRectificationForRoute()
+  refreshNotificationSummary({ force: true })
 }
 
 const handlePeerReviewPendingRefresh = () => {
-  syncPeerReviewPendingForRoute()
+  refreshNotificationSummary({ force: true })
 }
 
 const handlePlanAssignmentPendingRefresh = () => {
-  syncPlanAssignmentPendingForRoute()
+  refreshNotificationSummary({ force: true })
 }
 
 watch(
@@ -1023,19 +951,10 @@ watch(
     showAuthSessionMessageIfNeeded()
     if (route.path === '/login') {
       resetSessionNotice()
-      feedbackUnreadCount.value = 0
-      inspectionSignPendingCount.value = 0
-      myPendingRectificationCount.value = 0
-      peerReviewPendingCount.value = 0
-      planAssignmentPendingCount.value = 0
-      planAssignmentPendingItems.value = []
+      resetNotificationCounts()
     } else {
       window.setTimeout(runSessionMonitor, 0)
-      window.setTimeout(syncFeedbackUnreadForRoute, 0)
-      window.setTimeout(syncInspectionSignPendingForRoute, 0)
-      window.setTimeout(syncMyPendingRectificationForRoute, 0)
-      window.setTimeout(syncPeerReviewPendingForRoute, 0)
-      window.setTimeout(syncPlanAssignmentPendingForRoute, 0)
+      window.setTimeout(() => refreshNotificationSummary({ markFeedback: route.path === '/feedback' }), 0)
     }
   },
   { immediate: true }
@@ -1049,13 +968,12 @@ onMounted(() => {
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
-  sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
-  runSessionMonitor()
-  syncFeedbackUnreadForRoute()
-  syncInspectionSignPendingForRoute()
-  syncMyPendingRectificationForRoute()
-  syncPeerReviewPendingForRoute()
-  syncPlanAssignmentPendingForRoute()
+  if (!sessionMonitorTimer) {
+    sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
+  }
+  if (!notificationSummaryTimer) {
+    notificationSummaryTimer = window.setInterval(() => refreshNotificationSummary(), notificationRefreshIntervalMs)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -1069,6 +987,10 @@ onBeforeUnmount(() => {
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null
+  }
+  if (notificationSummaryTimer) {
+    window.clearInterval(notificationSummaryTimer)
+    notificationSummaryTimer = null
   }
 })
 

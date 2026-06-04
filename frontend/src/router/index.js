@@ -1,8 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import axios from 'axios'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
-import { clearAuthSession, isUsableAuthToken, storeAuthSession } from '../utils/authSession'
+import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
 
 const EmptyRouteView = { template: '<div></div>' }
 
@@ -202,14 +201,8 @@ const verifyStoredAuthToken = async () => {
     return false
   }
 
-  try {
-    const response = await axios.get('/api/auth/me')
-    storeAuthSession(response.data.user, response.data.token || token, response.data.expires_in)
-    return true
-  } catch (error) {
-    clearAuthSession(error?.response?.data?.error || '登录已过期，请重新登录。')
-    return false
-  }
+  const result = await verifyAuthSession()
+  return Boolean(result.ok)
 }
 
 router.beforeEach(async (to, from, next) => {

@@ -19,7 +19,13 @@ const AUTH_STORAGE_KEYS = [
 
 const AUTH_MESSAGE_KEY = 'auth_session_message'
 const DEFAULT_EXPIRED_MESSAGE = '登录已过期，请重新登录。'
+const AUTH_ME_CACHE_TTL_MS = 60 * 1000
 export const AUTH_SESSION_EXPIRED_EVENT = 'auth-session-expired'
+
+let authMeInFlight = null
+let authMeCacheToken = ''
+let authMeCacheCheckedAt = 0
+let authMeCacheResult = null
 
 export const getStoredAuthToken = () => localStorage.getItem('auth_token') || ''
 
@@ -61,6 +67,10 @@ export const clearAuthSession = (message = '') => {
   if (message) {
     localStorage.setItem(AUTH_MESSAGE_KEY, message)
   }
+  authMeInFlight = null
+  authMeCacheToken = ''
+  authMeCacheCheckedAt = 0
+  authMeCacheResult = null
   syncAxiosAuthHeader()
 }
 
@@ -98,7 +108,68 @@ export const storeAuthSession = (user, token, expiresInSeconds = null) => {
   localStorage.setItem('permissions', JSON.stringify(user?.permissions || {}))
   localStorage.setItem('must_change_password', user?.must_change_password ? 'true' : 'false')
   localStorage.removeItem(AUTH_MESSAGE_KEY)
+  authMeCacheToken = token
+  authMeCacheCheckedAt = Date.now()
+  authMeCacheResult = {
+    ok: true,
+    user,
+    token,
+    expiresIn: Number(expiresInSeconds || 0)
+  }
   syncAxiosAuthHeader()
+}
+
+export const verifyAuthSession = async ({ force = false } = {}) => {
+  const token = getStoredAuthToken()
+  if (!isUsableAuthToken(token)) {
+    clearAuthSession(token ? DEFAULT_EXPIRED_MESSAGE : '')
+    return { ok: false, error: token ? DEFAULT_EXPIRED_MESSAGE : '' }
+  }
+
+  const now = Date.now()
+  const cacheStillFresh = (
+    !force &&
+    authMeCacheResult?.ok &&
+    authMeCacheToken === token &&
+    now - authMeCacheCheckedAt < AUTH_ME_CACHE_TTL_MS &&
+    getStoredAuthSecondsRemaining() > 30
+  )
+  if (cacheStillFresh) return authMeCacheResult
+  if (authMeInFlight) return authMeInFlight
+
+  authMeInFlight = axios.get('/api/auth/me')
+    .then((response) => {
+      const user = response.data?.user
+      const refreshedToken = response.data?.token || token
+      const expiresIn = Number(response.data?.expires_in || 0)
+      if (user && refreshedToken) {
+        storeAuthSession(user, refreshedToken, expiresIn)
+      }
+      const result = {
+        ok: true,
+        user,
+        token: refreshedToken,
+        expiresIn
+      }
+      authMeCacheToken = refreshedToken
+      authMeCacheCheckedAt = Date.now()
+      authMeCacheResult = result
+      return result
+    })
+    .catch((error) => {
+      const message = error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE
+      clearAuthSession(message)
+      return {
+        ok: false,
+        error: message,
+        status: error?.response?.status
+      }
+    })
+    .finally(() => {
+      authMeInFlight = null
+    })
+
+  return authMeInFlight
 }
 
 export const configureAxiosAuth = () => {
