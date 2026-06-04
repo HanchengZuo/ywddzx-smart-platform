@@ -14,5 +14,11 @@ done
 echo "PostgreSQL is ready. Applying database migrations ..."
 flask --app app db upgrade
 
-echo "Starting Flask application ..."
-exec python app.py
+echo "Starting Flask application with gunicorn ..."
+exec gunicorn \
+  -w "${GUNICORN_WORKERS:-4}" \
+  -b 0.0.0.0:5000 \
+  --access-logfile - \
+  --error-logfile - \
+  --timeout "${GUNICORN_TIMEOUT:-120}" \
+  app:app
