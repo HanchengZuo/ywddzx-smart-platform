@@ -505,6 +505,7 @@ STATION_MANAGEMENT_SCHEMA_READY = False
 ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
 INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
+PLAN_COMPLETION_SYNC_LOCK_NAMESPACE = 2026060401
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -9280,8 +9281,31 @@ def get_period_date_range(coverage_type, period_key):
     return None, None
 
 
-def sync_plan_station_items_completion_by_history(cur, plan_config_id):
+def sync_plan_station_items_completion_by_history(cur, plan_config_id, wait_for_lock=True):
     ensure_inspection_completion_schema(cur)
+    try:
+        normalized_plan_config_id = int(plan_config_id)
+    except (TypeError, ValueError):
+        return 0
+
+    if wait_for_lock:
+        cur.execute(
+            """
+            SELECT pg_advisory_xact_lock(%s, %s);
+            """,
+            (PLAN_COMPLETION_SYNC_LOCK_NAMESPACE, normalized_plan_config_id),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT pg_try_advisory_xact_lock(%s, %s) AS lock_acquired;
+            """,
+            (PLAN_COMPLETION_SYNC_LOCK_NAMESPACE, normalized_plan_config_id),
+        )
+        lock_row = cur.fetchone()
+        if not lock_row or not lock_row.get("lock_acquired"):
+            return 0
+
     cur.execute(
         """
         SELECT id, inspection_table_id, coverage_type, period_key
@@ -9289,32 +9313,21 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
         WHERE id = %s
         LIMIT 1;
         """,
-        (plan_config_id,),
+        (normalized_plan_config_id,),
     )
     plan_config = cur.fetchone()
     if not plan_config:
-        return
+        return 0
 
     start_date, end_date = get_period_date_range(
         plan_config["coverage_type"], plan_config["period_key"]
     )
     if not start_date or not end_date:
-        return
+        return 0
 
     cur.execute(
         """
-        UPDATE inspection_plan_station_items psi
-        SET completion_status = CASE
-                WHEN matched.inspection_id IS NOT NULL THEN 'completed'
-                ELSE 'pending'
-            END,
-            completed_inspection_id = matched.inspection_id,
-            completed_at = CASE
-                WHEN matched.inspection_id IS NOT NULL THEN COALESCE(matched.inspection_completed_at, matched.inspection_updated_at, matched.inspection_created_at, CURRENT_TIMESTAMP)
-                ELSE NULL
-            END,
-            updated_at = CURRENT_TIMESTAMP
-        FROM (
+        WITH matched AS (
             SELECT
                 psi_inner.id AS psi_id,
                 matched_ins.id AS inspection_id,
@@ -9342,17 +9355,44 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
             ) AS matched_ins ON TRUE
             WHERE psi_inner.plan_config_id = %s
               AND psi_inner.is_included = TRUE
-        ) AS matched
-        WHERE psi.id = matched.psi_id;
+        ),
+        desired AS (
+            SELECT
+                psi_id,
+                CASE
+                    WHEN inspection_id IS NOT NULL THEN 'completed'
+                    ELSE 'pending'
+                END AS completion_status,
+                inspection_id AS completed_inspection_id,
+                CASE
+                    WHEN inspection_id IS NOT NULL
+                        THEN COALESCE(inspection_completed_at, inspection_updated_at, inspection_created_at, CURRENT_TIMESTAMP)
+                    ELSE NULL
+                END AS completed_at
+            FROM matched
+        )
+        UPDATE inspection_plan_station_items psi
+        SET completion_status = desired.completion_status,
+            completed_inspection_id = desired.completed_inspection_id,
+            completed_at = desired.completed_at,
+            updated_at = CURRENT_TIMESTAMP
+        FROM desired
+        WHERE psi.id = desired.psi_id
+          AND (
+              psi.completion_status IS DISTINCT FROM desired.completion_status
+              OR psi.completed_inspection_id IS DISTINCT FROM desired.completed_inspection_id
+              OR psi.completed_at IS DISTINCT FROM desired.completed_at
+          );
         """,
         (
             plan_config["inspection_table_id"],
             start_date,
             end_date,
             INSPECTION_COMPLETION_DONE,
-            plan_config_id,
+            normalized_plan_config_id,
         ),
     )
+    updated_count = max(cur.rowcount or 0, 0)
 
     cur.execute(
         """
@@ -9362,10 +9402,17 @@ def sync_plan_station_items_completion_by_history(cur, plan_config_id):
             completed_at = NULL,
             updated_at = CURRENT_TIMESTAMP
         WHERE plan_config_id = %s
-          AND is_included = FALSE;
+          AND is_included = FALSE
+          AND (
+              completion_status IS DISTINCT FROM 'pending'
+              OR completed_inspection_id IS NOT NULL
+              OR completed_at IS NOT NULL
+          );
         """,
-        (plan_config_id,),
+        (normalized_plan_config_id,),
     )
+    updated_count += max(cur.rowcount or 0, 0)
+    return updated_count
 
 
 def mark_related_plan_items_completed(
@@ -9429,11 +9476,6 @@ def get_inspection_plan_configs():
 
         ensure_inspection_completion_schema(cur)
         ensure_inspection_plan_assignment_schema(cur)
-        auto_complete_overdue_inspections(cur)
-        cur.execute("SELECT id FROM inspection_plan_configs;")
-        for plan_row in cur.fetchall():
-            sync_plan_station_items_completion_by_history(cur, plan_row["id"])
-        conn.commit()
 
         where_clauses = []
         params = []
@@ -9616,9 +9658,6 @@ def get_inspection_plan_config_detail(plan_config_id):
 
         ensure_inspection_completion_schema(cur)
         ensure_inspection_plan_assignment_schema(cur)
-        auto_complete_overdue_inspections(cur)
-        sync_plan_station_items_completion_by_history(cur, plan_config_id)
-        conn.commit()
 
         station_where_clauses = ["psi.plan_config_id = %s"]
         station_params = [plan_config_id]
@@ -10112,30 +10151,6 @@ def get_inspection_plan_assignment_board():
 
         ensure_inspection_completion_schema(cur)
         ensure_inspection_plan_assignment_schema(cur)
-        auto_complete_overdue_inspections(cur)
-        cur.execute(
-            """
-            UPDATE inspection_plan_station_items psi
-            SET assigned_at = COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at, CURRENT_TIMESTAMP),
-                assigned_by = COALESCE(psi.assigned_by, pc.updated_by),
-                updated_at = CURRENT_TIMESTAMP
-            FROM inspection_plan_configs pc
-            WHERE pc.id = psi.plan_config_id
-              AND psi.assigned_inspector_id IS NOT NULL
-              AND psi.is_included = TRUE
-              AND psi.assigned_at IS NULL;
-            """
-        )
-        cur.execute(
-            """
-            SELECT DISTINCT psi.plan_config_id
-            FROM inspection_plan_station_items psi
-            WHERE psi.assigned_inspector_id IS NOT NULL;
-            """
-        )
-        for row in cur.fetchall():
-            sync_plan_station_items_completion_by_history(cur, row["plan_config_id"])
-        conn.commit()
 
         where_clauses = [
             "psi.assigned_inspector_id IS NOT NULL",
@@ -10376,25 +10391,9 @@ def get_my_pending_inspection_plan_assignments():
         cur = conn.cursor()
         ensure_inspection_completion_schema(cur)
         ensure_inspection_plan_assignment_schema(cur)
-        auto_complete_overdue_inspections(cur)
 
         if not has_permission(cur, current_user, "submit_inspections"):
             return jsonify({"success": True, "pending_count": 0, "items": []})
-
-        cur.execute(
-            """
-            SELECT DISTINCT psi.plan_config_id
-            FROM inspection_plan_station_items psi
-            JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
-            WHERE psi.assigned_inspector_id = %s
-              AND psi.is_included = TRUE
-              AND pc.status = 'active';
-            """,
-            (current_user["id"],),
-        )
-        for row in cur.fetchall():
-            sync_plan_station_items_completion_by_history(cur, row["plan_config_id"])
-        conn.commit()
 
         cur.execute(
             """
@@ -16811,9 +16810,6 @@ def get_inspection_plan_overview():
 
         ensure_inspection_completion_schema(cur)
         ensure_inspection_plan_assignment_schema(cur)
-        auto_complete_overdue_inspections(cur)
-        sync_plan_station_items_completion_by_history(cur, config_row["id"])
-        conn.commit()
 
         station_where_clauses = ["psi.plan_config_id = %s"]
         station_params = [config_row["id"]]
