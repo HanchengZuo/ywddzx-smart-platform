@@ -3755,7 +3755,9 @@ onBeforeUnmount(() => {
     align-items: stretch;
     gap: 10px;
     overflow-x: auto;
-    padding: 4px 0 16px;
+    padding: 6px 10px 18px;
+    margin-left: -10px;
+    margin-right: -10px;
     margin-bottom: 2px;
 }
 

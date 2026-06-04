@@ -327,6 +327,30 @@
         </div>
 
         <div class="header-user-area">
+          <div class="server-resource-card" :class="serverResourceHealthClass" :title="serverResourceTooltip">
+            <div class="server-resource-head">
+              <span class="server-resource-dot"></span>
+              <span>服务器</span>
+            </div>
+            <div class="server-resource-metrics">
+              <span class="server-resource-metric">
+                <em>CPU</em>
+                <strong>{{ serverCpuLabel }}</strong>
+              </span>
+              <span class="server-resource-metric">
+                <em>内存</em>
+                <strong>{{ serverMemoryLabel }}</strong>
+              </span>
+              <span class="server-resource-metric server-resource-network">
+                <em>网速 MB/s</em>
+                <strong>{{ serverNetworkLabel }}</strong>
+              </span>
+              <span class="server-resource-metric server-resource-online">
+                <em>在线</em>
+                <strong>{{ serverOnlineLabel }}</strong>
+              </span>
+            </div>
+          </div>
           <div v-if="planAssignmentPendingCount > 0" class="header-plan-todo">
             <div class="header-plan-todo-trigger">
               <span>待办任务</span>
@@ -348,26 +372,6 @@
                 </div>
               </div>
               <button class="plan-todo-link" type="button" @click="go('/inspection/plan')">进入巡检计划</button>
-            </div>
-          </div>
-          <div class="server-resource-card" :class="serverResourceHealthClass" :title="serverResourceTooltip">
-            <div class="server-resource-head">
-              <span class="server-resource-dot"></span>
-              <span>服务器</span>
-            </div>
-            <div class="server-resource-metrics">
-              <span class="server-resource-metric">
-                <em>CPU</em>
-                <strong>{{ serverCpuLabel }}</strong>
-              </span>
-              <span class="server-resource-metric">
-                <em>内存</em>
-                <strong>{{ serverMemoryLabel }}</strong>
-              </span>
-              <span class="server-resource-metric server-resource-network">
-                <em>网速</em>
-                <strong>{{ serverNetworkLabel }}</strong>
-              </span>
             </div>
           </div>
           <div class="header-user-card">
@@ -558,6 +562,7 @@ const serverResourceState = reactive({
   memoryTotalMb: null,
   networkRxKbps: 0,
   networkTxKbps: 0,
+  onlineUserCount: 0,
   sampledAt: ''
 })
 
@@ -730,15 +735,15 @@ const formatResourcePercent = (value) => {
 }
 const formatNetworkSpeed = (value) => {
   const numericValue = Number(value)
-  if (!Number.isFinite(numericValue) || numericValue <= 0) return '0 KB/s'
-  if (numericValue >= 1024) return `${(numericValue / 1024).toFixed(1)} MB/s`
-  return `${numericValue >= 10 ? Math.round(numericValue) : numericValue.toFixed(1)} KB/s`
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return '0.00'
+  return (numericValue / 1024).toFixed(2)
 }
 const serverCpuLabel = computed(() => formatResourcePercent(serverResourceState.cpuPercent))
 const serverMemoryLabel = computed(() => formatResourcePercent(serverResourceState.memoryPercent))
 const serverNetworkLabel = computed(() => (
   `↓${formatNetworkSpeed(serverResourceState.networkRxKbps)} ↑${formatNetworkSpeed(serverResourceState.networkTxKbps)}`
 ))
+const serverOnlineLabel = computed(() => `${Number(serverResourceState.onlineUserCount || 0)}人`)
 const mobileServerResourceLabel = computed(() => `CPU ${serverCpuLabel.value} · MEM ${serverMemoryLabel.value}`)
 const serverResourceTooltip = computed(() => {
   const memoryDetail = (
@@ -747,7 +752,7 @@ const serverResourceTooltip = computed(() => {
   )
     ? `${serverResourceState.memoryUsedMb} / ${serverResourceState.memoryTotalMb} MB`
     : '暂无内存明细'
-  return `服务器资源：CPU ${serverCpuLabel.value}，内存 ${serverMemoryLabel.value}（${memoryDetail}），网速 ${serverNetworkLabel.value}${serverResourceState.sampledAt ? `，采样 ${serverResourceState.sampledAt}` : ''}`
+  return `服务器资源：CPU ${serverCpuLabel.value}，内存 ${serverMemoryLabel.value}（${memoryDetail}），网速 ${serverNetworkLabel.value} MB/s，在线 ${serverOnlineLabel.value}${serverResourceState.sampledAt ? `，采样 ${serverResourceState.sampledAt}` : ''}`
 })
 const serverResourceHealthClass = computed(() => {
   if (!serverResourceState.ok) return 'resource-muted'
@@ -1009,6 +1014,7 @@ const resetServerResourceState = () => {
   serverResourceState.memoryTotalMb = null
   serverResourceState.networkRxKbps = 0
   serverResourceState.networkTxKbps = 0
+  serverResourceState.onlineUserCount = 0
   serverResourceState.sampledAt = ''
   serverResourceFetchedAt = 0
 }
@@ -1021,6 +1027,7 @@ const applyServerResourceState = (payload = {}) => {
   serverResourceState.memoryTotalMb = payload.memory_total_mb ?? null
   serverResourceState.networkRxKbps = Number(payload.network_rx_kbps || 0)
   serverResourceState.networkTxKbps = Number(payload.network_tx_kbps || 0)
+  serverResourceState.onlineUserCount = Number(payload.online_user_count || 0)
   serverResourceState.sampledAt = payload.sampled_at || ''
 }
 
@@ -2440,7 +2447,7 @@ textarea:focus {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .header {
@@ -2454,6 +2461,7 @@ textarea:focus {
   gap: 18px;
   padding: 0 28px;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .header-left {
@@ -2475,18 +2483,18 @@ textarea:focus {
 .header-user-area {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .server-resource-card {
-  min-height: 48px;
-  width: 318px;
+  min-height: 46px;
+  width: 336px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 16px;
   background: linear-gradient(135deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.92));
   border: 1px solid rgba(148, 163, 184, 0.22);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
@@ -2496,8 +2504,8 @@ textarea:focus {
 .server-resource-head {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding-right: 10px;
+  gap: 5px;
+  padding-right: 8px;
   border-right: 1px solid rgba(148, 163, 184, 0.24);
   color: #475569;
   font-size: 12px;
@@ -2518,8 +2526,8 @@ textarea:focus {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: 48px 52px minmax(128px, 1fr);
-  gap: 10px;
+  grid-template-columns: 42px 44px minmax(96px, 1fr) 38px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -2532,7 +2540,7 @@ textarea:focus {
 
 .server-resource-metric em {
   color: #64748b;
-  font-size: 10px;
+  font-size: 9px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.03em;
@@ -2540,11 +2548,16 @@ textarea:focus {
 
 .server-resource-metric strong {
   color: #0f172a;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 950;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.server-resource-online {
+  padding-left: 7px;
+  border-left: 1px solid rgba(148, 163, 184, 0.22);
 }
 
 .resource-good .server-resource-dot {
@@ -2579,14 +2592,15 @@ textarea:focus {
 .header-plan-todo {
   position: relative;
   flex-shrink: 0;
+  z-index: 320;
 }
 
 .header-plan-todo-trigger {
-  min-height: 42px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding: 0 11px;
   border-radius: 15px;
   background: #fff7ed;
   border: 1px solid #fed7aa;
@@ -2614,7 +2628,7 @@ textarea:focus {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  z-index: 260;
+  z-index: 1800;
   width: min(360px, calc(100vw - 24px));
   padding: 14px;
   border-radius: 20px;
@@ -2659,16 +2673,17 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 360px;
+  max-height: min(360px, 54vh);
   overflow: auto;
   padding: 12px 2px 0;
 }
 
 .plan-todo-item {
-  padding: 10px 12px;
-  border-radius: 15px;
-  background: #fffaf5;
-  border: 1px solid #ffedd5;
+  padding: 11px 12px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 247, 237, 0.98), rgba(255, 255, 255, 0.98));
+  border: 1px solid rgba(251, 146, 60, 0.22);
+  box-shadow: 0 10px 24px rgba(154, 52, 18, 0.07);
 }
 
 .plan-todo-item div {
@@ -2678,8 +2693,12 @@ textarea:focus {
 }
 
 .plan-todo-item strong {
+  min-width: 0;
   color: #0f172a;
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plan-todo-item span,
@@ -2707,8 +2726,8 @@ textarea:focus {
   height: 38px;
   margin-top: 12px;
   border: 0;
-  border-radius: 14px;
-  background: #ea580c;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #ea580c, #f97316);
   color: #fff;
   font-size: 13px;
   font-weight: 900;
@@ -3274,15 +3293,19 @@ textarea:focus {
 
 @media (max-width: 1280px) {
   .server-resource-card {
-    width: 238px;
+    width: 256px;
   }
 
   .server-resource-metrics {
-    grid-template-columns: 48px 52px;
+    grid-template-columns: 42px 44px 42px;
   }
 
   .server-resource-network {
     display: none;
+  }
+
+  .server-resource-online {
+    padding-left: 7px;
   }
 }
 

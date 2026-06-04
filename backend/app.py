@@ -90,6 +90,11 @@ SERVER_RESOURCE_SAMPLE_PATH = os.environ.get(
     "SERVER_RESOURCE_SAMPLE_PATH",
     "/tmp/ywddzx_server_resource_sample.json",
 )
+SERVER_ONLINE_USERS_PATH = os.environ.get(
+    "SERVER_ONLINE_USERS_PATH",
+    "/tmp/ywddzx_online_users.json",
+)
+SERVER_ONLINE_USER_TTL_SECONDS = max(60, int(os.environ.get("SERVER_ONLINE_USER_TTL_SECONDS", "300")))
 LEGACY_FRONTEND_API_PATHS = {
     "/api/feedbacks/unread-count",
     "/api/assessment/peer-reviews/pending-count",
@@ -226,6 +231,41 @@ def swap_server_resource_sample(current_sample):
         return fallback_previous
 
 
+def update_online_user_count(user_id):
+    current_user_id = str(user_id or "").strip()
+    now = time.time()
+    with server_online_users_lock:
+        try:
+            with open(SERVER_ONLINE_USERS_PATH, "a+", encoding="utf-8") as online_file:
+                fcntl.flock(online_file.fileno(), fcntl.LOCK_EX)
+                online_file.seek(0)
+                raw_payload = online_file.read().strip()
+                online_users = json.loads(raw_payload) if raw_payload else {}
+                if not isinstance(online_users, dict):
+                    online_users = {}
+
+                cutoff = now - SERVER_ONLINE_USER_TTL_SECONDS
+                online_users = {
+                    str(user_key): float(last_seen)
+                    for user_key, last_seen in online_users.items()
+                    if str(user_key).strip()
+                    and isinstance(last_seen, (int, float))
+                    and float(last_seen) >= cutoff
+                }
+                if current_user_id:
+                    online_users[current_user_id] = now
+
+                online_file.seek(0)
+                online_file.truncate()
+                json.dump(online_users, online_file)
+                online_file.flush()
+                os.fsync(online_file.fileno())
+                fcntl.flock(online_file.fileno(), fcntl.LOCK_UN)
+                return len(online_users)
+        except Exception:
+            return 0
+
+
 def build_server_resource_snapshot():
     now = time.time()
     cpu_times = read_proc_cpu_times()
@@ -269,6 +309,7 @@ def build_server_resource_snapshot():
         "cpu_core_count": os.cpu_count() or 0,
         "network_rx_kbps": round(rx_kbps, 1),
         "network_tx_kbps": round(tx_kbps, 1),
+        "online_user_count": update_online_user_count(getattr(g, "current_user", {}).get("id")),
         "sampled_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         **memory_info,
     }
@@ -696,6 +737,7 @@ server_resource_last_sample = {
     "rx_bytes": None,
     "tx_bytes": None,
 }
+server_online_users_lock = threading.Lock()
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}

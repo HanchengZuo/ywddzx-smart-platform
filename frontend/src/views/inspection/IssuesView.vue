@@ -485,7 +485,15 @@
           </button>
         </div>
       </div>
-      <div class="table-scroll-wrap">
+      <div v-if="loading" class="table-loading-state">
+        <div class="empty-state-inline">
+          <div class="empty-state-orb loading"></div>
+          <div class="empty-state-kicker">同步中</div>
+          <h3>正在加载问题列表</h3>
+          <p>系统正在同步最新的问题记录，请稍候。</p>
+        </div>
+      </div>
+      <div v-else class="table-scroll-wrap">
         <div ref="tableScrollRef" class="table-scroll">
           <table class="issues-table">
             <thead>
@@ -644,16 +652,6 @@
                     <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
                     <button class="btn btn-secondary btn-sm empty-state-action" type="button"
                       @click="resetFilters">重置筛选</button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="loading">
-                <td :colspan="issueTableColspan" class="empty-row">
-                  <div class="empty-state-inline">
-                    <div class="empty-state-orb loading"></div>
-                    <div class="empty-state-kicker">同步中</div>
-                    <h3>正在加载问题列表</h3>
-                    <p>系统正在同步最新的问题记录，请稍候。</p>
                   </div>
                 </td>
               </tr>
@@ -4710,6 +4708,17 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   border-radius: 14px;
   overflow: hidden;
+}
+
+.table-loading-state {
+  min-height: 280px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 18px;
 }
 
 .table-scroll {

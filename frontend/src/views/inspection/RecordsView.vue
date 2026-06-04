@@ -2549,10 +2549,10 @@ onBeforeUnmount(() => {
 
 .batch-action-btn {
   width: auto;
-  min-width: 96px;
+  min-width: 132px;
   white-space: nowrap;
   line-height: 1.3;
-  padding: 8px 12px;
+  padding: 8px 14px;
 }
 
 .record-action-stack {
@@ -2880,8 +2880,9 @@ onBeforeUnmount(() => {
 }
 
 .table-scroll {
-  max-height: 60vh;
-  overflow: auto;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .records-table {
