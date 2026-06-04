@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.4.2',
+    date: '2026-06-04',
+    title: '性能与监控优化',
+    summary: '降低后台请求压力，并在顶部显示服务器资源状态。',
+    items: [
+      '优化待办通知刷新，减少重复请求。',
+      '旧页面会强制刷新到新版。',
+      '顶部新增 CPU、内存和网速监控。'
+    ]
+  },
+  {
     version: 'v3.4.1',
     date: '2026-06-03',
     title: '派工看板修复',

@@ -104,6 +104,10 @@
           </div>
         </div>
       </div>
+      <div class="mobile-resource-chip" :class="serverResourceHealthClass" :title="serverResourceTooltip">
+        <span class="server-resource-dot"></span>
+        {{ mobileServerResourceLabel }}
+      </div>
       <button class="btn btn-secondary btn-sm mobile-logout-btn" type="button" @click="handleLogout">退出</button>
     </header>
 
@@ -346,6 +350,26 @@
               <button class="plan-todo-link" type="button" @click="go('/inspection/plan')">进入巡检计划</button>
             </div>
           </div>
+          <div class="server-resource-card" :class="serverResourceHealthClass" :title="serverResourceTooltip">
+            <div class="server-resource-head">
+              <span class="server-resource-dot"></span>
+              <span>服务器</span>
+            </div>
+            <div class="server-resource-metrics">
+              <span class="server-resource-metric">
+                <em>CPU</em>
+                <strong>{{ serverCpuLabel }}</strong>
+              </span>
+              <span class="server-resource-metric">
+                <em>内存</em>
+                <strong>{{ serverMemoryLabel }}</strong>
+              </span>
+              <span class="server-resource-metric server-resource-network">
+                <em>网速</em>
+                <strong>{{ serverNetworkLabel }}</strong>
+              </span>
+            </div>
+          </div>
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
@@ -494,6 +518,8 @@ const defaultInitialPassword = '123456'
 const sessionCheckIntervalMs = 60 * 1000
 const notificationRefreshIntervalMs = 60 * 1000
 const notificationCacheTtlMs = 15 * 1000
+const serverResourceRefreshIntervalMs = 30 * 1000
+const serverResourceCacheTtlMs = 8 * 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
@@ -520,6 +546,20 @@ let notificationSummaryInFlight = null
 let notificationSummaryFetchedAt = 0
 let feedbackMarkReadInFlight = null
 let feedbackMarkedReadAt = 0
+let serverResourceTimer = null
+let serverResourceInFlight = null
+let serverResourceFetchedAt = 0
+const serverResourceState = reactive({
+  ok: false,
+  loading: false,
+  cpuPercent: null,
+  memoryPercent: null,
+  memoryUsedMb: null,
+  memoryTotalMb: null,
+  networkRxKbps: 0,
+  networkTxKbps: 0,
+  sampledAt: ''
+})
 
 const parseStoredPermissions = () => {
   try {
@@ -683,6 +723,43 @@ const peerReviewPendingDisplay = computed(() => {
 const planAssignmentPendingDisplay = computed(() => {
   const count = Number(planAssignmentPendingCount.value) || 0
   return count > 99 ? '99+' : String(count)
+})
+const formatResourcePercent = (value) => {
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) ? `${Math.round(numericValue)}%` : '--'
+}
+const formatNetworkSpeed = (value) => {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return '0 KB/s'
+  if (numericValue >= 1024) return `${(numericValue / 1024).toFixed(1)} MB/s`
+  return `${numericValue >= 10 ? Math.round(numericValue) : numericValue.toFixed(1)} KB/s`
+}
+const serverCpuLabel = computed(() => formatResourcePercent(serverResourceState.cpuPercent))
+const serverMemoryLabel = computed(() => formatResourcePercent(serverResourceState.memoryPercent))
+const serverNetworkLabel = computed(() => (
+  `↓${formatNetworkSpeed(serverResourceState.networkRxKbps)} ↑${formatNetworkSpeed(serverResourceState.networkTxKbps)}`
+))
+const mobileServerResourceLabel = computed(() => `CPU ${serverCpuLabel.value} · MEM ${serverMemoryLabel.value}`)
+const serverResourceTooltip = computed(() => {
+  const memoryDetail = (
+    Number.isFinite(Number(serverResourceState.memoryUsedMb)) &&
+    Number.isFinite(Number(serverResourceState.memoryTotalMb))
+  )
+    ? `${serverResourceState.memoryUsedMb} / ${serverResourceState.memoryTotalMb} MB`
+    : '暂无内存明细'
+  return `服务器资源：CPU ${serverCpuLabel.value}，内存 ${serverMemoryLabel.value}（${memoryDetail}），网速 ${serverNetworkLabel.value}${serverResourceState.sampledAt ? `，采样 ${serverResourceState.sampledAt}` : ''}`
+})
+const serverResourceHealthClass = computed(() => {
+  if (!serverResourceState.ok) return 'resource-muted'
+  const cpu = Number(serverResourceState.cpuPercent)
+  const memory = Number(serverResourceState.memoryPercent)
+  const peak = Math.max(
+    Number.isFinite(cpu) ? cpu : 0,
+    Number.isFinite(memory) ? memory : 0
+  )
+  if (peak >= 85) return 'resource-danger'
+  if (peak >= 70) return 'resource-warning'
+  return 'resource-good'
 })
 
 const syncAuthState = () => {
@@ -923,9 +1000,62 @@ const refreshNotificationSummary = async ({ force = false, markFeedback = route.
   return notificationSummaryInFlight
 }
 
+const resetServerResourceState = () => {
+  serverResourceState.ok = false
+  serverResourceState.loading = false
+  serverResourceState.cpuPercent = null
+  serverResourceState.memoryPercent = null
+  serverResourceState.memoryUsedMb = null
+  serverResourceState.memoryTotalMb = null
+  serverResourceState.networkRxKbps = 0
+  serverResourceState.networkTxKbps = 0
+  serverResourceState.sampledAt = ''
+  serverResourceFetchedAt = 0
+}
+
+const applyServerResourceState = (payload = {}) => {
+  serverResourceState.ok = true
+  serverResourceState.cpuPercent = payload.cpu_percent ?? null
+  serverResourceState.memoryPercent = payload.memory_percent ?? null
+  serverResourceState.memoryUsedMb = payload.memory_used_mb ?? null
+  serverResourceState.memoryTotalMb = payload.memory_total_mb ?? null
+  serverResourceState.networkRxKbps = Number(payload.network_rx_kbps || 0)
+  serverResourceState.networkTxKbps = Number(payload.network_tx_kbps || 0)
+  serverResourceState.sampledAt = payload.sampled_at || ''
+}
+
+const refreshServerResources = async ({ force = false } = {}) => {
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+    resetServerResourceState()
+    return
+  }
+  const now = Date.now()
+  if (!force && now - serverResourceFetchedAt < serverResourceCacheTtlMs) return
+  if (serverResourceInFlight) return serverResourceInFlight
+
+  serverResourceState.loading = true
+  serverResourceInFlight = axios.get('/api/system/resources')
+    .then((response) => {
+      applyServerResourceState(response.data || {})
+      serverResourceFetchedAt = Date.now()
+    })
+    .catch((error) => {
+      serverResourceState.ok = false
+      if (error?.response?.status && error.response.status !== 401) {
+        console.warn('服务器资源状态读取失败。', error)
+      }
+    })
+    .finally(() => {
+      serverResourceState.loading = false
+      serverResourceInFlight = null
+    })
+  return serverResourceInFlight
+}
+
 const handleWindowFocus = () => {
   runSessionMonitor()
   refreshNotificationSummary()
+  refreshServerResources()
 }
 
 const handleInspectionSignPendingRefresh = () => {
@@ -952,9 +1082,11 @@ watch(
     if (route.path === '/login') {
       resetSessionNotice()
       resetNotificationCounts()
+      resetServerResourceState()
     } else {
       window.setTimeout(runSessionMonitor, 0)
       window.setTimeout(() => refreshNotificationSummary({ markFeedback: route.path === '/feedback' }), 0)
+      window.setTimeout(() => refreshServerResources(), 0)
     }
   },
   { immediate: true }
@@ -974,6 +1106,9 @@ onMounted(() => {
   if (!notificationSummaryTimer) {
     notificationSummaryTimer = window.setInterval(() => refreshNotificationSummary(), notificationRefreshIntervalMs)
   }
+  if (!serverResourceTimer) {
+    serverResourceTimer = window.setInterval(() => refreshServerResources(), serverResourceRefreshIntervalMs)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -991,6 +1126,10 @@ onBeforeUnmount(() => {
   if (notificationSummaryTimer) {
     window.clearInterval(notificationSummaryTimer)
     notificationSummaryTimer = null
+  }
+  if (serverResourceTimer) {
+    window.clearInterval(serverResourceTimer)
+    serverResourceTimer = null
   }
 })
 
@@ -2339,6 +2478,104 @@ textarea:focus {
   gap: 12px;
 }
 
+.server-resource-card {
+  min-height: 48px;
+  width: 318px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(248, 250, 252, 0.98), rgba(239, 246, 255, 0.92));
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+}
+
+.server-resource-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 10px;
+  border-right: 1px solid rgba(148, 163, 184, 0.24);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.server-resource-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
+  flex-shrink: 0;
+}
+
+.server-resource-metrics {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px 52px minmax(128px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.server-resource-metric {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.server-resource-metric em {
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.server-resource-metric strong {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resource-good .server-resource-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.14);
+}
+
+.resource-warning {
+  border-color: rgba(245, 158, 11, 0.38);
+  background: linear-gradient(135deg, #fffaf0, #f8fafc);
+}
+
+.resource-warning .server-resource-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.16);
+}
+
+.resource-danger {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: linear-gradient(135deg, #fff1f2, #f8fafc);
+}
+
+.resource-danger .server-resource-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.14);
+}
+
+.resource-muted .server-resource-dot {
+  background: #94a3b8;
+}
+
 .header-plan-todo {
   position: relative;
   flex-shrink: 0;
@@ -2922,6 +3159,43 @@ textarea:focus {
     font-weight: 900;
   }
 
+  .mobile-resource-chip {
+    min-height: 34px;
+    max-width: 132px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(248, 250, 252, 0.96);
+    color: #334155;
+    font-size: 11px;
+    font-weight: 900;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+  }
+
+  .mobile-resource-chip.resource-good {
+    border-color: rgba(22, 163, 74, 0.22);
+    background: #f0fdf4;
+    color: #166534;
+  }
+
+  .mobile-resource-chip.resource-warning {
+    border-color: rgba(245, 158, 11, 0.3);
+    background: #fffbeb;
+    color: #92400e;
+  }
+
+  .mobile-resource-chip.resource-danger {
+    border-color: rgba(239, 68, 68, 0.28);
+    background: #fff1f2;
+    color: #991b1b;
+  }
+
   .mobile-plan-todo-popover {
     top: calc(100% + 8px);
     right: -54px;
@@ -2995,6 +3269,26 @@ textarea:focus {
 
   .content {
     padding: 74px 12px 16px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .server-resource-card {
+    width: 238px;
+  }
+
+  .server-resource-metrics {
+    grid-template-columns: 48px 52px;
+  }
+
+  .server-resource-network {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .mobile-resource-chip {
+    display: none;
   }
 }
 </style>

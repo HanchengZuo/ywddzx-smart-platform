@@ -1,5 +1,6 @@
 from flask import Flask, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+import fcntl
 import hashlib
 import json
 import logging
@@ -80,11 +81,15 @@ AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
 )
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
-FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.1").strip() or "3.4.1"
+FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.2").strip() or "3.4.2"
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
 AUTH_TOKEN_CACHE_MAX_ENTRIES = max(128, int(os.environ.get("AUTH_TOKEN_CACHE_MAX_ENTRIES", "2048")))
+SERVER_RESOURCE_SAMPLE_PATH = os.environ.get(
+    "SERVER_RESOURCE_SAMPLE_PATH",
+    "/tmp/ywddzx_server_resource_sample.json",
+)
 LEGACY_FRONTEND_API_PATHS = {
     "/api/feedbacks/unread-count",
     "/api/assessment/peer-reviews/pending-count",
@@ -94,6 +99,7 @@ LEGACY_FRONTEND_API_PATHS = {
 QUIET_ACCESS_LOG_PATHS = LEGACY_FRONTEND_API_PATHS | {
     "/api/auth/me",
     "/api/notifications/summary",
+    "/api/system/resources",
 }
 
 
@@ -135,6 +141,137 @@ class QuietAccessLogFilter(logging.Filter):
 
 
 logging.getLogger("werkzeug").addFilter(QuietAccessLogFilter())
+
+
+def read_proc_cpu_times():
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as stat_file:
+            line = stat_file.readline().strip()
+        if not line.startswith("cpu "):
+            return None
+        values = [int(value) for value in line.split()[1:]]
+        if len(values) < 5:
+            return None
+        idle = values[3] + values[4]
+        total = sum(values)
+        return {"total": total, "idle": idle}
+    except Exception:
+        return None
+
+
+def read_proc_memory_info():
+    try:
+        meminfo = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as meminfo_file:
+            for line in meminfo_file:
+                key, value = line.split(":", 1)
+                meminfo[key] = int(value.strip().split()[0])
+        total_kb = meminfo.get("MemTotal", 0)
+        available_kb = meminfo.get("MemAvailable", 0)
+        used_kb = max(0, total_kb - available_kb)
+        percent = (used_kb / total_kb * 100) if total_kb else 0
+        return {
+            "memory_percent": round(percent, 1),
+            "memory_used_mb": round(used_kb / 1024, 1),
+            "memory_total_mb": round(total_kb / 1024, 1),
+        }
+    except Exception:
+        return {
+            "memory_percent": None,
+            "memory_used_mb": None,
+            "memory_total_mb": None,
+        }
+
+
+def read_proc_network_bytes():
+    rx_bytes = 0
+    tx_bytes = 0
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8") as net_file:
+            for line in net_file.readlines()[2:]:
+                if ":" not in line:
+                    continue
+                interface, data = line.split(":", 1)
+                if interface.strip() == "lo":
+                    continue
+                fields = data.split()
+                if len(fields) < 16:
+                    continue
+                rx_bytes += int(fields[0])
+                tx_bytes += int(fields[8])
+    except Exception:
+        pass
+    return {"rx_bytes": rx_bytes, "tx_bytes": tx_bytes}
+
+
+def swap_server_resource_sample(current_sample):
+    with server_resource_sample_lock:
+        fallback_previous = dict(server_resource_last_sample)
+        server_resource_last_sample.update(current_sample)
+
+    try:
+        with open(SERVER_RESOURCE_SAMPLE_PATH, "a+", encoding="utf-8") as sample_file:
+            fcntl.flock(sample_file.fileno(), fcntl.LOCK_EX)
+            sample_file.seek(0)
+            raw_previous = sample_file.read().strip()
+            previous = json.loads(raw_previous) if raw_previous else {}
+            sample_file.seek(0)
+            sample_file.truncate()
+            json.dump(current_sample, sample_file)
+            sample_file.flush()
+            os.fsync(sample_file.fileno())
+            fcntl.flock(sample_file.fileno(), fcntl.LOCK_UN)
+            return previous or fallback_previous
+    except Exception:
+        return fallback_previous
+
+
+def build_server_resource_snapshot():
+    now = time.time()
+    cpu_times = read_proc_cpu_times()
+    net_bytes = read_proc_network_bytes()
+    memory_info = read_proc_memory_info()
+    current_sample = {
+        "timestamp": now,
+        "cpu_total": cpu_times["total"] if cpu_times else None,
+        "cpu_idle": cpu_times["idle"] if cpu_times else None,
+        "rx_bytes": net_bytes["rx_bytes"],
+        "tx_bytes": net_bytes["tx_bytes"],
+    }
+    previous = swap_server_resource_sample(current_sample)
+
+    cpu_percent = None
+    if (
+        cpu_times
+        and previous.get("cpu_total") is not None
+        and previous.get("cpu_idle") is not None
+    ):
+        total_delta = cpu_times["total"] - previous["cpu_total"]
+        idle_delta = cpu_times["idle"] - previous["cpu_idle"]
+        if total_delta > 0:
+            cpu_percent = round(max(0, min(100, (1 - idle_delta / total_delta) * 100)), 1)
+    if cpu_percent is None:
+        try:
+            load_1m = os.getloadavg()[0]
+            cpu_percent = round(max(0, min(100, load_1m / max(1, os.cpu_count() or 1) * 100)), 1)
+        except Exception:
+            cpu_percent = None
+
+    interval = max(0, now - previous["timestamp"]) if previous.get("timestamp") else 0
+    rx_kbps = 0
+    tx_kbps = 0
+    if interval > 0 and previous.get("rx_bytes") is not None and previous.get("tx_bytes") is not None:
+        rx_kbps = max(0, (net_bytes["rx_bytes"] - previous["rx_bytes"]) / 1024 / interval)
+        tx_kbps = max(0, (net_bytes["tx_bytes"] - previous["tx_bytes"]) / 1024 / interval)
+
+    return {
+        "cpu_percent": cpu_percent,
+        "cpu_core_count": os.cpu_count() or 0,
+        "network_rx_kbps": round(rx_kbps, 1),
+        "network_tx_kbps": round(tx_kbps, 1),
+        "sampled_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        **memory_info,
+    }
 
 # === Permission constants ===
 ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan", "area_account"}
@@ -551,6 +688,14 @@ auth_token_cache_lock = threading.Lock()
 auth_token_cache = {}
 auth_me_response_cache_lock = threading.Lock()
 auth_me_response_cache = {}
+server_resource_sample_lock = threading.Lock()
+server_resource_last_sample = {
+    "timestamp": None,
+    "cpu_total": None,
+    "cpu_idle": None,
+    "rx_bytes": None,
+    "tx_bytes": None,
+}
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -11920,6 +12065,13 @@ def get_frontend_version():
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    return response
+
+
+@app.route("/api/system/resources")
+def get_system_resources():
+    response = jsonify({"success": True, **build_server_resource_snapshot()})
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
