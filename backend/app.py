@@ -19701,8 +19701,22 @@ def update_issue(issue_id):
             sync_inspection_primary_inspector(cur, old_inspection_id)
             cleanup_empty_inspection_after_issue_move(cur, old_inspection_id)
 
+        can_explicit_delete = can_delete_inspection_issues(cur, user)
+        can_explicit_audit = can_audit_inspection_issues(cur, user)
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        updated_issue = fetch_issue_row_for_response(
+            cur,
+            issue_id,
+            user,
+            can_explicit_edit,
+            can_explicit_delete,
+            can_explicit_audit,
+            can_explicit_change_inspector,
+            hide_inspector_contact,
+        )
+
         conn.commit()
-        return jsonify({"success": True, "message": "巡检问题已保存。"})
+        return jsonify({"success": True, "message": "巡检问题已保存。", "issue": updated_issue})
     except ValueError as e:
         if conn:
             conn.rollback()

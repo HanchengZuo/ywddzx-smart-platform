@@ -3156,12 +3156,17 @@ const saveIssueEdit = async () => {
     if (editDialog.value.issuePhotoFile) {
       formData.append('issue_photo', editDialog.value.issuePhotoFile)
     }
-    await axios.put(`/api/issues/${issueId}`, formData)
+    const response = await axios.put(`/api/issues/${issueId}`, formData)
     preserveFullscreen = beginFullscreenDomPreservation()
+    const updatedIssue = response.data?.issue
+    if (updatedIssue?.id) {
+      list.value = list.value.map((row) => (
+        Number(row.id) === Number(updatedIssue.id) ? { ...row, ...updatedIssue } : row
+      ))
+    }
     editDialog.value.saving = false
     closeEditDialog()
-    showActionMessage('巡检问题已保存。', 'success')
-    await fetchIssues()
+    showActionMessage(response.data?.message || '巡检问题已保存。', 'success')
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     editDialog.value.error = error?.response?.data?.error || '保存巡检问题失败。'
