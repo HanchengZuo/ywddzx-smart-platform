@@ -5563,6 +5563,81 @@ def normalize_issue_row_for_response(
     return data
 
 
+def fetch_issue_row_for_response(
+    cur,
+    issue_id,
+    user,
+    can_explicit_edit=False,
+    can_explicit_delete=False,
+    can_explicit_audit=False,
+    can_explicit_change_inspector=None,
+    hide_inspector_contact_info=False,
+):
+    cur.execute(
+        """
+        SELECT
+            i.id,
+            i.station_id,
+            COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+            TO_CHAR(i.created_at, 'YYYY-MM') AS month,
+            TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
+            s.region,
+            s.station_name AS station,
+            s.station_manager_name AS station_manager,
+            s.station_manager_phone AS station_manager_phone,
+            issue_inspector.real_name AS inspector,
+            issue_inspector.phone AS inspector_phone,
+            t.table_name AS inspection_table_name,
+            i.standard_id,
+            i.standard_detail_text,
+            i.internal_standard_id,
+            i.internal_standard_detail_text,
+            i.description,
+            i.photo_path AS issue_photo,
+            i.rectification_result,
+            i.rectification_note,
+            TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
+            i.rectification_photo_path AS rectification_photo,
+            i.review_result,
+            i.review_note,
+            TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
+            i.review_photo_path AS review_photo,
+            i.status,
+            COALESCE(i.audit_status, 'pending') AS audit_status,
+            COALESCE(i.is_excellent, FALSE) AS is_excellent,
+            i.audited_by,
+            audit_user.real_name AS audited_by_name,
+            TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
+            ins.sign_status AS inspection_sign_status,
+            ins.station_manager_signed_name,
+            ins.station_manager_signature_path,
+            TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
+            ins.inspector_completion_status AS inspection_completion_status
+        FROM issues i
+        JOIN inspections ins ON i.inspection_id = ins.id
+        JOIN stations s ON i.station_id = s.id
+        JOIN inspection_tables t ON i.inspection_table_id = t.id
+        JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
+        LEFT JOIN users audit_user ON audit_user.id = i.audited_by
+        WHERE i.id = %s
+        LIMIT 1;
+        """,
+        (issue_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return normalize_issue_row_for_response(
+        row,
+        user,
+        can_explicit_edit,
+        can_explicit_delete,
+        can_explicit_audit,
+        can_explicit_change_inspector,
+        hide_inspector_contact_info,
+    )
+
+
 def ensure_issue_export_schema(cur):
     cur.execute(
         """
@@ -18928,7 +19003,8 @@ def audit_issue(issue_id):
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if not can_audit_inspection_issues(cur, user):
+        can_explicit_audit = can_audit_inspection_issues(cur, user)
+        if not can_explicit_audit:
             return jsonify({"success": False, "error": "当前账号无权审核巡检问题。"}), 403
 
         cur.execute(
@@ -19011,6 +19087,21 @@ def audit_issue(issue_id):
             )
             message = "该问题已审核通过。" if audit_status == "approved" else "该问题已审核否决，后续不参与记录统计和问题流转。"
 
+        can_explicit_edit = can_edit_inspection_issues(cur, user)
+        can_explicit_delete = can_delete_inspection_issues(cur, user)
+        can_explicit_change_inspector = can_change_issue_inspector(cur, user)
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        updated_issue = fetch_issue_row_for_response(
+            cur,
+            issue_id,
+            user,
+            can_explicit_edit,
+            can_explicit_delete,
+            can_explicit_audit,
+            can_explicit_change_inspector,
+            hide_inspector_contact,
+        )
+
         conn.commit()
         return jsonify(
             {
@@ -19018,6 +19109,7 @@ def audit_issue(issue_id):
                 "message": message,
                 "audit_status": audit_status,
                 "audit_status_label": ISSUE_AUDIT_STATUS_LABELS.get(audit_status, "待审核"),
+                "issue": updated_issue,
             }
         )
     except Exception as e:

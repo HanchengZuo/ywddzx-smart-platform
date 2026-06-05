@@ -2488,6 +2488,8 @@ textarea:focus {
 }
 
 .header {
+  position: relative;
+  z-index: 3600;
   height: 76px;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
@@ -2518,12 +2520,17 @@ textarea:focus {
 }
 
 .header-user-area {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;
+  overflow: visible;
 }
 
 .server-resource-card {
+  position: relative;
+  z-index: 2;
   min-height: 46px;
   width: 336px;
   flex-shrink: 0;
@@ -2536,6 +2543,7 @@ textarea:focus {
   border: 1px solid rgba(148, 163, 184, 0.22);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
   color: #0f172a;
+  overflow: visible;
 }
 
 .server-resource-head {
@@ -2610,7 +2618,7 @@ textarea:focus {
   position: absolute;
   top: calc(100% + 12px);
   right: -8px;
-  z-index: 1900;
+  z-index: 3900;
   width: min(340px, calc(100vw - 28px));
   padding: 14px;
   border-radius: 18px;
@@ -2773,7 +2781,7 @@ textarea:focus {
 .header-plan-todo {
   position: relative;
   flex-shrink: 0;
-  z-index: 320;
+  z-index: 1;
 }
 
 .header-plan-todo-trigger {
@@ -2809,7 +2817,7 @@ textarea:focus {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  z-index: 1800;
+  z-index: 3800;
   width: min(360px, calc(100vw - 24px));
   padding: 14px;
   border-radius: 20px;

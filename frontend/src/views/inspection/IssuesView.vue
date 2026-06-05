@@ -3216,8 +3216,27 @@ const auditIssue = async (item, status) => {
     })
     preserveFullscreen = beginFullscreenDomPreservation()
     const message = response.data?.message || `问题 #${item.id} 已${actionLabel}。`
+    const updatedIssue = response.data?.issue
+    if (updatedIssue?.id) {
+      list.value = list.value.map((row) => (
+        Number(row.id) === Number(updatedIssue.id) ? { ...row, ...updatedIssue } : row
+      ))
+    } else {
+      const nextAuditStatus = response.data?.audit_status || status
+      const nextAuditLabel = response.data?.audit_status_label || auditStatusLabel({ audit_status: nextAuditStatus })
+      list.value = list.value.map((row) => (
+        Number(row.id) === Number(item.id)
+          ? {
+              ...row,
+              audit_status: nextAuditStatus,
+              audit_status_label: nextAuditLabel,
+              is_excellent: nextAuditStatus === 'rejected' ? false : row.is_excellent,
+              status: nextAuditStatus === 'pending' ? '待审核' : (row.raw_status || row.workflow_status || row.status)
+            }
+          : row
+      ))
+    }
     showAuditNotice(actionLabel, message, status === 'rejected' ? 'danger' : 'success')
-    await fetchIssues()
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
