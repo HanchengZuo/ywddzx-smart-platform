@@ -1712,7 +1712,7 @@ textarea {
 .login-version-modal {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: 1400;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1887,7 +1887,7 @@ textarea:focus {
 .force-password-overlay {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: 1400;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2110,7 +2110,7 @@ textarea:focus {
 .session-guard-overlay {
   position: fixed;
   inset: 0;
-  z-index: 360;
+  z-index: 1400;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2489,7 +2489,7 @@ textarea:focus {
 
 .header {
   position: relative;
-  z-index: 3600;
+  z-index: 900;
   height: 76px;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
@@ -2618,7 +2618,7 @@ textarea:focus {
   position: absolute;
   top: calc(100% + 12px);
   right: -8px;
-  z-index: 3900;
+  z-index: 980;
   width: min(340px, calc(100vw - 28px));
   padding: 14px;
   border-radius: 18px;
@@ -2817,7 +2817,7 @@ textarea:focus {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  z-index: 3800;
+  z-index: 970;
   width: min(360px, calc(100vw - 24px));
   padding: 14px;
   border-radius: 20px;
