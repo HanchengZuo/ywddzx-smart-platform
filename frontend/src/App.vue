@@ -549,10 +549,44 @@ const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh
 const PEER_REVIEW_PENDING_REFRESH_EVENT = 'peer-review-pending-refresh'
 const PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT = 'plan-assignment-pending-refresh'
 const idleActivityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']
+const floatingModalCloseButtonSelector = [
+  '.login-version-dialog-header > button',
+  '.image-modal-header > button',
+  '.dialog-header > button',
+  '.dialog-head > button',
+  '.modal-head > button',
+  '.drawer-header > button',
+  '.plan-dialog-header > button',
+  '.batch-detail-header > button',
+  '.signature-dialog-header > button',
+  '.station-export-header > button',
+  '.photo-editor-head > button',
+  '.photo-editor-header > button',
+  '.mobile-detail-sheet > .modal-close'
+].join(',')
+const floatingModalPanelSelector = [
+  '.login-version-dialog',
+  '.image-modal-content',
+  '.dialog-card',
+  '.modal-panel',
+  '.role-permission-modal',
+  '.edit-dialog',
+  '.plan-dialog',
+  '.signature-dialog',
+  '.batch-detail-dialog',
+  '.station-export-modal',
+  '.drawer-panel',
+  '.photo-editor-dialog',
+  '.adjust-dialog',
+  '.export-dialog',
+  '.mobile-detail-sheet'
+].join(',')
 let sessionMonitorTimer = null
 let idleLogoutTimer = null
 let lastUserActivityAt = Date.now()
 let lastIdleActivityMarkedAt = 0
+let floatingModalCloseRaf = null
+let floatingModalCloseObserver = null
 let dismissedSessionWarningToken = ''
 
 const sessionNotice = reactive({
@@ -922,6 +956,43 @@ const markUserActivity = () => {
   scheduleIdleLogout()
 }
 
+const updateFloatingModalCloseButtons = () => {
+  if (typeof document === 'undefined') return
+
+  const buttons = Array.from(document.querySelectorAll(floatingModalCloseButtonSelector))
+  buttons.forEach((button) => {
+    const panel = button.closest(floatingModalPanelSelector)
+    if (!panel) return
+
+    const rect = panel.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+
+    const buttonSize = Number.parseFloat(window.getComputedStyle(button).width) || 50
+    const diagonalOffset = Math.max(34, Math.min(58, buttonSize * 0.86))
+    const safeGap = Math.max(12, buttonSize / 2 + 4)
+    const centerX = Math.min(
+      window.innerWidth - safeGap,
+      Math.max(safeGap, rect.right - diagonalOffset)
+    )
+    const centerY = Math.min(
+      window.innerHeight - safeGap,
+      Math.max(safeGap, rect.top + diagonalOffset)
+    )
+
+    button.style.setProperty('--floating-close-x', `${Math.round(centerX)}px`)
+    button.style.setProperty('--floating-close-y', `${Math.round(centerY)}px`)
+  })
+}
+
+const scheduleFloatingModalCloseUpdate = () => {
+  if (typeof window === 'undefined') return
+  if (floatingModalCloseRaf) return
+  floatingModalCloseRaf = window.requestAnimationFrame(() => {
+    floatingModalCloseRaf = null
+    updateFloatingModalCloseButtons()
+  })
+}
+
 const verifySessionSilently = async () => {
   if (isLoginPage.value) return
   const token = getStoredAuthToken()
@@ -1223,6 +1294,16 @@ onMounted(() => {
   idleActivityEvents.forEach((eventName) => {
     window.addEventListener(eventName, markUserActivity, { passive: true })
   })
+  window.addEventListener('resize', scheduleFloatingModalCloseUpdate, { passive: true })
+  window.addEventListener('scroll', scheduleFloatingModalCloseUpdate, { passive: true, capture: true })
+  floatingModalCloseObserver = new MutationObserver(scheduleFloatingModalCloseUpdate)
+  floatingModalCloseObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style']
+  })
+  scheduleFloatingModalCloseUpdate()
   if (!isLoginPage.value && isUsableAuthToken(getStoredAuthToken())) {
     lastUserActivityAt = Date.now()
     scheduleIdleLogout()
@@ -1249,6 +1330,16 @@ onBeforeUnmount(() => {
   idleActivityEvents.forEach((eventName) => {
     window.removeEventListener(eventName, markUserActivity)
   })
+  window.removeEventListener('resize', scheduleFloatingModalCloseUpdate)
+  window.removeEventListener('scroll', scheduleFloatingModalCloseUpdate, true)
+  if (floatingModalCloseObserver) {
+    floatingModalCloseObserver.disconnect()
+    floatingModalCloseObserver = null
+  }
+  if (floatingModalCloseRaf) {
+    window.cancelAnimationFrame(floatingModalCloseRaf)
+    floatingModalCloseRaf = null
+  }
   stopIdleLogoutTimer()
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
@@ -1502,16 +1593,17 @@ const handleLogout = async () => {
 .photo-editor-header > button,
 .mobile-detail-sheet > .modal-close {
   position: fixed !important;
-  top: clamp(18px, 4vh, 42px) !important;
-  right: clamp(18px, 4vw, 42px) !important;
+  top: var(--floating-close-y, clamp(36px, 5vh, 58px)) !important;
+  right: auto !important;
+  left: var(--floating-close-x, calc(100vw - 52px)) !important;
   z-index: 10020 !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 42px !important;
-  min-width: 42px !important;
-  height: 42px !important;
-  min-height: 42px !important;
+  width: 50px !important;
+  min-width: 50px !important;
+  height: 50px !important;
+  min-height: 50px !important;
   margin: 0 !important;
   padding: 0 !important;
   border: 1px solid rgba(248, 113, 113, 0.42) !important;
@@ -1525,6 +1617,7 @@ const handleLogout = async () => {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   cursor: pointer;
+  transform: translate(-50%, -50%);
 }
 
 .login-version-dialog-header > button::before,
@@ -1542,7 +1635,7 @@ const handleLogout = async () => {
 .mobile-detail-sheet > .modal-close::before {
   content: "×";
   color: #dc2626;
-  font-size: 27px;
+  font-size: 33px;
   font-weight: 950;
   line-height: 1;
 }
@@ -1563,7 +1656,7 @@ const handleLogout = async () => {
   border-color: rgba(239, 68, 68, 0.62) !important;
   background: rgba(254, 202, 202, 0.92) !important;
   box-shadow: 0 18px 38px rgba(185, 28, 28, 0.22);
-  transform: translateY(-1px);
+  transform: translate(-50%, -50%) scale(1.04);
 }
 
 .login-version-dialog-header > button:disabled,
@@ -1581,7 +1674,7 @@ const handleLogout = async () => {
 .mobile-detail-sheet > .modal-close:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-  transform: none;
+  transform: translate(-50%, -50%);
 }
 
 @media (max-width: 768px) {
@@ -1599,12 +1692,12 @@ const handleLogout = async () => {
   .photo-editor-head > button,
   .photo-editor-header > button,
   .mobile-detail-sheet > .modal-close {
-    top: 14px !important;
-    right: 14px !important;
-    width: 38px !important;
-    min-width: 38px !important;
-    height: 38px !important;
-    min-height: 38px !important;
+    top: var(--floating-close-y, 36px) !important;
+    left: var(--floating-close-x, calc(100vw - 36px)) !important;
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
   }
 
   .login-version-dialog-header > button::before,
@@ -1620,7 +1713,7 @@ const handleLogout = async () => {
   .photo-editor-head > button::before,
   .photo-editor-header > button::before,
   .mobile-detail-sheet > .modal-close::before {
-    font-size: 25px;
+    font-size: 30px;
   }
 }
 
