@@ -541,12 +541,18 @@ const notificationRefreshIntervalMs = 60 * 1000
 const notificationCacheTtlMs = 15 * 1000
 const serverResourceRefreshIntervalMs = 30 * 1000
 const serverResourceCacheTtlMs = 8 * 1000
+const idleLogoutMs = 2 * 60 * 60 * 1000
+const idleActivityThrottleMs = 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
 const PEER_REVIEW_PENDING_REFRESH_EVENT = 'peer-review-pending-refresh'
 const PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT = 'plan-assignment-pending-refresh'
+const idleActivityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']
 let sessionMonitorTimer = null
+let idleLogoutTimer = null
+let lastUserActivityAt = Date.now()
+let lastIdleActivityMarkedAt = 0
 let dismissedSessionWarningToken = ''
 
 const sessionNotice = reactive({
@@ -853,6 +859,69 @@ const openLoginInNewWindow = () => {
   window.open(`${window.location.origin}/login`, '_blank', 'noopener,noreferrer')
 }
 
+const stopIdleLogoutTimer = () => {
+  if (idleLogoutTimer) {
+    window.clearTimeout(idleLogoutTimer)
+    idleLogoutTimer = null
+  }
+}
+
+const isIdleLogoutDue = () => (
+  !isLoginPage.value &&
+  isUsableAuthToken(getStoredAuthToken()) &&
+  Date.now() - lastUserActivityAt >= idleLogoutMs
+)
+
+const handleIdleLogout = async () => {
+  if (!isIdleLogoutDue()) return
+
+  stopIdleLogoutTimer()
+  const token = getStoredAuthToken()
+  if (isUsableAuthToken(token)) {
+    try {
+      await axios.post('/api/auth/logout', {}, { timeout: 1200 })
+    } catch (error) {
+      // 自动退出不能被在线状态清理失败阻断，前端仍会立即清理本地登录态。
+    }
+  }
+
+  clearAuthSession('由于 2 小时未操作，已自动退出登录。')
+  resetSessionNotice()
+  resetPasswordChangeForm()
+  resetNotificationCounts()
+  resetServerResourceState()
+  syncAuthState()
+  mobileMenuOpen.value = false
+  loginForm.password = ''
+  router.push('/login')
+}
+
+const scheduleIdleLogout = () => {
+  stopIdleLogoutTimer()
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) return
+
+  const delay = Math.max(0, idleLogoutMs - (Date.now() - lastUserActivityAt))
+  idleLogoutTimer = window.setTimeout(handleIdleLogout, delay)
+}
+
+const markUserActivity = () => {
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+    stopIdleLogoutTimer()
+    return
+  }
+
+  const now = Date.now()
+  if (now - lastUserActivityAt >= idleLogoutMs) {
+    handleIdleLogout()
+    return
+  }
+  if (now - lastIdleActivityMarkedAt < idleActivityThrottleMs) return
+
+  lastUserActivityAt = now
+  lastIdleActivityMarkedAt = now
+  scheduleIdleLogout()
+}
+
 const verifySessionSilently = async () => {
   if (isLoginPage.value) return
   const token = getStoredAuthToken()
@@ -933,7 +1002,10 @@ const runSessionMonitor = () => {
 }
 
 const handleAuthSessionExpired = (event) => {
+  stopIdleLogoutTimer()
   syncAuthState()
+  resetNotificationCounts()
+  resetServerResourceState()
   showSessionExpired(event?.detail?.message || '登录已过期，请重新登录。')
 }
 
@@ -942,8 +1014,12 @@ const handleAuthStorageChange = (event) => {
   syncAuthState()
   if (isLoginPage.value) return
   if (isUsableAuthToken(getStoredAuthToken())) {
+    lastUserActivityAt = Date.now()
+    scheduleIdleLogout()
     verifySessionSilently()
     refreshNotificationSummary({ force: true })
+  } else {
+    stopIdleLogoutTimer()
   }
 }
 
@@ -1089,6 +1165,10 @@ const refreshServerResources = async ({ force = false } = {}) => {
 }
 
 const handleWindowFocus = () => {
+  if (isIdleLogoutDue()) {
+    handleIdleLogout()
+    return
+  }
   runSessionMonitor()
   refreshNotificationSummary()
   refreshServerResources()
@@ -1116,10 +1196,14 @@ watch(
     syncAuthState()
     showAuthSessionMessageIfNeeded()
     if (route.path === '/login') {
+      stopIdleLogoutTimer()
       resetSessionNotice()
       resetNotificationCounts()
       resetServerResourceState()
     } else {
+      if (isUsableAuthToken(getStoredAuthToken())) {
+        scheduleIdleLogout()
+      }
       window.setTimeout(runSessionMonitor, 0)
       window.setTimeout(() => refreshNotificationSummary({ markFeedback: route.path === '/feedback' }), 0)
       window.setTimeout(() => refreshServerResources(), 0)
@@ -1136,6 +1220,13 @@ onMounted(() => {
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
+  idleActivityEvents.forEach((eventName) => {
+    window.addEventListener(eventName, markUserActivity, { passive: true })
+  })
+  if (!isLoginPage.value && isUsableAuthToken(getStoredAuthToken())) {
+    lastUserActivityAt = Date.now()
+    scheduleIdleLogout()
+  }
   if (!sessionMonitorTimer) {
     sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
   }
@@ -1155,6 +1246,10 @@ onBeforeUnmount(() => {
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.removeEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.removeEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
+  idleActivityEvents.forEach((eventName) => {
+    window.removeEventListener(eventName, markUserActivity)
+  })
+  stopIdleLogoutTimer()
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null
@@ -1316,6 +1411,9 @@ const handleLogin = async () => {
     resetSessionNotice()
     resetPasswordChangeForm()
     syncAuthState()
+    lastUserActivityAt = Date.now()
+    lastIdleActivityMarkedAt = Date.now()
+    scheduleIdleLogout()
     loginForm.password = ''
     router.push(resolveHomePath(user))
   } catch (error) {
@@ -1325,6 +1423,7 @@ const handleLogin = async () => {
 }
 
 const handleLogout = async () => {
+  stopIdleLogoutTimer()
   const token = getStoredAuthToken()
   if (isUsableAuthToken(token)) {
     try {
@@ -1336,6 +1435,8 @@ const handleLogout = async () => {
   clearAuthSession()
   resetSessionNotice()
   resetPasswordChangeForm()
+  resetNotificationCounts()
+  resetServerResourceState()
   syncAuthState()
   mobileMenuOpen.value = false
   loginForm.password = ''
@@ -1367,6 +1468,41 @@ const handleLogout = async () => {
 
 * {
   box-sizing: border-box;
+}
+
+.login-version-dialog-header,
+.image-modal-header,
+.dialog-header,
+.dialog-head,
+.modal-head,
+.drawer-header,
+.plan-dialog-header,
+.batch-detail-header,
+.signature-dialog-header,
+.station-export-header,
+.photo-editor-head,
+.photo-editor-header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 45 !important;
+  background: var(--modal-sticky-header-bg, rgba(255, 255, 255, 0.96)) !important;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.18);
+}
+
+.login-version-dialog-header :where(.login-version-close),
+.image-modal-header :where(.close-btn, .modal-close, .dialog-close),
+.dialog-header :where(.close-btn, .modal-close, .dialog-close),
+.dialog-head :where(.close-btn, .modal-close, .dialog-close),
+.modal-head :where(.close-btn, .modal-close, .dialog-close),
+.drawer-header :where(.drawer-close, .close-btn, .modal-close, .dialog-close),
+.plan-dialog-header :where(.close-btn, .modal-close, .dialog-close),
+.batch-detail-header :where(.close-btn, .modal-close, .dialog-close),
+.signature-dialog-header :where(.close-btn, .modal-close, .dialog-close),
+.station-export-header :where(.close-btn, .modal-close, .dialog-close),
+.photo-editor-head :where(.photo-editor-close, .close-btn, .modal-close),
+.photo-editor-header :where(.photo-editor-close, .close-btn, .modal-close) {
+  flex: 0 0 auto;
 }
 
 html,

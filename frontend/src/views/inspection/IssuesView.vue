@@ -493,6 +493,16 @@
           <p>系统正在同步最新的问题记录，请稍候。</p>
         </div>
       </div>
+      <div v-else-if="paginatedData.length === 0" class="table-empty-state">
+        <div class="empty-state-inline">
+          <div class="empty-state-orb"></div>
+          <div class="empty-state-kicker">暂无记录</div>
+          <h3>当前没有符合条件的问题记录</h3>
+          <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
+          <button class="btn btn-secondary btn-sm empty-state-action" type="button"
+            @click="resetFilters">重置筛选</button>
+        </div>
+      </div>
       <div v-else class="table-scroll-wrap">
         <div ref="tableScrollRef" class="table-scroll">
           <table class="issues-table">
@@ -641,18 +651,6 @@
                     :title="excellentStarTitle(item)" @click="toggleIssueExcellent(item)">
                     ★
                   </button>
-                </td>
-              </tr>
-              <tr v-if="!loading && paginatedData.length === 0">
-                <td :colspan="issueTableColspan" class="empty-row">
-                  <div class="empty-state-inline">
-                    <div class="empty-state-orb"></div>
-                    <div class="empty-state-kicker">暂无记录</div>
-                    <h3>当前没有符合条件的问题记录</h3>
-                    <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
-                    <button class="btn btn-secondary btn-sm empty-state-action" type="button"
-                      @click="resetFilters">重置筛选</button>
-                  </div>
                 </td>
               </tr>
             </tbody>
@@ -1802,7 +1800,6 @@ const issueTableMinWidth = computed(() => {
   const baseWidth = visibleIssueColumns.value.reduce((total, column) => total + column.width, operationWidth)
   return Math.max(980, baseWidth + 96)
 })
-const issueTableColspan = computed(() => visibleIssueColumns.value.length + (canManageIssues.value ? 1 : 0))
 
 const isIssueColumnVisible = (key) => {
   if (hideInspectorContactInfo.value && hiddenInspectorColumnKeys.has(key)) return false
@@ -4734,7 +4731,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.table-loading-state {
+.table-loading-state,
+.table-empty-state {
   min-height: 280px;
   border: 1px solid #e5e7eb;
   border-radius: 14px;

@@ -1181,9 +1181,14 @@ onBeforeUnmount(() => {
 }
 
 .modal-close {
-  position: absolute;
-  right: 16px;
-  top: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-bottom: -38px;
   width: 38px;
   height: 38px;
   border: 0;
