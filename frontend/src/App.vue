@@ -1482,27 +1482,146 @@ const handleLogout = async () => {
 .station-export-header,
 .photo-editor-head,
 .photo-editor-header {
-  position: sticky !important;
-  top: 0 !important;
-  z-index: 45 !important;
-  background: var(--modal-sticky-header-bg, rgba(255, 255, 255, 0.96)) !important;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.18);
+  transform: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
-.login-version-dialog-header :where(.login-version-close),
-.image-modal-header :where(.close-btn, .modal-close, .dialog-close),
-.dialog-header :where(.close-btn, .modal-close, .dialog-close),
-.dialog-head :where(.close-btn, .modal-close, .dialog-close),
-.modal-head :where(.close-btn, .modal-close, .dialog-close),
-.drawer-header :where(.drawer-close, .close-btn, .modal-close, .dialog-close),
-.plan-dialog-header :where(.close-btn, .modal-close, .dialog-close),
-.batch-detail-header :where(.close-btn, .modal-close, .dialog-close),
-.signature-dialog-header :where(.close-btn, .modal-close, .dialog-close),
-.station-export-header :where(.close-btn, .modal-close, .dialog-close),
-.photo-editor-head :where(.photo-editor-close, .close-btn, .modal-close),
-.photo-editor-header :where(.photo-editor-close, .close-btn, .modal-close) {
-  flex: 0 0 auto;
+.login-version-dialog-header > button,
+.image-modal-header > button,
+.dialog-header > button,
+.dialog-head > button,
+.modal-head > button,
+.drawer-header > button,
+.plan-dialog-header > button,
+.batch-detail-header > button,
+.signature-dialog-header > button,
+.station-export-header > button,
+.photo-editor-head > button,
+.photo-editor-header > button,
+.mobile-detail-sheet > .modal-close {
+  position: fixed !important;
+  top: clamp(18px, 4vh, 42px) !important;
+  right: clamp(18px, 4vw, 42px) !important;
+  z-index: 10020 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 42px !important;
+  min-width: 42px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid rgba(248, 113, 113, 0.42) !important;
+  border-radius: 999px !important;
+  background: rgba(254, 226, 226, 0.76) !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 1 !important;
+  text-indent: 0 !important;
+  box-shadow: 0 16px 34px rgba(185, 28, 28, 0.16);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  cursor: pointer;
+}
+
+.login-version-dialog-header > button::before,
+.image-modal-header > button::before,
+.dialog-header > button::before,
+.dialog-head > button::before,
+.modal-head > button::before,
+.drawer-header > button::before,
+.plan-dialog-header > button::before,
+.batch-detail-header > button::before,
+.signature-dialog-header > button::before,
+.station-export-header > button::before,
+.photo-editor-head > button::before,
+.photo-editor-header > button::before,
+.mobile-detail-sheet > .modal-close::before {
+  content: "×";
+  color: #dc2626;
+  font-size: 27px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.login-version-dialog-header > button:hover:not(:disabled),
+.image-modal-header > button:hover:not(:disabled),
+.dialog-header > button:hover:not(:disabled),
+.dialog-head > button:hover:not(:disabled),
+.modal-head > button:hover:not(:disabled),
+.drawer-header > button:hover:not(:disabled),
+.plan-dialog-header > button:hover:not(:disabled),
+.batch-detail-header > button:hover:not(:disabled),
+.signature-dialog-header > button:hover:not(:disabled),
+.station-export-header > button:hover:not(:disabled),
+.photo-editor-head > button:hover:not(:disabled),
+.photo-editor-header > button:hover:not(:disabled),
+.mobile-detail-sheet > .modal-close:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.62) !important;
+  background: rgba(254, 202, 202, 0.92) !important;
+  box-shadow: 0 18px 38px rgba(185, 28, 28, 0.22);
+  transform: translateY(-1px);
+}
+
+.login-version-dialog-header > button:disabled,
+.image-modal-header > button:disabled,
+.dialog-header > button:disabled,
+.dialog-head > button:disabled,
+.modal-head > button:disabled,
+.drawer-header > button:disabled,
+.plan-dialog-header > button:disabled,
+.batch-detail-header > button:disabled,
+.signature-dialog-header > button:disabled,
+.station-export-header > button:disabled,
+.photo-editor-head > button:disabled,
+.photo-editor-header > button:disabled,
+.mobile-detail-sheet > .modal-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+@media (max-width: 768px) {
+
+  .login-version-dialog-header > button,
+  .image-modal-header > button,
+  .dialog-header > button,
+  .dialog-head > button,
+  .modal-head > button,
+  .drawer-header > button,
+  .plan-dialog-header > button,
+  .batch-detail-header > button,
+  .signature-dialog-header > button,
+  .station-export-header > button,
+  .photo-editor-head > button,
+  .photo-editor-header > button,
+  .mobile-detail-sheet > .modal-close {
+    top: 14px !important;
+    right: 14px !important;
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+
+  .login-version-dialog-header > button::before,
+  .image-modal-header > button::before,
+  .dialog-header > button::before,
+  .dialog-head > button::before,
+  .modal-head > button::before,
+  .drawer-header > button::before,
+  .plan-dialog-header > button::before,
+  .batch-detail-header > button::before,
+  .signature-dialog-header > button::before,
+  .station-export-header > button::before,
+  .photo-editor-head > button::before,
+  .photo-editor-header > button::before,
+  .mobile-detail-sheet > .modal-close::before {
+    font-size: 25px;
+  }
 }
 
 html,
