@@ -81,7 +81,7 @@ AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
 )
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
-FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.2").strip() or "3.4.2"
+FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.3").strip() or "3.4.3"
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -842,6 +842,7 @@ ISSUE_AUDIT_STATUS_LABELS = {
 }
 ISSUE_STATUS_ALIASES = {"已整改": "已闭环"}
 ISSUE_RESULT_ALIASES = {
+    "站级无法整改": "站经无法整改",
     "站级无法完成整改": "站经无法整改",
     "站经理无法整改": "站经无法整改",
 }
@@ -22374,6 +22375,12 @@ def submit_rectification(issue_id):
     if not rectification_note:
         return jsonify({"success": False, "error": "请填写整改说明。"}), 400
 
+    rectification_photo_required = rectification_result == "已整改"
+    if rectification_photo_required and (
+        not rectification_photo or not rectification_photo.filename
+    ):
+        return jsonify({"success": False, "error": "请上传整改照片。"}), 400
+
     conn = None
     cur = None
 
@@ -22613,7 +22620,8 @@ def submit_review(issue_id):
     if not review_note:
         return jsonify({"success": False, "error": "请填写复核说明。"}), 400
 
-    if not review_photo or not review_photo.filename:
+    review_photo_required = review_result == "已整改"
+    if review_photo_required and (not review_photo or not review_photo.filename):
         return jsonify({"success": False, "error": "请上传复核照片。"}), 400
 
     conn = None
@@ -22674,7 +22682,9 @@ def submit_review(issue_id):
             )
 
         new_status = "已闭环" if review_result == "已整改" else "站经无法整改"
-        review_photo_path = save_uploaded_file(review_photo, "rectifications")
+        review_photo_path = None
+        if review_photo and review_photo.filename:
+            review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
         cur.execute(
             """

@@ -389,7 +389,7 @@
               <select v-model="actionForm.rectificationResult">
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站经无法整改</option>
+                <option value="站经无法整改">站级无法整改</option>
               </select>
             </div>
 
@@ -398,7 +398,7 @@
               <textarea v-model="actionForm.rectificationNote" rows="4" placeholder="请填写整改说明"></textarea>
             </div>
 
-            <div class="form-item">
+            <div v-if="shouldShowRectificationPhotoUpload" class="form-item">
               <label>整改照片</label>
               <div class="drawer-upload-card">
                 <input id="rectification-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
@@ -436,6 +436,9 @@
                 </div>
               </div>
             </div>
+            <div v-else class="drawer-photo-skip-note">
+              已选择站级无法整改，本次无需上传整改照片。
+            </div>
 
           </template>
 
@@ -445,7 +448,7 @@
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站经无法整改</option>
+                <option value="站经无法整改">站级无法整改</option>
               </select>
             </div>
 
@@ -454,7 +457,7 @@
               <textarea v-model="actionForm.reviewNote" rows="4" placeholder="请填写复核说明"></textarea>
             </div>
 
-            <div class="form-item">
+            <div v-if="shouldShowReviewPhotoUpload" class="form-item">
               <label>复核照片</label>
               <div class="drawer-upload-card">
                 <input id="review-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
@@ -491,6 +494,9 @@
                   </div>
                 </div>
               </div>
+            </div>
+            <div v-else class="drawer-photo-skip-note">
+              已选择站级无法整改，本次无需上传复核照片。
             </div>
           </template>
 
@@ -903,6 +909,11 @@ const actionForm = ref({
   reviewPhotoPreview: ''
 })
 
+const noPhotoIssueResults = new Set(['站经无法整改', '站级无法整改', '站级无法完成整改', '站经理无法整改'])
+const skipsIssuePhotoUpload = (value) => noPhotoIssueResults.has(String(value || '').trim())
+const shouldShowRectificationPhotoUpload = computed(() => !skipsIssuePhotoUpload(actionForm.value.rectificationResult))
+const shouldShowReviewPhotoUpload = computed(() => !skipsIssuePhotoUpload(actionForm.value.reviewResult))
+
 const actionMessage = ref('')
 const actionMessageType = ref('info')
 let actionMessageTimer = null
@@ -1035,6 +1046,24 @@ const clearReviewFile = () => {
   clearFileInputsById(['review-photo-upload', 'review-photo-camera'])
 }
 
+watch(
+  () => actionForm.value.rectificationResult,
+  (value) => {
+    if (skipsIssuePhotoUpload(value)) {
+      clearRectificationFile()
+    }
+  }
+)
+
+watch(
+  () => actionForm.value.reviewResult,
+  (value) => {
+    if (skipsIssuePhotoUpload(value)) {
+      clearReviewFile()
+    }
+  }
+)
+
 const showActionToast = (message, type = 'info') => {
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
@@ -1077,7 +1106,8 @@ const submitAction = async () => {
         showActionToast('请填写整改说明。', 'error')
         return
       }
-      if (!actionForm.value.rectificationPhotoFile) {
+      const rectificationPhotoRequired = !skipsIssuePhotoUpload(actionForm.value.rectificationResult)
+      if (rectificationPhotoRequired && !actionForm.value.rectificationPhotoFile) {
         showActionToast('请上传整改照片。', 'error')
         return
       }
@@ -1086,7 +1116,7 @@ const submitAction = async () => {
       formData.append('user_id', userId)
       formData.append('rectification_result', actionForm.value.rectificationResult)
       formData.append('rectification_note', actionForm.value.rectificationNote)
-      if (actionForm.value.rectificationPhotoFile) {
+      if (rectificationPhotoRequired && actionForm.value.rectificationPhotoFile) {
         formData.append('rectification_photo', actionForm.value.rectificationPhotoFile)
       }
 
@@ -1109,7 +1139,8 @@ const submitAction = async () => {
       showActionToast('请填写复核说明。', 'error')
       return
     }
-    if (!actionForm.value.reviewPhotoFile) {
+    const reviewPhotoRequired = !skipsIssuePhotoUpload(actionForm.value.reviewResult)
+    if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
       showActionToast('请上传复核照片。', 'error')
       return
     }
@@ -1118,7 +1149,9 @@ const submitAction = async () => {
     formData.append('user_id', userId)
     formData.append('review_result', actionForm.value.reviewResult)
     formData.append('review_note', actionForm.value.reviewNote)
-    formData.append('review_photo', actionForm.value.reviewPhotoFile)
+    if (reviewPhotoRequired && actionForm.value.reviewPhotoFile) {
+      formData.append('review_photo', actionForm.value.reviewPhotoFile)
+    }
 
     const response = await axios.post(
       `/api/issues/${actionDrawer.value.item.id}/review`,
@@ -2211,6 +2244,18 @@ onBeforeUnmount(() => {
 .drawer-upload-trigger-secondary:hover {
   background: #e0edff;
   border-color: #93c5fd;
+}
+
+.drawer-photo-skip-note {
+  margin-top: -2px;
+  padding: 14px 16px;
+  border: 1px solid #bae6fd;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 100%);
+  color: #0369a1;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.7;
 }
 
 .drawer-image-preview-panel {

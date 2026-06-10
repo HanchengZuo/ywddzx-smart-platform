@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.4.3',
+    date: '2026-06-10',
+    title: '整改复核流程优化',
+    summary: '站级无法整改时，不再要求上传照片。',
+    items: [
+      '站点选择站级无法整改时不再显示整改照片上传。',
+      '督导复核为站级无法整改时不再要求复核照片。',
+      '后端同步放开无法整改的照片必填校验。'
+    ]
+  },
+  {
     version: 'v3.4.2',
     date: '2026-06-04',
     title: '性能与监控优化',
