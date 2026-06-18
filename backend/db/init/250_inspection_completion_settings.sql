@@ -57,6 +57,23 @@ ON inspections (inspector_completion_status, inspection_date);
 CREATE INDEX IF NOT EXISTS idx_inspections_completion_status_date_desc
 ON inspections (inspector_completion_status, inspection_date DESC);
 
+CREATE TABLE IF NOT EXISTS inspection_inspector_confirmations (
+    id SERIAL PRIMARY KEY,
+    inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+    inspector_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    confirmed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_inspection_inspector_confirmations UNIQUE (inspection_id, inspector_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inspection_inspector_confirmations_inspection
+ON inspection_inspector_confirmations (inspection_id);
+
+CREATE INDEX IF NOT EXISTS idx_inspection_inspector_confirmations_inspector
+ON inspection_inspector_confirmations (inspector_id);
+
 CREATE TABLE IF NOT EXISTS inspection_completion_settings (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
     auto_complete_enabled BOOLEAN NOT NULL DEFAULT TRUE,

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.4.4',
+    date: '2026-06-18',
+    title: '检查人确认进度',
+    summary: '多名检查人都确认后，检查表才算完成。',
+    items: [
+      '巡检记录显示每位检查人的确认状态。',
+      '多人参与同一张检查表时，需要全部确认才完成。',
+      '桌面端和移动端都能看到确认进度。'
+    ]
+  },
+  {
     version: 'v3.4.3',
     date: '2026-06-10',
     title: '整改复核流程优化',

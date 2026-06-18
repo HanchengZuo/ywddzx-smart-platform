@@ -81,7 +81,7 @@ AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
 )
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
-FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.3").strip() or "3.4.3"
+FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.4").strip() or "3.4.4"
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -805,7 +805,7 @@ STATION_MONITORING_STATUS_OPTIONS = {"运行中", "未运行"}
 STATION_STATUS_OPTIONS = {"营业中", "停业"}
 INSPECTION_COMPLETION_PENDING = "待检查人确认"
 INSPECTION_COMPLETION_DONE = "已确认完成"
-INSPECTION_COMPLETION_SOURCES = {"manual", "auto", "admin", "signature", "admin_reopen"}
+INSPECTION_COMPLETION_SOURCES = {"manual", "manual_all", "auto", "admin", "signature", "admin_reopen"}
 DEFAULT_INSPECTION_AUTO_COMPLETE_DAYS = 7
 DEFAULT_INSPECTION_RECORD_UNIQUENESS_PERIOD = "month"
 INSPECTION_RECORD_UNIQUENESS_PERIODS = {"week", "month", "quarter", "year"}
@@ -3775,6 +3775,32 @@ def ensure_inspection_completion_schema(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS inspection_inspector_confirmations (
+            id SERIAL PRIMARY KEY,
+            inspection_id INTEGER NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+            inspector_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            confirmed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_inspection_inspector_confirmations UNIQUE (inspection_id, inspector_id)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspection_inspector_confirmations_inspection
+        ON inspection_inspector_confirmations (inspection_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspection_inspector_confirmations_inspector
+        ON inspection_inspector_confirmations (inspector_id);
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS inspection_completion_settings (
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
             auto_complete_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -4188,6 +4214,7 @@ def get_or_create_period_inspection(
 def inspection_completion_source_label(value):
     return {
         "manual": "检查人手动确认",
+        "manual_all": "全部检查人确认",
         "auto": "系统自动确认",
         "admin": "后台管理确认",
         "signature": "站经理签字确认",
@@ -4244,6 +4271,13 @@ def complete_inspection_record(cur, inspection_id, user_id=None, source="manual"
 def reopen_inspection_record(cur, inspection_id):
     cur.execute(
         """
+        DELETE FROM inspection_inspector_confirmations
+        WHERE inspection_id = %s;
+        """,
+        (inspection_id,),
+    )
+    cur.execute(
+        """
         UPDATE inspections
         SET inspector_completion_status = %s,
             inspector_completed_by = NULL,
@@ -4279,6 +4313,205 @@ def user_participated_in_inspection(cur, inspection_id, user_id):
         (inspection_id, user_id, inspection_id, user_id),
     )
     return bool(cur.fetchone())
+
+
+def fetch_inspection_completion_progress(cur, inspection_ids):
+    normalized_ids = []
+    for value in inspection_ids or []:
+        try:
+            normalized_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    normalized_ids = sorted(set(normalized_ids))
+    if not normalized_ids:
+        return {}
+
+    cur.execute(
+        """
+        WITH participant_rows AS (
+            SELECT ins.id AS inspection_id, ins.inspector_id AS inspector_id
+            FROM inspections ins
+            WHERE ins.id = ANY(%s)
+              AND ins.inspector_id IS NOT NULL
+            UNION
+            SELECT i.inspection_id, i.inspector_id
+            FROM issues i
+            WHERE i.inspection_id = ANY(%s)
+              AND i.inspector_id IS NOT NULL
+              AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+        )
+        SELECT
+            pr.inspection_id,
+            participant.id AS inspector_id,
+            participant.username,
+            participant.real_name,
+            participant.phone,
+            ins.inspector_completion_status,
+            ins.inspector_completion_source,
+            TO_CHAR(ins.inspector_completed_at, 'YYYY-MM-DD HH24:MI') AS inspector_completed_at,
+            TO_CHAR(conf.confirmed_at, 'YYYY-MM-DD HH24:MI') AS confirmed_at,
+            conf.source AS confirmation_source
+        FROM participant_rows pr
+        JOIN inspections ins ON ins.id = pr.inspection_id
+        JOIN users participant ON participant.id = pr.inspector_id
+        LEFT JOIN inspection_inspector_confirmations conf
+          ON conf.inspection_id = pr.inspection_id
+         AND conf.inspector_id = pr.inspector_id
+        ORDER BY
+            pr.inspection_id ASC,
+            COALESCE(NULLIF(TRIM(participant.real_name), ''), participant.username, participant.id::text) ASC,
+            participant.id ASC;
+        """,
+        (normalized_ids, normalized_ids),
+    )
+
+    progress_map = {
+        inspection_id: {
+            "total": 0,
+            "confirmed": 0,
+            "pending": 0,
+            "is_complete": False,
+            "participants": [],
+        }
+        for inspection_id in normalized_ids
+    }
+    for row in cur.fetchall():
+        inspection_id = int(row["inspection_id"])
+        progress = progress_map.setdefault(
+            inspection_id,
+            {
+                "total": 0,
+                "confirmed": 0,
+                "pending": 0,
+                "is_complete": False,
+                "participants": [],
+            },
+        )
+        is_overall_done = row.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE
+        confirmed_at = row.get("confirmed_at")
+        confirmation_source = row.get("confirmation_source") or "manual"
+        if is_overall_done and not confirmed_at:
+            confirmed_at = row.get("inspector_completed_at")
+            confirmation_source = row.get("inspector_completion_source") or "manual_all"
+
+        is_confirmed = bool(confirmed_at) or is_overall_done
+        display_name = (
+            row.get("real_name")
+            or row.get("username")
+            or row.get("phone")
+            or str(row.get("inspector_id"))
+        )
+        progress["participants"].append(
+            {
+                "id": row.get("inspector_id"),
+                "username": row.get("username") or "",
+                "real_name": row.get("real_name") or "",
+                "phone": row.get("phone") or "",
+                "display_name": display_name,
+                "confirmed": is_confirmed,
+                "confirmed_at": confirmed_at or "",
+                "source": confirmation_source,
+                "source_label": inspection_completion_source_label(confirmation_source),
+            }
+        )
+
+    for inspection_id, progress in progress_map.items():
+        total = len(progress["participants"])
+        confirmed = sum(1 for item in progress["participants"] if item.get("confirmed"))
+        progress["total"] = total
+        progress["confirmed"] = confirmed
+        progress["pending"] = max(total - confirmed, 0)
+        progress["is_complete"] = bool(total and confirmed >= total)
+        progress["pending_names"] = [
+            item.get("display_name") or "未命名检查人"
+            for item in progress["participants"]
+            if not item.get("confirmed")
+        ]
+        progress["confirmed_names"] = [
+            item.get("display_name") or "未命名检查人"
+            for item in progress["participants"]
+            if item.get("confirmed")
+        ]
+    return progress_map
+
+
+def apply_inspection_completion_progress(cur, items, hide_inspector_contact=False):
+    if not items:
+        return items
+    progress_map = fetch_inspection_completion_progress(
+        cur,
+        [item.get("id") for item in items if item.get("id")],
+    )
+    for item in items:
+        progress = progress_map.get(int(item.get("id") or 0), {
+            "total": 0,
+            "confirmed": 0,
+            "pending": 0,
+            "is_complete": False,
+            "participants": [],
+            "pending_names": [],
+            "confirmed_names": [],
+        })
+        if hide_inspector_contact:
+            masked_participants = []
+            for index, participant in enumerate(progress.get("participants") or [], start=1):
+                masked_participants.append(
+                    {
+                        "id": participant.get("id"),
+                        "display_name": f"检查人{index}",
+                        "confirmed": bool(participant.get("confirmed")),
+                        "confirmed_at": participant.get("confirmed_at") or "",
+                        "source": participant.get("source") or "",
+                        "source_label": participant.get("source_label") or "",
+                    }
+                )
+            progress = {
+                **progress,
+                "participants": masked_participants,
+                "pending_names": [
+                    item.get("display_name") or "检查人"
+                    for item in masked_participants
+                    if not item.get("confirmed")
+                ],
+                "confirmed_names": [
+                    item.get("display_name") or "检查人"
+                    for item in masked_participants
+                    if item.get("confirmed")
+                ],
+            }
+        item["inspector_completion_progress"] = progress
+    return items
+
+
+def get_inspection_participant_ids(cur, inspection_id):
+    progress = fetch_inspection_completion_progress(cur, [inspection_id]).get(int(inspection_id), {})
+    return {
+        int(item["id"])
+        for item in progress.get("participants") or []
+        if item.get("id") is not None
+    }
+
+
+def confirm_inspection_participant(cur, inspection_id, inspector_id):
+    cur.execute(
+        """
+        INSERT INTO inspection_inspector_confirmations (
+            inspection_id,
+            inspector_id,
+            confirmed_at,
+            source,
+            updated_at
+        )
+        VALUES (%s, %s, CURRENT_TIMESTAMP, 'manual', CURRENT_TIMESTAMP)
+        ON CONFLICT (inspection_id, inspector_id)
+        DO UPDATE SET
+            confirmed_at = EXCLUDED.confirmed_at,
+            source = EXCLUDED.source,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        (inspection_id, inspector_id),
+    )
+    return fetch_inspection_completion_progress(cur, [inspection_id]).get(int(inspection_id), {})
 
 
 # === Permission helpers ===
@@ -20229,23 +20462,55 @@ def complete_inspection_by_inspector(inspection_id):
         if inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE:
             return jsonify({"success": False, "error": "该检查表已确认完成。"}), 400
 
-        if not is_root_user(user) and not user_participated_in_inspection(cur, inspection_id, user_id):
+        participant_ids = get_inspection_participant_ids(cur, inspection_id)
+        current_user_id = int(user["id"])
+        if current_user_id not in participant_ids:
             return jsonify({"success": False, "error": "只有参与该检查表录入的检查人员可以确认完成。"}), 403
 
-        complete_inspection_record(cur, inspection_id, user_id, "manual")
-        mark_related_plan_items_completed(
-            cur,
-            inspection["station_id"],
-            inspection["inspection_table_id"],
-            inspection_id,
-            inspection["inspection_date"],
-        )
+        progress = confirm_inspection_participant(cur, inspection_id, current_user_id)
+        all_confirmed = bool(progress.get("total")) and int(progress.get("pending") or 0) == 0
+        if all_confirmed:
+            complete_inspection_record(cur, inspection_id, current_user_id, "manual_all")
+            mark_related_plan_items_completed(
+                cur,
+                inspection["station_id"],
+                inspection["inspection_table_id"],
+                inspection_id,
+                inspection["inspection_date"],
+            )
+            progress = fetch_inspection_completion_progress(cur, [inspection_id]).get(int(inspection_id), progress)
+            message = "所有检查人均已确认，本检查表已确认完成。"
+        else:
+            cur.execute(
+                """
+                UPDATE inspections
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s;
+                """,
+                (inspection_id,),
+            )
+            pending_names = "、".join(progress.get("pending_names") or [])
+            message = (
+                f"已记录你的完成确认，仍需等待：{pending_names}。"
+                if pending_names
+                else "已记录你的完成确认，仍需等待其他检查人确认。"
+            )
         conn.commit()
         return jsonify(
             {
                 "success": True,
-                "message": "检查表已确认完成，后续不能再新增、编辑或删除该表问题。",
+                "message": message,
                 "inspection_id": inspection_id,
+                "inspection": {
+                    "id": inspection_id,
+                    "inspector_completion_status": (
+                        INSPECTION_COMPLETION_DONE if all_confirmed else INSPECTION_COMPLETION_PENDING
+                    ),
+                    "inspector_completion_source_label": (
+                        inspection_completion_source_label("manual_all") if all_confirmed else ""
+                    ),
+                    "inspector_completion_progress": progress,
+                },
             }
         )
     except Exception as e:
@@ -21937,6 +22202,22 @@ def get_inspections():
             )
             items.append(item)
 
+        apply_inspection_completion_progress(cur, items, hide_inspector_contact)
+        for item in items:
+            progress = item.get("inspector_completion_progress") or {}
+            current_user_confirmed = any(
+                str(participant.get("id") or "") == str(user["id"])
+                and participant.get("confirmed")
+                for participant in progress.get("participants") or []
+            )
+            item["current_user_completion_confirmed"] = bool(current_user_confirmed)
+            item["can_complete_record"] = bool(
+                is_supervisor_like(user)
+                and item.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE
+                and item.get("current_user_participated")
+                and not current_user_confirmed
+            )
+
         return jsonify(
             {
                 "success": True,
@@ -22273,6 +22554,7 @@ def get_inspection_issues(inspection_id):
             if pending_audit_count > 0:
                 return jsonify({"success": False, "error": "该巡检记录仍有待审核问题，暂不可查看。"}), 403
         hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        apply_inspection_completion_progress(cur, [inspection], hide_inspector_contact)
         if hide_inspector_contact:
             inspection["inspectors"] = []
             inspection["inspector_names"] = ""

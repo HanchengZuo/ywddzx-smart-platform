@@ -220,8 +220,24 @@
                 </span>
                 <span class="mobile-meta-pill"
                   :class="{ signed: isInspectionCompleted(record) }">
-                  {{ isInspectionCompleted(record) ? '已完成' : '待完成确认' }}
+                  {{ getCompletionProgressLabel(record) }}
                 </span>
+              </div>
+
+              <div class="mobile-completion-card" :class="{ completed: isInspectionCompleted(record) }">
+                <div class="completion-progress-head">
+                  <span>检查人确认</span>
+                  <strong>{{ getCompletionProgressLabel(record) }}</strong>
+                </div>
+                <div class="completion-progress-track">
+                  <span :style="{ width: getCompletionProgressWidth(record) }"></span>
+                </div>
+                <div class="completion-participant-list compact">
+                  <span v-for="participant in getCompletionParticipants(record)" :key="participant.id || participant.display_name"
+                    class="completion-participant-chip" :class="{ confirmed: participant.confirmed }">
+                    {{ getCompletionParticipantLabel(participant) }}
+                  </span>
+                </div>
               </div>
 
               <div class="mobile-batch-item-actions">
@@ -385,16 +401,30 @@
                   </td>
 
                   <td class="batch-completion-cell">
-                    <div v-if="isInspectionCompleted(record)" class="completion-preview-box">
-                      <div class="signature-status-badge success">已确认完成</div>
-                      <div class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
+                    <div class="completion-progress-box" :class="{ completed: isInspectionCompleted(record) }">
+                      <div class="completion-progress-head">
+                        <span>检查人确认</span>
+                        <strong>{{ getCompletionProgressLabel(record) }}</strong>
+                      </div>
+                      <div class="completion-progress-track">
+                        <span :style="{ width: getCompletionProgressWidth(record) }"></span>
+                      </div>
+                      <div class="completion-participant-list">
+                        <span v-for="participant in getCompletionParticipants(record)" :key="participant.id || participant.display_name"
+                          class="completion-participant-chip" :class="{ confirmed: participant.confirmed }">
+                          {{ getCompletionParticipantLabel(participant) }}
+                        </span>
+                      </div>
+                      <div v-if="isInspectionCompleted(record)" class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
+                      <div v-else-if="record.current_user_completion_confirmed" class="completion-waiting-note">
+                        你已确认，等待其他检查人
+                      </div>
                     </div>
-                    <button v-else-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
+                    <button v-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
                       type="button" :disabled="completingInspectionId === record.id"
                       @click="completeInspectionRecord(record)">
                       {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
                     </button>
-                    <span v-else class="signature-status-badge pending">待检查人确认</span>
                   </td>
 
                   <td class="batch-signature-cell">
@@ -629,7 +659,7 @@
             </div>
             <div>
               <span>完成确认</span>
-              <strong>{{ batchDetail.inspection?.inspector_completion_status || '待检查人确认' }}</strong>
+              <strong>{{ getCompletionProgressLabel(batchDetail.inspection) }}</strong>
             </div>
           </div>
 
@@ -1006,6 +1036,39 @@ const isInspectionCompleted = (record) => record?.inspector_completion_status ==
 
 const getRecordCompletionFilterStatus = (record) => {
   return isInspectionCompleted(record) ? 'completed' : 'pending'
+}
+
+const getCompletionProgress = (record) => {
+  const progress = record?.inspector_completion_progress || {}
+  const participants = Array.isArray(progress.participants) ? progress.participants : []
+  return {
+    total: Number(progress.total ?? participants.length ?? 0) || 0,
+    confirmed: Number(progress.confirmed ?? participants.filter((item) => item?.confirmed).length ?? 0) || 0,
+    pending: Number(progress.pending ?? 0) || 0,
+    participants
+  }
+}
+
+const getCompletionParticipants = (record) => getCompletionProgress(record).participants
+
+const getCompletionProgressLabel = (record) => {
+  const progress = getCompletionProgress(record)
+  if (!progress.total) {
+    return isInspectionCompleted(record) ? '已确认完成' : '待检查人确认'
+  }
+  return `${progress.confirmed}/${progress.total} ${isInspectionCompleted(record) ? '已确认' : '待确认'}`
+}
+
+const getCompletionProgressWidth = (record) => {
+  const progress = getCompletionProgress(record)
+  if (!progress.total) return isInspectionCompleted(record) ? '100%' : '0%'
+  const percent = Math.round((Math.min(progress.confirmed, progress.total) / progress.total) * 100)
+  return `${Math.max(0, Math.min(percent, 100))}%`
+}
+
+const getCompletionParticipantLabel = (participant) => {
+  const name = participant?.display_name || participant?.real_name || participant?.username || '检查人'
+  return `${name}${participant?.confirmed ? ' 已确认' : ' 待确认'}`
 }
 
 const getCompletionMeta = (record) => {
@@ -1566,14 +1629,14 @@ const completeInspectionRecord = async (record) => {
       user_id: userId
     })
     if (String(batchDetail.value.inspection?.id || '') === String(record.id)) {
+      const updatedInspection = response.data?.inspection || {}
       batchDetail.value.inspection = {
         ...(batchDetail.value.inspection || {}),
-        inspector_completion_status: '已确认完成',
-        inspector_completion_source_label: '检查人手动确认'
+        ...updatedInspection
       }
     }
     await fetchInspections()
-    showActionMessage(response.data?.message || '检查表已确认完成。', 'success')
+    showActionMessage(response.data?.message || '完成确认已记录。', 'success')
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '确认完成失败。', 'error')
   } finally {
@@ -2699,6 +2762,19 @@ onBeforeUnmount(() => {
   color: #047857;
 }
 
+.mobile-completion-card {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eff6ff 100%);
+}
+
+.mobile-completion-card.completed {
+  border-color: #bbf7d0;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+}
+
 .mobile-batch-item-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3098,6 +3174,96 @@ onBeforeUnmount(() => {
   gap: 8px;
   max-width: 220px;
   text-align: center;
+}
+
+.completion-progress-box {
+  width: min(240px, 100%);
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eff6ff 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.completion-progress-box.completed {
+  border-color: #bbf7d0;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+}
+
+.completion-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.completion-progress-head strong {
+  color: #0f172a;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.completion-progress-track {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.completion-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #16a34a 100%);
+  transition: width 0.22s ease;
+}
+
+.completion-participant-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.completion-participant-list.compact {
+  justify-content: flex-start;
+}
+
+.completion-participant-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.completion-participant-chip.confirmed {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #bbf7d0;
+}
+
+.completion-waiting-note {
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.5;
 }
 
 .signature-preview-box {
