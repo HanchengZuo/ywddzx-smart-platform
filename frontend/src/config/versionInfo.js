@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5.1',
+    date: '2026-06-22',
+    title: '新增油气事业部角色',
+    summary: '新增油气事业部账号，并按指定检查表限制可见数据。',
+    items: [
+      '用户管理支持创建油气事业部账号。',
+      '油气事业部默认权限沿用专职部门账号逻辑。',
+      '默认仅查看无异味管理和现场检查明细相关检查表。'
+    ]
+  },
+  {
     version: 'v3.5',
     date: '2026-06-22',
     title: '巡检记录状态升级',

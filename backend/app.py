@@ -86,7 +86,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.5"
+        raw_value = "3.5.1"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -106,7 +106,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5.1"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -432,13 +432,22 @@ def build_server_resource_snapshot():
     }
 
 # === Permission constants ===
-ROLE_OPTIONS = {"root", "supervisor", "station_manager", "quality_safety", "development_plan", "area_account"}
+ROLE_OPTIONS = {
+    "root",
+    "supervisor",
+    "station_manager",
+    "quality_safety",
+    "development_plan",
+    "oil_gas",
+    "area_account",
+}
 ROLE_LABELS = {
     "root": "系统管理员",
     "supervisor": "督导组账号",
     "station_manager": "站点账号",
     "quality_safety": "质安部账号",
     "development_plan": "发展计划部账号",
+    "oil_gas": "油气事业部账号",
     "area_account": "片区账号",
 }
 QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
@@ -451,9 +460,15 @@ QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
 DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE = [
     ("加油站设备设施检查表", "offline"),
 ]
+OIL_GAS_DEFAULT_CHECKLIST_SCOPE = [
+    ("加油站环境无异味管理检查表", "offline"),
+    ("加油站现场检查明细表", "online"),
+    ("加油站现场检查明细表", "offline"),
+]
 ROLE_DEFAULT_CHECKLIST_SCOPES = {
     "quality_safety": QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE,
     "development_plan": DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE,
+    "oil_gas": OIL_GAS_DEFAULT_CHECKLIST_SCOPE,
 }
 INSPECTION_TABLE_SCOPE_PERMISSION_KEYS = (
     "limit_issue_inspection_table_scope",
@@ -769,6 +784,7 @@ PERMISSION_CATALOG = [
 for permission_item in PERMISSION_CATALOG:
     defaults = permission_item.setdefault("defaults", {})
     defaults.setdefault("development_plan", bool(defaults.get("quality_safety", False)))
+    defaults.setdefault("oil_gas", bool(defaults.get("quality_safety", False)))
     defaults.setdefault("area_account", bool(defaults.get("quality_safety", False)))
 
 AREA_ACCOUNT_PERMISSION_OVERRIDES = {
@@ -8200,8 +8216,9 @@ def fetch_peer_review_people(cur):
                 WHEN 'supervisor' THEN 1
                 WHEN 'quality_safety' THEN 2
                 WHEN 'development_plan' THEN 3
-                WHEN 'area_account' THEN 4
-                WHEN 'station_manager' THEN 5
+                WHEN 'oil_gas' THEN 4
+                WHEN 'area_account' THEN 5
+                WHEN 'station_manager' THEN 6
                 ELSE 9
             END,
             real_name ASC,
@@ -9418,7 +9435,7 @@ def normalize_user_backup_id(value):
 def normalize_user_role(value):
     role = normalize_text(value)
     if role not in ROLE_OPTIONS:
-        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan、area_account。")
+        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan、oil_gas、area_account。")
     return role
 
 
@@ -13300,8 +13317,9 @@ def get_management_users():
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
-                    WHEN 'area_account' THEN 5
-                    ELSE 6
+                    WHEN 'oil_gas' THEN 5
+                    WHEN 'area_account' THEN 6
+                    ELSE 7
                 END,
                 u.id ASC;
             """
@@ -13476,6 +13494,7 @@ def get_management_users():
                 else "现场检查",
                 "is_quality_safety_default": row["id"] in role_default_table_id_map.get("quality_safety", set()),
                 "is_development_plan_default": row["id"] in role_default_table_id_map.get("development_plan", set()),
+                "is_oil_gas_default": row["id"] in role_default_table_id_map.get("oil_gas", set()),
                 "default_scope_role_labels": [
                     ROLE_LABELS.get(role, role)
                     for role, table_ids in role_default_table_id_map.items()
@@ -13499,6 +13518,9 @@ def get_management_users():
                 ],
                 "development_plan_default_inspection_table_ids": [
                     row["id"] for row in inspection_tables if row["is_development_plan_default"]
+                ],
+                "oil_gas_default_inspection_table_ids": [
+                    row["id"] for row in inspection_tables if row["is_oil_gas_default"]
                 ],
                 "role_default_inspection_table_scope_ids": role_default_inspection_table_scope_ids,
                 "role_permission_overrides": role_permission_overrides,
@@ -13691,8 +13713,9 @@ def export_management_users():
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
-                    WHEN 'area_account' THEN 5
-                    ELSE 6
+                    WHEN 'oil_gas' THEN 5
+                    WHEN 'area_account' THEN 6
+                    ELSE 7
                 END,
                 u.id ASC;
             """

@@ -521,10 +521,11 @@ const roleLabelMap = {
   supervisor: '督导组账号',
   quality_safety: '质安部账号',
   development_plan: '发展计划部账号',
+  oil_gas: '油气事业部账号',
   area_account: '片区账号',
   station_manager: '站点账号'
 }
-const roleOrder = ['supervisor', 'quality_safety', 'development_plan', 'area_account', 'station_manager']
+const roleOrder = ['supervisor', 'quality_safety', 'development_plan', 'oil_gas', 'area_account', 'station_manager']
 
 const emptyTemplateForm = () => ({
   id: null,

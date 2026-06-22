@@ -1543,7 +1543,8 @@ const fetchUsers = async () => {
     inspectionTables.value = response.data?.inspection_tables || []
     roleDefaultInspectionTableScopeIds.value = response.data?.role_default_inspection_table_scope_ids || {
       quality_safety: response.data?.quality_safety_default_inspection_table_ids || [],
-      development_plan: response.data?.development_plan_default_inspection_table_ids || []
+      development_plan: response.data?.development_plan_default_inspection_table_ids || [],
+      oil_gas: response.data?.oil_gas_default_inspection_table_ids || []
     }
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
