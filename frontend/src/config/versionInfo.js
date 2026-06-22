@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5',
+    date: '2026-06-22',
+    title: '巡检记录状态升级',
+    summary: '巡检记录流程合并成一个状态入口，重置规则更清晰。',
+    items: [
+      '巡检记录改为统一展示当前流程状态。',
+      '检查人确认、问题审核、站经理签名和整改进度放在同一状态卡片里。',
+      '重置权限改为统一的巡检记录流程重置，已签名验收的记录不能再重置。'
+    ]
+  },
+  {
     version: 'v3.4.4',
     date: '2026-06-18',
     title: '检查人确认进度',

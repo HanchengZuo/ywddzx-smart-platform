@@ -81,7 +81,32 @@ AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
 )
 AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
-FRONTEND_APP_VERSION = os.environ.get("APP_FRONTEND_VERSION", "3.4.4").strip() or "3.4.4"
+
+
+def normalize_frontend_app_version(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        raw_value = "3.5"
+    if raw_value.lower().startswith("v"):
+        raw_value = raw_value[1:]
+    parts = raw_value.split(".")
+    try:
+        major = int(parts[0])
+    except (TypeError, ValueError):
+        major = 1
+    try:
+        minor = int(parts[1]) if len(parts) > 1 else 0
+    except (TypeError, ValueError):
+        minor = 0
+    try:
+        patch = int(parts[2]) if len(parts) > 2 else 0
+    except (TypeError, ValueError):
+        patch = 0
+    base_version = f"{major}.{minor}"
+    return f"{base_version}.{patch}" if patch > 0 else base_version
+
+
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -588,9 +613,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "reset_inspection_signature",
-        "name": "重置站经理签名",
+        "name": "重置巡检记录流程",
         "category": "巡检记录",
-        "description": "重置已完成的站经理签名，并将本记录下的问题退回待审核。",
+        "description": "按当前流程状态回退巡检记录，并清空本记录下的问题审核结果；已站经理签名验收的记录不可重置。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -5777,7 +5802,7 @@ def normalize_issue_row_for_response(
     )
     audit_locked_by_completion = not inspection_completion_done
     data["audit_lock_reason"] = (
-        "待本表检查人完成确认"
+        "等待检查人确认"
         if can_explicit_audit and audit_locked_by_completion and not inspection_signed
         else ""
     )
@@ -11145,6 +11170,7 @@ def get_inspection_sign_pending_count_for_user(cur, user):
         SELECT COUNT(*) AS pending_count
         FROM inspections ins
         WHERE ins.station_id = %s
+          AND COALESCE(ins.inspector_completion_status, '待检查人确认') = %s
           AND COALESCE(ins.sign_status, '待签名确认') <> '已签名确认'
           AND NOT EXISTS (
               SELECT 1
@@ -11153,7 +11179,7 @@ def get_inspection_sign_pending_count_for_user(cur, user):
                 AND COALESCE(i.audit_status, 'pending') = 'pending'
           );
         """,
-        (user["station_id"],),
+        (user["station_id"], INSPECTION_COMPLETION_DONE),
     )
     return int(cur.fetchone()["pending_count"] or 0)
 
@@ -12772,6 +12798,7 @@ def get_inspection_sign_pending_count():
             SELECT COUNT(*) AS pending_count
             FROM inspections ins
             WHERE ins.station_id = %s
+              AND COALESCE(ins.inspector_completion_status, '待检查人确认') = %s
               AND COALESCE(ins.sign_status, '待签名确认') <> '已签名确认'
               AND NOT EXISTS (
                   SELECT 1
@@ -12780,7 +12807,7 @@ def get_inspection_sign_pending_count():
                     AND COALESCE(i.audit_status, 'pending') = 'pending'
               );
             """,
-            (user["station_id"],),
+            (user["station_id"], INSPECTION_COMPLETION_DONE),
         )
         pending_count = int(cur.fetchone()["pending_count"] or 0)
         conn.commit()
@@ -12826,9 +12853,9 @@ def sign_inspection_record(inspection_id):
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
         if not is_station_manager(user):
-            return jsonify({"success": False, "error": "只有站点账号可以完成本表站经理签字确认。"}), 403
+            return jsonify({"success": False, "error": "只有站点账号可以完成站经理签名验收。"}), 403
         if not can_sign_inspection_records(cur, user):
-            return jsonify({"success": False, "error": "当前账号无权完成本表站经理签字确认。"}), 403
+            return jsonify({"success": False, "error": "当前账号无权完成站经理签名验收。"}), 403
 
         cur.execute(
             """
@@ -12837,6 +12864,7 @@ def sign_inspection_record(inspection_id):
                 ins.station_id,
                 ins.inspection_date,
                 ins.sign_status,
+                ins.inspector_completion_status,
                 ins.inspection_table_id,
                 s.station_name,
                 t.table_name
@@ -12854,7 +12882,10 @@ def sign_inspection_record(inspection_id):
             return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
 
         if inspection["sign_status"] == "已签名确认":
-            return jsonify({"success": False, "error": "该检查表已完成签名确认。"}), 400
+            return jsonify({"success": False, "error": "该检查表已完成签名验收。"}), 400
+
+        if inspection.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE:
+            return jsonify({"success": False, "error": "该检查表仍在等待检查人完成确认，暂不能签字验收。"}), 400
 
         if str(user.get("station_id") or "") != str(inspection.get("station_id") or ""):
             return jsonify({"success": False, "error": "只能签署本账号所属站点的巡检记录。"}), 403
@@ -12916,9 +12947,169 @@ def sign_inspection_record(inspection_id):
         return jsonify(
             {
                 "success": True,
-                "message": "本检查表签名确认成功。",
+                "message": "本检查表签名验收成功。",
                 "inspection_id": inspection_id,
                 "signature_path": signature_path,
+            }
+        )
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspections/<int:inspection_id>/flow/reset", methods=["POST"])
+def reset_inspection_record_flow(inspection_id):
+    data = request.get_json(silent=True) or {}
+    user_id = get_authenticated_request_user_id(data.get("user_id"))
+    if not user_id:
+        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
+        ensure_inspection_completion_schema(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not can_reset_inspection_signature(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权重置巡检记录流程。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                ins.id,
+                ins.station_id,
+                s.region AS station_region,
+                ins.inspection_table_id,
+                ins.inspection_date,
+                ins.sign_status,
+                ins.station_manager_signature_path,
+                ins.station_manager_signed_at,
+                ins.station_manager_signed_name,
+                ins.inspector_completion_status,
+                COUNT(i.id) AS total_issue_count,
+                COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') = 'pending') AS pending_audit_count,
+                COUNT(i.id) FILTER (
+                    WHERE NULLIF(TRIM(COALESCE(i.rectification_result, '')), '') IS NOT NULL
+                       OR NULLIF(TRIM(COALESCE(i.rectification_note, '')), '') IS NOT NULL
+                       OR NULLIF(TRIM(COALESCE(i.rectification_photo_path, '')), '') IS NOT NULL
+                ) AS rectified_issue_count
+            FROM inspections ins
+            JOIN stations s ON s.id = ins.station_id
+            LEFT JOIN issues i ON i.inspection_id = ins.id
+            WHERE ins.id = %s
+            GROUP BY
+                ins.id,
+                ins.station_id,
+                s.region,
+                ins.inspection_table_id,
+                ins.inspection_date,
+                ins.sign_status,
+                ins.station_manager_signature_path,
+                ins.station_manager_signed_at,
+                ins.station_manager_signed_name,
+                ins.inspector_completion_status
+            LIMIT 1;
+            """,
+            (inspection_id,),
+        )
+        inspection = cur.fetchone()
+        if not inspection:
+            return jsonify({"success": False, "error": "巡检记录不存在。"}), 404
+
+        if not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            inspection["inspection_table_id"],
+            "limit_record_inspection_table_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该检查表的巡检记录。"}), 403
+        if not is_station_region_allowed_for_user(
+            cur,
+            user,
+            inspection.get("station_region"),
+            "limit_record_station_region_scope",
+        ):
+            return jsonify({"success": False, "error": "当前账号无权操作该片区的巡检记录。"}), 403
+
+        is_signed = (
+            inspection.get("sign_status") == "已签名确认"
+            or bool(inspection.get("station_manager_signature_path"))
+            or bool(inspection.get("station_manager_signed_at"))
+            or bool(inspection.get("station_manager_signed_name"))
+        )
+        is_completed = inspection.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE
+        total_issue_count = int(inspection.get("total_issue_count") or 0)
+        pending_audit_count = int(inspection.get("pending_audit_count") or 0)
+        rectified_issue_count = int(inspection.get("rectified_issue_count") or 0)
+
+        if not is_completed and not is_signed:
+            return jsonify({"success": False, "error": "该巡检记录仍在等待检查人确认，无需重置。"}), 400
+
+        if is_signed:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "该巡检记录已完成站经理签名验收，不能重置流程。",
+                    }
+                ),
+                400,
+            )
+
+        cur.execute(
+            """
+            UPDATE issues
+            SET audit_status = 'pending',
+                audited_by = NULL,
+                audited_at = NULL,
+                is_excellent = FALSE
+            WHERE inspection_id = %s;
+            """,
+            (inspection_id,),
+        )
+        reset_issue_count = cur.rowcount
+
+        reset_to_confirmation = (
+            is_completed
+            and not is_signed
+            and (pending_audit_count > 0 or total_issue_count == 0)
+        )
+        affected_plan_config_ids = []
+        if reset_to_confirmation:
+            cur.execute(
+                """
+                SELECT DISTINCT plan_config_id
+                FROM inspection_plan_station_items
+                WHERE completed_inspection_id = %s;
+                """,
+                (inspection_id,),
+            )
+            affected_plan_config_ids = [row["plan_config_id"] for row in cur.fetchall()]
+            reopen_inspection_record(cur, inspection_id)
+            for plan_config_id in affected_plan_config_ids:
+                sync_plan_station_items_completion_by_history(cur, plan_config_id)
+
+        conn.commit()
+
+        if reset_to_confirmation:
+            message = "巡检记录已回退到等待检查人确认，关联问题审核记录已清空。"
+        else:
+            message = "巡检记录已回退到等待问题审核，关联问题审核记录已清空。"
+
+        return jsonify(
+            {
+                "success": True,
+                "message": message,
+                "reset_issue_count": reset_issue_count,
+                "reset_to": "inspector_confirmation" if reset_to_confirmation else "issue_audit",
             }
         )
     except Exception as e:
@@ -12938,7 +13129,6 @@ def reset_inspection_signature(inspection_id):
 
     conn = None
     cur = None
-    signature_path = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -12948,7 +13138,7 @@ def reset_inspection_signature(inspection_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
         if not can_reset_inspection_signature(cur, user):
-            return jsonify({"success": False, "error": "当前账号无权重置站经理签名。"}), 403
+            return jsonify({"success": False, "error": "当前账号无权重置巡检记录流程。"}), 403
 
         cur.execute(
             """
@@ -12988,73 +13178,7 @@ def reset_inspection_signature(inspection_id):
         ):
             return jsonify({"success": False, "error": "当前账号无权操作该片区的巡检记录。"}), 403
 
-        if inspection.get("sign_status") != "已签名确认" and not (
-            inspection.get("station_manager_signature_path")
-            or inspection.get("station_manager_signed_at")
-            or inspection.get("station_manager_signed_name")
-        ):
-            return jsonify({"success": False, "error": "该巡检记录尚未完成站经理签名，无需重置。"}), 400
-
-        cur.execute(
-            """
-            SELECT COUNT(*) AS rectified_issue_count
-            FROM issues
-            WHERE inspection_id = %s
-              AND (
-                  NULLIF(TRIM(COALESCE(rectification_result, '')), '') IS NOT NULL
-                  OR NULLIF(TRIM(COALESCE(rectification_note, '')), '') IS NOT NULL
-                  OR NULLIF(TRIM(COALESCE(rectification_photo_path, '')), '') IS NOT NULL
-              );
-            """,
-            (inspection_id,),
-        )
-        rectified_issue_count = int(cur.fetchone()["rectified_issue_count"] or 0)
-        if rectified_issue_count > 0:
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": f"该巡检记录已有 {rectified_issue_count} 条问题提交了站经理整改，不能重置站经理签名。",
-                    }
-                ),
-                400,
-            )
-
-        signature_path = inspection.get("station_manager_signature_path")
-        cur.execute(
-            """
-            UPDATE inspections
-            SET sign_status = '待签名确认',
-                station_manager_signed_name = NULL,
-                station_manager_signature_path = NULL,
-                station_manager_signed_at = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s;
-            """,
-            (inspection_id,),
-        )
-        cur.execute(
-            """
-            UPDATE issues
-            SET audit_status = 'pending',
-                audited_by = NULL,
-                audited_at = NULL
-            WHERE inspection_id = %s;
-            """,
-            (inspection_id,),
-        )
-        reset_issue_count = cur.rowcount
-
-        conn.commit()
-        if signature_path:
-            remove_storage_file(signature_path)
-        return jsonify(
-            {
-                "success": True,
-                "message": "站经理签名已重置，关联问题已退回待审核；重新审核完成后可再次签字。",
-                "reset_issue_count": reset_issue_count,
-            }
-        )
+        return jsonify({"success": False, "error": "站经理已签名验收的巡检记录不能重置。"}), 400
     except Exception as e:
         if conn:
             conn.rollback()
@@ -19270,7 +19394,7 @@ def audit_issue(issue_id):
         if is_issue_inspection_signed(issue):
             return jsonify({"success": False, "error": "该问题所属检查表已完成站经理签字确认，不能继续审核。"}), 403
         if not is_issue_inspection_completion_done(issue):
-            return jsonify({"success": False, "error": "该问题所属巡检记录尚未完成“本表检查人完成确认”，暂不能审核。"}), 400
+            return jsonify({"success": False, "error": "该问题所属巡检记录仍在等待检查人确认，暂不能审核。"}), 400
 
         can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
         can_view_own = can_view_own_inspection_issues(cur, user)
@@ -22072,9 +22196,12 @@ def get_inspections():
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') = 'pending') AS pending_audit_count,
                     COUNT(i.id) FILTER (WHERE COALESCE(i.audit_status, 'pending') <> 'pending') AS audited_issue_count,
                     COUNT(i.id) FILTER (
-                        WHERE NULLIF(TRIM(COALESCE(i.rectification_result, '')), '') IS NOT NULL
-                           OR NULLIF(TRIM(COALESCE(i.rectification_note, '')), '') IS NOT NULL
-                           OR NULLIF(TRIM(COALESCE(i.rectification_photo_path, '')), '') IS NOT NULL
+                        WHERE COALESCE(i.audit_status, 'pending') <> 'rejected'
+                          AND (
+                              NULLIF(TRIM(COALESCE(i.rectification_result, '')), '') IS NOT NULL
+                              OR NULLIF(TRIM(COALESCE(i.rectification_note, '')), '') IS NOT NULL
+                              OR NULLIF(TRIM(COALESCE(i.rectification_photo_path, '')), '') IS NOT NULL
+                          )
                     ) AS rectified_issue_count
                 FROM issues i
                 JOIN filtered_ids fid ON fid.id = i.inspection_id
@@ -22174,19 +22301,17 @@ def get_inspections():
             item["inspector_search_text"] = "" if hide_inspector_contact else item.get("inspector_search_text")
             item["inspectors"] = [] if hide_inspector_contact else inspectors
             item["can_delete_record"] = bool(can_delete_records)
-            item["can_reset_signature"] = bool(
+            is_record_completed = item.get("inspector_completion_status") == INSPECTION_COMPLETION_DONE
+            is_record_signed = item.get("sign_status") == "已签名确认"
+            item["can_reset_record_flow"] = bool(
                 can_reset_signature
-                and item.get("sign_status") == "已签名确认"
-                and int(item.get("rectified_issue_count") or 0) == 0
-            )
-            item["reset_signature_lock_reason"] = (
-                "已有站经理整改，不能重置签名。"
-                if int(item.get("rectified_issue_count") or 0) > 0
-                else ""
+                and is_record_completed
+                and not is_record_signed
             )
             item["can_sign_record"] = bool(
                 is_station_manager(user)
                 and can_sign_records
+                and is_record_completed
                 and item.get("sign_status") != "已签名确认"
                 and user.get("station_id")
                 and item.get("station_id") == user.get("station_id")
@@ -22726,7 +22851,7 @@ def submit_rectification(issue_id):
                 jsonify(
                     {
                         "success": False,
-                        "error": "当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。",
+                        "error": "当前问题所属检查表尚未完成站经理签名验收，暂不可提交整改。",
                     }
                 ),
                 400,

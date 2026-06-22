@@ -201,7 +201,7 @@
               <strong>{{ batch.batchIssueCount }}</strong>
             </div>
             <div class="mobile-card-row">
-              <span>检查表签名进度</span>
+              <span>签名验收进度</span>
               <strong>{{ batch.signedCount }}/{{ batch.rowspan }}</strong>
             </div>
           </div>
@@ -214,29 +214,50 @@
               </div>
               <div class="mobile-batch-item-meta-row">
                 <span class="mobile-meta-pill">问题 {{ record.issue_count }}</span>
-                <span class="mobile-meta-pill"
-                  :class="{ signed: record.sign_status === '已签名确认' }">
-                  {{ record.sign_status === '已签名确认' ? '已签名' : '待签名' }}
-                </span>
-                <span class="mobile-meta-pill"
-                  :class="{ signed: isInspectionCompleted(record) }">
-                  {{ getCompletionProgressLabel(record) }}
+                <span class="mobile-meta-pill" :class="{ signed: isInspectionCompleted(record) }">
+                  {{ getRecordFlowTitle(record) }}
                 </span>
               </div>
 
-              <div class="mobile-completion-card" :class="{ completed: isInspectionCompleted(record) }">
-                <div class="completion-progress-head">
-                  <span>检查人确认</span>
-                  <strong>{{ getCompletionProgressLabel(record) }}</strong>
+              <div class="record-flow-card mobile-flow-card" :class="getRecordFlowCardClass(record)">
+                <button v-if="canResetRecordFlow(record)" class="record-flow-reset-btn" type="button"
+                  :disabled="resettingRecordFlowId === record.id" :title="getRecordFlowResetTitle(record)"
+                  @click="resetInspectionRecordFlow(record)">
+                  ↻
+                </button>
+                <div class="record-flow-head">
+                  <span>巡检记录状态</span>
+                  <strong>{{ getRecordFlowTitle(record) }}</strong>
                 </div>
-                <div class="completion-progress-track">
-                  <span :style="{ width: getCompletionProgressWidth(record) }"></span>
+                <p class="record-flow-copy">{{ getRecordFlowSubtitle(record) }}</p>
+                <div class="record-flow-track">
+                  <span :style="{ width: getRecordFlowProgressWidth(record) }"></span>
                 </div>
-                <div class="completion-participant-list compact">
+                <div v-if="shouldShowFlowParticipants(record)" class="completion-participant-list compact">
                   <span v-for="participant in getCompletionParticipants(record)" :key="participant.id || participant.display_name"
                     class="completion-participant-chip" :class="{ confirmed: participant.confirmed }">
                     {{ getCompletionParticipantLabel(participant) }}
                   </span>
+                </div>
+                <div v-if="isRecordFlowSigned(record)" class="record-flow-signature-preview">
+                  <img v-if="recordImagesReady && record.station_manager_signature_path"
+                    :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                    alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                  <div v-else class="signature-preview-placeholder">签名</div>
+                  <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
+                </div>
+                <div class="record-flow-actions">
+                  <button v-if="canCompleteInspectionRecord(record)"
+                    class="btn btn-primary batch-action-btn mobile-action-btn mobile-action-complete" type="button"
+                    :disabled="completingInspectionId === record.id" aria-label="确认检查表完成"
+                    @click="completeInspectionRecord(record)">
+                    {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
+                  </button>
+                  <button v-if="canSignInspectionRecord(record)"
+                    class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
+                    aria-label="站经理签名验收" @click="openSignatureDialog(record)">
+                    站经理签名
+                  </button>
                 </div>
               </div>
 
@@ -246,46 +267,12 @@
                   查看问题
                 </button>
 
-                <button v-if="canCompleteInspectionRecord(record)"
-                  class="btn btn-primary batch-action-btn mobile-action-btn mobile-action-complete" type="button"
-                  :disabled="completingInspectionId === record.id" aria-label="确认检查表完成"
-                  @click="completeInspectionRecord(record)">
-                  {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
-                </button>
-
-                <button v-if="canSignInspectionRecord(record)"
-                  class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
-                  aria-label="本表站经理签字确认" @click="openSignatureDialog(record)">
-                  站经理签名
-                </button>
-
-                <div v-else-if="shouldShowSignatureProgress(record)" class="mobile-sign-progress-card">
-                  <strong>{{ getSignatureProgressTitle(record) }}</strong>
-                  <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
-                </div>
-
                 <button v-if="canDeleteInspectionRecord(record)"
                   class="btn btn-danger batch-action-btn mobile-action-btn mobile-action-delete" type="button"
                   :disabled="deletingInspectionId === record.id" aria-label="删除巡检记录"
                   @click="deleteInspectionRecord(record)">
                   {{ deletingInspectionId === record.id ? '删除中...' : '删除记录' }}
                 </button>
-              </div>
-
-              <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
-                class="mobile-signature-box">
-                <div class="mobile-signature-label">站经理已签名</div>
-                <img v-if="recordImagesReady" :src="resolveImage(record.station_manager_signature_path)"
-                  class="signature-preview-image" alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
-                <div v-else class="signature-preview-placeholder">签名</div>
-                <div class="mobile-signature-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
-                <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
-                  type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
-                  {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
-                </button>
-                <span v-else-if="record.reset_signature_lock_reason" class="signature-reset-locked">
-                  {{ record.reset_signature_lock_reason }}
-                </span>
               </div>
             </div>
           </div>
@@ -344,15 +331,14 @@
                 <th>检查结果</th>
                 <th>发现问题数</th>
                 <th>本表问题</th>
-                <th>本表检查人完成确认</th>
-                <th>本表站经理签字确认</th>
+                <th>巡检记录状态</th>
               </tr>
             </thead>
             <tbody>
               <template v-for="(batch, batchIndex) in paginatedInspectionGroups" :key="batch.batchKey">
                 <tr v-if="shouldShowStationDivider(batch, batchIndex)" :key="`${batch.batchKey}-station-divider`"
                   class="station-divider-row">
-                  <td colspan="8">
+                  <td colspan="7">
                     <div class="station-divider-content">
                       <div class="station-divider-main">
                         <span class="station-divider-dot"></span>
@@ -400,75 +386,52 @@
                     </div>
                   </td>
 
-                  <td class="batch-completion-cell">
-                    <div class="completion-progress-box" :class="{ completed: isInspectionCompleted(record) }">
-                      <div class="completion-progress-head">
-                        <span>检查人确认</span>
-                        <strong>{{ getCompletionProgressLabel(record) }}</strong>
+                  <td class="record-flow-cell">
+                    <div class="record-flow-card" :class="getRecordFlowCardClass(record)">
+                      <button v-if="canResetRecordFlow(record)" class="record-flow-reset-btn" type="button"
+                        :disabled="resettingRecordFlowId === record.id" :title="getRecordFlowResetTitle(record)"
+                        @click="resetInspectionRecordFlow(record)">
+                        ↻
+                      </button>
+                      <div class="record-flow-head">
+                        <span>巡检记录状态</span>
+                        <strong>{{ getRecordFlowTitle(record) }}</strong>
                       </div>
-                      <div class="completion-progress-track">
-                        <span :style="{ width: getCompletionProgressWidth(record) }"></span>
+                      <p class="record-flow-copy">{{ getRecordFlowSubtitle(record) }}</p>
+                      <div class="record-flow-track">
+                        <span :style="{ width: getRecordFlowProgressWidth(record) }"></span>
                       </div>
-                      <div class="completion-participant-list">
+                      <div v-if="shouldShowFlowParticipants(record)" class="completion-participant-list">
                         <span v-for="participant in getCompletionParticipants(record)" :key="participant.id || participant.display_name"
                           class="completion-participant-chip" :class="{ confirmed: participant.confirmed }">
                           {{ getCompletionParticipantLabel(participant) }}
                         </span>
                       </div>
-                      <div v-if="isInspectionCompleted(record)" class="signature-preview-time">{{ getCompletionMeta(record) }}</div>
-                      <div v-else-if="record.current_user_completion_confirmed" class="completion-waiting-note">
-                        你已确认，等待其他检查人
-                      </div>
-                    </div>
-                    <button v-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
-                      type="button" :disabled="completingInspectionId === record.id"
-                      @click="completeInspectionRecord(record)">
-                      {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
-                    </button>
-                  </td>
-
-                  <td class="batch-signature-cell">
-                    <div v-if="record.sign_status === '已签名确认' && record.station_manager_signature_path"
-                      class="signature-signed-wrap">
-                      <div class="signature-preview-box">
-                        <div class="signature-status-badge success">已签名确认</div>
-                        <img v-if="recordImagesReady" :src="resolveImage(record.station_manager_signature_path)"
-                          class="signature-preview-image" alt="站经理签名" loading="lazy" decoding="async"
-                          fetchpriority="low" />
+                      <div v-if="isRecordFlowSigned(record)" class="record-flow-signature-preview">
+                        <img v-if="recordImagesReady && record.station_manager_signature_path"
+                          :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                          alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
                         <div v-else class="signature-preview-placeholder">签名</div>
-                        <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名确认' }}</div>
+                        <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
                       </div>
-                      <button v-if="canResetInspectionSignature(record)" class="btn btn-secondary btn-sm signature-reset-btn"
-                        type="button" :disabled="resettingSignatureId === record.id" @click="resetInspectionSignature(record)">
-                        {{ resettingSignatureId === record.id ? '重置中' : '重置' }}
-                      </button>
-                      <span v-else-if="record.reset_signature_lock_reason" class="signature-reset-locked">
-                        {{ record.reset_signature_lock_reason }}
-                      </span>
-                    </div>
-
-                    <button v-else-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
-                      type="button" @click="openSignatureDialog(record)">
-                      站经理签字
-                    </button>
-
-                    <div v-else-if="shouldShowSignatureProgress(record)" class="signature-progress-box">
-                      <div class="signature-status-badge pending">{{ getSignatureProgressTitle(record) }}</div>
-                      <p class="signature-progress-copy">
-                        <span v-for="line in getSignatureProgressLines(record)" :key="line">{{ line }}</span>
-                      </p>
-                      <div v-if="getTotalIssueCount(record) > 0" class="signature-progress-track">
-                        <span :style="{ width: getSignatureProgressWidth(record) }"></span>
+                      <div class="record-flow-actions">
+                        <button v-if="canCompleteInspectionRecord(record)" class="btn btn-primary batch-action-btn"
+                          type="button" :disabled="completingInspectionId === record.id"
+                          @click="completeInspectionRecord(record)">
+                          {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
+                        </button>
+                        <button v-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
+                          type="button" @click="openSignatureDialog(record)">
+                          站经理签字
+                        </button>
                       </div>
                     </div>
-
-                    <span v-else class="signature-status-badge pending">待签名确认</span>
                   </td>
 
                 </tr>
               </template>
               <tr v-if="!loading && paginatedInspectionGroups.length === 0">
-                <td colspan="8" class="empty-row">
+                <td colspan="7" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb"></div>
                     <div class="empty-state-kicker">暂无记录</div>
@@ -479,7 +442,7 @@
                 </td>
               </tr>
               <tr v-if="loading">
-                <td colspan="8" class="empty-row">
+                <td colspan="7" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb loading"></div>
                     <div class="empty-state-kicker">同步中</div>
@@ -575,8 +538,8 @@
       <div v-else class="signature-dialog card-surface">
         <div class="signature-dialog-header">
           <div>
-            <div class="batch-detail-kicker">本表站经理签字确认</div>
-            <h3>{{ signatureDialog.record?.inspection_table_name || '本表站经理签字确认' }}</h3>
+            <div class="batch-detail-kicker">站经理签名验收</div>
+            <h3>{{ signatureDialog.record?.inspection_table_name || '站经理签名验收' }}</h3>
             <div class="batch-detail-meta">
               <span>巡检日期：{{ signatureDialog.record?.date || '-' }}</span>
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
@@ -589,7 +552,7 @@
         <div class="signature-layout">
           <div class="signature-side-card">
             <div class="signature-side-title">确认提示</div>
-            <div class="signature-side-desc">请将手机交由站经理签字。该环节仅保留站经理签字确认，检查表是否封存以“本表检查人完成确认”为准。</div>
+            <div class="signature-side-desc">请将手机交由站经理签字。该环节用于完成巡检记录签名验收，签名后问题将进入站点整改流转。</div>
             <div class="signature-side-meta">
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
               <span>日期：{{ signatureDialog.record?.date || '-' }}</span>
@@ -817,7 +780,7 @@ const isSupervisorLike = computed(() => currentRole.value === 'root' || currentR
 const hideInspectorContactInfo = computed(() => currentRole.value !== 'root' && Boolean(localPermissions.value.hide_inspector_contact_info))
 const deletingInspectionId = ref(null)
 const completingInspectionId = ref(null)
-const resettingSignatureId = ref(null)
+const resettingRecordFlowId = ref(null)
 const actionMessage = ref({
   text: '',
   type: 'info'
@@ -1574,7 +1537,7 @@ const canCompleteInspectionRecord = (record) => Boolean(record?.can_complete_rec
 
 const canDeleteInspectionRecord = (record) => Boolean(record?.can_delete_record)
 
-const canResetInspectionSignature = (record) => Boolean(record?.can_reset_signature)
+const canResetRecordFlow = (record) => Boolean(record?.can_reset_record_flow)
 
 const getTotalIssueCount = (record) => Number(record?.total_issue_count ?? record?.issue_count ?? 0) || 0
 
@@ -1582,36 +1545,81 @@ const getPendingAuditCount = (record) => Number(record?.pending_audit_count || 0
 
 const getAuditedIssueCount = (record) => Number(record?.audited_issue_count || 0) || 0
 
-const shouldShowSignatureProgress = (record) => (
-  record?.sign_status !== '已签名确认' &&
-  getPendingAuditCount(record) > 0
-)
+const getRectifiedIssueCount = (record) => Number(record?.rectified_issue_count || 0) || 0
 
-const getSignatureProgressTitle = (record) => {
-  return getPendingAuditCount(record) > 0 ? '等待问题审核' : '待站经理签名'
+const isRecordFlowSigned = (record) => record?.sign_status === '已签名确认'
+
+const getRecordFlowState = (record) => {
+  if (!isInspectionCompleted(record)) return 'waiting-inspector'
+  if (getPendingAuditCount(record) > 0) return 'waiting-audit'
+  if (!isRecordFlowSigned(record)) return 'waiting-signature'
+  return 'signed'
 }
 
-const getSignatureProgressText = (record) => {
-  return getSignatureProgressLines(record).join('')
-}
+const getRecordFlowTitle = (record) => ({
+  'waiting-inspector': '等待检查人确认',
+  'waiting-audit': '等待问题审核',
+  'waiting-signature': '待站经理签名验收',
+  signed: '已签名，整改跟踪中'
+}[getRecordFlowState(record)] || '巡检记录状态')
 
-const getSignatureProgressLines = (record) => {
-  const total = getTotalIssueCount(record)
-  const pending = getPendingAuditCount(record)
-  if (pending > 0) {
-    return [
-      '本表问题审核完成后进入签字环节：',
-      `已审核 ${getAuditedIssueCount(record)}/${total}，剩余 ${pending} 条。`
-    ]
+const getRecordFlowSubtitle = (record) => {
+  const state = getRecordFlowState(record)
+  if (state === 'waiting-inspector') {
+    const progress = getCompletionProgress(record)
+    const pendingNames = (record?.inspector_completion_progress?.pending_names || []).filter(Boolean)
+    if (progress.total && pendingNames.length) {
+      return `已确认 ${progress.confirmed}/${progress.total}，待确认：${pendingNames.join('、')}`
+    }
+    if (progress.total) return `已确认 ${progress.confirmed}/${progress.total}`
+    return '等待参与本表的检查人完成确认。'
   }
-  return ['审核已完成，请等待站经理账号进行本表签字确认。']
+  if (state === 'waiting-audit') {
+    const total = getTotalIssueCount(record)
+    const pending = getPendingAuditCount(record)
+    return total > 0
+      ? `已审核 ${getAuditedIssueCount(record)}/${total}，剩余 ${pending} 条。`
+      : '本表暂无问题，等待进入签名验收。'
+  }
+  if (state === 'waiting-signature') {
+    return '问题审核已完成，等待站经理账号签名验收。'
+  }
+  const total = Number(record?.issue_count || 0) || 0
+  if (total <= 0) return '本表未发现问题，已完成签名验收。'
+  return `站经理已签名，整改进度 ${getRectifiedIssueCount(record)}/${total}。`
 }
 
-const getSignatureProgressWidth = (record) => {
+const getRecordFlowProgressWidth = (record) => {
+  const state = getRecordFlowState(record)
+  if (state === 'waiting-inspector') return getCompletionProgressWidth(record)
   const total = getTotalIssueCount(record)
+  if (state === 'waiting-audit') {
+    if (total <= 0) return '100%'
+    const done = Math.min(getAuditedIssueCount(record), total)
+    return `${Math.round((done / total) * 100)}%`
+  }
+  if (state === 'signed') {
+    const effectiveTotal = Number(record?.issue_count || 0) || 0
+    if (effectiveTotal <= 0) return '100%'
+    const done = Math.min(getRectifiedIssueCount(record), effectiveTotal)
+    return `${Math.round((done / effectiveTotal) * 100)}%`
+  }
   if (total <= 0) return '100%'
-  const done = Math.min(getAuditedIssueCount(record), total)
-  return `${Math.round((done / total) * 100)}%`
+  return '100%'
+}
+
+const getRecordFlowCardClass = (record) => `flow-${getRecordFlowState(record)}`
+
+const shouldShowFlowParticipants = (record) => getRecordFlowState(record) === 'waiting-inspector'
+
+const getRecordFlowResetTitle = (record) => {
+  const state = getRecordFlowState(record)
+  if (state === 'waiting-audit') return '回退到等待检查人确认'
+  if (state === 'waiting-signature') {
+    return getTotalIssueCount(record) > 0 ? '回退到等待问题审核' : '回退到等待检查人确认'
+  }
+  if (state === 'signed') return '清除签名并回退到等待问题审核'
+  return '重置巡检记录流程'
 }
 
 const completeInspectionRecord = async (record) => {
@@ -1671,38 +1679,51 @@ const deleteInspectionRecord = async (record) => {
   }
 }
 
-const resetInspectionSignature = async (record) => {
-  if (!record?.id || resettingSignatureId.value) return
+const resetInspectionRecordFlow = async (record) => {
+  if (!record?.id || resettingRecordFlowId.value) return
+
+  const state = getRecordFlowState(record)
+  const actionText = {
+    'waiting-audit': '回退到等待检查人确认，并清空本表问题审核记录',
+    'waiting-signature': getTotalIssueCount(record) > 0
+      ? '回退到等待问题审核，并清空本表问题审核记录'
+      : '回退到等待检查人确认',
+    signed: '清除站经理签名，回退到等待问题审核，并清空本表问题审核记录'
+  }[state] || '重置巡检记录流程'
 
   const confirmed = window.confirm(
-    `确定重置【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】的站经理签名吗？\n\n重置后只撤销站经理签名，并将本记录下的问题退回待审核；检查人完成确认状态保持不变，重新审核完成后可再次签字。`
+    `确定重置【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】吗？\n\n本次操作会${actionText}。`
   )
   if (!confirmed) return
 
   try {
-    resettingSignatureId.value = record.id
+    resettingRecordFlowId.value = record.id
     showActionMessage('')
     const userId = localStorage.getItem('user_id') || ''
-    const response = await axios.post(`/api/inspections/${record.id}/signature/reset`, {
+    const response = await axios.post(`/api/inspections/${record.id}/flow/reset`, {
       user_id: userId
     })
     if (String(batchDetail.value.inspection?.id || '') === String(record.id)) {
+      const resetTo = response.data?.reset_to || ''
       batchDetail.value.inspection = {
         ...(batchDetail.value.inspection || {}),
         sign_status: '待签名确认',
         station_manager_signed_name: '',
         station_manager_signature_path: '',
-        station_manager_signed_at: ''
+        station_manager_signed_at: '',
+        inspector_completion_status: resetTo === 'inspector_confirmation'
+          ? '待检查人确认'
+          : batchDetail.value.inspection?.inspector_completion_status
       }
     }
     await fetchInspections()
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
-    showActionMessage(response.data?.message || '站经理签名已重置。', 'success')
+    showActionMessage(response.data?.message || '巡检记录流程已重置。', 'success')
   } catch (error) {
-    showActionMessage(error?.response?.data?.error || '重置站经理签名失败。', 'error')
+    showActionMessage(error?.response?.data?.error || '重置巡检记录流程失败。', 'error')
   } finally {
-    resettingSignatureId.value = null
+    resettingRecordFlowId.value = null
   }
 }
 
@@ -3125,8 +3146,7 @@ onBeforeUnmount(() => {
 }
 
 .batch-action-cell,
-.batch-completion-cell,
-.batch-signature-cell {
+.record-flow-cell {
   vertical-align: middle;
   text-align: center !important;
 }
@@ -3135,18 +3155,12 @@ onBeforeUnmount(() => {
   min-width: 132px;
 }
 
-.batch-completion-cell {
-  min-width: 168px;
-  padding: 10px 12px;
+.record-flow-cell {
+  min-width: 310px;
+  padding: 12px 14px;
 }
 
-.batch-signature-cell {
-  min-width: 218px;
-  padding: 10px 12px;
-}
-
-.batch-completion-cell > *,
-.batch-signature-cell > * {
+.record-flow-cell > * {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3154,77 +3168,10 @@ onBeforeUnmount(() => {
   margin-right: auto;
 }
 
-.batch-completion-cell .btn,
-.batch-signature-cell .btn {
+.record-flow-cell .btn {
   justify-content: center;
   margin-left: auto;
   margin-right: auto;
-}
-
-.batch-completion-cell > .signature-status-badge,
-.batch-signature-cell > .signature-status-badge {
-  width: fit-content;
-}
-
-.completion-preview-box {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  max-width: 220px;
-  text-align: center;
-}
-
-.completion-progress-box {
-  width: min(240px, 100%);
-  padding: 10px;
-  border: 1px solid #dbeafe;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #f8fbff 0%, #eff6ff 100%);
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  gap: 8px;
-  text-align: center;
-}
-
-.completion-progress-box.completed {
-  border-color: #bbf7d0;
-  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
-}
-
-.completion-progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.completion-progress-head strong {
-  color: #0f172a;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.completion-progress-track {
-  width: 100%;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #dbeafe;
-}
-
-.completion-progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #2563eb 0%, #16a34a 100%);
-  transition: width 0.22s ease;
 }
 
 .completion-participant-list {
@@ -3259,57 +3206,152 @@ onBeforeUnmount(() => {
   border-color: #bbf7d0;
 }
 
-.completion-waiting-note {
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.5;
+.record-flow-card {
+  position: relative;
+  width: min(340px, 100%);
+  padding: 17px 18px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(37, 99, 235, 0.12), transparent 32%),
+    linear-gradient(135deg, #f8fbff 0%, #eff6ff 100%);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 9px;
+  text-align: center;
 }
 
-.signature-preview-box {
+.record-flow-card.flow-waiting-audit {
+  border-color: #fed7aa;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(249, 115, 22, 0.12), transparent 32%),
+    linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
+}
+
+.record-flow-card.flow-waiting-signature {
+  border-color: #bfdbfe;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(14, 165, 233, 0.13), transparent 32%),
+    linear-gradient(135deg, #f0f9ff 0%, #eff6ff 100%);
+}
+
+.record-flow-card.flow-signed {
+  border-color: #bbf7d0;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(22, 163, 74, 0.13), transparent 32%),
+    linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+}
+
+.record-flow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding-right: 48px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.record-flow-head strong {
+  color: #0f172a;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.record-flow-copy {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.record-flow-track {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.26);
+}
+
+.record-flow-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb 0%, #16a34a 100%);
+  transition: width 0.22s ease;
+}
+
+.record-flow-card.flow-waiting-audit .record-flow-track span {
+  background: linear-gradient(90deg, #f97316 0%, #f59e0b 100%);
+}
+
+.record-flow-card.flow-waiting-signature .record-flow-track span {
+  background: linear-gradient(90deg, #0ea5e9 0%, #2563eb 100%);
+}
+
+.record-flow-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.record-flow-reset-btn {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(254, 226, 226, 0.78);
+  color: #b91c1c;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 8px 18px rgba(185, 28, 28, 0.16);
+  backdrop-filter: blur(8px);
+  transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.record-flow-reset-btn:hover:not(:disabled) {
+  transform: rotate(-22deg) scale(1.05);
+  background: rgba(254, 202, 202, 0.92);
+  box-shadow: 0 10px 22px rgba(185, 28, 28, 0.22);
+}
+
+.record-flow-reset-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.record-flow-signature-preview {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  text-align: center;
+  gap: 7px;
 }
 
-.signature-signed-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
+.mobile-flow-card {
   width: 100%;
-  text-align: center;
+  margin-top: 10px;
+  box-sizing: border-box;
 }
 
-.signature-reset-btn {
-  min-width: 58px;
-  border-color: #fecaca;
-  color: #b91c1c;
-  background: #fff7f7;
-}
-
-.signature-reset-btn:hover:not(:disabled) {
-  border-color: #fca5a5;
-  background: #fee2e2;
-}
-
-.signature-reset-locked {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 180px;
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.4;
-  text-align: center;
-  white-space: normal;
+.mobile-flow-card .record-flow-copy {
+  text-align: left;
 }
 
 .signature-preview-image {
@@ -4423,6 +4465,22 @@ onBeforeUnmount(() => {
   .mobile-signature-icon-btn {
     border-radius: 16px;
     font-size: 24px;
+  }
+
+  .mobile-flow-card {
+    padding: 16px;
+  }
+
+  .mobile-flow-card .record-flow-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 44px;
+  }
+
+  .mobile-flow-card .record-flow-head strong {
+    white-space: normal;
+    text-align: left;
   }
 }
 

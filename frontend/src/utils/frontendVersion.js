@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { appVersion } from '../config/versionInfo'
+import { appVersion, formatAppVersion } from '../config/versionInfo'
 
 const VERSION_EXPIRED_CODE = 'FRONTEND_VERSION_EXPIRED'
 const VERSION_EXPIRED_MESSAGE = '系统已更新，正在刷新页面...'
@@ -7,7 +7,10 @@ const VERSION_EXPIRED_MESSAGE = '系统已更新，正在刷新页面...'
 let versionCheckInFlight = null
 let upgradeReloading = false
 
-const normalizeVersion = (value) => String(value || '').trim().replace(/^v/i, '')
+const normalizeVersion = (value) => {
+  const rawValue = String(value || '').trim().replace(/^v/i, '')
+  return rawValue ? formatAppVersion(rawValue) : ''
+}
 
 export const isFrontendVersionExpiredResponse = (error) => (
   error?.response?.status === 426 &&
