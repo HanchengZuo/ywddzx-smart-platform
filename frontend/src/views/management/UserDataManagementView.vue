@@ -7,6 +7,10 @@
         <p class="page-desc">维护系统用户、角色、所属站点和可操作权限。root 默认拥有全部权限，其他用户可在这里单独开关。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
+        <button class="btn btn-primary birthday-action-btn" type="button" :disabled="birthdayDialog.loading"
+          @click="openBirthdayDialog">
+          生日祝福管理
+        </button>
         <button class="btn btn-primary" type="button" :disabled="loading" @click="openRolePermissionDialog">
           角色通用权限
         </button>
@@ -422,6 +426,94 @@
       </section>
     </template>
 
+    <div v-if="birthdayDialog.visible" class="modal-backdrop birthday-modal-backdrop" @click.self="closeBirthdayDialog">
+      <div class="birthday-management-modal card-surface">
+        <div class="modal-head">
+          <div>
+            <div class="section-kicker">员工关怀</div>
+            <h3>生日祝福管理</h3>
+            <p>维护用户生日信息。生日当天用户登录后，会看到生日祝福动效和工作感谢时间。</p>
+          </div>
+          <button class="close-btn" type="button" @click="closeBirthdayDialog">×</button>
+        </div>
+
+        <div class="birthday-toolbar">
+          <div>
+            <strong>当前名单 {{ birthdayRows.length }} 人</strong>
+            <span>测试按钮不会修改生日日期，只用于 root 预览正式登录动效。</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="birthdayDialog.loading"
+            @click="fetchBirthdays">
+            {{ birthdayDialog.loading ? '刷新中...' : '刷新生日信息' }}
+          </button>
+        </div>
+
+        <div class="birthday-table-wrap">
+          <table class="birthday-table">
+            <thead>
+              <tr>
+                <th>姓名</th>
+                <th>生日月份</th>
+                <th>生日日期</th>
+                <th>匹配账号</th>
+                <th>最后更新</th>
+                <th>测试</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="birthdayDialog.loading">
+                <td colspan="6" class="empty-cell">正在加载生日信息...</td>
+              </tr>
+              <tr v-else-if="!birthdayRows.length">
+                <td colspan="6" class="empty-cell">暂无生日信息。</td>
+              </tr>
+              <template v-else>
+                <tr v-for="row in birthdayRows" :key="row.id || row.real_name">
+                  <td>
+                    <div class="birthday-name-cell">
+                      <strong>{{ row.real_name }}</strong>
+                      <span>{{ formatBirthdayLabel(row) }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <select v-model.number="row.birthday_month" class="birthday-select" @change="normalizeBirthdayDay(row)">
+                      <option v-for="month in birthdayMonthOptions" :key="month" :value="month">{{ month }} 月</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select v-model.number="row.birthday_day" class="birthday-select">
+                      <option v-for="day in birthdayDayOptions(row.birthday_month)" :key="day" :value="day">{{ day }} 日</option>
+                    </select>
+                  </td>
+                  <td>
+                    <div v-if="row.matched_username" class="birthday-user-match">
+                      <strong>{{ row.matched_username }}</strong>
+                      <span>{{ roleLabel(row.matched_role) }}{{ row.matched_phone ? ` · ${row.matched_phone}` : '' }}</span>
+                    </div>
+                    <span v-else class="birthday-unmatched">暂未匹配系统账号</span>
+                  </td>
+                  <td>{{ row.updated_at || '-' }}</td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm" type="button" @click="previewBirthdayBlessing(row)">
+                      测试动效
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="birthdayDialog.error" class="form-error">{{ birthdayDialog.error }}</div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" type="button" @click="closeBirthdayDialog">取消</button>
+          <button class="btn btn-primary" type="button" :disabled="birthdayDialog.saving" @click="saveBirthdays">
+            {{ birthdayDialog.saving ? '保存中...' : '保存生日信息' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="rolePermissionDialog.visible" class="modal-backdrop" @click.self="closeRolePermissionDialog">
       <div class="role-permission-modal card-surface">
         <div class="modal-head">
@@ -647,6 +739,14 @@ const message = reactive({
   type: 'info'
 })
 let messageTimer = null
+const birthdayRows = ref([])
+const birthdayDialog = reactive({
+  visible: false,
+  loading: false,
+  saving: false,
+  error: ''
+})
+const birthdayMonthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
 
 const filters = reactive({
   keyword: '',
@@ -980,6 +1080,115 @@ const setMessage = (text, type = 'info') => {
     message.text = ''
     messageTimer = null
   }, 2400)
+}
+
+const birthdayDayOptions = (month) => {
+  const normalizedMonth = Number(month) || 1
+  const dayCount = new Date(2026, normalizedMonth, 0).getDate()
+  return Array.from({ length: dayCount }, (_, index) => index + 1)
+}
+
+const formatBirthdayLabel = (row) => {
+  const month = Number(row?.birthday_month || 0)
+  const day = Number(row?.birthday_day || 0)
+  return month && day ? `${month}月${day}日` : '-'
+}
+
+const normalizeBirthdayRow = (row = {}) => {
+  const month = Number(row.birthday_month || 1)
+  const validDays = birthdayDayOptions(month)
+  const day = validDays.includes(Number(row.birthday_day)) ? Number(row.birthday_day) : 1
+  return {
+    ...row,
+    birthday_month: month,
+    birthday_day: day
+  }
+}
+
+const normalizeBirthdayDay = (row) => {
+  if (!row) return
+  const validDays = birthdayDayOptions(row.birthday_month)
+  const currentDay = Number(row.birthday_day || 1)
+  if (!validDays.includes(currentDay)) {
+    row.birthday_day = validDays[validDays.length - 1] || 1
+  }
+}
+
+const fetchBirthdays = async () => {
+  if (!hasPermission) return
+  try {
+    birthdayDialog.loading = true
+    birthdayDialog.error = ''
+    const response = await axios.get('/api/management/user-birthdays', {
+      params: {
+        user_id: currentUserId,
+        _ts: Date.now()
+      }
+    })
+    birthdayRows.value = (response.data?.birthdays || []).map(normalizeBirthdayRow)
+  } catch (error) {
+    birthdayDialog.error = error?.response?.data?.error || '生日信息加载失败。'
+    setMessage(birthdayDialog.error, 'error')
+  } finally {
+    birthdayDialog.loading = false
+  }
+}
+
+const openBirthdayDialog = async () => {
+  birthdayDialog.visible = true
+  await fetchBirthdays()
+}
+
+const closeBirthdayDialog = () => {
+  birthdayDialog.visible = false
+  birthdayDialog.error = ''
+}
+
+const saveBirthdays = async () => {
+  try {
+    birthdayDialog.saving = true
+    birthdayDialog.error = ''
+    const payloadRows = birthdayRows.value.map((row) => ({
+      real_name: row.real_name,
+      birthday_month: row.birthday_month,
+      birthday_day: row.birthday_day
+    }))
+    const response = await axios.put('/api/management/user-birthdays', {
+      user_id: currentUserId,
+      birthdays: payloadRows
+    })
+    setMessage(response.data?.message || '生日信息已保存。', 'success')
+    await fetchBirthdays()
+  } catch (error) {
+    birthdayDialog.error = error?.response?.data?.error || '生日信息保存失败。'
+    setMessage(birthdayDialog.error, 'error')
+  } finally {
+    birthdayDialog.saving = false
+  }
+}
+
+const previewBirthdayBlessing = (row) => {
+  const event = row?.birthday_event || {
+    is_test: true,
+    real_name: row?.real_name || '伙伴',
+    birthday_label: formatBirthdayLabel(row),
+    birthday_month: row?.birthday_month,
+    birthday_day: row?.birthday_day,
+    event_key: `test:${Date.now()}:${row?.real_name || 'user'}`,
+    work_days: 0
+  }
+  window.dispatchEvent(new CustomEvent('birthday-blessing-preview', {
+    detail: {
+      ...event,
+      is_test: true,
+      is_today: true,
+      real_name: row?.real_name || event.real_name,
+      birthday_label: formatBirthdayLabel(row),
+      birthday_month: row?.birthday_month,
+      birthday_day: row?.birthday_day,
+      event_key: `test:${Date.now()}:${row?.real_name || event.real_name}`
+    }
+  }))
 }
 
 const defaultPermissionValue = (permission, role) => {
@@ -2631,6 +2840,119 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.birthday-management-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, calc(100vw - 40px));
+  max-height: min(90vh, 860px);
+  padding: 24px;
+  overflow: hidden;
+}
+
+.birthday-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid #fed7aa;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 96% 0%, rgba(251, 191, 36, 0.16), transparent 30%),
+    linear-gradient(135deg, #fff7ed 0%, #ffffff 100%);
+}
+
+.birthday-toolbar div {
+  display: grid;
+  gap: 4px;
+}
+
+.birthday-toolbar strong {
+  color: #9a3412;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.birthday-toolbar span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.birthday-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.birthday-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.birthday-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 13px 14px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 950;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.birthday-table td {
+  padding: 13px 14px;
+  border-top: 1px solid #f1f5f9;
+  color: #334155;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+.birthday-name-cell,
+.birthday-user-match {
+  display: grid;
+  gap: 4px;
+}
+
+.birthday-name-cell strong,
+.birthday-user-match strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.birthday-name-cell span,
+.birthday-user-match span,
+.birthday-unmatched {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.birthday-unmatched {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+
+.birthday-select {
+  width: 110px;
+  height: 38px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0 10px;
+  background: #fff;
+  color: #0f172a;
+  font-weight: 800;
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;
@@ -2840,6 +3162,25 @@ onBeforeUnmount(() => {
     width: 100%;
     max-height: calc(100vh - 28px);
     padding: 18px;
+  }
+
+  .birthday-management-modal {
+    width: 100%;
+    max-height: calc(100vh - 28px);
+    padding: 18px;
+  }
+
+  .birthday-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .birthday-toolbar .btn {
+    width: 100%;
+  }
+
+  .birthday-table-wrap {
+    max-height: 56vh;
   }
 
   .modal-head,

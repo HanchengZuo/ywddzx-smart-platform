@@ -463,6 +463,53 @@
       </form>
     </div>
 
+    <div v-if="birthdayBlessing.visible && !authState.mustChangePassword" class="birthday-blessing-overlay"
+      role="dialog" aria-modal="true">
+      <div class="birthday-confetti" aria-hidden="true">
+        <span v-for="spark in birthdaySparkles" :key="spark" :style="{ '--i': spark }"></span>
+      </div>
+      <div class="birthday-fireworks" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="birthday-balloons" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <section class="birthday-blessing-card">
+        <button class="birthday-close" type="button" aria-label="关闭生日祝福" @click="closeBirthdayBlessing">×</button>
+        <div class="birthday-cake" aria-hidden="true">
+          <div class="cake-candle">
+            <span class="candle-flame"></span>
+            <span class="candle-body"></span>
+          </div>
+          <div class="cake-top">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="cake-middle"></div>
+          <div class="cake-bottom"></div>
+        </div>
+        <div class="birthday-kicker">今日生日祝福</div>
+        <h2>{{ birthdayBlessing.realName }}，生日快乐</h2>
+        <p class="birthday-message">
+          愿今天的你被鲜花、微光和好消息温柔包围。
+        </p>
+        <div class="birthday-work-card">
+          <strong>感谢你与业务督导中心并肩 {{ birthdayBlessing.workDays }} 天</strong>
+          <em>每一次认真巡检、每一次耐心跟进，都让这套系统背后的工作更踏实。</em>
+        </div>
+        <div class="birthday-footer">
+          <span>{{ birthdayBlessing.birthdayLabel }}</span>
+          <button class="btn btn-primary" type="button" @click="closeBirthdayBlessing">收下祝福</button>
+        </div>
+      </section>
+    </div>
+
     <div v-if="sessionNotice.visible && sessionNotice.mode === 'warning' && !isLoginPage" class="session-warning-toast"
       role="status">
       <div class="session-warning-mark">!</div>
@@ -548,6 +595,7 @@ const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
 const PEER_REVIEW_PENDING_REFRESH_EVENT = 'peer-review-pending-refresh'
 const PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT = 'plan-assignment-pending-refresh'
+const BIRTHDAY_BLESSING_PREVIEW_EVENT = 'birthday-blessing-preview'
 const idleActivityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']
 const floatingModalCloseButtonSelector = [
   '.login-version-dialog-header > button',
@@ -596,6 +644,17 @@ const sessionNotice = reactive({
   secondsRemaining: 0,
   checking: false
 })
+const birthdayBlessing = reactive({
+  visible: false,
+  isTest: false,
+  eventKey: '',
+  realName: '',
+  birthdayLabel: '',
+  workDays: 0,
+  workDurationText: '',
+  message: ''
+})
+const birthdaySparkles = Array.from({ length: 26 }, (_, index) => index + 1)
 const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
@@ -838,6 +897,53 @@ const getOnlineUserInitial = (user) => {
   return label.slice(0, 1).toUpperCase()
 }
 
+const getBirthdayDismissKey = (event = birthdayBlessing) => {
+  const key = String(event?.event_key || event?.eventKey || '').trim()
+  if (!key) return ''
+  return `birthday-blessing-dismissed:${key}`
+}
+
+const resetBirthdayBlessing = () => {
+  birthdayBlessing.visible = false
+  birthdayBlessing.isTest = false
+  birthdayBlessing.eventKey = ''
+  birthdayBlessing.realName = ''
+  birthdayBlessing.birthdayLabel = ''
+  birthdayBlessing.workDays = 0
+  birthdayBlessing.workDurationText = ''
+  birthdayBlessing.message = ''
+}
+
+const showBirthdayBlessing = (event, { force = false } = {}) => {
+  if (!event) return
+  const isBirthdayToday = Boolean(event.is_today || force || event.is_test)
+  if (!isBirthdayToday) return
+
+  const dismissKey = getBirthdayDismissKey(event)
+  if (!force && !event.is_test && dismissKey && localStorage.getItem(dismissKey) === '1') return
+
+  birthdayBlessing.visible = true
+  birthdayBlessing.isTest = Boolean(force || event.is_test)
+  birthdayBlessing.eventKey = String(event.event_key || event.eventKey || '')
+  birthdayBlessing.realName = event.real_name || event.realName || authState.realName || authState.username || '伙伴'
+  birthdayBlessing.birthdayLabel = event.birthday_label || event.birthdayLabel || '生日'
+  birthdayBlessing.workDays = Number(event.work_days || event.workDays || 0)
+  birthdayBlessing.workDurationText = event.work_duration_text || event.workDurationText || ''
+  birthdayBlessing.message = event.message || ''
+}
+
+const closeBirthdayBlessing = () => {
+  const dismissKey = getBirthdayDismissKey()
+  if (!birthdayBlessing.isTest && dismissKey) {
+    localStorage.setItem(dismissKey, '1')
+  }
+  resetBirthdayBlessing()
+}
+
+const handleBirthdayBlessingPreview = (event) => {
+  showBirthdayBlessing(event?.detail, { force: true })
+}
+
 const syncAuthState = () => {
   authState.token = localStorage.getItem('auth_token') || ''
   authState.userId = localStorage.getItem('user_id') || ''
@@ -1022,6 +1128,7 @@ const verifySessionSilently = async () => {
     if (user && refreshedToken) {
       storeAuthSession(user, refreshedToken, expiresIn)
       syncAuthState()
+      showBirthdayBlessing(user?.birthday_event)
     }
 
     if (expiresIn > sessionWarningThresholdSeconds) {
@@ -1081,6 +1188,7 @@ const handleAuthSessionExpired = (event) => {
   syncAuthState()
   resetNotificationCounts()
   resetServerResourceState()
+  resetBirthdayBlessing()
   showSessionExpired(event?.detail?.message || '登录已过期，请重新登录。')
 }
 
@@ -1275,6 +1383,7 @@ watch(
       resetSessionNotice()
       resetNotificationCounts()
       resetServerResourceState()
+      resetBirthdayBlessing()
     } else {
       if (isUsableAuthToken(getStoredAuthToken())) {
         scheduleIdleLogout()
@@ -1295,6 +1404,7 @@ onMounted(() => {
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
+  window.addEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   idleActivityEvents.forEach((eventName) => {
     window.addEventListener(eventName, markUserActivity, { passive: true })
   })
@@ -1331,6 +1441,7 @@ onBeforeUnmount(() => {
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.removeEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.removeEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
+  window.removeEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   idleActivityEvents.forEach((eventName) => {
     window.removeEventListener(eventName, markUserActivity)
   })
@@ -1458,6 +1569,7 @@ const handlePasswordChange = async () => {
 
     if (response.data?.token && response.data?.user) {
       storeAuthSession(response.data.user, response.data.token, response.data.expires_in)
+      showBirthdayBlessing(response.data.user?.birthday_event)
     } else {
       localStorage.setItem('must_change_password', 'false')
       syncAxiosAuthHeader()
@@ -1502,6 +1614,7 @@ const handleLogin = async () => {
     }
 
     storeAuthSession(user, token, response.data.expires_in)
+    showBirthdayBlessing(user?.birthday_event)
 
     resetSessionNotice()
     resetPasswordChangeForm()
@@ -1532,6 +1645,7 @@ const handleLogout = async () => {
   resetPasswordChangeForm()
   resetNotificationCounts()
   resetServerResourceState()
+  resetBirthdayBlessing()
   syncAuthState()
   mobileMenuOpen.value = false
   loginForm.password = ''
@@ -2262,6 +2376,486 @@ textarea:focus {
     radial-gradient(circle at top right, rgba(37, 99, 235, 0.1), transparent 34%),
     #fff;
   box-shadow: 0 30px 90px rgba(15, 23, 42, 0.36);
+}
+
+.birthday-blessing-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1450;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(250, 204, 21, 0.3), transparent 28%),
+    radial-gradient(circle at 82% 24%, rgba(244, 114, 182, 0.26), transparent 30%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.68), rgba(30, 41, 59, 0.55));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.birthday-confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.birthday-confetti span {
+  position: absolute;
+  top: -12vh;
+  left: calc(var(--i) * 3.7% - 5%);
+  width: 10px;
+  height: 18px;
+  border-radius: 999px;
+  background: hsl(calc(var(--i) * 31), 84%, 62%);
+  opacity: 0.86;
+  animation: birthdayConfettiFall calc(4.5s + var(--i) * 0.18s) linear infinite;
+  animation-delay: calc(var(--i) * -0.21s);
+  transform: rotate(calc(var(--i) * 19deg));
+}
+
+.birthday-fireworks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.birthday-fireworks span {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  opacity: 0;
+  background: #fde047;
+  filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.78));
+  animation: birthdayFirework 3.4s ease-out infinite;
+}
+
+.birthday-fireworks span::before,
+.birthday-fireworks span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  box-shadow:
+    0 -46px 0 #fde047,
+    32px -32px 0 #fb7185,
+    46px 0 0 #38bdf8,
+    32px 32px 0 #f97316,
+    0 46px 0 #a78bfa,
+    -32px 32px 0 #22c55e,
+    -46px 0 0 #facc15,
+    -32px -32px 0 #ec4899;
+}
+
+.birthday-fireworks span::after {
+  transform: rotate(22.5deg) scale(0.72);
+  opacity: 0.88;
+}
+
+.birthday-fireworks span:nth-child(1) {
+  left: 18%;
+  top: 18%;
+}
+
+.birthday-fireworks span:nth-child(2) {
+  right: 18%;
+  top: 16%;
+  background: #38bdf8;
+  animation-delay: 0.85s;
+}
+
+.birthday-fireworks span:nth-child(2)::before,
+.birthday-fireworks span:nth-child(2)::after {
+  box-shadow:
+    0 -42px 0 #38bdf8,
+    30px -30px 0 #facc15,
+    42px 0 0 #fb7185,
+    30px 30px 0 #22c55e,
+    0 42px 0 #f97316,
+    -30px 30px 0 #a78bfa,
+    -42px 0 0 #60a5fa,
+    -30px -30px 0 #f472b6;
+}
+
+.birthday-fireworks span:nth-child(3) {
+  left: 28%;
+  bottom: 19%;
+  background: #fb7185;
+  animation-delay: 1.65s;
+}
+
+.birthday-fireworks span:nth-child(4) {
+  right: 25%;
+  bottom: 22%;
+  background: #a78bfa;
+  animation-delay: 2.35s;
+}
+
+.birthday-balloons {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.birthday-balloons span {
+  position: absolute;
+  width: 68px;
+  height: 84px;
+  border-radius: 50% 50% 46% 46%;
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.82), transparent 14%),
+    linear-gradient(145deg, #fb7185, #e11d48);
+  box-shadow: 0 18px 42px rgba(225, 29, 72, 0.24);
+  animation: birthdayBalloonFloat 5.6s ease-in-out infinite;
+}
+
+.birthday-balloons span::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 82px;
+  width: 1px;
+  height: 72px;
+  background: rgba(255, 255, 255, 0.62);
+  transform: translateX(-50%);
+}
+
+.birthday-balloons span:nth-child(1) {
+  left: 9%;
+  top: 16%;
+}
+
+.birthday-balloons span:nth-child(2) {
+  right: 10%;
+  top: 20%;
+  width: 58px;
+  height: 74px;
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.82), transparent 14%),
+    linear-gradient(145deg, #38bdf8, #2563eb);
+  animation-delay: -1.2s;
+}
+
+.birthday-balloons span:nth-child(3) {
+  left: 16%;
+  bottom: 10%;
+  width: 54px;
+  height: 70px;
+  background:
+    radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.82), transparent 14%),
+    linear-gradient(145deg, #facc15, #f97316);
+  animation-delay: -2.4s;
+}
+
+.birthday-blessing-card {
+  position: relative;
+  width: min(680px, 100%);
+  padding: 42px;
+  overflow: hidden;
+  border: 1px solid rgba(254, 243, 199, 0.78);
+  border-radius: 34px;
+  background:
+    radial-gradient(circle at 16% 8%, rgba(251, 191, 36, 0.22), transparent 30%),
+    radial-gradient(circle at 92% 0%, rgba(236, 72, 153, 0.16), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(255, 251, 235, 0.96));
+  box-shadow:
+    0 36px 120px rgba(15, 23, 42, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  text-align: center;
+  animation: birthdayCardIn 0.58s cubic-bezier(.2, .9, .2, 1) both;
+}
+
+.birthday-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.16);
+  color: #dc2626;
+  font-size: 26px;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.birthday-close:hover {
+  transform: scale(1.08) rotate(6deg);
+  background: rgba(248, 113, 113, 0.25);
+}
+
+.birthday-cake {
+  position: relative;
+  width: 156px;
+  height: 132px;
+  margin: 0 auto 18px;
+  animation: birthdayCakeBounce 2.8s ease-in-out infinite;
+}
+
+.cake-candle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 4;
+  width: 24px;
+  height: 54px;
+  transform: translateX(-50%);
+}
+
+.candle-body {
+  position: absolute;
+  left: 6px;
+  bottom: 0;
+  width: 12px;
+  height: 36px;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(45deg, #fff 0 6px, #fb7185 6px 11px);
+  box-shadow: 0 6px 12px rgba(251, 113, 133, 0.18);
+}
+
+.candle-flame {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 20px;
+  height: 26px;
+  border-radius: 50% 50% 50% 50% / 60% 60% 36% 36%;
+  background:
+    radial-gradient(circle at 50% 70%, #fff7ad 0 18%, transparent 19%),
+    linear-gradient(180deg, #fde047, #fb923c 58%, #ef4444);
+  box-shadow:
+    0 0 18px rgba(251, 191, 36, 0.88),
+    0 0 34px rgba(251, 146, 60, 0.48);
+  transform: translateX(-50%);
+  transform-origin: 50% 90%;
+  animation: candleFlicker 0.78s ease-in-out infinite alternate;
+}
+
+.cake-top {
+  position: absolute;
+  left: 17px;
+  right: 17px;
+  top: 44px;
+  z-index: 3;
+  height: 32px;
+  border-radius: 22px 22px 18px 18px;
+  background: linear-gradient(180deg, #fff7ed, #fed7aa);
+  box-shadow: inset 0 -8px 0 rgba(251, 191, 36, 0.2);
+}
+
+.cake-top span {
+  position: absolute;
+  top: 12px;
+  width: 18px;
+  height: 20px;
+  border-radius: 0 0 999px 999px;
+  background: #fb7185;
+  animation: icingDrop 2.4s ease-in-out infinite;
+}
+
+.cake-top span:nth-child(1) {
+  left: 20px;
+}
+
+.cake-top span:nth-child(2) {
+  left: 58px;
+  height: 26px;
+  background: #f97316;
+  animation-delay: -0.7s;
+}
+
+.cake-top span:nth-child(3) {
+  right: 22px;
+  background: #38bdf8;
+  animation-delay: -1.4s;
+}
+
+.cake-middle {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 68px;
+  z-index: 2;
+  height: 42px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 20% 45%, #fff 0 4px, transparent 5px),
+    radial-gradient(circle at 44% 55%, #fff 0 4px, transparent 5px),
+    radial-gradient(circle at 68% 42%, #fff 0 4px, transparent 5px),
+    linear-gradient(135deg, #fb7185, #f97316);
+  box-shadow: 0 18px 34px rgba(249, 115, 22, 0.2);
+}
+
+.cake-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 42px;
+  border-radius: 20px 20px 24px 24px;
+  background:
+    radial-gradient(circle at 18% 50%, rgba(255,255,255,0.65) 0 5px, transparent 6px),
+    radial-gradient(circle at 44% 45%, rgba(255,255,255,0.65) 0 5px, transparent 6px),
+    radial-gradient(circle at 72% 52%, rgba(255,255,255,0.65) 0 5px, transparent 6px),
+    linear-gradient(135deg, #38bdf8, #2563eb);
+  box-shadow: 0 18px 34px rgba(37, 99, 235, 0.18);
+}
+
+.birthday-kicker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  margin-bottom: 12px;
+  padding: 0 14px;
+  border: 1px solid rgba(251, 191, 36, 0.48);
+  border-radius: 999px;
+  background: rgba(255, 247, 237, 0.88);
+  color: #b45309;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.birthday-blessing-card h2 {
+  margin: 0;
+  color: #111827;
+  font-size: clamp(32px, 5vw, 52px);
+  font-weight: 1000;
+  letter-spacing: -0.05em;
+}
+
+.birthday-message {
+  max-width: 520px;
+  margin: 16px auto 22px;
+  color: #475569;
+  font-size: 17px;
+  line-height: 1.8;
+}
+
+.birthday-work-card {
+  display: grid;
+  gap: 10px;
+  margin: 0 auto 22px;
+  padding: 22px;
+  border: 1px solid rgba(251, 191, 36, 0.34);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 247, 237, 0.9));
+  box-shadow: 0 16px 38px rgba(146, 64, 14, 0.08);
+}
+
+.birthday-work-card strong {
+  color: #0f172a;
+  font-size: 23px;
+  font-weight: 950;
+}
+
+.birthday-work-card em {
+  color: #64748b;
+  font-size: 14px;
+  font-style: normal;
+  line-height: 1.7;
+}
+
+.birthday-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.birthday-footer span {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+@keyframes birthdayConfettiFall {
+  0% {
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate3d(calc((var(--i) - 13) * 3px), 116vh, 0) rotate(720deg);
+  }
+}
+
+@keyframes birthdayFirework {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.08);
+  }
+  18% {
+    opacity: 1;
+  }
+  46% {
+    opacity: 0.98;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px) scale(1.18);
+  }
+}
+
+@keyframes birthdayCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes birthdayCakeBounce {
+  0%, 100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(1deg);
+  }
+}
+
+@keyframes candleFlicker {
+  0% {
+    transform: translateX(-50%) rotate(-4deg) scale(0.94);
+  }
+  100% {
+    transform: translateX(-50%) rotate(5deg) scale(1.08);
+  }
+}
+
+@keyframes icingDrop {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(3px);
+  }
+}
+
+@keyframes birthdayBalloonFloat {
+  0%, 100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-22px) rotate(4deg);
+  }
 }
 
 .force-password-eyebrow {
@@ -3616,6 +4210,73 @@ textarea:focus {
     width: 100%;
   }
 
+  .birthday-blessing-overlay {
+    padding: 14px;
+    align-items: center;
+  }
+
+  .birthday-blessing-card {
+    max-height: calc(100dvh - 28px);
+    overflow: auto;
+    padding: 30px 20px 22px;
+    border-radius: 26px;
+  }
+
+  .birthday-close {
+    top: 12px;
+    right: 12px;
+    width: 38px;
+    height: 38px;
+    font-size: 24px;
+  }
+
+  .birthday-cake {
+    width: 132px;
+    height: 116px;
+    margin-bottom: 14px;
+  }
+
+  .birthday-balloons span {
+    transform: scale(0.76);
+  }
+
+  .birthday-balloons span:nth-child(3) {
+    display: none;
+  }
+
+  .birthday-fireworks span {
+    transform-origin: center;
+    animation-name: birthdayFireworkMobile;
+  }
+
+  .birthday-blessing-card h2 {
+    font-size: 30px;
+    letter-spacing: -0.04em;
+  }
+
+  .birthday-message {
+    margin: 12px auto 16px;
+    font-size: 15px;
+  }
+
+  .birthday-work-card {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .birthday-work-card strong {
+    font-size: 18px;
+  }
+
+  .birthday-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .birthday-footer .btn {
+    width: 100%;
+  }
+
   .session-warning-toast {
     left: 12px;
     right: 12px;
@@ -3668,6 +4329,24 @@ textarea:focus {
 
   .session-guard-actions .btn {
     width: 100%;
+  }
+}
+
+@keyframes birthdayFireworkMobile {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.06);
+  }
+  18% {
+    opacity: 0.9;
+  }
+  46% {
+    opacity: 0.86;
+    transform: translateY(0) scale(0.72);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.84);
   }
 }
 

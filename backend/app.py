@@ -69,6 +69,30 @@ COS_BACKUP_PREFIX = os.environ.get("COS_BACKUP_PREFIX", "ywddzx-full-backups/").
 COS_BACKUP_RETENTION_COUNT = 3
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
+WORK_ANNIVERSARY_START_DATE = datetime(2026, 4, 15).date()
+DEFAULT_USER_BIRTHDAYS = [
+    ("徐佳仪", 1, 11),
+    ("王昕怡", 1, 16),
+    ("宋辞", 2, 5),
+    ("吴杰", 2, 11),
+    ("程镇林", 2, 14),
+    ("王涛", 3, 26),
+    ("彭思宇", 4, 18),
+    ("束紫荆", 5, 8),
+    ("左翰承", 7, 3),
+    ("李泊汛", 7, 3),
+    ("袁姝慧", 7, 30),
+    ("刘文喆", 8, 16),
+    ("王子玥", 8, 20),
+    ("吕雪儿", 9, 19),
+    ("赵萌", 10, 22),
+    ("徐晃", 11, 18),
+    ("魏九发", 12, 1),
+    ("姜傲云", 12, 7),
+    ("侯明敖", 12, 10),
+    ("葛心玉", 12, 18),
+    ("陈中磊", 12, 21),
+]
 ISSUE_EXPORT_RETENTION_DAYS = 7
 ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS = 60 * 60
 PASSWORD_MIN_LENGTH = 8
@@ -2180,6 +2204,7 @@ def build_auth_user_payload(cur, user):
         "address": user.get("address"),
         "permissions": permissions,
         "must_change_password": user.get("password") == DEFAULT_INITIAL_PASSWORD,
+        "birthday_event": get_user_birthday_event(cur, user),
     }
 
 
@@ -4617,6 +4642,108 @@ def get_user_by_id(cur, user_id):
     return cur.fetchone()
 
 
+def ensure_user_birthday_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_birthdays (
+            id SERIAL PRIMARY KEY,
+            real_name TEXT NOT NULL UNIQUE,
+            birthday_month INTEGER NOT NULL CHECK (birthday_month BETWEEN 1 AND 12),
+            birthday_day INTEGER NOT NULL CHECK (birthday_day BETWEEN 1 AND 31),
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_user_birthdays_real_name
+        ON user_birthdays(real_name);
+        """
+    )
+    for real_name, month, day in DEFAULT_USER_BIRTHDAYS:
+        cur.execute(
+            """
+            INSERT INTO user_birthdays (real_name, birthday_month, birthday_day, created_at, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (real_name) DO NOTHING;
+            """,
+            (real_name, month, day),
+        )
+
+
+def validate_birthday_month_day(month, day):
+    try:
+        birthday_month = int(month)
+        birthday_day = int(day)
+        datetime(2026, birthday_month, birthday_day)
+    except (TypeError, ValueError):
+        raise ValueError("生日日期不正确，请选择有效的月份和日期。")
+    return birthday_month, birthday_day
+
+
+def format_birthday_label(month, day):
+    return f"{int(month)}月{int(day)}日"
+
+
+def build_work_duration_payload(today=None):
+    current_date = today or beijing_today()
+    elapsed_days = max(0, (current_date - WORK_ANNIVERSARY_START_DATE).days + 1)
+    return {
+        "work_start_date": WORK_ANNIVERSARY_START_DATE.isoformat(),
+        "work_days": elapsed_days,
+        "work_duration_text": f"从2026年4月15日起，已并肩工作 {elapsed_days} 天",
+    }
+
+
+def build_birthday_event_payload(user, birthday_row, *, force=False):
+    today = beijing_today()
+    birthday_month = int(birthday_row["birthday_month"])
+    birthday_day = int(birthday_row["birthday_day"])
+    is_today = birthday_month == today.month and birthday_day == today.day
+    if not force and not is_today:
+        return None
+
+    real_name = (
+        birthday_row.get("real_name")
+        or (user or {}).get("real_name")
+        or (user or {}).get("username")
+        or "伙伴"
+    )
+    work_payload = build_work_duration_payload(today)
+    return {
+        "is_today": is_today,
+        "is_test": bool(force),
+        "event_key": f"{today.isoformat()}:{real_name}:{birthday_month}-{birthday_day}",
+        "real_name": real_name,
+        "birthday_month": birthday_month,
+        "birthday_day": birthday_day,
+        "birthday_label": format_birthday_label(birthday_month, birthday_day),
+        **work_payload,
+        "message": f"感谢你在业务督导中心的每一天付出，愿今天有光、有花，也有被认真看见的快乐。",
+    }
+
+
+def get_user_birthday_event(cur, user, *, force=False):
+    real_name = normalize_text((user or {}).get("real_name"), 80)
+    if not real_name:
+        return None
+    cur.execute(
+        """
+        SELECT id, real_name, birthday_month, birthday_day
+        FROM user_birthdays
+        WHERE TRIM(real_name) = TRIM(%s)
+        LIMIT 1;
+        """,
+        (real_name,),
+    )
+    birthday_row = cur.fetchone()
+    if not birthday_row:
+        return None
+    return build_birthday_event_payload(user, birthday_row, force=force)
+
+
 def ensure_user_security_schema(cur):
     global USER_SECURITY_SCHEMA_READY
     if USER_SECURITY_SCHEMA_READY:
@@ -4656,6 +4783,7 @@ def ensure_user_security_schema(cur):
         );
         """
     )
+    ensure_user_birthday_schema(cur)
     cur.execute("SELECT to_regclass('inspection_tables') AS table_ref;")
     if cur.fetchone()["table_ref"]:
         cur.execute(
@@ -12811,6 +12939,8 @@ def get_authenticated_user():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
         user = fetch_auth_user_by_id(cur, g.current_user["id"])
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
@@ -13659,6 +13789,174 @@ def get_management_users():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/management/user-birthdays", methods=["GET"])
+def get_management_user_birthdays():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_users")
+
+        cur.execute(
+            """
+            SELECT
+                b.id,
+                b.real_name,
+                b.birthday_month,
+                b.birthday_day,
+                TO_CHAR(b.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                matched_user.id AS matched_user_id,
+                matched_user.username AS matched_username,
+                matched_user.role AS matched_role,
+                matched_user.phone AS matched_phone
+            FROM user_birthdays b
+            LEFT JOIN LATERAL (
+                SELECT id, username, role, phone
+                FROM users u
+                WHERE TRIM(COALESCE(u.real_name, '')) = TRIM(b.real_name)
+                ORDER BY
+                    CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END,
+                    u.id ASC
+                LIMIT 1
+            ) matched_user ON TRUE
+            ORDER BY b.birthday_month ASC, b.birthday_day ASC, b.real_name ASC;
+            """
+        )
+        rows = cur.fetchall()
+        birthdays = []
+        for row in rows:
+            month = int(row["birthday_month"])
+            day = int(row["birthday_day"])
+            birthday_row = {
+                "real_name": row["real_name"],
+                "birthday_month": month,
+                "birthday_day": day,
+            }
+            birthdays.append(
+                {
+                    "id": row["id"],
+                    "real_name": row["real_name"],
+                    "birthday_month": month,
+                    "birthday_day": day,
+                    "birthday_label": format_birthday_label(month, day),
+                    "updated_at": row["updated_at"],
+                    "matched_user_id": row["matched_user_id"],
+                    "matched_username": row["matched_username"],
+                    "matched_role": row["matched_role"],
+                    "matched_phone": row["matched_phone"],
+                    "birthday_event": build_birthday_event_payload(
+                        {"real_name": row["real_name"]},
+                        birthday_row,
+                        force=True,
+                    ),
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "birthdays": birthdays,
+                "work_start_date": WORK_ANNIVERSARY_START_DATE.isoformat(),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/user-birthdays", methods=["PUT"])
+def update_management_user_birthdays():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    birthday_items = data.get("birthdays")
+    conn = None
+    cur = None
+
+    if not isinstance(birthday_items, list):
+        return jsonify({"success": False, "error": "生日信息格式不正确。"}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+
+        seen_names = set()
+        saved_count = 0
+        for item in birthday_items:
+            if not isinstance(item, dict):
+                raise ValueError("生日列表中存在无效记录。")
+            real_name = normalize_text(item.get("real_name"), 80)
+            if not real_name:
+                raise ValueError("生日名单中的姓名不能为空。")
+            if real_name in seen_names:
+                raise ValueError(f"生日名单中存在重复姓名：{real_name}")
+            seen_names.add(real_name)
+            month, day = validate_birthday_month_day(
+                item.get("birthday_month"),
+                item.get("birthday_day"),
+            )
+            cur.execute(
+                """
+                INSERT INTO user_birthdays (
+                    real_name,
+                    birthday_month,
+                    birthday_day,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (real_name)
+                DO UPDATE SET
+                    birthday_month = EXCLUDED.birthday_month,
+                    birthday_day = EXCLUDED.birthday_day,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (real_name, month, day, actor["id"]),
+            )
+            saved_count += 1
+
+        conn.commit()
+        invalidate_auth_caches_for_user()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"生日信息已保存，共维护 {saved_count} 条记录。",
+                "count": saved_count,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/role-permissions/<role>", methods=["PUT"])
 def update_management_role_permissions(role):
     data = request.get_json(silent=True) or {}
@@ -13862,6 +14160,15 @@ def export_management_users():
                 }
             )
 
+        cur.execute(
+            """
+            SELECT real_name, birthday_month, birthday_day
+            FROM user_birthdays
+            ORDER BY birthday_month ASC, birthday_day ASC, real_name ASC;
+            """
+        )
+        user_birthdays = [dict(row) for row in cur.fetchall()]
+
         now = beijing_now()
         response = jsonify(
             {
@@ -13874,6 +14181,7 @@ def export_management_users():
                 "role_permission_overrides": get_role_permission_overrides_map(cur),
                 "role_inspection_table_scope_ids": get_role_inspection_table_scope_overrides_map(cur),
                 "role_station_region_scope_values": get_role_station_region_scope_overrides_map(cur),
+                "user_birthdays": user_birthdays,
                 "users": users,
             }
         )
@@ -13904,6 +14212,7 @@ def import_management_users():
         raw_role_permissions = backup_payload.get("role_permission_overrides") or {}
         raw_role_inspection_scopes = backup_payload.get("role_inspection_table_scope_ids") or {}
         raw_role_region_scopes = backup_payload.get("role_station_region_scope_values") or {}
+        raw_birthdays = backup_payload.get("user_birthdays") or []
         user_payloads = []
         skipped_builtin_count = 0
         for raw_user in raw_users:
@@ -13940,6 +14249,40 @@ def import_management_users():
         ensure_inspection_checklist_management_schema(cur)
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
+
+        if raw_birthdays:
+            if not isinstance(raw_birthdays, list):
+                raise ValueError("用户备份文件中的生日信息格式不正确。")
+            for raw_birthday in raw_birthdays:
+                if not isinstance(raw_birthday, dict):
+                    raise ValueError("用户备份文件中存在无效的生日记录。")
+                real_name = normalize_text(raw_birthday.get("real_name"), 80)
+                if not real_name:
+                    continue
+                birthday_month, birthday_day = validate_birthday_month_day(
+                    raw_birthday.get("birthday_month"),
+                    raw_birthday.get("birthday_day"),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO user_birthdays (
+                        real_name,
+                        birthday_month,
+                        birthday_day,
+                        updated_by,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (real_name)
+                    DO UPDATE SET
+                        birthday_month = EXCLUDED.birthday_month,
+                        birthday_day = EXCLUDED.birthday_day,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = CURRENT_TIMESTAMP;
+                    """,
+                    (real_name, birthday_month, birthday_day, actor["id"]),
+                )
 
         if isinstance(raw_role_permissions, dict):
             for role, role_permissions in raw_role_permissions.items():
@@ -14155,6 +14498,7 @@ def import_management_users():
             """
         )
         conn.commit()
+        invalidate_auth_caches_for_user()
 
         skipped_text = f"，已跳过 {skipped_builtin_count} 条内置 root 记录" if skipped_builtin_count else ""
         return jsonify(
