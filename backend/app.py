@@ -86,7 +86,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.5.1"
+        raw_value = "3.5.2"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -106,7 +106,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5.1"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5.2"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -3933,6 +3933,24 @@ def ensure_inspection_plan_assignment_schema(cur):
     cur.execute(
         """
         ALTER TABLE inspection_plan_station_items
+        ADD COLUMN IF NOT EXISTS assigned_inspector_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE inspection_plan_station_items
+        SET assigned_inspector_ids = CASE
+                WHEN assigned_inspector_id IS NULL THEN '[]'::jsonb
+                ELSE jsonb_build_array(assigned_inspector_id)
+            END
+        WHERE assigned_inspector_ids IS NULL
+           OR assigned_inspector_ids = '[]'::jsonb
+           OR jsonb_typeof(assigned_inspector_ids) <> 'array';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_plan_station_items
         ADD COLUMN IF NOT EXISTS assigned_by INTEGER;
         """
     )
@@ -3992,10 +4010,40 @@ def ensure_inspection_plan_assignment_schema(cur):
         ON inspection_plan_station_items(assigned_inspector_id);
         """
     )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_inspection_plan_station_items_assigned_inspector_ids
+        ON inspection_plan_station_items USING GIN (assigned_inspector_ids);
+        """
+    )
     connection = getattr(cur, "connection", None)
     if connection:
         connection.commit()
     INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = True
+
+
+def normalize_plan_assigned_inspector_ids(item):
+    raw_values = item.get("assigned_inspector_ids")
+    if raw_values in (None, ""):
+        legacy_value = item.get("assigned_inspector_id")
+        raw_values = [] if legacy_value in (None, "") else [legacy_value]
+    elif not isinstance(raw_values, list):
+        raw_values = [raw_values]
+
+    result = []
+    seen = set()
+    for raw_value in raw_values:
+        if raw_value in (None, ""):
+            continue
+        try:
+            inspector_id = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("检查人参数不正确。") from exc
+        if inspector_id <= 0 or inspector_id in seen:
+            continue
+        seen.add(inspector_id)
+        result.append(inspector_id)
+    return result
 
 
 def serialize_inspection_completion_config(row=None):
@@ -10479,9 +10527,11 @@ def get_inspection_plan_config_detail(plan_config_id):
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 psi.is_included,
                 psi.assigned_inspector_id,
-                assigned_user.username AS assigned_inspector_username,
-                assigned_user.real_name AS assigned_inspector_name,
-                assigned_user.phone AS assigned_inspector_phone,
+                COALESCE(assigned_group.assigned_inspector_ids, '[]'::jsonb) AS assigned_inspector_ids,
+                COALESCE(assigned_group.assigned_inspectors, '[]'::jsonb) AS assigned_inspectors,
+                assigned_group.assigned_inspector_usernames AS assigned_inspector_username,
+                assigned_group.assigned_inspector_names AS assigned_inspector_name,
+                assigned_group.assigned_inspector_phones AS assigned_inspector_phone,
                 TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
                 psi.completion_status,
                 psi.completed_inspection_id,
@@ -10489,7 +10539,33 @@ def get_inspection_plan_config_detail(plan_config_id):
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
-            LEFT JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    JSONB_AGG(assigned_user.id ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_ids,
+                    JSONB_AGG(
+                        JSONB_BUILD_OBJECT(
+                            'id', assigned_user.id,
+                            'username', assigned_user.username,
+                            'real_name', assigned_user.real_name,
+                            'phone', assigned_user.phone,
+                            'display_name', COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)
+                        )
+                        ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)
+                    ) AS assigned_inspectors,
+                    STRING_AGG(assigned_user.username, '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_usernames,
+                    STRING_AGG(COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text), '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_names,
+                    STRING_AGG(assigned_user.phone, '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_phones
+                FROM (
+                    SELECT DISTINCT inspector_id
+                    FROM (
+                        SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                        UNION ALL
+                        SELECT psi.assigned_inspector_id
+                        WHERE psi.assigned_inspector_id IS NOT NULL
+                    ) raw_assigned_ids
+                ) assigned_ids
+                JOIN users assigned_user ON assigned_user.id = assigned_ids.inspector_id
+            ) assigned_group ON TRUE
             WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,
@@ -10620,7 +10696,8 @@ def save_inspection_plan_config_stations(plan_config_id):
             station_id = item.get("station_id")
             is_included = bool(item.get("is_included", True))
             note = str(item.get("note", "")).strip() or None
-            assigned_inspector_id = item.get("assigned_inspector_id")
+            assigned_inspector_ids = normalize_plan_assigned_inspector_ids(item)
+            assigned_inspector_id = assigned_inspector_ids[0] if assigned_inspector_ids else None
 
             if not station_id:
                 return (
@@ -10640,17 +10717,9 @@ def save_inspection_plan_config_stations(plan_config_id):
                 return jsonify({"success": False, "error": "stations 中存在重复站点。"}), 400
             seen_station_ids.add(station_id)
 
-            if assigned_inspector_id in ("", None):
-                assigned_inspector_id = None
-            else:
-                try:
-                    assigned_inspector_id = int(assigned_inspector_id)
-                except (TypeError, ValueError):
-                    return jsonify({"success": False, "error": "检查人参数不正确。"}), 400
-                if assigned_inspector_id <= 0:
-                    assigned_inspector_id = None
-            if assigned_inspector_id and assigned_inspector_id not in inspector_ids:
-                inspector_ids.append(assigned_inspector_id)
+            for inspector_id in assigned_inspector_ids:
+                if inspector_id not in inspector_ids:
+                    inspector_ids.append(inspector_id)
 
             station_ids.append(station_id)
             normalized_items.append(
@@ -10658,6 +10727,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                     "station_id": station_id,
                     "is_included": is_included,
                     "assigned_inspector_id": assigned_inspector_id if is_included else None,
+                    "assigned_inspector_ids": assigned_inspector_ids if is_included else [],
                     "note": note,
                 }
             )
@@ -10755,6 +10825,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                     station_id,
                     is_included,
                     assigned_inspector_id,
+                    assigned_inspector_ids,
                     assigned_by,
                     assigned_at,
                     completion_status,
@@ -10768,6 +10839,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                     %s,
                     %s,
                     %s,
+                    %s::jsonb,
                     CASE WHEN %s::integer IS NULL THEN NULL ELSE %s::integer END,
                     CASE WHEN %s::integer IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,
                     'pending',
@@ -10790,12 +10862,21 @@ def save_inspection_plan_config_stations(plan_config_id):
                             THEN NULL
                         ELSE EXCLUDED.assigned_inspector_id
                     END,
+                    assigned_inspector_ids = CASE
+                        WHEN inspection_plan_station_items.completion_status = 'completed'
+                            THEN inspection_plan_station_items.assigned_inspector_ids
+                        WHEN EXCLUDED.is_included = FALSE
+                            THEN '[]'::jsonb
+                        ELSE EXCLUDED.assigned_inspector_ids
+                    END,
                     assigned_by = CASE
                         WHEN inspection_plan_station_items.completion_status = 'completed'
                             THEN inspection_plan_station_items.assigned_by
                         WHEN EXCLUDED.is_included = FALSE
                             THEN NULL
-                        WHEN EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                        WHEN EXCLUDED.assigned_inspector_id IS NULL
+                            THEN NULL
+                        WHEN EXCLUDED.assigned_inspector_ids IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_ids
                             THEN EXCLUDED.assigned_by
                         ELSE inspection_plan_station_items.assigned_by
                     END,
@@ -10804,9 +10885,11 @@ def save_inspection_plan_config_stations(plan_config_id):
                             THEN inspection_plan_station_items.assigned_at
                         WHEN EXCLUDED.is_included = FALSE
                             THEN NULL
+                        WHEN EXCLUDED.assigned_inspector_id IS NULL
+                            THEN NULL
                         WHEN EXCLUDED.assigned_inspector_id IS NOT NULL
                              AND (
-                                EXCLUDED.assigned_inspector_id IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_id
+                                EXCLUDED.assigned_inspector_ids IS DISTINCT FROM inspection_plan_station_items.assigned_inspector_ids
                                 OR inspection_plan_station_items.assigned_at IS NULL
                              )
                             THEN CURRENT_TIMESTAMP
@@ -10835,6 +10918,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                     item["station_id"],
                     item["is_included"],
                     item["assigned_inspector_id"],
+                    json.dumps(item["assigned_inspector_ids"], ensure_ascii=False),
                     item["assigned_inspector_id"],
                     current_user_id,
                     item["assigned_inspector_id"],
@@ -10948,7 +11032,6 @@ def get_inspection_plan_assignment_board():
         ensure_inspection_plan_assignment_schema(cur)
 
         where_clauses = [
-            "psi.assigned_inspector_id IS NOT NULL",
             "psi.is_included = TRUE",
             "pc.status = 'active'",
         ]
@@ -10973,7 +11056,7 @@ def get_inspection_plan_assignment_board():
                 inspector_id_value = int(assigned_inspector_filter)
             except (TypeError, ValueError):
                 return jsonify({"success": False, "error": "检查人参数不正确。"}), 400
-            where_clauses.append("psi.assigned_inspector_id = %s")
+            where_clauses.append("assigned.inspector_id = %s")
             params.append(inspector_id_value)
 
         if completion_status in {"pending", "completed"}:
@@ -11002,7 +11085,6 @@ def get_inspection_plan_assignment_board():
             return jsonify({"success": True, "items": [], "summary": {"total": 0, "completed": 0, "pending": 0}})
 
         calendar_where_clauses = [
-            "psi.assigned_inspector_id IS NOT NULL",
             "psi.is_included = TRUE",
             "pc.status = 'active'",
         ]
@@ -11011,7 +11093,7 @@ def get_inspection_plan_assignment_board():
             calendar_where_clauses.append("TO_CHAR(COALESCE(psi.assigned_at, psi.updated_at, pc.updated_at, pc.created_at), 'YYYY-MM') = %s")
             calendar_params.append(calendar_month)
         if assigned_inspector_filter and assigned_inspector_filter != "all":
-            calendar_where_clauses.append("psi.assigned_inspector_id = %s")
+            calendar_where_clauses.append("assigned.inspector_id = %s")
             calendar_params.append(inspector_id_value)
         if append_inspection_table_scope_filter(
             cur,
@@ -11040,6 +11122,15 @@ def get_inspection_plan_assignment_board():
                     FROM inspection_plan_station_items psi
                     JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
                     JOIN stations s ON s.id = psi.station_id
+                    JOIN LATERAL (
+                        SELECT DISTINCT inspector_id
+                        FROM (
+                            SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                            UNION ALL
+                            SELECT psi.assigned_inspector_id
+                            WHERE psi.assigned_inspector_id IS NOT NULL
+                        ) raw_assigned_ids
+                    ) assigned ON TRUE
                     WHERE {calendar_where_sql}
                     GROUP BY assigned_date
                     ORDER BY assigned_date DESC;
@@ -11075,7 +11166,7 @@ def get_inspection_plan_assignment_board():
                     COALESCE(NULLIF(it.checklist_mode, ''), 'online') AS checklist_mode,
                     pc.coverage_type,
                     pc.period_key,
-                    psi.assigned_inspector_id,
+                    assigned.inspector_id AS assigned_inspector_id,
                     assigned_user.username AS assigned_inspector_username,
                     assigned_user.real_name AS assigned_inspector_name,
                     assigned_user.phone AS assigned_inspector_phone,
@@ -11091,7 +11182,16 @@ def get_inspection_plan_assignment_board():
                 JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
                 JOIN inspection_tables it ON it.id = pc.inspection_table_id
                 JOIN stations s ON s.id = psi.station_id
-                JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
+                JOIN LATERAL (
+                    SELECT DISTINCT inspector_id
+                    FROM (
+                        SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                        UNION ALL
+                        SELECT psi.assigned_inspector_id
+                        WHERE psi.assigned_inspector_id IS NOT NULL
+                    ) raw_assigned_ids
+                ) assigned ON TRUE
+                JOIN users assigned_user ON assigned_user.id = assigned.inspector_id
                 LEFT JOIN users assigner ON assigner.id = psi.assigned_by
                 WHERE {where_sql}
                 ORDER BY
@@ -11274,7 +11374,16 @@ def get_plan_assignment_pending_summary_for_user(cur, user, include_items=False,
         SELECT COUNT(*) AS pending_count
         FROM inspection_plan_station_items psi
         JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
-        WHERE psi.assigned_inspector_id = %s
+        JOIN LATERAL (
+            SELECT DISTINCT inspector_id
+            FROM (
+                SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                UNION ALL
+                SELECT psi.assigned_inspector_id
+                WHERE psi.assigned_inspector_id IS NOT NULL
+            ) raw_assigned_ids
+        ) assigned ON TRUE
+        WHERE assigned.inspector_id = %s
           AND psi.is_included = TRUE
           AND psi.completion_status = 'pending'
           AND pc.status = 'active';
@@ -11304,7 +11413,16 @@ def get_plan_assignment_pending_summary_for_user(cur, user, include_items=False,
         JOIN inspection_plan_configs pc ON pc.id = psi.plan_config_id
         JOIN inspection_tables t ON t.id = pc.inspection_table_id
         JOIN stations s ON s.id = psi.station_id
-        WHERE psi.assigned_inspector_id = %s
+        JOIN LATERAL (
+            SELECT DISTINCT inspector_id
+            FROM (
+                SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                UNION ALL
+                SELECT psi.assigned_inspector_id
+                WHERE psi.assigned_inspector_id IS NOT NULL
+            ) raw_assigned_ids
+        ) assigned ON TRUE
+        WHERE assigned.inspector_id = %s
           AND psi.is_included = TRUE
           AND psi.completion_status = 'pending'
           AND pc.status = 'active'
@@ -17904,9 +18022,11 @@ def get_inspection_plan_overview():
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
                 psi.is_included,
                 psi.assigned_inspector_id,
-                assigned_user.username AS assigned_inspector_username,
-                assigned_user.real_name AS assigned_inspector_name,
-                assigned_user.phone AS assigned_inspector_phone,
+                COALESCE(assigned_group.assigned_inspector_ids, '[]'::jsonb) AS assigned_inspector_ids,
+                COALESCE(assigned_group.assigned_inspectors, '[]'::jsonb) AS assigned_inspectors,
+                assigned_group.assigned_inspector_usernames AS assigned_inspector_username,
+                assigned_group.assigned_inspector_names AS assigned_inspector_name,
+                assigned_group.assigned_inspector_phones AS assigned_inspector_phone,
                 TO_CHAR(psi.assigned_at, 'YYYY-MM-DD HH24:MI') AS assigned_at,
                 psi.completion_status,
                 psi.completed_inspection_id,
@@ -17914,7 +18034,33 @@ def get_inspection_plan_overview():
                 psi.note
             FROM inspection_plan_station_items psi
             JOIN stations s ON psi.station_id = s.id
-            LEFT JOIN users assigned_user ON assigned_user.id = psi.assigned_inspector_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    JSONB_AGG(assigned_user.id ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_ids,
+                    JSONB_AGG(
+                        JSONB_BUILD_OBJECT(
+                            'id', assigned_user.id,
+                            'username', assigned_user.username,
+                            'real_name', assigned_user.real_name,
+                            'phone', assigned_user.phone,
+                            'display_name', COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)
+                        )
+                        ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)
+                    ) AS assigned_inspectors,
+                    STRING_AGG(assigned_user.username, '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_usernames,
+                    STRING_AGG(COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text), '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_names,
+                    STRING_AGG(assigned_user.phone, '、' ORDER BY COALESCE(assigned_user.real_name, assigned_user.username, assigned_user.id::text)) AS assigned_inspector_phones
+                FROM (
+                    SELECT DISTINCT inspector_id
+                    FROM (
+                        SELECT jsonb_array_elements_text(COALESCE(psi.assigned_inspector_ids, '[]'::jsonb))::integer AS inspector_id
+                        UNION ALL
+                        SELECT psi.assigned_inspector_id
+                        WHERE psi.assigned_inspector_id IS NOT NULL
+                    ) raw_assigned_ids
+                ) assigned_ids
+                JOIN users assigned_user ON assigned_user.id = assigned_ids.inspector_id
+            ) assigned_group ON TRUE
             WHERE {station_where_sql}
             ORDER BY s.id ASC;
             """,

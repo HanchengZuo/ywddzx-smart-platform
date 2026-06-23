@@ -1351,15 +1351,27 @@
                                     </div>
                                 </td>
                                 <td>
-                                    <select v-if="canAssignPlanInspectors" class="inspector-assign-select"
-                                        v-model="station.assignedInspectorId"
-                                        :disabled="station.done || !station.planned">
-                                        <option value="">暂不分配</option>
-                                        <option v-for="inspector in planInspectors" :key="inspector.id"
-                                            :value="String(inspector.id)">
-                                            {{ inspector.display_name }}
-                                        </option>
-                                    </select>
+                                    <div v-if="canAssignPlanInspectors" class="inspector-multi-assign"
+                                        :class="{ disabled: station.done || !station.planned }">
+                                        <div class="inspector-multi-summary">
+                                            {{ getStationAssignedInspectorName(station) }}
+                                        </div>
+                                        <div class="inspector-multi-options">
+                                            <label v-for="inspector in planInspectors" :key="inspector.id"
+                                                class="inspector-multi-option">
+                                                <input type="checkbox"
+                                                    :checked="isStationInspectorSelected(station, inspector.id)"
+                                                    :disabled="station.done || !station.planned"
+                                                    @change="toggleStationInspector(station, inspector.id, $event.target.checked)" />
+                                                <span>{{ inspector.display_name }}</span>
+                                            </label>
+                                        </div>
+                                        <button class="mini-clear-btn" type="button"
+                                            :disabled="station.done || !station.planned || !station.assignedInspectorIds?.length"
+                                            @click="clearStationInspectors(station)">
+                                            清空
+                                        </button>
+                                    </div>
                                     <div v-else-if="detailDialog.row?.planConfigId">
                                         <strong>{{ getStationAssignedInspectorName(station) }}</strong>
                                         <div v-if="station.assignedAt" class="table-sub">分配 {{ station.assignedAt }}</div>
@@ -1436,13 +1448,22 @@
                             </label>
                             <div v-if="canAssignPlanInspectors" class="mobile-inspector-assign">
                                 <span>分配检查人</span>
-                                <select v-model="station.assignedInspectorId" :disabled="station.done || !station.planned">
-                                    <option value="">暂不分配</option>
-                                    <option v-for="inspector in planInspectors" :key="`mobile-inspector-${inspector.id}`"
-                                        :value="String(inspector.id)">
-                                        {{ inspector.display_name }}
-                                    </option>
-                                </select>
+                                <div class="mobile-inspector-summary">{{ getStationAssignedInspectorName(station) }}</div>
+                                <div class="mobile-inspector-options">
+                                    <label v-for="inspector in planInspectors" :key="`mobile-inspector-${inspector.id}`"
+                                        class="inspector-multi-option">
+                                        <input type="checkbox"
+                                            :checked="isStationInspectorSelected(station, inspector.id)"
+                                            :disabled="station.done || !station.planned"
+                                            @change="toggleStationInspector(station, inspector.id, $event.target.checked)" />
+                                        <span>{{ inspector.display_name }}</span>
+                                    </label>
+                                </div>
+                                <button class="mini-clear-btn mobile-clear-btn" type="button"
+                                    :disabled="station.done || !station.planned || !station.assignedInspectorIds?.length"
+                                    @click="clearStationInspectors(station)">
+                                    清空检查人
+                                </button>
                             </div>
                             <div v-else-if="isPlanManager && !detailDialog.row?.planConfigId" class="mobile-card-note">
                                 新建保存后可分配检查人。
@@ -2582,8 +2603,71 @@ const getInspectorDisplayNameById = (inspectorId) => {
     return matched?.display_name || ''
 }
 
+const normalizeAssignedInspectorIds = (item = {}) => {
+    const rawValues = Array.isArray(item.assigned_inspector_ids)
+        ? item.assigned_inspector_ids
+        : Array.isArray(item.assignedInspectorIds)
+            ? item.assignedInspectorIds
+            : []
+    const fallbackValue = item.assigned_inspector_id ?? item.assignedInspectorId
+    const values = rawValues.length ? rawValues : (fallbackValue ? [fallbackValue] : [])
+    const seen = new Set()
+    return values
+        .map((value) => String(value || '').trim())
+        .filter((value) => {
+            if (!value || seen.has(value)) return false
+            seen.add(value)
+            return true
+        })
+}
+
+const normalizeAssignedInspectors = (item = {}) => {
+    if (Array.isArray(item.assigned_inspectors)) return item.assigned_inspectors
+    if (Array.isArray(item.assignedInspectors)) return item.assignedInspectors
+    return []
+}
+
+const getStationAssignedInspectorIds = (station) => {
+    if (!Array.isArray(station?.assignedInspectorIds)) {
+        station.assignedInspectorIds = normalizeAssignedInspectorIds(station)
+    }
+    return station.assignedInspectorIds
+}
+
 const getStationAssignedInspectorName = (station) => {
-    return getInspectorDisplayNameById(station?.assignedInspectorId) || station?.assignedInspectorName || '未分配'
+    const ids = getStationAssignedInspectorIds(station)
+    if (ids.length) {
+        return ids
+            .map((id) => getInspectorDisplayNameById(id))
+            .filter(Boolean)
+            .join('、') || station?.assignedInspectorName || '未分配'
+    }
+    return station?.assignedInspectorName || '未分配'
+}
+
+const isStationInspectorSelected = (station, inspectorId) => {
+    return getStationAssignedInspectorIds(station).some((id) => String(id) === String(inspectorId))
+}
+
+const toggleStationInspector = (station, inspectorId, checked) => {
+    if (!station || station.done || !station.planned) return
+    const normalizedId = String(inspectorId || '').trim()
+    if (!normalizedId) return
+    const current = getStationAssignedInspectorIds(station)
+    if (checked) {
+        if (!current.includes(normalizedId)) {
+            station.assignedInspectorIds = [...current, normalizedId]
+        }
+    } else {
+        station.assignedInspectorIds = current.filter((id) => id !== normalizedId)
+    }
+    station.assignedInspectorId = station.assignedInspectorIds[0] || ''
+}
+
+const clearStationInspectors = (station) => {
+    if (!station || station.done || !station.planned) return
+    station.assignedInspectorIds = []
+    station.assignedInspectorId = ''
 }
 
 const isStationMonitoringBlocked = (station) => {
@@ -2743,6 +2827,7 @@ const toggleStationPlan = (station) => {
     station.planned = nextPlanned
     if (!nextPlanned) {
         station.assignedInspectorId = ''
+        station.assignedInspectorIds = []
     }
 }
 
@@ -2753,7 +2838,7 @@ const markAllPlanned = () => {
         if (item.done) return { ...item }
         if (isStationMonitoringBlocked(item)) {
             skippedMonitoringCount += 1
-            return { ...item, planned: false, assignedInspectorId: '' }
+            return { ...item, planned: false, assignedInspectorId: '', assignedInspectorIds: [] }
         }
         return { ...item, planned: true }
     })
@@ -2880,6 +2965,8 @@ const fetchAllStationsCatalog = async () => {
                 done: false,
                 doneDate: '-',
                 assignedInspectorId: '',
+                assignedInspectorIds: [],
+                assignedInspectors: [],
                 assignedInspectorName: '',
                 assignedAt: '',
                 note: null
@@ -2989,6 +3076,8 @@ const mapOverviewStationRow = (item) => ({
     done: item.completion_status === 'completed',
     doneDate: item.completed_at || '-',
     assignedInspectorId: item.assigned_inspector_id ? String(item.assigned_inspector_id) : '',
+    assignedInspectorIds: normalizeAssignedInspectorIds(item),
+    assignedInspectors: normalizeAssignedInspectors(item),
     assignedInspectorName: item.assigned_inspector_name || item.assigned_inspector_username || '',
     assignedInspectorPhone: item.assigned_inspector_phone || '',
     assignedAt: item.assigned_at || '',
@@ -3011,6 +3100,12 @@ const mergePlanStationsWithCatalog = (catalogRows, planStationRows) => {
             planned: false,
             done: false,
             doneDate: '-',
+            assignedInspectorId: '',
+            assignedInspectorIds: [],
+            assignedInspectors: [],
+            assignedInspectorName: '',
+            assignedInspectorPhone: '',
+            assignedAt: '',
             note: null
         }
     })
@@ -3292,6 +3387,7 @@ const savePlanDetail = async () => {
                     station_id: item.station_id,
                     is_included: Boolean(item.planned),
                     assigned_inspector_id: item.planned ? (item.assignedInspectorId || null) : null,
+                    assigned_inspector_ids: item.planned ? getStationAssignedInspectorIds(item) : [],
                     note: item.note || ''
                 }))
             })
@@ -4777,23 +4873,81 @@ onBeforeUnmount(() => {
     cursor: not-allowed;
 }
 
-.inspector-assign-select {
-    width: 168px;
-    max-width: 100%;
-    height: 36px;
-    border: 1px solid #dbe4ee;
-    border-radius: 12px;
-    padding: 0 10px;
-    background: #fff;
-    color: #0f172a;
-    font-size: 13px;
-    font-weight: 700;
+.inspector-multi-assign {
+    width: min(280px, 100%);
+    padding: 10px;
+    border: 1px solid #dbeafe;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
 }
 
-.inspector-assign-select:disabled {
-    background: #f1f5f9;
-    color: #94a3b8;
+.inspector-multi-assign.disabled {
+    opacity: 0.68;
+}
+
+.inspector-multi-summary,
+.mobile-inspector-summary {
+    color: #1e3a8a;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1.45;
+}
+
+.inspector-multi-options,
+.mobile-inspector-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 110px;
+    overflow: auto;
+}
+
+.inspector-multi-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 28px;
+    padding: 5px 8px;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.inspector-multi-option input {
+    width: 14px;
+    height: 14px;
+    accent-color: #2563eb;
+}
+
+.inspector-multi-option:has(input:disabled) {
     cursor: not-allowed;
+    opacity: 0.58;
+}
+
+.mini-clear-btn {
+    align-self: flex-start;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 999px;
+    background: #fff;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.mini-clear-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
 }
 
 .warning-text {
@@ -5054,21 +5208,18 @@ onBeforeUnmount(() => {
     font-weight: 900;
 }
 
-.mobile-inspector-assign select {
-    width: 100%;
-    height: 40px;
-    border: 1px solid #dbe4ee;
-    border-radius: 12px;
-    padding: 0 12px;
-    background: #fff;
-    color: #0f172a;
-    font-size: 14px;
-    font-weight: 800;
+.mobile-inspector-options {
+    max-height: 150px;
 }
 
-.mobile-inspector-assign select:disabled {
-    background: #f1f5f9;
-    color: #94a3b8;
+.mobile-inspector-options .inspector-multi-option {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: flex-start;
+}
+
+.mobile-clear-btn {
+    align-self: stretch;
+    justify-content: center;
 }
 
 .mobile-progress-head {

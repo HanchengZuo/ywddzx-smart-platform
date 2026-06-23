@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5.2',
+    date: '2026-06-23',
+    title: '巡检计划支持多人分配',
+    summary: '一个站点任务可以同时分配给多名检查人。',
+    items: [
+      '巡检计划管理中，分配检查人改为多选。',
+      '派工看板和顶部待办会按每位检查人分别展示任务。',
+      '旧的单人分配数据会自动兼容。'
+    ]
+  },
+  {
     version: 'v3.5.1',
     date: '2026-06-22',
     title: '新增油气事业部角色',
