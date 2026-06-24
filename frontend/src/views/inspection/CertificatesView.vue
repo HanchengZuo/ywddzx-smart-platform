@@ -36,7 +36,7 @@
                     <div class="section-head">
                         <div>
                             <div class="section-kicker">证照台账</div>
-                            <h3>{{ canViewAll ? '全部站点证照有效期' : '本站证照有效期' }}</h3>
+                            <h3>{{ ledgerTitle }}</h3>
                         </div>
                         <div class="inline-tags">
                             <span class="tag neutral">共 {{ filteredCertificateRows.length }} 条</span>
@@ -48,7 +48,7 @@
                     </div>
 
                     <div class="filter-grid">
-                        <div v-if="canViewAll" class="filter-field">
+                        <div v-if="canViewAll || canViewRegion" class="filter-field">
                             <label>站点</label>
                             <select v-model="filters.stationId">
                                 <option value="all">全部站点</option>
@@ -299,7 +299,7 @@
                     <div class="section-head compact">
                         <div>
                             <div class="section-kicker">到期提醒</div>
-                            <h3>{{ canViewAll ? '全部站点重点提醒' : '本站重点提醒' }}</h3>
+                            <h3>{{ reminderTitle }}</h3>
                         </div>
                     </div>
 
@@ -360,6 +360,7 @@ const currentRole = ref(localStorage.getItem('user_role') || '')
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const currentStationId = ref(localStorage.getItem('station_id') || '')
 const currentStationName = ref(localStorage.getItem('station_name') || '')
+const currentRegion = ref(localStorage.getItem('station_region') || localStorage.getItem('region') || '')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -394,10 +395,11 @@ try {
     localPermissions = {}
 }
 const canViewAll = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_all_certificates))
+const canViewRegion = computed(() => Boolean(localPermissions.limit_certificate_station_region_scope))
 const canEditAll = computed(() => currentRole.value === 'root')
 const canEditOwn = computed(() => currentRole.value === 'root' || Boolean(localPermissions.edit_own_certificates))
 const canViewOwn = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_own_certificates) || canEditOwn.value)
-const hasPermission = computed(() => canViewAll.value || canViewOwn.value)
+const hasPermission = computed(() => canViewAll.value || canViewRegion.value || canViewOwn.value)
 const canEdit = computed(() => canEditAll.value || canEditOwn.value)
 const isEditing = computed(() => Boolean(certificateForm.id))
 const canEditRow = (row) => {
@@ -407,6 +409,7 @@ const canEditRow = (row) => {
 
 const pageTitle = computed(() => {
     if (canViewAll.value) return '站点证照有效期管理'
+    if (canViewRegion.value) return `${currentRegion.value || '片区'}站点证照有效期`
     return `${currentStationName.value || '本站'}证照有效期`
 })
 
@@ -417,6 +420,9 @@ const pageDesc = computed(() => {
     if (canViewAll.value) {
         return '可查看全部站点证照有效期和到期提醒；编辑权限由系统管理员控制。'
     }
+    if (canViewRegion.value) {
+        return '可查看授权片区范围内站点的证照有效期和到期提醒；编辑权限由系统管理员控制。'
+    }
     if (canEditOwn.value) {
         return '可查看并维护本账号所属站点的证照有效期和到期提醒。'
     }
@@ -426,11 +432,13 @@ const pageDesc = computed(() => {
 const roleChipText = computed(() => {
     if (canEditAll.value) return '全站维护视角'
     if (canViewAll.value) return '全站查看视角'
+    if (canViewRegion.value) return '片区查看视角'
     if (canEditOwn.value) return '本站维护视角'
     return '本站查看视角'
 })
 
 const readonlyTitle = computed(() => {
+    if (canViewRegion.value) return '当前账号仅可查看授权片区证照'
     return canViewAll.value ? '当前账号仅可查看全部站点证照' : '当前账号仅可查看本站证照'
 })
 
@@ -438,7 +446,22 @@ const readonlyDesc = computed(() => {
     if (canViewAll.value) {
         return '当前页面展示所有站点已录入的证照有效期和到期提醒。如需调整有效期，请联系系统管理员维护。'
     }
+    if (canViewRegion.value) {
+        return '当前页面展示授权片区范围内站点已录入的证照有效期和到期提醒。如需调整有效期，请联系系统管理员维护。'
+    }
     return '当前页面展示本账号所属站点已录入的证照有效期和到期提醒。'
+})
+
+const ledgerTitle = computed(() => {
+    if (canViewAll.value) return '全部站点证照有效期'
+    if (canViewRegion.value) return '片区站点证照有效期'
+    return '本站证照有效期'
+})
+
+const reminderTitle = computed(() => {
+    if (canViewAll.value) return '全部站点重点提醒'
+    if (canViewRegion.value) return '片区站点重点提醒'
+    return '本站重点提醒'
 })
 
 const formTitle = computed(() => {

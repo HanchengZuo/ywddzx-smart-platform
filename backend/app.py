@@ -508,6 +508,7 @@ STATION_REGION_SCOPE_PERMISSION_KEYS = (
     "limit_issue_station_region_scope",
     "limit_record_station_region_scope",
     "limit_plan_station_region_scope",
+    "limit_certificate_station_region_scope",
 )
 PERMISSION_CATALOG = [
     {
@@ -693,6 +694,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
     },
     {
+        "key": "limit_certificate_station_region_scope",
+        "name": "查看片区站点数据",
+        "category": "站点证照有效期管理",
+        "description": "只查看选定片区/归属地的站点证照有效期和到期提醒。与“查看本站数据”“查看全部站点数据”三选一。",
+        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
         "key": "edit_own_certificates",
         "name": "编辑本站证照",
         "category": "站点证照有效期管理",
@@ -703,7 +711,7 @@ PERMISSION_CATALOG = [
         "key": "view_all_certificates",
         "name": "查看全部站点数据",
         "category": "站点证照有效期管理",
-        "description": "查看所有站点的证照有效期和到期提醒。与“查看本站数据”二选一。",
+        "description": "查看所有站点的证照有效期和到期提醒。与“查看本站数据”“查看片区站点数据”三选一。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
@@ -820,6 +828,8 @@ AREA_ACCOUNT_PERMISSION_OVERRIDES = {
     "limit_issue_station_region_scope": True,
     "limit_record_station_region_scope": True,
     "limit_plan_station_region_scope": True,
+    "limit_certificate_station_region_scope": True,
+    "view_all_certificates": False,
     "hide_inspector_contact_info": True,
 }
 for permission_item in PERMISSION_CATALOG:
@@ -830,7 +840,7 @@ PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
     ("view_own_inspection_issues", "limit_issue_station_region_scope", "view_all_inspection_issues"),
     ("view_own_inspection_records", "limit_record_station_region_scope", "view_all_inspection_records"),
-    ("view_own_certificates", "view_all_certificates"),
+    ("view_own_certificates", "limit_certificate_station_region_scope", "view_all_certificates"),
 ]
 PERMISSION_DEPENDENCIES = {
     "edit_own_certificates": "view_own_certificates",
@@ -8895,6 +8905,10 @@ def can_view_all_certificates(cur, user):
     return bool(get_effective_permissions(cur, user).get("view_all_certificates"))
 
 
+def can_view_region_certificates(cur, user):
+    return bool(get_effective_permissions(cur, user).get("limit_certificate_station_region_scope"))
+
+
 def can_edit_all_certificates(user):
     return is_root_user(user)
 
@@ -8903,6 +8917,7 @@ def can_view_certificates(cur, user):
     return (
         can_edit_all_certificates(user)
         or can_view_all_certificates(cur, user)
+        or can_view_region_certificates(cur, user)
         or can_view_own_certificates(cur, user)
         or can_edit_own_certificates(cur, user)
     )
@@ -9626,6 +9641,8 @@ def build_management_user_payload(data, is_create=False):
 
     role = normalize_user_role(data.get("role"))
     real_name = normalize_text(data.get("real_name"), 80)
+    if role == "area_account" and not real_name:
+        real_name = username
     if not real_name:
         raise ValueError("请填写用户姓名。")
 
@@ -9648,7 +9665,7 @@ def build_management_user_payload(data, is_create=False):
         "password": password,
         "role": role,
         "real_name": real_name,
-        "phone": normalize_text(data.get("phone"), 40) or None,
+        "phone": None if role == "area_account" else normalize_text(data.get("phone"), 40) or None,
         "station_id": station_id,
     }
 
@@ -17082,23 +17099,39 @@ def get_station_certificates():
             )
 
         scope_all = can_edit_all_certificates(user) or can_view_all_certificates(cur, user)
+        scope_region = (not scope_all) and can_view_region_certificates(cur, user)
+        can_edit_own = can_edit_own_certificates(cur, user)
+        empty_scope_response = {
+            "success": True,
+            "certificate_types": CERTIFICATE_TYPES,
+            "stations": [],
+            "records": [],
+            "can_view_all": scope_all,
+            "can_view_region": scope_region,
+            "can_edit_all": can_edit_all_certificates(user),
+            "can_edit_own": can_edit_own,
+        }
+
         station_params = []
-        station_where = ""
-        if not scope_all:
+        station_where_clauses = []
+        if scope_all:
+            pass
+        elif scope_region:
+            if not append_station_region_scope_filter(
+                cur,
+                user,
+                station_where_clauses,
+                station_params,
+                "region",
+                "limit_certificate_station_region_scope",
+            ):
+                return jsonify(empty_scope_response)
+        else:
             if not user["station_id"]:
-                return jsonify(
-                    {
-                        "success": True,
-                        "certificate_types": CERTIFICATE_TYPES,
-                        "stations": [],
-                        "records": [],
-                        "can_view_all": False,
-                        "can_edit_all": False,
-                        "can_edit_own": can_edit_own_certificates(cur, user),
-                    }
-                )
-            station_where = "WHERE id = %s"
+                return jsonify(empty_scope_response)
+            station_where_clauses.append("id = %s")
             station_params.append(user["station_id"])
+        station_where = f"WHERE {' AND '.join(station_where_clauses)}" if station_where_clauses else ""
 
         cur.execute(
             f"""
@@ -17119,10 +17152,23 @@ def get_station_certificates():
         stations = cur.fetchall()
 
         record_params = []
-        record_where = ""
-        if not scope_all:
-            record_where = "WHERE sc.station_id = %s"
+        record_where_clauses = []
+        if scope_all:
+            pass
+        elif scope_region:
+            if not append_station_region_scope_filter(
+                cur,
+                user,
+                record_where_clauses,
+                record_params,
+                "s.region",
+                "limit_certificate_station_region_scope",
+            ):
+                return jsonify(empty_scope_response)
+        else:
+            record_where_clauses.append("sc.station_id = %s")
             record_params.append(user["station_id"])
+        record_where = f"WHERE {' AND '.join(record_where_clauses)}" if record_where_clauses else ""
 
         cur.execute(
             f"""
@@ -17169,8 +17215,9 @@ def get_station_certificates():
                 "stations": stations,
                 "records": records,
                 "can_view_all": scope_all,
+                "can_view_region": scope_region,
                 "can_edit_all": can_edit_all_certificates(user),
-                "can_edit_own": can_edit_own_certificates(cur, user),
+                "can_edit_own": can_edit_own,
             }
         )
     except Exception as e:

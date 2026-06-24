@@ -73,15 +73,37 @@
               <small v-if="isEditingRoot" class="field-tip">root 是系统内置管理员，角色固定不可调整。</small>
             </label>
 
-            <label class="form-field">
+            <label v-if="form.role !== 'area_account'" class="form-field">
               <span>姓名</span>
               <input v-model.trim="form.real_name" type="text" placeholder="请输入姓名" />
             </label>
 
-            <label class="form-field">
+            <label v-if="form.role !== 'area_account'" class="form-field">
               <span>手机号</span>
               <input v-model.trim="form.phone" type="text" placeholder="请输入手机号" />
             </label>
+
+            <div v-if="form.role === 'area_account'" class="station-picker-card area-account-region-card">
+              <div class="station-picker-head">
+                <div>
+                  <strong>绑定片区</strong>
+                  <p>片区账号创建时不需要填写姓名和手机号，但必须指定可查看的片区范围。</p>
+                </div>
+                <span>{{ areaAccountRegion || '未选择片区' }}</span>
+              </div>
+
+              <div class="station-picker-grid single">
+                <label class="form-field">
+                  <span>所属片区/归属地</span>
+                  <select v-model="areaAccountRegion" @change="applyAreaAccountRegionScope">
+                    <option value="">请选择片区/归属地</option>
+                    <option v-for="region in stationRegionOptions" :key="region" :value="region">
+                      {{ region }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+            </div>
 
             <div v-if="form.role === 'station_manager'" class="station-picker-card">
               <div class="station-picker-head">
@@ -723,6 +745,7 @@ const roleInspectionTableScopeIds = ref({})
 const roleStationRegionScopeValues = ref({})
 const stationRegionFilter = ref('')
 const stationKeyword = ref('')
+const areaAccountRegion = ref('')
 const roles = ref([])
 const permissions = ref([])
 const loading = ref(false)
@@ -759,7 +782,7 @@ const tableCardRef = ref(null)
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues'],
   ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records'],
-  ['view_own_certificates', 'view_all_certificates']
+  ['view_own_certificates', 'limit_certificate_station_region_scope', 'view_all_certificates']
 ]
 
 const dependentPermissionMap = {
@@ -788,7 +811,8 @@ const inspectionTableScopePermissionKeys = [
 const stationRegionScopePermissionKeys = [
   'limit_issue_station_region_scope',
   'limit_record_station_region_scope',
-  'limit_plan_station_region_scope'
+  'limit_plan_station_region_scope',
+  'limit_certificate_station_region_scope'
 ]
 
 const inspectionScopeConfigs = {
@@ -824,6 +848,11 @@ const stationRegionScopeConfigs = {
     permissionKey: 'limit_plan_station_region_scope',
     title: '巡检计划片区站点范围',
     description: '选择“查看片区站点数据”后，只统计和展示选定片区/归属地内站点的巡检计划。'
+  },
+  '站点证照有效期管理': {
+    permissionKey: 'limit_certificate_station_region_scope',
+    title: '证照管理片区站点范围',
+    description: '选择“查看片区站点数据”后，只展示选定片区/归属地内站点的证照有效期和提醒。'
   }
 }
 
@@ -880,7 +909,7 @@ const scopedPermissionLayouts = {
     actionKeys: ['manage_inspection_plans']
   },
   '站点证照有效期管理': {
-    scopeKeys: ['view_own_certificates', 'view_all_certificates'],
+    scopeKeys: ['view_own_certificates', 'limit_certificate_station_region_scope', 'view_all_certificates'],
     actionKeys: ['edit_own_certificates']
   }
 }
@@ -964,6 +993,35 @@ const stationRegionOptions = computed(() => {
 const stationCountByRegion = (region) => {
   const normalizedRegion = region || '未填写片区'
   return stations.value.filter((station) => (station.region || '未填写片区') === normalizedRegion).length
+}
+
+const applyAreaAccountRegionScope = () => {
+  if (form.role !== 'area_account') return
+  const regionValues = areaAccountRegion.value ? [areaAccountRegion.value] : []
+  if (!form.station_region_scope_values || typeof form.station_region_scope_values !== 'object') {
+    form.station_region_scope_values = createEmptyStationRegionScopeMap()
+  }
+  stationRegionScopePermissionKeys.forEach((key) => {
+    form.permissions[key] = true
+    form.station_region_scope_values[key] = [...regionValues]
+  })
+  form.permissions.view_own_inspection_issues = false
+  form.permissions.view_all_inspection_issues = false
+  form.permissions.view_own_inspection_records = false
+  form.permissions.view_all_inspection_records = false
+  form.permissions.view_own_certificates = false
+  form.permissions.view_all_certificates = false
+  form.permissions.edit_own_certificates = false
+  form.permissions = enforceExclusivePermissions(form.permissions, form.role)
+}
+
+const firstAreaAccountRegionFromScope = (scopeMap) => {
+  const normalized = normalizeStationRegionScopeMap(scopeMap)
+  for (const key of stationRegionScopePermissionKeys) {
+    const value = normalized[key]?.[0]
+    if (value) return value
+  }
+  return ''
 }
 
 const filteredStations = computed(() => {
@@ -1350,6 +1408,16 @@ const applyRoleDefaults = () => {
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
   form.station_region_scope_values = createEmptyStationRegionScopeMap()
+  if (form.role === 'area_account') {
+    form.station_id = ''
+    form.real_name = ''
+    form.phone = ''
+    stationRegionFilter.value = ''
+    stationKeyword.value = ''
+    applyAreaAccountRegionScope()
+    return
+  }
+  areaAccountRegion.value = ''
   if (form.role !== 'station_manager') {
     form.station_id = ''
     stationRegionFilter.value = ''
@@ -1394,6 +1462,7 @@ const validateRoleTemplate = () => {
     return '已启用检查表范围限制，请至少为对应页面选择一张检查表。'
   }
   if (
+    rolePermissionDialog.role !== 'area_account' &&
     stationRegionScopePermissionKeys.some((key) => (
       rolePermissionDialog.permissions?.[key] && !ensureRoleStationRegionScopeList(key).length
     ))
@@ -1656,6 +1725,7 @@ const resetForm = (options = {}) => {
   form.station_region_scope_values = createEmptyStationRegionScopeMap()
   stationRegionFilter.value = ''
   stationKeyword.value = ''
+  areaAccountRegion.value = ''
   formError.value = ''
   if (!options.keepMessage) setMessage('')
   if (options.scrollToEditor) {
@@ -1675,6 +1745,7 @@ const resetCreateTextFields = (options = {}) => {
     rememberedRole
   )
   const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
+  const rememberedAreaRegion = rememberedRole === 'area_account' ? areaAccountRegion.value : ''
   const rememberedScopeIds = normalizeInspectionScopeMap(form.inspection_table_scope_ids)
   const rememberedRegionScopeValues = normalizeStationRegionScopeMap(form.station_region_scope_values)
 
@@ -1691,6 +1762,10 @@ const resetCreateTextFields = (options = {}) => {
     permissions: rememberedPermissions
   })
   stationKeyword.value = ''
+  areaAccountRegion.value = rememberedAreaRegion
+  if (rememberedRole === 'area_account') {
+    applyAreaAccountRegionScope()
+  }
   formError.value = ''
   if (!options.keepMessage) setMessage('')
 }
@@ -1719,6 +1794,9 @@ const startEdit = (user) => {
   const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
   stationRegionFilter.value = station?.region || ''
   stationKeyword.value = ''
+  areaAccountRegion.value = user.role === 'area_account'
+    ? firstAreaAccountRegionFromScope(user.station_region_scope_values)
+    : ''
   formError.value = ''
   setMessage(`已进入【${user.username}】编辑状态。`, 'info')
   nextTick(() => {
@@ -1878,8 +1956,9 @@ const validateForm = () => {
   if (!form.username) return '请填写用户名。'
   if (!form.id && !form.password) return '请填写初始密码。'
   if (!form.role) return '请选择角色。'
-  if (!form.real_name) return '请填写用户姓名。'
+  if (form.role !== 'area_account' && !form.real_name) return '请填写用户姓名。'
   if (form.role === 'station_manager' && !form.station_id) return '站点账号必须选择所属站点。'
+  if (form.role === 'area_account' && !areaAccountRegion.value) return '片区账号必须选择所属片区/归属地。'
   if (
     form.role !== 'root' &&
     inspectionTables.value.length > 0 &&
@@ -1901,6 +1980,9 @@ const validateForm = () => {
 }
 
 const saveUser = async () => {
+  if (form.role === 'area_account') {
+    applyAreaAccountRegionScope()
+  }
   formError.value = validateForm()
   if (formError.value) {
     setMessage(formError.value, 'error')
@@ -1910,13 +1992,16 @@ const saveUser = async () => {
   try {
     saving.value = true
     const isCreating = !form.id
+    const normalizedRealName = form.role === 'area_account'
+      ? (form.real_name || areaAccountRegion.value || form.username)
+      : form.real_name
     const payload = {
       user_id: currentUserId,
       username: form.username,
       password: form.password,
       role: form.role,
-      real_name: form.real_name,
-      phone: form.phone,
+      real_name: normalizedRealName,
+      phone: form.role === 'area_account' ? '' : form.phone,
       station_id: form.station_id,
       inspection_table_scope_ids: form.inspection_table_scope_ids,
       station_region_scope_values: form.station_region_scope_values,
@@ -2220,6 +2305,10 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(160px, 0.85fr) minmax(220px, 1fr) minmax(320px, 1.4fr);
   gap: 14px;
   align-items: end;
+}
+
+.station-picker-grid.single {
+  grid-template-columns: minmax(240px, 420px);
 }
 
 .form-field {
