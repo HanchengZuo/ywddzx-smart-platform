@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5.3',
+    date: '2026-06-24',
+    title: '新增非油事业部角色',
+    summary: '新增非油事业部账号，并按非油检查表限制可见数据。',
+    items: [
+      '用户管理支持创建非油事业部账号。',
+      '默认权限沿用专职部门账号逻辑。',
+      '默认仅查看非油合规和非油现场检查表。'
+    ]
+  },
+  {
     version: 'v3.5.2',
     date: '2026-06-23',
     title: '巡检计划支持多人分配',

@@ -375,6 +375,7 @@ const roleLabel = (role) => {
     quality_safety: '质安部',
     development_plan: '发展计划部',
     oil_gas: '油气事业部',
+    non_oil: '非油事业部',
     area_account: '片区账号'
   }
   return map[role] || role || '未知角色'
