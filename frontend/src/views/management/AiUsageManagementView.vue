@@ -375,6 +375,7 @@ const roleLabel = (role) => {
   if (role === 'development_plan') return '发展计划部'
   if (role === 'oil_gas') return '油气事业部'
   if (role === 'non_oil') return '非油事业部'
+  if (role === 'finance') return '财务部'
   if (role === 'area_account') return '片区账号'
   return role || '-'
 }

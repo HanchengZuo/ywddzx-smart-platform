@@ -738,6 +738,7 @@ const isQualitySafety = computed(() => authState.role === 'quality_safety')
 const isDevelopmentPlan = computed(() => authState.role === 'development_plan')
 const isOilGas = computed(() => authState.role === 'oil_gas')
 const isNonOil = computed(() => authState.role === 'non_oil')
+const isFinance = computed(() => authState.role === 'finance')
 const isAreaAccount = computed(() => authState.role === 'area_account')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
@@ -803,6 +804,7 @@ const currentRoleLabel = computed(() => {
   if (authState.role === 'development_plan') return '发展计划部账号'
   if (authState.role === 'oil_gas') return '油气事业部账号'
   if (authState.role === 'non_oil') return '非油事业部账号'
+  if (authState.role === 'finance') return '财务部账号'
   if (authState.role === 'area_account') return '片区账号'
   return '站点账号'
 })
@@ -812,6 +814,7 @@ const sidebarTitle = computed(() => {
   if (isDevelopmentPlan.value) return '发展计划部工作台'
   if (isOilGas.value) return '油气事业部工作台'
   if (isNonOil.value) return '非油事业部工作台'
+  if (isFinance.value) return '财务部工作台'
   if (isAreaAccount.value) return '片区工作台'
   return '业务督导中心'
 })
@@ -821,6 +824,7 @@ const sidebarLogoText = computed(() => {
   if (isDevelopmentPlan.value) return '发'
   if (isOilGas.value) return '油'
   if (isNonOil.value) return '非'
+  if (isFinance.value) return '财'
   return '督'
 })
 const sessionRemainingLabel = computed(() => {

@@ -376,6 +376,7 @@ const roleLabel = (role) => {
     development_plan: '发展计划部',
     oil_gas: '油气事业部',
     non_oil: '非油事业部',
+    finance: '财务部',
     area_account: '片区账号'
   }
   return map[role] || role || '未知角色'

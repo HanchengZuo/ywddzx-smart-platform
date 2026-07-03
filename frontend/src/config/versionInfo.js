@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5.4',
+    date: '2026-07-03',
+    title: '新增财务部角色',
+    summary: '新增财务部账号，并按财务检查表限制可见数据。',
+    items: [
+      '用户管理支持创建财务部账号。',
+      '默认权限沿用专职部门账号逻辑。',
+      '默认仅查看财务检查表现场数据。'
+    ]
+  },
+  {
     version: 'v3.5.3',
     date: '2026-06-24',
     title: '新增非油事业部角色',

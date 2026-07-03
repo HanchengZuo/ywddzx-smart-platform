@@ -1832,7 +1832,8 @@ const fetchUsers = async () => {
       quality_safety: response.data?.quality_safety_default_inspection_table_ids || [],
       development_plan: response.data?.development_plan_default_inspection_table_ids || [],
       oil_gas: response.data?.oil_gas_default_inspection_table_ids || [],
-      non_oil: response.data?.non_oil_default_inspection_table_ids || []
+      non_oil: response.data?.non_oil_default_inspection_table_ids || [],
+      finance: response.data?.finance_default_inspection_table_ids || []
     }
     roles.value = response.data?.roles || []
     permissions.value = response.data?.permissions || []
