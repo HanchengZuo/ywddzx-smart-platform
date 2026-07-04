@@ -4199,6 +4199,11 @@ onBeforeUnmount(() => {
     grid-column: 1 / -1;
   }
 
+  .filter-item-month,
+  .filter-item-date {
+    grid-column: 1 / -1;
+  }
+
   .filter-item label {
     display: inline-flex;
     width: fit-content;
@@ -4225,7 +4230,9 @@ onBeforeUnmount(() => {
   }
 
   .filter-item-date input,
+  .filter-item-date .date-range-trigger,
   .filter-item-result select,
+  .filter-item-completion select,
   .filter-item-signature select {
     height: 48px;
     max-width: 100%;
@@ -4244,6 +4251,28 @@ onBeforeUnmount(() => {
     padding: 0 9px;
     -webkit-appearance: none;
     appearance: none;
+  }
+
+  .filter-item-date .date-range-picker,
+  .filter-item-month input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .filter-item-date .date-range-trigger {
+    min-height: 48px;
+    border-color: #bfdbfe;
+    border-radius: 16px;
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.06),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  }
+
+  .filter-item-date .date-range-panel {
+    left: 0;
+    width: min(100%, calc(100vw - 56px));
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .filter-item-date input::-webkit-date-and-time-value {
@@ -4433,11 +4462,9 @@ onBeforeUnmount(() => {
   }
 
   .mobile-signature-board {
-    width: 100vw;
-    height: 100dvh;
-    height: 100svh;
-    max-height: 100dvh;
-    max-height: 100svh;
+    width: auto;
+    height: auto;
+    max-height: none;
     border-radius: 0;
     padding-top: max(8px, env(safe-area-inset-top));
     padding-right: max(8px, env(safe-area-inset-right));
@@ -4458,13 +4485,33 @@ onBeforeUnmount(() => {
   }
 
   .mobile-signature-layout {
-    grid-template-columns: minmax(0, 1fr) 68px;
+    position: relative;
+    display: block;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mobile-signature-canvas-wrap {
+    position: absolute;
+    inset: 0 calc(66px + max(8px, env(safe-area-inset-right))) 0 0;
+  }
+
+  .mobile-signature-rail {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 58px;
     gap: 8px;
+    padding: 2px 0;
+    box-sizing: border-box;
   }
 
   .mobile-signature-icon-btn {
-    border-radius: 16px;
-    font-size: 24px;
+    min-height: 44px;
+    border-radius: 15px;
+    font-size: 22px;
   }
 
   .mobile-flow-card {
@@ -4481,6 +4528,53 @@ onBeforeUnmount(() => {
   .mobile-flow-card .record-flow-head strong {
     white-space: normal;
     text-align: left;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 360px) {
+  .mobile-signature-board {
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-right: max(6px, env(safe-area-inset-right));
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    padding-left: max(6px, env(safe-area-inset-left));
+  }
+
+  .mobile-signature-canvas-wrap {
+    inset: 0 calc(58px + max(6px, env(safe-area-inset-right))) 0 0;
+    border-radius: 14px;
+  }
+
+  .mobile-signature-rail {
+    width: 52px;
+    gap: 6px;
+  }
+
+  .mobile-signature-icon-btn {
+    min-height: 38px;
+    border-radius: 13px;
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 250px) {
+  .mobile-signature-canvas-wrap {
+    inset: 0 0 58px 0;
+  }
+
+  .mobile-signature-rail {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 50px;
+    flex-direction: row;
+    padding: 0;
+  }
+
+  .mobile-signature-icon-btn {
+    height: 50px;
+    min-height: 50px;
   }
 }
 

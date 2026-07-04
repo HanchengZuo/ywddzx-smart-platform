@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.5.5',
+    date: '2026-07-04',
+    title: '巡检记录移动端优化',
+    summary: '优化手机端筛选和签名面板体验。',
+    items: [
+      '巡检记录手机端日期筛选不再挤压重叠。',
+      '站经理签名面板按钮在内嵌浏览器中更容易操作。'
+    ]
+  },
+  {
     version: 'v3.5.4',
     date: '2026-07-03',
     title: '新增财务部角色',
