@@ -31,7 +31,7 @@
       <div class="filter-grid">
         <div class="filter-item filter-item-month">
           <label>巡检月度</label>
-          <input v-model="filters.month" type="month" @change="handleRecordMonthChange" />
+          <input v-model="filters.month" class="month-filter-input" type="month" @change="handleRecordMonthChange" />
         </div>
         <div class="filter-item filter-item-date">
           <label>巡检日期</label>
@@ -4202,6 +4202,8 @@ onBeforeUnmount(() => {
   .filter-item-month,
   .filter-item-date {
     grid-column: 1 / -1;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .filter-item label {
@@ -4230,7 +4232,7 @@ onBeforeUnmount(() => {
   }
 
   .filter-item-date input,
-  .filter-item-date .date-range-trigger,
+  .filter-item-date :deep(.date-range-trigger),
   .filter-item-result select,
   .filter-item-completion select,
   .filter-item-signature select {
@@ -4259,7 +4261,37 @@ onBeforeUnmount(() => {
     min-width: 0;
   }
 
-  .filter-item-date .date-range-trigger {
+  .filter-item-month .month-filter-input {
+    display: block;
+    inline-size: 100%;
+    max-inline-size: 100%;
+    min-inline-size: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+    padding-right: 10px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .filter-item-month .month-filter-input::-webkit-date-and-time-value {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .filter-item-month .month-filter-input::-webkit-calendar-picker-indicator {
+    flex: 0 0 auto;
+    margin-left: 4px;
+    opacity: 0.72;
+  }
+
+  .filter-item-date :deep(.date-range-picker) {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .filter-item-date :deep(.date-range-trigger) {
     min-height: 48px;
     border-color: #bfdbfe;
     border-radius: 16px;
@@ -4268,7 +4300,7 @@ onBeforeUnmount(() => {
       inset 0 0 0 1px rgba(255, 255, 255, 0.7);
   }
 
-  .filter-item-date .date-range-panel {
+  .filter-item-date :deep(.date-range-panel) {
     left: 0;
     width: min(100%, calc(100vw - 56px));
     max-width: 100%;
