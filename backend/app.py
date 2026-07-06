@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.5.5"
+        raw_value = "3.6.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.5.5"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.6.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -10457,6 +10457,794 @@ def mark_related_plan_items_completed(
             sync_plan_station_items_completion_by_history(cur, row["id"])
 
 
+def normalize_plan_assignment_match_text(value):
+    text = str(value or "").strip().lower()
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[（）()【】\[\]《》<>·,，。:：;；/\\|_\-]+", "", text)
+    return text
+
+
+PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS = ("序号", "片区", "加油站")
+PLAN_ASSIGNMENT_TEMPLATE_MAX_DATA_ROWS = 1000
+PLAN_ASSIGNMENT_TEMPLATE_MAX_ASSIGNMENTS = 3000
+
+
+def normalize_plan_assignment_template_header(value):
+    return re.sub(r"\s+", "", str(value or "").strip())
+
+
+def plan_assignment_template_cell_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def split_plan_assignment_inspector_text(value):
+    text = plan_assignment_template_cell_text(value)
+    if not text:
+        return []
+    parts = re.split(r"[、,，;；/\\|｜\n\r\t ]+", text)
+    result = []
+    seen = set()
+    for part in parts:
+        name = str(part or "").strip()
+        if not name:
+            continue
+        key = normalize_plan_assignment_match_text(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(name)
+    return result
+
+
+def parse_plan_assignment_template_file(file_storage):
+    if not file_storage or not getattr(file_storage, "filename", ""):
+        raise ValueError("请先上传固定派工模板文件。")
+
+    original_filename = str(getattr(file_storage, "filename", "") or "").strip()
+    display_filename = original_filename.replace("\\", "/").split("/")[-1] or "未命名文件"
+    safe_filename = secure_filename(display_filename) or display_filename
+    ext = os.path.splitext(display_filename)[1].lower() or os.path.splitext(safe_filename)[1].lower()
+    if not ext:
+        mimetype = str(getattr(file_storage, "mimetype", "") or "").lower()
+        if "spreadsheetml.sheet" in mimetype:
+            ext = ".xlsx"
+    if ext == ".xls":
+        raise ValueError("暂不支持旧版 .xls 文件，请另存为 .xlsx 后上传。")
+    if ext not in {".xlsx", ".xlsm"}:
+        raise ValueError("请上传固定模板 .xlsx 或 .xlsm 文件。")
+
+    raw_bytes = file_storage.read()
+    if not raw_bytes:
+        raise ValueError("上传文件为空，请重新选择文件。")
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法解析 Excel。") from exc
+
+    workbook = None
+    try:
+        workbook = load_workbook(BytesIO(raw_bytes), read_only=True, data_only=True)
+        worksheet = workbook.worksheets[0]
+        header_row_number = None
+        header_values = []
+        normalized_headers = []
+
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_row=1, max_row=10, values_only=True),
+            start=1,
+        ):
+            values = [plan_assignment_template_cell_text(value) for value in row]
+            normalized = [normalize_plan_assignment_template_header(value) for value in values]
+            if all(header in normalized for header in PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS):
+                header_row_number = row_number
+                header_values = values
+                normalized_headers = normalized
+                break
+
+        if header_row_number is None:
+            raise ValueError("未找到模板表头，请确认前 3 列包含“序号、片区、加油站”。")
+
+        header_positions = {}
+        for index, header in enumerate(normalized_headers):
+            if header and header not in header_positions:
+                header_positions[header] = index
+
+        region_col = header_positions.get("片区")
+        station_col = header_positions.get("加油站")
+        table_columns = []
+        required_set = set(PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS)
+        for column_index, header in enumerate(header_values):
+            normalized_header = normalized_headers[column_index] if column_index < len(normalized_headers) else ""
+            table_name = str(header or "").strip()
+            if column_index <= station_col or not table_name or normalized_header in required_set:
+                continue
+            table_columns.append({"index": column_index, "table_name": table_name})
+
+        if not table_columns:
+            raise ValueError("模板中没有检查表列，请在“加油站”后方保留检查表名称列。")
+
+        parsed_rows = []
+        max_row = header_row_number + PLAN_ASSIGNMENT_TEMPLATE_MAX_DATA_ROWS
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_row=header_row_number + 1, max_row=max_row, values_only=True),
+            start=header_row_number + 1,
+        ):
+            region_name = plan_assignment_template_cell_text(row[region_col]) if region_col is not None and region_col < len(row) else ""
+            station_name = plan_assignment_template_cell_text(row[station_col]) if station_col is not None and station_col < len(row) else ""
+            has_any_assignment = False
+            for table_column in table_columns:
+                cell_value = (
+                    row[table_column["index"]]
+                    if table_column["index"] < len(row)
+                    else None
+                )
+                inspectors = split_plan_assignment_inspector_text(cell_value)
+                if not inspectors:
+                    continue
+                has_any_assignment = True
+                if not station_name:
+                    parsed_rows.append(
+                        {
+                            "table_name": table_column["table_name"],
+                            "station_name": "",
+                            "station_region": region_name,
+                            "inspectors": inspectors,
+                            "raw_text": f"第{row_number}行缺少加油站名称",
+                            "source_row_number": row_number,
+                        }
+                    )
+                else:
+                    parsed_rows.append(
+                        {
+                            "table_name": table_column["table_name"],
+                            "station_name": station_name,
+                            "station_region": region_name,
+                            "inspectors": inspectors,
+                            "raw_text": f"第{row_number}行：{region_name or '-'} / {station_name} / {table_column['table_name']} / {'、'.join(inspectors)}",
+                            "source_row_number": row_number,
+                        }
+                    )
+                if len(parsed_rows) > PLAN_ASSIGNMENT_TEMPLATE_MAX_ASSIGNMENTS:
+                    raise ValueError("单次模板最多解析 3000 条派工项，请拆分文件后上传。")
+
+            if not has_any_assignment and not station_name and not region_name:
+                continue
+
+        if not parsed_rows:
+            raise ValueError("模板里没有填写检查人，请在检查表列下填写督导组成员姓名。")
+
+        return parsed_rows, {
+            "filename": display_filename,
+            "sheet_name": worksheet.title,
+            "header_row": header_row_number,
+            "table_columns": [item["table_name"] for item in table_columns],
+        }
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+def build_plan_assignment_catalog_context(cur):
+    cur.execute(
+        """
+        SELECT
+            id,
+            table_name,
+            COALESCE(NULLIF(checklist_mode, ''), 'online') AS checklist_mode
+        FROM inspection_tables
+        WHERE is_active = TRUE
+        ORDER BY id ASC;
+        """
+    )
+    table_rows = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            station_name,
+            COALESCE(region, '') AS region,
+            COALESCE(hos_station_code, '') AS hos_station_code,
+            COALESCE(monitoring_status, '运行中') AS monitoring_status
+        FROM stations
+        ORDER BY station_name ASC, id ASC;
+        """
+    )
+    station_rows = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT id, username, real_name, phone
+        FROM users
+        WHERE role = 'supervisor'
+        ORDER BY COALESCE(NULLIF(real_name, ''), username), id ASC;
+        """
+    )
+    inspector_rows = cur.fetchall()
+
+    context = {
+        "inspection_tables": [
+            {
+                "id": row["id"],
+                "table_name": row["table_name"],
+                "mode": normalize_checklist_mode(row.get("checklist_mode")),
+                "mode_label": "视频检查"
+                if normalize_checklist_mode(row.get("checklist_mode")) == "online"
+                else "现场检查",
+            }
+            for row in table_rows
+        ],
+        "stations": [
+            {
+                "id": row["id"],
+                "station_name": row["station_name"],
+                "region": row["region"],
+                "hos_station_code": row["hos_station_code"],
+                "monitoring_status": row["monitoring_status"],
+            }
+            for row in station_rows
+        ],
+        "inspectors": [
+            {
+                "id": row["id"],
+                "username": row["username"],
+                "real_name": row["real_name"],
+                "phone": row["phone"],
+            }
+            for row in inspector_rows
+        ],
+    }
+    return context, table_rows, station_rows, inspector_rows
+
+
+def build_plan_assignment_alias_map(rows, alias_builder):
+    aliases = []
+    for row in rows:
+        for alias in alias_builder(row):
+            key = normalize_plan_assignment_match_text(alias)
+            if key:
+                aliases.append((key, row))
+    aliases.sort(key=lambda item: -len(item[0]))
+    return aliases
+
+
+def find_plan_assignment_catalog_candidates(value, aliases):
+    key = normalize_plan_assignment_match_text(value)
+    if not key:
+        return []
+    exact_matches = []
+    for alias_key, row in aliases:
+        if key == alias_key:
+            exact_matches.append(row)
+    if exact_matches:
+        return unique_plan_assignment_rows(exact_matches)
+
+    partial_matches = []
+    for alias_key, row in aliases:
+        if len(key) >= 2 and (key in alias_key or alias_key in key):
+            partial_matches.append(row)
+    return unique_plan_assignment_rows(partial_matches)
+
+
+def unique_plan_assignment_rows(rows):
+    result = []
+    seen = set()
+    for row in rows:
+        row_id = row.get("id") if isinstance(row, dict) else id(row)
+        if row_id in seen:
+            continue
+        seen.add(row_id)
+        result.append(row)
+    return result
+
+
+def match_plan_assignment_catalog_row(value, aliases):
+    candidates = find_plan_assignment_catalog_candidates(value, aliases)
+    return candidates[0] if candidates else None
+
+
+def match_plan_assignment_station_row(station_name, station_region, aliases):
+    candidates = find_plan_assignment_catalog_candidates(station_name, aliases)
+    if not candidates:
+        return None
+    region_key = normalize_plan_assignment_match_text(station_region).replace("片区", "")
+    if not region_key:
+        return candidates[0]
+    region_matches = []
+    for row in candidates:
+        row_region_key = normalize_plan_assignment_match_text(row.get("region")).replace("片区", "")
+        if row_region_key and (region_key in row_region_key or row_region_key in region_key):
+            region_matches.append(row)
+    return region_matches[0] if region_matches else candidates[0]
+
+
+def select_current_plan_config(plan_configs, inspection_table_id, target_date):
+    candidates = []
+    for config in plan_configs:
+        if int(config["inspection_table_id"]) != int(inspection_table_id):
+            continue
+        start_date, end_date = get_period_date_range(
+            config["coverage_type"],
+            config["period_key"],
+        )
+        if start_date and end_date and start_date <= target_date < end_date:
+            candidates.append(config)
+    if not candidates:
+        return None, "当前日期没有匹配到该检查表的有效计划，请先建立当前周期计划。"
+
+    priority_map = {"monthly": 1, "quarterly": 2, "yearly": 3}
+    candidates.sort(
+        key=lambda item: (
+            priority_map.get(item["coverage_type"], 9),
+            -int(item["id"]),
+        )
+    )
+    selected = candidates[0]
+    if len(candidates) > 1:
+        return selected, "匹配到多个当前周期计划，已优先选择更细周期计划，请人工复核。"
+    return selected, ""
+
+
+def format_plan_assignment_inspector_names(inspectors):
+    return "、".join(
+        [
+            str(item.get("real_name") or item.get("username") or item.get("id") or "").strip()
+            for item in inspectors
+            if item
+        ]
+    )
+
+
+def fetch_plan_assignment_template_tables(cur, user):
+    cur.execute(
+        """
+        SELECT
+            id,
+            table_name,
+            COALESCE(NULLIF(checklist_mode, ''), 'online') AS checklist_mode
+        FROM inspection_tables
+        WHERE is_active = TRUE
+        ORDER BY id ASC;
+        """
+    )
+    table_rows = cur.fetchall()
+    return [
+        row
+        for row in table_rows
+        if is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            row["id"],
+            "limit_plan_inspection_table_scope",
+        )
+    ]
+
+
+def build_plan_assignment_template_workbook(cur, user):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法生成模板。") from exc
+
+    table_rows = fetch_plan_assignment_template_tables(cur, user)
+    if not table_rows:
+        raise ValueError("当前账号没有可维护的检查表，无法生成派工模板。")
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "派工模板"
+
+    headers = list(PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS) + [
+        row["table_name"] for row in table_rows
+    ]
+    worksheet.append(headers)
+    for row_index in range(1, 201):
+        worksheet.append([row_index, "", ""] + [""] * len(table_rows))
+
+    header_fill = PatternFill("solid", fgColor="DBEAFE")
+    required_fill = PatternFill("solid", fgColor="E0F2FE")
+    header_font = Font(bold=True, color="0F172A")
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+    center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for column_index, cell in enumerate(worksheet[1], start=1):
+        cell.fill = required_fill if column_index <= 3 else header_fill
+        cell.font = header_font
+        cell.alignment = center_alignment
+        cell.border = thin_border
+
+    for row in worksheet.iter_rows(min_row=2, max_row=201, max_col=len(headers)):
+        for cell in row:
+            cell.alignment = center_alignment
+            cell.border = thin_border
+
+    worksheet.freeze_panes = "D2"
+    worksheet.auto_filter.ref = f"A1:{excel_column_name(len(headers))}201"
+    worksheet.column_dimensions["A"].width = 10
+    worksheet.column_dimensions["B"].width = 14
+    worksheet.column_dimensions["C"].width = 20
+    for column_index in range(4, len(headers) + 1):
+        worksheet.column_dimensions[excel_column_name(column_index)].width = 32
+    worksheet.row_dimensions[1].height = 38
+
+    guide = workbook.create_sheet("填写说明")
+    guide_rows = [
+        ["填写规则", "说明"],
+        ["片区", "填写站点所属片区/归属地，可帮助系统更准确匹配站点。"],
+        ["加油站", "填写站点名称，可填写简称，系统会结合片区匹配真实站点。"],
+        ["检查表列", "每个检查表列下填写负责检查人姓名；多人可用“、”分隔。"],
+        ["写入规则", "上传后只生成预览清单，必须人工确认后才会写入当前日期所在周期的计划。"],
+        ["注意事项", "请不要修改表头名称；旧版 .xls 文件请另存为 .xlsx 后上传。"],
+    ]
+    for row in guide_rows:
+        guide.append(row)
+    guide.column_dimensions["A"].width = 18
+    guide.column_dimensions["B"].width = 86
+    for row in guide.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = thin_border
+    for cell in guide[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    output.seek(0)
+    return output
+
+
+def resolve_plan_assignment_preview_rows(cur, user, parsed_rows):
+    context, table_rows, station_rows, inspector_rows = build_plan_assignment_catalog_context(cur)
+
+    table_aliases = build_plan_assignment_alias_map(
+        table_rows,
+        lambda row: [
+            row["table_name"],
+            f"{row['table_name']}{'视频检查' if normalize_checklist_mode(row.get('checklist_mode')) == 'online' else '现场检查'}",
+            f"{row['table_name']}（{'视频' if normalize_checklist_mode(row.get('checklist_mode')) == 'online' else '现场'}）",
+        ],
+    )
+    station_aliases = build_plan_assignment_alias_map(
+        station_rows,
+        lambda row: [row["station_name"], row.get("hos_station_code")],
+    )
+    inspector_aliases = build_plan_assignment_alias_map(
+        inspector_rows,
+        lambda row: [row.get("real_name"), row.get("username"), row.get("phone")],
+    )
+
+    cur.execute(
+        """
+        SELECT
+            pc.id,
+            pc.inspection_table_id,
+            it.table_name AS inspection_table_name,
+            COALESCE(NULLIF(it.checklist_mode, ''), 'online') AS checklist_mode,
+            pc.coverage_type,
+            pc.period_key,
+            pc.status
+        FROM inspection_plan_configs pc
+        JOIN inspection_tables it ON it.id = pc.inspection_table_id
+        WHERE pc.status = 'active'
+        ORDER BY pc.id DESC;
+        """
+    )
+    plan_configs = cur.fetchall()
+    today = datetime.now(BEIJING_TZ).date()
+
+    initial_rows = []
+    plan_station_pairs = []
+    for index, raw_row in enumerate(parsed_rows or [], start=1):
+        row = raw_row if isinstance(raw_row, dict) else {}
+        messages = []
+        status = "ready"
+
+        table_row = match_plan_assignment_catalog_row(row.get("table_name"), table_aliases)
+        station_row = match_plan_assignment_station_row(
+            row.get("station_name"),
+            row.get("station_region"),
+            station_aliases,
+        )
+
+        raw_inspectors = row.get("inspectors") if isinstance(row.get("inspectors"), list) else []
+        matched_inspectors = []
+        seen_inspector_ids = set()
+        for raw_inspector in raw_inspectors:
+            inspector_row = match_plan_assignment_catalog_row(raw_inspector, inspector_aliases)
+            if not inspector_row:
+                continue
+            inspector_id = int(inspector_row["id"])
+            if inspector_id in seen_inspector_ids:
+                continue
+            seen_inspector_ids.add(inspector_id)
+            matched_inspectors.append(inspector_row)
+
+        selected_plan = None
+        plan_warning = ""
+        if not table_row:
+            status = "error"
+            messages.append("未匹配到检查表。")
+        elif not is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            table_row["id"],
+            "limit_plan_inspection_table_scope",
+        ):
+            status = "error"
+            messages.append("当前账号无权维护该检查表计划。")
+        else:
+            selected_plan, plan_warning = select_current_plan_config(
+                plan_configs,
+                table_row["id"],
+                today,
+            )
+            if not selected_plan:
+                status = "error"
+                messages.append(plan_warning)
+            elif plan_warning:
+                status = "warning"
+                messages.append(plan_warning)
+
+        if not station_row:
+            status = "error"
+            messages.append("未匹配到站点。")
+        elif not is_station_region_allowed_for_user(
+            cur,
+            user,
+            station_row.get("region"),
+            "limit_plan_station_region_scope",
+        ):
+            status = "error"
+            messages.append("当前账号无权维护该片区站点计划。")
+
+        if not matched_inspectors:
+            status = "error"
+            messages.append("未匹配到督导组检查人。")
+
+        if selected_plan and station_row:
+            mode = normalize_checklist_mode(selected_plan.get("checklist_mode"))
+            if mode == "online" and station_row.get("monitoring_status") == "未运行":
+                status = "error"
+                messages.append("该站点监控未运行，视频检查计划不可分配。")
+            plan_station_pairs.append((selected_plan["id"], station_row["id"]))
+
+        initial_rows.append(
+            {
+                "source_index": index,
+                "raw_text": row.get("raw_text") or "",
+                "source_table_name": row.get("table_name") or "",
+                "source_station_name": row.get("station_name") or "",
+                "source_station_region": row.get("station_region") or "",
+                "source_inspector_text": "、".join(raw_inspectors),
+                "inspection_table_id": table_row["id"] if table_row else None,
+                "inspection_table_name": table_row["table_name"] if table_row else "",
+                "checklist_mode": normalize_checklist_mode(table_row.get("checklist_mode")) if table_row else "",
+                "checklist_mode_label": (
+                    "视频检查"
+                    if table_row and normalize_checklist_mode(table_row.get("checklist_mode")) == "online"
+                    else "现场检查"
+                    if table_row
+                    else ""
+                ),
+                "plan_config_id": selected_plan["id"] if selected_plan else None,
+                "coverage_type": selected_plan["coverage_type"] if selected_plan else "",
+                "coverage_type_label": COVERAGE_TYPE_LABELS.get(selected_plan["coverage_type"], selected_plan["coverage_type"]) if selected_plan else "",
+                "period_key": selected_plan["period_key"] if selected_plan else "",
+                "station_id": station_row["id"] if station_row else None,
+                "station_name": station_row["station_name"] if station_row else "",
+                "station_region": station_row["region"] if station_row else "",
+                "monitoring_status": station_row["monitoring_status"] if station_row else "",
+                "inspector_ids": [item["id"] for item in matched_inspectors],
+                "inspectors": [
+                    {
+                        "id": item["id"],
+                        "username": item["username"],
+                        "real_name": item["real_name"],
+                        "phone": item["phone"],
+                        "display_name": item["real_name"] or item["username"],
+                    }
+                    for item in matched_inspectors
+                ],
+                "status": status,
+                "message": " ".join(messages) or "已匹配到当前周期计划，待人工确认。",
+                "can_apply": status in {"ready", "warning"},
+            }
+        )
+
+    item_map = {}
+    if plan_station_pairs:
+        plan_ids = sorted({int(plan_id) for plan_id, _station_id in plan_station_pairs})
+        station_ids = sorted({int(station_id) for _plan_id, station_id in plan_station_pairs})
+        cur.execute(
+            """
+            SELECT
+                plan_config_id,
+                station_id,
+                is_included,
+                assigned_inspector_id,
+                COALESCE(assigned_inspector_ids, '[]'::jsonb) AS assigned_inspector_ids,
+                completion_status,
+                TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at
+            FROM inspection_plan_station_items
+            WHERE plan_config_id = ANY(%s)
+              AND station_id = ANY(%s);
+            """,
+            (plan_ids, station_ids),
+        )
+        item_map = {
+            (int(row["plan_config_id"]), int(row["station_id"])): row
+            for row in cur.fetchall()
+        }
+
+    merged_rows = []
+    merged_key_map = {}
+    for row in initial_rows:
+        key = (row.get("plan_config_id"), row.get("station_id"))
+        existing_item = item_map.get(key)
+        if existing_item:
+            row["previous_is_included"] = bool(existing_item["is_included"])
+            row["previous_inspector_ids"] = normalize_plan_assigned_inspector_ids(existing_item)
+            row["previous_completion_status"] = existing_item["completion_status"]
+            row["completed_at"] = existing_item["completed_at"]
+            if existing_item["completion_status"] == "completed":
+                row["status"] = "error"
+                row["can_apply"] = False
+                row["message"] = "该站点当前周期任务已完成，不可再调整派工。"
+        else:
+            row["previous_is_included"] = False
+            row["previous_inspector_ids"] = []
+            row["previous_completion_status"] = "pending"
+            row["completed_at"] = ""
+
+        if not row.get("can_apply"):
+            merged_rows.append(row)
+            continue
+
+        merge_key = (row["plan_config_id"], row["station_id"])
+        if merge_key not in merged_key_map:
+            merged_key_map[merge_key] = row
+            merged_rows.append(row)
+            continue
+
+        target = merged_key_map[merge_key]
+        existing_ids = {int(value) for value in target.get("inspector_ids") or []}
+        for inspector in row.get("inspectors") or []:
+            inspector_id = int(inspector["id"])
+            if inspector_id in existing_ids:
+                continue
+            target["inspector_ids"].append(inspector_id)
+            target["inspectors"].append(inspector)
+            existing_ids.add(inspector_id)
+        if row.get("raw_text"):
+            target["raw_text"] = "；".join([item for item in [target.get("raw_text"), row.get("raw_text")] if item])[:120]
+        target["source_inspector_text"] = format_plan_assignment_inspector_names(target["inspectors"])
+        target["message"] = "已合并同一站点同一检查表的多名检查人，请人工复核。"
+        target["status"] = "warning"
+
+    for row in merged_rows:
+        previous_names = []
+        previous_ids = row.get("previous_inspector_ids") or []
+        for previous_id in previous_ids:
+            inspector = next((item for item in inspector_rows if int(item["id"]) == int(previous_id)), None)
+            if inspector:
+                previous_names.append(inspector["real_name"] or inspector["username"])
+        row["previous_inspector_names"] = "、".join(previous_names)
+        row["inspector_names"] = format_plan_assignment_inspector_names(row.get("inspectors") or [])
+    return merged_rows, context, today
+
+
+def validate_plan_assignment_apply_row(cur, user, row, target_date):
+    plan_config_id = int(row.get("plan_config_id") or 0)
+    station_id = int(row.get("station_id") or 0)
+    inspector_ids = normalize_plan_assigned_inspector_ids(
+        {"assigned_inspector_ids": row.get("inspector_ids") or []}
+    )
+    if plan_config_id <= 0 or station_id <= 0 or not inspector_ids:
+        raise ValueError("存在缺少计划、站点或检查人的派工项。")
+
+    cur.execute(
+        """
+        SELECT
+            pc.id,
+            pc.inspection_table_id,
+            it.table_name AS inspection_table_name,
+            COALESCE(NULLIF(it.checklist_mode, ''), 'online') AS checklist_mode,
+            pc.coverage_type,
+            pc.period_key,
+            pc.status
+        FROM inspection_plan_configs pc
+        JOIN inspection_tables it ON it.id = pc.inspection_table_id
+        WHERE pc.id = %s
+        LIMIT 1;
+        """,
+        (plan_config_id,),
+    )
+    plan_config = cur.fetchone()
+    if not plan_config or plan_config["status"] != "active":
+        raise ValueError("存在无效或已停用的巡检计划。")
+    if not is_inspection_table_allowed_for_user(
+        cur,
+        user,
+        plan_config["inspection_table_id"],
+        "limit_plan_inspection_table_scope",
+    ):
+        raise PermissionError("当前账号无权维护某张检查表计划。")
+
+    start_date, end_date = get_period_date_range(
+        plan_config["coverage_type"],
+        plan_config["period_key"],
+    )
+    if not start_date or not end_date or not (start_date <= target_date < end_date):
+        raise ValueError("存在不属于当前日期周期的计划，请重新生成预览后再写入。")
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            station_name,
+            COALESCE(region, '') AS region,
+            COALESCE(monitoring_status, '运行中') AS monitoring_status
+        FROM stations
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (station_id,),
+    )
+    station = cur.fetchone()
+    if not station:
+        raise ValueError("存在无效站点。")
+    if not is_station_region_allowed_for_user(
+        cur,
+        user,
+        station.get("region"),
+        "limit_plan_station_region_scope",
+    ):
+        raise PermissionError("当前账号无权维护某个片区站点计划。")
+    if normalize_checklist_mode(plan_config.get("checklist_mode")) == "online" and station.get("monitoring_status") == "未运行":
+        raise ValueError(f"【{station['station_name']}】监控未运行，不能分配视频检查任务。")
+
+    cur.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE id = ANY(%s)
+          AND role = 'supervisor';
+        """,
+        (inspector_ids,),
+    )
+    existing_inspector_ids = {int(item["id"]) for item in cur.fetchall()}
+    if any(inspector_id not in existing_inspector_ids for inspector_id in inspector_ids):
+        raise ValueError("只能分配给督导组角色账号。")
+
+    cur.execute(
+        """
+        SELECT id, completion_status
+        FROM inspection_plan_station_items
+        WHERE plan_config_id = %s
+          AND station_id = %s
+        FOR UPDATE;
+        """,
+        (plan_config_id, station_id),
+    )
+    existing_item = cur.fetchone()
+    if existing_item and existing_item["completion_status"] == "completed":
+        raise ValueError(f"【{station['station_name']}】当前周期任务已完成，不能调整派工。")
+
+    return plan_config, station, inspector_ids
+
+
 # === Inspection Plan Configs API ===
 
 
@@ -11158,6 +11946,263 @@ def get_inspection_plan_inspectors():
         return jsonify({"success": False, "error": str(exc)}), 401
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/template", methods=["GET"])
+def download_inspection_plan_assignment_template():
+    conn = None
+    cur = None
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if not can_manage_plan(cur, current_user):
+            return jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}), 403
+
+        output = build_plan_assignment_template_workbook(cur, current_user)
+        response = send_file(
+            output,
+            as_attachment=True,
+            download_name="巡检计划派工模板.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as exc:
+        logging.exception("Failed to generate inspection plan assignment template.")
+        return jsonify({"success": False, "error": f"生成派工模板失败：{str(exc)}"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/template-preview", methods=["POST"])
+@app.route("/api/inspection-plan-assignments/ai-preview", methods=["POST"])
+def preview_inspection_plan_template_assignments():
+    upload_file = request.files.get("file") or request.files.get("assignment_file")
+
+    try:
+        parsed_rows, template_info = parse_plan_assignment_template_file(upload_file)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Failed to parse inspection plan assignment template.")
+        return jsonify({"success": False, "error": f"读取派工模板失败：{str(exc)}"}), 500
+
+    conn = None
+    cur = None
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if not can_manage_plan(cur, current_user):
+            return jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}), 403
+
+        ensure_inspection_plan_assignment_schema(cur)
+        preview_rows, _context, target_date = resolve_plan_assignment_preview_rows(
+            cur,
+            current_user,
+            parsed_rows,
+        )
+        conn.commit()
+
+        ready_count = sum(1 for row in preview_rows if row.get("can_apply"))
+        warning_count = sum(1 for row in preview_rows if row.get("status") == "warning")
+        error_count = sum(1 for row in preview_rows if row.get("status") == "error")
+        return jsonify(
+            {
+                "success": True,
+                "message": "模板解析完成，请确认后再写入计划。",
+                "ai_generated": False,
+                "template_info": template_info,
+                "target_date": target_date.isoformat(),
+                "rows": preview_rows,
+                "summary": {
+                    "total": len(preview_rows),
+                    "ready": ready_count,
+                    "warning": warning_count,
+                    "error": error_count,
+                },
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        logging.exception("Inspection plan template assignment preview failed.")
+        return jsonify({"success": False, "error": f"生成派工预览失败：{str(exc)}"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-plan-assignments/template-apply", methods=["POST"])
+@app.route("/api/inspection-plan-assignments/ai-apply", methods=["POST"])
+def apply_inspection_plan_template_assignments():
+    data = request.get_json(silent=True) or {}
+    rows = data.get("rows") or []
+    if not isinstance(rows, list):
+        return jsonify({"success": False, "error": "rows 参数格式不正确。"}), 400
+    if not rows:
+        return jsonify({"success": False, "error": "请先选择需要写入的派工项。"}), 400
+    if len(rows) > 300:
+        return jsonify({"success": False, "error": "单次最多写入 300 条派工项。"}), 400
+
+    grouped_rows = OrderedDict()
+    for row in rows:
+        if not isinstance(row, dict):
+            return jsonify({"success": False, "error": "rows 中存在非法项。"}), 400
+        if row.get("selected") is False:
+            continue
+        key = (str(row.get("plan_config_id") or ""), str(row.get("station_id") or ""))
+        if not key[0] or not key[1]:
+            return jsonify({"success": False, "error": "存在缺少计划或站点的派工项。"}), 400
+        if key not in grouped_rows:
+            grouped_rows[key] = {
+                **row,
+                "inspector_ids": [],
+            }
+        current_ids = grouped_rows[key]["inspector_ids"]
+        for inspector_id in row.get("inspector_ids") or []:
+            try:
+                normalized_id = int(inspector_id)
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "检查人参数不正确。"}), 400
+            if normalized_id not in current_ids:
+                current_ids.append(normalized_id)
+
+    if not grouped_rows:
+        return jsonify({"success": False, "error": "请至少勾选一条可写入的派工项。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if not can_manage_plan(cur, current_user):
+            return jsonify({"success": False, "error": "当前账号无权维护巡检计划。"}), 403
+
+        ensure_inspection_plan_assignment_schema(cur)
+        target_date = datetime.now(BEIJING_TZ).date()
+        affected_plan_config_ids = set()
+        applied_count = 0
+
+        for row in grouped_rows.values():
+            plan_config, station, inspector_ids = validate_plan_assignment_apply_row(
+                cur,
+                current_user,
+                row,
+                target_date,
+            )
+            assigned_inspector_id = inspector_ids[0] if inspector_ids else None
+            cur.execute(
+                """
+                INSERT INTO inspection_plan_station_items (
+                    plan_config_id,
+                    station_id,
+                    is_included,
+                    assigned_inspector_id,
+                    assigned_inspector_ids,
+                    assigned_by,
+                    assigned_at,
+                    completion_status,
+                    completed_inspection_id,
+                    completed_at,
+                    note,
+                    updated_at
+                )
+                VALUES (
+                    %s,
+                    %s,
+                    TRUE,
+                    %s,
+                    %s::jsonb,
+                    %s,
+                    CURRENT_TIMESTAMP,
+                    'pending',
+                    NULL,
+                    NULL,
+                    %s,
+                    CURRENT_TIMESTAMP
+                )
+                ON CONFLICT (plan_config_id, station_id)
+                DO UPDATE SET
+                    is_included = TRUE,
+                    assigned_inspector_id = EXCLUDED.assigned_inspector_id,
+                    assigned_inspector_ids = EXCLUDED.assigned_inspector_ids,
+                    assigned_by = EXCLUDED.assigned_by,
+                    assigned_at = CASE
+                        WHEN inspection_plan_station_items.assigned_inspector_ids IS DISTINCT FROM EXCLUDED.assigned_inspector_ids
+                            OR inspection_plan_station_items.assigned_at IS NULL
+                            THEN CURRENT_TIMESTAMP
+                        ELSE inspection_plan_station_items.assigned_at
+                    END,
+                    completion_status = 'pending',
+                    completed_inspection_id = NULL,
+                    completed_at = NULL,
+                    note = COALESCE(inspection_plan_station_items.note, EXCLUDED.note),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE inspection_plan_station_items.completion_status <> 'completed';
+                """,
+                (
+                    int(plan_config["id"]),
+                    int(station["id"]),
+                    assigned_inspector_id,
+                    json.dumps(inspector_ids, ensure_ascii=False),
+                    int(current_user["id"]),
+                    str(row.get("note") or "模板批量派工").strip()[:200],
+                ),
+            )
+            if cur.rowcount <= 0:
+                raise ValueError(f"【{station['station_name']}】当前周期任务已完成，不能调整派工。")
+            affected_plan_config_ids.add(int(plan_config["id"]))
+            applied_count += 1
+
+        for plan_config_id in affected_plan_config_ids:
+            cur.execute(
+                """
+                UPDATE inspection_plan_configs
+                SET updated_by = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s;
+                """,
+                (int(current_user["id"]), plan_config_id),
+            )
+            sync_plan_station_items_completion_by_history(cur, plan_config_id, wait_for_lock=False)
+
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": f"模板派工已写入 {applied_count} 个站点任务。",
+                "applied_count": applied_count,
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
     finally:
         close_db_resources(cur, conn)
 

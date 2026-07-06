@@ -1035,10 +1035,15 @@
                     </div>
                 </div>
 
-                <div class="overview-summary-bar">
-                    <span class="plan-status-chip neutral">全部计划：{{ managedPlanRows.length }}</span>
-                    <span class="plan-status-chip editable">已完成：{{ managedFinishedPlanCount }}</span>
-                    <span class="plan-status-chip readonly">未完成：{{ managedPendingPlanCount }}</span>
+                <div class="overview-summary-bar manage-summary-bar">
+                    <div class="manage-summary-chips">
+                        <span class="plan-status-chip neutral">全部计划：{{ managedPlanRows.length }}</span>
+                        <span class="plan-status-chip editable">已完成：{{ managedFinishedPlanCount }}</span>
+                        <span class="plan-status-chip readonly">未完成：{{ managedPendingPlanCount }}</span>
+                    </div>
+                    <button class="ai-plan-btn" type="button" @click="openAiAssignDialog">
+                        模板批量派工
+                    </button>
                 </div>
 
                 <div class="table-wrap manage-plan-table-wrap">
@@ -1155,6 +1160,161 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="aiAssignDialog.visible" class="plan-dialog-overlay ai-plan-dialog-overlay">
+        <div class="card-surface plan-dialog ai-plan-dialog">
+            <div class="plan-dialog-header">
+                <div>
+                    <div class="section-kicker">模板批量派工</div>
+                    <h3>上传固定模板，先审核再写入计划</h3>
+                    <div class="plan-dialog-meta">
+                        <span>下载模板后填写</span>
+                        <span>按当前日期匹配有效计划</span>
+                        <span>支持多检查人分配</span>
+                    </div>
+                </div>
+                <button class="ghost-btn" type="button" @click="closeAiAssignDialog">关闭</button>
+            </div>
+
+            <div class="plan-dialog-body">
+                <div class="ai-assignment-input-panel template-assignment-input-panel">
+                    <div class="assignment-template-card">
+                        <span class="ai-upload-icon">XLS</span>
+                        <div>
+                            <strong>固定模板格式</strong>
+                            <p>前 3 列为序号、片区、加油站；后方每一列是检查表名称，单元格填写检查人姓名，多人可用“、”分隔。</p>
+                        </div>
+                        <button class="ghost-btn" type="button" :disabled="aiAssignDialog.isDownloadingTemplate"
+                            @click="downloadAssignmentTemplate">
+                            {{ aiAssignDialog.isDownloadingTemplate ? '正在生成...' : '下载模板文件' }}
+                        </button>
+                    </div>
+
+                    <label class="ai-upload-zone">
+                        <input type="file" accept=".xlsx,.xlsm" @change="handleAiAssignmentFileChange" />
+                        <span class="ai-upload-icon">表</span>
+                        <strong>{{ aiAssignDialog.fileName || '上传填写后的 .xlsx 模板' }}</strong>
+                        <small>请不要修改表头；旧版 .xls 请另存为 .xlsx 后上传。</small>
+                    </label>
+                </div>
+
+                <div class="ai-assignment-actions">
+                    <div class="ai-assignment-hint">
+                        系统会严格按模板列解析派工内容，再用真实检查表计划、站点和督导组账号做二次校验。
+                    </div>
+                    <button class="primary-btn" type="button" :disabled="aiAssignDialog.isParsing"
+                        @click="generateAiAssignmentPreview">
+                        {{ aiAssignDialog.isParsing ? '解析中...' : '生成派工预览' }}
+                    </button>
+                </div>
+
+                <div v-if="aiAssignDialog.rows.length" class="ai-preview-panel">
+                    <div class="ai-preview-head">
+                        <div>
+                            <div class="section-kicker">审核清单</div>
+                            <h3>请确认模板解析结果</h3>
+                            <p>
+                                当前按 {{ aiAssignDialog.targetDate || '今天' }} 匹配计划；确认无误后再写入系统。
+                            </p>
+                        </div>
+                        <div class="ai-preview-stats">
+                            <span class="plan-status-chip neutral">共 {{ aiAssignDialog.summary.total || aiAssignDialog.rows.length }} 条</span>
+                            <span class="plan-status-chip editable">可写入 {{ aiAssignableRows.length }} 条</span>
+                            <span class="plan-status-chip readonly">需处理 {{ aiAssignDialog.summary.error || 0 }} 条</span>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap ai-preview-table-wrap">
+                        <table class="plan-table ai-preview-table">
+                            <thead>
+                                <tr>
+                                    <th>确认</th>
+                                    <th>匹配计划</th>
+                                    <th>站点</th>
+                                    <th>检查人</th>
+                                    <th>原分配</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="row in aiAssignDialog.rows" :key="row.source_index + '-' + (row.plan_config_id || 'x') + '-' + (row.station_id || 'y')">
+                                    <td>
+                                        <label class="plan-checkbox-wrap" :class="{ disabled: !row.can_apply }">
+                                            <input type="checkbox" v-model="row.selected" :disabled="!row.can_apply" />
+                                            <span>{{ row.can_apply ? '写入' : '不可写入' }}</span>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <div class="table-title">{{ row.inspection_table_name || row.source_table_name || '-' }}</div>
+                                        <div class="table-sub">
+                                            {{ row.coverage_type_label || '-' }} · {{ row.period_key || '-' }}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="table-title">{{ row.station_name || row.source_station_name || '-' }}</div>
+                                        <div class="table-sub">{{ row.station_region || '-' }} · 监控{{ row.monitoring_status || '-' }}</div>
+                                    </td>
+                                    <td>
+                                        <strong>{{ row.inspector_names || row.source_inspector_text || '-' }}</strong>
+                                    </td>
+                                    <td>
+                                        <span>{{ row.previous_inspector_names || '未分配' }}</span>
+                                    </td>
+                                    <td>
+                                        <span :class="['ai-row-status', row.status]">
+                                            {{ getAiAssignmentStatusLabel(row) }}
+                                        </span>
+                                        <div class="table-sub">{{ row.message }}</div>
+                                        <div v-if="row.raw_text" class="table-sub">来源：{{ row.raw_text }}</div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mobile-ai-preview-list">
+                        <div v-for="row in aiAssignDialog.rows" :key="'mobile-ai-' + row.source_index + '-' + (row.station_id || 'x')"
+                            class="mobile-ai-preview-card">
+                            <div class="mobile-card-head">
+                                <div class="mobile-card-title-wrap">
+                                    <div class="mobile-card-kicker">{{ row.coverage_type_label || '未匹配计划' }} · {{ row.period_key || '-' }}</div>
+                                    <div class="mobile-card-title">{{ row.station_name || row.source_station_name || '-' }}</div>
+                                    <div class="mobile-card-meta">{{ row.inspection_table_name || row.source_table_name || '-' }}</div>
+                                </div>
+                                <span :class="['ai-row-status', row.status]">{{ getAiAssignmentStatusLabel(row) }}</span>
+                            </div>
+                            <div class="mobile-card-grid">
+                                <div class="mobile-card-row">
+                                    <span>检查人</span>
+                                    <strong>{{ row.inspector_names || row.source_inspector_text || '-' }}</strong>
+                                </div>
+                                <div class="mobile-card-row">
+                                    <span>原分配</span>
+                                    <strong>{{ row.previous_inspector_names || '未分配' }}</strong>
+                                </div>
+                                <div class="mobile-card-row mobile-card-row-full">
+                                    <span>校验信息</span>
+                                    <strong>{{ row.message }}</strong>
+                                </div>
+                            </div>
+                            <label class="mobile-plan-toggle" :class="{ disabled: !row.can_apply }">
+                                <input type="checkbox" v-model="row.selected" :disabled="!row.can_apply" />
+                                <span>{{ row.can_apply ? '确认写入这条派工' : '当前不可写入' }}</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="plan-dialog-actions">
+                    <button class="ghost-btn" type="button" @click="closeAiAssignDialog">取消</button>
+                    <button class="primary-btn" type="button" :disabled="!selectedAiAssignmentRows.length || aiAssignDialog.isApplying"
+                        @click="applyAiAssignments">
+                        {{ aiAssignDialog.isApplying ? '写入中...' : `写入已勾选 ${selectedAiAssignmentRows.length} 条` }}
+                    </button>
                 </div>
             </div>
         </div>
@@ -1620,6 +1780,21 @@ const planSavingLock = ref({
 const manageDialog = ref({
     visible: false
 })
+const aiAssignDialog = ref({
+    visible: false,
+    sourceText: '',
+    file: null,
+    fileName: '',
+    rows: [],
+    summary: {},
+    targetDate: '',
+    aiGenerated: false,
+    templateInfo: {},
+    message: '',
+    isParsing: false,
+    isApplying: false,
+    isDownloadingTemplate: false
+})
 const historyFilters = ref({
     tableName: 'all',
     periodKey: 'all',
@@ -1979,6 +2154,14 @@ const managedFinishedPlanCount = computed(() => {
 
 const managedPendingPlanCount = computed(() => {
     return managedPlanRows.value.length - managedFinishedPlanCount.value
+})
+
+const aiAssignableRows = computed(() => {
+    return aiAssignDialog.value.rows.filter((row) => row.can_apply)
+})
+
+const selectedAiAssignmentRows = computed(() => {
+    return aiAssignDialog.value.rows.filter((row) => row.can_apply && row.selected)
 })
 
 const parsePeriodConfig = (coverageType, periodKey) => {
@@ -2873,8 +3056,10 @@ const requestJson = async (url, options = {}) => {
     })
 
     let payload = null
+    let rawText = ''
     try {
-        payload = await response.json()
+        rawText = await response.text()
+        payload = rawText ? JSON.parse(rawText) : null
     } catch {
         payload = null
     }
@@ -2891,6 +3076,50 @@ const requestJson = async (url, options = {}) => {
         if (payload?.existing_id) {
             error.existing_id = payload.existing_id
         }
+        throw error
+    }
+
+    return payload
+}
+
+const requestFormData = async (url, formData, options = {}) => {
+    const token = getStoredAuthToken()
+    const headers = {
+        ...(options.headers || {})
+    }
+    if (isUsableAuthToken(token)) {
+        headers.Authorization = `Bearer ${token}`
+    }
+
+    const response = await fetch(url, {
+        ...options,
+        method: options.method || 'POST',
+        headers,
+        body: formData
+    })
+
+    let payload = null
+    let rawText = ''
+    try {
+        rawText = await response.text()
+        payload = rawText ? JSON.parse(rawText) : null
+    } catch {
+        payload = null
+    }
+
+    if (response.status === 401) {
+        notifyAuthSessionExpired(payload?.error || '登录已过期，请重新登录。')
+    }
+
+    if (!response.ok || payload?.success === false) {
+        const fallbackMessage = response.status >= 500
+            ? '服务器处理派工模板超时或异常，请稍后重试；如果文件很大，可以先减少行数后再上传。'
+            : `请求失败：${response.status}`
+        const message = payload?.error || payload?.message || fallbackMessage
+        const error = new Error(message)
+        error.payload = payload
+        error.status = response.status
+        error.rawText = rawText
         throw error
     }
 
@@ -3192,6 +3421,192 @@ const openManagePlansDialog = () => {
 
 const closeManagePlansDialog = () => {
     manageDialog.value.visible = false
+}
+
+const openAiAssignDialog = () => {
+    if (!isPlanManager) return
+    aiAssignDialog.value.visible = true
+}
+
+const closeAiAssignDialog = () => {
+    if (aiAssignDialog.value.isParsing || aiAssignDialog.value.isApplying) return
+    aiAssignDialog.value = {
+        visible: false,
+        sourceText: '',
+        file: null,
+        fileName: '',
+        rows: [],
+        summary: {},
+        targetDate: '',
+        aiGenerated: false,
+        templateInfo: {},
+        message: '',
+        isParsing: false,
+        isApplying: false,
+        isDownloadingTemplate: false
+    }
+}
+
+const handleAiAssignmentFileChange = (event) => {
+    const file = event.target.files?.[0] || null
+    if (file) {
+        const fileName = String(file.name || '').toLowerCase()
+        if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xlsm')) {
+            window.alert('请上传固定模板 .xlsx 或 .xlsm 文件。')
+            event.target.value = ''
+            aiAssignDialog.value.file = null
+            aiAssignDialog.value.fileName = ''
+            aiAssignDialog.value.rows = []
+            aiAssignDialog.value.summary = {}
+            return
+        }
+    }
+    aiAssignDialog.value.file = file
+    aiAssignDialog.value.fileName = file?.name || ''
+    aiAssignDialog.value.rows = []
+    aiAssignDialog.value.summary = {}
+}
+
+const getAiAssignmentStatusLabel = (row) => {
+    if (row?.status === 'error') return '需处理'
+    if (row?.status === 'warning') return '需复核'
+    return row?.can_apply ? '可写入' : '不可写入'
+}
+
+const downloadAssignmentTemplate = async () => {
+    if (aiAssignDialog.value.isDownloadingTemplate) return
+    aiAssignDialog.value.isDownloadingTemplate = true
+    try {
+        const token = getStoredAuthToken()
+        const headers = {}
+        if (isUsableAuthToken(token)) {
+            headers.Authorization = `Bearer ${token}`
+        }
+        const response = await fetch('/api/inspection-plan-assignments/template', {
+            method: 'GET',
+            headers
+        })
+
+        if (response.status === 401) {
+            let payload = null
+            try {
+                payload = await response.json()
+            } catch {
+                payload = null
+            }
+            notifyAuthSessionExpired(payload?.error || '登录已过期，请重新登录。')
+            return
+        }
+
+        if (!response.ok) {
+            let message = `下载模板失败：${response.status}`
+            try {
+                const payload = await response.json()
+                message = payload?.error || payload?.message || message
+            } catch {
+                // keep fallback message
+            }
+            throw new Error(message)
+        }
+
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = '巡检计划派工模板.xlsx'
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(url)
+    } catch (error) {
+        window.alert(error.message || '下载派工模板失败。')
+    } finally {
+        aiAssignDialog.value.isDownloadingTemplate = false
+    }
+}
+
+const generateAiAssignmentPreview = async () => {
+    if (aiAssignDialog.value.isParsing) return
+    if (!aiAssignDialog.value.file) {
+        window.alert('请先上传填写后的派工模板。')
+        return
+    }
+
+    const formData = new FormData()
+    formData.append('file', aiAssignDialog.value.file)
+
+    aiAssignDialog.value.isParsing = true
+    aiAssignDialog.value.rows = []
+    aiAssignDialog.value.summary = {}
+    planSavingLock.value = {
+        visible: true,
+        title: '正在生成派工预览',
+        message: '系统正在读取模板，并校验检查表、站点和检查人，请稍候。'
+    }
+
+    try {
+        const payload = await requestFormData('/api/inspection-plan-assignments/template-preview', formData)
+        aiAssignDialog.value.rows = (payload.rows || []).map((row) => ({
+            ...row,
+            selected: Boolean(row.can_apply)
+        }))
+        aiAssignDialog.value.summary = payload.summary || {}
+        aiAssignDialog.value.targetDate = payload.target_date || ''
+        aiAssignDialog.value.aiGenerated = Boolean(payload.ai_generated)
+        aiAssignDialog.value.templateInfo = payload.template_info || {}
+        aiAssignDialog.value.message = payload.message || ''
+        if (!aiAssignDialog.value.rows.length) {
+            window.alert(payload.message || '未能解析到可审核的派工内容，请检查模板格式。')
+        }
+    } catch (error) {
+        window.alert(error.message || '生成派工预览失败。')
+    } finally {
+        aiAssignDialog.value.isParsing = false
+        planSavingLock.value.visible = false
+    }
+}
+
+const applyAiAssignments = async () => {
+    if (aiAssignDialog.value.isApplying) return
+    const rows = selectedAiAssignmentRows.value
+    if (!rows.length) {
+        window.alert('请先勾选需要写入的派工项。')
+        return
+    }
+    const confirmed = window.confirm(`确定写入 ${rows.length} 条模板派工结果吗？写入后会更新对应当前周期计划。`)
+    if (!confirmed) return
+
+    aiAssignDialog.value.isApplying = true
+    planSavingLock.value = {
+        visible: true,
+        title: '正在写入模板派工结果',
+        message: '系统正在批量更新当前周期检查表计划，请不要关闭页面。'
+    }
+
+    try {
+        const payload = await requestJson('/api/inspection-plan-assignments/template-apply', {
+            method: 'POST',
+            body: JSON.stringify({
+                rows: rows.map((row) => ({
+                    selected: true,
+                    plan_config_id: row.plan_config_id,
+                    station_id: row.station_id,
+                    inspector_ids: row.inspector_ids || [],
+                    note: '模板批量派工'
+                }))
+            })
+        })
+        await refreshPlanViews()
+        window.dispatchEvent(new Event('plan-assignment-pending-refresh'))
+        window.alert(payload.message || '模板派工已写入。')
+        aiAssignDialog.value.isApplying = false
+        closeAiAssignDialog()
+    } catch (error) {
+        window.alert(error.message || '模板派工写入失败。')
+    } finally {
+        aiAssignDialog.value.isApplying = false
+        planSavingLock.value.visible = false
+    }
 }
 
 const openManagedPlanCreate = () => {
@@ -4497,6 +4912,274 @@ onBeforeUnmount(() => {
     line-height: 1.8;
 }
 
+.manage-summary-bar {
+    justify-content: space-between;
+    align-items: center;
+}
+
+.manage-summary-chips {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ai-plan-btn {
+    height: 38px;
+    border: 0;
+    border-radius: 999px;
+    padding: 0 18px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+    background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
+    box-shadow: 0 14px 28px rgba(37, 99, 235, 0.22);
+}
+
+.ai-plan-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 34px rgba(37, 99, 235, 0.28);
+}
+
+.ai-plan-dialog-overlay {
+    z-index: 1260;
+}
+
+.ai-plan-dialog {
+    width: min(1180px, 100%);
+}
+
+.ai-assignment-input-panel {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.78fr) minmax(360px, 1.22fr);
+    gap: 16px;
+    align-items: stretch;
+}
+
+.template-assignment-input-panel {
+    grid-template-columns: minmax(300px, 0.95fr) minmax(320px, 1.05fr);
+}
+
+.assignment-template-card {
+    min-height: 196px;
+    padding: 22px;
+    border-radius: 22px;
+    border: 1px solid #dbe4ee;
+    background: linear-gradient(145deg, #ffffff 0%, #f8fafc 58%, #eef6ff 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+}
+
+.assignment-template-card strong {
+    display: block;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 900;
+    margin-bottom: 6px;
+}
+
+.assignment-template-card p {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.75;
+}
+
+.assignment-template-card .ghost-btn {
+    align-self: flex-start;
+}
+
+.ai-upload-zone {
+    position: relative;
+    min-height: 196px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: 22px;
+    border: 1px dashed #93c5fd;
+    border-radius: 22px;
+    background: linear-gradient(145deg, #eff6ff 0%, #f8fafc 58%, #ecfeff 100%);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.ai-upload-zone input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.ai-upload-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 1000;
+    letter-spacing: 0.04em;
+    background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
+    box-shadow: 0 16px 34px rgba(37, 99, 235, 0.24);
+}
+
+.ai-upload-zone strong {
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 900;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.ai-upload-zone small {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.ai-text-input-card {
+    padding: 16px;
+    border: 1px solid #dbe4ee;
+    border-radius: 22px;
+    background: #fff;
+}
+
+.ai-text-input-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 900;
+}
+
+.ai-text-input-card textarea {
+    width: 100%;
+    min-height: 150px;
+    resize: vertical;
+    border: 1px solid #cbd5e1;
+    border-radius: 16px;
+    padding: 14px;
+    color: #0f172a;
+    font-size: 14px;
+    line-height: 1.7;
+    outline: none;
+    background: #f8fafc;
+}
+
+.ai-text-input-card textarea:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+    background: #fff;
+}
+
+.ai-assignment-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid #dbe4ee;
+    background: #f8fafc;
+}
+
+.ai-assignment-hint {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.ai-preview-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.ai-preview-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    border-radius: 20px;
+    border: 1px solid #dbe4ee;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.ai-preview-head h3 {
+    margin: 4px 0 6px;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.ai-preview-head p {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.ai-preview-stats {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ai-preview-table {
+    min-width: 1060px;
+}
+
+.ai-row-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.ai-row-status.ready {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.ai-row-status.warning {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.ai-row-status.error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.mobile-ai-preview-list {
+    display: none;
+}
+
+.mobile-ai-preview-card {
+    padding: 14px;
+    border-radius: 18px;
+    border: 1px solid #dbe4ee;
+    background: #fff;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+}
+
 .manage-plan-table {
     min-width: 980px;
 }
@@ -5406,6 +6089,19 @@ onBeforeUnmount(() => {
         gap: 8px;
     }
 
+    .manage-summary-bar {
+        align-items: stretch;
+    }
+
+    .manage-summary-chips {
+        width: 100%;
+    }
+
+    .ai-plan-btn {
+        width: 100%;
+        height: 44px;
+    }
+
     .overview-summary-bar .plan-status-chip {
         flex: 1 1 calc(50% - 8px);
         justify-content: flex-start;
@@ -5417,7 +6113,8 @@ onBeforeUnmount(() => {
     .history-table-wrap,
     .station-overview-table-wrap,
     .manage-plan-table-wrap,
-    .detail-station-table-wrap {
+    .detail-station-table-wrap,
+    .ai-preview-table-wrap {
         display: none;
     }
 
@@ -5425,8 +6122,15 @@ onBeforeUnmount(() => {
     .mobile-history-list,
     .mobile-overview-station-list,
     .mobile-manage-plan-list,
-    .mobile-detail-station-list {
+    .mobile-detail-station-list,
+    .mobile-ai-preview-list {
         display: block;
+    }
+
+    .mobile-ai-preview-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
     }
 
     .mobile-filter-strip {
@@ -5485,6 +6189,37 @@ onBeforeUnmount(() => {
 
     .plan-config-panel {
         grid-template-columns: 1fr;
+    }
+
+    .ai-assignment-input-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .ai-upload-zone {
+        min-height: 160px;
+        padding: 18px;
+        border-radius: 20px;
+    }
+
+    .assignment-template-card {
+        min-height: auto;
+        padding: 18px;
+        border-radius: 20px;
+    }
+
+    .assignment-template-card .ghost-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .ai-assignment-actions,
+    .ai-preview-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ai-preview-stats {
+        justify-content: flex-start;
     }
 
     .detail-period-flex,

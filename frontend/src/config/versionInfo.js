@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.6.0',
+    date: '2026-07-06',
+    title: '巡检计划模板派工',
+    summary: '巡检计划派工改为固定模板导入。',
+    items: [
+      '巡检计划支持下载固定派工模板。',
+      '上传模板后先生成预览，确认无误再写入计划。',
+      '不再使用 AI 自由识别派工文件，减少识别错误和超时。'
+    ]
+  },
+  {
     version: 'v3.5.5',
     date: '2026-07-04',
     title: '巡检记录移动端优化',
