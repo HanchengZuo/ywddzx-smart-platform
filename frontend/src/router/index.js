@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
+import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisibility'
 
 const EmptyRouteView = { template: '<div></div>' }
 
@@ -100,6 +101,10 @@ const routes = [
     component: () => import('../views/management/AiUsageManagementView.vue')
   },
   {
+    path: '/management/page-visibility',
+    component: () => import('../views/management/PageVisibilityManagementView.vue')
+  },
+  {
     path: '/management/backups',
     component: () => import('../views/management/BackupManagementView.vue')
   },
@@ -122,6 +127,7 @@ const hasPermission = (role, permissions, key) => role === 'root' || Boolean(per
 
 const canAccessPath = (path, role, permissions) => {
   if (role === 'root') return true
+  if (path === '/management/page-visibility') return false
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
   if (path === '/management/checklists') return hasPermission(role, permissions, 'manage_checklists')
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
@@ -166,32 +172,48 @@ const canAccessPath = (path, role, permissions) => {
   return true
 }
 
-const resolveFallbackPath = (role, permissions) => {
-  if (role === 'root') return '/inspection/station-map'
-  if (role === 'station_manager') return '/inspection/my-issues'
-  if (permissions.view_station_map) return '/inspection/station-map'
-  if (permissions.submit_inspections) return '/inspection/register'
-  if (permissions.view_inspection_standards) return '/inspection/standards'
-  if (permissions.view_checklist_originals) return '/inspection/checklist-originals'
-  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) return '/inspection/issues'
-  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) return '/inspection/records'
-  if (permissions.view_inspection_plans) return '/inspection/plan'
-  if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
-    return '/inspection/certificates'
+const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
+  const candidates = []
+  if (role === 'root') {
+    candidates.push(
+      '/inspection/station-map',
+      '/inspection/issues',
+      '/inspection/records',
+      '/management/page-visibility'
+    )
   }
-  if (permissions.view_attendance) return '/assessment/attendance'
-  if (permissions.view_station_scores) return '/assessment/station-score'
-  if (permissions.view_peer_reviews) return '/assessment/peer-review'
-  if (permissions.view_assessment) return '/assessment'
-  if (permissions.view_training) return '/training'
-  if (permissions.view_training_materials) return '/training/materials'
-  if (permissions.manage_stations) return '/management/stations'
-  if (permissions.manage_checklists) return '/management/checklists'
-  if (permissions.manage_internal_standards) return '/management/internal-standards'
-  if (permissions.manage_ai_usage) return '/management/ai-usage'
-  if (role === 'root') return '/management/inspection-completion'
-  if (role === 'supervisor') return '/inspection/my-issues'
-  return '/feedback'
+  if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  if (permissions.view_station_map) candidates.push('/inspection/station-map')
+  if (permissions.submit_inspections) candidates.push('/inspection/register')
+  if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
+  if (permissions.view_checklist_originals) candidates.push('/inspection/checklist-originals')
+  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) {
+    candidates.push('/inspection/issues')
+  }
+  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) {
+    candidates.push('/inspection/records')
+  }
+  if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
+  if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
+    candidates.push('/inspection/certificates')
+  }
+  if (permissions.view_attendance) candidates.push('/assessment/attendance')
+  if (permissions.view_station_scores) candidates.push('/assessment/station-score')
+  if (permissions.view_peer_reviews) candidates.push('/assessment/peer-review')
+  if (permissions.view_assessment) candidates.push('/assessment')
+  if (permissions.view_training) candidates.push('/training')
+  if (permissions.view_training_materials) candidates.push('/training/materials')
+  if (permissions.manage_stations) candidates.push('/management/stations')
+  if (permissions.manage_checklists) candidates.push('/management/checklists')
+  if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
+  if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
+  if (role === 'root') {
+    candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
+  }
+  if (role === 'supervisor') candidates.push('/inspection/my-issues')
+  candidates.push('/feedback')
+
+  return candidates.find((path) => canAccessPath(path, role, permissions) && isPathVisible(path)) || '/feedback'
 }
 
 const verifyStoredAuthToken = async () => {
@@ -217,7 +239,12 @@ router.beforeEach(async (to, from, next) => {
       } catch (error) {
         verifiedPermissions = {}
       }
-      next(resolveFallbackPath(verifiedRole, verifiedPermissions))
+      const visibilitySettings = await fetchPageVisibility()
+      next(resolveFallbackPath(
+        verifiedRole,
+        verifiedPermissions,
+        (path) => isPageVisibleInSnapshot(path, visibilitySettings)
+      ))
       return
     }
     next()
@@ -238,7 +265,24 @@ router.beforeEach(async (to, from, next) => {
   }
 
   if (!canAccessPath(to.path, verifiedRole, verifiedPermissions)) {
-    next(resolveFallbackPath(verifiedRole, verifiedPermissions))
+    const visibilitySettings = await fetchPageVisibility()
+    next(resolveFallbackPath(
+      verifiedRole,
+      verifiedPermissions,
+      (path) => isPageVisibleInSnapshot(path, visibilitySettings)
+    ))
+    return
+  }
+
+  const visibilitySettings = await fetchPageVisibility()
+  const isPathVisible = (path) => isPageVisibleInSnapshot(path, visibilitySettings)
+  if (!isPathVisible(to.path)) {
+    const fallbackPath = resolveFallbackPath(verifiedRole, verifiedPermissions, isPathVisible)
+    if (fallbackPath === to.path) {
+      next()
+      return
+    }
+    next(fallbackPath)
     return
   }
 

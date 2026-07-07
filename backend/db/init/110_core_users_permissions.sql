@@ -51,3 +51,14 @@ CREATE TABLE role_permissions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                       -- 更新时间
     PRIMARY KEY (role, permission_key)
 );
+
+CREATE TABLE system_page_visibility (
+    page_key TEXT PRIMARY KEY,                                             -- 页面标识，通常为前端路由路径
+    is_visible BOOLEAN NOT NULL DEFAULT TRUE,                              -- 是否在菜单与路由中显示
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,            -- 最后维护人
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,                        -- 创建时间
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP                         -- 更新时间
+);
+
+CREATE INDEX idx_system_page_visibility_visible
+ON system_page_visibility(is_visible);

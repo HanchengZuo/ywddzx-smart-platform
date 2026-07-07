@@ -137,7 +137,7 @@
         </button>
       </div>
 
-      <div class="menu-section">
+      <div v-if="canViewInspectionSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">巡检系统</div>
 
         <button v-if="canSubmitInspections" class="nav-item"
@@ -258,9 +258,9 @@
         </button>
       </div>
 
-      <div class="menu-section">
+      <div v-if="canViewCommonSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
-        <button class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
+        <button v-if="canViewFeedback" class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/feedback')" :title="sidebarCollapsed ? '系统反馈' : ''">
           <span class="nav-item-icon feedback-nav-icon">
             馈
@@ -313,6 +313,12 @@
           @click="go('/management/ai-usage')" :title="sidebarCollapsed ? 'AI调用统计' : ''">
           <span class="nav-item-icon">智</span>
           <span v-if="!sidebarCollapsed">AI调用统计</span>
+        </button>
+        <button v-if="canManagePageVisibility" class="nav-item"
+          :class="{ active: isActive('/management/page-visibility'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/page-visibility')" :title="sidebarCollapsed ? '页面显示管理' : ''">
+          <span class="nav-item-icon">显</span>
+          <span v-if="!sidebarCollapsed">页面显示管理</span>
         </button>
       </div>
     </aside>
@@ -560,6 +566,12 @@ import {
   syncAxiosAuthHeader,
   verifyAuthSession
 } from './utils/authSession'
+import {
+  clearPageVisibilityCache,
+  fetchPageVisibility,
+  getPageVisibilitySnapshot,
+  PAGE_VISIBILITY_UPDATED_EVENT
+} from './utils/pageVisibility'
 
 const router = useRouter()
 const route = useRoute()
@@ -682,6 +694,7 @@ const serverResourceState = reactive({
   onlineUsers: [],
   sampledAt: ''
 })
+const pageVisibilitySettings = ref(getPageVisibilitySnapshot())
 
 const parseStoredPermissions = () => {
   try {
@@ -741,53 +754,67 @@ const isNonOil = computed(() => authState.role === 'non_oil')
 const isFinance = computed(() => authState.role === 'finance')
 const isAreaAccount = computed(() => authState.role === 'area_account')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
-const canViewStationMap = computed(() => hasPermissionKey('view_station_map'))
-const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections'))
-const canViewInspectionStandards = computed(() => hasPermissionKey('view_inspection_standards'))
-const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklist_originals'))
+const isPageVisible = (path) => pageVisibilitySettings.value[path] !== false
+const canViewStationMap = computed(() => hasPermissionKey('view_station_map') && isPageVisible('/inspection/station-map'))
+const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections') && isPageVisible('/inspection/register'))
+const canViewInspectionStandards = computed(() => hasPermissionKey('view_inspection_standards') && isPageVisible('/inspection/standards'))
+const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklist_originals') && isPageVisible('/inspection/checklist-originals'))
 const canViewIssues = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_inspection_issues) ||
   Boolean(localPermissions.value.limit_issue_station_region_scope) ||
   Boolean(localPermissions.value.view_own_inspection_issues) ||
   Boolean(localPermissions.value.submit_inspections)
-))
+) && isPageVisible('/inspection/issues'))
 const canViewRecords = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_inspection_records) ||
   Boolean(localPermissions.value.limit_record_station_region_scope) ||
   Boolean(localPermissions.value.view_own_inspection_records)
-))
-const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans'))
+) && isPageVisible('/inspection/records'))
+const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans') && isPageVisible('/inspection/plan'))
 const canViewCertificates = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_certificates) ||
   Boolean(localPermissions.value.limit_certificate_station_region_scope) ||
   Boolean(localPermissions.value.view_own_certificates) ||
   Boolean(localPermissions.value.edit_own_certificates)
+) && isPageVisible('/inspection/certificates'))
+const canViewMyIssues = computed(() => (isSupervisor.value || isStationManager.value) && isPageVisible('/inspection/my-issues'))
+const canViewInspectionSection = computed(() => (
+  canSubmitInspections.value ||
+  canViewInspectionStandards.value ||
+  canViewChecklistOriginals.value ||
+  canViewMyIssues.value ||
+  canViewIssues.value ||
+  canViewRecords.value ||
+  canViewInspectionPlans.value ||
+  canViewCertificates.value
 ))
-const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment'))
-const canViewAttendance = computed(() => hasPermissionKey('view_attendance'))
-const canViewStationScores = computed(() => hasPermissionKey('view_station_scores'))
-const canViewPeerReviews = computed(() => hasPermissionKey('view_peer_reviews'))
+const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment') && isPageVisible('/assessment'))
+const canViewAttendance = computed(() => hasPermissionKey('view_attendance') && isPageVisible('/assessment/attendance'))
+const canViewStationScores = computed(() => hasPermissionKey('view_station_scores') && isPageVisible('/assessment/station-score'))
+const canViewPeerReviews = computed(() => hasPermissionKey('view_peer_reviews') && isPageVisible('/assessment/peer-review'))
 const canViewAssessmentSection = computed(() => (
   canViewAssessmentHome.value ||
   canViewAttendance.value ||
   canViewStationScores.value ||
   canViewPeerReviews.value
 ))
-const canViewTrainingInternal = computed(() => hasPermissionKey('view_training'))
-const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials'))
+const canViewTrainingInternal = computed(() => hasPermissionKey('view_training') && isPageVisible('/training'))
+const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials') && isPageVisible('/training/materials'))
 const canViewTrainingSection = computed(() => canViewTrainingInternal.value || canViewTrainingMaterials.value)
-const canViewMyIssues = computed(() => isSupervisor.value || isStationManager.value)
-const canViewVehicle = computed(() => isRoot.value || isSupervisor.value)
-const canManageUsers = computed(() => isRoot.value)
-const canManageStations = computed(() => hasPermissionKey('manage_stations'))
-const canManageChecklists = computed(() => hasPermissionKey('manage_checklists'))
-const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards'))
-const canManageInspectionCompletion = computed(() => isRoot.value)
-const canManageBackups = computed(() => isRoot.value)
-const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage'))
+const canViewVehicle = computed(() => (isRoot.value || isSupervisor.value) && isPageVisible('/vehicle'))
+const canViewFeedback = computed(() => isPageVisible('/feedback'))
+const canViewCommonSection = computed(() => canViewFeedback.value)
+const canManageUsers = computed(() => isRoot.value && isPageVisible('/management/users'))
+const canManageStations = computed(() => hasPermissionKey('manage_stations') && isPageVisible('/management/stations'))
+const canManageChecklists = computed(() => hasPermissionKey('manage_checklists') && isPageVisible('/management/checklists'))
+const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards') && isPageVisible('/management/internal-standards'))
+const canManageInspectionCompletion = computed(() => isRoot.value && isPageVisible('/management/inspection-completion'))
+const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
+const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
+const canManagePageVisibility = computed(() => isRoot.value)
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
   canManageStations.value ||
@@ -795,7 +822,8 @@ const canViewManagementSection = computed(() => (
   canManageInternalStandards.value ||
   canManageInspectionCompletion.value ||
   canManageBackups.value ||
-  canManageAiUsage.value
+  canManageAiUsage.value ||
+  canManagePageVisibility.value
 ))
 const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
@@ -966,6 +994,25 @@ const syncAuthState = () => {
   authState.address = localStorage.getItem('address') || ''
   authState.mustChangePassword = getStoredMustChangePassword()
   authState.permissions = parseStoredPermissions()
+}
+
+const resetPageVisibilityState = () => {
+  clearPageVisibilityCache()
+  pageVisibilitySettings.value = {}
+}
+
+const refreshPageVisibilityState = async ({ force = false } = {}) => {
+  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+    resetPageVisibilityState()
+    return {}
+  }
+  const settings = await fetchPageVisibility({ force })
+  pageVisibilitySettings.value = settings
+  return settings
+}
+
+const handlePageVisibilityUpdated = (event) => {
+  pageVisibilitySettings.value = event?.detail?.settings || getPageVisibilitySnapshot()
 }
 
 const showAuthSessionMessageIfNeeded = () => {
@@ -1392,12 +1439,14 @@ watch(
       resetSessionNotice()
       resetNotificationCounts()
       resetServerResourceState()
+      resetPageVisibilityState()
       resetBirthdayBlessing()
     } else {
       if (isUsableAuthToken(getStoredAuthToken())) {
         scheduleIdleLogout()
       }
       window.setTimeout(runSessionMonitor, 0)
+      window.setTimeout(() => refreshPageVisibilityState(), 0)
       window.setTimeout(() => refreshNotificationSummary({ markFeedback: route.path === '/feedback' }), 0)
       window.setTimeout(() => refreshServerResources(), 0)
     }
@@ -1414,6 +1463,7 @@ onMounted(() => {
   window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.addEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
+  window.addEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
   idleActivityEvents.forEach((eventName) => {
     window.addEventListener(eventName, markUserActivity, { passive: true })
   })
@@ -1430,6 +1480,7 @@ onMounted(() => {
   if (!isLoginPage.value && isUsableAuthToken(getStoredAuthToken())) {
     lastUserActivityAt = Date.now()
     scheduleIdleLogout()
+    refreshPageVisibilityState()
   }
   if (!sessionMonitorTimer) {
     sessionMonitorTimer = window.setInterval(runSessionMonitor, sessionCheckIntervalMs)
@@ -1451,6 +1502,7 @@ onBeforeUnmount(() => {
   window.removeEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.removeEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.removeEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
+  window.removeEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
   idleActivityEvents.forEach((eventName) => {
     window.removeEventListener(eventName, markUserActivity)
   })
@@ -1484,34 +1536,40 @@ const isActive = (path) => route.path === path
 const resolveHomePath = (user) => {
   const role = user?.role || ''
   const permissions = user?.permissions || {}
-  if (role === 'station_manager') return '/inspection/my-issues'
-  if (role === 'root' || permissions.view_station_map) return '/inspection/station-map'
-  if (permissions.submit_inspections) return '/inspection/register'
-  if (permissions.view_inspection_standards) return '/inspection/standards'
-  if (permissions.view_checklist_originals) return '/inspection/checklist-originals'
-  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) return '/inspection/issues'
-  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) return '/inspection/records'
-  if (permissions.view_inspection_plans) return '/inspection/plan'
+  const candidates = []
+  if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  if (role === 'root' || permissions.view_station_map) candidates.push('/inspection/station-map')
+  if (permissions.submit_inspections) candidates.push('/inspection/register')
+  if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
+  if (permissions.view_checklist_originals) candidates.push('/inspection/checklist-originals')
+  if (permissions.view_all_inspection_issues || permissions.limit_issue_station_region_scope || permissions.view_own_inspection_issues) {
+    candidates.push('/inspection/issues')
+  }
+  if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) {
+    candidates.push('/inspection/records')
+  }
+  if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
   if (
     permissions.view_all_certificates ||
     permissions.limit_certificate_station_region_scope ||
     permissions.view_own_certificates ||
     permissions.edit_own_certificates
   ) {
-    return '/inspection/certificates'
+    candidates.push('/inspection/certificates')
   }
-  if (permissions.view_attendance) return '/assessment/attendance'
-  if (permissions.view_station_scores) return '/assessment/station-score'
-  if (permissions.view_peer_reviews) return '/assessment/peer-review'
-  if (permissions.view_assessment) return '/assessment'
-  if (permissions.view_training) return '/training'
-  if (permissions.view_training_materials) return '/training/materials'
-  if (permissions.manage_stations) return '/management/stations'
-  if (permissions.manage_checklists) return '/management/checklists'
-  if (permissions.manage_internal_standards) return '/management/internal-standards'
-  if (permissions.manage_ai_usage) return '/management/ai-usage'
-  if (role === 'root') return '/management/inspection-completion'
-  return '/feedback'
+  if (permissions.view_attendance) candidates.push('/assessment/attendance')
+  if (permissions.view_station_scores) candidates.push('/assessment/station-score')
+  if (permissions.view_peer_reviews) candidates.push('/assessment/peer-review')
+  if (permissions.view_assessment) candidates.push('/assessment')
+  if (permissions.view_training) candidates.push('/training')
+  if (permissions.view_training_materials) candidates.push('/training/materials')
+  if (permissions.manage_stations) candidates.push('/management/stations')
+  if (permissions.manage_checklists) candidates.push('/management/checklists')
+  if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
+  if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
+  if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')
+  candidates.push('/feedback')
+  return candidates.find((path) => isPageVisible(path)) || (role === 'root' ? '/management/page-visibility' : '/feedback')
 }
 
 const go = (path) => {
@@ -1633,6 +1691,7 @@ const handleLogin = async () => {
     resetSessionNotice()
     resetPasswordChangeForm()
     syncAuthState()
+    pageVisibilitySettings.value = await fetchPageVisibility({ force: true })
     lastUserActivityAt = Date.now()
     lastIdleActivityMarkedAt = Date.now()
     scheduleIdleLogout()
@@ -1659,6 +1718,7 @@ const handleLogout = async () => {
   resetPasswordChangeForm()
   resetNotificationCounts()
   resetServerResourceState()
+  resetPageVisibilityState()
   resetBirthdayBlessing()
   syncAuthState()
   mobileMenuOpen.value = false

@@ -907,6 +907,7 @@ ISSUE_INSPECTOR_SCHEMA_READY = False
 INSPECTION_COMPLETION_SCHEMA_READY = False
 INSPECTION_PLAN_ASSIGNMENT_SCHEMA_READY = False
 FEEDBACK_SCHEMA_READY = False
+SYSTEM_PAGE_VISIBILITY_SCHEMA_READY = False
 PLAN_COMPLETION_SYNC_LOCK_NAMESPACE = 2026060401
 auth_token_cache_lock = threading.Lock()
 auth_token_cache = {}
@@ -4940,6 +4941,67 @@ def ensure_user_security_schema(cur):
         """
     )
     USER_SECURITY_SCHEMA_READY = True
+
+
+def ensure_system_page_visibility_schema(cur):
+    global SYSTEM_PAGE_VISIBILITY_SCHEMA_READY
+    if SYSTEM_PAGE_VISIBILITY_SCHEMA_READY:
+        return
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_page_visibility (
+            page_key TEXT PRIMARY KEY,
+            is_visible BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_system_page_visibility_visible
+        ON system_page_visibility(is_visible);
+        """
+    )
+    SYSTEM_PAGE_VISIBILITY_SCHEMA_READY = True
+
+
+def fetch_page_visibility_settings(cur):
+    ensure_system_page_visibility_schema(cur)
+    cur.execute(
+        """
+        SELECT page_key, is_visible
+        FROM system_page_visibility
+        ORDER BY page_key ASC;
+        """
+    )
+    return {row["page_key"]: bool(row["is_visible"]) for row in cur.fetchall()}
+
+
+def normalize_page_visibility_items(raw_items):
+    if not isinstance(raw_items, list):
+        raise ValueError("页面显示配置格式不正确。")
+
+    normalized = []
+    seen_keys = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise ValueError("页面显示配置中存在无效项目。")
+        page_key = normalize_text(item.get("page_key"), 120)
+        if not page_key:
+            raise ValueError("页面标识不能为空。")
+        if page_key in seen_keys:
+            raise ValueError(f"页面显示配置中存在重复项目：{page_key}")
+        seen_keys.add(page_key)
+        normalized.append(
+            {
+                "page_key": page_key,
+                "is_visible": bool(item.get("is_visible")),
+            }
+        )
+    return normalized
 
 
 def ensure_ai_usage_schema(cur):
@@ -14532,6 +14594,109 @@ def get_frontend_version():
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+@app.route("/api/page-visibility", methods=["GET"])
+def get_page_visibility():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_system_page_visibility_schema(cur)
+        conn.commit()
+        return jsonify({"success": True, "settings": fetch_page_visibility_settings(cur)})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/page-visibility", methods=["GET"])
+def get_management_page_visibility():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        ensure_system_page_visibility_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_users")
+        return jsonify({"success": True, "settings": fetch_page_visibility_settings(cur)})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/page-visibility", methods=["PUT"])
+def update_management_page_visibility():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        page_items = normalize_page_visibility_items(data.get("pages"))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_user_security_schema(cur)
+        ensure_system_page_visibility_schema(cur)
+        actor = require_management_user(cur, user_id, "manage_users")
+        for item in page_items:
+            cur.execute(
+                """
+                INSERT INTO system_page_visibility (
+                    page_key,
+                    is_visible,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (page_key)
+                DO UPDATE SET
+                    is_visible = EXCLUDED.is_visible,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (item["page_key"], item["is_visible"], actor["id"]),
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "页面显示设置已保存。",
+                "settings": fetch_page_visibility_settings(cur),
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
 
 
 @app.route("/api/system/resources")
