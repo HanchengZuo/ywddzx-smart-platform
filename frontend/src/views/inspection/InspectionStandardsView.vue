@@ -24,23 +24,23 @@
       <div class="filter-layout">
         <label class="filter-item keyword-filter">
           <span>关键词搜索</span>
-          <input v-model.trim="keyword" type="search" placeholder="搜索内部规范ID、字段内容或外部规范ID" />
+          <input v-model.trim="keyword" type="search" placeholder="搜索内部规范ID、规范内容、标签或外部规范ID" />
         </label>
 
-        <div v-if="filterableFields.length" class="filter-fields">
-          <label v-for="field in filterableFields" :key="field.field_key" class="filter-item">
-            <span>{{ field.field_label }}</span>
-            <select v-model="fieldFilters[field.field_key]">
+        <div v-if="filterableTagGroups.length" class="filter-fields">
+          <label v-for="group in filterableTagGroups" :key="getTagGroupFilterKey(group)" class="filter-item">
+            <span>{{ group.group_name }}</span>
+            <select v-model="tagFilters[getTagGroupFilterKey(group)]">
               <option :value="FILTER_ALL_VALUE">全部</option>
-              <option v-for="value in getFieldFilterOptions(field.field_key)" :key="value" :value="value">
-                {{ value }}
+              <option v-for="tag in getTagFilterOptions(group)" :key="tag.tag_key || tag.tag_name" :value="tag.tag_name">
+                {{ tag.tag_name }}
               </option>
             </select>
           </label>
         </div>
 
         <div class="filter-actions">
-          <button v-if="hasActiveFieldFilters" class="btn btn-light" type="button" @click="clearFieldFilters">
+          <button v-if="hasActiveTagFilters" class="btn btn-light" type="button" @click="clearTagFilters">
             清空筛选
           </button>
           <button class="btn btn-primary" type="button" :disabled="loading || exporting || !filteredStandards.length"
@@ -72,14 +72,14 @@
                 {{ item.linked_externals?.length ? `关联 ${item.linked_externals.length}` : '未关联外部规范' }}
               </span>
             </div>
-            <div class="standard-card-fields">
-              <span v-for="field in shortInternalFields" :key="field.field_key" class="standard-field-chip">
-                <em>{{ field.field_label }}</em>
-                <strong>{{ getFieldValue(item, field.field_key) || '-' }}</strong>
+            <p class="standard-content-preview">{{ getStandardContent(item) || '暂无规范内容' }}</p>
+            <div class="standard-tag-cloud">
+              <span v-for="tag in item.tags || []" :key="`${item.id}-${tag.group_type}-${tag.tag_name}`"
+                class="standard-tag-chip" :style="{ '--tag-color': tag.color || '#2563eb' }">
+                <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
               </span>
+              <span v-if="!(item.tags || []).length" class="empty-inline">暂无标签</span>
             </div>
-            <p v-if="getLongFieldPreview(item)" class="standard-long-preview">{{ getLongFieldPreview(item) }}</p>
-            <p v-else-if="!shortInternalFields.length" class="standard-long-preview">暂无字段内容</p>
           </button>
 
           <div v-if="!loading && !filteredStandards.length" class="empty-block">
@@ -109,18 +109,23 @@
             <div>
               <div class="section-kicker">内部规范详情</div>
               <h3>{{ activeStandard.internal_standard_id }}</h3>
-              <p>{{ formatFieldSummary(activeStandard) }}</p>
+              <p>{{ getStandardContent(activeStandard) || '暂无规范内容' }}</p>
             </div>
           </div>
 
           <div class="detail-block">
-            <strong>内部规范字段</strong>
-            <div class="internal-field-grid">
-              <div v-for="field in internalFields" :key="field.field_key" class="internal-field-item"
-                :class="{ long: field.is_long_text }">
-                <span>{{ field.field_label }}</span>
-                <strong>{{ getFieldValue(activeStandard, field.field_key) || '-' }}</strong>
-              </div>
+            <strong>内部规范内容</strong>
+            <div class="internal-content-block">{{ getStandardContent(activeStandard) || '-' }}</div>
+          </div>
+
+          <div class="detail-block">
+            <strong>规范标签</strong>
+            <div class="standard-tag-cloud detail-tags">
+              <span v-for="tag in activeStandard.tags || []" :key="`${activeStandard.id}-detail-${tag.group_type}-${tag.tag_name}`"
+                class="standard-tag-chip" :style="{ '--tag-color': tag.color || '#2563eb' }">
+                <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
+              </span>
+              <span v-if="!(activeStandard.tags || []).length" class="empty-inline">暂无标签</span>
             </div>
           </div>
 
@@ -154,15 +159,19 @@
           <button class="modal-close" type="button" @click="mobileDialogVisible = false">×</button>
           <div class="section-kicker">内部规范详情</div>
           <h3>{{ activeStandard.internal_standard_id }}</h3>
-          <p class="path-line">{{ formatFieldSummary(activeStandard) }}</p>
+          <p class="path-line">{{ getStandardContent(activeStandard) || '暂无规范内容' }}</p>
           <div class="detail-block">
-            <strong>内部规范字段</strong>
-            <div class="internal-field-grid">
-              <div v-for="field in internalFields" :key="field.field_key" class="internal-field-item"
-                :class="{ long: field.is_long_text }">
-                <span>{{ field.field_label }}</span>
-                <strong>{{ getFieldValue(activeStandard, field.field_key) || '-' }}</strong>
-              </div>
+            <strong>内部规范内容</strong>
+            <div class="internal-content-block">{{ getStandardContent(activeStandard) || '-' }}</div>
+          </div>
+          <div class="detail-block">
+            <strong>规范标签</strong>
+            <div class="standard-tag-cloud detail-tags">
+              <span v-for="tag in activeStandard.tags || []" :key="`${activeStandard.id}-mobile-${tag.group_type}-${tag.tag_name}`"
+                class="standard-tag-chip" :style="{ '--tag-color': tag.color || '#2563eb' }">
+                <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
+              </span>
+              <span v-if="!(activeStandard.tags || []).length" class="empty-inline">暂无标签</span>
             </div>
           </div>
           <div class="detail-block">
@@ -206,91 +215,77 @@ const FILTER_ALL_VALUE = '__ALL__'
 const loading = ref(false)
 const exporting = ref(false)
 const standards = ref([])
-const internalFields = ref([])
+const tagGroups = ref([])
 const activeStandard = ref(null)
 const keyword = ref('')
 const page = ref(1)
 const pageSize = 8
 const mobileDialogVisible = ref(false)
 const isMobile = ref(false)
-const fieldFilters = reactive({})
+const tagFilters = reactive({})
 
 const linkedCount = computed(() => standards.value.filter((item) => item.linked_externals?.length).length)
-const filterableFields = computed(() => internalFields.value.filter((field) => field.is_filterable))
-const shortInternalFields = computed(() => internalFields.value.filter((field) => !field.is_long_text))
-const longInternalFields = computed(() => internalFields.value.filter((field) => field.is_long_text))
-const hasActiveFieldFilters = computed(() => {
-  return filterableFields.value.some((field) => String(fieldFilters[field.field_key] || FILTER_ALL_VALUE).trim() !== FILTER_ALL_VALUE)
+const filterableTagGroups = computed(() => tagGroups.value.filter((group) => group.is_filterable))
+const hasActiveTagFilters = computed(() => {
+  return filterableTagGroups.value.some((group) => {
+    return String(tagFilters[getTagGroupFilterKey(group)] || FILTER_ALL_VALUE).trim() !== FILTER_ALL_VALUE
+  })
 })
 
-const getFieldValue = (item, fieldKey) => {
-  return String(item?.field_values?.[fieldKey] ?? '').trim()
-}
+const getStandardContent = (item) => String(item?.content || item?.standard_detail_text || '').trim()
 
-const formatFieldSummary = (item) => {
-  const values = internalFields.value
-    .map((field) => getFieldValue(item, field.field_key))
-    .filter(Boolean)
-  return values.length ? values.join(' / ') : '未设置字段内容'
-}
-
-const getPrimaryFieldValue = (item) => {
-  const firstField = internalFields.value[0]
-  if (!firstField) return item?.content || ''
-  return getFieldValue(item, firstField.field_key)
-}
-
-const getLongFieldPreview = (item) => {
-  const values = longInternalFields.value
-    .map((field) => {
-      const value = getFieldValue(item, field.field_key)
-      return value ? `${field.field_label}：${value}` : ''
-    })
-    .filter(Boolean)
-  return values.join('\n')
-}
+const getTagGroupFilterKey = (group) => String(group.id || group.group_type || group.group_name)
 
 const filteredStandards = computed(() => {
   const text = keyword.value.toLowerCase()
   return standards.value.filter((item) => {
+    const tagText = (item.tags || []).map((tag) => `${tag.group_name} ${tag.tag_name}`).join(' ')
     const keywordMatched = !text || [
       item.internal_standard_id,
-      formatFieldSummary(item),
-      ...internalFields.value.map((field) => getFieldValue(item, field.field_key)),
+      getStandardContent(item),
+      tagText,
       ...(item.linked_externals || []).map((link) => `${link.external_standard_id} ${link.inspection_table_name} ${link.standard_detail_text}`)
     ].join(' ').toLowerCase().includes(text)
     if (!keywordMatched) return false
 
-    return filterableFields.value.every((field) => {
-      const filterValue = String(fieldFilters[field.field_key] || FILTER_ALL_VALUE).trim()
-      return filterValue === FILTER_ALL_VALUE || getFieldValue(item, field.field_key) === filterValue
+    return filterableTagGroups.value.every((group) => {
+      const filterValue = String(tagFilters[getTagGroupFilterKey(group)] || FILTER_ALL_VALUE).trim()
+      if (filterValue === FILTER_ALL_VALUE) return true
+      return (item.tags || []).some((tag) => tag.group_name === group.group_name && tag.tag_name === filterValue)
     })
   })
 })
 
-const getFieldFilterOptions = (fieldKey) => {
-  return [...new Set(
-    standards.value
-      .map((item) => getFieldValue(item, fieldKey))
-      .filter(Boolean)
-  )].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+const getTagFilterOptions = (group) => {
+  const values = []
+  const seen = new Set()
+  standards.value.forEach((item) => {
+    ;(item.tags || []).forEach((tag) => {
+      if (tag.group_name !== group.group_name) return
+      const key = tag.tag_key || tag.tag_name
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      values.push(tag)
+    })
+  })
+  return values.sort((a, b) => String(a.tag_name).localeCompare(String(b.tag_name), 'zh-Hans-CN'))
 }
 
-const ensureFieldFilters = () => {
-  const keys = new Set(filterableFields.value.map((field) => field.field_key))
-  Object.keys(fieldFilters).forEach((key) => {
-    if (!keys.has(key)) delete fieldFilters[key]
+const ensureTagFilters = () => {
+  const keys = new Set(filterableTagGroups.value.map((group) => getTagGroupFilterKey(group)))
+  Object.keys(tagFilters).forEach((key) => {
+    if (!keys.has(key)) delete tagFilters[key]
   })
   keys.forEach((key) => {
-    if (!Object.prototype.hasOwnProperty.call(fieldFilters, key)) {
-      fieldFilters[key] = FILTER_ALL_VALUE
+    if (!Object.prototype.hasOwnProperty.call(tagFilters, key)) {
+      tagFilters[key] = FILTER_ALL_VALUE
     }
   })
 }
 
-const clearFieldFilters = () => {
-  Object.keys(fieldFilters).forEach((key) => {
-    fieldFilters[key] = FILTER_ALL_VALUE
+const clearTagFilters = () => {
+  Object.keys(tagFilters).forEach((key) => {
+    tagFilters[key] = FILTER_ALL_VALUE
   })
 }
 
@@ -317,26 +312,19 @@ const buildExportFilterSummary = () => {
   const parts = []
   const text = keyword.value.trim()
   if (text) parts.push(`关键词：${text}`)
-  filterableFields.value.forEach((field) => {
-    const value = String(fieldFilters[field.field_key] || FILTER_ALL_VALUE).trim()
-    if (value && value !== FILTER_ALL_VALUE) parts.push(`${field.field_label}：${value}`)
+  filterableTagGroups.value.forEach((group) => {
+    const value = String(tagFilters[getTagGroupFilterKey(group)] || FILTER_ALL_VALUE).trim()
+    if (value && value !== FILTER_ALL_VALUE) parts.push(`${group.group_name}：${value}`)
   })
   return parts.length ? parts.join('；') : '全部'
 }
 
 const buildExportFieldItems = (item) => {
-  if (!internalFields.value.length) {
-    return `<div class="field-item long"><span>内部规范内容</span><strong>${htmlWithLineBreaks(item.content || formatFieldSummary(item))}</strong></div>`
-  }
-  return internalFields.value.map((field) => {
-    const value = getFieldValue(item, field.field_key) || '-'
-    return `
-      <div class="field-item ${field.is_long_text ? 'long' : ''}">
-        <span>${escapeHtml(field.field_label)}</span>
-        <strong>${htmlWithLineBreaks(value)}</strong>
-      </div>
-    `
-  }).join('')
+  const tags = (item.tags || []).map((tag) => `${tag.group_name}：${tag.tag_name}`).join('；') || '-'
+  return `
+    <div class="field-item long"><span>内部规范内容</span><strong>${htmlWithLineBreaks(getStandardContent(item))}</strong></div>
+    <div class="field-item long"><span>规范标签</span><strong>${htmlWithLineBreaks(tags)}</strong></div>
+  `
 }
 
 const buildExportExternalLinks = (item) => {
@@ -658,8 +646,8 @@ const fetchStandards = async () => {
     const response = await axios.get('/api/inspection-internal-standards', {
       params: { keyword: keyword.value, _ts: Date.now() }
     })
-    internalFields.value = response.data?.fields || []
-    ensureFieldFilters()
+    tagGroups.value = response.data?.tag_groups || []
+    ensureTagFilters()
     standards.value = response.data?.items || []
     if (!activeStandard.value || !standards.value.some((item) => item.id === activeStandard.value.id)) {
       activeStandard.value = standards.value[0] || null
@@ -673,7 +661,7 @@ watch(keyword, () => {
   page.value = 1
 })
 
-watch(fieldFilters, () => {
+watch(tagFilters, () => {
   page.value = 1
 }, { deep: true })
 
@@ -912,41 +900,8 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.standard-card-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.standard-field-chip {
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid #e5edf5;
-  border-radius: 13px;
-  background: #f8fafc;
-}
-
-.standard-field-chip em {
-  display: block;
-  color: #64748b;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 900;
-  margin-bottom: 4px;
-}
-
-.standard-field-chip strong {
-  display: block;
-  color: #0f172a;
-  font-size: 13px;
-  line-height: 1.45;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.standard-long-preview {
+.standard-content-preview,
+.internal-content-block {
   margin: 12px 0 0;
   padding: 10px 12px;
   border-radius: 14px;
@@ -954,10 +909,58 @@ onBeforeUnmount(() => {
   color: #475569;
   font-size: 13px;
   line-height: 1.75;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.standard-content-preview {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.internal-content-block {
+  margin: 0;
+  background: #fff;
+  color: #0f172a;
+}
+
+.standard-tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.detail-tags {
+  margin-top: 0;
+}
+
+.standard-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 35%, #ffffff);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-color, #2563eb) 10%, #ffffff);
+  color: color-mix(in srgb, var(--tag-color, #2563eb) 72%, #0f172a);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.standard-tag-chip em {
+  max-width: 92px;
+  padding-right: 6px;
+  border-right: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 28%, transparent);
+  color: #64748b;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .internal-code {
@@ -1220,10 +1223,6 @@ onBeforeUnmount(() => {
   }
 
   .internal-field-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .standard-card-fields {
     grid-template-columns: 1fr;
   }
 

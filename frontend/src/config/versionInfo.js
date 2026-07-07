@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.7',
+    date: '2026-07-07',
+    title: '内部规范库标签化',
+    summary: '内部规范改为按标签管理。',
+    items: [
+      '内部规范新增改为填写规范内容并绑定标签。',
+      '支持维护标签群组，巡检问题列表可按标签筛选。',
+      '标签颜色统一按群组配置，标签多时更容易维护。'
+    ]
+  },
+  {
     version: 'v3.6.0',
     date: '2026-07-06',
     title: '巡检计划模板派工',

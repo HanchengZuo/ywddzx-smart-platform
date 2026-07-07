@@ -1,8 +1,8 @@
 -- inspection_internal_standards 表：业务督导中心自建内部巡检规范库
 -- 用途：
--- 1. 以动态字段配置承载内部规范结构，例如：区域、环节、分类、子分类、规范等
--- 2. internal_standard_id 为系统生成的内部规范ID，例如 PDJ1、PDJ2
--- 3. field_values 使用 JSONB 保存每条内部规范的字段值，不写死字段数量
+-- 1. 内部规范由“规范内容 + 标签 + 外部规范ID挂载关系”组成
+-- 2. internal_standard_id 为系统生成的内部规范ID
+-- 3. field_values/path_values 保留用于兼容旧版字段结构数据
 
 CREATE TABLE inspection_internal_standards (
     id SERIAL PRIMARY KEY,
@@ -63,6 +63,65 @@ ON inspection_internal_standards USING GIN (field_values);
 
 CREATE INDEX IF NOT EXISTS idx_internal_standard_links_internal
 ON inspection_internal_standard_links (internal_standard_id);
+
+-- inspection_internal_standard_tag_groups 表：内部规范标签群组
+-- 说明：
+-- 1. 外部规范ID、检查表为系统标签群组
+-- 2. custom 类型由用户维护，例如区域、环节、专业等标签群组
+
+CREATE TABLE inspection_internal_standard_tag_groups (
+    id SERIAL PRIMARY KEY,
+    group_name TEXT UNIQUE NOT NULL,
+    group_type TEXT NOT NULL DEFAULT 'custom',
+    color TEXT NOT NULL DEFAULT '#2563EB',
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+    is_required BOOLEAN NOT NULL DEFAULT FALSE,
+    is_filterable BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_internal_standard_tag_group_type
+        CHECK (group_type IN ('custom', 'external_standard', 'inspection_table'))
+);
+
+CREATE TABLE inspection_internal_standard_tags (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES inspection_internal_standard_tag_groups(id) ON DELETE CASCADE,
+    tag_name TEXT NOT NULL,
+    tag_key TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#2563EB',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (group_id, tag_key)
+);
+
+CREATE TABLE inspection_internal_standard_tag_links (
+    internal_standard_id INTEGER NOT NULL REFERENCES inspection_internal_standards(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES inspection_internal_standard_tags(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (internal_standard_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_internal_standard_tags_group
+ON inspection_internal_standard_tags (group_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS idx_internal_standard_tag_links_tag
+ON inspection_internal_standard_tag_links (tag_id);
+
+INSERT INTO inspection_internal_standard_tag_groups (
+    group_name,
+    group_type,
+    color,
+    is_system,
+    is_required,
+    is_filterable,
+    sort_order
+)
+VALUES
+    ('外部规范ID', 'external_standard', '#2563EB', TRUE, TRUE, TRUE, 0),
+    ('检查表', 'inspection_table', '#0F766E', TRUE, FALSE, TRUE, 1)
+ON CONFLICT (group_name) DO NOTHING;
 
 -- inspection_standard_usage_settings 表：巡检登记规范来源开关
 -- 说明：

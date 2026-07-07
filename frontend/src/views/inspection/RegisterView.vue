@@ -547,6 +547,7 @@ const STANDARD_SEARCH_EXCLUDED_KEYS = new Set([
 const getStandardSearchValues = (item = {}) => {
   if (item?.internal_standard_id) {
     const fieldValues = Object.values(item.field_values || {})
+    const tagValues = (item.tags || []).flatMap((tag) => [tag.group_name, tag.tag_name])
     const linkedValues = (item.linked_externals || []).flatMap((link) => [
       link.external_standard_id,
       link.inspection_table_name,
@@ -559,6 +560,7 @@ const getStandardSearchValues = (item = {}) => {
       item.standard_detail_text,
       item.inspection_table_name,
       ...fieldValues,
+      ...tagValues,
       ...linkedValues
     ].filter((value) => value !== null && value !== undefined)
   }
@@ -719,6 +721,7 @@ const getStandardIdentity = (item) => {
 }
 
 const buildInternalStandardDetailText = (item, fields = standardFields.value) => {
+  if (!fields.length) return item?.content || ''
   const lines = fields.map((field) => {
     const value = String(item?.field_values?.[field.field_key] || '').trim() || '-'
     return `${field.field_label}：${value}`
@@ -791,7 +794,7 @@ const fetchStandards = async () => {
       standard_id: item.internal_standard_id,
       internal_standard_id: item.internal_standard_id,
       standard_detail_text: detailText,
-      register_display_text: item.register_display_text || '',
+      register_display_text: item.register_display_text || detailText,
       inspection_table_id: '',
       inspection_table_name: linkedTableNames.length
         ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`

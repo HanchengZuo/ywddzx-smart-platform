@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.6.0"
+        raw_value = "3.7.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.6.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.7.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
@@ -6104,6 +6104,7 @@ def fetch_issue_row_for_response(
     row = cur.fetchone()
     if not row:
         return None
+    attach_internal_standard_tags_to_issue_rows(cur, [row])
     return normalize_issue_row_for_response(
         row,
         user,
@@ -6242,6 +6243,7 @@ def normalize_issue_export_filter_summary(raw_summary):
         "inspectionTableName",
         "standardId",
         "standardDetail",
+        "standardTags",
         "rectificationResult",
         "reviewResult",
         "status",
@@ -6275,6 +6277,7 @@ ISSUE_EXPORT_FIELD_KEYS = {
     "inspection_table_name",
     "internal_standard",
     "external_standard",
+    "standard_tags",
     "description",
     "is_excellent",
     "audit_result",
@@ -6491,6 +6494,13 @@ def fetch_issue_export_rows(cur, user, issue_ids):
         params,
     )
     rows = cur.fetchall()
+    attach_internal_standard_tags_to_issue_rows(cur, rows)
+    for row in rows:
+        row["standard_tags"] = "；".join(
+            f"{tag.get('group_name') or ''}：{tag.get('tag_name') or ''}".strip("：")
+            for tag in row.get("standard_tags", [])
+            if tag.get("tag_name")
+        )
     if hide_inspector_contact:
         sanitized_rows = []
         for row in rows:
@@ -6525,6 +6535,7 @@ ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS = [
 ]
 
 ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD = [
+    ("规范标签", "standard_tags"),
     ("问题描述", "description"),
     ("是否优秀", "is_excellent"),
     ("审核结果", "audit_result"),
@@ -12961,6 +12972,55 @@ def ensure_internal_standard_schema(cur):
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standard_tag_groups (
+            id SERIAL PRIMARY KEY,
+            group_name TEXT UNIQUE NOT NULL,
+            group_type TEXT NOT NULL DEFAULT 'custom',
+            color TEXT NOT NULL DEFAULT '#2563EB',
+            is_system BOOLEAN NOT NULL DEFAULT FALSE,
+            is_required BOOLEAN NOT NULL DEFAULT FALSE,
+            is_filterable BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT chk_internal_standard_tag_group_type
+                CHECK (group_type IN ('custom', 'external_standard', 'inspection_table'))
+        );
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE inspection_internal_standard_tag_groups
+        ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#2563EB';
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standard_tags (
+            id SERIAL PRIMARY KEY,
+            group_id INTEGER NOT NULL REFERENCES inspection_internal_standard_tag_groups(id) ON DELETE CASCADE,
+            tag_name TEXT NOT NULL,
+            tag_key TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT '#2563EB',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (group_id, tag_key)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inspection_internal_standard_tag_links (
+            internal_standard_id INTEGER NOT NULL REFERENCES inspection_internal_standards(id) ON DELETE CASCADE,
+            tag_id INTEGER NOT NULL REFERENCES inspection_internal_standard_tags(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (internal_standard_id, tag_id)
+        );
+        """
+    )
+    cur.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_internal_standards_path_values
         ON inspection_internal_standards USING GIN (path_values);
         """
@@ -12975,6 +13035,43 @@ def ensure_internal_standard_schema(cur):
         """
         CREATE INDEX IF NOT EXISTS idx_internal_standard_links_internal
         ON inspection_internal_standard_links (internal_standard_id);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_internal_standard_tags_group
+        ON inspection_internal_standard_tags (group_id, sort_order);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_internal_standard_tag_links_tag
+        ON inspection_internal_standard_tag_links (tag_id);
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO inspection_internal_standard_tag_groups (
+            group_name,
+            group_type,
+            color,
+            is_system,
+            is_required,
+            is_filterable,
+            sort_order
+        )
+        VALUES
+            ('外部规范ID', 'external_standard', '#2563EB', TRUE, TRUE, TRUE, 0),
+            ('检查表', 'inspection_table', '#0F766E', TRUE, FALSE, TRUE, 1)
+        ON CONFLICT (group_name)
+        DO UPDATE SET
+            group_type = EXCLUDED.group_type,
+            color = EXCLUDED.color,
+            is_system = EXCLUDED.is_system,
+            is_required = EXCLUDED.is_required,
+            is_filterable = EXCLUDED.is_filterable,
+            sort_order = EXCLUDED.sort_order,
+            updated_at = CURRENT_TIMESTAMP;
         """
     )
     ensure_inspection_standard_usage_settings_schema(cur)
@@ -13076,6 +13173,486 @@ def upsert_internal_standard_fields(cur, fields):
             """,
             (field_key, field_key),
         )
+
+
+INTERNAL_STANDARD_TAG_COLORS = [
+    "#2563EB",
+    "#0F766E",
+    "#D97706",
+    "#DC2626",
+    "#7C3AED",
+    "#0891B2",
+    "#65A30D",
+    "#DB2777",
+    "#4F46E5",
+    "#EA580C",
+]
+
+
+def normalize_internal_tag_key(value):
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def next_internal_tag_color(seed=None):
+    if seed:
+        digest = hashlib.sha1(str(seed).encode("utf-8")).hexdigest()
+        return INTERNAL_STANDARD_TAG_COLORS[int(digest[:2], 16) % len(INTERNAL_STANDARD_TAG_COLORS)]
+    return INTERNAL_STANDARD_TAG_COLORS[uuid.uuid4().int % len(INTERNAL_STANDARD_TAG_COLORS)]
+
+
+def serialize_internal_tag_group(row, tags=None):
+    return {
+        "id": row["id"],
+        "group_name": row["group_name"],
+        "group_type": row.get("group_type") or "custom",
+        "color": row.get("color") or next_internal_tag_color(row.get("group_name")),
+        "is_system": bool(row.get("is_system")),
+        "is_required": bool(row.get("is_required")),
+        "is_filterable": bool(row.get("is_filterable")),
+        "sort_order": row.get("sort_order") or 0,
+        "tags": tags or [],
+    }
+
+
+def serialize_internal_custom_tag(row):
+    return {
+        "id": row["id"],
+        "tag_id": row["id"],
+        "group_id": row["group_id"],
+        "group_name": row.get("group_name") or "",
+        "group_type": row.get("group_type") or "custom",
+        "tag_name": row["tag_name"],
+        "tag_key": row["tag_key"],
+        "color": row.get("color") or next_internal_tag_color(row.get("group_name")),
+        "sort_order": row.get("sort_order") or 0,
+        "is_system": bool(row.get("is_system")),
+    }
+
+
+def get_internal_standard_tag_groups(cur, include_system=True):
+    where_sql = "" if include_system else "WHERE is_system = FALSE"
+    cur.execute(
+        f"""
+        SELECT
+            id,
+            group_name,
+            group_type,
+            color,
+            is_system,
+            is_required,
+            is_filterable,
+            sort_order
+        FROM inspection_internal_standard_tag_groups
+        {where_sql}
+        ORDER BY sort_order ASC, id ASC;
+        """
+    )
+    groups = [dict(row) for row in cur.fetchall()]
+    if not groups:
+        return []
+
+    cur.execute(
+        """
+        SELECT
+            t.id,
+            t.group_id,
+            g.group_name,
+            g.group_type,
+            g.is_system,
+            t.tag_name,
+            t.tag_key,
+            g.color,
+            t.sort_order
+        FROM inspection_internal_standard_tags t
+        JOIN inspection_internal_standard_tag_groups g ON g.id = t.group_id
+        WHERE t.group_id = ANY(%s)
+        ORDER BY g.sort_order ASC, t.sort_order ASC, t.id ASC;
+        """,
+        ([group["id"] for group in groups],),
+    )
+    tags_by_group = {}
+    for tag in cur.fetchall():
+        tags_by_group.setdefault(tag["group_id"], []).append(serialize_internal_custom_tag(tag))
+
+    return [
+        serialize_internal_tag_group(group, tags_by_group.get(group["id"], []))
+        for group in groups
+    ]
+
+
+def normalize_internal_tag_group_rows(value):
+    if not isinstance(value, list):
+        raise ValueError("标签群组参数格式不正确。")
+    normalized_groups = []
+    seen_group_names = set()
+    for group_index, raw_group in enumerate(value, start=1):
+        if not isinstance(raw_group, dict):
+            continue
+        group_name = normalize_text(raw_group.get("group_name"), 50)
+        if not group_name:
+            raise ValueError(f"第 {group_index} 个标签群组缺少名称。")
+        group_key = normalize_internal_tag_key(group_name)
+        if group_key in {"外部规范id", "外部规范ID".lower(), "检查表"} or group_name in {"外部规范ID", "检查表"}:
+            raise ValueError("外部规范ID和检查表是系统标签群组，不能手工维护。")
+        if group_key in seen_group_names:
+            raise ValueError(f"标签群组【{group_name}】重复。")
+        seen_group_names.add(group_key)
+        raw_color = str(raw_group.get("color") or "").strip()
+        if not raw_color:
+            for raw_tag in raw_group.get("tags") or []:
+                if isinstance(raw_tag, dict) and str(raw_tag.get("color") or "").strip():
+                    raw_color = str(raw_tag.get("color")).strip()
+                    break
+        group_color = raw_color if re.match(r"^#[0-9a-fA-F]{6}$", raw_color) else next_internal_tag_color(group_name)
+
+        raw_tags = raw_group.get("tags") or []
+        if not isinstance(raw_tags, list):
+            raise ValueError(f"标签群组【{group_name}】的标签格式不正确。")
+        tags = []
+        seen_tag_names = set()
+        for tag_index, raw_tag in enumerate(raw_tags, start=1):
+            if not isinstance(raw_tag, dict):
+                continue
+            tag_name = normalize_text(raw_tag.get("tag_name"), 60)
+            if not tag_name:
+                raise ValueError(f"标签群组【{group_name}】第 {tag_index} 个标签缺少名称。")
+            tag_key = normalize_internal_tag_key(tag_name)
+            if tag_key in seen_tag_names:
+                raise ValueError(f"标签群组【{group_name}】内标签【{tag_name}】重复。")
+            seen_tag_names.add(tag_key)
+            tags.append(
+                {
+                    "id": raw_tag.get("id"),
+                    "tag_name": tag_name,
+                    "tag_key": tag_key,
+                    "color": group_color,
+                    "sort_order": tag_index,
+                }
+            )
+        normalized_groups.append(
+            {
+                "id": raw_group.get("id"),
+                "group_name": group_name,
+                "group_type": "custom",
+                "color": group_color,
+                "is_system": False,
+                "is_required": False,
+                "is_filterable": normalize_boolean_flag(raw_group.get("is_filterable"), True),
+                "sort_order": group_index + 1,
+                "tags": tags,
+            }
+        )
+    return normalized_groups
+
+
+def upsert_internal_standard_tag_groups(cur, groups):
+    incoming_group_ids = []
+
+    for group in groups:
+        raw_group_id = group.get("id")
+        group_id = None
+        if raw_group_id:
+            cur.execute(
+                """
+                UPDATE inspection_internal_standard_tag_groups
+                SET group_name = %s,
+                    color = %s,
+                    is_filterable = %s,
+                    sort_order = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND is_system = FALSE
+                RETURNING id;
+                """,
+                (
+                    group["group_name"],
+                    group["color"],
+                    group["is_filterable"],
+                    group["sort_order"],
+                    raw_group_id,
+                ),
+            )
+            row = cur.fetchone()
+            group_id = row["id"] if row else None
+        if not group_id:
+            cur.execute(
+                """
+                INSERT INTO inspection_internal_standard_tag_groups (
+                    group_name,
+                    group_type,
+                    color,
+                    is_system,
+                    is_required,
+                    is_filterable,
+                    sort_order,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, 'custom', %s, FALSE, FALSE, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT (group_name)
+                DO UPDATE SET
+                    color = EXCLUDED.color,
+                    is_filterable = EXCLUDED.is_filterable,
+                    sort_order = EXCLUDED.sort_order,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id;
+                """,
+                (group["group_name"], group["color"], group["is_filterable"], group["sort_order"]),
+            )
+            group_id = cur.fetchone()["id"]
+        incoming_group_ids.append(int(group_id))
+
+        incoming_tag_ids = []
+        for tag in group["tags"]:
+            tag_id = None
+            if tag.get("id"):
+                cur.execute(
+                    """
+                    UPDATE inspection_internal_standard_tags
+                    SET tag_name = %s,
+                        tag_key = %s,
+                        color = %s,
+                        sort_order = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND group_id = %s
+                    RETURNING id;
+                    """,
+                    (
+                        tag["tag_name"],
+                        tag["tag_key"],
+                        group["color"],
+                        tag["sort_order"],
+                        tag["id"],
+                        group_id,
+                    ),
+                )
+                row = cur.fetchone()
+                tag_id = row["id"] if row else None
+            if not tag_id:
+                cur.execute(
+                    """
+                    INSERT INTO inspection_internal_standard_tags (
+                        group_id,
+                        tag_name,
+                        tag_key,
+                        color,
+                        sort_order,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (group_id, tag_key)
+                    DO UPDATE SET
+                        tag_name = EXCLUDED.tag_name,
+                        color = EXCLUDED.color,
+                        sort_order = EXCLUDED.sort_order,
+                        updated_at = CURRENT_TIMESTAMP
+                    RETURNING id;
+                    """,
+                    (group_id, tag["tag_name"], tag["tag_key"], group["color"], tag["sort_order"]),
+                )
+                tag_id = cur.fetchone()["id"]
+            incoming_tag_ids.append(int(tag_id))
+
+        if group["tags"]:
+            cur.execute(
+                """
+                DELETE FROM inspection_internal_standard_tags
+                WHERE group_id = %s
+                  AND id <> ALL(%s::int[]);
+                """,
+                (group_id, [int(tag_id) for tag_id in incoming_tag_ids]),
+            )
+        else:
+            cur.execute("DELETE FROM inspection_internal_standard_tags WHERE group_id = %s;", (group_id,))
+
+    if incoming_group_ids:
+        cur.execute(
+            """
+            DELETE FROM inspection_internal_standard_tag_groups
+            WHERE is_system = FALSE
+              AND id <> ALL(%s::int[]);
+            """,
+            (incoming_group_ids,),
+        )
+    else:
+        cur.execute("DELETE FROM inspection_internal_standard_tag_groups WHERE is_system = FALSE;")
+
+
+def normalize_internal_custom_tag_ids(value):
+    if not isinstance(value, list):
+        return []
+    result = []
+    seen = set()
+    for raw_id in value:
+        try:
+            tag_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if tag_id <= 0 or tag_id in seen:
+            continue
+        seen.add(tag_id)
+        result.append(tag_id)
+    return result
+
+
+def replace_internal_standard_custom_tags(cur, internal_id, tag_ids):
+    normalized_ids = normalize_internal_custom_tag_ids(tag_ids)
+    if normalized_ids:
+        cur.execute(
+            """
+            SELECT t.id
+            FROM inspection_internal_standard_tags t
+            JOIN inspection_internal_standard_tag_groups g ON g.id = t.group_id
+            WHERE t.id = ANY(%s)
+              AND g.group_type = 'custom'
+              AND g.is_system = FALSE;
+            """,
+            (normalized_ids,),
+        )
+        existing_ids = {int(row["id"]) for row in cur.fetchall()}
+        missing_ids = [tag_id for tag_id in normalized_ids if tag_id not in existing_ids]
+        if missing_ids:
+            raise ValueError(f"标签ID【{missing_ids[0]}】不存在或不可用于内部规范。")
+
+    cur.execute("DELETE FROM inspection_internal_standard_tag_links WHERE internal_standard_id = %s;", (internal_id,))
+    for tag_id in normalized_ids:
+        cur.execute(
+            """
+            INSERT INTO inspection_internal_standard_tag_links (
+                internal_standard_id,
+                tag_id,
+                created_at
+            )
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT DO NOTHING;
+            """,
+            (internal_id, tag_id),
+        )
+
+
+def fetch_internal_standard_custom_tags(cur, internal_ids):
+    ids = [int(item) for item in internal_ids if item]
+    if not ids:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            l.internal_standard_id,
+            t.id,
+            t.group_id,
+            g.group_name,
+            g.group_type,
+            g.is_system,
+            t.tag_name,
+            t.tag_key,
+            g.color,
+            t.sort_order
+        FROM inspection_internal_standard_tag_links l
+        JOIN inspection_internal_standard_tags t ON t.id = l.tag_id
+        JOIN inspection_internal_standard_tag_groups g ON g.id = t.group_id
+        WHERE l.internal_standard_id = ANY(%s)
+        ORDER BY g.sort_order ASC, t.sort_order ASC, t.id ASC;
+        """,
+        (ids,),
+    )
+    result = {item: [] for item in ids}
+    for row in cur.fetchall():
+        result.setdefault(row["internal_standard_id"], []).append(serialize_internal_custom_tag(row))
+    return result
+
+
+def build_internal_system_tags_from_links(linked_externals):
+    external_tags = []
+    table_tags = []
+    seen_tables = set()
+    for link in linked_externals or []:
+        external_id = str(link.get("external_standard_id") or "").strip()
+        if external_id:
+            external_tags.append(
+                {
+                    "id": f"external:{external_id}",
+                    "tag_id": f"external:{external_id}",
+                    "group_id": "external_standard",
+                    "group_name": "外部规范ID",
+                    "group_type": "external_standard",
+                    "tag_name": external_id,
+                    "tag_key": external_id.lower(),
+                    "color": "#2563EB",
+                    "is_system": True,
+                }
+            )
+        table_id = str(link.get("external_inspection_table_id") or "").strip()
+        table_name = str(link.get("inspection_table_name") or "").strip()
+        table_key = table_id or table_name
+        if table_key and table_key not in seen_tables:
+            seen_tables.add(table_key)
+            table_tags.append(
+                {
+                    "id": f"table:{table_key}",
+                    "tag_id": f"table:{table_key}",
+                    "group_id": "inspection_table",
+                    "group_name": "检查表",
+                    "group_type": "inspection_table",
+                    "tag_name": table_name or f"检查表 {table_key}",
+                    "tag_key": normalize_internal_tag_key(table_name or table_key),
+                    "color": "#0F766E",
+                    "is_system": True,
+                }
+            )
+    return external_tags + table_tags
+
+
+def fetch_internal_standard_tags_by_codes(cur, internal_standard_ids):
+    codes = sorted({str(item or "").strip().upper() for item in internal_standard_ids if str(item or "").strip()})
+    if not codes:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            id,
+            internal_standard_id,
+            path_values,
+            field_values,
+            content,
+            notes,
+            is_active,
+            TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
+        FROM inspection_internal_standards
+        WHERE UPPER(internal_standard_id) = ANY(%s);
+        """,
+        (codes,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return {}
+    link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+    tag_map = fetch_internal_standard_custom_tags(cur, [row["id"] for row in rows])
+    result = {}
+    for row in rows:
+        item = serialize_internal_standard(
+            row,
+            link_map.get(row["id"], []),
+            [],
+            tag_map.get(row["id"], []),
+        )
+        result[item["internal_standard_id"]] = item["tags"]
+    return result
+
+
+def attach_internal_standard_tags_to_issue_rows(cur, rows):
+    if not rows:
+        return rows
+    tag_map = fetch_internal_standard_tags_by_codes(
+        cur,
+        [row.get("internal_standard_id") for row in rows],
+    )
+    for row in rows:
+        code = str(row.get("internal_standard_id") or "").strip().upper()
+        row["standard_tags"] = tag_map.get(code, [])
+    return rows
 
 
 def parse_json_field(value, fallback):
@@ -13277,8 +13854,10 @@ def fetch_internal_links_by_external_ids(cur, external_standard_ids):
     return {int(row["external_standard_id"]): dict(row) for row in cur.fetchall()}
 
 
-def serialize_internal_standard(row, linked_externals=None, fields=None):
+def serialize_internal_standard(row, linked_externals=None, fields=None, custom_tags=None):
     fields = fields or []
+    linked_externals = linked_externals or []
+    custom_tags = custom_tags or []
     path_values = parse_json_field(row.get("path_values"), [])
     field_values = parse_json_field(row.get("field_values"), {})
     if not isinstance(path_values, list):
@@ -13296,6 +13875,8 @@ def serialize_internal_standard(row, linked_externals=None, fields=None):
         [field for field in fields if normalize_boolean_flag(field.get("is_register_visible"), True)],
         field_values,
     ) if fields else ""
+    system_tags = build_internal_system_tags_from_links(linked_externals)
+    all_tags = custom_tags + system_tags
     return {
         "id": row["id"],
         "internal_standard_id": str(row["internal_standard_id"] or "").upper(),
@@ -13307,7 +13888,11 @@ def serialize_internal_standard(row, linked_externals=None, fields=None):
         "is_active": bool(row.get("is_active")),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
-        "linked_externals": linked_externals or [],
+        "linked_externals": linked_externals,
+        "custom_tags": custom_tags,
+        "custom_tag_ids": [tag["id"] for tag in custom_tags if isinstance(tag.get("id"), int)],
+        "system_tags": system_tags,
+        "tags": all_tags,
     }
 
 
@@ -13419,7 +14004,17 @@ def fetch_internal_standard_by_code(cur, internal_standard_id):
     if not row:
         return None, fields, []
     link_map = fetch_internal_standard_links(cur, [row["id"]])
-    return serialize_internal_standard(row, link_map.get(row["id"], []), fields), fields, link_map.get(row["id"], [])
+    tag_map = fetch_internal_standard_custom_tags(cur, [row["id"]])
+    return (
+        serialize_internal_standard(
+            row,
+            link_map.get(row["id"], []),
+            fields,
+            tag_map.get(row["id"], []),
+        ),
+        fields,
+        link_map.get(row["id"], []),
+    )
 
 
 def prepare_issue_registration_targets(
@@ -13691,6 +14286,24 @@ def normalize_internal_standards_backup_payload(payload):
         raw_fields = inferred_fields
 
     fields = normalize_internal_standard_field_rows(raw_fields or [], allow_empty=True)
+    raw_tag_groups = payload.get("tag_groups")
+    tag_groups = normalize_internal_tag_group_rows(raw_tag_groups) if isinstance(raw_tag_groups, list) else []
+    source_tag_id_map = {}
+    if isinstance(raw_tag_groups, list):
+        for raw_group in raw_tag_groups:
+            if not isinstance(raw_group, dict):
+                continue
+            group_name = normalize_text(raw_group.get("group_name"), 50)
+            for raw_tag in raw_group.get("tags") or []:
+                if not isinstance(raw_tag, dict):
+                    continue
+                raw_id = raw_tag.get("id") or raw_tag.get("tag_id")
+                tag_name = normalize_text(raw_tag.get("tag_name"), 60)
+                if raw_id and group_name and tag_name:
+                    source_tag_id_map[str(raw_id)] = {
+                        "group_name": group_name,
+                        "tag_name": tag_name,
+                    }
     normalized = []
     seen_internal_ids = set()
     seen_external_ids = set()
@@ -13717,9 +14330,15 @@ def normalize_internal_standards_backup_payload(payload):
             content_text = normalize_text(item.get("content"), 1000)
             if content_text and fields:
                 raw_field_values[fields[-1]["field_key"]] = raw_field_values.get(fields[-1]["field_key"]) or content_text
+        content = normalize_text(item.get("content"), 3000)
         field_values = normalize_internal_field_values(raw_field_values, fields) if fields else {}
-        path_values = build_internal_path_values_from_field_values(fields, field_values)
-        content = build_internal_standard_summary(fields, field_values)
+        if not content and fields:
+            content = build_internal_standard_summary(fields, field_values)
+        if not content:
+            legacy_path_values = item.get("path_values") or []
+            if isinstance(legacy_path_values, list):
+                content = normalize_text("\n".join(str(value or "").strip() for value in legacy_path_values if str(value or "").strip()), 3000)
+        path_values = [content] if content else build_internal_path_values_from_field_values(fields, field_values)
         links = normalize_external_link_rows(
             item.get("external_links") or item.get("linked_externals") or []
         )
@@ -13731,6 +14350,36 @@ def normalize_internal_standards_backup_payload(payload):
                 )
             seen_external_ids.add(external_standard_id)
 
+        custom_tag_refs = []
+        seen_tag_refs = set()
+        raw_custom_tags = item.get("custom_tags") or item.get("tags") or []
+        if isinstance(raw_custom_tags, list):
+            for raw_tag in raw_custom_tags:
+                if not isinstance(raw_tag, dict):
+                    continue
+                if raw_tag.get("is_system") or raw_tag.get("group_type") in ("external_standard", "inspection_table"):
+                    continue
+                group_name = normalize_text(raw_tag.get("group_name"), 50)
+                tag_name = normalize_text(raw_tag.get("tag_name"), 60)
+                if not group_name or not tag_name:
+                    continue
+                key = (normalize_internal_tag_key(group_name), normalize_internal_tag_key(tag_name))
+                if key in seen_tag_refs:
+                    continue
+                seen_tag_refs.add(key)
+                custom_tag_refs.append({"group_name": group_name, "tag_name": tag_name})
+        raw_tag_ids = item.get("tag_ids") or item.get("custom_tag_ids") or []
+        if isinstance(raw_tag_ids, list):
+            for raw_id in raw_tag_ids:
+                tag_ref = source_tag_id_map.get(str(raw_id))
+                if not tag_ref:
+                    continue
+                key = (normalize_internal_tag_key(tag_ref["group_name"]), normalize_internal_tag_key(tag_ref["tag_name"]))
+                if key in seen_tag_refs:
+                    continue
+                seen_tag_refs.add(key)
+                custom_tag_refs.append(tag_ref)
+
         normalized.append(
             {
                 "internal_standard_id": internal_standard_id,
@@ -13740,10 +14389,12 @@ def normalize_internal_standards_backup_payload(payload):
                 "notes": "",
                 "is_active": bool(item.get("is_active", True)),
                 "external_links": links,
+                "custom_tag_refs": custom_tag_refs,
             }
         )
     return {
         "fields": fields,
+        "tag_groups": tag_groups,
         "standards": normalized,
     }
 
@@ -19668,21 +20319,29 @@ def get_inspection_internal_standards():
         fields = [dict(field) for field in get_internal_standard_fields(cur)]
         conn.commit()
         link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        tag_map = fetch_internal_standard_custom_tags(cur, [row["id"] for row in rows])
+        tag_groups = get_internal_standard_tag_groups(cur)
         items = []
         for row in rows:
-            item = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+            item = serialize_internal_standard(
+                row,
+                link_map.get(row["id"], []),
+                fields,
+                tag_map.get(row["id"], []),
+            )
             haystack = "\n".join(
                 [
                     item["internal_standard_id"],
                     " ".join(str(value or "") for value in item["field_values"].values()),
                     item["content"],
+                    " ".join(str(tag.get("tag_name") or "") for tag in item["tags"]),
                     " ".join(str(link.get("external_standard_id") or "") for link in item["linked_externals"]),
                 ]
             ).lower()
             if keyword and keyword not in haystack:
                 continue
             items.append(item)
-        return jsonify({"success": True, "fields": fields, "items": items})
+        return jsonify({"success": True, "fields": fields, "tag_groups": tag_groups, "items": items})
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 401
     except Exception as e:
@@ -19744,14 +20403,22 @@ def get_management_internal_standards():
         fields = [dict(field) for field in get_internal_standard_fields(cur)]
         conn.commit()
         link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        tag_map = fetch_internal_standard_custom_tags(cur, [row["id"] for row in rows])
+        tag_groups = get_internal_standard_tag_groups(cur)
         usage_mode = get_inspection_standard_usage_mode(cur)
         return jsonify(
             {
                 "success": True,
                 "usage_mode": usage_mode,
                 "fields": fields,
+                "tag_groups": tag_groups,
                 "items": [
-                    serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+                    serialize_internal_standard(
+                        row,
+                        link_map.get(row["id"], []),
+                        fields,
+                        tag_map.get(row["id"], []),
+                    )
                     for row in rows
                 ],
             }
@@ -19866,8 +20533,6 @@ def update_management_internal_standard_fields():
         fields = normalize_internal_standard_field_rows(data.get("fields") or [], allow_empty=True)
         conn = get_db_connection()
         cur = conn.cursor()
-        ensure_internal_standard_schema(cur)
-        conn.commit()
         require_management_user(cur, user_id, "manage_internal_standards")
         upsert_internal_standard_fields(cur, fields)
         conn.commit()
@@ -19900,6 +20565,75 @@ def update_management_internal_standard_fields():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/management/internal-standards/tag-groups", methods=["GET"])
+def get_management_internal_standard_tag_groups():
+    user_id = str(request.args.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        return jsonify(
+            {
+                "success": True,
+                "tag_groups": get_internal_standard_tag_groups(cur),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/internal-standards/tag-groups", methods=["PUT"])
+def update_management_internal_standard_tag_groups():
+    data = request.get_json(silent=True) or {}
+    user_id = str(data.get("user_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        groups = normalize_internal_tag_group_rows(data.get("tag_groups") or [])
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_internal_standard_schema(cur)
+        conn.commit()
+        require_management_user(cur, user_id, "manage_internal_standards")
+        upsert_internal_standard_tag_groups(cur, groups)
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "内部规范标签群组已保存。",
+                "tag_groups": get_internal_standard_tag_groups(cur),
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        if getattr(e, "pgcode", "") == "23505":
+            return jsonify({"success": False, "error": "标签群组或标签名称已存在。"}), 400
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/internal-standards", methods=["POST"])
 def create_management_internal_standard():
     data = request.get_json(silent=True) or {}
@@ -19908,6 +20642,12 @@ def create_management_internal_standard():
     cur = None
     try:
         links = normalize_external_link_rows(data.get("external_links") or [])
+        tag_ids = normalize_internal_custom_tag_ids(data.get("tag_ids") or data.get("custom_tag_ids") or [])
+        content = normalize_text(data.get("content"), 3000)
+        if not content:
+            return jsonify({"success": False, "error": "请填写内部规范内容。"}), 400
+        if not links:
+            return jsonify({"success": False, "error": "内部规范必须至少绑定一个外部规范ID。"}), 400
 
         conn = get_db_connection()
         cur = conn.cursor()
@@ -19915,11 +20655,9 @@ def create_management_internal_standard():
         ensure_internal_standard_schema(cur)
         conn.commit()
         require_management_user(cur, user_id, "manage_internal_standards")
-        fields = [dict(field) for field in get_internal_standard_fields(cur)]
-        field_values = normalize_internal_field_values(data.get("field_values") or {}, fields)
-        path_values = build_internal_path_values_from_field_values(fields, field_values)
-        content = build_internal_standard_summary(fields, field_values)
-        internal_standard_id = generate_internal_standard_id(cur, field_values[fields[0]["field_key"]])
+        path_values = [content]
+        field_values = {}
+        internal_standard_id = generate_internal_standard_id(cur, content)
         cur.execute(
             """
             INSERT INTO inspection_internal_standards (
@@ -19946,6 +20684,7 @@ def create_management_internal_standard():
         )
         row = cur.fetchone()
         replace_internal_standard_links(cur, row["id"], links)
+        replace_internal_standard_custom_tags(cur, row["id"], tag_ids)
         conn.commit()
         return jsonify(
             {
@@ -19979,6 +20718,12 @@ def update_management_internal_standard(standard_id):
     cur = None
     try:
         links = normalize_external_link_rows(data.get("external_links") or [])
+        tag_ids = normalize_internal_custom_tag_ids(data.get("tag_ids") or data.get("custom_tag_ids") or [])
+        content = normalize_text(data.get("content"), 3000)
+        if not content:
+            return jsonify({"success": False, "error": "请填写内部规范内容。"}), 400
+        if not links:
+            return jsonify({"success": False, "error": "内部规范必须至少绑定一个外部规范ID。"}), 400
 
         conn = get_db_connection()
         cur = conn.cursor()
@@ -19986,10 +20731,8 @@ def update_management_internal_standard(standard_id):
         ensure_internal_standard_schema(cur)
         conn.commit()
         require_management_user(cur, user_id, "manage_internal_standards")
-        fields = [dict(field) for field in get_internal_standard_fields(cur)]
-        field_values = normalize_internal_field_values(data.get("field_values") or {}, fields)
-        path_values = build_internal_path_values_from_field_values(fields, field_values)
-        content = build_internal_standard_summary(fields, field_values)
+        path_values = [content]
+        field_values = {}
         cur.execute(
             "SELECT id, internal_standard_id FROM inspection_internal_standards WHERE id = %s LIMIT 1;",
             (standard_id,),
@@ -20018,6 +20761,7 @@ def update_management_internal_standard(standard_id):
             ),
         )
         replace_internal_standard_links(cur, standard_id, links)
+        replace_internal_standard_custom_tags(cur, standard_id, tag_ids)
         sync_referenced_internal_standard_detail_text(
             cur,
             existing_standard["internal_standard_id"],
@@ -20104,14 +20848,29 @@ def export_management_internal_standards():
         rows = cur.fetchall()
         fields = [dict(field) for field in get_internal_standard_fields(cur)]
         link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
+        tag_map = fetch_internal_standard_custom_tags(cur, [row["id"] for row in rows])
+        tag_groups = get_internal_standard_tag_groups(cur, include_system=False)
         standards = []
         for row in rows:
-            item = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+            item = serialize_internal_standard(
+                row,
+                link_map.get(row["id"], []),
+                fields,
+                tag_map.get(row["id"], []),
+            )
             standards.append(
                 {
                     "internal_standard_id": item["internal_standard_id"],
+                    "content": item["content"],
                     "field_values": item["field_values"],
                     "is_active": item["is_active"],
+                    "custom_tags": [
+                        {
+                            "group_name": tag.get("group_name"),
+                            "tag_name": tag.get("tag_name"),
+                        }
+                        for tag in item["custom_tags"]
+                    ],
                     "external_links": [
                         {
                             "external_standard_id": link["external_standard_id"],
@@ -20126,9 +20885,10 @@ def export_management_internal_standards():
         response = jsonify(
             {
                 "backup_type": "ywddzx_internal_standards",
-                "version": 2,
+                "version": 3,
                 "exported_at": now.isoformat(),
                 "fields": fields,
+                "tag_groups": tag_groups,
                 "standards": standards,
             }
         )
@@ -20155,6 +20915,7 @@ def import_management_internal_standards():
     try:
         backup_data = parse_internal_standards_backup_file(file_storage)
         fields = backup_data["fields"]
+        tag_groups = backup_data.get("tag_groups", [])
         standards = backup_data["standards"]
         conn = get_db_connection()
         cur = conn.cursor()
@@ -20175,6 +20936,13 @@ def import_management_internal_standards():
 
         cur.execute("DELETE FROM inspection_internal_standards;")
         upsert_internal_standard_fields(cur, fields)
+        upsert_internal_standard_tag_groups(cur, tag_groups)
+        restored_tag_groups = get_internal_standard_tag_groups(cur, include_system=False)
+        restored_tag_id_map = {}
+        for group in restored_tag_groups:
+            group_key = normalize_internal_tag_key(group.get("group_name"))
+            for tag in group.get("tags") or []:
+                restored_tag_id_map[(group_key, normalize_internal_tag_key(tag.get("tag_name")))] = tag.get("id")
         for item in standards:
             cur.execute(
                 """
@@ -20202,6 +20970,18 @@ def import_management_internal_standards():
             )
             row = cur.fetchone()
             replace_internal_standard_links(cur, row["id"], item["external_links"])
+            restored_tag_ids = [
+                restored_tag_id_map.get((
+                    normalize_internal_tag_key(tag_ref.get("group_name")),
+                    normalize_internal_tag_key(tag_ref.get("tag_name")),
+                ))
+                for tag_ref in item.get("custom_tag_refs", [])
+            ]
+            replace_internal_standard_custom_tags(
+                cur,
+                row["id"],
+                [tag_id for tag_id in restored_tag_ids if tag_id],
+            )
             sync_referenced_internal_standard_detail_text(
                 cur,
                 item["internal_standard_id"],
@@ -20946,6 +21726,7 @@ def get_issues():
             params,
         )
         rows = cur.fetchall()
+        attach_internal_standard_tags_to_issue_rows(cur, rows)
         conn.commit()
         return jsonify(
             [

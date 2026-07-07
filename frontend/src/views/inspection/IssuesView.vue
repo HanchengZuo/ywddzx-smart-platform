@@ -69,6 +69,16 @@
               </div>
             </div>
             <div class="mobile-card-row mobile-card-row-top">
+              <span>规范标签</span>
+              <div class="standard-tag-cloud compact">
+                <span v-for="tag in getIssueStandardTags(item)" :key="`${item.id}-mobile-tag-${tag.group_name}-${tag.tag_name}`"
+                  class="standard-tag-chip" :style="{ '--tag-color': tag.color || '#2563eb' }">
+                  <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
+                </span>
+                <span v-if="!getIssueStandardTags(item).length" class="tag-empty">暂无</span>
+              </div>
+            </div>
+            <div class="mobile-card-row mobile-card-row-top">
               <span>问题描述</span>
               <div class="mobile-card-text">{{ item.description }}</div>
             </div>
@@ -356,6 +366,33 @@
           <input v-model="filters.standardDetail" placeholder="搜索规范详情关键词" />
         </div>
         <div class="filter-item">
+          <label>规范标签</label>
+          <div class="search-select multi-search-select" ref="standardTagsSelectRef">
+            <div class="multi-select-control" @click="focusMultiFilterInput('standardTags')">
+              <div class="multi-selected-values">
+                <span v-for="value in filters.standardTags" :key="`standard-tag-${value}`" class="multi-selected-chip">
+                  {{ value }}
+                  <button type="button" @click.stop="removeMultiFilterValue('standardTags', value)">×</button>
+                </span>
+                <input ref="standardTagsFilterInputRef" v-model="filterSearch.standardTags" type="text"
+                  :placeholder="filters.standardTags.length ? '继续搜索标签' : '搜索并多选规范标签'"
+                  @focus="openFilterDropdown('standardTags')" @input="openFilterDropdown('standardTags')" />
+              </div>
+              <span v-if="filters.standardTags.length" class="multi-selected-count">已选 {{ filters.standardTags.length }}</span>
+            </div>
+            <div v-if="dropdownVisible.standardTags" class="search-select-dropdown">
+              <button v-for="option in filteredStandardTagOptions" :key="option" type="button"
+                class="search-select-option multi-select-option"
+                :class="{ selected: isMultiFilterSelected('standardTags', option) }"
+                @mousedown.prevent @click="toggleMultiFilter('standardTags', option)">
+                <span class="multi-option-check">{{ isMultiFilterSelected('standardTags', option) ? '✓' : '' }}</span>
+                <div class="option-main">{{ option }}</div>
+              </button>
+              <div v-if="filteredStandardTagOptions.length === 0" class="search-select-empty">无匹配规范标签</div>
+            </div>
+          </div>
+        </div>
+        <div class="filter-item">
           <label>站经理整改结果</label>
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
@@ -520,6 +557,7 @@
                 <th v-if="isIssueColumnVisible('inspection_table_name')" class="nowrap">检查表</th>
                 <th v-if="isIssueColumnVisible('standard_id')" class="nowrap">规范ID（内/外）</th>
                 <th v-if="isIssueColumnVisible('standard_detail')">规范详情</th>
+                <th v-if="isIssueColumnVisible('standard_tags')" class="nowrap">规范标签</th>
                 <th v-if="isIssueColumnVisible('description')">问题描述</th>
                 <th v-if="isIssueColumnVisible('issue_photo')" class="nowrap">问题照片</th>
                 <th v-if="isIssueColumnVisible('rectification_result')" class="nowrap">站经理整改结果</th>
@@ -562,6 +600,15 @@
                       getStandardDetailPreview(getCombinedStandardDetailText(item))
                       }}</div>
                     <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
+                  </div>
+                </td>
+                <td v-if="isIssueColumnVisible('standard_tags')" class="standard-tags-cell">
+                  <div class="standard-tag-cloud">
+                    <span v-for="tag in getIssueStandardTags(item)" :key="`${item.id}-tag-${tag.group_name}-${tag.tag_name}`"
+                      class="standard-tag-chip" :style="{ '--tag-color': tag.color || '#2563eb' }">
+                      <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
+                    </span>
+                    <span v-if="!getIssueStandardTags(item).length" class="tag-empty">暂无</span>
                   </div>
                 </td>
                 <td v-if="isIssueColumnVisible('description')" class="long-text">{{ item.description }}</td>
@@ -1292,6 +1339,7 @@ const filters = ref({
   inspectionTableName: [],
   standardId: '',
   standardDetail: '',
+  standardTags: [],
   rectificationResult: '',
   reviewResult: '',
   status: '',
@@ -1307,10 +1355,12 @@ const stationSelectRef = ref(null)
 const stationManagerSelectRef = ref(null)
 const inspectorSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
+const standardTagsSelectRef = ref(null)
 const regionFilterInputRef = ref(null)
 const stationFilterInputRef = ref(null)
 const inspectorFilterInputRef = ref(null)
 const inspectionTableFilterInputRef = ref(null)
+const standardTagsFilterInputRef = ref(null)
 const editStandardSelectRef = ref(null)
 const tableCardRef = ref(null)
 const tableScrollRef = ref(null)
@@ -1322,13 +1372,15 @@ const dropdownVisible = ref({
   station: false,
   stationManager: false,
   inspector: false,
-  inspectionTableName: false
+  inspectionTableName: false,
+  standardTags: false
 })
 const filterSearch = ref({
   region: '',
   station: '',
   inspector: '',
-  inspectionTableName: ''
+  inspectionTableName: '',
+  standardTags: ''
 })
 
 const isMobileView = ref(false)
@@ -1385,6 +1437,7 @@ const issueColumnDefinitions = [
   { key: 'inspection_table_name', label: '检查表', group: '规范问题', width: 146 },
   { key: 'standard_id', label: '规范ID（内/外）', group: '规范问题', width: 150 },
   { key: 'standard_detail', label: '规范详情', group: '规范问题', width: 250 },
+  { key: 'standard_tags', label: '规范标签', group: '规范问题', width: 180 },
   { key: 'description', label: '问题描述', group: '规范问题', width: 250 },
   { key: 'issue_photo', label: '问题照片', group: '规范问题', width: 104 },
   { key: 'rectification_result', label: '站经理整改结果', group: '整改复核', width: 136 },
@@ -1411,6 +1464,7 @@ const compactIssueColumnKeys = new Set([
   'inspector',
   'inspection_table_name',
   'standard_id',
+  'standard_tags',
   'description',
   'issue_photo',
   'status',
@@ -1521,6 +1575,7 @@ const exportFieldGroups = [
     options: [
       { key: 'internal_standard', label: '内部规范', help: '内部规范ID和内部规范详情' },
       { key: 'external_standard', label: '外部规范', help: '外部规范ID和检查表原字段' },
+      { key: 'standard_tags', label: '规范标签', help: '内部规范绑定的标签' },
       { key: 'description', label: '问题描述', help: '现场登记的问题说明' },
       { key: 'issue_photo', label: '问题照片', help: '嵌入现场问题照片', photo: true }
     ]
@@ -1562,6 +1617,7 @@ const exportFilterLabels = {
   inspectionTableName: '检查表',
   standardId: '规范ID',
   standardDetail: '规范详情',
+  standardTags: '规范标签',
   rectificationResult: '站经理整改结果',
   reviewResult: '督导组复核结果',
   status: '问题状态',
@@ -1592,6 +1648,26 @@ const matchesAnySelectedText = (value, selectedValues) => {
   return selected.some((item) => normalizedValue === normalizedKeyword(item).trim())
 }
 
+const getIssueStandardTags = (item = {}) => Array.isArray(item.standard_tags) ? item.standard_tags : []
+
+const getIssueStandardTagLabels = (item = {}) => {
+  return getIssueStandardTags(item)
+    .map((tag) => {
+      const groupName = String(tag.group_name || '').trim()
+      const tagName = String(tag.tag_name || '').trim()
+      if (!tagName) return ''
+      return groupName ? `${groupName}：${tagName}` : tagName
+    })
+    .filter(Boolean)
+}
+
+const matchesAnySelectedTag = (item, selectedValues) => {
+  const selected = Array.isArray(selectedValues) ? selectedValues : []
+  if (!selected.length) return true
+  const labels = getIssueStandardTagLabels(item).map((label) => normalizedKeyword(label).trim())
+  return selected.some((value) => labels.includes(normalizedKeyword(value).trim()))
+}
+
 const getDatePart = (value) => String(value || '').slice(0, 10)
 
 const isDateInRange = (value, dateFrom, dateTo) => {
@@ -1614,6 +1690,7 @@ const filteredData = computed(() => {
     const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
     const matchedStandardId = !filters.value.standardId || normalizedKeyword(getStandardIdSearchText(item)).includes(normalizedKeyword(filters.value.standardId))
     const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
+    const matchedStandardTags = matchesAnySelectedTag(item, filters.value.standardTags)
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
@@ -1636,6 +1713,7 @@ const filteredData = computed(() => {
       matchedInspectionTableName &&
       matchedStandardId &&
       matchedStandardDetail &&
+      matchedStandardTags &&
       matchedRectificationResult &&
       matchedReviewResult &&
       matchedStatus &&
@@ -1651,12 +1729,14 @@ const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) 
 const stationManagerOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station_manager)))
 const inspectorOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspector)))
 const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
+const standardTagOptions = computed(() => uniqueSortedOptions(list.value.flatMap((item) => getIssueStandardTagLabels(item))))
 
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filterSearch.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filterSearch.value.station))
 const filteredStationManagerOptions = computed(() => filterOptionByKeyword(stationManagerOptions.value, filters.value.stationManager))
 const filteredInspectorOptions = computed(() => filterOptionByKeyword(inspectorOptions.value, filterSearch.value.inspector))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
+const filteredStandardTagOptions = computed(() => filterOptionByKeyword(standardTagOptions.value, filterSearch.value.standardTags))
 
 const activeFilterCount = computed(() => {
   return Object.entries(filters.value).reduce((count, [key, value]) => {
@@ -2023,6 +2103,7 @@ const filteredEditStandards = computed(() => {
       item.standard_detail_text,
       item.register_display_text,
       item.content,
+      ...(item.tags || []).flatMap((tag) => [tag.group_name, tag.tag_name]),
       ...Object.values(item.field_values || {}),
       ...(item.linked_externals || []).flatMap((link) => [
         link.external_standard_id,
@@ -2085,6 +2166,7 @@ const fetchIssues = async () => {
 }
 
 const buildEditInternalStandardDetailText = (item, fields = editStandardFields.value) => {
+  if (!fields.length) return item?.content || ''
   const lines = fields.map((field) => {
     const value = String(item?.field_values?.[field.field_key] || '').trim() || '-'
     return `${field.field_label}：${value}`
@@ -2114,11 +2196,13 @@ const fetchEditStandardReferenceData = async () => {
             .map((link) => String(link.inspection_table_name || '').trim())
             .filter(Boolean)
         )]
+        const detailText = buildEditInternalStandardDetailText(item, fields)
         return {
           ...item,
           standard_id: item.internal_standard_id,
           internal_standard_id: item.internal_standard_id,
-          standard_detail_text: buildEditInternalStandardDetailText(item, fields),
+          standard_detail_text: detailText,
+          register_display_text: item.register_display_text || detailText,
           inspection_table_name: linkedTableNames.length
             ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`
             : '未挂载外部检查表',
@@ -2199,6 +2283,7 @@ const resetFilters = () => {
     inspectionTableName: [],
     standardId: '',
     standardDetail: '',
+    standardTags: [],
     rectificationResult: '',
     reviewResult: '',
     status: '',
@@ -2210,7 +2295,8 @@ const resetFilters = () => {
     region: '',
     station: '',
     inspector: '',
-    inspectionTableName: ''
+    inspectionTableName: '',
+    standardTags: ''
   }
   closeAllDropdowns()
 }
@@ -2240,6 +2326,7 @@ const filterMyTodayIssues = () => {
     inspectionTableName: [],
     standardId: '',
     standardDetail: '',
+    standardTags: [],
     rectificationResult: '',
     reviewResult: '',
     status: '',
@@ -2251,7 +2338,8 @@ const filterMyTodayIssues = () => {
     region: '',
     station: '',
     inspector: '',
-    inspectionTableName: ''
+    inspectionTableName: '',
+    standardTags: ''
   }
   closeAllDropdowns()
   showMobileFilters.value = false
@@ -3547,7 +3635,8 @@ const focusMultiFilterInput = async (key) => {
     region: regionFilterInputRef,
     station: stationFilterInputRef,
     inspector: inspectorFilterInputRef,
-    inspectionTableName: inspectionTableFilterInputRef
+    inspectionTableName: inspectionTableFilterInputRef,
+    standardTags: standardTagsFilterInputRef
   }
   refMap[key]?.value?.focus()
 }
@@ -3558,7 +3647,8 @@ const closeAllDropdowns = () => {
     station: false,
     stationManager: false,
     inspector: false,
-    inspectionTableName: false
+    inspectionTableName: false,
+    standardTags: false
   }
 }
 
@@ -3577,6 +3667,9 @@ const handleClickOutside = (event) => {
   }
   if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
     dropdownVisible.value.inspectionTableName = false
+  }
+  if (standardTagsSelectRef.value && !standardTagsSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.standardTags = false
   }
   if (editStandardSelectRef.value && !editStandardSelectRef.value.contains(event.target)) {
     editStandardDropdownVisible.value = false
@@ -4974,6 +5067,56 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+}
+
+.standard-tags-cell {
+  min-width: 180px;
+}
+
+.standard-tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 220px;
+  margin: 0 auto;
+}
+
+.standard-tag-cloud.compact {
+  justify-content: flex-start;
+  max-width: none;
+}
+
+.standard-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 35%, #ffffff);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-color, #2563eb) 10%, #ffffff);
+  color: color-mix(in srgb, var(--tag-color, #2563eb) 72%, #0f172a);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.standard-tag-chip em {
+  max-width: 78px;
+  padding-right: 5px;
+  border-right: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 28%, transparent);
+  color: #64748b;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .standard-detail-preview {

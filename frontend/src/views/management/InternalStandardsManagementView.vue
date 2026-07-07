@@ -18,8 +18,8 @@
         </button>
         <input ref="importFileInput" class="visually-hidden-file" type="file" accept="application/json,.json"
           :disabled="loading || saving" @change="handleImportBackup" />
-        <button class="btn btn-secondary" type="button" :disabled="loading || saving" @click="openFieldDialog">
-          字段配置
+        <button class="btn btn-secondary" type="button" :disabled="loading || saving" @click="openTagDialog">
+          标签群组
         </button>
         <button class="btn btn-primary" type="button" :disabled="loading || saving" @click="openStandardDialog()">
           新增内部规范
@@ -66,17 +66,17 @@
             <h3>共 {{ filteredInternalStandards.length }} 条内部规范</h3>
           </div>
           <div class="list-search-wrap">
-            <input v-model.trim="keyword" class="list-search" type="search" placeholder="搜索内部规范ID、字段内容或外部规范ID" />
+            <input v-model.trim="keyword" class="list-search" type="search" placeholder="搜索内部规范ID、规范内容、标签或外部规范ID" />
           </div>
         </div>
 
-        <div v-if="filterableFields.length" class="field-filter-panel">
-          <label v-for="field in filterableFields" :key="field.field_key" class="field-filter-item">
-            <span>{{ field.field_label }}</span>
-            <select v-model="fieldFilters[field.field_key]">
+        <div v-if="filterableTagGroups.length" class="field-filter-panel">
+          <label v-for="group in filterableTagGroups" :key="group.id || group.group_type" class="field-filter-item">
+            <span>{{ group.group_name }}</span>
+            <select v-model="tagFilters[getTagGroupFilterKey(group)]">
               <option value="">全部</option>
-              <option v-for="value in getInternalFieldOptions(field.field_key)" :key="value" :value="value">
-                {{ value }}
+              <option v-for="tag in getTagFilterOptions(group)" :key="tag.tag_key || tag.id" :value="tag.tag_name">
+                {{ tag.tag_name }}
               </option>
             </select>
           </label>
@@ -84,8 +84,7 @@
         </div>
 
         <div class="schema-overview">
-          <span v-if="internalFields.length">当前字段：{{ internalFields.map((field) => field.field_label).join('、') }}</span>
-          <span v-else>当前还没有配置内部规范字段，请先点击“字段配置”。</span>
+          <span>系统标签群组：外部规范ID、检查表；自定义标签群组 {{ customTagGroups.length }} 个。</span>
         </div>
 
         <div class="internal-list">
@@ -103,15 +102,14 @@
               </div>
             </div>
 
-            <div class="field-value-grid">
-              <div v-for="field in internalFields" :key="field.field_key" class="field-value-item">
-                <span>{{ field.field_label }}</span>
-                <strong>{{ getFieldValue(item, field.field_key) || '-' }}</strong>
-              </div>
-              <div v-if="!internalFields.length" class="field-value-item empty-schema">
-                <span>字段配置</span>
-                <strong>未配置</strong>
-              </div>
+            <div class="internal-content-preview">{{ item.content || '-' }}</div>
+
+            <div class="tag-chip-cloud">
+              <span v-for="tag in item.tags || []" :key="`${item.id}-${tag.group_type}-${tag.tag_name}`" class="tag-chip"
+                :style="{ '--tag-color': tag.color || '#2563eb' }">
+                <em>{{ tag.group_name }}</em>{{ tag.tag_name }}
+              </span>
+              <span v-if="!(item.tags || []).length" class="empty-selected">暂无标签</span>
             </div>
 
             <div class="link-summary">
@@ -124,66 +122,91 @@
           </article>
 
           <div v-if="!loading && !filteredInternalStandards.length" class="empty-block">
-            暂无内部规范，可先配置字段，再点击“新增内部规范”开始维护。
+            暂无内部规范，可先配置标签群组，再点击“新增内部规范”开始维护。
           </div>
           <div v-if="loading" class="empty-block">正在加载巡检规范库数据...</div>
         </div>
       </section>
     </template>
 
-    <div v-if="fieldDialog.visible" class="modal-overlay">
+    <div v-if="tagDialog.visible" class="modal-overlay">
       <div class="modal-panel field-modal card-surface" @click.stop>
         <div class="modal-head">
           <div>
-            <div class="section-kicker">字段配置</div>
-            <h3>内部规范通用字段</h3>
-            <p>这些字段会应用到所有内部规范，字段顺序决定新增规范时的填写顺序。</p>
+            <div class="section-kicker">标签群组</div>
+            <h3>内部规范标签体系</h3>
+            <p>外部规范ID和检查表是系统标签；这里维护区域、环节、专业等自定义标签群组。</p>
           </div>
-          <button class="modal-close" type="button" @click="closeFieldDialog">×</button>
+          <button class="modal-close" type="button" @click="closeTagDialog">×</button>
         </div>
 
         <div class="field-config-help">
-          <span>长内容：新增规范时使用更大的输入框。</span>
-          <span>可显示：巡检登记搜索规范时展示该字段。</span>
+          <span>每个标签群组可以配置多个标签，内部规范可在同一群组内选择一个或多个标签。</span>
+          <span>颜色配置在标签群组上，同一群组内的所有标签会使用同一种颜色。</span>
         </div>
 
         <div class="field-config-list">
-          <div v-for="(field, index) in fieldDialog.fields" :key="field.local_id" class="field-config-row">
-            <span class="field-order">字段 {{ index + 1 }}</span>
-            <input v-model.trim="field.field_label" type="text" placeholder="字段名称，例如：区域、环节、规范事项" />
-            <div class="field-flag-group" aria-label="字段属性">
-              <label class="filter-switch">
-                <input v-model="field.is_filterable" type="checkbox" />
-                <span>可筛选</span>
-              </label>
-              <label class="filter-switch">
-                <input v-model="field.is_long_text" type="checkbox" />
-                <span>长内容</span>
-              </label>
-              <label class="filter-switch">
-                <input v-model="field.is_register_visible" type="checkbox" />
-                <span>可显示</span>
-              </label>
+          <div v-for="(group, groupIndex) in tagDialog.groups" :key="group.local_id" class="tag-group-config-card"
+            :style="{ '--group-color': group.color || '#2563EB' }">
+            <div class="tag-group-card-head">
+              <div class="tag-group-title-block">
+                <span class="field-order">群组 {{ groupIndex + 1 }}</span>
+                <span class="tag-group-color-dot"></span>
+                <input v-model.trim="group.group_name" type="text" placeholder="标签群组名称，例如：区域、环节、专业" />
+              </div>
+              <div class="tag-group-tools">
+                <label class="tag-group-color-field">
+                  <span>群组颜色</span>
+                  <input v-model="group.color" type="color" />
+                </label>
+                <label class="filter-switch">
+                  <input v-model="group.is_filterable" type="checkbox" />
+                  <span>可筛选</span>
+                </label>
+                <div class="field-row-actions">
+                  <button class="btn btn-secondary btn-sm" type="button" :disabled="groupIndex === 0" @click="moveTagGroup(groupIndex, -1)">上移</button>
+                  <button class="btn btn-secondary btn-sm" type="button" :disabled="groupIndex === tagDialog.groups.length - 1"
+                    @click="moveTagGroup(groupIndex, 1)">下移</button>
+                  <button class="btn btn-danger btn-sm" type="button" @click="removeTagGroup(groupIndex)">删除群组</button>
+                </div>
+              </div>
             </div>
-            <div class="field-row-actions">
-              <button class="btn btn-secondary btn-sm" type="button" :disabled="index === 0" @click="moveField(index, -1)">上移</button>
-              <button class="btn btn-secondary btn-sm" type="button" :disabled="index === fieldDialog.fields.length - 1"
-                @click="moveField(index, 1)">下移</button>
-              <button class="btn btn-danger btn-sm" type="button" @click="removeField(index)">删除</button>
+
+            <div class="tag-group-meta-line">
+              <span>已配置 {{ group.tags.length }} 个标签</span>
+              <span v-if="group.keyword">当前筛选 {{ getVisibleTagRows(group).length }} 个</span>
+            </div>
+
+            <div class="tag-config-toolbar">
+              <input v-model.trim="group.newTagName" type="text" placeholder="输入标签名称，回车添加"
+                @keydown.enter.prevent="addTag(groupIndex)" />
+              <button class="btn btn-secondary btn-sm" type="button" @click="addTag(groupIndex)">添加标签</button>
+              <input v-model.trim="group.keyword" type="search" placeholder="搜索本群组标签" />
+            </div>
+
+            <div class="tag-config-list">
+              <div v-for="row in getVisibleTagRows(group)" :key="row.tag.local_id" class="tag-config-row">
+                <span class="tag-edit-color-mark"></span>
+                <input v-model.trim="row.tag.tag_name" type="text" placeholder="标签名称，例如：加油区、卸油区" />
+                <button class="tag-remove-icon-btn" type="button" title="删除标签" @click="removeTag(groupIndex, row.tagIndex)">×</button>
+              </div>
+              <div v-if="!getVisibleTagRows(group).length" class="empty-tag-inline">
+                {{ group.tags.length ? '没有匹配的标签。' : '当前群组还没有标签。' }}
+              </div>
             </div>
           </div>
-          <div v-if="!fieldDialog.fields.length" class="empty-schema-card">
-            当前没有字段。新增内部规范前，请先添加至少一个字段。
+          <div v-if="!tagDialog.groups.length" class="empty-schema-card">
+            当前没有自定义标签群组。可以直接新增一个“区域”标签群组开始维护。
           </div>
         </div>
-        <div v-if="fieldDialog.error" class="dialog-message error">{{ fieldDialog.error }}</div>
+        <div v-if="tagDialog.error" class="dialog-message error">{{ tagDialog.error }}</div>
 
         <div class="modal-actions split-actions">
-          <button class="btn btn-secondary" type="button" @click="addField">添加字段</button>
+          <button class="btn btn-secondary" type="button" @click="addTagGroup">添加标签群组</button>
           <div>
-            <button class="btn btn-secondary" type="button" @click="closeFieldDialog">取消</button>
-            <button class="btn btn-primary" type="button" :disabled="saving" @click="saveFields">
-              {{ saving ? '保存中...' : '保存字段配置' }}
+            <button class="btn btn-secondary" type="button" @click="closeTagDialog">取消</button>
+            <button class="btn btn-primary" type="button" :disabled="saving" @click="saveTagGroups">
+              {{ saving ? '保存中...' : '保存标签群组' }}
             </button>
           </div>
         </div>
@@ -196,33 +219,26 @@
           <div>
             <div class="section-kicker">{{ standardDialog.form.id ? '编辑内部规范' : '新增内部规范' }}</div>
             <h3>{{ standardDialog.form.id ? standardDialog.form.internal_standard_id : '系统自动生成内部规范ID' }}</h3>
-            <p>先填写内部规范字段，再选择需要挂载的外部规范。</p>
+            <p>填写内部规范内容，再为它绑定外部规范ID并选择标签。</p>
           </div>
           <button class="modal-close" type="button" @click="closeStandardDialog">×</button>
         </div>
 
         <div class="step-tabs">
           <button type="button" :class="{ active: standardDialog.step === 1 }" @click="standardDialog.step = 1">
-            1. 填写字段
+            1. 规范内容
           </button>
           <button type="button" :class="{ active: standardDialog.step === 2 }" @click="standardDialog.step = 2">
-            2. 挂载外部规范
+            2. 标签与外部规范
           </button>
         </div>
 
         <div v-if="standardDialog.step === 1" class="standard-step">
-          <div v-if="!internalFields.length" class="empty-schema-card">
-            当前还没有配置字段。请先关闭本弹窗，点击页面右上角“字段配置”。
-          </div>
-          <div v-else class="standard-field-grid">
-            <label v-for="(field, index) in internalFields" :key="field.field_key" class="standard-field-item">
-              <span>{{ field.field_label }}<em v-if="index === 0">用于生成内部规范ID</em></span>
-              <textarea v-model.trim="standardDialog.form.field_values[field.field_key]"
-                :rows="field.is_long_text ? 6 : 2"
-                :class="{ 'long-text-input': field.is_long_text }"
-                :placeholder="index === 0 ? '例如：配电间' : '填写字段内容，空值会显示为 -'"></textarea>
-            </label>
-          </div>
+          <label class="standard-field-item standard-content-editor">
+            <span>规范内容<em>用于生成内部规范ID</em></span>
+            <textarea v-model.trim="standardDialog.form.content" rows="8"
+              placeholder="填写业务督导中心内部整理后的规范内容"></textarea>
+          </label>
           <label class="switch-field">
             <input v-model="standardDialog.form.is_active" type="checkbox" />
             启用这条内部规范
@@ -230,6 +246,24 @@
         </div>
 
         <div v-else class="standard-step">
+          <div class="standard-tag-picker">
+            <div class="section-kicker">自定义标签</div>
+            <div v-if="customTagGroups.length" class="tag-picker-grid">
+              <section v-for="group in customTagGroups" :key="group.id" class="tag-picker-group">
+                <strong>{{ group.group_name }}</strong>
+                <div class="tag-picker-options">
+                  <button v-for="tag in group.tags" :key="tag.id" type="button" class="tag-select-chip"
+                    :class="{ selected: isTagSelected(tag.id) }"
+                    :style="{ '--tag-color': tag.color || '#2563eb' }"
+                    @click="toggleTag(tag.id)">
+                    {{ tag.tag_name }}
+                  </button>
+                </div>
+              </section>
+            </div>
+            <div v-else class="empty-schema-card">暂无自定义标签群组，可先保存外部规范ID标签。</div>
+          </div>
+
           <div class="external-toolbar">
             <label>
               <span>按检查表筛选</span>
@@ -279,7 +313,7 @@
           </button>
           <div>
             <button class="btn btn-secondary" type="button" @click="closeStandardDialog">取消</button>
-            <button v-if="standardDialog.step === 1" class="btn btn-primary" type="button" :disabled="!internalFields.length"
+            <button v-if="standardDialog.step === 1" class="btn btn-primary" type="button"
               @click="standardDialog.step = 2">
               下一步
             </button>
@@ -307,15 +341,27 @@ try {
 }
 
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_internal_standards)
+const TAG_COLOR_PALETTE = [
+  '#2563EB',
+  '#0F766E',
+  '#D97706',
+  '#DC2626',
+  '#7C3AED',
+  '#0891B2',
+  '#65A30D',
+  '#DB2777',
+  '#4F46E5',
+  '#EA580C'
+]
 const loading = ref(false)
 const saving = ref(false)
 const savingUsageMode = ref(false)
 const keyword = ref('')
-const internalFields = ref([])
+const tagGroups = ref([])
 const internalStandards = ref([])
 const externalStandards = ref([])
 const importFileInput = ref(null)
-const fieldFilters = reactive({})
+const tagFilters = reactive({})
 const message = reactive({ text: '', type: 'info' })
 const usageMode = reactive({
   mode: 'internal',
@@ -329,14 +375,15 @@ let messageTimer = null
 const createEmptyStandardForm = () => ({
   id: null,
   internal_standard_id: '',
-  field_values: {},
+  content: '',
   is_active: true,
-  external_links: []
+  external_links: [],
+  tag_ids: []
 })
 
-const fieldDialog = reactive({
+const tagDialog = reactive({
   visible: false,
-  fields: [],
+  groups: [],
   error: ''
 })
 
@@ -361,11 +408,8 @@ const setMessage = (text, type = 'info') => {
   }
 }
 
-const getFieldValue = (item, fieldKey) => {
-  return String(item?.field_values?.[fieldKey] ?? '').trim()
-}
-
-const filterableFields = computed(() => internalFields.value.filter((field) => field.is_filterable))
+const customTagGroups = computed(() => tagGroups.value.filter((group) => group.group_type === 'custom' && !group.is_system))
+const filterableTagGroups = computed(() => tagGroups.value.filter((group) => group.is_filterable))
 
 const usageModeLabel = computed(() => usageMode.mode === 'external' ? '外部规范库' : '内部规范库')
 const usageModeDescription = computed(() => usageMode.mode === 'external'
@@ -375,23 +419,24 @@ const usageModeDescription = computed(() => usageMode.mode === 'external'
 const filteredInternalStandards = computed(() => {
   const text = keyword.value.toLowerCase()
   return internalStandards.value.filter((item) => {
-    const fieldText = internalFields.value
-      .map((field) => getFieldValue(item, field.field_key))
-      .join(' ')
+    const tagText = (item.tags || []).map((tag) => `${tag.group_name} ${tag.tag_name}`).join(' ')
     const externalText = (item.linked_externals || [])
       .map((link) => link.external_standard_id)
       .join(' ')
     const keywordMatched = !text || [
       item.internal_standard_id,
-      fieldText,
+      item.content,
+      tagText,
       externalText
     ].join(' ').toLowerCase().includes(text)
     if (!keywordMatched) return false
 
-    return filterableFields.value.every((field) => {
-      const filterValue = String(fieldFilters[field.field_key] || '').trim()
+    return filterableTagGroups.value.every((group) => {
+      const filterValue = String(tagFilters[getTagGroupFilterKey(group)] || '').trim()
       if (!filterValue) return true
-      return getFieldValue(item, field.field_key) === filterValue
+      return (item.tags || []).some((tag) => {
+        return tag.group_name === group.group_name && tag.tag_name === filterValue
+      })
     })
   })
 })
@@ -423,31 +468,55 @@ const filteredExternalStandards = computed(() => {
   }).slice(0, 100)
 })
 
-const getInternalFieldOptions = (fieldKey) => {
-  return [...new Set(internalStandards.value
-    .map((item) => getFieldValue(item, fieldKey))
-    .filter(Boolean))]
+const getTagGroupFilterKey = (group) => String(group.id || group.group_type || group.group_name)
+
+const getTagFilterOptions = (group) => {
+  const values = []
+  const seen = new Set()
+  internalStandards.value.forEach((item) => {
+    ;(item.tags || []).forEach((tag) => {
+      if (tag.group_name !== group.group_name) return
+      const key = tag.tag_key || tag.tag_name
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      values.push(tag)
+    })
+  })
+  return values
 }
 
 const clearFilters = () => {
-  Object.keys(fieldFilters).forEach((key) => {
-    fieldFilters[key] = ''
+  Object.keys(tagFilters).forEach((key) => {
+    tagFilters[key] = ''
   })
 }
 
-const hydrateStandardFieldValues = (item = {}) => {
-  const values = {}
-  internalFields.value.forEach((field) => {
-    values[field.field_key] = String(item.field_values?.[field.field_key] ?? '').trim()
-  })
-  return values
+const createLocalId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+
+const randomTagGroupColor = (seed = '') => {
+  if (seed) {
+    let hash = 0
+    String(seed).split('').forEach((char) => {
+      hash = ((hash << 5) - hash) + char.charCodeAt(0)
+      hash |= 0
+    })
+    return TAG_COLOR_PALETTE[Math.abs(hash) % TAG_COLOR_PALETTE.length]
+  }
+  return TAG_COLOR_PALETTE[Math.floor(Math.random() * TAG_COLOR_PALETTE.length)]
+}
+
+const getVisibleTagRows = (group) => {
+  const keywordText = String(group?.keyword || '').trim().toLowerCase()
+  return (group?.tags || [])
+    .map((tag, tagIndex) => ({ tag, tagIndex }))
+    .filter(({ tag }) => !keywordText || String(tag.tag_name || '').toLowerCase().includes(keywordText))
 }
 
 const fetchInternalStandards = async () => {
   const response = await axios.get('/api/management/internal-standards', {
     params: { user_id: currentUserId, _ts: Date.now() }
   })
-  internalFields.value = response.data?.fields || []
+  tagGroups.value = response.data?.tag_groups || []
   internalStandards.value = response.data?.items || []
   Object.assign(usageMode, response.data?.usage_mode || {})
 }
@@ -497,74 +566,95 @@ const updateUsageMode = async (mode) => {
   }
 }
 
-const openFieldDialog = () => {
-  fieldDialog.fields = internalFields.value.map((field) => ({
-    ...field,
-    is_filterable: field.is_filterable ?? true,
-    is_long_text: field.is_long_text ?? false,
-    is_register_visible: field.is_register_visible ?? true,
-    local_id: field.field_key || `field_${Date.now()}_${Math.random().toString(16).slice(2)}`
+const openTagDialog = () => {
+  tagDialog.groups = customTagGroups.value.map((group) => ({
+    ...group,
+    color: group.color || randomTagGroupColor(group.group_name),
+    is_filterable: group.is_filterable ?? true,
+    keyword: '',
+    newTagName: '',
+    local_id: group.id || createLocalId('group'),
+    tags: (group.tags || []).map((tag) => ({
+      ...tag,
+      color: group.color || tag.color || randomTagGroupColor(group.group_name),
+      local_id: tag.id || createLocalId('tag')
+    }))
   }))
-  fieldDialog.error = ''
-  fieldDialog.visible = true
+  tagDialog.error = ''
+  tagDialog.visible = true
 }
 
-const closeFieldDialog = () => {
-  fieldDialog.visible = false
+const closeTagDialog = () => {
+  tagDialog.visible = false
 }
 
-const addField = () => {
-  fieldDialog.error = ''
-  fieldDialog.fields.push({
-    local_id: `field_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-    field_key: '',
-    field_label: '',
+const addTagGroup = () => {
+  tagDialog.error = ''
+  tagDialog.groups.push({
+    local_id: createLocalId('group'),
+    group_name: '',
+    color: randomTagGroupColor(),
     is_filterable: true,
-    is_long_text: false,
-    is_register_visible: true
+    keyword: '',
+    newTagName: '',
+    tags: []
   })
 }
 
-const hasFieldContent = (fieldKey) => {
-  return internalStandards.value.some((item) => String(item.field_values?.[fieldKey] || '').trim())
-}
-
-const removeField = (index) => {
-  const field = fieldDialog.fields[index]
-  if (field?.field_key && hasFieldContent(field.field_key)) {
-    const confirmed = window.confirm(`字段【${field.field_label}】已经有内部规范数据。删除后这些内容会永久丢失，确定继续吗？`)
+const removeTagGroup = (index) => {
+  const group = tagDialog.groups[index]
+  if (group?.tags?.some((tag) => internalStandards.value.some((item) => (item.custom_tag_ids || []).includes(tag.id)))) {
+    const confirmed = window.confirm(`标签群组【${group.group_name}】已有内部规范使用。删除后这些标签绑定会同步移除，确定继续吗？`)
     if (!confirmed) return
   }
-  fieldDialog.fields.splice(index, 1)
+  tagDialog.groups.splice(index, 1)
 }
 
-const moveField = (index, offset) => {
+const moveTagGroup = (index, offset) => {
   const targetIndex = index + offset
-  if (targetIndex < 0 || targetIndex >= fieldDialog.fields.length) return
-  const [item] = fieldDialog.fields.splice(index, 1)
-  fieldDialog.fields.splice(targetIndex, 0, item)
+  if (targetIndex < 0 || targetIndex >= tagDialog.groups.length) return
+  const [item] = tagDialog.groups.splice(index, 1)
+  tagDialog.groups.splice(targetIndex, 0, item)
 }
 
-const saveFields = async () => {
+const addTag = (groupIndex) => {
+  const group = tagDialog.groups[groupIndex]
+  group.tags.push({
+    local_id: createLocalId('tag'),
+    tag_name: String(group.newTagName || '').trim(),
+    color: group.color || randomTagGroupColor(group.group_name)
+  })
+  group.newTagName = ''
+  group.keyword = ''
+}
+
+const removeTag = (groupIndex, tagIndex) => {
+  tagDialog.groups[groupIndex].tags.splice(tagIndex, 1)
+}
+
+const saveTagGroups = async () => {
   try {
     saving.value = true
-    fieldDialog.error = ''
-    const response = await axios.put('/api/management/internal-standards/fields', {
+    tagDialog.error = ''
+    const response = await axios.put('/api/management/internal-standards/tag-groups', {
       user_id: currentUserId,
-      fields: fieldDialog.fields.map((field) => ({
-        field_key: field.field_key,
-        field_label: field.field_label,
-        is_filterable: field.is_filterable,
-        is_long_text: field.is_long_text,
-        is_register_visible: field.is_register_visible
+      tag_groups: tagDialog.groups.map((group) => ({
+        id: group.id,
+        group_name: group.group_name,
+        color: group.color,
+        is_filterable: group.is_filterable,
+        tags: (group.tags || []).map((tag) => ({
+          id: tag.id,
+          tag_name: tag.tag_name
+        }))
       }))
     })
-    internalFields.value = response.data?.fields || []
-    setMessage(response.data?.message || '字段配置已保存。', 'success')
-    fieldDialog.visible = false
+    tagGroups.value = response.data?.tag_groups || []
+    setMessage(response.data?.message || '标签群组已保存。', 'success')
+    tagDialog.visible = false
     await fetchAll()
   } catch (error) {
-    fieldDialog.error = error?.response?.data?.error || '字段配置保存失败。'
+    tagDialog.error = error?.response?.data?.error || '标签群组保存失败。'
   } finally {
     saving.value = false
   }
@@ -580,21 +670,33 @@ const openStandardDialog = (item = null) => {
     ? {
         id: item.id,
         internal_standard_id: item.internal_standard_id,
-        field_values: hydrateStandardFieldValues(item),
+        content: item.content || '',
         is_active: Boolean(item.is_active),
+        tag_ids: [...(item.custom_tag_ids || [])],
         external_links: (item.linked_externals || []).map((link) => ({
           external_standard_id: link.external_standard_id,
           external_inspection_table_id: link.external_inspection_table_id
         }))
       }
-    : {
-        ...createEmptyStandardForm(),
-        field_values: hydrateStandardFieldValues()
-      }
+    : createEmptyStandardForm()
 }
 
 const closeStandardDialog = () => {
   standardDialog.visible = false
+}
+
+const isTagSelected = (tagId) => {
+  return standardDialog.form.tag_ids.some((item) => String(item) === String(tagId))
+}
+
+const toggleTag = (tagId) => {
+  const normalizedId = Number.parseInt(tagId, 10)
+  if (!Number.isFinite(normalizedId)) return
+  if (isTagSelected(normalizedId)) {
+    standardDialog.form.tag_ids = standardDialog.form.tag_ids.filter((item) => String(item) !== String(normalizedId))
+    return
+  }
+  standardDialog.form.tag_ids.push(normalizedId)
 }
 
 const isExternalSelected = (item) => {
@@ -628,22 +730,23 @@ const removeExternalLink = (externalStandardId) => {
 }
 
 const saveStandard = async () => {
-  if (!internalFields.value.length) {
-    standardDialog.error = '请先配置内部规范字段。'
+  if (!String(standardDialog.form.content || '').trim()) {
+    standardDialog.error = '请填写内部规范内容。'
+    standardDialog.step = 1
     return
   }
-  const firstField = internalFields.value[0]
-  if (!String(standardDialog.form.field_values[firstField.field_key] || '').trim()) {
-    standardDialog.error = `请填写首个字段【${firstField.field_label}】。`
-    standardDialog.step = 1
+  if (!standardDialog.form.external_links.length) {
+    standardDialog.error = '请至少绑定一个外部规范ID。'
+    standardDialog.step = 2
     return
   }
 
   const payload = {
     user_id: currentUserId,
-    field_values: standardDialog.form.field_values,
+    content: standardDialog.form.content,
     is_active: standardDialog.form.is_active,
-    external_links: standardDialog.form.external_links
+    external_links: standardDialog.form.external_links,
+    tag_ids: standardDialog.form.tag_ids
   }
 
   try {
@@ -709,7 +812,7 @@ const exportBackup = async () => {
 const handleImportBackup = async (event) => {
   const file = event.target.files?.[0]
   if (!file) return
-  const confirmed = window.confirm('导入备份会覆盖当前全部内部巡检规范、字段配置和挂载关系，确定继续吗？')
+  const confirmed = window.confirm('导入备份会覆盖当前全部内部巡检规范、标签群组和挂载关系，确定继续吗？')
   if (!confirmed) {
     event.target.value = ''
     return
@@ -1108,33 +1211,49 @@ onMounted(fetchAll)
   color: #64748b;
 }
 
-.field-value-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.field-value-item {
-  padding: 10px 12px;
-  border-radius: 14px;
+.internal-content-preview {
+  padding: 13px 14px;
+  border-radius: 16px;
   background: #f8fafc;
   border: 1px solid #e5edf5;
-}
-
-.field-value-item span {
-  display: block;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 900;
-  margin-bottom: 5px;
-}
-
-.field-value-item strong {
   color: #0f172a;
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.75;
   white-space: pre-line;
   word-break: break-word;
+}
+
+.tag-chip-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 35%, #ffffff);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-color, #2563eb) 10%, #ffffff);
+  color: color-mix(in srgb, var(--tag-color, #2563eb) 72%, #0f172a);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.tag-chip em {
+  max-width: 92px;
+  padding-right: 6px;
+  border-right: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 28%, transparent);
+  color: #64748b;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .link-summary {
@@ -1255,7 +1374,7 @@ onMounted(fetchAll)
 .field-config-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .field-config-help {
@@ -1286,6 +1405,126 @@ onMounted(fetchAll)
   border-radius: 20px;
   background: linear-gradient(135deg, #ffffff, #f8fafc);
   box-sizing: border-box;
+}
+
+.tag-group-config-card {
+  position: relative;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--group-color, #2563eb) 22%, #e5edf5);
+  border-radius: 22px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--group-color, #2563eb) 8%, transparent), transparent 46%),
+    linear-gradient(135deg, #ffffff, #f8fafc);
+  overflow: hidden;
+}
+
+.tag-group-config-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: var(--group-color, #2563eb);
+}
+
+.tag-group-card-head {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding-left: 8px;
+}
+
+.tag-group-title-block {
+  display: grid;
+  grid-template-columns: auto auto minmax(220px, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.tag-group-title-block input,
+.tag-config-toolbar input,
+.tag-config-row input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  box-sizing: border-box;
+}
+
+.tag-group-color-dot,
+.tag-edit-color-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--group-color, #2563eb);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--group-color, #2563eb) 14%, transparent);
+}
+
+.tag-group-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tag-group-color-field {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.tag-group-color-field input {
+  width: 34px;
+  height: 26px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tag-group-meta-line {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 10px;
+  padding-left: 8px;
+}
+
+.tag-group-meta-line span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--group-color, #2563eb) 9%, #ffffff);
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.tag-config-toolbar {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto minmax(180px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #e5edf5;
+  border-radius: 18px 18px 0 0;
+  background: #f8fafc;
 }
 
 .field-order {
@@ -1397,12 +1636,6 @@ onMounted(fetchAll)
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
-.standard-field-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
 .standard-field-item textarea {
   min-height: 88px;
   padding: 12px;
@@ -1410,12 +1643,125 @@ onMounted(fetchAll)
   line-height: 1.7;
 }
 
-.standard-field-item textarea.long-text-input {
-  min-height: 150px;
+.standard-content-editor textarea {
+  min-height: 210px;
+  font-size: 15px;
+  line-height: 1.8;
 }
 
 .switch-field {
   margin-top: 16px;
+}
+
+.tag-config-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #e5edf5;
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  background: #ffffff;
+}
+
+.tag-config-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--group-color, #2563eb) 22%, #e5edf5);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--group-color, #2563eb) 6%, #ffffff);
+}
+
+.tag-config-row input {
+  min-width: 0;
+  height: 34px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.tag-remove-icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.empty-tag-inline {
+  grid-column: 1 / -1;
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.standard-tag-picker {
+  padding: 14px;
+  border: 1px solid #e5edf5;
+  border-radius: 20px;
+  background: #f8fafc;
+  margin-bottom: 16px;
+}
+
+.tag-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tag-picker-group {
+  padding: 14px;
+  border: 1px solid #e5edf5;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.tag-picker-group strong {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.tag-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-select-chip {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--tag-color, #2563eb) 28%, #dbe4ee);
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.tag-select-chip.selected {
+  background: color-mix(in srgb, var(--tag-color, #2563eb) 14%, #ffffff);
+  color: color-mix(in srgb, var(--tag-color, #2563eb) 78%, #0f172a);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tag-color, #2563eb) 35%, transparent);
 }
 
 .external-toolbar {
@@ -1534,7 +1880,7 @@ onMounted(fetchAll)
 @media (max-width: 1100px) {
   .internal-list,
   .external-list,
-  .standard-field-grid {
+  .tag-picker-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1578,12 +1924,24 @@ onMounted(fetchAll)
   }
 
   .field-filter-panel,
-  .field-value-grid,
   .field-config-row,
   .field-config-help,
   .external-toolbar,
-  .usage-mode-options {
+  .usage-mode-options,
+  .tag-group-card-head,
+  .tag-group-title-block,
+  .tag-config-toolbar,
+  .tag-config-row {
     grid-template-columns: 1fr;
+  }
+
+  .tag-group-tools {
+    justify-content: flex-start;
+  }
+
+  .tag-config-list {
+    grid-template-columns: 1fr;
+    max-height: 320px;
   }
 
   .usage-mode-card {
