@@ -161,14 +161,14 @@
           <span v-if="!sidebarCollapsed">检查表原件库</span>
         </button>
 
-        <button v-if="canViewMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
+        <button v-if="canViewStationMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/my-issues')"
-          :title="sidebarCollapsed ? (currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题') : ''">
+          :title="sidebarCollapsed ? '我的待整改问题' : ''">
           <span class="nav-item-icon feedback-nav-icon">
             待
             <span v-if="myPendingRectificationCount > 0" class="feedback-unread-badge">{{ myPendingRectificationDisplay }}</span>
           </span>
-          <span v-if="!sidebarCollapsed">{{ currentRole === 'station_manager' ? '我的待整改问题' : '我的待复核问题' }}</span>
+          <span v-if="!sidebarCollapsed">我的待整改问题</span>
         </button>
 
         <button v-if="canViewIssues" class="nav-item"
@@ -186,6 +186,16 @@
             <span v-if="inspectionSignPendingCount > 0" class="feedback-unread-badge">{{ inspectionSignPendingDisplay }}</span>
           </span>
           <span v-if="!sidebarCollapsed">巡检记录</span>
+        </button>
+
+        <button v-if="canViewSupervisorMyIssues" class="nav-item" :class="{ active: isActive('/inspection/my-issues'), collapsed: sidebarCollapsed }"
+          type="button" @click="go('/inspection/my-issues')"
+          :title="sidebarCollapsed ? '我的待复核问题' : ''">
+          <span class="nav-item-icon feedback-nav-icon">
+            待
+            <span v-if="myPendingRectificationCount > 0" class="feedback-unread-badge">{{ myPendingRectificationDisplay }}</span>
+          </span>
+          <span v-if="!sidebarCollapsed">我的待复核问题</span>
         </button>
 
         <button v-if="canViewInspectionPlans" class="nav-item"
@@ -781,6 +791,8 @@ const canViewCertificates = computed(() => (
   Boolean(localPermissions.value.edit_own_certificates)
 ) && isPageVisible('/inspection/certificates'))
 const canViewMyIssues = computed(() => (isSupervisor.value || isStationManager.value) && isPageVisible('/inspection/my-issues'))
+const canViewStationMyIssues = computed(() => isStationManager.value && isPageVisible('/inspection/my-issues'))
+const canViewSupervisorMyIssues = computed(() => isSupervisor.value && isPageVisible('/inspection/my-issues'))
 const canViewInspectionSection = computed(() => (
   canSubmitInspections.value ||
   canViewInspectionStandards.value ||
