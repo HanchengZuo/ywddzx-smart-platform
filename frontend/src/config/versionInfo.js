@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.7.1',
+    date: '2026-07-09',
+    title: '巡检问题筛选优化',
+    summary: '巡检问题列表支持按问题描述搜索。',
+    items: [
+      '筛选面板新增问题描述关键词搜索。'
+    ]
+  },
+  {
     version: 'v3.7',
     date: '2026-07-07',
     title: '内部规范库标签化',

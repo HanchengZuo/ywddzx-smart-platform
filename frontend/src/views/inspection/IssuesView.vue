@@ -393,6 +393,10 @@
           </div>
         </div>
         <div class="filter-item">
+          <label>问题描述</label>
+          <input v-model.trim="filters.issueDescription" placeholder="搜索问题描述关键词" />
+        </div>
+        <div class="filter-item">
           <label>站经理整改结果</label>
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
@@ -1340,6 +1344,7 @@ const filters = ref({
   standardId: '',
   standardDetail: '',
   standardTags: [],
+  issueDescription: '',
   rectificationResult: '',
   reviewResult: '',
   status: '',
@@ -1618,6 +1623,7 @@ const exportFilterLabels = {
   standardId: '规范ID',
   standardDetail: '规范详情',
   standardTags: '规范标签',
+  issueDescription: '问题描述',
   rectificationResult: '站经理整改结果',
   reviewResult: '督导组复核结果',
   status: '问题状态',
@@ -1691,6 +1697,7 @@ const filteredData = computed(() => {
     const matchedStandardId = !filters.value.standardId || normalizedKeyword(getStandardIdSearchText(item)).includes(normalizedKeyword(filters.value.standardId))
     const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
     const matchedStandardTags = matchesAnySelectedTag(item, filters.value.standardTags)
+    const matchedIssueDescription = !filters.value.issueDescription || normalizedKeyword(item.description).includes(normalizedKeyword(filters.value.issueDescription))
     const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
     const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
     const matchedStatus = !filters.value.status || item.status === filters.value.status
@@ -1714,6 +1721,7 @@ const filteredData = computed(() => {
       matchedStandardId &&
       matchedStandardDetail &&
       matchedStandardTags &&
+      matchedIssueDescription &&
       matchedRectificationResult &&
       matchedReviewResult &&
       matchedStatus &&
@@ -2284,6 +2292,7 @@ const resetFilters = () => {
     standardId: '',
     standardDetail: '',
     standardTags: [],
+    issueDescription: '',
     rectificationResult: '',
     reviewResult: '',
     status: '',
@@ -2327,6 +2336,7 @@ const filterMyTodayIssues = () => {
     standardId: '',
     standardDetail: '',
     standardTags: [],
+    issueDescription: '',
     rectificationResult: '',
     reviewResult: '',
     status: '',
