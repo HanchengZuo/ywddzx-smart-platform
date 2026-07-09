@@ -1186,7 +1186,7 @@
                         <span class="ai-upload-icon">XLS</span>
                         <div>
                             <strong>固定模板格式</strong>
-                            <p>前 3 列为序号、片区、加油站；后方每一列是检查表名称，单元格填写检查人姓名，多人可用“、”分隔。</p>
+                            <p>前 3 列为序号、片区、站点；后方每一列是检查表名称，单元格填写检查人姓名，多人可用“、”分隔。</p>
                         </div>
                         <button class="ghost-btn" type="button" :disabled="aiAssignDialog.isDownloadingTemplate"
                             @click="downloadAssignmentTemplate">
@@ -1744,7 +1744,7 @@ const inferScopeByName = (tableName) => {
     const name = String(tableName || '')
     if (name.includes('充电站')) return '充电站'
     if (name.includes('远程')) return '远程巡检'
-    return '加油站现场巡检'
+    return '现场巡检'
 }
 
 const createPlanRowFromTable = (table) => ({

@@ -220,7 +220,7 @@
                         <td class="label-cell">出车地点</td>
                         <td colspan="2" class="value-cell">分公司本部</td>
                         <td class="label-cell">到达地点</td>
-                        <td colspan="2" class="value-cell">华辉加油站、龙吴路加油站</td>
+                        <td colspan="2" class="value-cell">华辉、龙吴路</td>
                     </tr>
                     <tr>
                         <td class="label-cell tall-cell">用车部门<br />负责人签字</td>
@@ -300,7 +300,7 @@ const applications = [
         reason: '赴站点巡检',
         useDate: '2026-04-20',
         start: '分公司本部',
-        end: '华辉加油站、龙吴路加油站',
+        end: '华辉、龙吴路',
         status: '主任审批中',
         statusClass: 'warning',
         flow: [
@@ -317,7 +317,7 @@ const applications = [
         reason: '现场陪同检查',
         useDate: '2026-04-19',
         start: '分公司本部',
-        end: '锦秋加油站',
+        end: '锦秋',
         status: '出车中',
         statusClass: 'info',
         flow: [

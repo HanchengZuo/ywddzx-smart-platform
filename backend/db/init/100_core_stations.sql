@@ -13,14 +13,14 @@ CREATE TABLE stations (
     latitude NUMERIC(10, 6),                                                -- 纬度
     station_manager_name TEXT,                                              -- 站点负责人姓名
     station_manager_phone TEXT,                                             -- 站点负责人手机号
-    station_type TEXT NOT NULL CHECK (station_type IN ('加油站', '充电站')),  -- 站点类型，仅允许：加油站 / 充电站
+    station_type TEXT NOT NULL CHECK (station_type IN ('油站', '充电站')),    -- 站点类型，仅允许：油站 / 充电站
     asset_type TEXT DEFAULT '全资' CHECK (asset_type IN ('全资', '股权')),    -- 资产类型，仅允许：全资 / 股权
     is_consolidated TEXT DEFAULT '否' CHECK (is_consolidated IN ('是', '否')), -- 是否并表，仅允许：是 / 否
     online_3_status TEXT DEFAULT '未上线'
         CHECK (online_3_status IN ('上线', '上线参股模式', '未上线')),         -- 是否上线3.0
     monitoring_status TEXT NOT NULL DEFAULT '运行中'
         CHECK (monitoring_status IN ('运行中', '未运行')),                    -- 监控状态，仅允许：运行中 / 未运行
-    hos_station_code TEXT UNIQUE NOT NULL,                                    -- HOS加油站编码，站点主数据唯一标识，例如：PQ04
+    hos_station_code TEXT UNIQUE NOT NULL,                                    -- HOS编码，站点主数据唯一标识，例如：PQ04
     landline_phone TEXT,                                                     -- 固定电话，例如：021-67220331
     status TEXT DEFAULT '营业中' CHECK (status IN ('营业中', '停业')),        -- 站点状态，仅允许：营业中 / 停业
     operating_hours TEXT DEFAULT '24小时',                                  -- 营运时间，例如：24小时 / 06:00-22:00

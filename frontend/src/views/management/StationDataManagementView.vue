@@ -149,7 +149,7 @@
                 </label>
 
                 <label class="form-field">
-                  <span>HOS加油站编码</span>
+                  <span>HOS编码</span>
                   <input v-model.trim="form.hos_station_code" type="text" placeholder="例如：PQ04" />
                   <small>站点唯一标识，用于防止重复添加。</small>
                 </label>
@@ -157,7 +157,7 @@
                 <label class="form-field">
                   <span>站点类型</span>
                   <select v-model="form.station_type">
-                    <option value="加油站">加油站</option>
+                    <option value="油站">油站</option>
                     <option value="充电站">充电站</option>
                   </select>
                 </label>
@@ -318,7 +318,7 @@
               <span>站点类型</span>
               <select v-model="filters.station_type">
                 <option value="">全部类型</option>
-                <option value="加油站">加油站</option>
+                <option value="油站">油站</option>
                 <option value="充电站">充电站</option>
               </select>
             </label>
@@ -594,7 +594,7 @@ const createEmptyForm = () => ({
   latitude: '',
   station_manager_name: '',
   station_manager_phone: '',
-  station_type: '加油站',
+  station_type: '油站',
   asset_type: '全资',
   is_consolidated: '否',
   online_3_status: '未上线',
@@ -613,7 +613,7 @@ const stationExportFieldGroups = [
       { key: 'station_usernames', label: '站点登录用户名', help: '绑定本站的站点账号' },
       { key: 'region', label: '所属片区/归属地', help: '站点所属片区或归属地' },
       { key: 'address', label: '站点地址', help: '站点详细地址' },
-      { key: 'hos_station_code', label: 'HOS加油站编码', help: '站点唯一业务编码' }
+      { key: 'hos_station_code', label: 'HOS编码', help: '站点唯一业务编码' }
     ]
   },
   {
@@ -629,7 +629,7 @@ const stationExportFieldGroups = [
   {
     title: '经营属性',
     options: [
-      { key: 'station_type', label: '站点类型', help: '加油站或充电站' },
+      { key: 'station_type', label: '站点类型', help: '油站或充电站' },
       { key: 'asset_type', label: '资产类型', help: '全资或股权' },
       { key: 'is_consolidated', label: '是否并表', help: '是否纳入并表范围' },
       { key: 'online_3_status', label: '是否上线3.0', help: '3.0 系统上线状态' },
@@ -815,7 +815,7 @@ const normalizeStationForForm = (station) => ({
   latitude: station.latitude ?? '',
   station_manager_name: station.station_manager_name || '',
   station_manager_phone: station.station_manager_phone || '',
-  station_type: station.station_type || '加油站',
+  station_type: station.station_type || '油站',
   asset_type: normalizeAssetType(station.asset_type) === '股权' ? '股权' : '全资',
   is_consolidated: station.is_consolidated || '否',
   online_3_status: station.online_3_status || '未上线',
@@ -1042,7 +1042,7 @@ const validateForm = () => {
   form.hos_station_code = String(form.hos_station_code || '').trim().toUpperCase()
   form.operating_hours = getOperatingHoursValue()
   if (!form.station_name) return '请填写站点名称。'
-  if (!form.hos_station_code) return '请填写 HOS加油站编码。'
+  if (!form.hos_station_code) return '请填写 HOS编码。'
   if (!form.station_type) return '请选择站点类型。'
   if (!form.asset_type) return '请选择资产类型。'
   if (!form.is_consolidated) return '请选择是否并表。'

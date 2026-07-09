@@ -133,6 +133,8 @@ def normalize_frontend_app_version(value):
 FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.7.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
+DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
+DISPLAY_OIL_STATION_TYPE = "油站"
 AUTH_SERVER_CACHE_TTL_SECONDS = max(1, int(os.environ.get("AUTH_SERVER_CACHE_TTL_SECONDS", "30")))
 AUTH_TOKEN_CACHE_MAX_ENTRIES = max(128, int(os.environ.get("AUTH_TOKEN_CACHE_MAX_ENTRIES", "2048")))
 SERVER_RESOURCE_SAMPLE_PATH = os.environ.get(
@@ -190,6 +192,43 @@ def frontend_version_expired_response():
     response.headers["Expires"] = "0"
     response.headers["Clear-Site-Data"] = '"cache", "storage"'
     return response, 426
+
+
+def sanitize_display_string(value):
+    if not isinstance(value, str) or DISPLAY_REMOVED_STATION_PHRASE not in value:
+        return value
+    if value.strip() == DISPLAY_REMOVED_STATION_PHRASE:
+        return DISPLAY_OIL_STATION_TYPE
+    return value.replace(DISPLAY_REMOVED_STATION_PHRASE, "")
+
+
+def sanitize_display_payload(value):
+    if isinstance(value, dict):
+        return {key: sanitize_display_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_display_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_display_payload(item) for item in value]
+    if isinstance(value, str):
+        return sanitize_display_string(value)
+    return value
+
+
+@app.after_request
+def sanitize_json_display_text(response):
+    if response.direct_passthrough:
+        return response
+    if "application/json" not in str(response.content_type or "").lower():
+        return response
+
+    payload = response.get_json(silent=True)
+    if payload is None:
+        return response
+
+    sanitized_payload = sanitize_display_payload(payload)
+    response.set_data(json.dumps(sanitized_payload, ensure_ascii=False, default=str))
+    response.headers["Content-Length"] = str(len(response.get_data()))
+    return response
 
 
 class QuietAccessLogFilter(logging.Filter):
@@ -481,17 +520,17 @@ ROLE_LABELS = {
 QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE = [
     ("计量稽查检查表", "online"),
     ("计量稽查检查表", "offline"),
-    ("加油站环境无异味管理检查表", "offline"),
-    ("加油站质量安全环保检查表", "online"),
-    ("加油站质量安全环保检查表", "offline"),
+    ("环境无异味管理检查表", "offline"),
+    ("质量安全环保检查表", "online"),
+    ("质量安全环保检查表", "offline"),
 ]
 DEVELOPMENT_PLAN_DEFAULT_CHECKLIST_SCOPE = [
-    ("加油站设备设施检查表", "offline"),
+    ("设备设施检查表", "offline"),
 ]
 OIL_GAS_DEFAULT_CHECKLIST_SCOPE = [
-    ("加油站环境无异味管理检查表", "offline"),
-    ("加油站现场检查明细表", "online"),
-    ("加油站现场检查明细表", "offline"),
+    ("环境无异味管理检查表", "offline"),
+    ("现场检查明细表", "online"),
+    ("现场检查明细表", "offline"),
 ]
 NON_OIL_DEFAULT_CHECKLIST_SCOPE = [
     ("非油合规性检查（团购）", "online"),
@@ -888,7 +927,7 @@ PERMISSION_ANY_DEPENDENCIES = {
         "view_all_inspection_records",
     ),
 }
-STATION_TYPE_OPTIONS = {"加油站", "充电站"}
+STATION_TYPE_OPTIONS = {DISPLAY_OIL_STATION_TYPE, "充电站"}
 STATION_ASSET_TYPE_OPTIONS = {"全资", "股权"}
 STATION_CONSOLIDATED_OPTIONS = {"是", "否"}
 STATION_ONLINE_3_STATUS_OPTIONS = {"上线", "上线参股模式", "未上线"}
@@ -1000,12 +1039,12 @@ CERTIFICATE_TYPES = [
     {
         "code": "lightning_protection_report",
         "name": "防雷检测报告",
-        "note": "加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。",
+        "note": "爆炸、火灾危险环境场所防雷装置一般每半年检测一次。",
         "recommended_reminder_days": 30,
         "legal_reminder_days": 7,
         "recommended_label": "到期前 30天",
         "legal_label": "到期前 7天",
-        "rule": "30天进入推荐提醒；7天内进入法定提醒。加油站等爆炸、火灾危险环境场所防雷装置一般每半年检测一次。",
+        "rule": "30天进入推荐提醒；7天内进入法定提醒。爆炸、火灾危险环境场所防雷装置一般每半年检测一次。",
     },
     {
         "code": "tobacco_monopoly_permit",
@@ -3482,7 +3521,7 @@ def normalize_checklist_backup_payload(payload):
         if not isinstance(item, dict):
             raise ValueError(f"第 {index} 张检查表数据格式不正确。")
         table_code = normalize_checklist_code(item.get("table_code"))
-        table_name = normalize_text(item.get("table_name"), 120)
+        table_name = sanitize_display_string(normalize_text(item.get("table_name"), 120))
         checklist_mode = normalize_checklist_mode(item.get("checklist_mode"))
         standard_id_base = normalize_checklist_standard_id_base(
             item.get("standard_id_base"),
@@ -5415,7 +5454,7 @@ def apply_role_permission_updates(cur, role, permissions, actor_user_id):
 
 def normalize_checklist_scope_name(value):
     return (
-        str(value or "")
+        sanitize_display_string(str(value or ""))
         .replace("（视频）", "")
         .replace("(视频)", "")
         .replace("（现场）", "")
@@ -9288,10 +9327,17 @@ def normalize_asset_type_option(value):
     return text
 
 
+def normalize_station_type_option(value):
+    text = normalize_text(value)
+    if text == DISPLAY_REMOVED_STATION_PHRASE:
+        return DISPLAY_OIL_STATION_TYPE
+    return text
+
+
 def normalize_hos_station_code(value):
     text = normalize_text(value, 40).upper()
     if not text:
-        raise ValueError("请填写 HOS加油站编码。")
+        raise ValueError("请填写 HOS编码。")
     return text
 
 
@@ -9361,6 +9407,42 @@ def ensure_station_management_columns(cur):
     cur.execute(
         """
         ALTER TABLE stations
+        DROP CONSTRAINT IF EXISTS stations_station_type_check;
+        """
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET station_type = %s
+        WHERE station_type = %s;
+        """,
+        (DISPLAY_OIL_STATION_TYPE, DISPLAY_REMOVED_STATION_PHRASE),
+    )
+    cur.execute(
+        """
+        UPDATE stations
+        SET station_type = %s
+        WHERE station_type IS NULL
+           OR station_type NOT IN (%s, '充电站');
+        """,
+        (DISPLAY_OIL_STATION_TYPE, DISPLAY_OIL_STATION_TYPE),
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ALTER COLUMN station_type SET DEFAULT '油站';
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
+        ADD CONSTRAINT stations_station_type_check
+        CHECK (station_type IN ('油站', '充电站'));
+        """
+    )
+    cur.execute(
+        """
+        ALTER TABLE stations
         ADD COLUMN IF NOT EXISTS hos_station_code TEXT;
         """
     )
@@ -9413,15 +9495,15 @@ def require_management_user(cur, user_id, permission_key):
 
 
 def build_station_payload(data):
-    station_name = normalize_text(data.get("station_name"), 120)
+    station_name = sanitize_display_string(normalize_text(data.get("station_name"), 120))
     if not station_name:
         raise ValueError("请填写站点名称。")
 
     station_type = validate_option(
-        data.get("station_type"),
+        normalize_station_type_option(data.get("station_type")),
         STATION_TYPE_OPTIONS,
         "站点类型",
-        "加油站",
+        DISPLAY_OIL_STATION_TYPE,
     )
     asset_type = validate_option(
         normalize_asset_type_option(data.get("asset_type")),
@@ -9456,8 +9538,8 @@ def build_station_payload(data):
 
     return {
         "station_name": station_name,
-        "region": normalize_text(data.get("region"), 80) or None,
-        "address": normalize_text(data.get("address"), 220) or None,
+        "region": sanitize_display_string(normalize_text(data.get("region"), 80)) or None,
+        "address": sanitize_display_string(normalize_text(data.get("address"), 220)) or None,
         "longitude": normalize_decimal_text(data.get("longitude")),
         "latitude": normalize_decimal_text(data.get("latitude")),
         "station_manager_name": normalize_text(data.get("station_manager_name"), 80) or None,
@@ -9488,7 +9570,7 @@ STATION_DATA_EXPORT_FIELDS = [
     {"key": "is_consolidated", "label": "是否并表", "width": 14},
     {"key": "online_3_status", "label": "是否上线3.0", "width": 18},
     {"key": "monitoring_status", "label": "监控状态", "width": 14},
-    {"key": "hos_station_code", "label": "HOS加油站编码", "width": 18},
+    {"key": "hos_station_code", "label": "HOS编码", "width": 18},
     {"key": "landline_phone", "label": "固定电话", "width": 18},
     {"key": "status", "label": "站点状态", "width": 14},
     {"key": "operating_hours", "label": "营运时间", "width": 16},
@@ -10531,13 +10613,15 @@ def mark_related_plan_items_completed(
 
 
 def normalize_plan_assignment_match_text(value):
-    text = str(value or "").strip().lower()
+    text = sanitize_display_string(str(value or "")).strip().lower()
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"[（）()【】\[\]《》<>·,，。:：;；/\\|_\-]+", "", text)
     return text
 
 
-PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS = ("序号", "片区", "加油站")
+PLAN_ASSIGNMENT_TEMPLATE_STATION_HEADER = "站点"
+PLAN_ASSIGNMENT_TEMPLATE_LEGACY_STATION_HEADER = DISPLAY_REMOVED_STATION_PHRASE
+PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS = ("序号", "片区", PLAN_ASSIGNMENT_TEMPLATE_STATION_HEADER)
 PLAN_ASSIGNMENT_TEMPLATE_MAX_DATA_ROWS = 1000
 PLAN_ASSIGNMENT_TEMPLATE_MAX_ASSIGNMENTS = 3000
 
@@ -10613,14 +10697,22 @@ def parse_plan_assignment_template_file(file_storage):
         ):
             values = [plan_assignment_template_cell_text(value) for value in row]
             normalized = [normalize_plan_assignment_template_header(value) for value in values]
-            if all(header in normalized for header in PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS):
+            has_required_headers = (
+                "序号" in normalized
+                and "片区" in normalized
+                and (
+                    PLAN_ASSIGNMENT_TEMPLATE_STATION_HEADER in normalized
+                    or PLAN_ASSIGNMENT_TEMPLATE_LEGACY_STATION_HEADER in normalized
+                )
+            )
+            if has_required_headers:
                 header_row_number = row_number
                 header_values = values
                 normalized_headers = normalized
                 break
 
         if header_row_number is None:
-            raise ValueError("未找到模板表头，请确认前 3 列包含“序号、片区、加油站”。")
+            raise ValueError("未找到模板表头，请确认前 3 列包含“序号、片区、站点”。")
 
         header_positions = {}
         for index, header in enumerate(normalized_headers):
@@ -10628,18 +10720,20 @@ def parse_plan_assignment_template_file(file_storage):
                 header_positions[header] = index
 
         region_col = header_positions.get("片区")
-        station_col = header_positions.get("加油站")
+        station_col = header_positions.get(PLAN_ASSIGNMENT_TEMPLATE_STATION_HEADER)
+        if station_col is None:
+            station_col = header_positions.get(PLAN_ASSIGNMENT_TEMPLATE_LEGACY_STATION_HEADER)
         table_columns = []
-        required_set = set(PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS)
+        required_set = set(PLAN_ASSIGNMENT_TEMPLATE_REQUIRED_HEADERS) | {PLAN_ASSIGNMENT_TEMPLATE_LEGACY_STATION_HEADER}
         for column_index, header in enumerate(header_values):
             normalized_header = normalized_headers[column_index] if column_index < len(normalized_headers) else ""
-            table_name = str(header or "").strip()
+            table_name = sanitize_display_string(str(header or "").strip())
             if column_index <= station_col or not table_name or normalized_header in required_set:
                 continue
             table_columns.append({"index": column_index, "table_name": table_name})
 
         if not table_columns:
-            raise ValueError("模板中没有检查表列，请在“加油站”后方保留检查表名称列。")
+            raise ValueError("模板中没有检查表列，请在“站点”后方保留检查表名称列。")
 
         parsed_rows = []
         max_row = header_row_number + PLAN_ASSIGNMENT_TEMPLATE_MAX_DATA_ROWS
@@ -10648,7 +10742,11 @@ def parse_plan_assignment_template_file(file_storage):
             start=header_row_number + 1,
         ):
             region_name = plan_assignment_template_cell_text(row[region_col]) if region_col is not None and region_col < len(row) else ""
-            station_name = plan_assignment_template_cell_text(row[station_col]) if station_col is not None and station_col < len(row) else ""
+            station_name = (
+                sanitize_display_string(plan_assignment_template_cell_text(row[station_col]))
+                if station_col is not None and station_col < len(row)
+                else ""
+            )
             has_any_assignment = False
             for table_column in table_columns:
                 cell_value = (
@@ -10667,7 +10765,7 @@ def parse_plan_assignment_template_file(file_storage):
                             "station_name": "",
                             "station_region": region_name,
                             "inspectors": inspectors,
-                            "raw_text": f"第{row_number}行缺少加油站名称",
+                            "raw_text": f"第{row_number}行缺少站点名称",
                             "source_row_number": row_number,
                         }
                     )
@@ -10954,7 +11052,7 @@ def build_plan_assignment_template_workbook(cur, user):
     guide_rows = [
         ["填写规则", "说明"],
         ["片区", "填写站点所属片区/归属地，可帮助系统更准确匹配站点。"],
-        ["加油站", "填写站点名称，可填写简称，系统会结合片区匹配真实站点。"],
+        ["站点", "填写站点名称，可填写简称，系统会结合片区匹配真实站点。"],
         ["检查表列", "每个检查表列下填写负责检查人姓名；多人可用“、”分隔。"],
         ["写入规则", "上传后只生成预览清单，必须人工确认后才会写入当前日期所在周期的计划。"],
         ["注意事项", "请不要修改表头名称；旧版 .xls 文件请另存为 .xlsx 后上传。"],
@@ -17563,7 +17661,7 @@ def get_management_stations():
                 "success": True,
                 "stations": rows,
                 "options": {
-                    "station_types": ["加油站", "充电站"],
+                    "station_types": [DISPLAY_OIL_STATION_TYPE, "充电站"],
                     "asset_types": ["全资", "股权"],
                     "is_consolidated": ["是", "否"],
                     "online_3_statuses": ["上线", "上线参股模式", "未上线"],
@@ -18221,7 +18319,7 @@ def create_management_checklist():
 
     try:
         table_code = normalize_checklist_code(data.get("table_code"))
-        table_name = normalize_text(data.get("table_name"), 120)
+        table_name = sanitize_display_string(normalize_text(data.get("table_name"), 120))
         if not table_name:
             raise ValueError("请填写检查表名称。")
         checklist_mode = normalize_checklist_mode(data.get("checklist_mode"))
@@ -18315,7 +18413,7 @@ def update_management_checklist(inspection_table_id):
     cur = None
 
     try:
-        table_name = normalize_text(data.get("table_name"), 120)
+        table_name = sanitize_display_string(normalize_text(data.get("table_name"), 120))
         if not table_name:
             raise ValueError("请填写检查表名称。")
         checklist_mode = normalize_checklist_mode(data.get("checklist_mode"))

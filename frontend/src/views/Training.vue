@@ -166,8 +166,8 @@ const trainingTasks = [
     pendingText: '对应充电站安全检查口径'
   },
   {
-    title: '现场巡检—加油站财务与设备巡检培训',
-    stationScope: '加油站现场巡检模块',
+    title: '现场巡检—财务与设备巡检培训',
+    stationScope: '现场巡检模块',
     deadline: '04-30',
     status: '进行中',
     statusClass: 'processing',
@@ -178,14 +178,14 @@ const trainingTasks = [
   },
   {
     title: '远程巡检—每月全覆盖项目学习',
-    stationScope: '加油站远程巡检模块',
+    stationScope: '远程巡检模块',
     deadline: '05-05',
     status: '待下发',
     statusClass: 'pending',
     progress: 28,
     progressText: '28%',
     module: '每月全覆盖',
-    pendingText: '含加油站现场、安全检查、手工比对、油品接卸、加油机自校'
+    pendingText: '含现场、安全检查、手工比对、油品接卸、加油机自校'
   }
 ]
 
