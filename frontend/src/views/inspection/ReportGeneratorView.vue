@@ -93,19 +93,29 @@
 
     <section v-else-if="hasReport" class="report-document card-surface">
       <div class="report-document-head">
-        <div>
+        <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
           <h1>{{ report.title || reportTitleFallback }}</h1>
         </div>
-        <div v-if="dataScopeNote" class="report-data-scope-note">
-          <span>统计口径</span>
-          <p>{{ dataScopeNote }}</p>
-        </div>
-        <div class="doc-meta">
-          <span>数据来源</span>
-          <strong>{{ targetTableText }}</strong>
-          <small>上次生成：{{ reportGeneratedAt }}</small>
-          <small v-if="reportSnapshot.cached" class="snapshot-hint">当前展示上次生成结果</small>
+        <div class="report-context-grid" :class="{ 'single-context': !dataScopeNote }">
+          <div v-if="dataScopeNote" class="report-data-scope-note">
+            <div class="report-context-label">
+              <span>01</span>
+              <b>统计口径</b>
+            </div>
+            <p>{{ dataScopeNote }}</p>
+          </div>
+          <div class="doc-meta">
+            <div class="report-context-label">
+              <span>{{ dataScopeNote ? '02' : '01' }}</span>
+              <b>数据来源</b>
+            </div>
+            <strong>{{ targetTableText }}</strong>
+            <div class="report-generated-meta">
+              <small>上次生成：{{ reportGeneratedAt }}</small>
+              <small v-if="reportSnapshot.cached" class="snapshot-hint">当前展示上次生成结果</small>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1333,54 +1343,110 @@ onBeforeUnmount(() => {
 }
 
 .report-document-head {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(250px, 0.72fr) minmax(520px, 1.28fr);
   gap: 24px;
-  align-items: flex-start;
+  align-items: center;
   padding-bottom: 22px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.25);
 }
 
+.report-title-block {
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.report-title-block h1 {
+  max-width: 520px;
+}
+
+.report-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(220px, 0.85fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px;
+  background: #f6f9fb;
+}
+
+.report-context-grid.single-context {
+  grid-template-columns: minmax(280px, 420px);
+  justify-content: end;
+}
+
+.report-data-scope-note,
 .doc-meta {
-  min-width: 260px;
-  max-width: 360px;
-  padding: 16px;
-  border-radius: 18px;
-  background: #f8fafc;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: #64748b;
+  min-width: 0;
+  min-height: 132px;
+  box-sizing: border-box;
+  padding: 15px 16px;
+  border: 1px solid #e4edf4;
+  border-radius: 16px;
+  background: #ffffff;
 }
 
 .report-data-scope-note {
-  width: min(340px, 34vw);
-  flex: 0 1 340px;
-  padding: 14px 16px;
-  border: 1px solid #dbeafe;
-  border-left: 4px solid #1686bd;
-  border-radius: 16px;
-  background: #f5faff;
+  background:
+    radial-gradient(circle at 96% 4%, rgba(14, 165, 233, 0.11), transparent 40%),
+    #ffffff;
 }
 
-.report-data-scope-note span {
-  display: block;
-  margin-bottom: 5px;
-  color: #0369a1;
+.report-context-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+
+.report-context-label span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 22px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1686bd;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.report-context-label b {
+  color: #0f5278;
   font-size: 12px;
   font-weight: 900;
+  letter-spacing: 0.06em;
 }
 
 .report-data-scope-note p {
   margin: 0;
   color: #475569;
-  font-size: 12px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+
+.doc-meta {
+  display: flex;
+  flex-direction: column;
+  color: #64748b;
 }
 
 .doc-meta strong {
   color: #0f172a;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.report-generated-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 10px;
+  color: #64748b;
 }
 
 .snapshot-hint {
@@ -2158,6 +2224,16 @@ onBeforeUnmount(() => {
   .report-hero,
   .report-document-head {
     flex-direction: column;
+  }
+
+  .report-document-head {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .report-context-grid {
+    grid-template-columns: 1fr;
   }
 
   .report-month-control,
