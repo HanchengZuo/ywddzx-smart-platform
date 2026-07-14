@@ -45,6 +45,10 @@ const routes = [
     component: () => import('../views/inspection/PlanView.vue')
   },
   {
+    path: '/inspection/reports',
+    component: () => import('../views/inspection/ReportGeneratorView.vue')
+  },
+  {
     path: '/inspection/my-issues',
     component: () => import('../views/inspection/MyIssuesView.vue')
   },
@@ -154,6 +158,7 @@ const canAccessPath = (path, role, permissions) => {
     )
   }
   if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_plans')
+  if (path === '/inspection/reports') return hasPermission(role, permissions, 'view_inspection_reports')
   if (path === '/inspection/certificates') {
     return Boolean(
       permissions.view_all_certificates ||
@@ -194,6 +199,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
+  if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     candidates.push('/inspection/certificates')
   }

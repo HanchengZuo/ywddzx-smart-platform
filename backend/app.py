@@ -20,13 +20,13 @@ from zoneinfo import ZoneInfo
 from io import BytesIO
 import psycopg2
 from psycopg2 import sql
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
-from ai_utils import generate_feedback_title, generate_standard_recommendations
+from ai_utils import generate_feedback_title, generate_quality_measurement_report_insights, generate_standard_recommendations
 from ai_usage import get_ai_pricing_table
 
 try:
@@ -717,6 +717,13 @@ PERMISSION_CATALOG = [
         "category": "巡检计划",
         "description": "访问巡检计划页面和计划完成情况。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "view_inspection_reports",
+        "name": "查看页面",
+        "category": "报告自动生成",
+        "description": "访问报告自动生成页面，查看和重新生成月度监督检查报告。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "limit_plan_inspection_table_scope",
@@ -6744,6 +6751,715 @@ def parse_standard_detail_value_map(detail_text):
         else:
             values[label] = value
     return values
+
+
+REPORT_MANAGEMENT_REGIONS = [
+    "宝静片区",
+    "崇明片区",
+    "奉贤片区",
+    "嘉青片区",
+    "闵普徐片区",
+    "南汇片区",
+    "浦东片区",
+    "松金片区",
+]
+REPORT_HOLDING_UNITS = [
+    "中油奉贤",
+    "中油港汇",
+    "中油康桥",
+    "中油农工商",
+    "中油浦东",
+    "中油浦江",
+    "中油上海",
+    "中油申能",
+    "中油同盛",
+]
+QUALITY_MEASUREMENT_REPORT_TABLE_KEYWORD = "计量稽查检查表"
+
+
+def parse_report_month(value):
+    raw_value = str(value or "").strip()
+    try:
+        month_start = datetime.strptime(raw_value, "%Y-%m").date().replace(day=1)
+    except (TypeError, ValueError):
+        now = datetime.now(BEIJING_TZ).date()
+        month_start = now.replace(day=1)
+    if month_start.month == 12:
+        month_end = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        month_end = month_start.replace(month=month_start.month + 1)
+    return month_start, month_end
+
+
+def format_report_month_label(month_start):
+    return f"{month_start.year}年{month_start.month}月"
+
+
+def normalize_management_region(value):
+    text = str(value or "").strip()
+    if not text:
+        return "未设置片区"
+    for region in REPORT_MANAGEMENT_REGIONS:
+        if text == region or text in region or region in text:
+            return region
+    return text
+
+
+def identify_report_holding_unit(row):
+    combined_text = " ".join(
+        str(row.get(key) or "")
+        for key in ("station_name", "region", "address")
+    )
+    for unit_name in REPORT_HOLDING_UNITS:
+        if unit_name in combined_text:
+            return unit_name
+    return ""
+
+
+def identify_report_secondary_unit(row):
+    holding_unit = identify_report_holding_unit(row)
+    if holding_unit:
+        return "holding", holding_unit
+    return "region", normalize_management_region(row.get("region"))
+
+
+def is_positive_prohibited_value(value):
+    text = str(value or "").strip().lower()
+    if not text or text in {"-", "否", "无", "不涉及", "false", "0", "no", "n"}:
+        return False
+    if any(keyword in text for keyword in ("否", "无", "不涉及")):
+        return False
+    return text in {"是", "有", "true", "1", "yes", "y"} or any(
+        keyword in text for keyword in ("是", "涉及", "禁止")
+    )
+
+
+def is_prohibited_report_issue(detail_text):
+    for entry in parse_standard_detail_entries(detail_text):
+        if "禁止项" in str(entry.get("label") or ""):
+            return is_positive_prohibited_value(entry.get("value"))
+    return False
+
+
+def get_report_standard_field_value(detail_text, target_label):
+    target = str(target_label or "").strip()
+    if not target:
+        return ""
+    entries = parse_standard_detail_entries(detail_text)
+    for entry in entries:
+        label = str(entry.get("label") or "").strip()
+        if label == target:
+            return str(entry.get("value") or "").strip()
+    for entry in entries:
+        label = str(entry.get("label") or "").strip()
+        if target in label:
+            return str(entry.get("value") or "").strip()
+    return ""
+
+
+def normalize_report_category(value, fallback="未设置"):
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return fallback
+    return re.sub(r"\s+", " ", text)
+
+
+def join_chinese_list(items):
+    values = [str(item or "").strip() for item in items if str(item or "").strip()]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 2:
+        return "和".join(values)
+    return "、".join(values[:-1]) + "和" + values[-1]
+
+
+def build_report_business_flow_distribution(rows):
+    flow_counts = OrderedDict()
+    for row in rows:
+        flow_name = normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "业务流程"),
+            "未设置业务流程",
+        )
+        flow_counts[flow_name] = flow_counts.get(flow_name, 0) + 1
+    total = sum(flow_counts.values())
+    items = [
+        {
+            "name": name,
+            "count": count,
+            "percentage": round((count / total * 100) if total else 0, 1),
+        }
+        for name, count in flow_counts.items()
+    ]
+    items.sort(key=lambda item: (-item["count"], item["name"]))
+    return items
+
+
+def build_report_business_flow_sentence(total_count, distribution, prefix="检查发现问题"):
+    if not total_count or not distribution:
+        return f"{prefix}0项。"
+    names = [item["name"] for item in distribution]
+    counts = [f"{item['count']}项" for item in distribution]
+    percentages = [f"{item['percentage']:.1f}%" for item in distribution]
+    return (
+        f"{prefix}{total_count}项，涉及{join_chinese_list(names)}问题，"
+        f"问题数量分别为{join_chinese_list(counts)}，"
+        f"占比{join_chinese_list(percentages)}。"
+    )
+
+
+REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT = "quality_measurement"
+
+
+def report_snapshot_table_available(cur):
+    cur.execute("SELECT to_regclass('public.inspection_report_snapshots') AS table_name;")
+    row = cur.fetchone()
+    return bool(row and row.get("table_name"))
+
+
+def build_report_snapshot_scope_key(user):
+    if not user:
+        return "user:anonymous"
+    return f"user:{user.get('id') or 'unknown'}"
+
+
+def format_report_snapshot_time(value):
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M")
+    text = str(value).strip()
+    if not text:
+        return ""
+    return text[:16] if len(text) >= 16 else text
+
+
+def normalize_report_snapshot_payload(payload):
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            parsed = json.loads(payload)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def attach_report_snapshot_meta(report, snapshot_row=None, cached=False, generated_by_name=""):
+    normalized_report = dict(report or {})
+    summary = dict(normalized_report.get("summary") or {})
+    generated_at = ""
+    generated_by = generated_by_name or ""
+    if snapshot_row:
+        generated_at = format_report_snapshot_time(snapshot_row.get("generated_at"))
+        generated_by = snapshot_row.get("generated_by_name") or generated_by
+    generated_at = generated_at or summary.get("generated_at") or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+    summary["generated_at"] = generated_at
+    normalized_report["summary"] = summary
+    normalized_report["snapshot"] = {
+        "cached": bool(cached),
+        "generated_at": generated_at,
+        "generated_by_name": generated_by,
+    }
+    return normalized_report
+
+
+def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
+    if not report_snapshot_table_available(cur):
+        return None
+    cur.execute(
+        """
+        SELECT
+            report_payload,
+            generated_by_name,
+            generated_at
+        FROM inspection_report_snapshots
+        WHERE report_type = %s
+          AND report_month = %s
+          AND scope_key = %s
+        LIMIT 1;
+        """,
+        (report_type, report_month, scope_key),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    payload = normalize_report_snapshot_payload(row.get("report_payload"))
+    if not payload:
+        return None
+    return attach_report_snapshot_meta(payload, row, cached=True)
+
+
+def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, report, user):
+    if not report_snapshot_table_available(cur):
+        return report
+    generated_by = user.get("id") if user else None
+    generated_by_name = (
+        (user.get("real_name") or user.get("username") or "").strip()
+        if user
+        else ""
+    )
+    snapshot_report = attach_report_snapshot_meta(
+        report,
+        None,
+        cached=False,
+        generated_by_name=generated_by_name,
+    )
+    cur.execute(
+        """
+        INSERT INTO inspection_report_snapshots (
+            report_type,
+            report_month,
+            scope_key,
+            report_payload,
+            generated_by,
+            generated_by_name,
+            generated_at,
+            updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (report_type, report_month, scope_key)
+        DO UPDATE SET
+            report_payload = EXCLUDED.report_payload,
+            generated_by = EXCLUDED.generated_by,
+            generated_by_name = EXCLUDED.generated_by_name,
+            generated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING generated_by_name, generated_at;
+        """,
+        (
+            report_type,
+            report_month,
+            scope_key,
+            Json(snapshot_report, dumps=lambda value: json.dumps(value, ensure_ascii=False, default=str)),
+            generated_by,
+            generated_by_name,
+        ),
+    )
+    row = cur.fetchone()
+    return attach_report_snapshot_meta(snapshot_report, row, cached=False)
+
+
+def build_report_prohibited_examples(rows, limit=10):
+    prohibited_rows = [
+        row for row in rows
+        if is_prohibited_report_issue(row.get("standard_detail_text"))
+        and str(row.get("description") or "").strip()
+    ]
+    prohibited_rows.sort(
+        key=lambda row: (
+            normalize_management_region(row.get("region")),
+            -len(str(row.get("description") or "")),
+            int(row.get("id") or 0),
+        )
+    )
+
+    examples = []
+    used_units = set()
+    used_descriptions = set()
+
+    def append_example(row):
+        unit_type, unit_name = identify_report_secondary_unit(row)
+        description = str(row.get("description") or "").strip()
+        if not description or description in used_descriptions:
+            return False
+        examples.append(
+            {
+                "issue_id": row.get("id"),
+                "unit_type": unit_type,
+                "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
+                "unit_name": unit_name,
+                "description": description,
+            }
+        )
+        used_descriptions.add(description)
+        used_units.add(f"{unit_type}:{unit_name}")
+        return True
+
+    for row in prohibited_rows:
+        unit_type, unit_name = identify_report_secondary_unit(row)
+        unit_key = f"{unit_type}:{unit_name}"
+        if unit_key in used_units:
+            continue
+        append_example(row)
+        if len(examples) >= limit:
+            return examples
+
+    for row in prohibited_rows:
+        if len(examples) >= limit:
+            break
+        append_example(row)
+
+    return examples
+
+
+def serialize_report_issue(row):
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    return {
+        "issue_id": int(row.get("id") or 0),
+        "station_id": row.get("station_id"),
+        "station_name": str(row.get("station_name") or "").strip(),
+        "unit_type": unit_type,
+        "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
+        "unit_name": unit_name,
+        "business_flow": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "业务流程"),
+            "未设置业务流程",
+        ),
+        "description": str(row.get("description") or "").strip(),
+        "issue_photo": row.get("issue_photo") or "",
+        "is_prohibited": is_prohibited_report_issue(row.get("standard_detail_text")),
+        "is_marked_typical": bool(row.get("is_excellent")),
+    }
+
+
+def build_quality_report_ai_context(month_start, rows, distribution):
+    serialized_rows = [serialize_report_issue(row) for row in rows]
+    flow_items = []
+    for flow in distribution:
+        flow_name = flow["name"]
+        issues = [
+            {
+                "issue_id": item["issue_id"],
+                "station_name": item["station_name"],
+                "unit_name": item["unit_name"],
+                "description": item["description"][:260],
+                "is_prohibited": item["is_prohibited"],
+                "is_marked_typical": item["is_marked_typical"],
+            }
+            for item in serialized_rows
+            if item["business_flow"] == flow_name and item["description"]
+        ]
+        flow_items.append(
+            {
+                "flow_name": flow_name,
+                "count": flow["count"],
+                "percentage": flow["percentage"],
+                "issues": issues,
+            }
+        )
+
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "total_issue_count": len(serialized_rows),
+        "business_flows": flow_items,
+    }
+
+
+def select_local_report_issues(issues, limit=3):
+    sorted_issues = sorted(
+        issues,
+        key=lambda item: (
+            not item.get("is_marked_typical"),
+            not item.get("is_prohibited"),
+            -len(str(item.get("description") or "")),
+            int(item.get("issue_id") or 0),
+        ),
+    )
+    return sorted_issues[:limit]
+
+
+def normalize_report_ai_issue_ids(raw_ids):
+    if not isinstance(raw_ids, list):
+        return []
+    result = []
+    for raw_id in raw_ids:
+        try:
+            issue_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if issue_id and issue_id not in result:
+            result.append(issue_id)
+    return result
+
+
+def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
+    flow_ai_map = {}
+    if isinstance(ai_payload, dict):
+        for item in ai_payload.get("flow_highlights") or []:
+            if not isinstance(item, dict):
+                continue
+            flow_name = str(item.get("flow_name") or "").strip()
+            if not flow_name:
+                continue
+            flow_ai_map[flow_name] = {
+                "issue_ids": normalize_report_ai_issue_ids(item.get("highlight_issue_ids")),
+                "summary": str(item.get("summary") or "").strip(),
+            }
+
+    issue_map = {item["issue_id"]: item for item in serialized_rows if item.get("issue_id")}
+    result = []
+    for flow in distribution:
+        flow_name = flow["name"]
+        flow_issues = [item for item in serialized_rows if item["business_flow"] == flow_name]
+        valid_flow_ids = {item["issue_id"] for item in flow_issues}
+        selected = []
+        for issue_id in flow_ai_map.get(flow_name, {}).get("issue_ids", []):
+            if issue_id in valid_flow_ids and issue_id in issue_map:
+                selected.append(issue_map[issue_id])
+            if len(selected) >= 3:
+                break
+        if not selected:
+            selected = select_local_report_issues(flow_issues, 3)
+        result.append(
+            {
+                "flow_name": flow_name,
+                "count": flow["count"],
+                "percentage": flow["percentage"],
+                "summary": flow_ai_map.get(flow_name, {}).get("summary") or "",
+                "highlight_count": len(selected),
+                "highlighted_issues": selected,
+            }
+        )
+    return result
+
+
+def pick_local_management_trace_issue(serialized_rows):
+    candidates = sorted(
+        [item for item in serialized_rows if item.get("description")],
+        key=lambda item: (
+            not item.get("is_marked_typical"),
+            not item.get("is_prohibited"),
+            -len(str(item.get("description") or "")),
+            int(item.get("issue_id") or 0),
+        ),
+    )
+    return candidates[0] if candidates else None
+
+
+def build_local_management_trace(issue):
+    if not issue:
+        return {
+            "typical_issue": None,
+            "execution_analysis": "暂无可分析的典型问题。",
+            "supervision_analysis": "暂无可分析的典型问题。",
+            "management_analysis": "暂无可分析的典型问题。",
+            "conclusion": "综上所述：当前月份暂无可用于管理追溯的典型问题。",
+            "improvement_measures": [],
+        }
+
+    description = issue.get("description") or "现场问题执行不到位"
+    return {
+        "typical_issue": issue,
+        "execution_analysis": "现场人员对质量计量关键环节标准掌握不够细，操作执行和过程留痕存在薄弱点。",
+        "supervision_analysis": "片区日常监督对关键动作复核不够深入，对重复性、苗头性问题跟踪提醒不足。",
+        "management_analysis": "专业条线对质量计量风险的闭环管理和考核牵引仍需加强，问题整改成效需要持续验证。",
+        "conclusion": f"综上所述：{description}，主要原因为站点执行不到位、片区监督不够细、专业管理跟踪考核不够实。",
+        "improvement_measures": [
+            {"level": "管理层面", "content": "专业部门加强质量计量重点风险督导，对反复出现的问题纳入闭环考核。"},
+            {"level": "监督层面", "content": "管理片区加强现场复核和跟踪提醒，推动问题整改从发现到销项全过程留痕。"},
+            {"level": "执行层面", "content": "站点负责人组织岗位再培训，督促员工严格按规程完成关键作业。"},
+        ],
+    }
+
+
+def build_report_management_trace(serialized_rows, ai_payload):
+    issue_map = {item["issue_id"]: item for item in serialized_rows if item.get("issue_id")}
+    ai_trace = ai_payload.get("management_trace") if isinstance(ai_payload, dict) else None
+    typical_issue = None
+    if isinstance(ai_trace, dict):
+        try:
+            typical_issue_id = int(ai_trace.get("typical_issue_id") or 0)
+        except (TypeError, ValueError):
+            typical_issue_id = 0
+        typical_issue = issue_map.get(typical_issue_id)
+
+    if not typical_issue:
+        typical_issue = pick_local_management_trace_issue(serialized_rows)
+
+    local_trace = build_local_management_trace(typical_issue)
+    if not isinstance(ai_trace, dict):
+        return local_trace
+
+    improvements = ai_trace.get("improvement_measures")
+    normalized_improvements = []
+    if isinstance(improvements, list):
+        for item in improvements[:5]:
+            if not isinstance(item, dict):
+                continue
+            level = str(item.get("level") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if level and content:
+                normalized_improvements.append({"level": level, "content": content})
+
+    return {
+        "typical_issue": typical_issue,
+        "execution_analysis": str(ai_trace.get("execution_analysis") or "").strip()
+        or local_trace["execution_analysis"],
+        "supervision_analysis": str(ai_trace.get("supervision_analysis") or "").strip()
+        or local_trace["supervision_analysis"],
+        "management_analysis": str(ai_trace.get("management_analysis") or "").strip()
+        or local_trace["management_analysis"],
+        "conclusion": str(ai_trace.get("conclusion") or "").strip()
+        or local_trace["conclusion"],
+        "improvement_measures": normalized_improvements or local_trace["improvement_measures"],
+    }
+
+
+def build_local_work_plan(month_start, distribution):
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    next_month_label = f"{next_month.month}月份"
+    top_flows = [item["name"] for item in distribution[:3]]
+    flow_text = "、".join(top_flows) if top_flows else "质量计量重点环节"
+    return [
+        {
+            "title": "深化全流程规范管理",
+            "content": f"针对本月检查暴露的{flow_text}薄弱环节，计划{next_month_label}开展专项能力提升和现场复盘，推动整改闭环。",
+        },
+        {
+            "title": "持续推进专项治理",
+            "content": "围绕计量风险防控和质量管理关键动作，持续开展专项治理，加强人防、物防、技防联动。",
+        },
+        {
+            "title": "开展下月监督检查",
+            "content": f"计划开展{next_month_label}质量计量监督检查，跟踪本月问题整改成效，确保质量计量工作受控。",
+        },
+    ]
+
+
+def build_report_work_plan(month_start, distribution, ai_payload):
+    local_plan = build_local_work_plan(month_start, distribution)
+    raw_plan = ai_payload.get("work_plan") if isinstance(ai_payload, dict) else None
+    if not isinstance(raw_plan, list):
+        return local_plan
+    normalized = []
+    for item in raw_plan[:5]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if title and content:
+            normalized.append({"title": title, "content": content})
+    return normalized or local_plan
+
+
+def build_report_deep_analysis(month_start, rows, distribution, ai_result):
+    serialized_rows = [serialize_report_issue(row) for row in rows]
+    ai_payload = (ai_result or {}).get("payload")
+    flow_highlights = build_report_flow_highlights(distribution, serialized_rows, ai_payload)
+    management_trace = build_report_management_trace(serialized_rows, ai_payload)
+    work_plan = build_report_work_plan(month_start, distribution, ai_payload)
+    return {
+        "ai_generated": bool((ai_result or {}).get("generated")),
+        "ai_message": (ai_result or {}).get("message") or "",
+        "flow_highlights": flow_highlights,
+        "management_trace": management_trace,
+        "work_plan": work_plan,
+    }
+
+
+def build_quality_measurement_report_payload(month_start, rows):
+    grouped = OrderedDict()
+    station_ids = set()
+    issue_count = 0
+    prohibited_count = 0
+
+    for row in rows:
+        issue_count += 1
+        if row.get("station_id") is not None:
+            station_ids.add(row["station_id"])
+        unit_type, unit_name = identify_report_secondary_unit(row)
+        group_key = f"{unit_type}:{unit_name}"
+        if group_key not in grouped:
+            grouped[group_key] = {
+                "unit_type": unit_type,
+                "unit_name": unit_name,
+                "station_ids": set(),
+                "general_issue_count": 0,
+                "prohibited_issue_count": 0,
+            }
+        if row.get("station_id") is not None:
+            grouped[group_key]["station_ids"].add(row["station_id"])
+        if is_prohibited_report_issue(row.get("standard_detail_text")):
+            prohibited_count += 1
+            grouped[group_key]["prohibited_issue_count"] += 1
+        else:
+            grouped[group_key]["general_issue_count"] += 1
+
+    region_order = {name: index for index, name in enumerate(REPORT_MANAGEMENT_REGIONS)}
+    holding_order = {name: index for index, name in enumerate(REPORT_HOLDING_UNITS)}
+
+    def sort_key(item):
+        if item["unit_type"] == "region":
+            return (0, region_order.get(item["unit_name"], 999), item["unit_name"])
+        if item["unit_type"] == "holding":
+            return (1, holding_order.get(item["unit_name"], 999), item["unit_name"])
+        return (2, 999, item["unit_name"])
+
+    table_rows = []
+    for group in sorted(grouped.values(), key=sort_key):
+        general_count = int(group["general_issue_count"])
+        prohibited_issue_count = int(group["prohibited_issue_count"])
+        table_rows.append(
+            {
+                "unit_type": group["unit_type"],
+                "unit_type_label": "控（参）股单位" if group["unit_type"] == "holding" else "管理片区",
+                "unit_name": group["unit_name"],
+                "station_count": len(group["station_ids"]),
+                "general_issue_count": general_count,
+                "prohibited_issue_count": prohibited_issue_count,
+                "total_issue_count": general_count + prohibited_issue_count,
+            }
+        )
+
+    region_count = len({
+        row["unit_name"]
+        for row in table_rows
+        if row["unit_type"] == "region" and row["unit_name"] in REPORT_MANAGEMENT_REGIONS
+    })
+    holding_unit_count = len({
+        row["unit_name"]
+        for row in table_rows
+        if row["unit_type"] == "holding"
+    })
+    month_label = format_report_month_label(month_start)
+    business_flow_distribution = build_report_business_flow_distribution(rows)
+    prohibited_examples = build_report_prohibited_examples(rows)
+
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": month_label,
+        "title": f"上海销售{month_start.month}月质量计量监督检查报告",
+        "target_tables": [
+            "计量稽查检查表（现场）",
+            "计量稽查检查表（视频）",
+        ],
+        "summary": {
+            "region_count": region_count,
+            "holding_unit_count": holding_unit_count,
+            "station_count": len(station_ids),
+            "total_issue_count": issue_count,
+            "general_issue_count": issue_count - prohibited_count,
+            "prohibited_issue_count": prohibited_count,
+            "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
+        },
+        "overview_text": (
+            f"{month_label}，业务督导中心围绕计量稽查现场与视频检查数据开展汇总分析，"
+            f"本次问题涉及{region_count}个管理片区、{holding_unit_count}个主要控（参）股单位、"
+            f"{len(station_ids)}座站点，共发现问题{issue_count}项，其中涉及禁止项问题{prohibited_count}项。"
+        ),
+        "finding_summary": {
+            "total_issue_count": issue_count,
+            "business_flow_distribution": business_flow_distribution,
+            "finding_text": build_report_business_flow_sentence(issue_count, business_flow_distribution, "本次检查发现问题"),
+            "station_link_text": build_report_business_flow_sentence(issue_count, business_flow_distribution, "检查发现站点环节问题"),
+        },
+        "prohibited_examples": prohibited_examples,
+        "rows": table_rows,
+        "total_row": {
+            "unit_name": "合计",
+            "station_count": len(station_ids),
+            "general_issue_count": issue_count - prohibited_count,
+            "prohibited_issue_count": prohibited_count,
+            "total_issue_count": issue_count,
+        },
+    }
 
 
 def build_issue_export_table_field_map(cur, rows):
@@ -22009,6 +22725,171 @@ def get_issues():
                 for row in rows
             ]
         )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-reports/quality-measurement-summary")
+def get_quality_measurement_report_summary():
+    user_id = str(request.args.get("user_id", "")).strip()
+    month_start, month_end = parse_report_month(request.args.get("month", ""))
+    force_regenerate = str(request.args.get("force", "")).strip().lower() in {"1", "true", "yes", "on"}
+    report_month = month_start.strftime("%Y-%m")
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ensure_issue_inspector_schema(cur)
+
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_inspection_reports"):
+            return jsonify({"success": False, "error": "当前账号无权查看巡检报告。"}), 403
+
+        snapshot_scope_key = build_report_snapshot_scope_key(user)
+        if not force_regenerate:
+            cached_report = get_inspection_report_snapshot(
+                cur,
+                REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+                report_month,
+                snapshot_scope_key,
+            )
+            if cached_report:
+                conn.commit()
+                return jsonify({
+                    "success": True,
+                    "report": cached_report,
+                })
+
+        where_clauses = [
+            "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') LIKE %s",
+            "t.checklist_mode IN ('online', 'offline')",
+            "COALESCE(i.audit_status, 'pending') <> 'rejected'",
+        ]
+        params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            f"%{QUALITY_MEASUREMENT_REPORT_TABLE_KEYWORD}%",
+        ]
+
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "i.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        ):
+            empty_report = build_quality_measurement_report_payload(month_start, [])
+            empty_report["deep_analysis"] = build_report_deep_analysis(month_start, [], [], None)
+            empty_report = save_inspection_report_snapshot(
+                cur,
+                REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+                report_month,
+                snapshot_scope_key,
+                empty_report,
+                user,
+            )
+            conn.commit()
+            return jsonify({
+                "success": True,
+                "report": empty_report,
+            })
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        ):
+            empty_report = build_quality_measurement_report_payload(month_start, [])
+            empty_report["deep_analysis"] = build_report_deep_analysis(month_start, [], [], None)
+            empty_report = save_inspection_report_snapshot(
+                cur,
+                REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+                report_month,
+                snapshot_scope_key,
+                empty_report,
+                user,
+            )
+            conn.commit()
+            return jsonify({
+                "success": True,
+                "report": empty_report,
+            })
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    i.id,
+                    i.station_id,
+                    s.station_name,
+                    s.region,
+                    s.address,
+                    t.table_name,
+                    t.checklist_mode,
+                    i.standard_id,
+                    i.standard_detail_text,
+                    i.description,
+                    i.photo_path AS issue_photo,
+                    COALESCE(i.is_excellent, FALSE) AS is_excellent,
+                    COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+                FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
+                JOIN stations s ON i.station_id = s.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
+                {where_clause}
+                ORDER BY s.region ASC NULLS LAST, s.station_name ASC, i.id ASC;
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            params,
+        )
+        rows = cur.fetchall()
+        report = build_quality_measurement_report_payload(month_start, rows)
+        distribution = report.get("finding_summary", {}).get("business_flow_distribution") or []
+        insight_result = None
+        if rows:
+            ai_context = build_quality_report_ai_context(month_start, rows, distribution)
+            insight_result = generate_quality_measurement_report_insights(ai_context)
+            record_ai_usage_log(
+                cur,
+                user,
+                insight_result,
+                "报告自动生成",
+                "质量计量报告分析",
+                f"{report.get('month_label')} · 问题{len(rows)}项",
+            )
+            conn.commit()
+        report["deep_analysis"] = build_report_deep_analysis(
+            month_start,
+            rows,
+            distribution,
+            insight_result,
+        )
+        report = save_inspection_report_snapshot(
+            cur,
+            REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+            report_month,
+            snapshot_scope_key,
+            report,
+            user,
+        )
+        conn.commit()
+        return jsonify({
+            "success": True,
+            "report": report,
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
     finally:

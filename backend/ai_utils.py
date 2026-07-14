@@ -5,7 +5,9 @@ import re
 
 from ai_prompts import (
     INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT,
+    QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT,
     build_inspection_standard_recommendation_prompt,
+    build_quality_measurement_report_insight_prompt,
 )
 from ai_usage import build_ai_usage_meta
 
@@ -419,6 +421,98 @@ def generate_standard_recommendations(issue_description, standards):
                 False,
                 get_standard_recommendation_ai_error_message(exc),
             ),
+            prompt_text=prompt_text,
+            ai_called=True,
+            fallback_used=True,
+            status_code=status_code,
+        )
+
+
+def generate_quality_measurement_report_insights(report_context):
+    prompt = build_quality_measurement_report_insight_prompt(report_context or {})
+    prompt_text = f"{QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
+    try:
+        client = get_deepseek_client()
+    except Exception as exc:
+        logging.exception("DeepSeek client initialization failed for report insights: %s", exc)
+        return with_ai_usage_meta(
+            {
+                "generated": False,
+                "message": "AI 服务初始化失败，已使用本地规则生成报告分析。",
+                "payload": None,
+            },
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
+
+    if not client:
+        return with_ai_usage_meta(
+            {
+                "generated": False,
+                "message": "未配置 AI 服务，已使用本地规则生成报告分析。",
+                "payload": None,
+            },
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
+
+    try:
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        raw_content = response.choices[0].message.content
+        payload = extract_json_from_ai_text(raw_content)
+        if payload is None:
+            logging.warning(
+                "DeepSeek returned an unusable report insight payload: %r",
+                raw_content,
+            )
+            return with_ai_usage_meta(
+                {
+                    "generated": False,
+                    "message": "AI 返回内容无法识别，已使用本地规则生成报告分析。",
+                    "payload": None,
+                },
+                prompt_text=prompt_text,
+                completion_text=raw_content,
+                ai_called=True,
+                fallback_used=True,
+            )
+
+        return with_ai_usage_meta(
+            {
+                "generated": True,
+                "message": "AI 报告分析生成成功。",
+                "payload": payload,
+            },
+            prompt_text=prompt_text,
+            completion_text=raw_content,
+            ai_called=True,
+            success=True,
+        )
+    except Exception as exc:
+        status_code = get_ai_error_status_code(exc)
+        logging.exception(
+            "DeepSeek report insight generation failed. status=%s error=%s",
+            status_code,
+            exc,
+        )
+        return with_ai_usage_meta(
+            {
+                "generated": False,
+                "message": "AI 报告分析生成失败，已使用本地规则生成报告分析。",
+                "payload": None,
+            },
             prompt_text=prompt_text,
             ai_called=True,
             fallback_used=True,

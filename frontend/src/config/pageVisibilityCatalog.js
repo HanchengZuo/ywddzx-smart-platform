@@ -60,6 +60,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '查看巡检计划、派工和完成情况。'
       },
       {
+        key: '/inspection/reports',
+        path: '/inspection/reports',
+        title: '报告自动生成',
+        description: '按月份汇总巡检数据并生成监督检查报告。'
+      },
+      {
         key: '/inspection/certificates',
         path: '/inspection/certificates',
         title: '证照管理',

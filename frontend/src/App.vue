@@ -205,6 +205,13 @@
           <span v-if="!sidebarCollapsed">巡检计划</span>
         </button>
 
+        <button v-if="canViewInspectionReports" class="nav-item"
+          :class="{ active: isActive('/inspection/reports'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/reports')" :title="sidebarCollapsed ? '报告自动生成' : ''">
+          <span class="nav-item-icon">报</span>
+          <span v-if="!sidebarCollapsed">报告自动生成</span>
+        </button>
+
         <button v-if="canViewCertificates" class="nav-item"
           :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
@@ -783,6 +790,7 @@ const canViewRecords = computed(() => (
   Boolean(localPermissions.value.view_own_inspection_records)
 ) && isPageVisible('/inspection/records'))
 const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans') && isPageVisible('/inspection/plan'))
+const canViewInspectionReports = computed(() => hasPermissionKey('view_inspection_reports') && isPageVisible('/inspection/reports'))
 const canViewCertificates = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_certificates) ||
@@ -801,6 +809,7 @@ const canViewInspectionSection = computed(() => (
   canViewIssues.value ||
   canViewRecords.value ||
   canViewInspectionPlans.value ||
+  canViewInspectionReports.value ||
   canViewCertificates.value
 ))
 const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment') && isPageVisible('/assessment'))
@@ -1561,6 +1570,7 @@ const resolveHomePath = (user) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
+  if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
   if (
     permissions.view_all_certificates ||
     permissions.limit_certificate_station_region_scope ||
