@@ -6774,7 +6774,12 @@ REPORT_HOLDING_UNITS = [
     "中油申能",
     "中油同盛",
 ]
-QUALITY_MEASUREMENT_REPORT_TABLE_KEYWORD = "计量稽查检查表"
+QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE = "计量稽查检查表（现场）"
+QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE = "计量稽查检查表（视频）"
+QUALITY_MEASUREMENT_REPORT_SOURCE_NOTE = (
+    "以“计量稽查检查表（现场）”中审核通过问题涉及站点为统计范围，"
+    "同时合并这些站点在“计量稽查检查表（视频）”中的审核通过问题。"
+)
 
 
 def parse_report_month(value):
@@ -6915,7 +6920,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "approved-only-ai-provenance-v2"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "onsite-stations-with-video-approved-v3"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -6923,11 +6928,12 @@ INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
             {
                 "key": REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
                 "name": "质量计量监督检查报告",
-                "description": "汇总计量稽查现场与视频检查数据，生成月度分析报告。",
+                "description": "以计量稽查现场检查涉及站点为范围，合并同站视频检查数据。",
                 "target_tables": [
-                    "计量稽查检查表（现场）",
-                    "计量稽查检查表（视频）",
+                    QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+                    QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
                 ],
+                "data_scope_note": QUALITY_MEASUREMENT_REPORT_SOURCE_NOTE,
                 "template_ready": True,
             },
         ),
@@ -7676,9 +7682,10 @@ def build_quality_measurement_report_payload(month_start, rows):
         "month_label": month_label,
         "title": f"{month_start.month}月质量计量监督检查报告",
         "target_tables": [
-            "计量稽查检查表（现场）",
-            "计量稽查检查表（视频）",
+            QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+            QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
         ],
+        "data_scope_note": QUALITY_MEASUREMENT_REPORT_SOURCE_NOTE,
         "summary": {
             "region_count": region_count,
             "holding_unit_count": holding_unit_count,
@@ -7689,7 +7696,8 @@ def build_quality_measurement_report_payload(month_start, rows):
             "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
         },
         "overview_text": (
-            f"{month_label}，业务督导中心围绕计量稽查现场与视频检查数据开展汇总分析，"
+            f"{month_label}，业务督导中心以计量稽查现场检查涉及站点为范围，"
+            "合并同站视频检查数据开展汇总分析，"
             f"本次问题涉及{region_count}个管理片区、{holding_unit_count}个主要控（参）股单位、"
             f"{len(station_ids)}座站点，共发现问题{issue_count}项，其中涉及禁止项问题{prohibited_count}项。"
         ),
@@ -7709,6 +7717,31 @@ def build_quality_measurement_report_payload(month_start, rows):
             "total_issue_count": issue_count,
         },
     }
+
+
+def filter_quality_measurement_report_rows(candidate_rows):
+    normalized_rows = []
+    onsite_station_ids = set()
+    allowed_tables = {
+        QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+        QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
+    }
+
+    for raw_row in candidate_rows or []:
+        row = dict(raw_row)
+        table_name = str(sanitize_display_string(row.get("table_name")) or "").strip()
+        if table_name not in allowed_tables:
+            continue
+        row["table_name"] = table_name
+        normalized_rows.append(row)
+        if table_name == QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE and row.get("station_id") is not None:
+            onsite_station_ids.add(row["station_id"])
+
+    return [
+        row
+        for row in normalized_rows
+        if row.get("station_id") in onsite_station_ids
+    ]
 
 
 def build_issue_export_table_field_map(cur, rows):
@@ -23005,7 +23038,7 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
             "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
-            "REPLACE(t.table_name, %s, '') LIKE %s",
+            "REPLACE(t.table_name, %s, '') IN (%s, %s)",
             "t.checklist_mode IN ('online', 'offline')",
             "COALESCE(i.audit_status, 'pending') = 'approved'",
         ]
@@ -23013,7 +23046,8 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
             month_start,
             month_end,
             DISPLAY_REMOVED_STATION_PHRASE,
-            f"%{QUALITY_MEASUREMENT_REPORT_TABLE_KEYWORD}%",
+            QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+            QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
         ]
         table_scope_allowed = append_inspection_table_scope_filter(
             cur,
@@ -23060,7 +23094,8 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
                 ).format(where_clause=sql.SQL(where_clause)),
                 params,
             )
-            rows = [dict(row) for row in cur.fetchall()]
+            candidate_rows = [dict(row) for row in cur.fetchall()]
+            rows = filter_quality_measurement_report_rows(candidate_rows)
         conn.commit()
     finally:
         close_db_resources(cur, conn)

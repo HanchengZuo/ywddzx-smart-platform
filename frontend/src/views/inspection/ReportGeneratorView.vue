@@ -97,6 +97,10 @@
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
           <h1>{{ report.title || reportTitleFallback }}</h1>
         </div>
+        <div v-if="dataScopeNote" class="report-data-scope-note">
+          <span>统计口径</span>
+          <p>{{ dataScopeNote }}</p>
+        </div>
         <div class="doc-meta">
           <span>数据来源</span>
           <strong>{{ targetTableText }}</strong>
@@ -400,8 +404,9 @@ const DEFAULT_REPORT_TYPES = [
   {
     key: 'quality_measurement',
     name: '质量计量监督检查报告',
-    description: '汇总计量稽查现场与视频检查数据，生成月度分析报告。',
+    description: '以计量稽查现场检查涉及站点为范围，合并同站视频检查数据。',
     target_tables: ['计量稽查检查表（现场）', '计量稽查检查表（视频）'],
+    data_scope_note: '以“计量稽查检查表（现场）”中审核通过问题涉及站点为统计范围，同时合并这些站点在“计量稽查检查表（视频）”中的审核通过问题。',
     template_ready: true
   },
   {
@@ -446,6 +451,7 @@ const createEmptyReport = () => ({
   month_label: '',
   title: '',
   target_tables: [],
+  data_scope_note: '',
   summary: {},
   overview_text: '',
   finding_summary: {},
@@ -528,6 +534,9 @@ const targetTableText = computed(() => {
   const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
   return (tables.length ? tables : fallbackTables).join('、') || '-'
 })
+const dataScopeNote = computed(() => (
+  report.value.data_scope_note || currentReportType.value.data_scope_note || ''
+))
 
 const summaryCards = computed(() => {
   const summary = report.value.summary || {}
@@ -1344,6 +1353,31 @@ onBeforeUnmount(() => {
   color: #64748b;
 }
 
+.report-data-scope-note {
+  width: min(340px, 34vw);
+  flex: 0 1 340px;
+  padding: 14px 16px;
+  border: 1px solid #dbeafe;
+  border-left: 4px solid #1686bd;
+  border-radius: 16px;
+  background: #f5faff;
+}
+
+.report-data-scope-note span {
+  display: block;
+  margin-bottom: 5px;
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.report-data-scope-note p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .doc-meta strong {
   color: #0f172a;
   line-height: 1.5;
@@ -2127,7 +2161,8 @@ onBeforeUnmount(() => {
   }
 
   .report-month-control,
-  .doc-meta {
+  .doc-meta,
+  .report-data-scope-note {
     width: 100%;
     max-width: none;
     min-width: 0;
