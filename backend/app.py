@@ -6915,6 +6915,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "approved-only-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -7079,6 +7080,11 @@ def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
     payload = normalize_report_snapshot_payload(row.get("report_payload"))
     if not payload:
         return None
+    if (
+        report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
+        and payload.get("data_policy_version") != QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION
+    ):
+        return None
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
@@ -7091,8 +7097,11 @@ def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, r
         if user
         else ""
     )
+    normalized_report = dict(report or {})
+    if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
+        normalized_report["data_policy_version"] = QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION
     snapshot_report = attach_report_snapshot_meta(
-        report,
+        normalized_report,
         None,
         cached=False,
         generated_by_name=generated_by_name,
@@ -22950,7 +22959,7 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
     rows = []
     user = None
     try:
-        update_inspection_report_job(task_id, "running", 12, "正在读取巡检问题和检查表数据")
+        update_inspection_report_job(task_id, "running", 12, "正在读取审核通过的巡检问题和检查表数据")
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_user_by_id(cur, user_id)
@@ -22964,7 +22973,7 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
             "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
             "REPLACE(t.table_name, %s, '') LIKE %s",
             "t.checklist_mode IN ('online', 'offline')",
-            "COALESCE(i.audit_status, 'pending') <> 'rejected'",
+            "COALESCE(i.audit_status, 'pending') = 'approved'",
         ]
         params = [
             month_start,
@@ -23022,7 +23031,7 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
     finally:
         close_db_resources(cur, conn)
 
-    update_inspection_report_job(task_id, "running", 38, f"已汇总 {len(rows)} 条问题，正在整理报告结构")
+    update_inspection_report_job(task_id, "running", 38, f"已汇总 {len(rows)} 条审核通过问题，正在整理报告结构")
     report = build_quality_measurement_report_payload(month_start, rows)
     distribution = report.get("finding_summary", {}).get("business_flow_distribution") or []
     insight_result = None
