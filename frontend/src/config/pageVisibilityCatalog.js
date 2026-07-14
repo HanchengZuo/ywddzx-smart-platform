@@ -62,8 +62,8 @@ export const PAGE_VISIBILITY_GROUPS = [
       {
         key: '/inspection/reports',
         path: '/inspection/reports',
-        title: '报告自动生成',
-        description: '按月份汇总巡检数据并生成监督检查报告。'
+        title: 'AI报告生成',
+        description: '按月份汇总巡检数据并调用AI生成监督检查报告。'
       },
       {
         key: '/inspection/certificates',

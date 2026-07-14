@@ -2,34 +2,100 @@
   <div class="report-page">
     <section class="report-hero card-surface">
       <div>
-        <div class="page-kicker">报告自动生成</div>
-        <h2>月度监督检查报告</h2>
-        <p>先以质量计量监督检查报告为样板，按月份汇总计量稽查现场与视频检查问题数据。</p>
+        <div class="page-kicker">AI REPORT STUDIO</div>
+        <h2>AI报告生成</h2>
+        <p>选择报告类型和月份，由后台汇总巡检数据并调用 AI 完成报告分析。</p>
       </div>
       <div class="report-month-control">
         <label>
           <span>报告月份</span>
-          <input v-model="selectedMonth" type="month" @change="fetchReport" />
+          <input v-model="selectedMonth" type="month" @change="handleReportContextChange" />
         </label>
-        <button type="button" class="regenerate-report-btn" :disabled="loading" @click="fetchReport({ force: true })">
-          重新生成
+        <button
+          type="button"
+          class="regenerate-report-btn"
+          :disabled="loading || templateUnavailable"
+          @click="startGeneration({ force: true })"
+        >
+          {{ templateUnavailable ? '模板待配置' : '重新生成' }}
+        </button>
+      </div>
+    </section>
+
+    <section class="report-type-panel card-surface">
+      <div class="report-type-panel-head">
+        <div>
+          <span>报告类型</span>
+          <h3>选择本次需要生成的报告</h3>
+        </div>
+        <small>不同报告独立关联检查表和报告模板</small>
+      </div>
+      <div class="report-type-grid">
+        <button
+          v-for="item in reportTypes"
+          :key="item.key"
+          type="button"
+          :class="['report-type-card', { active: selectedReportType === item.key, pending: !item.template_ready }]"
+          @click="selectReportType(item.key)"
+        >
+          <span class="report-type-status">{{ item.template_ready ? '模板已配置' : '模板待配置' }}</span>
+          <strong>{{ item.name }}</strong>
+          <p>{{ item.description }}</p>
+          <div class="report-type-sources">
+            <span>关联检查表</span>
+            <em v-for="tableName in item.target_tables" :key="`${item.key}-${tableName}`">{{ tableName }}</em>
+          </div>
         </button>
       </div>
     </section>
 
     <div v-if="error" class="state-card error">{{ error }}</div>
 
-    <section v-if="loading" class="state-card card-surface">
-      <div class="state-orb loading"></div>
-      <h3>正在生成报告</h3>
-      <p>系统正在读取检查表、站点和问题数据，稍等一下就好。</p>
+    <section v-if="templateUnavailable" class="template-placeholder card-surface">
+      <div class="template-placeholder-mark">AI</div>
+      <div>
+        <span>模板预留</span>
+        <h3>{{ currentReportType.name }}</h3>
+        <p>关联检查表已经预留，报告章节和分析模板暂未配置，当前不会发起生成任务。</p>
+      </div>
     </section>
 
-    <section v-else class="report-document card-surface">
+    <section v-else-if="loading" class="ai-generation-state card-surface">
+      <div class="ai-generation-visual" aria-hidden="true">
+        <span class="ai-orbit orbit-one"></span>
+        <span class="ai-orbit orbit-two"></span>
+        <span class="ai-spark spark-one"></span>
+        <span class="ai-spark spark-two"></span>
+        <span class="ai-core">AI</span>
+      </div>
+      <div class="ai-generation-content">
+        <div class="ai-generation-kicker">
+          <span class="live-dot"></span>
+          后台 AI 生成任务
+        </div>
+        <h3>{{ generationStageMessage }}</h3>
+        <p>系统正在汇总真实巡检数据并调用 DeepSeek 生成分析内容。可以放心切换页面，后台任务不会中断。</p>
+        <div class="ai-progress-head">
+          <span>{{ currentReportType.name }}</span>
+          <strong>{{ generationProgress }}%</strong>
+        </div>
+        <div class="ai-progress-track">
+          <span :style="{ width: `${generationProgress}%` }"></span>
+        </div>
+        <div class="ai-stage-list">
+          <span :class="{ done: generationProgress >= 12 }">读取数据</span>
+          <span :class="{ done: generationProgress >= 38 }">汇总统计</span>
+          <span :class="{ done: generationProgress >= 52 }">AI分析</span>
+          <span :class="{ done: generationProgress >= 84 }">编排报告</span>
+        </div>
+      </div>
+    </section>
+
+    <section v-else-if="hasReport" class="report-document card-surface">
       <div class="report-document-head">
         <div>
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
-          <h1>{{ report.title || '上海销售质量计量监督检查报告' }}</h1>
+          <h1>{{ report.title || reportTitleFallback }}</h1>
         </div>
         <div class="doc-meta">
           <span>数据来源</span>
@@ -242,6 +308,12 @@
       </article>
     </section>
 
+    <section v-else class="state-card card-surface">
+      <div class="state-orb"></div>
+      <h3>暂未生成报告</h3>
+      <p>点击重新生成，后台会开始整理当前月份的巡检数据。</p>
+    </section>
+
     <teleport to="body">
       <div v-if="imagePreview.visible" class="report-image-preview" @click.self="closeImagePreview">
         <img :src="imagePreview.src" :alt="imagePreview.title || '问题照片预览'" />
@@ -251,26 +323,55 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 
-const getDefaultReportMonth = () => {
-  const now = new Date()
-  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  const year = previousMonth.getFullYear()
-  const month = String(previousMonth.getMonth() + 1).padStart(2, '0')
-  return `${year}-${month}`
-}
+const DEFAULT_REPORT_TYPES = [
+  {
+    key: 'quality_measurement',
+    name: '质量计量监督检查报告',
+    description: '汇总计量稽查现场与视频检查数据，生成月度分析报告。',
+    target_tables: ['计量稽查检查表（现场）', '计量稽查检查表（视频）'],
+    template_ready: true
+  },
+  {
+    key: 'safety_quality',
+    name: '安全质量检查报告',
+    description: '汇总质量安全环保现场与视频检查数据。',
+    target_tables: ['质量安全环保检查表（视频）', '质量安全环保检查表（现场）'],
+    template_ready: false
+  },
+  {
+    key: 'finance',
+    name: '财务检查报告',
+    description: '汇总财务现场检查数据。',
+    target_tables: ['财务检查表（现场）'],
+    template_ready: false
+  },
+  {
+    key: 'on_site_service',
+    name: '现场服务检查报告',
+    description: '汇总现场服务视频与现场检查数据。',
+    target_tables: ['现场检查明细表（视频）', '现场检查明细表（现场）'],
+    template_ready: false
+  },
+  {
+    key: 'equipment_facilities',
+    name: '设备设施检查报告',
+    description: '汇总设备设施现场检查数据。',
+    target_tables: ['设备设施检查表（现场）'],
+    template_ready: false
+  },
+  {
+    key: 'non_oil',
+    name: '非油检查报告',
+    description: '汇总非油团购合规与现场检查数据。',
+    target_tables: ['非油合规性检查（团购）', '非油检查表（现场）'],
+    template_ready: false
+  }
+]
 
-const selectedMonth = ref(getDefaultReportMonth())
-const loading = ref(false)
-const error = ref('')
-const imagePreview = ref({
-  visible: false,
-  src: '',
-  title: ''
-})
-const report = ref({
+const createEmptyReport = () => ({
   month: '',
   month_label: '',
   title: '',
@@ -283,6 +384,49 @@ const report = ref({
   rows: [],
   total_row: {}
 })
+
+const getDefaultReportMonth = () => {
+  const now = new Date()
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const year = previousMonth.getFullYear()
+  const month = String(previousMonth.getMonth() + 1).padStart(2, '0')
+  return `${year}-${month}`
+}
+
+const selectedMonth = ref(getDefaultReportMonth())
+const selectedReportType = ref('quality_measurement')
+const reportTypes = ref(DEFAULT_REPORT_TYPES)
+const loading = ref(false)
+const error = ref('')
+const activeJob = ref(null)
+const imagePreview = ref({
+  visible: false,
+  src: '',
+  title: ''
+})
+const report = ref(createEmptyReport())
+let pollTimer = null
+let contextRequestId = 0
+
+const currentReportType = computed(() => (
+  reportTypes.value.find((item) => item.key === selectedReportType.value)
+  || DEFAULT_REPORT_TYPES[0]
+))
+const templateUnavailable = computed(() => currentReportType.value.template_ready === false)
+const hasReport = computed(() => Boolean(report.value?.month))
+const reportTitleFallback = computed(() => {
+  const monthNumber = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
+  const monthPrefix = Number.isFinite(monthNumber) ? `${monthNumber}月` : ''
+  return `${monthPrefix}${currentReportType.value.name}`
+})
+const generationProgress = computed(() => {
+  const value = Number(activeJob.value?.progress)
+  if (Number.isFinite(value)) return Math.max(3, Math.min(100, Math.round(value)))
+  return 3
+})
+const generationStageMessage = computed(() => (
+  activeJob.value?.stage_message || '正在连接后台 AI 生成服务'
+))
 
 const reportSnapshot = computed(() => report.value.snapshot || {})
 const reportGeneratedAt = computed(() => (
@@ -311,7 +455,8 @@ const workPlan = computed(() => (
 ))
 const targetTableText = computed(() => {
   const tables = Array.isArray(report.value.target_tables) ? report.value.target_tables : []
-  return tables.length ? tables.join('、') : '计量稽查检查表（现场）、计量稽查检查表（视频）'
+  const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
+  return (tables.length ? tables : fallbackTables).join('、') || '-'
 })
 
 const summaryCards = computed(() => {
@@ -436,31 +581,160 @@ const closeImagePreview = () => {
   }
 }
 
-const fetchReport = async (options = {}) => {
-  if (!selectedMonth.value) return
-  const force = options?.force === true
-  loading.value = true
-  error.value = ''
-  try {
-    const response = await axios.get('/api/inspection-reports/quality-measurement-summary', {
-      params: {
-        user_id: localStorage.getItem('user_id') || '',
-        month: selectedMonth.value,
-        ...(force ? { force: 'true' } : {})
-      }
-    })
-    if (!response.data?.success) {
-      throw new Error(response.data?.error || '报告生成失败。')
-    }
-    report.value = response.data.report || report.value
-  } catch (err) {
-    error.value = err?.response?.data?.error || err?.message || '报告生成失败，请稍后重试。'
-  } finally {
-    loading.value = false
+const clearPolling = () => {
+  if (pollTimer) {
+    window.clearTimeout(pollTimer)
+    pollTimer = null
   }
 }
 
-onMounted(fetchReport)
+const scheduleJobPoll = () => {
+  clearPolling()
+  pollTimer = window.setTimeout(pollActiveJob, 2200)
+}
+
+const pollActiveJob = async () => {
+  const taskId = activeJob.value?.task_id
+  if (!taskId) return
+  try {
+    const response = await axios.get(`/api/inspection-reports/jobs/${taskId}`)
+    if (activeJob.value?.task_id !== taskId) return
+    const job = response.data?.job
+    if (!response.data?.success || !job) {
+      throw new Error(response.data?.error || '读取AI报告生成进度失败。')
+    }
+    activeJob.value = job
+    if (job.status === 'completed') {
+      clearPolling()
+      if (response.data?.report) report.value = response.data.report
+      loading.value = false
+      error.value = ''
+      return
+    }
+    if (job.status === 'failed') {
+      clearPolling()
+      if (response.data?.report) report.value = response.data.report
+      loading.value = false
+      error.value = job.error_message || 'AI报告生成失败，请稍后重试。'
+      return
+    }
+    scheduleJobPoll()
+  } catch (err) {
+    error.value = err?.response?.data?.error || err?.message || '暂时无法读取生成进度，后台任务仍在继续。'
+    scheduleJobPoll()
+  }
+}
+
+const startGeneration = async (options = {}) => {
+  if (!selectedMonth.value || templateUnavailable.value) return
+  const requestId = ++contextRequestId
+  clearPolling()
+  loading.value = true
+  error.value = ''
+  activeJob.value = {
+    progress: 3,
+    stage_message: '正在向后台提交 AI 报告生成任务'
+  }
+  try {
+    const response = await axios.post('/api/inspection-reports/generate', {
+      report_type: selectedReportType.value,
+      month: selectedMonth.value,
+      force: options?.force === true
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) {
+      throw new Error(response.data?.error || 'AI报告生成任务提交失败。')
+    }
+    if (response.data?.report && !response.data?.job) {
+      report.value = response.data.report
+      activeJob.value = null
+      loading.value = false
+      return
+    }
+    if (!response.data?.job?.task_id) {
+      throw new Error('后台没有返回有效的报告生成任务。')
+    }
+    activeJob.value = response.data.job
+    scheduleJobPoll()
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    activeJob.value = null
+    loading.value = false
+    error.value = err?.response?.data?.error || err?.message || 'AI报告生成任务提交失败。'
+  }
+}
+
+const loadReportState = async ({ autoStart = true } = {}) => {
+  const requestId = ++contextRequestId
+  clearPolling()
+  activeJob.value = null
+  error.value = ''
+  if (templateUnavailable.value) {
+    report.value = createEmptyReport()
+    loading.value = false
+    return
+  }
+  loading.value = true
+  try {
+    const response = await axios.get('/api/inspection-reports/status', {
+      params: {
+        report_type: selectedReportType.value,
+        month: selectedMonth.value
+      }
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) {
+      throw new Error(response.data?.error || '读取报告状态失败。')
+    }
+    report.value = response.data?.report || createEmptyReport()
+    if (response.data?.job?.task_id) {
+      activeJob.value = response.data.job
+      scheduleJobPoll()
+      return
+    }
+    loading.value = false
+    if (!response.data?.report && autoStart) {
+      await startGeneration()
+    }
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    loading.value = false
+    error.value = err?.response?.data?.error || err?.message || '读取报告状态失败，请稍后重试。'
+  }
+}
+
+const selectReportType = async (reportType) => {
+  if (selectedReportType.value === reportType) return
+  selectedReportType.value = reportType
+  report.value = createEmptyReport()
+  await loadReportState()
+}
+
+const handleReportContextChange = async () => {
+  report.value = createEmptyReport()
+  await loadReportState()
+}
+
+const loadReportTypes = async () => {
+  try {
+    const response = await axios.get('/api/inspection-reports/types')
+    if (response.data?.success && Array.isArray(response.data.report_types) && response.data.report_types.length) {
+      reportTypes.value = response.data.report_types
+    }
+  } catch {
+    reportTypes.value = DEFAULT_REPORT_TYPES
+  }
+}
+
+onMounted(async () => {
+  await loadReportTypes()
+  await loadReportState()
+})
+
+onBeforeUnmount(() => {
+  contextRequestId += 1
+  clearPolling()
+})
 </script>
 
 <style scoped>
@@ -561,6 +835,376 @@ onMounted(fetchReport)
 .regenerate-report-btn:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.report-type-panel {
+  position: relative;
+  padding: 22px;
+  border-radius: 24px;
+  border-color: rgba(125, 157, 177, 0.42);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(14, 165, 233, 0.13), transparent 30%),
+    linear-gradient(145deg, #e8f1f6 0%, #f2f7fa 50%, #e5eef4 100%);
+  box-shadow:
+    0 20px 46px rgba(15, 23, 42, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.report-type-panel-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+.report-type-panel-head span {
+  color: #0284c7;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.report-type-panel-head h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.report-type-panel-head small {
+  color: #64748b;
+}
+
+.report-type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.38);
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.035);
+}
+
+.report-type-card {
+  position: relative;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid rgba(184, 204, 216, 0.82);
+  border-radius: 19px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  box-shadow: 0 8px 18px rgba(30, 64, 82, 0.045);
+}
+
+.report-type-card:hover {
+  transform: translateY(-2px);
+  border-color: #7dd3fc;
+  box-shadow: 0 14px 28px rgba(14, 116, 144, 0.1);
+}
+
+.report-type-card.active {
+  border-color: #0284c7;
+  background: linear-gradient(145deg, #f0f9ff, #ffffff 72%);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12), 0 16px 30px rgba(14, 116, 144, 0.1);
+}
+
+.report-type-card.pending.active {
+  border-color: #d97706;
+  background: linear-gradient(145deg, #fffbeb, #ffffff 72%);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12), 0 16px 30px rgba(146, 64, 14, 0.08);
+}
+
+.report-type-card strong {
+  display: block;
+  padding-right: 96px;
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.report-type-card>p {
+  margin: 8px 0 14px;
+  color: #64748b;
+  line-height: 1.65;
+}
+
+.report-type-status {
+  position: absolute;
+  top: 17px;
+  right: 17px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.report-type-card.pending .report-type-status {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.report-type-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.report-type-sources span {
+  margin-right: 2px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.report-type-sources em {
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #334155;
+  background: #eef2f7;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.template-placeholder {
+  min-height: 260px;
+  padding: 34px;
+  border-radius: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  background:
+    radial-gradient(circle at 85% 18%, rgba(245, 158, 11, 0.13), transparent 30%),
+    linear-gradient(145deg, #ffffff, #fffbeb);
+}
+
+.template-placeholder-mark {
+  width: 82px;
+  height: 82px;
+  flex: 0 0 82px;
+  border-radius: 24px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: linear-gradient(145deg, #d97706, #f59e0b);
+  box-shadow: 0 18px 36px rgba(217, 119, 6, 0.22);
+  font-size: 25px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.template-placeholder span {
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.template-placeholder h3 {
+  margin: 6px 0 8px;
+  color: #0f172a;
+  font-size: 24px;
+}
+
+.template-placeholder p {
+  max-width: 660px;
+  margin: 0;
+  color: #64748b;
+  line-height: 1.75;
+}
+
+.ai-generation-state {
+  min-height: 330px;
+  padding: 38px 42px;
+  border-radius: 28px;
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  align-items: center;
+  gap: 42px;
+  overflow: hidden;
+  color: #e0f2fe;
+  border-color: rgba(56, 189, 248, 0.22);
+  background:
+    radial-gradient(circle at 13% 50%, rgba(34, 211, 238, 0.18), transparent 26%),
+    radial-gradient(circle at 88% 0%, rgba(14, 165, 233, 0.16), transparent 30%),
+    linear-gradient(130deg, #071827 0%, #0b2538 58%, #0c3445 100%);
+  box-shadow: 0 26px 64px rgba(7, 24, 39, 0.24);
+}
+
+.ai-generation-visual {
+  position: relative;
+  width: 188px;
+  height: 188px;
+  display: grid;
+  place-items: center;
+}
+
+.ai-core {
+  position: relative;
+  z-index: 3;
+  width: 86px;
+  height: 86px;
+  border-radius: 28px;
+  display: grid;
+  place-items: center;
+  color: #f0fdfa;
+  background: linear-gradient(145deg, #0891b2, #0ea5e9);
+  box-shadow: 0 0 0 10px rgba(34, 211, 238, 0.08), 0 0 46px rgba(56, 189, 248, 0.38);
+  font-size: 27px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  animation: aiCorePulse 2.2s ease-in-out infinite;
+}
+
+.ai-orbit {
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 50%;
+}
+
+.ai-orbit::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #67e8f9;
+  box-shadow: 0 0 16px #22d3ee;
+}
+
+.orbit-one {
+  animation: aiOrbitSpin 5.4s linear infinite;
+}
+
+.orbit-two {
+  inset: 2px;
+  border-style: dashed;
+  opacity: 0.55;
+  animation: aiOrbitSpin 8s linear infinite reverse;
+}
+
+.ai-spark {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #bae6fd;
+  box-shadow: 0 0 14px #7dd3fc;
+  animation: aiSparkFloat 2.4s ease-in-out infinite;
+}
+
+.spark-one {
+  top: 28px;
+  right: 18px;
+}
+
+.spark-two {
+  bottom: 23px;
+  left: 20px;
+  animation-delay: -1.1s;
+}
+
+.ai-generation-content {
+  min-width: 0;
+}
+
+.ai-generation-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  border-radius: 999px;
+  color: #a5f3fc;
+  background: rgba(8, 145, 178, 0.12);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 10px #22d3ee;
+  animation: liveDotPulse 1.2s ease-in-out infinite;
+}
+
+.ai-generation-content h3 {
+  margin: 14px 0 8px;
+  color: #f8fafc;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.4;
+}
+
+.ai-generation-content>p {
+  margin: 0 0 22px;
+  color: #a9c4d5;
+  line-height: 1.75;
+}
+
+.ai-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 9px;
+  color: #bae6fd;
+  font-size: 13px;
+}
+
+.ai-progress-head strong {
+  color: #67e8f9;
+  font-size: 18px;
+}
+
+.ai-progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.ai-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0891b2, #22d3ee, #7dd3fc);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.45);
+  transition: width 0.45s ease;
+}
+
+.ai-stage-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.ai-stage-list span {
+  padding-top: 10px;
+  border-top: 2px solid rgba(148, 163, 184, 0.18);
+  color: #68869a;
+  font-size: 12px;
+  text-align: center;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.ai-stage-list span.done {
+  color: #a5f3fc;
+  border-color: #22d3ee;
 }
 
 .state-card {
@@ -1192,6 +1836,45 @@ onMounted(fetchReport)
   }
 }
 
+@keyframes aiOrbitSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes aiCorePulse {
+  0%, 100% {
+    transform: scale(0.97);
+    box-shadow: 0 0 0 10px rgba(34, 211, 238, 0.08), 0 0 38px rgba(56, 189, 248, 0.3);
+  }
+  50% {
+    transform: scale(1.03);
+    box-shadow: 0 0 0 14px rgba(34, 211, 238, 0.11), 0 0 58px rgba(56, 189, 248, 0.48);
+  }
+}
+
+@keyframes aiSparkFloat {
+  0%, 100% {
+    transform: translateY(-5px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(7px);
+    opacity: 1;
+  }
+}
+
+@keyframes liveDotPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
 @media (max-width: 900px) {
   .report-hero,
   .report-document-head {
@@ -1204,6 +1887,28 @@ onMounted(fetchReport)
     max-width: none;
     min-width: 0;
     box-sizing: border-box;
+  }
+
+  .report-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-generation-state {
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 24px;
+    padding: 30px;
+  }
+
+  .ai-generation-visual {
+    width: 148px;
+    height: 148px;
+  }
+
+  .ai-core {
+    width: 72px;
+    height: 72px;
+    border-radius: 23px;
+    font-size: 23px;
   }
 
   .summary-cards {
@@ -1260,6 +1965,76 @@ onMounted(fetchReport)
 }
 
 @media (max-width: 520px) {
+  .report-type-panel {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .report-type-panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .report-type-card {
+    padding: 16px;
+  }
+
+  .report-type-card strong {
+    padding-right: 0;
+    margin-top: 32px;
+    font-size: 17px;
+  }
+
+  .report-type-status {
+    left: 15px;
+    right: auto;
+    top: 14px;
+  }
+
+  .template-placeholder {
+    min-height: 250px;
+    padding: 28px 20px;
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .ai-generation-state {
+    min-height: 0;
+    padding: 26px 20px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 14px;
+    border-radius: 22px;
+  }
+
+  .ai-generation-visual {
+    width: 126px;
+    height: 126px;
+  }
+
+  .ai-generation-content {
+    width: 100%;
+    text-align: center;
+  }
+
+  .ai-generation-content h3 {
+    font-size: 21px;
+  }
+
+  .ai-generation-content>p {
+    margin-bottom: 18px;
+    font-size: 13px;
+  }
+
+  .ai-stage-list {
+    gap: 4px;
+  }
+
+  .ai-stage-list span {
+    font-size: 11px;
+  }
+
   .summary-cards {
     grid-template-columns: 1fr;
   }

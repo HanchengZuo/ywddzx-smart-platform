@@ -207,9 +207,9 @@
 
         <button v-if="canViewInspectionReports" class="nav-item"
           :class="{ active: isActive('/inspection/reports'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/inspection/reports')" :title="sidebarCollapsed ? '报告自动生成' : ''">
+          @click="go('/inspection/reports')" :title="sidebarCollapsed ? 'AI报告生成' : ''">
           <span class="nav-item-icon">报</span>
-          <span v-if="!sidebarCollapsed">报告自动生成</span>
+          <span v-if="!sidebarCollapsed">AI报告生成</span>
         </button>
 
         <button v-if="canViewCertificates" class="nav-item"
