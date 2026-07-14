@@ -6997,6 +6997,10 @@ INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
 )
 
 
+class InspectionReportJobSchemaUnavailable(RuntimeError):
+    pass
+
+
 def report_snapshot_table_available(cur):
     cur.execute("SELECT to_regclass('public.inspection_report_snapshots') AS table_name;")
     row = cur.fetchone()
@@ -7146,7 +7150,17 @@ def serialize_inspection_report_job(row):
     }
 
 
+def require_inspection_report_job_schema(cur):
+    cur.execute("SELECT to_regclass('public.inspection_report_jobs') AS table_name;")
+    row = cur.fetchone()
+    if not row or not row.get("table_name"):
+        raise InspectionReportJobSchemaUnavailable(
+            "AI报告后台任务表尚未完成数据库迁移，请重新部署后端并执行数据库升级。"
+        )
+
+
 def get_inspection_report_job(cur, task_id):
+    require_inspection_report_job_schema(cur)
     cur.execute(
         """
         SELECT
@@ -7173,6 +7187,7 @@ def get_inspection_report_job(cur, task_id):
 
 
 def get_active_inspection_report_job(cur, report_type, report_month, scope_key):
+    require_inspection_report_job_schema(cur)
     cur.execute(
         """
         SELECT
@@ -23178,6 +23193,8 @@ def get_inspection_report_types():
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
+    except InspectionReportJobSchemaUnavailable as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
     finally:
         close_db_resources(cur, conn)
 
@@ -23212,6 +23229,8 @@ def get_inspection_report_status():
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
+    except InspectionReportJobSchemaUnavailable as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
     finally:
         close_db_resources(cur, conn)
 
@@ -23258,6 +23277,10 @@ def create_inspection_report_generation_job():
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 403
+    except InspectionReportJobSchemaUnavailable as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 503
     except Exception as exc:
         if conn:
             conn.rollback()
@@ -23297,6 +23320,8 @@ def get_inspection_report_generation_job(task_id):
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
+    except InspectionReportJobSchemaUnavailable as exc:
+        return jsonify({"success": False, "error": str(exc)}), 503
     finally:
         close_db_resources(cur, conn)
 
@@ -23328,6 +23353,10 @@ def get_quality_measurement_report_summary():
             "job": serialize_inspection_report_job(job),
             "background": bool(job),
         }), (202 if job else 200)
+    except InspectionReportJobSchemaUnavailable as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 503
     except Exception as exc:
         if conn:
             conn.rollback()
