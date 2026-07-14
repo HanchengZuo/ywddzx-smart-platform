@@ -221,12 +221,20 @@
 
       <article class="chapter-card">
         <div class="chapter-banner">第五章　各环节突出问题</div>
-        <div class="analysis-source-pill" :class="{ ai: deepAnalysis.ai_generated }">
-          {{ deepAnalysis.ai_generated ? 'AI已辅助筛选突出问题' : 'AI暂不可用，已使用本地规则筛选' }}
+        <div class="content-source-row">
+          <span>突出问题的筛选和概括会明确标注内容来源</span>
         </div>
         <section v-for="flow in flowHighlights" :key="`highlight-${flow.flow_name}`" class="flow-highlight-section">
           <div class="flow-highlight-head">
-            <h4>{{ flow.flow_name }}</h4>
+            <div class="flow-highlight-title">
+              <h4>{{ flow.flow_name }}</h4>
+              <AiContentBadge
+                :generated="Boolean(flow.ai_generated)"
+                ai-label="AI辅助筛选"
+                fallback-label="规则筛选"
+                compact
+              />
+            </div>
             <p>发现问题{{ flow.count || 0 }}项，突出问题{{ flow.highlight_count || 0 }}项：</p>
           </div>
           <p v-if="flow.summary" class="flow-highlight-summary">{{ flow.summary }}</p>
@@ -257,6 +265,14 @@
 
       <article class="chapter-card trace-chapter">
         <div class="chapter-banner">第六章　管理追溯</div>
+        <div class="content-source-row">
+          <span>典型问题分析、结论和改进措施</span>
+          <AiContentBadge
+            :generated="Boolean(managementTrace.ai_generated)"
+            ai-label="AI参与生成"
+            fallback-label="规则生成"
+          />
+        </div>
         <div v-if="managementTrace.typical_issue" class="trace-problem-card">
           <span>典型问题</span>
           <strong>{{ formatStationIssue(managementTrace.typical_issue) }}</strong>
@@ -296,11 +312,27 @@
 
       <article class="chapter-card">
         <div class="chapter-banner">第七章　工作计划</div>
+        <div class="content-source-row">
+          <span>以本月问题分布与管理分析为依据生成</span>
+          <AiContentBadge
+            :generated="Boolean(deepAnalysis.work_plan_ai_generated)"
+            ai-label="AI生成"
+            fallback-label="规则生成"
+          />
+        </div>
         <div class="work-plan-list">
           <article v-for="(item, index) in workPlan" :key="`work-plan-${index}`" class="work-plan-card">
             <span>{{ index + 1 }}</span>
             <div>
-              <h4>{{ item.title }}</h4>
+              <div class="work-plan-title-row">
+                <h4>{{ item.title }}</h4>
+                <AiContentBadge
+                  :generated="Boolean(item.ai_generated)"
+                  ai-label="AI生成"
+                  fallback-label="规则生成"
+                  compact
+                />
+              </div>
               <p>{{ item.content }}</p>
             </div>
           </article>
@@ -325,6 +357,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
+import AiContentBadge from '@/components/AiContentBadge.vue'
 
 const DEFAULT_REPORT_TYPES = [
   {
@@ -1557,23 +1590,19 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.analysis-source-pill {
-  display: inline-flex;
+.content-source-row {
+  display: flex;
   align-items: center;
-  margin: 0 0 4px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  color: #92400e;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 10px 12px 10px 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  color: #64748b;
+  background: #f8fafc;
   font-size: 13px;
-  font-weight: 800;
-}
-
-.analysis-source-pill.ai {
-  color: #166534;
-  background: #dcfce7;
-  border-color: #bbf7d0;
+  line-height: 1.6;
 }
 
 .flow-highlight-section {
@@ -1597,6 +1626,25 @@ onBeforeUnmount(() => {
   margin: 0;
   color: #0f172a;
   font-size: 22px;
+}
+
+.flow-highlight-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.work-plan-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.work-plan-title-row h4 {
+  margin: 0;
 }
 
 .flow-highlight-head p {

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS system_feedbacks (
     feedback_type TEXT NOT NULL,
     module TEXT NOT NULL,
     title TEXT NOT NULL,
+    title_ai_generated BOOLEAN NOT NULL DEFAULT FALSE,
     description TEXT NOT NULL,
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     author_name TEXT,

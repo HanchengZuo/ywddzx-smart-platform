@@ -161,7 +161,14 @@
                 <span>{{ item.feedback_type }}</span>
                 <span>{{ item.module }}</span>
               </div>
-              <h3>{{ item.title }}</h3>
+              <div class="thread-title-row">
+                <h3>{{ item.title }}</h3>
+                <AiContentBadge
+                  v-if="item.title_ai_generated"
+                  ai-label="AI生成标题"
+                  compact
+                />
+              </div>
             </div>
             <div v-if="item.can_accept || item.can_delete" class="thread-actions">
               <button v-if="item.can_accept" class="accept-btn" :class="{ active: item.is_accepted }" type="button"
@@ -230,6 +237,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import AiContentBadge from '@/components/AiContentBadge.vue'
 import {
   clearFileInputsById,
   getImageFilesFromClipboardEvent,
@@ -1050,6 +1058,18 @@ onBeforeUnmount(() => {
   color: #047857;
   font-size: 12px;
   font-weight: 800;
+}
+
+.thread-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.thread-title-row h3 {
+  margin: 0;
 }
 
 .feedback-form {

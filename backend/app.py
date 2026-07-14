@@ -6915,7 +6915,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "approved-only-v1"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "approved-only-ai-provenance-v2"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -7417,22 +7417,26 @@ def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
         flow_name = flow["name"]
         flow_issues = [item for item in serialized_rows if item["business_flow"] == flow_name]
         valid_flow_ids = {item["issue_id"] for item in flow_issues}
+        ai_entry = flow_ai_map.get(flow_name, {})
         selected = []
-        for issue_id in flow_ai_map.get(flow_name, {}).get("issue_ids", []):
+        for issue_id in ai_entry.get("issue_ids", []):
             if issue_id in valid_flow_ids and issue_id in issue_map:
                 selected.append(issue_map[issue_id])
             if len(selected) >= 3:
                 break
+        ai_selected_issue = bool(selected)
         if not selected:
             selected = select_local_report_issues(flow_issues, 3)
+        ai_summary = ai_entry.get("summary") or ""
         result.append(
             {
                 "flow_name": flow_name,
                 "count": flow["count"],
                 "percentage": flow["percentage"],
-                "summary": flow_ai_map.get(flow_name, {}).get("summary") or "",
+                "summary": ai_summary,
                 "highlight_count": len(selected),
                 "highlighted_issues": selected,
+                "ai_generated": bool(ai_summary or ai_selected_issue),
             }
         )
     return result
@@ -7454,6 +7458,7 @@ def pick_local_management_trace_issue(serialized_rows):
 def build_local_management_trace(issue):
     if not issue:
         return {
+            "ai_generated": False,
             "typical_issue": None,
             "execution_analysis": "暂无可分析的典型问题。",
             "supervision_analysis": "暂无可分析的典型问题。",
@@ -7464,6 +7469,7 @@ def build_local_management_trace(issue):
 
     description = issue.get("description") or "现场问题执行不到位"
     return {
+        "ai_generated": False,
         "typical_issue": issue,
         "execution_analysis": "现场人员对质量计量关键环节标准掌握不够细，操作执行和过程留痕存在薄弱点。",
         "supervision_analysis": "片区日常监督对关键动作复核不够深入，对重复性、苗头性问题跟踪提醒不足。",
@@ -7481,12 +7487,14 @@ def build_report_management_trace(serialized_rows, ai_payload):
     issue_map = {item["issue_id"]: item for item in serialized_rows if item.get("issue_id")}
     ai_trace = ai_payload.get("management_trace") if isinstance(ai_payload, dict) else None
     typical_issue = None
+    ai_selected_typical_issue = False
     if isinstance(ai_trace, dict):
         try:
             typical_issue_id = int(ai_trace.get("typical_issue_id") or 0)
         except (TypeError, ValueError):
             typical_issue_id = 0
         typical_issue = issue_map.get(typical_issue_id)
+        ai_selected_typical_issue = bool(typical_issue)
 
     if not typical_issue:
         typical_issue = pick_local_management_trace_issue(serialized_rows)
@@ -7506,7 +7514,18 @@ def build_report_management_trace(serialized_rows, ai_payload):
             if level and content:
                 normalized_improvements.append({"level": level, "content": content})
 
+    ai_text_fields = (
+        "execution_analysis",
+        "supervision_analysis",
+        "management_analysis",
+        "conclusion",
+    )
+    ai_generated = ai_selected_typical_issue or bool(normalized_improvements) or any(
+        str(ai_trace.get(field) or "").strip() for field in ai_text_fields
+    )
+
     return {
+        "ai_generated": ai_generated,
         "typical_issue": typical_issue,
         "execution_analysis": str(ai_trace.get("execution_analysis") or "").strip()
         or local_trace["execution_analysis"],
@@ -7530,14 +7549,17 @@ def build_local_work_plan(month_start, distribution):
     flow_text = "、".join(top_flows) if top_flows else "质量计量重点环节"
     return [
         {
+            "ai_generated": False,
             "title": "深化全流程规范管理",
             "content": f"针对本月检查暴露的{flow_text}薄弱环节，计划{next_month_label}开展专项能力提升和现场复盘，推动整改闭环。",
         },
         {
+            "ai_generated": False,
             "title": "持续推进专项治理",
             "content": "围绕计量风险防控和质量管理关键动作，持续开展专项治理，加强人防、物防、技防联动。",
         },
         {
+            "ai_generated": False,
             "title": "开展下月监督检查",
             "content": f"计划开展{next_month_label}质量计量监督检查，跟踪本月问题整改成效，确保质量计量工作受控。",
         },
@@ -7556,7 +7578,7 @@ def build_report_work_plan(month_start, distribution, ai_payload):
         title = str(item.get("title") or "").strip()
         content = str(item.get("content") or "").strip()
         if title and content:
-            normalized.append({"title": title, "content": content})
+            normalized.append({"title": title, "content": content, "ai_generated": True})
     return normalized or local_plan
 
 
@@ -7566,9 +7588,15 @@ def build_report_deep_analysis(month_start, rows, distribution, ai_result):
     flow_highlights = build_report_flow_highlights(distribution, serialized_rows, ai_payload)
     management_trace = build_report_management_trace(serialized_rows, ai_payload)
     work_plan = build_report_work_plan(month_start, distribution, ai_payload)
+    flow_ai_generated = any(item.get("ai_generated") for item in flow_highlights)
+    management_ai_generated = bool(management_trace.get("ai_generated"))
+    work_plan_ai_generated = any(item.get("ai_generated") for item in work_plan)
     return {
-        "ai_generated": bool((ai_result or {}).get("generated")),
+        "ai_generated": bool(flow_ai_generated or management_ai_generated or work_plan_ai_generated),
         "ai_message": (ai_result or {}).get("message") or "",
+        "flow_highlights_ai_generated": flow_ai_generated,
+        "management_trace_ai_generated": management_ai_generated,
+        "work_plan_ai_generated": work_plan_ai_generated,
         "flow_highlights": flow_highlights,
         "management_trace": management_trace,
         "work_plan": work_plan,
@@ -10008,6 +10036,7 @@ def ensure_feedback_schema(cur):
             feedback_type TEXT NOT NULL,
             module TEXT NOT NULL,
             title TEXT NOT NULL,
+            title_ai_generated BOOLEAN NOT NULL DEFAULT FALSE,
             description TEXT NOT NULL,
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             author_name TEXT,
@@ -10023,7 +10052,8 @@ def ensure_feedback_schema(cur):
         """
         ALTER TABLE system_feedbacks
             ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMP,
-            ADD COLUMN IF NOT EXISTS accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+            ADD COLUMN IF NOT EXISTS accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            ADD COLUMN IF NOT EXISTS title_ai_generated BOOLEAN NOT NULL DEFAULT FALSE;
         """
     )
     cur.execute(
@@ -10206,6 +10236,7 @@ def serialize_feedback_comment(row, can_delete=False):
 
 def serialize_feedback_row(row, screenshots=None, comments=None, can_delete=False):
     item = dict(row)
+    item["title_ai_generated"] = bool(item.get("title_ai_generated"))
     item["screenshots"] = screenshots or []
     item["comments"] = comments or []
     item["can_delete"] = bool(can_delete)
@@ -17755,6 +17786,7 @@ def get_system_feedbacks():
                 feedback_type,
                 module,
                 title,
+                title_ai_generated,
                 description,
                 created_by,
                 author_name,
@@ -17873,19 +17905,21 @@ def create_system_feedback():
                 feedback_type,
                 module,
                 title,
+                title_ai_generated,
                 description,
                 created_by,
                 author_name,
                 author_phone,
                 author_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id;
             """,
             (
                 feedback_type,
                 module,
                 title,
+                bool(title_result.get("generated")),
                 description,
                 current_user["id"],
                 author["author_name"],

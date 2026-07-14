@@ -129,14 +129,24 @@
                   :class="{ selected: String(candidate.standard_id) === String(form.standardId) }"
                   @click="selectRecommendedStandard(candidate)">
                   <div class="ai-recommendation-top">
-                    <span class="ai-recommendation-code">{{ candidate.standard_id }}</span>
+                    <div class="ai-recommendation-identity">
+                      <span class="ai-recommendation-code">{{ candidate.standard_id }}</span>
+                      <AiContentBadge
+                        :generated="aiRecommendationsGenerated"
+                        ai-label="AI推荐"
+                        fallback-label="规则匹配"
+                        compact
+                      />
+                    </div>
                     <span class="ai-confidence" :class="`level-${candidate.confidence || '中'}`">
                       {{ candidate.confidence || '中' }}相关
                     </span>
                   </div>
                   <div class="ai-recommendation-title">{{ getStandardTitle(candidate) }}</div>
                   <div class="ai-recommendation-table">{{ candidate.inspection_table_name || '未命名检查表' }}</div>
-                  <div class="ai-recommendation-reason">{{ candidate.reason || 'AI认为该规范与问题描述相关。' }}</div>
+                  <div class="ai-recommendation-reason">
+                    {{ candidate.reason || (aiRecommendationsGenerated ? 'AI认为该规范与问题描述相关。' : '本地规则认为该规范与问题描述相关。') }}
+                  </div>
                 </button>
               </div>
 
@@ -347,6 +357,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
+import AiContentBadge from '@/components/AiContentBadge.vue'
 import {
   clearFileInputsById,
   getImageFilesFromClipboardEvent,
@@ -394,6 +405,7 @@ const standardSourceMode = ref('internal')
 const referenceMode = ref('manual')
 const aiMatching = ref(false)
 const aiRecommendations = ref([])
+const aiRecommendationsGenerated = ref(false)
 const aiReferenceMessage = ref('')
 const aiReferenceMessageType = ref('info')
 const aiNoRelated = ref(false)
@@ -846,6 +858,7 @@ const handleTableInput = () => {
 
 const clearAiReferenceState = () => {
   aiRecommendations.value = []
+  aiRecommendationsGenerated.value = false
   aiReferenceMessage.value = ''
   aiReferenceMessageType.value = 'info'
   aiNoRelated.value = false
@@ -985,6 +998,7 @@ const runAiStandardMatch = async () => {
       standard_source_mode: standardSourceMode.value
     })
     aiRecommendations.value = response.data?.items || []
+    aiRecommendationsGenerated.value = Boolean(response.data?.ai_generated)
     aiNoRelated.value = Boolean(response.data?.no_related)
 
     if (aiNoRelated.value) {
@@ -999,6 +1013,7 @@ const runAiStandardMatch = async () => {
     aiReferenceMessageType.value = response.data?.ai_generated ? 'success' : 'warning'
   } catch (error) {
     aiRecommendations.value = []
+    aiRecommendationsGenerated.value = false
     aiNoRelated.value = true
     aiReferenceMessage.value = error?.response?.data?.error || 'AI匹配失败，请稍后重试或改用人工引用。'
     aiReferenceMessageType.value = 'error'
@@ -2022,6 +2037,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.ai-recommendation-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .ai-recommendation-code {
