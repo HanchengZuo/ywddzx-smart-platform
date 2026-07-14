@@ -162,6 +162,43 @@
       <article class="chapter-card">
         <div class="chapter-banner">第二章　检查发现-发现问题</div>
         <p class="chapter-lead">{{ chapterTwoText }}</p>
+        <div class="finding-distribution-chart">
+          <div class="finding-chart-head">
+            <div>
+              <span>问题板块分布</span>
+              <strong>按业务流程统计</strong>
+            </div>
+            <div class="finding-chart-total">
+              <strong>{{ findingSummary.total_issue_count || 0 }}</strong>
+              <span>问题总数</span>
+            </div>
+          </div>
+
+          <div v-if="businessFlowRows.length" class="finding-flow-list">
+            <div
+              v-for="(item, index) in businessFlowRows"
+              :key="`finding-flow-${item.name}`"
+              class="finding-flow-row"
+              :style="{
+                '--flow-color': getFindingFlowColor(index),
+                '--flow-width': `${getFindingFlowWidth(item.count)}%`
+              }"
+            >
+              <div class="finding-flow-label">
+                <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                <strong>{{ item.name }}</strong>
+              </div>
+              <div class="finding-flow-track" aria-hidden="true">
+                <span></span>
+              </div>
+              <div class="finding-flow-value">
+                <strong>{{ item.count }}项</strong>
+                <span>{{ formatPercent(item.percentage) }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="finding-chart-empty">当前月份暂无业务流程分布数据。</div>
+        </div>
       </article>
 
       <article class="chapter-card">
@@ -577,6 +614,15 @@ const chartTicks = computed(() => {
 const getBarHeight = (count) => {
   const max = chartMax.value || 1
   return Math.max(2, Math.min(100, (Number(count || 0) / max) * 100))
+}
+
+const findingFlowColors = ['#167fb3', '#20a0a0', '#e8993f', '#5479c9', '#7b61b3', '#d76565', '#4b9b68', '#8b6f47']
+
+const getFindingFlowColor = (index) => findingFlowColors[index % findingFlowColors.length]
+
+const getFindingFlowWidth = (count) => {
+  const max = Math.max(...businessFlowRows.value.map((item) => Number(item.count) || 0), 1)
+  return Math.max(3, Math.min(100, ((Number(count) || 0) / max) * 100))
 }
 
 const resolveImage = (path) => {
@@ -1474,6 +1520,157 @@ onBeforeUnmount(() => {
   color: #94a3b8;
 }
 
+.finding-distribution-chart {
+  overflow: hidden;
+  border: 1px solid #dbe7f0;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(14, 165, 233, 0.1), transparent 34%),
+    linear-gradient(180deg, #fbfdff, #f8fbfd);
+}
+
+.finding-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.finding-chart-head>div:first-child span,
+.finding-chart-head>div:first-child strong {
+  display: block;
+}
+
+.finding-chart-head>div:first-child span {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.finding-chart-head>div:first-child strong {
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.finding-chart-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.finding-chart-total strong {
+  color: #0b6f9f;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.finding-chart-total span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.finding-flow-list {
+  display: grid;
+  gap: 14px;
+  padding: 22px 20px 24px;
+}
+
+.finding-flow-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(220px, 2.5fr) 92px;
+  align-items: center;
+  gap: 16px;
+}
+
+.finding-flow-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.finding-flow-label>span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  color: var(--flow-color);
+  background: #eef5f9;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.finding-flow-label strong {
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finding-flow-track {
+  height: 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9eff4;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.07);
+}
+
+.finding-flow-track span {
+  display: block;
+  width: var(--flow-width);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8cc6df, var(--flow-color));
+  box-shadow: 0 4px 10px rgba(22, 127, 179, 0.18);
+  transform-origin: left center;
+  animation: findingBarReveal 0.65s ease both;
+}
+
+.finding-flow-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.finding-flow-value strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.finding-flow-value span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.finding-chart-empty {
+  padding: 48px 20px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+@keyframes findingBarReveal {
+  from {
+    transform: scaleX(0);
+    opacity: 0.35;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
 .chart-title {
   margin: 28px 0 8px 36px;
   font-size: 24px;
@@ -1979,6 +2176,11 @@ onBeforeUnmount(() => {
     font-size: 20px;
   }
 
+  .finding-flow-row {
+    grid-template-columns: minmax(130px, 0.9fr) minmax(180px, 2fr) 86px;
+    gap: 12px;
+  }
+
   .chapter-banner {
     min-height: 56px;
     margin: -20px -20px 22px;
@@ -2099,6 +2301,45 @@ onBeforeUnmount(() => {
   .chapter-banner {
     font-size: 17px;
     letter-spacing: 0;
+  }
+
+  .finding-chart-head {
+    align-items: flex-start;
+    padding: 16px;
+  }
+
+  .finding-chart-total {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+  }
+
+  .finding-chart-total strong {
+    font-size: 26px;
+  }
+
+  .finding-flow-list {
+    gap: 17px;
+    padding: 18px 16px 20px;
+  }
+
+  .finding-flow-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .finding-flow-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .finding-flow-value {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .finding-flow-label strong {
+    white-space: normal;
   }
 
   .chart-title {
