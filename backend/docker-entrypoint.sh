@@ -14,6 +14,9 @@ done
 echo "PostgreSQL is ready. Applying database migrations ..."
 flask --app app db upgrade
 
+echo "Verifying required runtime database schema ..."
+python /app/ensure_runtime_schema.py
+
 echo "Starting Flask application with gunicorn ..."
 exec gunicorn \
   -w "${GUNICORN_WORKERS:-4}" \

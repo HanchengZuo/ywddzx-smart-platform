@@ -24,7 +24,7 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["python", "app.py"]
+CMD ["sh", "/app/docker-entrypoint.sh"]
 EOF
 
 echo "✅ backend/Dockerfile 已修补完成"
