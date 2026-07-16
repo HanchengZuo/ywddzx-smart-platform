@@ -66,7 +66,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('station', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点</div>
+              <div v-if="filterOptionsLoading && !filterOptionsLoaded" class="search-select-empty option-loading">正在加载站点...</div>
+              <button v-else-if="filterOptionsError && !filterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchInspectionFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点</div>
             </div>
           </div>
         </div>
@@ -93,7 +96,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('inspectionTableName', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+              <div v-if="filterOptionsLoading && !filterOptionsLoaded" class="search-select-empty option-loading">正在加载检查表...</div>
+              <button v-else-if="filterOptionsError && !filterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchInspectionFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
             </div>
           </div>
         </div>
@@ -120,7 +126,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('inspector', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人</div>
+              <div v-if="filterOptionsLoading && !filterOptionsLoaded" class="search-select-empty option-loading">正在加载检查人...</div>
+              <button v-else-if="filterOptionsError && !filterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchInspectionFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人</div>
             </div>
           </div>
         </div>
@@ -158,7 +167,7 @@
         </div>
         <div class="filter-main-actions">
           <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-          <button class="btn btn-secondary" type="button" @click="fetchInspections({ forceOptions: true })" :disabled="loading">
+          <button class="btn btn-secondary" type="button" @click="refreshInspectionData" :disabled="loading || filterOptionsLoading">
             {{ loading ? '刷新中...' : '刷新数据' }}
           </button>
         </div>
@@ -766,6 +775,8 @@ const filterOptions = ref({
   inspectors: []
 })
 const filterOptionsLoaded = ref(false)
+const filterOptionsLoading = ref(false)
+const filterOptionsError = ref('')
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -829,6 +840,8 @@ const recordImagesReady = ref(false)
 let recordImagesReadyTimer = null
 let inspectionFetchTimer = null
 let inspectionFetchSequence = 0
+let filterOptionsRequest = null
+let filterOptionsAbortController = null
 let suppressNextPageFetch = false
 
 const normalizedKeyword = (value) => String(value || '').trim().toLowerCase()
@@ -933,37 +946,11 @@ const getInspectionInspectorSearchValues = (record) => {
   ].filter(Boolean)
 }
 
-const getInspectionInspectorOptionValues = (record) => {
-  if (hideInspectorContactInfo.value) return []
-  const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
-  if (inspectors.length) {
-    return inspectors
-      .map((item) => item.real_name || item.username || item.phone || '')
-      .filter(Boolean)
-  }
-  return String(record?.inspector_names || record?.inspector_name || record?.inspector_username || '')
-    .split(/[、,，/]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
 const filteredData = computed(() => list.value)
 
-const stationOptions = computed(() => uniqueSortedOptions(
-  filterOptions.value.stations.length
-    ? filterOptions.value.stations
-    : list.value.map((item) => item.station)
-))
-const inspectionTableOptions = computed(() => uniqueSortedOptions(
-  filterOptions.value.inspectionTables.length
-    ? filterOptions.value.inspectionTables
-    : list.value.map((item) => item.inspection_table_name)
-))
-const inspectorOptions = computed(() => uniqueSortedOptions(
-  filterOptions.value.inspectors.length
-    ? filterOptions.value.inspectors
-    : list.value.flatMap(getInspectionInspectorOptionValues)
-))
+const stationOptions = computed(() => uniqueSortedOptions(filterOptions.value.stations))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(filterOptions.value.inspectionTables))
+const inspectorOptions = computed(() => uniqueSortedOptions(filterOptions.value.inspectors))
 
 const filteredStationOptions = computed(() => filterStationOptionByKeyword(stationOptions.value, filterSearch.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
@@ -1972,7 +1959,45 @@ watch(
 
 const serializeMultiFilter = (value) => JSON.stringify(Array.isArray(value) ? value : [])
 
-const fetchInspections = async (options = {}) => {
+const fetchInspectionFilterOptions = ({ force = false } = {}) => {
+  if (filterOptionsLoaded.value && !force) {
+    return Promise.resolve(filterOptions.value)
+  }
+  if (filterOptionsRequest) {
+    return filterOptionsRequest
+  }
+
+  filterOptionsLoading.value = true
+  filterOptionsError.value = ''
+  filterOptionsAbortController = new AbortController()
+  const userId = localStorage.getItem('user_id') || ''
+  filterOptionsRequest = axios.get('/api/inspections/filter-options', {
+    params: { user_id: userId },
+    signal: filterOptionsAbortController.signal
+  }).then((response) => {
+    const payload = response.data?.filter_options || {}
+    filterOptions.value = {
+      stations: Array.isArray(payload.stations) ? payload.stations : [],
+      inspectionTables: Array.isArray(payload.inspection_tables) ? payload.inspection_tables : [],
+      inspectors: Array.isArray(payload.inspectors) ? payload.inspectors : []
+    }
+    filterOptionsLoaded.value = true
+    return filterOptions.value
+  }).catch((error) => {
+    if (error?.code !== 'ERR_CANCELED') {
+      filterOptionsError.value = error?.response?.data?.error || '筛选项加载失败。'
+    }
+    throw error
+  }).finally(() => {
+    filterOptionsLoading.value = false
+    filterOptionsRequest = null
+    filterOptionsAbortController = null
+  })
+
+  return filterOptionsRequest
+}
+
+const fetchInspections = async () => {
   const sequence = ++inspectionFetchSequence
   try {
     loading.value = true
@@ -1982,7 +2007,7 @@ const fetchInspections = async (options = {}) => {
         user_id: userId,
         page: page.value,
         page_size: pageSize.value,
-        include_options: options?.forceOptions || !filterOptionsLoaded.value ? 1 : 0,
+        include_options: 0,
         month: filters.value.month,
         date_from: filters.value.dateFrom,
         date_to: filters.value.dateTo,
@@ -2006,15 +2031,6 @@ const fetchInspections = async (options = {}) => {
     list.value = Array.isArray(payload.items) ? payload.items : []
     totalRecords.value = Number(payload.total || 0)
 
-    if (payload.filter_options) {
-      filterOptions.value = {
-        stations: Array.isArray(payload.filter_options.stations) ? payload.filter_options.stations : [],
-        inspectionTables: Array.isArray(payload.filter_options.inspection_tables) ? payload.filter_options.inspection_tables : [],
-        inspectors: Array.isArray(payload.filter_options.inspectors) ? payload.filter_options.inspectors : []
-      }
-      filterOptionsLoaded.value = true
-    }
-
     const serverPage = Number(payload.page || page.value)
     if (Number.isFinite(serverPage) && serverPage >= 1 && serverPage !== page.value) {
       suppressNextPageFetch = true
@@ -2029,6 +2045,13 @@ const fetchInspections = async (options = {}) => {
       loading.value = false
     }
   }
+}
+
+const refreshInspectionData = async () => {
+  await Promise.allSettled([
+    fetchInspectionFilterOptions({ force: true }),
+    fetchInspections()
+  ])
 }
 
 const resetFilters = () => {
@@ -2111,6 +2134,9 @@ const jumpToInputPage = () => {
 
 const openFilterDropdown = (key) => {
   dropdownVisible.value[key] = true
+  if (!filterOptionsLoaded.value && !filterOptionsLoading.value) {
+    fetchInspectionFilterOptions().catch(() => {})
+  }
 }
 
 const isMultiFilterSelected = (key, value) => {
@@ -2175,6 +2201,7 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', handleViewportResize)
   visualViewportRef.value?.addEventListener('resize', handleVisualViewportChange)
+  fetchInspectionFilterOptions().catch(() => {})
   fetchInspections()
 })
 
@@ -2192,6 +2219,10 @@ onBeforeUnmount(() => {
   if (inspectionFetchTimer) {
     clearTimeout(inspectionFetchTimer)
     inspectionFetchTimer = null
+  }
+  if (filterOptionsAbortController) {
+    filterOptionsAbortController.abort()
+    filterOptionsAbortController = null
   }
   if (signaturePadInstance.value) {
     signaturePadInstance.value.off()
@@ -2512,6 +2543,25 @@ onBeforeUnmount(() => {
   padding: 12px;
   color: #64748b;
   font-size: 13px;
+}
+
+.option-loading {
+  color: #2563eb;
+}
+
+.search-select-retry {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-select-retry:hover {
+  background: #ffedd5;
 }
 
 .option-main {

@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.8.0"
+        raw_value = "3.8.1"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.8.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.8.1"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -25966,6 +25966,130 @@ def get_assessment_attendance():
         close_db_resources(cur, conn)
 
 
+def build_inspection_record_filter_options(cur, user, can_view_all, can_view_own, hide_inspector_contact):
+    station_option_clauses = []
+    station_option_params = []
+    if not can_view_all and can_view_own and user.get("station_id"):
+        station_option_clauses.append("id = %s")
+        station_option_params.append(user["station_id"])
+    else:
+        region_scope_values = get_effective_station_region_scope_values(
+            cur, user, "limit_record_station_region_scope"
+        )
+        if region_scope_values is not None:
+            if not region_scope_values:
+                station_option_clauses.append("FALSE")
+            else:
+                station_option_clauses.append(
+                    "COALESCE(NULLIF(TRIM(region), ''), '未填写片区') = ANY(%s)"
+                )
+                station_option_params.append(list(region_scope_values))
+    station_option_where = (
+        f"WHERE {' AND '.join(station_option_clauses)}"
+        if station_option_clauses
+        else ""
+    )
+    cur.execute(
+        f"""
+        SELECT station_name
+        FROM stations
+        {station_option_where}
+        ORDER BY station_name ASC;
+        """,
+        station_option_params,
+    )
+    stations = [row["station_name"] for row in cur.fetchall() if row.get("station_name")]
+
+    table_option_clauses = ["COALESCE(is_active, TRUE) = TRUE"]
+    table_option_params = []
+    table_scope_ids = get_effective_inspection_table_scope_ids(
+        cur, user, "limit_record_inspection_table_scope"
+    )
+    if table_scope_ids is not None:
+        if not table_scope_ids:
+            table_option_clauses.append("FALSE")
+        else:
+            table_option_clauses.append("id = ANY(%s)")
+            table_option_params.append(list(table_scope_ids))
+    table_option_where = f"WHERE {' AND '.join(table_option_clauses)}"
+    cur.execute(
+        f"""
+        SELECT table_name
+        FROM inspection_tables
+        {table_option_where}
+        ORDER BY table_name ASC;
+        """,
+        table_option_params,
+    )
+    inspection_tables = [
+        row["table_name"] for row in cur.fetchall() if row.get("table_name")
+    ]
+
+    inspectors = []
+    if not hide_inspector_contact:
+        cur.execute(
+            """
+            SELECT DISTINCT
+                COALESCE(NULLIF(TRIM(real_name), ''), NULLIF(TRIM(username), ''), NULLIF(TRIM(phone), ''), id::text) AS label
+            FROM users
+            WHERE role IN ('root', 'supervisor')
+            ORDER BY label ASC;
+            """
+        )
+        inspectors = [row["label"] for row in cur.fetchall() if row.get("label")]
+
+    return {
+        "stations": stations,
+        "inspection_tables": inspection_tables,
+        "inspectors": inspectors,
+    }
+
+
+@app.route("/api/inspections/filter-options")
+def get_inspection_filter_options():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_current_request_user()
+        can_view_all = can_view_all_inspection_records(cur, user) or can_view_region_inspection_records(cur, user)
+        can_view_own = can_view_own_inspection_records(cur, user)
+        if not can_view_all and not can_view_own:
+            return jsonify({"success": False, "error": "当前账号无权查看巡检记录。"}), 403
+        if not can_view_all and can_view_own and not user.get("station_id"):
+            return jsonify(
+                {
+                    "success": True,
+                    "filter_options": {
+                        "stations": [],
+                        "inspection_tables": [],
+                        "inspectors": [],
+                    },
+                }
+            )
+
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        return jsonify(
+            {
+                "success": True,
+                "filter_options": build_inspection_record_filter_options(
+                    cur,
+                    user,
+                    can_view_all,
+                    can_view_own,
+                    hide_inspector_contact,
+                ),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 # 新增巡检记录接口
 @app.route("/api/inspections")
 def get_inspections():
@@ -26046,10 +26170,6 @@ def get_inspections():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        ensure_issue_inspector_schema(cur)
-        ensure_inspection_completion_schema(cur)
-        conn.commit()
-
         user = None
         base_where_clauses = []
         base_params = []
@@ -26198,80 +26318,13 @@ def get_inspections():
 
         filter_options = {}
         if include_options:
-            station_option_clauses = []
-            station_option_params = []
-            if not can_view_all and can_view_own and user.get("station_id"):
-                station_option_clauses.append("id = %s")
-                station_option_params.append(user["station_id"])
-            else:
-                region_scope_values = get_effective_station_region_scope_values(
-                    cur, user, "limit_record_station_region_scope"
-                )
-                if region_scope_values is not None:
-                    if not region_scope_values:
-                        station_option_clauses.append("FALSE")
-                    else:
-                        station_option_clauses.append(
-                            "COALESCE(NULLIF(TRIM(region), ''), '未填写片区') = ANY(%s)"
-                        )
-                        station_option_params.append(list(region_scope_values))
-            station_option_where = (
-                f"WHERE {' AND '.join(station_option_clauses)}"
-                if station_option_clauses
-                else ""
+            filter_options = build_inspection_record_filter_options(
+                cur,
+                user,
+                can_view_all,
+                can_view_own,
+                hide_inspector_contact,
             )
-            cur.execute(
-                f"""
-                SELECT station_name
-                FROM stations
-                {station_option_where}
-                ORDER BY station_name ASC;
-                """,
-                station_option_params,
-            )
-            filter_options["stations"] = [
-                row["station_name"] for row in cur.fetchall() if row.get("station_name")
-            ]
-
-            table_option_clauses = ["COALESCE(is_active, TRUE) = TRUE"]
-            table_option_params = []
-            table_scope_ids = get_effective_inspection_table_scope_ids(
-                cur, user, "limit_record_inspection_table_scope"
-            )
-            if table_scope_ids is not None:
-                if not table_scope_ids:
-                    table_option_clauses.append("FALSE")
-                else:
-                    table_option_clauses.append("id = ANY(%s)")
-                    table_option_params.append(list(table_scope_ids))
-            table_option_where = f"WHERE {' AND '.join(table_option_clauses)}"
-            cur.execute(
-                f"""
-                SELECT table_name
-                FROM inspection_tables
-                {table_option_where}
-                ORDER BY table_name ASC;
-                """,
-                table_option_params,
-            )
-            filter_options["inspection_tables"] = [
-                row["table_name"] for row in cur.fetchall() if row.get("table_name")
-            ]
-            if hide_inspector_contact:
-                filter_options["inspectors"] = []
-            else:
-                cur.execute(
-                    """
-                    SELECT DISTINCT
-                        COALESCE(NULLIF(TRIM(real_name), ''), NULLIF(TRIM(username), ''), NULLIF(TRIM(phone), ''), id::text) AS label
-                    FROM users
-                    WHERE role IN ('root', 'supervisor')
-                    ORDER BY label ASC;
-                    """
-                )
-                filter_options["inspectors"] = [
-                    row["label"] for row in cur.fetchall() if row.get("label")
-                ]
 
         cur.execute(
             f"""

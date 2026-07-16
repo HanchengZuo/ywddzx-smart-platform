@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.8.1',
+    date: '2026-07-16',
+    title: '巡检记录筛选修复',
+    summary: '修复站点和检查人刚打开时搜不到的问题。',
+    items: [
+      '筛选项改为独立加载，不再依赖当前页巡检记录。',
+      '避免重复请求导致筛选数据延迟出现。'
+    ]
+  },
+  {
     version: 'v3.8',
     date: '2026-07-16',
     title: 'AI报告生成',
