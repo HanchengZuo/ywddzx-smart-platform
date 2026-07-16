@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.8',
+    date: '2026-07-16',
+    title: 'AI报告生成',
+    summary: '新增按月生成巡检分析报告的功能。',
+    items: [
+      '质量计量监督检查报告支持后台生成并保留上次结果。',
+      '报告包含问题统计、分布图、突出问题、管理追溯和工作计划。',
+      'AI生成内容会明确标识，并且只使用审核通过的问题。',
+      '质量计量报告以现场表涉及站点为范围，同时合并同站视频表问题。'
+    ]
+  },
+  {
     version: 'v3.7.1',
     date: '2026-07-09',
     title: '巡检问题筛选优化',
