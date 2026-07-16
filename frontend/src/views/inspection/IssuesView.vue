@@ -253,7 +253,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('region', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredRegionOptions.length === 0" class="search-select-empty">无匹配站点所属地</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载所属地...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredRegionOptions.length === 0" class="search-select-empty">无匹配站点所属地</div>
             </div>
           </div>
         </div>
@@ -281,7 +284,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('station', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点名称</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载站点...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredStationOptions.length === 0" class="search-select-empty">无匹配站点名称</div>
             </div>
           </div>
         </div>
@@ -296,7 +302,10 @@
                 @click="selectFilterOption('stationManager', option)">
                 <div class="option-main">{{ option }}</div>
               </div>
-              <div v-if="filteredStationManagerOptions.length === 0" class="search-select-empty">无匹配站点负责人</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载负责人...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredStationManagerOptions.length === 0" class="search-select-empty">无匹配站点负责人</div>
             </div>
           </div>
         </div>
@@ -324,7 +333,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('inspector', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人员</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载检查人员...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredInspectorOptions.length === 0" class="search-select-empty">无匹配检查人员</div>
             </div>
           </div>
         </div>
@@ -352,7 +364,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('inspectionTableName', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载检查表...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
             </div>
           </div>
         </div>
@@ -388,7 +403,10 @@
                 <span class="multi-option-check">{{ isMultiFilterSelected('standardTags', option) ? '✓' : '' }}</span>
                 <div class="option-main">{{ option }}</div>
               </button>
-              <div v-if="filteredStandardTagOptions.length === 0" class="search-select-empty">无匹配规范标签</div>
+              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载规范标签...</div>
+              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
+                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
+              <div v-else-if="filteredStandardTagOptions.length === 0" class="search-select-empty">无匹配规范标签</div>
             </div>
           </div>
         </div>
@@ -471,7 +489,7 @@
             导出数据
           </button>
           <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
-          <button class="btn btn-secondary" @click="fetchIssues" :disabled="loading">
+          <button class="btn btn-secondary" @click="refreshIssueData" :disabled="loading || issueFilterOptionsLoading">
             {{ loading ? '刷新中...' : '刷新数据' }}
           </button>
         </div>
@@ -1355,6 +1373,20 @@ const filters = ref({
 
 const list = shallowRef([])
 const loading = ref(false)
+const issueFilterOptions = ref({
+  regions: [],
+  stations: [],
+  stationManagers: [],
+  inspectors: [],
+  inspectionTables: [],
+  standardTags: []
+})
+const issueFilterOptionsLoaded = ref(false)
+const issueFilterOptionsLoading = ref(false)
+const issueFilterOptionsError = ref('')
+let issueFilterOptionsRequest = null
+let issueFilterOptionsAbortController = null
+let issueFetchSequence = 0
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
 const stationManagerSelectRef = ref(null)
@@ -1732,12 +1764,12 @@ const filteredData = computed(() => {
   })
 })
 
-const regionOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.region)))
-const stationOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station)))
-const stationManagerOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.station_manager)))
-const inspectorOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspector)))
-const inspectionTableOptions = computed(() => uniqueSortedOptions(list.value.map((item) => item.inspection_table_name)))
-const standardTagOptions = computed(() => uniqueSortedOptions(list.value.flatMap((item) => getIssueStandardTagLabels(item))))
+const regionOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.regions))
+const stationOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.stations))
+const stationManagerOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.stationManagers))
+const inspectorOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.inspectors))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.inspectionTables))
+const standardTagOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.standardTags))
 
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filterSearch.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filterSearch.value.station))
@@ -2156,7 +2188,49 @@ watch(
   { immediate: true }
 )
 
+const fetchIssueFilterOptions = ({ force = false } = {}) => {
+  if (issueFilterOptionsLoaded.value && !force) {
+    return Promise.resolve(issueFilterOptions.value)
+  }
+  if (issueFilterOptionsRequest) {
+    return issueFilterOptionsRequest
+  }
+
+  issueFilterOptionsLoading.value = true
+  issueFilterOptionsError.value = ''
+  issueFilterOptionsAbortController = new AbortController()
+  const userId = localStorage.getItem('user_id') || ''
+  issueFilterOptionsRequest = axios.get('/api/issues/filter-options', {
+    params: { user_id: userId },
+    signal: issueFilterOptionsAbortController.signal
+  }).then((response) => {
+    const payload = response.data?.filter_options || {}
+    issueFilterOptions.value = {
+      regions: Array.isArray(payload.regions) ? payload.regions : [],
+      stations: Array.isArray(payload.stations) ? payload.stations : [],
+      stationManagers: Array.isArray(payload.station_managers) ? payload.station_managers : [],
+      inspectors: Array.isArray(payload.inspectors) ? payload.inspectors : [],
+      inspectionTables: Array.isArray(payload.inspection_tables) ? payload.inspection_tables : [],
+      standardTags: Array.isArray(payload.standard_tags) ? payload.standard_tags : []
+    }
+    issueFilterOptionsLoaded.value = true
+    return issueFilterOptions.value
+  }).catch((error) => {
+    if (error?.code !== 'ERR_CANCELED') {
+      issueFilterOptionsError.value = error?.response?.data?.error || '筛选项加载失败。'
+    }
+    throw error
+  }).finally(() => {
+    issueFilterOptionsLoading.value = false
+    issueFilterOptionsRequest = null
+    issueFilterOptionsAbortController = null
+  })
+
+  return issueFilterOptionsRequest
+}
+
 const fetchIssues = async () => {
+  const sequence = ++issueFetchSequence
   try {
     loading.value = true
     const userId = localStorage.getItem('user_id') || ''
@@ -2165,12 +2239,23 @@ const fetchIssues = async () => {
         user_id: userId
       }
     })
+    if (sequence !== issueFetchSequence) return
     list.value = response.data || []
   } catch (error) {
+    if (sequence !== issueFetchSequence) return
     list.value = []
   } finally {
-    loading.value = false
+    if (sequence === issueFetchSequence) {
+      loading.value = false
+    }
   }
+}
+
+const refreshIssueData = async () => {
+  await Promise.allSettled([
+    fetchIssueFilterOptions({ force: true }),
+    fetchIssues()
+  ])
 }
 
 const buildEditInternalStandardDetailText = (item, fields = editStandardFields.value) => {
@@ -3614,6 +3699,9 @@ const standardExternalEntries = computed(() => {
 
 const openFilterDropdown = (key) => {
   dropdownVisible.value[key] = true
+  if (!issueFilterOptionsLoaded.value && !issueFilterOptionsLoading.value) {
+    fetchIssueFilterOptions().catch(() => {})
+  }
 }
 
 const selectFilterOption = (key, value) => {
@@ -3715,6 +3803,7 @@ onMounted(() => {
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
   document.addEventListener('fullscreenchange', handleTableFullscreenChange)
+  fetchIssueFilterOptions().catch(() => {})
   fetchIssues()
 })
 
@@ -3739,6 +3828,10 @@ onBeforeUnmount(() => {
   }
   if (listImagesReadyTimer) {
     clearTimeout(listImagesReadyTimer)
+  }
+  if (issueFilterOptionsAbortController) {
+    issueFilterOptionsAbortController.abort()
+    issueFilterOptionsAbortController = null
   }
 })
 </script>
@@ -4010,6 +4103,25 @@ onBeforeUnmount(() => {
   padding: 12px;
   color: #64748b;
   font-size: 13px;
+}
+
+.option-loading {
+  color: #2563eb;
+}
+
+.search-select-retry {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-select-retry:hover {
+  background: #ffedd5;
 }
 
 .option-main {

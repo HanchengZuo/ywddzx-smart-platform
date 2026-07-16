@@ -22862,6 +22862,121 @@ def get_my_pending_rectification_count():
     return frontend_version_expired_response()
 
 
+def empty_issue_filter_options():
+    return {
+        "regions": [],
+        "stations": [],
+        "station_managers": [],
+        "inspectors": [],
+        "inspection_tables": [],
+        "standard_tags": [],
+    }
+
+
+@app.route("/api/issues/filter-options")
+def get_issue_filter_options():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_current_request_user()
+        where_clauses = []
+        params = []
+
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if not can_view_all:
+            if can_view_own and user.get("station_id"):
+                where_clauses.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
+                params.extend([user["station_id"], user["id"]])
+            else:
+                where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
+                params.append(user["id"])
+
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "i.inspection_table_id",
+            "limit_issue_inspection_table_scope",
+        ):
+            return jsonify({"success": True, "filter_options": empty_issue_filter_options()})
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_issue_station_region_scope",
+        ):
+            return jsonify({"success": True, "filter_options": empty_issue_filter_options()})
+        append_pending_audit_issue_visibility_filter(user, where_clauses)
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(s.region), ''))
+                        FILTER (WHERE NULLIF(TRIM(s.region), '') IS NOT NULL) AS regions,
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(s.station_name), ''))
+                        FILTER (WHERE NULLIF(TRIM(s.station_name), '') IS NOT NULL) AS stations,
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(s.station_manager_name), ''))
+                        FILTER (WHERE NULLIF(TRIM(s.station_manager_name), '') IS NOT NULL) AS station_managers,
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(issue_inspector.real_name), ''))
+                        FILTER (WHERE NULLIF(TRIM(issue_inspector.real_name), '') IS NOT NULL) AS inspectors,
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(t.table_name), ''))
+                        FILTER (WHERE NULLIF(TRIM(t.table_name), '') IS NOT NULL) AS inspection_tables,
+                    ARRAY_AGG(DISTINCT NULLIF(TRIM(i.internal_standard_id), ''))
+                        FILTER (WHERE NULLIF(TRIM(i.internal_standard_id), '') IS NOT NULL) AS internal_standard_ids
+                FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
+                JOIN stations s ON i.station_id = s.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
+                JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
+                {where_clause};
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            params,
+        )
+        row = cur.fetchone() or {}
+        tag_map = fetch_internal_standard_tags_by_codes(
+            cur, row.get("internal_standard_ids") or []
+        )
+        standard_tags = sorted(
+            {
+                (
+                    f"{str(tag.get('group_name') or '').strip()}：{str(tag.get('tag_name') or '').strip()}"
+                    if str(tag.get("group_name") or "").strip()
+                    else str(tag.get("tag_name") or "").strip()
+                )
+                for tags in tag_map.values()
+                for tag in tags
+                if str(tag.get("tag_name") or "").strip()
+            }
+        )
+        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        return jsonify(
+            {
+                "success": True,
+                "filter_options": {
+                    "regions": row.get("regions") or [],
+                    "stations": row.get("stations") or [],
+                    "station_managers": row.get("station_managers") or [],
+                    "inspectors": [] if hide_inspector_contact else (row.get("inspectors") or []),
+                    "inspection_tables": row.get("inspection_tables") or [],
+                    "standard_tags": standard_tags,
+                },
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
 @app.route("/api/issues")
 def get_issues():
     user_id = str(request.args.get("user_id", "")).strip()
