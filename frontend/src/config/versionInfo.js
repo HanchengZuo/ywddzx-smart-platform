@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.8.2',
+    date: '2026-07-17',
+    title: '待办问题筛选优化',
+    summary: '待复核问题可以按检查表筛选，手机端筛选与站点记忆更完整。',
+    items: [
+      '待复核和待整改问题新增检查表筛选。',
+      '手机端恢复所属地筛选，并记住上次选择的站点。'
+    ]
+  },
+  {
     version: 'v3.8.1',
     date: '2026-07-16',
     title: '巡检记录筛选修复',

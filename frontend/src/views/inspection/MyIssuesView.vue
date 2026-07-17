@@ -70,6 +70,21 @@
             </div>
           </div>
         </div>
+
+        <div class="filter-item">
+          <label>检查表</label>
+          <div class="search-select" ref="inspectionTableSelectRef">
+            <input v-model="filters.inspectionTableName" placeholder="搜索或选择检查表"
+              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
+            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
+              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
+                @click="selectFilterOption('inspectionTableName', option)">
+                <div class="option-main">{{ option }}</div>
+              </div>
+              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="filter-actions">
@@ -582,16 +597,19 @@ const submittingAction = ref(false)
 const issues = ref([])
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
+const inspectionTableSelectRef = ref(null)
 const columnSettingsRef = ref(null)
 
 const dropdownVisible = ref({
   region: false,
-  station: false
+  station: false,
+  inspectionTableName: false
 })
 
 const filters = ref({
   region: '',
-  station: ''
+  station: '',
+  inspectionTableName: ''
 })
 
 const isMobileView = ref(false)
@@ -599,6 +617,7 @@ const showMobileFilters = ref(false)
 const columnSettingsOpen = ref(false)
 
 const MY_ISSUES_COLUMNS_STORAGE_KEY = 'my_issues_visible_columns_v1'
+const MY_ISSUES_MOBILE_STATION_STORAGE_KEY = 'my_issues_mobile_station_filter_v1'
 const myIssueColumnDefinitions = [
   { key: 'id', label: 'ID', group: '基础信息' },
   { key: 'month', label: '检查月度', group: '基础信息' },
@@ -656,7 +675,7 @@ const loadMyIssueColumnVisibility = () => {
           : defaultMyIssueColumnKeys.has(column.key)
       ])
     )
-  } catch (error) {
+  } catch {
     return buildDefaultMyIssueColumnVisibility()
   }
 }
@@ -667,7 +686,8 @@ const filteredData = computed(() => {
   return issues.value.filter((item) => {
     const matchedRegion = !filters.value.region || normalizedKeyword(item.region).includes(normalizedKeyword(filters.value.region))
     const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
-    return matchedRegion && matchedStation
+    const matchedInspectionTable = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
+    return matchedRegion && matchedStation && matchedInspectionTable
   })
 })
 
@@ -690,9 +710,11 @@ const groupedMyIssueColumns = computed(() => {
 
 const regionOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.region)))
 const stationOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.station)))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.inspection_table_name)))
 
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
+const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
 const activeFilterCount = computed(() => {
   return Object.values(filters.value).filter((value) => String(value || '').trim()).length
@@ -794,10 +816,34 @@ const myIssueCategoryLabel = () => {
   return currentRole.value === 'station_manager' ? '待整改问题' : '待复核问题'
 }
 
+const getMobileStationStorageKey = () => {
+  const userId = localStorage.getItem('user_id') || 'anonymous'
+  return `${MY_ISSUES_MOBILE_STATION_STORAGE_KEY}:${userId}:${currentRole.value || 'unknown'}`
+}
+
+const restoreMobileStationFilter = () => {
+  if (!isMobileView.value) return
+  filters.value.station = String(localStorage.getItem(getMobileStationStorageKey()) || '').trim()
+}
+
+const rememberMobileStationFilter = (value) => {
+  if (!isMobileView.value) return
+  const station = String(value || '').trim()
+  if (station) {
+    localStorage.setItem(getMobileStationStorageKey(), station)
+  } else {
+    localStorage.removeItem(getMobileStationStorageKey())
+  }
+}
+
 const resetFilters = () => {
   filters.value = {
     region: '',
-    station: ''
+    station: '',
+    inspectionTableName: ''
+  }
+  if (isMobileView.value) {
+    localStorage.removeItem(getMobileStationStorageKey())
   }
   closeAllDropdowns()
 }
@@ -872,12 +918,16 @@ const openFilterDropdown = (key) => {
 const selectFilterOption = (key, value) => {
   filters.value[key] = value
   dropdownVisible.value[key] = false
+  if (key === 'station') {
+    rememberMobileStationFilter(value)
+  }
 }
 
 const closeAllDropdowns = () => {
   dropdownVisible.value = {
     region: false,
-    station: false
+    station: false,
+    inspectionTableName: false
   }
 }
 
@@ -887,6 +937,9 @@ const handleClickOutside = (event) => {
   }
   if (stationSelectRef.value && !stationSelectRef.value.contains(event.target)) {
     dropdownVisible.value.station = false
+  }
+  if (inspectionTableSelectRef.value && !inspectionTableSelectRef.value.contains(event.target)) {
+    dropdownVisible.value.inspectionTableName = false
   }
   if (columnSettingsRef.value && !columnSettingsRef.value.contains(event.target)) {
     columnSettingsOpen.value = false
@@ -1182,6 +1235,9 @@ const updateResponsiveState = () => {
   if (nextIsMobile === isMobileView.value) return
   isMobileView.value = nextIsMobile
   pageSize.value = nextIsMobile ? 5 : 20
+  if (nextIsMobile) {
+    restoreMobileStationFilter()
+  }
 }
 
 onMounted(() => {
@@ -1297,7 +1353,7 @@ onBeforeUnmount(() => {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
   gap: 16px;
 }
 
@@ -2431,7 +2487,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1200px) {
   .filter-grid {
-    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
   }
 
   .filter-item-wide {
