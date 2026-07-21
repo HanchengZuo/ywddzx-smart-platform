@@ -185,6 +185,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '管理巡检记录确认、封存和周期规则。'
       },
       {
+        key: '/management/auto-audit',
+        path: '/management/auto-audit',
+        title: '白名单自动审核管理',
+        description: '配置巡检问题自动通过、否决规则并回溯命中记录。'
+      },
+      {
         key: '/management/backups',
         path: '/management/backups',
         title: '数据备份管理',

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.9',
+    date: '2026-07-21',
+    title: '白名单自动审核',
+    summary: '新增巡检问题自动审核规则和回溯管理。',
+    items: [
+      '可按外部规范ID或问题描述关键词自动通过、否决。',
+      '自动审核只在巡检记录确认完成后执行。',
+      '巡检问题列表会标明自动审核结果。'
+    ]
+  },
+  {
     version: 'v3.8.3',
     date: '2026-07-21',
     title: '外部规范ID筛选优化',

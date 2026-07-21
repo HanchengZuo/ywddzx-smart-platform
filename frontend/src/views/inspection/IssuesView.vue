@@ -37,6 +37,8 @@
                   ★
                 </button>
                 <span :class="statusClass(item.status)">{{ item.status }}</span>
+                <span v-if="isAutoAudited(item)" class="auto-audit-indicator compact"
+                  :title="autoAuditTitle(item)">自动审核</span>
               </div>
             </div>
             <div class="mobile-card-code">
@@ -681,6 +683,8 @@
                       </template>
                       <template v-else>
                         <span :class="auditStatusClass(item)">{{ auditStatusLabel(item) }}</span>
+                        <span v-if="isAutoAudited(item)" class="auto-audit-indicator"
+                          :title="autoAuditTitle(item)">自动审核</span>
                         <button class="btn btn-secondary btn-sm" type="button" :disabled="auditingIssueId === item.id"
                           @click="auditIssue(item, 'pending')">重新判定</button>
                       </template>
@@ -688,6 +692,8 @@
                     <template v-else>
                       <span v-if="!isIssueAuditPending(item)" :class="auditStatusClass(item)">{{
                         auditStatusLabel(item) }}</span>
+                      <span v-if="isAutoAudited(item)" class="auto-audit-indicator"
+                        :title="autoAuditTitle(item)">自动审核</span>
                       <span v-else-if="issueAuditLockReason(item)" class="audit-lock-reason">{{
                         issueAuditLockReason(item) }}</span>
                       <span v-else class="audit-empty">-</span>
@@ -1991,6 +1997,15 @@ const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectif
 const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
 const issueAuditLockReason = (item = {}) => String(item?.audit_lock_reason || '').trim()
 const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
+const isAutoAudited = (item = {}) => Boolean(item?.is_auto_audited || item?.audit_source === 'automatic')
+const autoAuditTitle = (item = {}) => {
+  const details = [
+    item?.auto_audit_rule_name ? `命中规则：${item.auto_audit_rule_name}` : '系统自动审核',
+    item?.auto_audit_match_summary,
+    item?.audited_at ? `执行时间：${item.audited_at}` : ''
+  ].filter(Boolean)
+  return details.join('\n')
+}
 const canToggleExcellentIssue = (item) => Boolean(item?.can_mark_excellent_issue) && normalizeAuditStatus(item) !== 'rejected'
 const excellentStarTitle = (item) => {
   if (normalizeAuditStatus(item) === 'rejected') return '审核否决的问题不能标记为优秀'
@@ -5082,6 +5097,37 @@ onBeforeUnmount(() => {
   border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.auto-audit-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid #a9d8df;
+  border-radius: 999px;
+  background: #eaf8fa;
+  color: #0f6d78;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.auto-audit-indicator::before {
+  content: '·';
+  margin-right: 4px;
+  color: #16a3b4;
+  font-size: 18px;
+  line-height: 0;
+}
+
+.auto-audit-indicator.compact {
+  min-height: 22px;
+  padding-inline: 7px;
+  font-size: 10px;
 }
 
 .table-actions {

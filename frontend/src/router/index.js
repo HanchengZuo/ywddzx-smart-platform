@@ -101,6 +101,10 @@ const routes = [
     component: () => import('../views/management/InspectionCompletionManagementView.vue')
   },
   {
+    path: '/management/auto-audit',
+    component: () => import('../views/management/AutoAuditManagementView.vue')
+  },
+  {
     path: '/management/ai-usage',
     component: () => import('../views/management/AiUsageManagementView.vue')
   },
@@ -135,6 +139,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
   if (path === '/management/checklists') return hasPermission(role, permissions, 'manage_checklists')
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
+  if (path === '/management/auto-audit') return hasPermission(role, permissions, 'manage_auto_audit_rules')
   if (path === '/management/ai-usage') return hasPermission(role, permissions, 'manage_ai_usage')
   if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
@@ -212,6 +217,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.manage_stations) candidates.push('/management/stations')
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
+  if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (role === 'root') {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
@@ -233,18 +239,21 @@ const verifyStoredAuthToken = async () => {
   return Boolean(result.ok)
 }
 
+const parseStoredPermissions = () => {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch {
+    return {}
+  }
+}
+
 router.beforeEach(async (to, from, next) => {
   const token = localStorage.getItem('auth_token')
 
   if (to.meta.public) {
     if (to.path === '/login' && token && (await verifyStoredAuthToken())) {
       const verifiedRole = localStorage.getItem('user_role')
-      let verifiedPermissions = {}
-      try {
-        verifiedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-      } catch (error) {
-        verifiedPermissions = {}
-      }
+      const verifiedPermissions = parseStoredPermissions()
       const visibilitySettings = await fetchPageVisibility()
       next(resolveFallbackPath(
         verifiedRole,
@@ -263,12 +272,7 @@ router.beforeEach(async (to, from, next) => {
   }
 
   const verifiedRole = localStorage.getItem('user_role')
-  let verifiedPermissions = {}
-  try {
-    verifiedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-  } catch (error) {
-    verifiedPermissions = {}
-  }
+  const verifiedPermissions = parseStoredPermissions()
 
   if (!canAccessPath(to.path, verifiedRole, verifiedPermissions)) {
     const visibilitySettings = await fetchPageVisibility()

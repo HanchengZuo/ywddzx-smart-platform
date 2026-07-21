@@ -319,6 +319,12 @@
           <span class="nav-item-icon">封</span>
           <span v-if="!sidebarCollapsed">巡检封存管理</span>
         </button>
+        <button v-if="canManageAutoAudit" class="nav-item"
+          :class="{ active: isActive('/management/auto-audit'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/auto-audit')" :title="sidebarCollapsed ? '白名单自动审核管理' : ''">
+          <span class="nav-item-icon">审</span>
+          <span v-if="!sidebarCollapsed">白名单自动审核管理</span>
+        </button>
         <button v-if="canManageBackups" class="nav-item"
           :class="{ active: isActive('/management/backups'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/backups')" :title="sidebarCollapsed ? '数据备份管理' : ''">
@@ -716,7 +722,7 @@ const pageVisibilitySettings = ref(getPageVisibilitySnapshot())
 const parseStoredPermissions = () => {
   try {
     return JSON.parse(localStorage.getItem('permissions') || '{}')
-  } catch (error) {
+  } catch {
     return {}
   }
 }
@@ -741,7 +747,6 @@ const authState = reactive({
 syncAxiosAuthHeader()
 
 const isLoginPage = computed(() => route.path === '/login')
-const currentRole = computed(() => authState.role)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
 const localPermissions = computed(() => authState.permissions || {})
 const passwordRuleStatus = computed(() => {
@@ -833,6 +838,7 @@ const canManageStations = computed(() => hasPermissionKey('manage_stations') && 
 const canManageChecklists = computed(() => hasPermissionKey('manage_checklists') && isPageVisible('/management/checklists'))
 const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards') && isPageVisible('/management/internal-standards'))
 const canManageInspectionCompletion = computed(() => isRoot.value && isPageVisible('/management/inspection-completion'))
+const canManageAutoAudit = computed(() => hasPermissionKey('manage_auto_audit_rules') && isPageVisible('/management/auto-audit'))
 const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
 const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
 const canManagePageVisibility = computed(() => isRoot.value)
@@ -842,6 +848,7 @@ const canViewManagementSection = computed(() => (
   canManageChecklists.value ||
   canManageInternalStandards.value ||
   canManageInspectionCompletion.value ||
+  canManageAutoAudit.value ||
   canManageBackups.value ||
   canManageAiUsage.value ||
   canManagePageVisibility.value
@@ -1101,7 +1108,7 @@ const handleIdleLogout = async () => {
   if (isUsableAuthToken(token)) {
     try {
       await axios.post('/api/auth/logout', {}, { timeout: 1200 })
-    } catch (error) {
+    } catch {
       // 自动退出不能被在线状态清理失败阻断，前端仍会立即清理本地登录态。
     }
   }
@@ -1588,6 +1595,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_stations) candidates.push('/management/stations')
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
+  if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')
   candidates.push('/feedback')
@@ -1731,7 +1739,7 @@ const handleLogout = async () => {
   if (isUsableAuthToken(token)) {
     try {
       await axios.post('/api/auth/logout', {}, { timeout: 1200 })
-    } catch (error) {
+    } catch {
       // 退出登录不能被在线状态清理失败阻断。
     }
   }

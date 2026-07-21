@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.8.3"
+        raw_value = "3.9.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.8.3"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.9.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -863,6 +863,13 @@ PERMISSION_CATALOG = [
         "name": "管理内部巡检规范",
         "category": "巡检规范库数据管理",
         "description": "访问巡检规范库数据管理页面，并维护内部规范字段配置和外部规范挂载关系。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "manage_auto_audit_rules",
+        "name": "管理自动审核规则",
+        "category": "白名单自动审核管理",
+        "description": "配置外部规范ID或问题描述关键词的自动通过、否决规则，并查看自动审核记录。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -4222,6 +4229,153 @@ def save_inspection_completion_config(cur, data, user_id):
     return get_inspection_completion_config(cur)
 
 
+AUTO_AUDIT_MATCH_TYPES = {"external_standard_id", "description_keyword"}
+AUTO_AUDIT_DECISIONS = {"approved", "rejected"}
+
+
+def auto_audit_match_summary(rule):
+    if rule.get("match_type") == "external_standard_id":
+        return f"外部规范ID = {rule.get('match_value') or '-'}"
+    return f"问题描述包含“{rule.get('match_value') or '-'}”"
+
+
+def issue_matches_auto_audit_rule(issue, rule):
+    match_value = str(rule.get("match_value") or "").strip()
+    if not match_value:
+        return False
+    if rule.get("match_type") == "external_standard_id":
+        return str(issue.get("standard_id") or "").strip() == match_value
+    if rule.get("match_type") == "description_keyword":
+        return match_value.casefold() in str(issue.get("description") or "").casefold()
+    return False
+
+
+def apply_auto_audit_rules_for_inspection(cur, inspection_id):
+    cur.execute(
+        """
+        SELECT inspector_completion_status
+        FROM inspections
+        WHERE id = %s
+        LIMIT 1;
+        """,
+        (inspection_id,),
+    )
+    inspection = cur.fetchone()
+    if not inspection or inspection.get("inspector_completion_status") != INSPECTION_COMPLETION_DONE:
+        return 0
+
+    cur.execute(
+        """
+        SELECT id, rule_name, match_type, match_value, decision, priority
+        FROM inspection_auto_audit_rules
+        WHERE is_enabled = TRUE
+        ORDER BY
+            priority ASC,
+            CASE WHEN decision = 'rejected' THEN 0 ELSE 1 END ASC,
+            id ASC;
+        """
+    )
+    rules = cur.fetchall()
+    if not rules:
+        return 0
+
+    cur.execute(
+        """
+        SELECT
+            i.id,
+            i.inspection_id,
+            i.standard_id,
+            i.description,
+            s.station_name,
+            t.table_name AS inspection_table_name
+        FROM issues i
+        JOIN stations s ON s.id = i.station_id
+        JOIN inspection_tables t ON t.id = i.inspection_table_id
+        WHERE i.inspection_id = %s
+          AND COALESCE(i.audit_status, 'pending') = 'pending'
+        ORDER BY i.id ASC
+        FOR UPDATE OF i;
+        """,
+        (inspection_id,),
+    )
+    issues = cur.fetchall()
+    audited_count = 0
+
+    for issue in issues:
+        matched_rule = next(
+            (rule for rule in rules if issue_matches_auto_audit_rule(issue, rule)),
+            None,
+        )
+        if not matched_rule:
+            continue
+
+        decision = matched_rule["decision"]
+        match_summary = auto_audit_match_summary(matched_rule)
+        cur.execute(
+            """
+            UPDATE issues
+            SET audit_status = %s,
+                audited_by = NULL,
+                audited_at = CURRENT_TIMESTAMP,
+                audit_source = 'automatic',
+                auto_audit_rule_id = %s,
+                auto_audit_rule_name = %s,
+                auto_audit_match_summary = %s,
+                is_excellent = CASE WHEN %s = 'rejected' THEN FALSE ELSE is_excellent END
+            WHERE id = %s
+              AND COALESCE(audit_status, 'pending') = 'pending';
+            """,
+            (
+                decision,
+                matched_rule["id"],
+                matched_rule["rule_name"],
+                match_summary,
+                decision,
+                issue["id"],
+            ),
+        )
+        if cur.rowcount == 0:
+            continue
+
+        cur.execute(
+            """
+            INSERT INTO inspection_auto_audit_logs (
+                issue_id,
+                issue_reference_id,
+                inspection_reference_id,
+                rule_id,
+                rule_name,
+                match_type,
+                match_value,
+                decision,
+                station_name,
+                inspection_table_name,
+                external_standard_id,
+                issue_description,
+                triggered_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
+            """,
+            (
+                issue["id"],
+                issue["id"],
+                issue["inspection_id"],
+                matched_rule["id"],
+                matched_rule["rule_name"],
+                matched_rule["match_type"],
+                matched_rule["match_value"],
+                decision,
+                issue.get("station_name"),
+                issue.get("inspection_table_name"),
+                issue.get("standard_id"),
+                issue.get("description"),
+            ),
+        )
+        audited_count += 1
+
+    return audited_count
+
+
 def auto_complete_overdue_inspections(cur):
     config = get_inspection_completion_config(cur)
     if not config["auto_complete_enabled"]:
@@ -4239,11 +4393,15 @@ def auto_complete_overdue_inspections(cur):
         WHERE inspector_completion_status <> %s
           AND inspection_date <= %s
           AND COALESCE(sign_status, '') <> '已签名确认'
-          AND COALESCE(inspector_completion_source, '') <> 'admin_reopen';
+          AND COALESCE(inspector_completion_source, '') <> 'admin_reopen'
+        RETURNING id;
         """,
         (INSPECTION_COMPLETION_DONE, INSPECTION_COMPLETION_DONE, cutoff_date),
     )
-    return cur.rowcount
+    completed_rows = cur.fetchall()
+    for row in completed_rows:
+        apply_auto_audit_rules_for_inspection(cur, row["id"])
+    return len(completed_rows)
 
 
 def normalize_inspection_period(value):
@@ -4452,7 +4610,10 @@ def complete_inspection_record(cur, inspection_id, user_id=None, source="manual"
             INSPECTION_COMPLETION_DONE,
         ),
     )
-    return cur.rowcount
+    updated = cur.rowcount
+    if updated:
+        apply_auto_audit_rules_for_inspection(cur, inspection_id)
+    return updated
 
 
 def reopen_inspection_record(cur, inspection_id):
@@ -6073,6 +6234,8 @@ def normalize_issue_row_for_response(
         data["audit_status"],
         "待审核",
     )
+    data["audit_source"] = str(data.get("audit_source") or "").strip()
+    data["is_auto_audited"] = data["audit_source"] == "automatic"
     data["is_excellent"] = bool(data.get("is_excellent")) and data["audit_status"] != "rejected"
     if "status" in data:
         data["status"] = canonical_issue_status(data.get("status"))
@@ -6193,6 +6356,10 @@ def fetch_issue_row_for_response(
             i.audited_by,
             audit_user.real_name AS audited_by_name,
             TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
+            i.audit_source,
+            i.auto_audit_rule_id,
+            i.auto_audit_rule_name,
+            i.auto_audit_match_summary,
             ins.sign_status AS inspection_sign_status,
             ins.station_manager_signed_name,
             ins.station_manager_signature_path,
@@ -16330,6 +16497,10 @@ def reset_inspection_record_flow(inspection_id):
             SET audit_status = 'pending',
                 audited_by = NULL,
                 audited_at = NULL,
+                audit_source = NULL,
+                auto_audit_rule_id = NULL,
+                auto_audit_rule_name = NULL,
+                auto_audit_match_summary = NULL,
                 is_excellent = FALSE
             WHERE inspection_id = %s;
             """,
@@ -23094,6 +23265,10 @@ def get_issues():
                     i.audited_by,
                     audit_user.real_name AS audited_by_name,
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
+                    i.audit_source,
+                    i.auto_audit_rule_id,
+                    i.auto_audit_rule_name,
+                    i.auto_audit_match_summary,
                     ins.sign_status AS inspection_sign_status,
                     ins.station_manager_signed_name,
                     ins.station_manager_signature_path,
@@ -23651,7 +23826,11 @@ def audit_issue(issue_id):
                 UPDATE issues
                 SET audit_status = 'pending',
                     audited_by = NULL,
-                    audited_at = NULL
+                    audited_at = NULL,
+                    audit_source = NULL,
+                    auto_audit_rule_id = NULL,
+                    auto_audit_rule_name = NULL,
+                    auto_audit_match_summary = NULL
                 WHERE id = %s;
                 """,
                 (issue_id,),
@@ -23664,6 +23843,10 @@ def audit_issue(issue_id):
                 SET audit_status = %s,
                     audited_by = %s,
                     audited_at = CURRENT_TIMESTAMP,
+                    audit_source = 'manual',
+                    auto_audit_rule_id = NULL,
+                    auto_audit_rule_name = NULL,
+                    auto_audit_match_summary = NULL,
                     is_excellent = CASE WHEN %s = 'rejected' THEN FALSE ELSE is_excellent END
                 WHERE id = %s;
                 """,
@@ -25101,6 +25284,365 @@ def reopen_management_inspection_record(inspection_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def normalize_auto_audit_rule_payload(data):
+    rule_name = str(data.get("rule_name") or "").strip()
+    if not rule_name:
+        raise ValueError("请填写规则名称。")
+    if len(rule_name) > 80:
+        raise ValueError("规则名称不能超过 80 个字符。")
+
+    match_type = str(data.get("match_type") or "").strip()
+    if match_type not in AUTO_AUDIT_MATCH_TYPES:
+        raise ValueError("触发条件类型不正确。")
+
+    match_value = str(data.get("match_value") or "").strip()
+    if match_type == "external_standard_id":
+        try:
+            standard_id = int(match_value)
+        except (TypeError, ValueError):
+            raise ValueError("外部规范ID必须是完整数字。")
+        if standard_id <= 0:
+            raise ValueError("外部规范ID必须大于 0。")
+        match_value = str(standard_id)
+    else:
+        if len(match_value) < 2:
+            raise ValueError("问题描述关键词至少填写 2 个字符。")
+        if len(match_value) > 120:
+            raise ValueError("问题描述关键词不能超过 120 个字符。")
+
+    decision = str(data.get("decision") or "").strip()
+    if decision not in AUTO_AUDIT_DECISIONS:
+        raise ValueError("自动审核结果必须是通过或否决。")
+
+    try:
+        priority = int(data.get("priority", 100))
+    except (TypeError, ValueError):
+        raise ValueError("优先级必须是数字。")
+    if priority < 1 or priority > 9999:
+        raise ValueError("优先级需设置为 1-9999。")
+
+    remark = str(data.get("remark") or "").strip()
+    if len(remark) > 500:
+        raise ValueError("备注不能超过 500 个字符。")
+
+    return {
+        "rule_name": rule_name,
+        "match_type": match_type,
+        "match_value": match_value,
+        "decision": decision,
+        "priority": priority,
+        "is_enabled": data.get("is_enabled") is not False,
+        "remark": remark,
+    }
+
+
+def ensure_auto_audit_rule_unique(cur, rule, exclude_rule_id=None):
+    params = [rule["match_type"], rule["match_value"]]
+    exclude_sql = ""
+    if exclude_rule_id is not None:
+        exclude_sql = "AND id <> %s"
+        params.append(exclude_rule_id)
+    cur.execute(
+        f"""
+        SELECT id
+        FROM inspection_auto_audit_rules
+        WHERE match_type = %s
+          AND LOWER(TRIM(match_value)) = LOWER(TRIM(%s))
+          {exclude_sql}
+        LIMIT 1;
+        """,
+        params,
+    )
+    if cur.fetchone():
+        raise ValueError("相同触发条件已存在，请直接编辑原规则。")
+
+
+@app.route("/api/management/auto-audit", methods=["GET"])
+def get_management_auto_audit():
+    user_id = str(request.args.get("user_id", "")).strip()
+    decision = str(request.args.get("decision", "")).strip()
+    keyword = str(request.args.get("keyword", "")).strip()
+    rule_id = str(request.args.get("rule_id", "")).strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        page_size = min(100, max(5, int(request.args.get("page_size", 20))))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "分页参数不正确。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, user_id, "manage_auto_audit_rules")
+
+        cur.execute(
+            """
+            SELECT
+                r.id,
+                r.rule_name,
+                r.match_type,
+                r.match_value,
+                r.decision,
+                r.priority,
+                r.is_enabled,
+                COALESCE(r.remark, '') AS remark,
+                COALESCE(creator.real_name, creator.username, '') AS created_by_name,
+                COALESCE(updater.real_name, updater.username, '') AS updated_by_name,
+                TO_CHAR(r.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                TO_CHAR(r.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+                COUNT(log.id) AS matched_count,
+                TO_CHAR(MAX(log.triggered_at), 'YYYY-MM-DD HH24:MI') AS last_triggered_at
+            FROM inspection_auto_audit_rules r
+            LEFT JOIN users creator ON creator.id = r.created_by
+            LEFT JOIN users updater ON updater.id = r.updated_by
+            LEFT JOIN inspection_auto_audit_logs log ON log.rule_id = r.id
+            GROUP BY r.id, creator.real_name, creator.username, updater.real_name, updater.username
+            ORDER BY r.priority ASC, r.id ASC;
+            """
+        )
+        rules = cur.fetchall()
+
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE decision = 'approved') AS approved,
+                COUNT(*) FILTER (WHERE decision = 'rejected') AS rejected,
+                COUNT(*) FILTER (WHERE triggered_at >= CURRENT_DATE) AS today
+            FROM inspection_auto_audit_logs;
+            """
+        )
+        summary = cur.fetchone() or {}
+        summary.update(
+            {
+                "rule_total": len(rules),
+                "rule_enabled": sum(1 for rule in rules if rule.get("is_enabled")),
+            }
+        )
+
+        history_where = []
+        history_params = []
+        if decision in AUTO_AUDIT_DECISIONS:
+            history_where.append("log.decision = %s")
+            history_params.append(decision)
+        if rule_id:
+            try:
+                normalized_rule_id = int(rule_id)
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "规则筛选参数不正确。"}), 400
+            history_where.append("log.rule_id = %s")
+            history_params.append(normalized_rule_id)
+        if keyword:
+            history_where.append(
+                """(
+                    log.rule_name ILIKE %s
+                    OR COALESCE(log.station_name, '') ILIKE %s
+                    OR COALESCE(log.inspection_table_name, '') ILIKE %s
+                    OR COALESCE(log.issue_description, '') ILIKE %s
+                    OR log.issue_reference_id::text = %s
+                    OR COALESCE(log.external_standard_id::text, '') = %s
+                )"""
+            )
+            like_keyword = f"%{keyword}%"
+            history_params.extend(
+                [like_keyword, like_keyword, like_keyword, like_keyword, keyword, keyword]
+            )
+        history_where_sql = f"WHERE {' AND '.join(history_where)}" if history_where else ""
+
+        cur.execute(
+            f"SELECT COUNT(*) AS total FROM inspection_auto_audit_logs log {history_where_sql};",
+            history_params,
+        )
+        history_total = int(cur.fetchone()["total"] or 0)
+        history_total_pages = max(1, (history_total + page_size - 1) // page_size)
+        page = min(page, history_total_pages)
+        offset = (page - 1) * page_size
+
+        cur.execute(
+            f"""
+            SELECT
+                log.id,
+                log.issue_id,
+                log.issue_reference_id,
+                log.inspection_reference_id,
+                log.rule_id,
+                log.rule_name,
+                log.match_type,
+                log.match_value,
+                log.decision,
+                COALESCE(log.station_name, '') AS station_name,
+                COALESCE(log.inspection_table_name, '') AS inspection_table_name,
+                log.external_standard_id,
+                COALESCE(log.issue_description, '') AS issue_description,
+                TO_CHAR(log.triggered_at, 'YYYY-MM-DD HH24:MI') AS triggered_at
+            FROM inspection_auto_audit_logs log
+            {history_where_sql}
+            ORDER BY log.triggered_at DESC, log.id DESC
+            LIMIT %s OFFSET %s;
+            """,
+            [*history_params, page_size, offset],
+        )
+        history_items = cur.fetchall()
+
+        return jsonify(
+            {
+                "success": True,
+                "rules": rules,
+                "summary": summary,
+                "history": {
+                    "items": history_items,
+                    "page": page,
+                    "page_size": page_size,
+                    "total": history_total,
+                    "total_pages": history_total_pages,
+                },
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/auto-audit/rules", methods=["POST"])
+def create_management_auto_audit_rule():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, data.get("user_id"), "manage_auto_audit_rules")
+        rule = normalize_auto_audit_rule_payload(data)
+        ensure_auto_audit_rule_unique(cur, rule)
+        cur.execute(
+            """
+            INSERT INTO inspection_auto_audit_rules (
+                rule_name, match_type, match_value, decision, priority,
+                is_enabled, remark, created_by, updated_by, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            RETURNING id;
+            """,
+            (
+                rule["rule_name"], rule["match_type"], rule["match_value"], rule["decision"],
+                rule["priority"], rule["is_enabled"], rule["remark"], actor["id"], actor["id"],
+            ),
+        )
+        rule_id = cur.fetchone()["id"]
+        conn.commit()
+        return jsonify({"success": True, "message": "自动审核规则已新增。", "rule_id": rule_id})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except psycopg2.IntegrityError:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": "相同触发条件已存在，请直接编辑原规则。"}), 400
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/auto-audit/rules/<int:rule_id>", methods=["PUT"])
+def update_management_auto_audit_rule(rule_id):
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, data.get("user_id"), "manage_auto_audit_rules")
+        rule = normalize_auto_audit_rule_payload(data)
+        ensure_auto_audit_rule_unique(cur, rule, rule_id)
+        cur.execute(
+            """
+            UPDATE inspection_auto_audit_rules
+            SET rule_name = %s,
+                match_type = %s,
+                match_value = %s,
+                decision = %s,
+                priority = %s,
+                is_enabled = %s,
+                remark = %s,
+                updated_by = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s;
+            """,
+            (
+                rule["rule_name"], rule["match_type"], rule["match_value"], rule["decision"],
+                rule["priority"], rule["is_enabled"], rule["remark"], actor["id"], rule_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise LookupError("自动审核规则不存在。")
+        conn.commit()
+        return jsonify({"success": True, "message": "自动审核规则已保存。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except psycopg2.IntegrityError:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": "相同触发条件已存在，请直接编辑原规则。"}), 400
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/auto-audit/rules/<int:rule_id>", methods=["DELETE"])
+def delete_management_auto_audit_rule(rule_id):
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_management_user(cur, data.get("user_id"), "manage_auto_audit_rules")
+        cur.execute("DELETE FROM inspection_auto_audit_rules WHERE id = %s;", (rule_id,))
+        if cur.rowcount == 0:
+            raise LookupError("自动审核规则不存在。")
+        conn.commit()
+        return jsonify({"success": True, "message": "规则已删除，历史自动审核记录仍保留。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 500
     finally:
         close_db_resources(cur, conn)
 
