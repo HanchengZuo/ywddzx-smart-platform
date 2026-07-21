@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.8.2"
+        raw_value = "3.8.3"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.8.2"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.8.3"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"

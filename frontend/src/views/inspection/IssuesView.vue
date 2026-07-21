@@ -373,8 +373,8 @@
         </div>
 
         <div class="filter-item">
-          <label>规范ID</label>
-          <input v-model="filters.standardId" placeholder="搜索规范ID" />
+          <label>外部规范ID</label>
+          <input v-model="filters.standardId" placeholder="输入完整外部规范ID" />
         </div>
         <div class="filter-item">
           <label>规范详情</label>
@@ -1449,12 +1449,13 @@ const columnSettingsOpen = ref(false)
 const currentRole = localStorage.getItem('user_role') || localStorage.getItem('role') || ''
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
-let parsedPermissions = {}
-try {
-  parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
-  parsedPermissions = {}
-}
+const parsedPermissions = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch {
+    return {}
+  }
+})()
 
 const localPermissions = ref(parsedPermissions)
 const actionMessage = ref('')
@@ -1515,7 +1516,7 @@ const loadIssueColumnVisibility = () => {
       ...Object.fromEntries(issueColumnDefinitions.map((column) => [column.key, parsed[column.key] !== false]))
     }
     return Object.values(visibility).some(Boolean) ? visibility : { ...defaultIssueColumnVisibility }
-  } catch (error) {
+  } catch {
     return { ...defaultIssueColumnVisibility }
   }
 }
@@ -1652,7 +1653,7 @@ const exportFilterLabels = {
   stationManager: '站点负责人',
   inspector: '检查人员',
   inspectionTableName: '检查表',
-  standardId: '规范ID',
+  standardId: '外部规范ID',
   standardDetail: '规范详情',
   standardTags: '规范标签',
   issueDescription: '问题描述',
@@ -1726,7 +1727,8 @@ const filteredData = computed(() => {
     const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
     const matchedInspector = hideInspectorContactInfo.value || matchesAnySelectedText(item.inspector, filters.value.inspector)
     const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
-    const matchedStandardId = !filters.value.standardId || normalizedKeyword(getStandardIdSearchText(item)).includes(normalizedKeyword(filters.value.standardId))
+    const standardIdKeyword = String(filters.value.standardId || '').trim()
+    const matchedStandardId = !standardIdKeyword || String(item.standard_id ?? '').trim() === standardIdKeyword
     const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
     const matchedStandardTags = matchesAnySelectedTag(item, filters.value.standardTags)
     const matchedIssueDescription = !filters.value.issueDescription || normalizedKeyword(item.description).includes(normalizedKeyword(filters.value.issueDescription))
@@ -1798,7 +1800,7 @@ const formatExportFilterValue = (key, value) => {
 
 const exportFilterChips = computed(() => {
   return Object.entries(exportDialog.value.filterSummary || {})
-    .filter(([_key, value]) => String(value || '').trim())
+    .filter(([, value]) => String(value || '').trim())
     .map(([key, value]) => ({
       key,
       label: exportFilterLabels[key] || key,
@@ -2045,14 +2047,6 @@ const getStandardIdParts = (item = {}) => {
   return parts
 }
 
-const getStandardIdSearchText = (item = {}) => {
-  return [
-    item?.standard_id,
-    item?.internal_standard_id,
-    item?.code
-  ].filter(Boolean).join(' ')
-}
-
 const getCombinedStandardDetailText = (item = {}) => {
   const sections = []
   if (item?.internal_standard_id || item?.internal_standard_detail_text) {
@@ -2241,7 +2235,7 @@ const fetchIssues = async () => {
     })
     if (sequence !== issueFetchSequence) return
     list.value = response.data || []
-  } catch (error) {
+  } catch {
     if (sequence !== issueFetchSequence) return
     list.value = []
   } finally {
@@ -2461,7 +2455,7 @@ const buildCurrentExportFilterSummary = () => {
           : String(value || '').trim()
         return [key, normalized]
       })
-      .filter(([_key, value]) => value)
+      .filter(([, value]) => value)
   )
 }
 
@@ -2527,7 +2521,7 @@ const invertExportFields = () => {
     exportFieldOptions.map((option) => [
       option.key,
       canSelectExportField(option)
-        ? !Boolean(exportDialog.value.includeFields[option.key])
+        ? !exportDialog.value.includeFields[option.key]
         : Boolean(exportDialog.value.includeFields[option.key])
     ])
   )
@@ -3484,7 +3478,7 @@ const enterTableFullscreen = async () => {
     if (fullscreenTarget?.requestFullscreen && !document.fullscreenElement) {
       await fullscreenTarget.requestFullscreen()
     }
-  } catch (error) {
+  } catch {
     // 浏览器拒绝原生全屏时，仍保留页面内全屏兜底。
   }
   tableFullscreen.value = true
@@ -3511,7 +3505,7 @@ const finishFullscreenDomPreservation = async (shouldPreserve) => {
   if (!document.fullscreenElement && tableCardRef.value?.requestFullscreen) {
     try {
       await tableCardRef.value.requestFullscreen()
-    } catch (error) {
+    } catch {
       // 异步保存后浏览器可能拒绝重新进入原生全屏，保留页面内全屏兜底。
     }
   }
@@ -3535,7 +3529,7 @@ const exitTableFullscreen = async () => {
     if (document.fullscreenElement) {
       await document.exitFullscreen()
     }
-  } catch (error) {
+  } catch {
     // 退出原生全屏失败不影响页面状态恢复。
   }
   tableFullscreen.value = false

@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.8.3',
+    date: '2026-07-21',
+    title: '外部规范ID筛选优化',
+    summary: '巡检问题可以按完整的外部规范ID准确查找。',
+    items: [
+      '规范ID筛选更名为外部规范ID。',
+      '输入完整ID才会显示对应问题。'
+    ]
+  },
+  {
     version: 'v3.8.2',
     date: '2026-07-17',
     title: '待办问题筛选优化',
