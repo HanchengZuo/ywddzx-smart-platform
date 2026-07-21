@@ -123,6 +123,11 @@
               <p>{{ activeItem.original_filename || '当前检查表暂未上传 PDF 原件。' }}</p>
             </div>
             <div class="preview-actions">
+              <button class="btn btn-primary export-standards-btn" type="button"
+                :disabled="!activeExternalStandards.length || exportingTableId === activeItem.inspection_table_id"
+                @click="exportActiveStandards">
+                {{ exportingTableId === activeItem.inspection_table_id ? '正在导出...' : '导出外部规范' }}
+              </button>
               <a v-if="activeItem.has_pdf" class="btn btn-secondary" :href="activeItem.file_url" target="_blank"
                 rel="noopener">
                 新窗口打开
@@ -246,16 +251,16 @@ import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
-const currentUsername = ref(localStorage.getItem('username') || '')
 const currentRole = localStorage.getItem('user_role') || ''
-let localPermissions = {}
+let localPermissions
 try {
   localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
+} catch {
   localPermissions = {}
 }
 const loading = ref(false)
 const uploadingId = ref(null)
+const exportingTableId = ref(null)
 const pageError = ref('')
 const actionMessage = ref('')
 const actionMessageType = ref('info')
@@ -325,7 +330,6 @@ const activeExternalPage = computed(() => {
 })
 
 const paginatedActiveExternalStandards = computed(() => {
-  const tableId = activeItem.value?.inspection_table_id
   const start = (activeExternalPage.value - 1) * STANDARD_PAGE_SIZE
   return filteredActiveExternalStandards.value.slice(start, start + STANDARD_PAGE_SIZE)
 })
@@ -402,6 +406,63 @@ const formatFileSize = (size) => {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+const getExcelDownloadFileName = (disposition, fallback) => {
+  const value = String(disposition || '')
+  const utf8Matched = value.match(/filename\*=UTF-8''([^;]+)/i)
+  const fallbackMatched = value.match(/filename="?([^";]+)"?/i)
+  const encodedName = utf8Matched?.[1] || fallbackMatched?.[1] || ''
+  try {
+    return decodeURIComponent(encodedName) || fallback
+  } catch {
+    return encodedName || fallback
+  }
+}
+
+const getDownloadErrorMessage = async (error, fallback) => {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const payload = JSON.parse(await data.text())
+      return payload.error || payload.message || fallback
+    } catch {
+      return fallback
+    }
+  }
+  return data?.error || data?.message || fallback
+}
+
+const exportActiveStandards = async () => {
+  const item = activeItem.value
+  if (!item?.inspection_table_id || !activeExternalStandards.value.length) {
+    setActionMessage('当前检查表暂无可导出的外部规范。', 'error')
+    return
+  }
+
+  try {
+    exportingTableId.value = item.inspection_table_id
+    const response = await axios.get(
+      `/api/inspection-table-originals/${item.inspection_table_id}/external-standards/export`,
+      { responseType: 'blob' }
+    )
+    const blobUrl = window.URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = getExcelDownloadFileName(
+      response.headers?.['content-disposition'],
+      `${item.table_name || '检查表'}_外部规范.xlsx`
+    )
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(blobUrl)
+    setActionMessage(`已导出 ${activeExternalStandards.value.length} 条外部规范。`, 'success')
+  } catch (error) {
+    setActionMessage(await getDownloadErrorMessage(error, '外部规范导出失败，请稍后重试。'), 'error')
+  } finally {
+    exportingTableId.value = null
+  }
+}
+
 const selectItem = (item) => {
   activeTableId.value = String(item.inspection_table_id)
   fetchFieldsForTable(item.inspection_table_id)
@@ -471,7 +532,7 @@ const fetchFieldsForTable = async (inspectionTableId) => {
       ...fieldMap.value,
       [tableKey]: response.data || []
     }
-  } catch (error) {
+  } catch {
     fieldMap.value = {
       ...fieldMap.value,
       [tableKey]: []
@@ -792,6 +853,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.export-standards-btn {
+  min-width: 132px;
 }
 
 .pdf-preview-shell {

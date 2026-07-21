@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.9.1',
+    date: '2026-07-21',
+    title: '外部规范导出',
+    summary: '检查表原件库支持导出外部规范。',
+    items: [
+      '可按检查表导出全部外部规范和对应的外部规范ID。'
+    ]
+  },
+  {
     version: 'v3.9',
     date: '2026-07-21',
     title: '白名单自动审核',

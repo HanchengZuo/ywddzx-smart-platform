@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.9.0"
+        raw_value = "3.9.1"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.9.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.9.1"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -3331,6 +3331,96 @@ def fetch_checklist_standard_rows(cur, physical_table_name, fields):
         )
     )
     return [dict(row) for row in cur.fetchall()]
+
+
+def build_checklist_external_standards_workbook(checklist, fields, rows):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出 Excel。") from exc
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "外部规范"
+    worksheet.freeze_panes = "A2"
+    worksheet.sheet_view.showGridLines = False
+    worksheet.print_title_rows = "1:1"
+    worksheet.page_setup.orientation = "landscape"
+    worksheet.page_setup.fitToWidth = 1
+    worksheet.page_setup.fitToHeight = 0
+    worksheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+    display_table_name = sanitize_display_string(checklist.get("table_name") or "检查表")
+    workbook.properties.title = f"{display_table_name}外部规范"
+    workbook.properties.subject = "由检查表拆解得到的外部规范"
+    workbook.properties.creator = "业务督导中心数智管理平台"
+
+    header_fill = PatternFill("solid", fgColor="1D4ED8")
+    header_font = Font(bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+    center_alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    text_alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+
+    columns = [
+        {"key": "standard_id", "label": "外部规范ID", "is_long_text": False},
+        *[
+            {
+                "key": field["field_key"],
+                "label": field["field_label"],
+                "is_long_text": bool(field.get("is_long_text")),
+            }
+            for field in fields
+        ],
+    ]
+
+    for column_index, column in enumerate(columns, start=1):
+        cell = worksheet.cell(row=1, column=column_index, value=column["label"])
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = center_alignment
+    worksheet.row_dimensions[1].height = 28
+
+    for row_index, row in enumerate(rows, start=2):
+        for column_index, column in enumerate(columns, start=1):
+            raw_value = row.get(column["key"])
+            if column["key"] == "standard_id":
+                value = int(raw_value) if raw_value is not None else "-"
+            else:
+                value = str(raw_value).strip() if raw_value is not None else ""
+                value = sanitize_display_string(value) if value else "-"
+                if value != "-" and value[:1] in {"=", "+", "-", "@"}:
+                    value = f"'{value}"
+
+            cell = worksheet.cell(row=row_index, column=column_index, value=value)
+            cell.border = thin_border
+            cell.alignment = center_alignment if column["key"] == "standard_id" else text_alignment
+        worksheet.row_dimensions[row_index].height = 34
+
+    last_column = get_column_letter(len(columns))
+    worksheet.auto_filter.ref = f"A1:{last_column}{max(len(rows) + 1, 1)}"
+    worksheet.column_dimensions["A"].width = 16
+    for column_index, column in enumerate(columns[1:], start=2):
+        label_length = len(str(column["label"] or ""))
+        sampled_values = [
+            len(str(row.get(column["key"]) or ""))
+            for row in rows[:200]
+        ]
+        content_width = max(sampled_values, default=0)
+        width_cap = 48 if column["is_long_text"] else 30
+        width = min(max(label_length * 2, content_width + 2, 14), width_cap)
+        if column["is_long_text"]:
+            width = max(width, 34)
+        worksheet.column_dimensions[get_column_letter(column_index)].width = width
+
+    return workbook
 
 
 def insert_checklist_standard_rows(cur, physical_table_name, fields, rows):
@@ -21130,6 +21220,64 @@ def get_inspection_table_originals():
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route(
+    "/api/inspection-table-originals/<int:inspection_table_id>/external-standards/export",
+    methods=["GET"],
+)
+def export_inspection_table_external_standards(inspection_table_id):
+    conn = None
+    cur = None
+    try:
+        user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if not can_view_checklist_originals(cur, user):
+            return jsonify({"success": False, "error": "当前账号无权导出检查表外部规范。"}), 403
+
+        inspection_table = get_inspection_table_record(cur, inspection_table_id)
+        if not inspection_table or not inspection_table.get("is_active"):
+            return jsonify({"success": False, "error": "检查表不存在或未启用。"}), 404
+
+        fields = get_management_checklist_fields(cur, inspection_table_id, include_public=True)
+        physical_table_name = get_physical_table_name_by_code(inspection_table.get("table_code"))
+        rows = (
+            fetch_checklist_standard_rows(cur, physical_table_name, fields)
+            if physical_table_name
+            else []
+        )
+        if not rows:
+            return jsonify({"success": False, "error": "该检查表暂未维护外部规范，无法导出。"}), 400
+
+        workbook = build_checklist_external_standards_workbook(inspection_table, fields, rows)
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        output.seek(0)
+
+        display_table_name = sanitize_display_string(inspection_table.get("table_name") or "检查表")
+        safe_table_name = re.sub(r'[\\/:*?"<>|]+', "_", display_table_name).strip(" ._") or "检查表"
+        filename = f"{safe_table_name}_外部规范_{beijing_now().strftime('%Y%m%d_%H%M')}.xlsx"
+        response = send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-External-Standard-Count"] = str(len(rows))
+        return response
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 401
+    except (ValueError, RuntimeError) as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("导出检查表外部规范失败: %s", exc)
+        return jsonify({"success": False, "error": "外部规范导出失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
