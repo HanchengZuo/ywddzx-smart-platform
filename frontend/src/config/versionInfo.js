@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.9.3',
+    date: '2026-07-23',
+    title: '移动端输入体验修复',
+    summary: '修复点击搜索框或输入框后页面异常放大的问题。',
+    items: [
+      '移动端填写和筛选时不再自动放大页面。'
+    ]
+  },
+  {
     version: 'v3.9.2',
     date: '2026-07-23',
     title: '自动审核回溯导出',

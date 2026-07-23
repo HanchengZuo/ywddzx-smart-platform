@@ -1960,6 +1960,19 @@ textarea {
   font: inherit;
 }
 
+/*
+ * iOS and embedded WebViews zoom the page when a focused form control uses a
+ * font smaller than 16px. Keep text-entry controls at the safe size on touch
+ * devices without disabling the user's normal pinch-to-zoom capability.
+ */
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 .login-page {
   height: 100dvh;
   box-sizing: border-box;
