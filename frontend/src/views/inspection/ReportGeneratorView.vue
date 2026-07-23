@@ -119,6 +119,7 @@
         </div>
       </div>
 
+      <template v-if="isQualityMeasurementReport">
       <div class="summary-cards">
         <article v-for="card in summaryCards" :key="card.label" class="summary-card">
           <span>{{ card.label }}</span>
@@ -389,6 +390,292 @@
           </article>
         </div>
       </article>
+      </template>
+
+      <template v-else-if="isSafetyQualityReport">
+        <div class="summary-cards safety-summary-cards">
+          <article v-for="card in summaryCards" :key="card.label" class="summary-card">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+            <small>{{ card.desc }}</small>
+          </article>
+        </div>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第一章　总体情况</div>
+          <section
+            v-for="section in safetySections"
+            :key="`scope-${section.mode}`"
+            class="safety-scope-section"
+          >
+            <div class="safety-section-head">
+              <div>
+                <span>{{ section.mode === 'video' ? 'VIDEO' : 'ON-SITE' }}</span>
+                <h3>{{ section.label }}</h3>
+              </div>
+              <div class="safety-section-metrics">
+                <span><b>{{ section.station_count || 0 }}</b>座站点</span>
+                <span><b>{{ section.total_issue_count || 0 }}</b>项问题</span>
+              </div>
+            </div>
+            <p class="chapter-lead safety-narrative">{{ section.narrative }}</p>
+
+            <div class="safety-unit-chart-shell">
+              <div class="safety-chart-legend">
+                <span><i class="issue-series"></i>问题数量</span>
+                <span><i class="station-series"></i>检查站点数量</span>
+              </div>
+              <div v-if="section.units?.length" class="safety-unit-chart-scroll">
+                <div
+                  class="safety-unit-chart"
+                  :style="{ minWidth: getSafetyChartMinWidth(section) }"
+                >
+                  <div class="safety-unit-y-axis">
+                    <span
+                      v-for="tick in getSafetyUnitChartTicks(section)"
+                      :key="`${section.mode}-unit-tick-${tick}`"
+                    >{{ tick }}</span>
+                  </div>
+                  <div class="safety-unit-plot">
+                    <span
+                      v-for="tick in getSafetyUnitChartTicks(section)"
+                      :key="`${section.mode}-grid-${tick}`"
+                      class="safety-unit-grid-line"
+                      :style="{ bottom: `${getSafetyUnitTickPosition(section, tick)}%` }"
+                    ></span>
+                    <div
+                      v-for="unit in section.units"
+                      :key="`${section.mode}-${unit.unit_type}-${unit.unit_name}`"
+                      class="safety-unit-bar-group"
+                    >
+                      <div class="safety-unit-bars">
+                        <div
+                          class="safety-unit-bar issue-series"
+                          :style="{ height: `${getSafetyUnitBarHeight(section, unit.issue_count)}%` }"
+                        >
+                          <span>{{ unit.issue_count }}</span>
+                        </div>
+                        <div
+                          class="safety-unit-bar station-series"
+                          :style="{ height: `${getSafetyUnitBarHeight(section, unit.station_count)}%` }"
+                        >
+                          <span>{{ unit.station_count }}</span>
+                        </div>
+                      </div>
+                      <strong>{{ unit.unit_name }}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="safety-chart-empty">当前月份暂无可展示的单位统计数据。</div>
+            </div>
+          </section>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第二章　检查发现-典型问题</div>
+          <div class="content-source-row">
+            <span>分别从视频和现场问题中识别高频、具有共性的典型问题</span>
+            <AiContentBadge
+              :generated="Boolean(safetyDeepAnalysis.ai_generated)"
+              ai-label="AI辅助识别"
+              fallback-label="规则筛选"
+            />
+          </div>
+          <div class="safety-typical-grid">
+            <article
+              v-for="item in safetyTypicalFindings"
+              :key="`safety-typical-${item.mode}`"
+              class="safety-typical-card"
+            >
+              <div class="safety-typical-copy">
+                <div class="safety-typical-title">
+                  <span>{{ item.label }}</span>
+                  <AiContentBadge
+                    :generated="Boolean(item.ai_generated)"
+                    ai-label="AI选取"
+                    fallback-label="规则选取"
+                    compact
+                  />
+                </div>
+                <h3>{{ item.title }}</h3>
+                <p>{{ buildSafetyTypicalText(item) }}</p>
+                <small v-if="item.summary">{{ item.summary }}</small>
+                <div v-if="item.representative_issue" class="safety-typical-example">
+                  <b>{{ item.representative_issue.station_name || '未命名站点' }}</b>
+                  <span>{{ item.representative_issue.description || '暂无问题描述' }}</span>
+                </div>
+              </div>
+              <button
+                v-if="item.representative_issue?.issue_photo"
+                type="button"
+                class="safety-typical-photo"
+                @click="openImagePreview(
+                  item.representative_issue.issue_photo,
+                  `${item.representative_issue.station_name || item.title}问题照片`
+                )"
+              >
+                <img :src="resolveImage(item.representative_issue.issue_photo)" alt="典型问题照片" />
+                <span>点击查看完整照片</span>
+              </button>
+              <div v-else class="safety-typical-photo empty">
+                <span>暂无问题照片</span>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第三章　问题数据统计分析</div>
+          <section
+            v-for="section in safetySections"
+            :key="`category-${section.mode}`"
+            class="safety-category-section"
+          >
+            <div class="safety-category-heading">
+              <div>
+                <span>{{ section.label }}</span>
+                <h3>按“{{ section.category_field }}”分类</h3>
+              </div>
+              <strong>{{ section.total_issue_count || 0 }}项</strong>
+            </div>
+            <p class="chapter-lead safety-narrative">{{ section.category_text }}</p>
+            <div v-if="section.category_distribution?.length" class="safety-category-list">
+              <div
+                v-for="(item, index) in section.category_distribution"
+                :key="`${section.mode}-category-${item.name}`"
+                class="safety-category-row"
+                :style="{
+                  '--category-color': getFindingFlowColor(index),
+                  '--category-width': `${getSafetyCategoryWidth(section, item.count)}%`
+                }"
+              >
+                <strong>{{ item.name }}</strong>
+                <div class="safety-category-track"><span></span></div>
+                <div>
+                  <b>{{ item.count }}项</b>
+                  <span>{{ formatPercent(item.percentage) }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="safety-chart-empty">当前分类暂无审核通过的问题数据。</div>
+          </section>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第四章　分类重点问题</div>
+          <div class="content-source-row">
+            <span>按视频“检查内容”和现场“检查主题”分别展示重点问题</span>
+          </div>
+          <section
+            v-for="group in safetyHighlightGroups"
+            :key="`highlight-group-${group.mode}`"
+            class="safety-highlight-group"
+          >
+            <div class="safety-highlight-group-head">
+              <span>{{ group.label }}</span>
+              <strong>{{ group.items.length }}个分类</strong>
+            </div>
+            <div class="safety-highlight-list">
+              <article
+                v-for="item in group.items"
+                :key="`${group.mode}-${item.category_name}`"
+                class="safety-highlight-card"
+              >
+                <div class="safety-highlight-card-head">
+                  <div>
+                    <span>{{ item.category_count }}项问题</span>
+                    <h4>{{ item.category_name }}</h4>
+                  </div>
+                  <AiContentBadge
+                    :generated="Boolean(item.ai_generated)"
+                    ai-label="AI选取"
+                    fallback-label="规则选取"
+                    compact
+                  />
+                </div>
+                <p>{{ item.summary }}</p>
+                <div class="safety-highlight-issues">
+                  <div
+                    v-for="issue in item.issues"
+                    :key="`${item.mode}-${item.category_name}-${issue.issue_id}`"
+                    class="safety-highlight-issue"
+                  >
+                    <div>
+                      <b>{{ issue.station_name || '未命名站点' }}</b>
+                      <span>{{ issue.description || '暂无问题描述' }}</span>
+                    </div>
+                    <button
+                      v-if="issue.issue_photo"
+                      type="button"
+                      @click="openImagePreview(issue.issue_photo, `${issue.station_name || '重点问题'}照片`)"
+                    >
+                      <img :src="resolveImage(issue.issue_photo)" alt="重点问题照片" />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第五章　问题分析</div>
+          <div class="content-source-row">
+            <span>结合视频扫站与四不两直现场检查数据综合分析</span>
+            <AiContentBadge
+              :generated="safetyProblemAnalysis.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="safety-analysis-list">
+            <article
+              v-for="(item, index) in safetyProblemAnalysis"
+              :key="`safety-analysis-${index}-${item.title}`"
+            >
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <div>
+                <h4>{{ item.title }}</h4>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第六章　工作建议</div>
+          <div class="content-source-row">
+            <span>依据本月高频问题、分类分布和原因分析形成</span>
+            <AiContentBadge
+              :generated="safetyWorkSuggestions.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="work-plan-list safety-work-list">
+            <article
+              v-for="(item, index) in safetyWorkSuggestions"
+              :key="`safety-work-${index}-${item.title}`"
+              class="work-plan-card"
+            >
+              <span>{{ index + 1 }}</span>
+              <div>
+                <div class="work-plan-title-row">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge
+                    :generated="Boolean(item.ai_generated)"
+                    ai-label="AI生成"
+                    fallback-label="规则生成"
+                    compact
+                  />
+                </div>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+      </template>
     </section>
 
     <section v-else class="state-card card-surface">
@@ -424,7 +711,8 @@ const DEFAULT_REPORT_TYPES = [
     name: '安全质量检查报告',
     description: '汇总质量安全环保现场与视频检查数据。',
     target_tables: ['质量安全环保检查表（视频）', '质量安全环保检查表（现场）'],
-    template_ready: false
+    data_scope_note: '仅统计所选月份内审核通过的问题；视频扫站与四不两直现场检查分别汇总、分别分析。',
+    template_ready: true
   },
   {
     key: 'finance',
@@ -467,6 +755,7 @@ const createEmptyReport = () => ({
   finding_summary: {},
   prohibited_examples: [],
   deep_analysis: {},
+  sections: [],
   rows: [],
   total_row: {}
 })
@@ -499,6 +788,8 @@ const currentReportType = computed(() => (
   || DEFAULT_REPORT_TYPES[0]
 ))
 const templateUnavailable = computed(() => currentReportType.value.template_ready === false)
+const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
+const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
 const hasReport = computed(() => Boolean(report.value?.month))
 const reportTitleFallback = computed(() => {
   const monthNumber = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
@@ -539,6 +830,37 @@ const managementTrace = computed(() => deepAnalysis.value.management_trace || {}
 const workPlan = computed(() => (
   Array.isArray(deepAnalysis.value.work_plan) ? deepAnalysis.value.work_plan : []
 ))
+const safetySections = computed(() => (
+  Array.isArray(report.value.sections) ? report.value.sections : []
+))
+const safetyDeepAnalysis = computed(() => report.value.deep_analysis || {})
+const safetyTypicalFindings = computed(() => (
+  Array.isArray(safetyDeepAnalysis.value.typical_findings)
+    ? safetyDeepAnalysis.value.typical_findings
+    : []
+))
+const safetyCategoryHighlights = computed(() => (
+  Array.isArray(safetyDeepAnalysis.value.category_highlights)
+    ? safetyDeepAnalysis.value.category_highlights
+    : []
+))
+const safetyHighlightGroups = computed(() => (
+  safetySections.value.map((section) => ({
+    mode: section.mode,
+    label: section.label,
+    items: safetyCategoryHighlights.value.filter((item) => item.mode === section.mode)
+  }))
+))
+const safetyProblemAnalysis = computed(() => (
+  Array.isArray(safetyDeepAnalysis.value.problem_analysis)
+    ? safetyDeepAnalysis.value.problem_analysis
+    : []
+))
+const safetyWorkSuggestions = computed(() => (
+  Array.isArray(safetyDeepAnalysis.value.work_suggestions)
+    ? safetyDeepAnalysis.value.work_suggestions
+    : []
+))
 const targetTableText = computed(() => {
   const tables = Array.isArray(report.value.target_tables) ? report.value.target_tables : []
   const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
@@ -550,6 +872,30 @@ const dataScopeNote = computed(() => (
 
 const summaryCards = computed(() => {
   const summary = report.value.summary || {}
+  if (isSafetyQualityReport.value) {
+    return [
+      {
+        label: '视频检查站点',
+        value: summary.video_station_count ?? 0,
+        desc: `发现问题 ${summary.video_issue_count ?? 0} 项`
+      },
+      {
+        label: '现场检查站点',
+        value: summary.onsite_station_count ?? 0,
+        desc: `发现问题 ${summary.onsite_issue_count ?? 0} 项`
+      },
+      {
+        label: '涉及站点',
+        value: summary.station_count ?? 0,
+        desc: '视频与现场合并去重'
+      },
+      {
+        label: '问题总数',
+        value: summary.total_issue_count ?? 0,
+        desc: '仅统计审核通过问题'
+      }
+    ]
+  }
   return [
     {
       label: '管理片区',
@@ -642,6 +988,68 @@ const getFindingFlowColor = (index) => findingFlowColors[index % findingFlowColo
 const getFindingFlowWidth = (count) => {
   const max = Math.max(...businessFlowRows.value.map((item) => Number(item.count) || 0), 1)
   return Math.max(3, Math.min(100, ((Number(count) || 0) / max) * 100))
+}
+
+const getSafetyUnitChartStep = (section) => {
+  const values = (section?.units || []).flatMap((item) => [
+    Number(item.issue_count || 0),
+    Number(item.station_count || 0)
+  ])
+  const max = Math.max(...values, 0)
+  if (max <= 4) return 1
+  const rawStep = max / 4
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
+  return ([1, 2, 5, 10].find((item) => item * magnitude >= rawStep) || 10) * magnitude
+}
+
+const getSafetyUnitChartMax = (section) => {
+  const values = (section?.units || []).flatMap((item) => [
+    Number(item.issue_count || 0),
+    Number(item.station_count || 0)
+  ])
+  const max = Math.max(...values, 0)
+  const step = getSafetyUnitChartStep(section)
+  return Math.max(step * 4, Math.ceil(max / step) * step)
+}
+
+const getSafetyUnitChartTicks = (section) => {
+  const max = getSafetyUnitChartMax(section)
+  const step = getSafetyUnitChartStep(section)
+  const ticks = []
+  for (let value = max; value >= 0; value -= step) ticks.push(value)
+  if (ticks[ticks.length - 1] !== 0) ticks.push(0)
+  return ticks
+}
+
+const getSafetyUnitTickPosition = (section, tick) => {
+  const max = getSafetyUnitChartMax(section)
+  return max ? (Number(tick || 0) / max) * 100 : 0
+}
+
+const getSafetyUnitBarHeight = (section, value) => {
+  const max = getSafetyUnitChartMax(section)
+  if (!Number(value || 0)) return 0
+  return Math.max(3, Math.min(100, (Number(value || 0) / max) * 100))
+}
+
+const getSafetyChartMinWidth = (section) => {
+  const unitCount = Array.isArray(section?.units) ? section.units.length : 0
+  return `${Math.max(640, unitCount * 98 + 70)}px`
+}
+
+const getSafetyCategoryWidth = (section, count) => {
+  const max = Math.max(
+    ...(section?.category_distribution || []).map((item) => Number(item.count || 0)),
+    1
+  )
+  return Math.max(3, Math.min(100, (Number(count || 0) / max) * 100))
+}
+
+const buildSafetyTypicalText = (item) => {
+  if (!item?.issue_count) return '当前月份暂无可用于典型问题分析的数据。'
+  const units = joinChineseList(Array.isArray(item.unit_names) ? item.unit_names : [])
+  const unitText = units ? `涉及${units}，` : ''
+  return `${item.title}属于${item.label}高频问题，${unitText}在${item.station_count || 0}座站点出现${item.issue_count || 0}项，占该类检查问题${formatPercent(item.percentage)}。`
 }
 
 const resolveImage = (path) => {
@@ -2024,6 +2432,514 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
+.safety-scope-section,
+.safety-category-section,
+.safety-highlight-group {
+  padding: 22px;
+  border: 1px solid #dbe7ef;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 96% 0%, rgba(14, 165, 233, 0.08), transparent 28%),
+    linear-gradient(180deg, #fbfdff, #ffffff);
+}
+
+.safety-scope-section + .safety-scope-section,
+.safety-category-section + .safety-category-section,
+.safety-highlight-group + .safety-highlight-group {
+  margin-top: 24px;
+}
+
+.safety-section-head,
+.safety-category-heading,
+.safety-highlight-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.safety-section-head > div:first-child > span,
+.safety-category-heading > div > span {
+  color: #0284c7;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.safety-section-head h3,
+.safety-category-heading h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 21px;
+}
+
+.safety-section-metrics {
+  display: flex;
+  gap: 8px;
+}
+
+.safety-section-metrics span {
+  padding: 8px 11px;
+  border-radius: 12px;
+  color: #475569;
+  background: #f1f5f9;
+  font-size: 12px;
+}
+
+.safety-section-metrics b {
+  margin-right: 3px;
+  color: #0369a1;
+  font-size: 16px;
+}
+
+.safety-narrative {
+  margin: 18px 0 20px;
+}
+
+.safety-unit-chart-shell {
+  overflow: hidden;
+  border: 1px solid #dbe7ef;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.safety-chart-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #e8eef3;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.safety-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.safety-chart-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.safety-chart-legend .issue-series,
+.safety-unit-bar.issue-series {
+  background: linear-gradient(180deg, #38bdf8, #167fb3);
+}
+
+.safety-chart-legend .station-series,
+.safety-unit-bar.station-series {
+  background: linear-gradient(180deg, #fbbf24, #d97706);
+}
+
+.safety-unit-chart-scroll {
+  overflow-x: auto;
+  padding: 18px 18px 8px;
+  scrollbar-color: #b7c8d4 transparent;
+  scrollbar-width: thin;
+}
+
+.safety-unit-chart {
+  height: 350px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+}
+
+.safety-unit-y-axis {
+  height: 294px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding-right: 10px;
+  color: #64748b;
+  font-size: 11px;
+  text-align: right;
+}
+
+.safety-unit-plot {
+  position: relative;
+  height: 320px;
+  display: grid;
+  grid-auto-columns: minmax(72px, 1fr);
+  grid-auto-flow: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 0 10px;
+  border-left: 1px solid #94a3b8;
+}
+
+.safety-unit-grid-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #e2e8f0;
+  pointer-events: none;
+}
+
+.safety-unit-bar-group {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 294px 1fr;
+  gap: 8px;
+}
+
+.safety-unit-bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  border-bottom: 1px solid #94a3b8;
+}
+
+.safety-unit-bar {
+  position: relative;
+  width: 24px;
+  min-height: 0;
+  border-radius: 6px 6px 0 0;
+  transition: height 0.45s ease;
+}
+
+.safety-unit-bar span {
+  position: absolute;
+  top: -21px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.safety-unit-bar-group > strong {
+  overflow: hidden;
+  color: #334155;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.safety-chart-empty {
+  padding: 42px 18px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.safety-typical-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.safety-typical-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid #dbe7ef;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(14, 165, 233, 0.08), transparent 30%),
+    #ffffff;
+}
+
+.safety-typical-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.safety-typical-title > span {
+  color: #0369a1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.safety-typical-copy h3 {
+  margin: 10px 0 8px;
+  color: #0f172a;
+  font-size: 22px;
+}
+
+.safety-typical-copy > p,
+.safety-typical-copy > small {
+  display: block;
+  margin: 0;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.safety-typical-copy > small {
+  margin-top: 6px;
+  color: #64748b;
+}
+
+.safety-typical-example {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.safety-typical-example b,
+.safety-typical-example span {
+  display: block;
+}
+
+.safety-typical-example b {
+  margin-bottom: 4px;
+  color: #0f172a;
+}
+
+.safety-typical-example span {
+  color: #475569;
+  line-height: 1.65;
+}
+
+.safety-typical-photo {
+  position: relative;
+  width: 100%;
+  min-height: 190px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: #eaf1f5;
+  cursor: zoom-in;
+}
+
+.safety-typical-photo img {
+  width: 100%;
+  height: 100%;
+  min-height: 190px;
+  object-fit: cover;
+}
+
+.safety-typical-photo span {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.72);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.safety-typical-photo.empty {
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  cursor: default;
+}
+
+.safety-typical-photo.empty span {
+  position: static;
+  color: #94a3b8;
+  background: transparent;
+}
+
+.safety-category-heading > strong {
+  color: #0b6f9f;
+  font-size: 26px;
+}
+
+.safety-category-list {
+  display: grid;
+  gap: 14px;
+}
+
+.safety-category-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(240px, 2.3fr) 96px;
+  align-items: center;
+  gap: 16px;
+}
+
+.safety-category-row > strong {
+  color: #334155;
+  font-size: 14px;
+}
+
+.safety-category-track {
+  height: 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef3;
+}
+
+.safety-category-track span {
+  display: block;
+  width: var(--category-width);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #9ac8dc, var(--category-color));
+}
+
+.safety-category-row > div:last-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.safety-category-row b {
+  color: #0f172a;
+}
+
+.safety-category-row > div:last-child span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.safety-highlight-group-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.safety-highlight-group-head > span {
+  color: #0f172a;
+  font-size: 19px;
+  font-weight: 900;
+}
+
+.safety-highlight-group-head > strong {
+  color: #0369a1;
+  font-size: 13px;
+}
+
+.safety-highlight-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.safety-highlight-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 17px;
+  background: #ffffff;
+}
+
+.safety-highlight-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.safety-highlight-card-head span {
+  color: #0284c7;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.safety-highlight-card-head h4 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.safety-highlight-card > p {
+  margin: 12px 0;
+  color: #64748b;
+  line-height: 1.7;
+}
+
+.safety-highlight-issues {
+  display: grid;
+  gap: 9px;
+}
+
+.safety-highlight-issue {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 13px;
+  background: #f8fafc;
+}
+
+.safety-highlight-issue b,
+.safety-highlight-issue span {
+  display: block;
+}
+
+.safety-highlight-issue b {
+  margin-bottom: 3px;
+  color: #0f172a;
+}
+
+.safety-highlight-issue span {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.safety-highlight-issue button {
+  width: 72px;
+  height: 64px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+.safety-highlight-issue img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.safety-analysis-list {
+  display: grid;
+  gap: 12px;
+}
+
+.safety-analysis-list > article {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 14px;
+  padding: 17px;
+  border: 1px solid #e2e8f0;
+  border-radius: 17px;
+  background: #fbfdff;
+}
+
+.safety-analysis-list > article > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #0b6f9f, #2b9dca);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.safety-analysis-list h4 {
+  margin: 0 0 5px;
+  color: #0f172a;
+}
+
+.safety-analysis-list p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.75;
+}
+
 .report-image-preview {
   position: fixed;
   inset: 0;
@@ -2323,6 +3239,20 @@ onBeforeUnmount(() => {
   .trace-analysis-grid {
     grid-template-columns: 1fr;
   }
+
+  .safety-typical-card,
+  .safety-highlight-list {
+    grid-template-columns: 1fr;
+  }
+
+  .safety-typical-photo {
+    min-height: 240px;
+  }
+
+  .safety-category-row {
+    grid-template-columns: minmax(130px, 0.8fr) minmax(180px, 2fr) 88px;
+    gap: 12px;
+  }
 }
 
 @media (max-width: 520px) {
@@ -2461,6 +3391,84 @@ onBeforeUnmount(() => {
   .bar-chart {
     margin-left: -8px;
     margin-right: -8px;
+  }
+
+  .safety-scope-section,
+  .safety-category-section,
+  .safety-highlight-group {
+    padding: 16px;
+    border-radius: 17px;
+  }
+
+  .safety-section-head,
+  .safety-category-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .safety-section-metrics {
+    width: 100%;
+  }
+
+  .safety-section-metrics span {
+    flex: 1;
+    text-align: center;
+  }
+
+  .safety-narrative {
+    text-indent: 0;
+    line-height: 1.8;
+  }
+
+  .safety-unit-chart-scroll {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .safety-chart-legend {
+    justify-content: flex-start;
+  }
+
+  .safety-typical-card {
+    padding: 15px;
+  }
+
+  .safety-typical-photo {
+    min-height: 200px;
+  }
+
+  .safety-category-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .safety-category-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .safety-category-row > div:last-child {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .safety-highlight-issue {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+
+  .safety-highlight-issue button {
+    width: 64px;
+  }
+
+  .safety-analysis-list > article {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 11px;
+    padding: 14px;
+  }
+
+  .safety-analysis-list > article > span {
+    width: 36px;
+    height: 36px;
   }
 }
 </style>

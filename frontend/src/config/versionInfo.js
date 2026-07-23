@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.0',
+    date: '2026-07-23',
+    title: '安全质量AI报告',
+    summary: '安全质量检查报告支持按月自动生成。',
+    items: [
+      '视频扫站和现场检查分别统计站点、问题和分类分布。',
+      'AI辅助挑选典型问题和重点问题，并生成问题分析与工作建议。',
+      '报告只使用审核通过的问题，支持保留上次生成结果。'
+    ]
+  },
+  {
     version: 'v3.9.3',
     date: '2026-07-23',
     title: '移动端输入体验修复',
