@@ -14,7 +14,7 @@ import time
 import uuid
 import zipfile
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import (
     generate_feedback_title,
+    generate_finance_report_insights,
     generate_quality_measurement_report_insights,
     generate_safety_quality_report_insights,
     generate_standard_recommendations,
@@ -115,7 +116,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "4.0.0"
+        raw_value = "4.1.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -135,7 +136,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.0.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.1.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7048,6 +7049,11 @@ SAFETY_QUALITY_REPORT_ONSITE_TABLE = "质量安全环保检查表（现场）"
 SAFETY_QUALITY_REPORT_SOURCE_NOTE = (
     "仅统计所选月份内审核通过的问题；视频扫站与四不两直现场检查分别汇总、分别分析。"
 )
+FINANCE_REPORT_TABLE = "财务检查表（现场）"
+FINANCE_REPORT_SOURCE_NOTE = (
+    "仅统计所选月份内“财务检查表（现场）”中审核通过的问题，"
+    "按项目、关键环节、所属单位和站点进行汇总分析。"
+)
 SAFETY_QUALITY_REPORT_REGION_ORDER = [
     "浦东片区",
     "松金片区",
@@ -7200,6 +7206,7 @@ REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
 QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "onsite-stations-with-video-approved-v3"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
+FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -7237,9 +7244,10 @@ INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
                 "name": "财务检查报告",
                 "description": "汇总财务现场检查数据。",
                 "target_tables": [
-                    "财务检查表（现场）",
+                    FINANCE_REPORT_TABLE,
                 ],
-                "template_ready": False,
+                "data_scope_note": FINANCE_REPORT_SOURCE_NOTE,
+                "template_ready": True,
             },
         ),
         (
@@ -7376,6 +7384,11 @@ def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
         and payload.get("data_policy_version") != SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION
     ):
         return None
+    if (
+        report_type == REPORT_SNAPSHOT_TYPE_FINANCE
+        and payload.get("data_policy_version") != FINANCE_REPORT_DATA_POLICY_VERSION
+    ):
+        return None
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
@@ -7393,6 +7406,8 @@ def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, r
         normalized_report["data_policy_version"] = QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION
     elif report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
         normalized_report["data_policy_version"] = SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION
+    elif report_type == REPORT_SNAPSHOT_TYPE_FINANCE:
+        normalized_report["data_policy_version"] = FINANCE_REPORT_DATA_POLICY_VERSION
     snapshot_report = attach_report_snapshot_meta(
         normalized_report,
         None,
@@ -8510,6 +8525,406 @@ def build_safety_quality_report_payload(month_start, rows):
         },
         "sections": public_sections,
     }, sections
+
+
+def serialize_finance_report_issue(row):
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    report_date = row.get("report_date")
+    if isinstance(report_date, (datetime, date)):
+        report_date_text = report_date.strftime("%Y-%m-%d")
+    else:
+        report_date_text = str(report_date or "").strip()[:10]
+    return {
+        "issue_id": int(row.get("id") or 0),
+        "station_id": row.get("station_id"),
+        "station_name": str(sanitize_display_string(row.get("station_name")) or "").strip(),
+        "unit_type": unit_type,
+        "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
+        "unit_name": unit_name,
+        "report_date": report_date_text,
+        "external_standard_id": row.get("standard_id"),
+        "project": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "项目"),
+            "未设置项目",
+        ),
+        "key_link": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "关键环节"),
+            "未设置关键环节",
+        ),
+        "management_standard": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "管理规范"),
+            "-",
+        ),
+        "description": str(row.get("description") or "").strip(),
+        "issue_photo": row.get("issue_photo") or "",
+    }
+
+
+def build_finance_distribution(issues, field_name):
+    counts = {}
+    for issue in issues:
+        name = str(issue.get(field_name) or "").strip() or "未设置"
+        counts[name] = counts.get(name, 0) + 1
+    total = sum(counts.values())
+    return [
+        {
+            "name": name,
+            "count": count,
+            "percentage": round((count / total * 100) if total else 0, 1),
+        }
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def build_finance_distribution_text(label, distribution):
+    if not distribution:
+        return f"按{label}统计，当前月份暂无审核通过的问题数据。"
+    names = [item["name"] for item in distribution]
+    counts = [f"{item['count']}项" for item in distribution]
+    percentages = [f"{item['percentage']:.1f}%" for item in distribution]
+    return (
+        f"按{label}统计，问题涉及{join_chinese_list(names)}，"
+        f"数量分别为{join_chinese_list(counts)}，"
+        f"占比{join_chinese_list(percentages)}。"
+    )
+
+
+def finance_unit_sort_key(item):
+    unit_type = item.get("unit_type")
+    unit_name = item.get("unit_name")
+    if unit_type == "region":
+        try:
+            return 0, REPORT_MANAGEMENT_REGIONS.index(unit_name), unit_name
+        except ValueError:
+            return 0, len(REPORT_MANAGEMENT_REGIONS), unit_name
+    try:
+        return 1, REPORT_HOLDING_UNITS.index(unit_name), unit_name
+    except ValueError:
+        return 1, len(REPORT_HOLDING_UNITS), unit_name
+
+
+def build_finance_overview(issues, month_start):
+    unit_map = {}
+    for issue in issues:
+        unit_key = f"{issue['unit_type']}:{issue['unit_name']}"
+        unit = unit_map.setdefault(
+            unit_key,
+            {
+                "unit_type": issue["unit_type"],
+                "unit_type_label": issue["unit_type_label"],
+                "unit_name": issue["unit_name"],
+                "issue_count": 0,
+                "_stations": {},
+            },
+        )
+        unit["issue_count"] += 1
+        station_key = issue.get("station_id") or issue.get("station_name")
+        station = unit["_stations"].setdefault(
+            station_key,
+            {
+                "station_id": issue.get("station_id"),
+                "station_name": issue.get("station_name") or "未命名站点",
+                "issue_count": 0,
+            },
+        )
+        station["issue_count"] += 1
+
+    total_issue_count = len(issues)
+    units = []
+    for unit in unit_map.values():
+        station_breakdown = sorted(
+            unit.pop("_stations").values(),
+            key=lambda item: (-item["issue_count"], item["station_name"]),
+        )
+        unit["station_count"] = len(station_breakdown)
+        unit["percentage"] = round(
+            unit["issue_count"] / total_issue_count * 100,
+            1,
+        ) if total_issue_count else 0
+        unit["station_breakdown"] = station_breakdown
+        units.append(unit)
+    units.sort(key=finance_unit_sort_key)
+
+    report_dates = sorted(
+        issue["report_date"] for issue in issues if issue.get("report_date")
+    )
+    date_from = report_dates[0] if report_dates else ""
+    date_to = report_dates[-1] if report_dates else ""
+    if date_from and date_to and date_from != date_to:
+        date_range = f"{date_from} 至 {date_to}"
+    else:
+        date_range = date_from or "当前月份暂无巡检记录"
+
+    station_ids = {
+        issue.get("station_id") or issue.get("station_name")
+        for issue in issues
+        if issue.get("station_id") or issue.get("station_name")
+    }
+    region_count = sum(1 for unit in units if unit["unit_type"] == "region")
+    holding_unit_count = sum(1 for unit in units if unit["unit_type"] == "holding")
+    overview_text = (
+        f"{format_report_month_label(month_start)}，巡检时间为{date_range}，"
+        f"对{region_count}个管理片区、{holding_unit_count}家控（参）股单位的"
+        f"{len(station_ids)}座站点开展财务检查，共发现审核通过问题{total_issue_count}项。"
+        if issues
+        else f"{format_report_month_label(month_start)}暂无财务检查审核通过问题。"
+    )
+    scope_items = [
+        f"{unit['unit_name']}检查{unit['station_count']}座站点，发现{unit['issue_count']}项问题"
+        for unit in units
+    ]
+    scope_text = (
+        f"巡检范围覆盖{join_chinese_list(scope_items)}。"
+        if scope_items
+        else "当前月份暂无可统计的巡检范围。"
+    )
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_range": date_range,
+        "region_count": region_count,
+        "holding_unit_count": holding_unit_count,
+        "station_count": len(station_ids),
+        "total_issue_count": total_issue_count,
+        "overview_text": overview_text,
+        "scope_text": scope_text,
+        "units": units,
+    }
+
+
+def build_finance_station_reports(issues):
+    station_map = {}
+    for issue in issues:
+        station_key = issue.get("station_id") or issue.get("station_name")
+        station = station_map.setdefault(
+            station_key,
+            {
+                "station_id": issue.get("station_id"),
+                "station_name": issue.get("station_name") or "未命名站点",
+                "unit_type": issue.get("unit_type"),
+                "unit_type_label": issue.get("unit_type_label"),
+                "unit_name": issue.get("unit_name"),
+                "issues": [],
+            },
+        )
+        station["issues"].append(issue)
+
+    station_reports = []
+    for station in station_map.values():
+        station["issues"].sort(
+            key=lambda item: (
+                item.get("report_date") or "",
+                int(item.get("issue_id") or 0),
+            )
+        )
+        report_dates = [
+            item["report_date"] for item in station["issues"] if item.get("report_date")
+        ]
+        station["issue_count"] = len(station["issues"])
+        station["date_from"] = report_dates[0] if report_dates else ""
+        station["date_to"] = report_dates[-1] if report_dates else ""
+        station["date_range"] = (
+            f"{station['date_from']} 至 {station['date_to']}"
+            if station["date_from"] and station["date_from"] != station["date_to"]
+            else station["date_from"] or "-"
+        )
+        station_reports.append(station)
+    station_reports.sort(
+        key=lambda item: (
+            finance_unit_sort_key(item),
+            item["station_name"],
+        )
+    )
+    return station_reports
+
+
+def build_finance_report_ai_context(month_start, issues, project_distribution, key_link_distribution):
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "total_issue_count": len(issues),
+        "project_distribution": project_distribution,
+        "key_link_distribution": key_link_distribution,
+        "issues": [
+            {
+                "issue_id": issue["issue_id"],
+                "station_name": issue["station_name"],
+                "unit_name": issue["unit_name"],
+                "report_date": issue["report_date"],
+                "project": issue["project"],
+                "key_link": issue["key_link"],
+                "management_standard": issue["management_standard"][:280],
+                "description": issue["description"][:320],
+            }
+            for issue in issues
+        ],
+    }
+
+
+def build_local_finance_deep_analysis(issues, project_distribution, key_link_distribution):
+    top_projects = project_distribution[:3]
+    top_key_links = key_link_distribution[:4]
+    project_text = join_chinese_list([item["name"] for item in top_projects]) or "财务管理项目"
+    key_link_text = join_chinese_list([item["name"] for item in top_key_links]) or "财务关键环节"
+    return {
+        "ai_generated": False,
+        "ai_message": "未使用 AI，当前展示规则生成的分析和建议。",
+        "result_analysis": [
+            {
+                "title": "高频项目问题较集中",
+                "content": f"本月审核通过问题主要集中在{project_text}，应结合问题数量和重复发生情况确定后续检查重点。",
+                "related_issues": issues[:3],
+                "ai_generated": False,
+            },
+            {
+                "title": "关键环节执行需加强",
+                "content": f"{key_link_text}等环节问题相对突出，反映部分站点在日常执行、过程留痕和复核方面仍有薄弱点。",
+                "related_issues": issues[3:6],
+                "ai_generated": False,
+            },
+            {
+                "title": "监督检查应持续闭环",
+                "content": "片区和专业条线应对高频问题开展复核，对重复问题明确整改时限和责任人，持续验证整改效果。",
+                "related_issues": [],
+                "ai_generated": False,
+            },
+        ] if issues else [],
+        "content_suggestions": [
+            {
+                "title": "聚焦高频项目复查",
+                "content": f"后续检查优先覆盖{project_text}，核验制度执行、台账记录和问题整改情况。",
+                "focus_projects": [item["name"] for item in top_projects],
+                "focus_key_links": [],
+                "ai_generated": False,
+            },
+            {
+                "title": "强化关键环节穿透检查",
+                "content": f"围绕{key_link_text}开展抽样核对和现场验证，重点检查操作记录与实际执行是否一致。",
+                "focus_projects": [],
+                "focus_key_links": [item["name"] for item in top_key_links],
+                "ai_generated": False,
+            },
+            {
+                "title": "跟踪重复问题整改",
+                "content": "建立问题复查清单，对同类问题重复出现的站点提高抽查频次，并将整改结果纳入后续检查。",
+                "focus_projects": [],
+                "focus_key_links": [],
+                "ai_generated": False,
+            },
+        ] if issues else [],
+    }
+
+
+def build_finance_deep_analysis(issues, project_distribution, key_link_distribution, ai_result):
+    fallback = build_local_finance_deep_analysis(
+        issues,
+        project_distribution,
+        key_link_distribution,
+    )
+    ai_payload = (ai_result or {}).get("payload")
+    if not isinstance(ai_payload, dict):
+        fallback["ai_message"] = (ai_result or {}).get("message") or fallback["ai_message"]
+        return fallback
+
+    issue_map = {issue["issue_id"]: issue for issue in issues}
+    valid_projects = {item["name"] for item in project_distribution}
+    valid_key_links = {item["name"] for item in key_link_distribution}
+    result_analysis = []
+    for item in (ai_payload.get("result_analysis") or [])[:5]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not title or not content:
+            continue
+        related_issues = []
+        for issue_id in normalize_report_ai_issue_ids(item.get("related_issue_ids")):
+            issue = issue_map.get(issue_id)
+            if issue:
+                related_issues.append(issue)
+            if len(related_issues) >= 3:
+                break
+        result_analysis.append(
+            {
+                "title": title,
+                "content": content,
+                "related_issues": related_issues,
+                "ai_generated": True,
+            }
+        )
+
+    content_suggestions = []
+    for item in (ai_payload.get("content_suggestions") or [])[:5]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not title or not content:
+            continue
+        focus_projects = [
+            str(value).strip()
+            for value in (item.get("focus_projects") or [])
+            if str(value).strip() in valid_projects
+        ][:4]
+        focus_key_links = [
+            str(value).strip()
+            for value in (item.get("focus_key_links") or [])
+            if str(value).strip() in valid_key_links
+        ][:4]
+        content_suggestions.append(
+            {
+                "title": title,
+                "content": content,
+                "focus_projects": focus_projects,
+                "focus_key_links": focus_key_links,
+                "ai_generated": True,
+            }
+        )
+
+    return {
+        "ai_generated": bool(result_analysis or content_suggestions),
+        "ai_message": (ai_result or {}).get("message") or "",
+        "result_analysis": result_analysis or fallback["result_analysis"],
+        "content_suggestions": content_suggestions or fallback["content_suggestions"],
+    }
+
+
+def build_finance_report_payload(month_start, rows):
+    issues = [serialize_finance_report_issue(row) for row in rows]
+    overview = build_finance_overview(issues, month_start)
+    project_distribution = build_finance_distribution(issues, "project")
+    key_link_distribution = build_finance_distribution(issues, "key_link")
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "title": f"{month_start.month}月财务检查报告",
+        "target_tables": [FINANCE_REPORT_TABLE],
+        "data_scope_note": FINANCE_REPORT_SOURCE_NOTE,
+        "summary": {
+            "date_from": overview["date_from"],
+            "date_to": overview["date_to"],
+            "date_range": overview["date_range"],
+            "region_count": overview["region_count"],
+            "holding_unit_count": overview["holding_unit_count"],
+            "station_count": overview["station_count"],
+            "total_issue_count": overview["total_issue_count"],
+            "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
+        },
+        "overview_text": overview["overview_text"],
+        "scope_text": overview["scope_text"],
+        "units": overview["units"],
+        "project_distribution": project_distribution,
+        "project_distribution_text": build_finance_distribution_text(
+            "检查项目",
+            project_distribution,
+        ),
+        "key_link_distribution": key_link_distribution,
+        "key_link_distribution_text": build_finance_distribution_text(
+            "关键环节",
+            key_link_distribution,
+        ),
+        "station_reports": build_finance_station_reports(issues),
+    }, issues
 
 
 def build_issue_export_table_field_map(cur, rows):
@@ -24279,6 +24694,164 @@ def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_
         close_db_resources(cur, conn)
 
 
+def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_key):
+    month_start, month_end = parse_report_month(report_month)
+    conn = None
+    cur = None
+    rows = []
+    user = None
+    try:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            12,
+            "正在读取财务检查审核通过问题",
+        )
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if not has_permission(cur, user, "view_inspection_reports"):
+            raise PermissionError("当前账号无权生成巡检报告。")
+
+        where_clauses = [
+            "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') = %s",
+            "COALESCE(i.audit_status, 'pending') = 'approved'",
+        ]
+        params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            FINANCE_REPORT_TABLE,
+        ]
+        table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "i.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        if table_scope_allowed and region_scope_allowed:
+            where_clause = f"WHERE {' AND '.join(where_clauses)}"
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        i.id,
+                        i.station_id,
+                        s.station_name,
+                        s.region,
+                        s.address,
+                        t.table_name,
+                        i.standard_id,
+                        i.standard_detail_text,
+                        i.description,
+                        i.photo_path AS issue_photo,
+                        COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+                    FROM issues i
+                    JOIN inspections ins ON i.inspection_id = ins.id
+                    JOIN stations s ON i.station_id = s.id
+                    JOIN inspection_tables t ON i.inspection_table_id = t.id
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
+                        s.region ASC NULLS LAST,
+                        s.station_name ASC,
+                        i.id ASC;
+                    """
+                ).format(where_clause=sql.SQL(where_clause)),
+                params,
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        38,
+        f"已汇总 {len(rows)} 条审核通过问题，正在统计单位、站点、项目和关键环节",
+    )
+    report, finance_issues = build_finance_report_payload(month_start, rows)
+    insight_result = None
+    if finance_issues:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            52,
+            "正在调用 DeepSeek 生成检查结果分析与检查内容建议",
+        )
+        ai_context = build_finance_report_ai_context(
+            month_start,
+            finance_issues,
+            report.get("project_distribution") or [],
+            report.get("key_link_distribution") or [],
+        )
+        insight_result = generate_finance_report_insights(ai_context)
+    else:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            72,
+            "当前月份暂无审核通过问题，正在生成空白财务报告",
+        )
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        84,
+        "AI 分析已完成，正在编排财务检查报告三个章节",
+    )
+    report["deep_analysis"] = build_finance_deep_analysis(
+        finance_issues,
+        report.get("project_distribution") or [],
+        report.get("key_link_distribution") or [],
+        insight_result,
+    )
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if rows and insight_result:
+            record_ai_usage_log(
+                cur,
+                user,
+                insight_result,
+                "AI报告生成",
+                "财务检查报告分析",
+                f"{report.get('month_label')} · 问题{len(rows)}项",
+            )
+        save_inspection_report_snapshot(
+            cur,
+            REPORT_SNAPSHOT_TYPE_FINANCE,
+            report_month,
+            snapshot_scope_key,
+            report,
+            user,
+        )
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+
 def run_inspection_report_generation_job(task_id):
     conn = None
     cur = None
@@ -24302,6 +24875,13 @@ def run_inspection_report_generation_job(task_id):
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
             generate_safety_quality_report_job(
+                task_id,
+                job.get("requested_by"),
+                job.get("report_month"),
+                job.get("scope_key"),
+            )
+        elif report_type == REPORT_SNAPSHOT_TYPE_FINANCE:
+            generate_finance_report_job(
                 task_id,
                 job.get("requested_by"),
                 job.get("report_month"),

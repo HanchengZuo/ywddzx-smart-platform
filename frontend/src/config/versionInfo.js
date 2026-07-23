@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.1',
+    date: '2026-07-23',
+    title: '财务AI检查报告',
+    summary: '财务检查报告支持按月自动生成。',
+    items: [
+      '汇总巡检时间、检查范围、单位、站点和审核通过问题。',
+      '按检查项目和关键环节统计，并逐站通报问题明细。',
+      'AI结合真实问题生成检查结果分析和检查内容建议。'
+    ]
+  },
+  {
     version: 'v4.0',
     date: '2026-07-23',
     title: '安全质量AI报告',

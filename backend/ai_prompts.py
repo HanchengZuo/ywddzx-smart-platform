@@ -23,6 +23,14 @@ SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "必须只输出 JSON，不要解释，不要使用 Markdown。"
 )
 
+FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的财务月度检查报告分析助手。"
+    "请严格基于系统提供的审核通过问题，围绕财务检查表中的项目和关键环节分析问题，"
+    "并提出具体、可执行的检查内容建议。"
+    "只能引用输入数据中真实存在的问题ID、项目和关键环节，不允许编造站点、问题或分类。"
+    "必须只输出 JSON，不要解释，不要使用 Markdown。"
+)
+
 
 def build_inspection_standard_recommendation_prompt(issue_description, standards):
     standards_payload = json.dumps(
@@ -148,4 +156,45 @@ def build_safety_quality_report_insight_prompt(report_context):
         "5. 视频和现场数据必须分别判断，不得把一个模式的问题ID放到另一个模式。\n"
         "6. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
         "7. 只能输出 JSON 本身。"
+    )
+
+
+def build_finance_report_insight_prompt(report_context):
+    context_payload = json.dumps(
+        report_context,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是财务检查报告的结构化巡检问题数据 JSON，所有问题均已审核通过。\n"
+        "project_distribution=按“项目”统计的分布，key_link_distribution=按“关键环节”统计的分布。"
+        "issues 中 issue_id=问题ID，station_name=站点名称，unit_name=所属片区或控参股单位，"
+        "report_date=检查日期，project=项目，key_link=关键环节，"
+        "management_standard=管理规范，description=问题描述。\n"
+        f"{context_payload}\n\n"
+        "请返回如下 JSON 对象：\n"
+        "{"
+        "\"result_analysis\":["
+        "{"
+        "\"title\":\"分析标题，控制在24字内\","
+        "\"content\":\"结合项目、关键环节和真实问题形成的分析，控制在130字内\","
+        "\"related_issue_ids\":[1,2,3]"
+        "}"
+        "],"
+        "\"content_suggestions\":["
+        "{"
+        "\"title\":\"建议标题，控制在24字内\","
+        "\"content\":\"具体可执行的财务检查内容建议，控制在130字内\","
+        "\"focus_projects\":[\"必须来自输入的真实项目\"],"
+        "\"focus_key_links\":[\"必须来自输入的真实关键环节\"]"
+        "}"
+        "]"
+        "}\n"
+        "要求：\n"
+        "1. result_analysis 输出 3-5 条，分析高频项目、薄弱关键环节、重复问题和单位差异。\n"
+        "2. 每条分析最多引用 3 个真实问题ID；没有合适问题时 related_issue_ids 可为空。\n"
+        "3. content_suggestions 输出 3-5 条，建议要明确检查对象、检查动作和管理要求。\n"
+        "4. focus_projects 和 focus_key_links 只能使用输入分布中真实存在的名称。\n"
+        "5. 所有文字使用正式企业财务检查报告语气，不要像聊天回复。\n"
+        "6. 只能输出 JSON 本身。"
     )

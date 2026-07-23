@@ -676,6 +676,267 @@
           </div>
         </article>
       </template>
+
+      <template v-else-if="isFinanceReport">
+        <div class="summary-cards finance-summary-cards">
+          <article v-for="card in summaryCards" :key="card.label" class="summary-card">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+            <small>{{ card.desc }}</small>
+          </article>
+        </div>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第一章　总体情况</div>
+          <p class="chapter-lead">{{ report.overview_text }}</p>
+          <div class="finance-scope-strip">
+            <div>
+              <span>巡检时间范围</span>
+              <strong>{{ financeSummary.date_range || '-' }}</strong>
+            </div>
+            <div>
+              <span>巡检范围</span>
+              <strong>{{ financeUnitRows.length }}个二级单位</strong>
+            </div>
+          </div>
+          <p class="finance-scope-text">{{ report.scope_text }}</p>
+
+          <div class="report-table-wrap finance-overview-table">
+            <table class="report-table">
+              <thead>
+                <tr>
+                  <th>二级单位</th>
+                  <th>单位类型</th>
+                  <th>检查站点</th>
+                  <th>发现问题</th>
+                  <th>各站问题数量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!financeUnitRows.length">
+                  <td colspan="5" class="empty-cell">当前月份暂无财务检查审核通过问题。</td>
+                </tr>
+                <tr v-for="unit in financeUnitRows" :key="`finance-unit-${unit.unit_type}-${unit.unit_name}`">
+                  <td><strong>{{ unit.unit_name }}</strong></td>
+                  <td>
+                    <span :class="['unit-type-pill', unit.unit_type]">{{ unit.unit_type_label }}</span>
+                  </td>
+                  <td>{{ unit.station_count }}座</td>
+                  <td>{{ unit.issue_count }}项</td>
+                  <td class="finance-station-breakdown-cell">
+                    <span
+                      v-for="station in unit.station_breakdown"
+                      :key="`${unit.unit_name}-${station.station_id || station.station_name}`"
+                    >
+                      {{ station.station_name }} {{ station.issue_count }}项
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <section class="finance-chart-section">
+            <div class="finance-subsection-head">
+              <div>
+                <span>UNIT OVERVIEW</span>
+                <h3>片区与控（参）股单位检查情况</h3>
+              </div>
+              <div class="safety-chart-legend">
+                <span><i class="issue-series"></i>问题数量</span>
+                <span><i class="station-series"></i>检查站点数量</span>
+              </div>
+            </div>
+            <div v-if="financeUnitRows.length" class="safety-unit-chart-scroll">
+              <div
+                class="safety-unit-chart"
+                :style="{ minWidth: getSafetyChartMinWidth(financeOverviewSection) }"
+              >
+                <div class="safety-unit-y-axis">
+                  <span
+                    v-for="tick in getSafetyUnitChartTicks(financeOverviewSection)"
+                    :key="`finance-unit-tick-${tick}`"
+                  >{{ tick }}</span>
+                </div>
+                <div class="safety-unit-plot">
+                  <span
+                    v-for="tick in getSafetyUnitChartTicks(financeOverviewSection)"
+                    :key="`finance-unit-grid-${tick}`"
+                    class="safety-unit-grid-line"
+                    :style="{ bottom: `${getSafetyUnitTickPosition(financeOverviewSection, tick)}%` }"
+                  ></span>
+                  <div
+                    v-for="unit in financeUnitRows"
+                    :key="`finance-bar-${unit.unit_type}-${unit.unit_name}`"
+                    class="safety-unit-bar-group"
+                  >
+                    <div class="safety-unit-bars">
+                      <div
+                        class="safety-unit-bar issue-series"
+                        :style="{ height: `${getSafetyUnitBarHeight(financeOverviewSection, unit.issue_count)}%` }"
+                      ><span>{{ unit.issue_count }}</span></div>
+                      <div
+                        class="safety-unit-bar station-series"
+                        :style="{ height: `${getSafetyUnitBarHeight(financeOverviewSection, unit.station_count)}%` }"
+                      ><span>{{ unit.station_count }}</span></div>
+                    </div>
+                    <strong>{{ unit.unit_name }}</strong>
+                    <small>{{ unit.percentage }}%</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="safety-chart-empty">当前月份暂无单位分布数据。</div>
+          </section>
+
+          <div class="finance-distribution-grid">
+            <section
+              v-for="distribution in financeDistributions"
+              :key="distribution.key"
+              class="finance-distribution-card"
+            >
+              <div class="finance-subsection-head">
+                <div>
+                  <span>{{ distribution.eyebrow }}</span>
+                  <h3>{{ distribution.title }}</h3>
+                </div>
+                <strong>{{ distribution.items.length }}类</strong>
+              </div>
+              <p>{{ distribution.text }}</p>
+              <div v-if="distribution.items.length" class="safety-category-list">
+                <div
+                  v-for="item in distribution.items"
+                  :key="`${distribution.key}-${item.name}`"
+                  class="safety-category-row"
+                >
+                  <strong>{{ item.name }}</strong>
+                  <div class="safety-category-track">
+                    <span :style="{ width: `${getFinanceCategoryWidth(distribution.items, item.count)}%` }"></span>
+                  </div>
+                  <div><b>{{ item.count }}项</b><span>{{ formatPercent(item.percentage) }}</span></div>
+                </div>
+              </div>
+              <div v-else class="safety-chart-empty">当前分类暂无审核通过的问题数据。</div>
+            </section>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第二章　各站结果通报</div>
+          <p class="chapter-note">按所属单位和站点归纳全部审核通过问题，检查时间、项目和关键环节均取自巡检原始记录。</p>
+          <div class="finance-station-report-list">
+            <section
+              v-for="(station, stationIndex) in financeStationReports"
+              :key="`finance-station-${station.station_id || station.station_name}`"
+              class="finance-station-report"
+            >
+              <div class="finance-station-report-head">
+                <div>
+                  <span>{{ String(stationIndex + 1).padStart(2, '0') }}</span>
+                  <div>
+                    <h3>{{ station.station_name }}</h3>
+                    <p>{{ station.unit_name }} · {{ station.date_range }}</p>
+                  </div>
+                </div>
+                <strong>{{ station.issue_count }}项问题</strong>
+              </div>
+              <div class="report-table-wrap">
+                <table class="report-table finance-issue-table">
+                  <thead>
+                    <tr>
+                      <th>检查时间</th>
+                      <th>项目</th>
+                      <th>关键环节</th>
+                      <th>管理规范</th>
+                      <th>问题描述</th>
+                      <th>问题照片</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="issue in station.issues" :key="`finance-station-issue-${issue.issue_id}`">
+                      <td>{{ issue.report_date || '-' }}</td>
+                      <td>{{ issue.project || '-' }}</td>
+                      <td>{{ issue.key_link || '-' }}</td>
+                      <td class="text-cell">{{ issue.management_standard || '-' }}</td>
+                      <td class="text-cell">{{ issue.description || '-' }}</td>
+                      <td>
+                        <button
+                          v-if="issue.issue_photo"
+                          type="button"
+                          class="finance-photo-button"
+                          @click="openImagePreview(issue.issue_photo, `${station.station_name}问题照片`)"
+                        >
+                          <img :src="resolveImage(issue.issue_photo)" alt="问题照片" loading="lazy" />
+                        </button>
+                        <span v-else>-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <div v-if="!financeStationReports.length" class="safety-chart-empty">当前月份暂无可通报的站点问题。</div>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第三章　检查结果分析与检查内容建议</div>
+          <div class="content-source-row">
+            <span>围绕检查项目、关键环节和审核通过问题综合生成</span>
+            <AiContentBadge
+              :generated="Boolean(financeDeepAnalysis.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="finance-ai-grid">
+            <section class="finance-ai-panel">
+              <div class="finance-ai-panel-head">
+                <span>01</span>
+                <div><small>RESULT ANALYSIS</small><h3>检查结果分析</h3></div>
+              </div>
+              <article
+                v-for="(item, index) in financeResultAnalysis"
+                :key="`finance-analysis-${index}-${item.title}`"
+                class="finance-ai-item"
+              >
+                <div class="finance-ai-item-title">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+                <div v-if="item.related_issues?.length" class="finance-related-issues">
+                  <span
+                    v-for="issue in item.related_issues"
+                    :key="`finance-related-${index}-${issue.issue_id}`"
+                  >{{ issue.station_name }} · {{ issue.description }}</span>
+                </div>
+              </article>
+            </section>
+            <section class="finance-ai-panel suggestion">
+              <div class="finance-ai-panel-head">
+                <span>02</span>
+                <div><small>CHECK SUGGESTIONS</small><h3>检查内容建议</h3></div>
+              </div>
+              <article
+                v-for="(item, index) in financeContentSuggestions"
+                :key="`finance-suggestion-${index}-${item.title}`"
+                class="finance-ai-item"
+              >
+                <div class="finance-ai-item-title">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+                <div class="finance-focus-tags">
+                  <span v-for="name in item.focus_projects" :key="`focus-project-${index}-${name}`">{{ name }}</span>
+                  <span v-for="name in item.focus_key_links" :key="`focus-link-${index}-${name}`">{{ name }}</span>
+                </div>
+              </article>
+            </section>
+          </div>
+        </article>
+      </template>
     </section>
 
     <section v-else class="state-card card-surface">
@@ -719,7 +980,8 @@ const DEFAULT_REPORT_TYPES = [
     name: '财务检查报告',
     description: '汇总财务现场检查数据。',
     target_tables: ['财务检查表（现场）'],
-    template_ready: false
+    data_scope_note: '仅统计所选月份内“财务检查表（现场）”中审核通过的问题，按项目、关键环节、所属单位和站点进行汇总分析。',
+    template_ready: true
   },
   {
     key: 'on_site_service',
@@ -756,6 +1018,10 @@ const createEmptyReport = () => ({
   prohibited_examples: [],
   deep_analysis: {},
   sections: [],
+  units: [],
+  project_distribution: [],
+  key_link_distribution: [],
+  station_reports: [],
   rows: [],
   total_row: {}
 })
@@ -790,6 +1056,7 @@ const currentReportType = computed(() => (
 const templateUnavailable = computed(() => currentReportType.value.template_ready === false)
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
+const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const hasReport = computed(() => Boolean(report.value?.month))
 const reportTitleFallback = computed(() => {
   const monthNumber = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
@@ -861,6 +1128,43 @@ const safetyWorkSuggestions = computed(() => (
     ? safetyDeepAnalysis.value.work_suggestions
     : []
 ))
+const financeSummary = computed(() => report.value.summary || {})
+const financeUnitRows = computed(() => (
+  Array.isArray(report.value.units) ? report.value.units : []
+))
+const financeOverviewSection = computed(() => ({
+  units: financeUnitRows.value
+}))
+const financeDistributions = computed(() => [
+  {
+    key: 'project',
+    eyebrow: 'PROJECT',
+    title: '按检查项目分类',
+    text: report.value.project_distribution_text || '',
+    items: Array.isArray(report.value.project_distribution) ? report.value.project_distribution : []
+  },
+  {
+    key: 'key-link',
+    eyebrow: 'KEY LINK',
+    title: '按关键环节分类',
+    text: report.value.key_link_distribution_text || '',
+    items: Array.isArray(report.value.key_link_distribution) ? report.value.key_link_distribution : []
+  }
+])
+const financeStationReports = computed(() => (
+  Array.isArray(report.value.station_reports) ? report.value.station_reports : []
+))
+const financeDeepAnalysis = computed(() => report.value.deep_analysis || {})
+const financeResultAnalysis = computed(() => (
+  Array.isArray(financeDeepAnalysis.value.result_analysis)
+    ? financeDeepAnalysis.value.result_analysis
+    : []
+))
+const financeContentSuggestions = computed(() => (
+  Array.isArray(financeDeepAnalysis.value.content_suggestions)
+    ? financeDeepAnalysis.value.content_suggestions
+    : []
+))
 const targetTableText = computed(() => {
   const tables = Array.isArray(report.value.target_tables) ? report.value.target_tables : []
   const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
@@ -891,6 +1195,35 @@ const summaryCards = computed(() => {
       },
       {
         label: '问题总数',
+        value: summary.total_issue_count ?? 0,
+        desc: '仅统计审核通过问题'
+      }
+    ]
+  }
+  if (isFinanceReport.value) {
+    return [
+      {
+        label: '巡检时间',
+        value: summary.date_from && summary.date_to ? `${summary.date_from.slice(5)}—${summary.date_to.slice(5)}` : '-',
+        desc: summary.date_range || '当前月份暂无巡检记录'
+      },
+      {
+        label: '管理片区',
+        value: summary.region_count ?? 0,
+        desc: '实际涉及片区'
+      },
+      {
+        label: '控（参）股单位',
+        value: summary.holding_unit_count ?? 0,
+        desc: '中油单位去重统计'
+      },
+      {
+        label: '检查站点',
+        value: summary.station_count ?? 0,
+        desc: '去重统计站点数'
+      },
+      {
+        label: '发现问题',
         value: summary.total_issue_count ?? 0,
         desc: '仅统计审核通过问题'
       }
@@ -1042,6 +1375,11 @@ const getSafetyCategoryWidth = (section, count) => {
     ...(section?.category_distribution || []).map((item) => Number(item.count || 0)),
     1
   )
+  return Math.max(3, Math.min(100, (Number(count || 0) / max) * 100))
+}
+
+const getFinanceCategoryWidth = (items, count) => {
+  const max = Math.max(...(items || []).map((item) => Number(item.count || 0)), 1)
   return Math.max(3, Math.min(100, (Number(count || 0) / max) * 100))
 }
 
@@ -2940,6 +3278,360 @@ onBeforeUnmount(() => {
   line-height: 1.75;
 }
 
+.finance-summary-cards {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.finance-summary-cards .summary-card:first-child strong {
+  font-size: 22px;
+  letter-spacing: -0.04em;
+}
+
+.finance-scope-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.finance-scope-strip > div {
+  padding: 15px 17px;
+  border: 1px solid #dce7ee;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #f8fbfd, #ffffff);
+}
+
+.finance-scope-strip span,
+.finance-scope-strip strong {
+  display: block;
+}
+
+.finance-scope-strip span {
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.finance-scope-strip strong {
+  color: #0f172a;
+  line-height: 1.6;
+}
+
+.finance-scope-text {
+  margin: 0 0 22px;
+  color: #475569;
+  line-height: 1.85;
+}
+
+.finance-overview-table {
+  margin-bottom: 24px;
+}
+
+.finance-station-breakdown-cell {
+  min-width: 270px;
+}
+
+.finance-station-breakdown-cell span {
+  display: inline-flex;
+  margin: 3px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  color: #475569;
+  background: #f1f5f9;
+  font-size: 12px;
+}
+
+.finance-chart-section,
+.finance-distribution-card {
+  overflow: hidden;
+  border: 1px solid #dbe7ef;
+  border-radius: 20px;
+  background: #ffffff;
+}
+
+.finance-subsection-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 17px 18px;
+  border-bottom: 1px solid #e5edf2;
+  background: #f8fbfd;
+}
+
+.finance-subsection-head span {
+  color: #0284c7;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.finance-subsection-head h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.finance-subsection-head > strong {
+  color: #0369a1;
+  font-size: 13px;
+}
+
+.finance-chart-section .safety-chart-legend {
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.finance-chart-section .safety-unit-bar-group > small {
+  margin-top: -7px;
+  color: #94a3b8;
+  font-size: 10px;
+  text-align: center;
+}
+
+.finance-distribution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.finance-distribution-card > p {
+  min-height: 74px;
+  margin: 0;
+  padding: 16px 18px 4px;
+  color: #475569;
+  line-height: 1.75;
+}
+
+.finance-distribution-card .safety-category-list {
+  padding: 14px 18px 20px;
+}
+
+.finance-distribution-card .safety-category-row {
+  grid-template-columns: minmax(105px, 0.9fr) minmax(120px, 1.5fr) 78px;
+}
+
+.finance-station-report-list {
+  display: grid;
+  gap: 20px;
+}
+
+.finance-station-report {
+  overflow: hidden;
+  border: 1px solid #dbe7ef;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
+}
+
+.finance-station-report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5edf2;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(14, 165, 233, 0.1), transparent 34%),
+    #f8fbfd;
+}
+
+.finance-station-report-head > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.finance-station-report-head > div > span {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #0b6f9f, #2b9dca);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.finance-station-report-head h3,
+.finance-station-report-head p {
+  margin: 0;
+}
+
+.finance-station-report-head h3 {
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.finance-station-report-head p {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.finance-station-report-head > strong {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border-radius: 11px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 13px;
+}
+
+.finance-station-report .report-table-wrap {
+  border: 0;
+  border-radius: 0;
+}
+
+.finance-issue-table {
+  min-width: 1060px;
+}
+
+.finance-issue-table th:first-child {
+  width: 110px;
+}
+
+.finance-issue-table th:nth-child(2),
+.finance-issue-table th:nth-child(3) {
+  width: 130px;
+}
+
+.finance-photo-button {
+  width: 76px;
+  height: 58px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #e2e8f0;
+  cursor: zoom-in;
+}
+
+.finance-photo-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.finance-ai-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.finance-ai-panel {
+  overflow: hidden;
+  border: 1px solid #dbe7ef;
+  border-radius: 21px;
+  background: #fbfdff;
+}
+
+.finance-ai-panel.suggestion {
+  border-color: #d9e7dd;
+  background: #fbfefc;
+}
+
+.finance-ai-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 17px 18px;
+  border-bottom: 1px solid #e5edf2;
+  background: #f1f7fa;
+}
+
+.finance-ai-panel.suggestion .finance-ai-panel-head {
+  background: #f1f8f3;
+}
+
+.finance-ai-panel-head > span {
+  width: 39px;
+  height: 39px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: #ffffff;
+  background: #167fb3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.finance-ai-panel.suggestion .finance-ai-panel-head > span {
+  background: #36885a;
+}
+
+.finance-ai-panel-head small {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.finance-ai-panel-head h3 {
+  margin: 3px 0 0;
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.finance-ai-item {
+  margin: 14px;
+  padding: 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.finance-ai-item-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.finance-ai-item h4 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.finance-ai-item > p {
+  margin: 9px 0 0;
+  color: #475569;
+  line-height: 1.75;
+}
+
+.finance-related-issues,
+.finance-focus-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.finance-related-issues span {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.finance-focus-tags span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #166534;
+  background: #dcfce7;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .report-image-preview {
   position: fixed;
   inset: 0;
@@ -3253,6 +3945,19 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(130px, 0.8fr) minmax(180px, 2fr) 88px;
     gap: 12px;
   }
+
+  .finance-summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .finance-distribution-grid,
+  .finance-ai-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-distribution-card > p {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 520px) {
@@ -3469,6 +4174,34 @@ onBeforeUnmount(() => {
   .safety-analysis-list > article > span {
     width: 36px;
     height: 36px;
+  }
+
+  .finance-summary-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-scope-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-subsection-head,
+  .finance-station-report-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .finance-chart-section .safety-chart-legend {
+    align-self: stretch;
+    justify-content: flex-start;
+  }
+
+  .finance-station-report-head > strong {
+    margin-left: 50px;
+  }
+
+  .finance-ai-item-title {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>
