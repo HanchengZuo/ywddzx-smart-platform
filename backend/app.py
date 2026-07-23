@@ -110,7 +110,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "3.9.1"
+        raw_value = "3.9.2"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -130,7 +130,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.9.1"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "3.9.2"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -6754,45 +6754,46 @@ def serialize_issue_export_task(task):
     }
 
 
-def fetch_issue_export_rows(cur, user, issue_ids):
+def fetch_issue_export_rows(cur, user, issue_ids, enforce_user_scope=True):
     where_parts = ["i.id = ANY(%s)"]
     params = [issue_ids]
 
-    can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
-    can_view_own = can_view_own_inspection_issues(cur, user)
-    if can_view_all:
-        pass
-    elif can_view_own:
-        if not user.get("station_id"):
+    if enforce_user_scope:
+        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
+        can_view_own = can_view_own_inspection_issues(cur, user)
+        if can_view_all:
+            pass
+        elif can_view_own:
+            if not user.get("station_id"):
+                where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
+                params.append(user["id"])
+            else:
+                where_parts.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
+                params.extend([user["station_id"], user["id"]])
+        else:
             where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
             params.append(user["id"])
-        else:
-            where_parts.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
-            params.extend([user["station_id"], user["id"]])
-    else:
-        where_parts.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
-        params.append(user["id"])
 
-    if not append_inspection_table_scope_filter(
-        cur,
-        user,
-        where_parts,
-        params,
-        "i.inspection_table_id",
-        "limit_issue_inspection_table_scope",
-    ):
-        return []
-    if not append_station_region_scope_filter(
-        cur,
-        user,
-        where_parts,
-        params,
-        "s.region",
-        "limit_issue_station_region_scope",
-    ):
-        return []
-    append_pending_audit_issue_visibility_filter(user, where_parts)
-    hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        if not append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_parts,
+            params,
+            "i.inspection_table_id",
+            "limit_issue_inspection_table_scope",
+        ):
+            return []
+        if not append_station_region_scope_filter(
+            cur,
+            user,
+            where_parts,
+            params,
+            "s.region",
+            "limit_issue_station_region_scope",
+        ):
+            return []
+        append_pending_audit_issue_visibility_filter(user, where_parts)
+    hide_inspector_contact = enforce_user_scope and should_hide_inspector_contact_info(cur, user)
 
     cur.execute(
         sql.SQL(
@@ -8077,7 +8078,14 @@ def build_issue_export_standard_field_columns(group, table_field_map):
     return columns
 
 
-def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_map=None):
+def write_issue_export_xlsx(
+    file_path,
+    rows,
+    export_options=None,
+    table_field_map=None,
+    extra_columns=None,
+    workbook_title="巡检问题列表导出",
+):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -8089,7 +8097,10 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
     if not selected_field_keys:
         raise ValueError("请至少选择一个导出字段。")
     selected_photo_keys = selected_issue_export_photo_keys(export_options)
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    if isinstance(file_path, (str, bytes, os.PathLike)):
+        export_directory = os.path.dirname(os.fspath(file_path))
+        if export_directory:
+            os.makedirs(export_directory, exist_ok=True)
 
     workbook = Workbook()
     default_sheet = workbook.active
@@ -8114,7 +8125,7 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
             if "external_standard" in selected_field_keys
             else []
         )
-        columns = []
+        columns = list(extra_columns or [])
         columns.extend(
             (header, key)
             for header, key in ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD
@@ -8150,7 +8161,12 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
             width = 18
             if key.startswith("external_field::"):
                 width = 22
-            if key in ISSUE_EXPORT_LONG_TEXT_KEYS or key in {"description", "rectification_note", "review_note"}:
+            if key in ISSUE_EXPORT_LONG_TEXT_KEYS or key in {
+                "description",
+                "rectification_note",
+                "review_note",
+                "auto_audit_match_value",
+            }:
                 width = 34
             if key in ISSUE_EXPORT_PHOTO_KEYS:
                 width = 22 if key in selected_photo_keys else 16
@@ -8163,7 +8179,9 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
                 cell = worksheet.cell(row=row_index, column=column_index)
                 cell.border = thin_border
                 cell.alignment = long_text_alignment if (
-                    key in ISSUE_EXPORT_LONG_TEXT_KEYS or key.startswith("external_field::")
+                    key in ISSUE_EXPORT_LONG_TEXT_KEYS
+                    or key == "auto_audit_match_value"
+                    or key.startswith("external_field::")
                 ) else wrap_alignment
 
                 if key in ISSUE_EXPORT_PHOTO_KEYS:
@@ -8188,9 +8206,10 @@ def write_issue_export_xlsx(file_path, rows, export_options=None, table_field_ma
         last_column = excel_column_name(len(columns))
         worksheet.auto_filter.ref = f"A1:{last_column}1"
 
-    workbook.properties.title = "巡检问题列表导出"
+    workbook.properties.title = workbook_title
     workbook.properties.creator = "业务督导中心数智管理平台"
     workbook.save(file_path)
+    workbook.close()
 
 
 def mark_issue_export_task_failed(task_id, message):
@@ -25509,9 +25528,59 @@ def ensure_auto_audit_rule_unique(cur, rule, exclude_rule_id=None):
         raise ValueError("相同触发条件已存在，请直接编辑原规则。")
 
 
+def build_auto_audit_history_filter(decision="", rule_id="", keyword=""):
+    history_where = []
+    history_params = []
+    decision = str(decision or "").strip()
+    rule_id = str(rule_id or "").strip()
+    keyword = str(keyword or "").strip()
+
+    if decision:
+        if decision not in AUTO_AUDIT_DECISIONS:
+            raise ValueError("审核结论筛选参数不正确。")
+        history_where.append("log.decision = %s")
+        history_params.append(decision)
+    if rule_id:
+        try:
+            normalized_rule_id = int(rule_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("规则筛选参数不正确。") from exc
+        history_where.append("log.rule_id = %s")
+        history_params.append(normalized_rule_id)
+    if keyword:
+        history_where.append(
+            """(
+                log.rule_name ILIKE %s
+                OR COALESCE(log.station_name, '') ILIKE %s
+                OR COALESCE(log.inspection_table_name, '') ILIKE %s
+                OR COALESCE(log.issue_description, '') ILIKE %s
+                OR log.issue_reference_id::text = %s
+                OR COALESCE(log.external_standard_id::text, '') = %s
+            )"""
+        )
+        like_keyword = f"%{keyword}%"
+        history_params.extend(
+            [like_keyword, like_keyword, like_keyword, like_keyword, keyword, keyword]
+        )
+    history_where_sql = f"WHERE {' AND '.join(history_where)}" if history_where else ""
+    return history_where_sql, history_params
+
+
+AUTO_AUDIT_EXPORT_COLUMNS = [
+    ("回溯记录ID", "auto_audit_log_id"),
+    ("巡检记录ID", "auto_audit_inspection_id"),
+    ("自动审核执行时间", "auto_audit_triggered_at"),
+    ("命中规则", "auto_audit_rule_name"),
+    ("触发指标", "auto_audit_match_type"),
+    ("触发内容", "auto_audit_match_value"),
+    ("自动审核结论", "auto_audit_decision"),
+    ("原问题记录", "auto_audit_record_state"),
+]
+
+
 @app.route("/api/management/auto-audit", methods=["GET"])
 def get_management_auto_audit():
-    user_id = str(request.args.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(request.args.get("user_id"))
     decision = str(request.args.get("decision", "")).strip()
     keyword = str(request.args.get("keyword", "")).strip()
     rule_id = str(request.args.get("rule_id", "")).strip()
@@ -25573,34 +25642,11 @@ def get_management_auto_audit():
             }
         )
 
-        history_where = []
-        history_params = []
-        if decision in AUTO_AUDIT_DECISIONS:
-            history_where.append("log.decision = %s")
-            history_params.append(decision)
-        if rule_id:
-            try:
-                normalized_rule_id = int(rule_id)
-            except (TypeError, ValueError):
-                return jsonify({"success": False, "error": "规则筛选参数不正确。"}), 400
-            history_where.append("log.rule_id = %s")
-            history_params.append(normalized_rule_id)
-        if keyword:
-            history_where.append(
-                """(
-                    log.rule_name ILIKE %s
-                    OR COALESCE(log.station_name, '') ILIKE %s
-                    OR COALESCE(log.inspection_table_name, '') ILIKE %s
-                    OR COALESCE(log.issue_description, '') ILIKE %s
-                    OR log.issue_reference_id::text = %s
-                    OR COALESCE(log.external_standard_id::text, '') = %s
-                )"""
-            )
-            like_keyword = f"%{keyword}%"
-            history_params.extend(
-                [like_keyword, like_keyword, like_keyword, like_keyword, keyword, keyword]
-            )
-        history_where_sql = f"WHERE {' AND '.join(history_where)}" if history_where else ""
+        history_where_sql, history_params = build_auto_audit_history_filter(
+            decision,
+            rule_id,
+            keyword,
+        )
 
         cur.execute(
             f"SELECT COUNT(*) AS total FROM inspection_auto_audit_logs log {history_where_sql};",
@@ -25651,10 +25697,154 @@ def get_management_auto_audit():
                 },
             }
         )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/auto-audit/export", methods=["GET"])
+def export_management_auto_audit_history():
+    user_id = get_authenticated_request_user_id(request.args.get("user_id"))
+    decision = str(request.args.get("decision", "")).strip()
+    keyword = str(request.args.get("keyword", "")).strip()
+    rule_id = str(request.args.get("rule_id", "")).strip()
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, user_id, "manage_auto_audit_rules")
+        history_where_sql, history_params = build_auto_audit_history_filter(
+            decision,
+            rule_id,
+            keyword,
+        )
+        cur.execute(
+            f"""
+            SELECT
+                log.id,
+                log.issue_id,
+                log.issue_reference_id,
+                log.inspection_reference_id,
+                log.rule_name,
+                log.match_type,
+                log.match_value,
+                log.decision,
+                COALESCE(log.station_name, '') AS station_name,
+                COALESCE(log.inspection_table_name, '') AS inspection_table_name,
+                COALESCE(current_table.id, snapshot_table.id) AS inspection_table_id,
+                log.external_standard_id,
+                COALESCE(log.issue_description, '') AS issue_description,
+                TO_CHAR(log.triggered_at, 'YYYY-MM-DD HH24:MI') AS triggered_at
+            FROM inspection_auto_audit_logs log
+            LEFT JOIN issues current_issue ON current_issue.id = log.issue_id
+            LEFT JOIN inspection_tables current_table
+              ON current_table.id = current_issue.inspection_table_id
+            LEFT JOIN inspections snapshot_inspection
+              ON snapshot_inspection.id = log.inspection_reference_id
+            LEFT JOIN inspection_tables snapshot_table
+              ON snapshot_table.id = snapshot_inspection.inspection_table_id
+            {history_where_sql}
+            ORDER BY log.triggered_at DESC, log.id DESC;
+            """,
+            history_params,
+        )
+        logs = cur.fetchall()
+        if not logs:
+            raise ValueError("当前筛选结果没有可导出的自动审核记录。")
+
+        issue_ids = list(
+            dict.fromkeys(int(row["issue_id"]) for row in logs if row.get("issue_id"))
+        )
+        current_rows = (
+            fetch_issue_export_rows(cur, actor, issue_ids, enforce_user_scope=False)
+            if issue_ids
+            else []
+        )
+        current_row_map = {int(row["id"]): dict(row) for row in current_rows}
+        export_rows = []
+        for log in logs:
+            issue_id = int(log["issue_id"]) if log.get("issue_id") else None
+            row = dict(current_row_map.get(issue_id) or {})
+            row.update(
+                {
+                    "id": int(log["issue_reference_id"]),
+                    "inspection_table_id": row.get("inspection_table_id")
+                    or log.get("inspection_table_id"),
+                    "inspection_table_name": log.get("inspection_table_name")
+                    or row.get("inspection_table_name")
+                    or "未命名检查表",
+                    "station": log.get("station_name") or row.get("station") or "-",
+                    "standard_id": log.get("external_standard_id"),
+                    "description": log.get("issue_description") or row.get("description") or "-",
+                    "audit_result": "通过" if log.get("decision") == "approved" else "否决",
+                    "auto_audit_log_id": log["id"],
+                    "auto_audit_inspection_id": log["inspection_reference_id"],
+                    "auto_audit_triggered_at": log.get("triggered_at") or "-",
+                    "auto_audit_rule_name": log.get("rule_name") or "-",
+                    "auto_audit_match_type": (
+                        "外部规范ID"
+                        if log.get("match_type") == "external_standard_id"
+                        else "问题描述关键词"
+                    ),
+                    "auto_audit_match_value": log.get("match_value") or "-",
+                    "auto_audit_decision": (
+                        "自动通过" if log.get("decision") == "approved" else "自动否决"
+                    ),
+                    "auto_audit_record_state": "原问题存在" if issue_id in current_row_map else "原问题已删除",
+                }
+            )
+            export_rows.append(row)
+
+        table_field_map = build_issue_export_table_field_map(cur, export_rows)
+        export_options = normalize_issue_export_options(
+            {
+                "include_fields": {key: True for key in ISSUE_EXPORT_FIELD_KEYS},
+                "include_photos": {key: True for key in ISSUE_EXPORT_PHOTO_KEYS},
+            }
+        )
+        output = BytesIO()
+        write_issue_export_xlsx(
+            output,
+            export_rows,
+            export_options,
+            table_field_map,
+            extra_columns=AUTO_AUDIT_EXPORT_COLUMNS,
+            workbook_title="白名单自动审核回溯导出",
+        )
+        output.seek(0)
+        filename = f"白名单自动审核回溯_{beijing_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        response = send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Auto-Audit-Export-Count"] = str(len(export_rows))
+        return response
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        app.logger.exception("导出自动审核回溯失败: %s", exc)
+        return jsonify({"success": False, "error": "自动审核回溯导出失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 

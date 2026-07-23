@@ -121,7 +121,13 @@
           <h3>已自动审核的问题</h3>
           <p>记录保留触发当时的规则和问题快照，规则修改或删除后仍可查看。</p>
         </div>
-        <div class="history-total">共 <strong>{{ history.total }}</strong> 条</div>
+        <div class="history-actions">
+          <button class="btn btn-primary history-export-btn" type="button"
+            :disabled="exportingHistory || !history.total" @click="exportHistory">
+            {{ exportingHistory ? '正在生成 Excel...' : '导出回溯记录' }}
+          </button>
+          <div class="history-total">共 <strong>{{ history.total }}</strong> 条</div>
+        </div>
       </div>
 
       <div class="history-filters">
@@ -303,6 +309,7 @@ import axios from 'axios'
 
 const loading = ref(false)
 const historyLoading = ref(false)
+const exportingHistory = ref(false)
 const rules = ref([])
 const actingRuleId = ref(null)
 const summary = reactive({
@@ -377,6 +384,60 @@ const matchTypeHelp = (value) => value === 'external_standard_id'
   ? '适合针对某一条明确的外部规范建立固定结论。'
   : '问题描述中出现连续关键词时命中，配置前请避免使用过于宽泛的词。'
 const decisionLabel = (value) => value === 'rejected' ? '自动否决' : '自动通过'
+
+const getDownloadFileName = (disposition) => {
+  const value = String(disposition || '')
+  const utf8Matched = value.match(/filename\*=UTF-8''([^;]+)/i)
+  const fallbackMatched = value.match(/filename="?([^";]+)"?/i)
+  const encodedName = utf8Matched?.[1] || fallbackMatched?.[1] || ''
+  try {
+    return decodeURIComponent(encodedName) || `白名单自动审核回溯_${Date.now()}.xlsx`
+  } catch {
+    return encodedName || `白名单自动审核回溯_${Date.now()}.xlsx`
+  }
+}
+
+const getDownloadErrorMessage = async (error, fallback) => {
+  const data = error?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const payload = JSON.parse(await data.text())
+      return payload.error || payload.message || fallback
+    } catch {
+      return fallback
+    }
+  }
+  return data?.error || data?.message || fallback
+}
+
+const exportHistory = async () => {
+  if (!history.total || exportingHistory.value) return
+  try {
+    exportingHistory.value = true
+    const response = await axios.get('/api/management/auto-audit/export', {
+      params: {
+        user_id: localStorage.getItem('user_id') || '',
+        decision: filters.decision,
+        rule_id: filters.rule_id,
+        keyword: filters.keyword
+      },
+      responseType: 'blob'
+    })
+    const blobUrl = window.URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = getDownloadFileName(response.headers?.['content-disposition'])
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(blobUrl)
+    showNotice(`已导出 ${history.total} 条自动审核回溯记录。`)
+  } catch (error) {
+    showNotice(await getDownloadErrorMessage(error, '自动审核回溯导出失败，请稍后重试。'), 'error')
+  } finally {
+    exportingHistory.value = false
+  }
+}
 
 const applyResponse = (data = {}) => {
   rules.value = Array.isArray(data.rules) ? data.rules : []
@@ -545,7 +606,9 @@ onBeforeUnmount(() => {
 
 .card-surface {
   border: 1px solid rgba(160, 185, 199, 0.5);
+  border-radius: 24px;
   box-shadow: 0 14px 34px rgba(26, 64, 85, 0.08);
+  background-clip: padding-box;
 }
 
 .page-header {
@@ -659,6 +722,8 @@ onBeforeUnmount(() => {
 .rule-switch input:checked + span::after { transform: translateX(19px); }
 
 .history-head { align-items: center; }
+.history-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.history-export-btn { min-width: 146px; }
 .history-total { flex: none; padding: 10px 14px; border-radius: 10px; background: var(--audit-soft); color: #69818f; }
 .history-total strong { color: var(--audit-blue); font-size: 19px; }
 .history-filters { display: grid; grid-template-columns: 180px 220px minmax(280px, 1fr) auto; align-items: end; gap: 12px; padding: 15px; margin-bottom: 18px; border-radius: 13px; background: #f3f8fa; }
@@ -743,6 +808,8 @@ onBeforeUnmount(() => {
   .workflow-steps i { width: 12px; margin-top: 17px; }
   .section-head,
   .history-head { align-items: stretch; flex-direction: column; }
+  .history-actions { justify-content: space-between; }
+  .history-export-btn { flex: 1; min-width: 0; }
   .rule-row { grid-template-columns: 62px minmax(0, 1fr); }
   .priority-block { grid-row: 1 / 3; }
   .rule-main { padding: 14px; }

@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v3.9.2',
+    date: '2026-07-23',
+    title: '自动审核回溯导出',
+    summary: '自动审核页面样式更统一，回溯记录可以导出 Excel。',
+    items: [
+      '自动审核页面统一改为圆角卡片。',
+      '可导出筛选后的全部自动审核问题和完整问题信息。'
+    ]
+  },
+  {
     version: 'v3.9.1',
     date: '2026-07-21',
     title: '外部规范导出',
