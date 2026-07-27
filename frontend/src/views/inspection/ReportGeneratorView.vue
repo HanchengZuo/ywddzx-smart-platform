@@ -937,6 +937,232 @@
           </div>
         </article>
       </template>
+
+      <template v-else-if="isEquipmentFacilitiesReport">
+        <div class="summary-cards equipment-summary-cards">
+          <article v-for="card in summaryCards" :key="card.label" class="summary-card">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+            <small>{{ card.desc }}</small>
+          </article>
+        </div>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第一章　总体情况</div>
+          <p class="chapter-lead">{{ report.overview_text }}</p>
+
+          <section class="equipment-overview-section">
+            <div class="equipment-subsection-head">
+              <div>
+                <span>01 · REGION VIEW</span>
+                <h3>按片区划分</h3>
+              </div>
+              <strong>{{ equipmentRegionRows.length }}个片区及管理单位</strong>
+            </div>
+            <p class="equipment-section-text">{{ report.region_text }}</p>
+            <div class="equipment-chart-legend">
+              <span><i class="station"></i>受检站点数量</span>
+              <span><i class="issue"></i>发现问题数量</span>
+              <span><i class="average"></i>平均问题数量</span>
+            </div>
+            <div v-if="equipmentRegionRows.length" class="equipment-region-chart">
+              <article
+                v-for="row in equipmentRegionRows"
+                :key="`equipment-region-${row.unit_type}-${row.unit_name}`"
+                class="equipment-region-row"
+              >
+                <div class="equipment-region-name">
+                  <span :class="['unit-type-pill', row.unit_type]">
+                    {{ row.unit_type === 'holding' ? '控（参）股单位' : '管理片区' }}
+                  </span>
+                  <strong>{{ row.unit_name }}</strong>
+                </div>
+                <div class="equipment-region-bars">
+                  <div>
+                    <span class="station" :style="{ width: `${getEquipmentRegionBarWidth('station_count', row.station_count)}%` }"></span>
+                    <b>{{ row.station_count }}座</b>
+                  </div>
+                  <div>
+                    <span class="issue" :style="{ width: `${getEquipmentRegionBarWidth('issue_count', row.issue_count)}%` }"></span>
+                    <b>{{ row.issue_count }}项</b>
+                  </div>
+                </div>
+                <div class="equipment-average-value">
+                  <strong>{{ Number(row.average_issue_count || 0).toFixed(1) }}</strong>
+                  <span>项/站</span>
+                </div>
+              </article>
+            </div>
+            <div v-else class="safety-chart-empty">当前月份暂无片区统计数据。</div>
+          </section>
+
+          <section class="equipment-overview-section station-view">
+            <div class="equipment-subsection-head">
+              <div>
+                <span>02 · STATION RANKING</span>
+                <h3>按站点划分</h3>
+              </div>
+              <strong>按问题数量由高到低</strong>
+            </div>
+            <div v-if="equipmentStationRanking.length" class="equipment-station-ranking">
+              <article
+                v-for="station in equipmentStationRanking"
+                :key="`equipment-station-${station.station_id || station.station_name}`"
+                :class="{ 'top-rank': station.rank <= 3 }"
+              >
+                <span class="equipment-rank-number">{{ String(station.rank).padStart(2, '0') }}</span>
+                <div class="equipment-station-copy">
+                  <strong>{{ station.station_name }}</strong>
+                  <small>{{ station.management_unit }} · {{ station.date_range }}</small>
+                </div>
+                <div class="equipment-station-track">
+                  <span :style="{ width: `${getEquipmentStationBarWidth(station.issue_count)}%` }"></span>
+                </div>
+                <b>{{ station.issue_count }}项</b>
+              </article>
+            </div>
+            <div v-else class="safety-chart-empty">当前月份暂无已完成受检站点。</div>
+          </section>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第二章　问题数据统计分析</div>
+          <div class="equipment-distribution-grid">
+            <section
+              v-for="distribution in equipmentDistributions"
+              :key="distribution.key"
+              class="equipment-distribution-card"
+            >
+              <div class="equipment-subsection-head">
+                <div>
+                  <span>{{ distribution.eyebrow }}</span>
+                  <h3>{{ distribution.title }}</h3>
+                </div>
+                <strong>{{ distribution.items.length }}类</strong>
+              </div>
+              <p>{{ distribution.text }}</p>
+              <div v-if="distribution.items.length" class="safety-category-list">
+                <div
+                  v-for="item in distribution.items"
+                  :key="`${distribution.key}-${item.name}`"
+                  class="safety-category-row equipment-category-row"
+                >
+                  <strong>{{ item.name }}</strong>
+                  <div class="safety-category-track">
+                    <span :style="{ width: `${getFinanceCategoryWidth(distribution.items, item.count)}%` }"></span>
+                  </div>
+                  <div><b>{{ item.count }}项</b><span>{{ formatPercent(item.percentage) }}</span></div>
+                </div>
+              </div>
+              <div v-else class="safety-chart-empty">当前分类暂无审核通过的问题数据。</div>
+            </section>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第三章　检查发现-典型问题</div>
+          <div class="content-source-row">
+            <span>从跨站重复出现的高频问题中选择代表性问题</span>
+            <AiContentBadge
+              :generated="Boolean(equipmentTypicalFinding.ai_generated)"
+              ai-label="AI筛选"
+              fallback-label="规则筛选"
+            />
+          </div>
+          <div v-if="equipmentTypicalFinding.issue_count" class="equipment-typical-card">
+            <div class="equipment-typical-copy">
+              <div class="equipment-typical-title">
+                <span>高频典型问题</span>
+                <h3>{{ equipmentTypicalFinding.title }}</h3>
+              </div>
+              <p>{{ buildEquipmentTypicalText(equipmentTypicalFinding) }}</p>
+              <blockquote v-if="equipmentTypicalFinding.summary">{{ equipmentTypicalFinding.summary }}</blockquote>
+              <div v-if="equipmentTypicalFinding.representative_issue" class="equipment-typical-example">
+                <span>代表问题</span>
+                <strong>{{ equipmentTypicalFinding.representative_issue.station_name }}</strong>
+                <p>{{ equipmentTypicalFinding.representative_issue.description }}</p>
+                <small>
+                  {{ equipmentTypicalFinding.representative_issue.area_name }} ·
+                  {{ equipmentTypicalFinding.representative_issue.inspection_item }}
+                </small>
+              </div>
+            </div>
+            <button
+              v-if="equipmentTypicalFinding.representative_issue?.issue_photo"
+              type="button"
+              class="equipment-typical-photo"
+              @click="openImagePreview(
+                equipmentTypicalFinding.representative_issue.issue_photo,
+                `${equipmentTypicalFinding.representative_issue.station_name || '典型问题'}照片`
+              )"
+            >
+              <img
+                :src="resolveImage(equipmentTypicalFinding.representative_issue.issue_photo)"
+                alt="典型问题照片"
+                loading="lazy"
+              />
+              <span>点击查看原图</span>
+            </button>
+            <div v-else class="equipment-typical-photo empty">暂无问题照片</div>
+          </div>
+          <div v-else class="safety-chart-empty">当前月份暂无可用于典型问题分析的数据。</div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第四章　问题分析</div>
+          <div class="content-source-row">
+            <span>结合所属区域、检查事项和高频问题综合分析</span>
+            <AiContentBadge
+              :generated="equipmentProblemAnalysis.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="safety-analysis-list equipment-analysis-list">
+            <article
+              v-for="(item, index) in equipmentProblemAnalysis"
+              :key="`equipment-analysis-${index}-${item.title}`"
+            >
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <div>
+                <div class="equipment-analysis-title">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="chapter-card">
+          <div class="chapter-banner">第五章　工作建议</div>
+          <div class="content-source-row">
+            <span>依据问题分布、典型问题和原因分析形成</span>
+            <AiContentBadge
+              :generated="equipmentWorkSuggestions.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="work-plan-list equipment-work-list">
+            <article
+              v-for="(item, index) in equipmentWorkSuggestions"
+              :key="`equipment-work-${index}-${item.title}`"
+              class="work-plan-card"
+            >
+              <span>{{ index + 1 }}</span>
+              <div>
+                <div class="work-plan-title-row">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+      </template>
     </section>
 
     <section v-else class="state-card card-surface">
@@ -995,7 +1221,8 @@ const DEFAULT_REPORT_TYPES = [
     name: '设备设施检查报告',
     description: '汇总设备设施现场检查数据。',
     target_tables: ['设备设施检查表（现场）'],
-    template_ready: false
+    data_scope_note: '受检站点按所选月份内已确认完成的巡检记录统计；问题数量、分类、典型问题和AI分析仅使用审核通过的问题。',
+    template_ready: true
   },
   {
     key: 'non_oil',
@@ -1022,6 +1249,10 @@ const createEmptyReport = () => ({
   project_distribution: [],
   key_link_distribution: [],
   station_reports: [],
+  region_rows: [],
+  station_ranking: [],
+  area_distribution: [],
+  item_distribution: [],
   rows: [],
   total_row: {}
 })
@@ -1057,6 +1288,7 @@ const templateUnavailable = computed(() => currentReportType.value.template_read
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
 const isFinanceReport = computed(() => selectedReportType.value === 'finance')
+const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const hasReport = computed(() => Boolean(report.value?.month))
 const reportTitleFallback = computed(() => {
   const monthNumber = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
@@ -1165,6 +1397,42 @@ const financeContentSuggestions = computed(() => (
     ? financeDeepAnalysis.value.content_suggestions
     : []
 ))
+const equipmentRegionRows = computed(() => (
+  Array.isArray(report.value.region_rows) ? report.value.region_rows : []
+))
+const equipmentStationRanking = computed(() => (
+  Array.isArray(report.value.station_ranking) ? report.value.station_ranking : []
+))
+const equipmentDistributions = computed(() => [
+  {
+    key: 'area',
+    eyebrow: 'AREA DISTRIBUTION',
+    title: '按所属区域分类',
+    text: report.value.area_distribution_text || '',
+    items: Array.isArray(report.value.area_distribution) ? report.value.area_distribution : []
+  },
+  {
+    key: 'inspection-item',
+    eyebrow: 'INSPECTION ITEM',
+    title: '按检查事项分类',
+    text: report.value.item_distribution_text || '',
+    items: Array.isArray(report.value.item_distribution) ? report.value.item_distribution : []
+  }
+])
+const equipmentDeepAnalysis = computed(() => report.value.deep_analysis || {})
+const equipmentTypicalFinding = computed(() => (
+  equipmentDeepAnalysis.value.typical_finding || {}
+))
+const equipmentProblemAnalysis = computed(() => (
+  Array.isArray(equipmentDeepAnalysis.value.problem_analysis)
+    ? equipmentDeepAnalysis.value.problem_analysis
+    : []
+))
+const equipmentWorkSuggestions = computed(() => (
+  Array.isArray(equipmentDeepAnalysis.value.work_suggestions)
+    ? equipmentDeepAnalysis.value.work_suggestions
+    : []
+))
 const targetTableText = computed(() => {
   const tables = Array.isArray(report.value.target_tables) ? report.value.target_tables : []
   const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
@@ -1226,6 +1494,30 @@ const summaryCards = computed(() => {
         label: '发现问题',
         value: summary.total_issue_count ?? 0,
         desc: '仅统计审核通过问题'
+      }
+    ]
+  }
+  if (isEquipmentFacilitiesReport.value) {
+    return [
+      {
+        label: '受检站点',
+        value: summary.station_count ?? 0,
+        desc: '已确认完成的巡检记录'
+      },
+      {
+        label: '片区及单位',
+        value: summary.unit_count ?? 0,
+        desc: '按站点主数据归类'
+      },
+      {
+        label: '发现问题',
+        value: summary.total_issue_count ?? 0,
+        desc: '仅统计审核通过问题'
+      },
+      {
+        label: '平均问题',
+        value: Number(summary.average_issue_count || 0).toFixed(1),
+        desc: '平均每座受检站点'
       }
     ]
   }
@@ -1381,6 +1673,35 @@ const getSafetyCategoryWidth = (section, count) => {
 const getFinanceCategoryWidth = (items, count) => {
   const max = Math.max(...(items || []).map((item) => Number(item.count || 0)), 1)
   return Math.max(3, Math.min(100, (Number(count || 0) / max) * 100))
+}
+
+const getEquipmentRegionBarWidth = (field, value) => {
+  const max = Math.max(
+    ...equipmentRegionRows.value.map((item) => Number(item?.[field] || 0)),
+    1
+  )
+  return Number(value || 0) > 0
+    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
+    : 0
+}
+
+const getEquipmentStationBarWidth = (value) => {
+  const max = Math.max(
+    ...equipmentStationRanking.value.map((item) => Number(item.issue_count || 0)),
+    1
+  )
+  return Number(value || 0) > 0
+    ? Math.max(2, Math.min(100, Number(value || 0) / max * 100))
+    : 0
+}
+
+const buildEquipmentTypicalText = (item) => {
+  if (!item?.issue_count) return '当前月份暂无可用于典型问题分析的数据。'
+  const areas = joinChineseList(Array.isArray(item.area_names) ? item.area_names : [])
+  const units = joinChineseList(Array.isArray(item.management_units) ? item.management_units : [])
+  const areaText = areas ? `属于${areas}相关问题，` : ''
+  const unitText = units ? `涉及${units}，` : ''
+  return `${item.title}${areaText}${unitText}在${item.station_count || 0}座站点出现${item.issue_count || 0}项，占本月设备设施问题${formatPercent(item.percentage)}。`
 }
 
 const buildSafetyTypicalText = (item) => {
@@ -3632,6 +3953,457 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
+.equipment-summary-cards .summary-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.equipment-summary-cards .summary-card::after {
+  content: "";
+  position: absolute;
+  right: -28px;
+  bottom: -34px;
+  width: 86px;
+  height: 86px;
+  border: 16px solid rgba(14, 116, 144, 0.055);
+  border-radius: 50%;
+}
+
+.equipment-overview-section {
+  overflow: hidden;
+  margin-top: 18px;
+  border: 1px solid #dbe7e5;
+  border-radius: 21px;
+  background: linear-gradient(145deg, #fbfefd, #ffffff);
+}
+
+.equipment-overview-section.station-view {
+  margin-top: 22px;
+  border-color: #dce5ee;
+  background: linear-gradient(145deg, #fbfcfe, #ffffff);
+}
+
+.equipment-subsection-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e2ebe8;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(13, 148, 136, 0.1), transparent 34%),
+    #f4faf8;
+}
+
+.station-view .equipment-subsection-head {
+  border-bottom-color: #e2e8f0;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(14, 116, 144, 0.09), transparent 34%),
+    #f6f9fb;
+}
+
+.equipment-subsection-head span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.station-view .equipment-subsection-head span {
+  color: #0369a1;
+}
+
+.equipment-subsection-head h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.equipment-subsection-head > strong {
+  color: #0f766e;
+  font-size: 13px;
+}
+
+.station-view .equipment-subsection-head > strong {
+  color: #0369a1;
+}
+
+.equipment-section-text {
+  margin: 0;
+  padding: 18px 20px 8px;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.equipment-chart-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 20px 14px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.equipment-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.equipment-chart-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.equipment-chart-legend i.station {
+  background: #2a9d8f;
+}
+
+.equipment-chart-legend i.issue {
+  background: #e07a5f;
+}
+
+.equipment-chart-legend i.average {
+  background: #f2cc8f;
+}
+
+.equipment-region-chart {
+  display: grid;
+  gap: 1px;
+  margin: 0 20px 20px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 17px;
+  background: #e8eef2;
+}
+
+.equipment-region-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.9fr) minmax(300px, 2fr) 86px;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+
+.equipment-region-name {
+  min-width: 0;
+}
+
+.equipment-region-name strong {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.equipment-region-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.equipment-region-bars > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 9px;
+}
+
+.equipment-region-bars > div::before {
+  content: "";
+  grid-column: 1;
+  grid-row: 1;
+  height: 9px;
+  border-radius: 999px;
+  background: #edf2f4;
+}
+
+.equipment-region-bars > div > span {
+  position: relative;
+  z-index: 1;
+  grid-column: 1;
+  grid-row: 1;
+  height: 9px;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.equipment-region-bars > div > span.station {
+  background: linear-gradient(90deg, #8ed4ca, #2a9d8f);
+}
+
+.equipment-region-bars > div > span.issue {
+  background: linear-gradient(90deg, #f3b7a7, #e07a5f);
+}
+
+.equipment-region-bars b {
+  color: #334155;
+  font-size: 12px;
+  text-align: right;
+}
+
+.equipment-average-value {
+  padding: 9px 7px;
+  border-radius: 13px;
+  color: #8a5a12;
+  background: #fff7e5;
+  text-align: center;
+}
+
+.equipment-average-value strong,
+.equipment-average-value span {
+  display: block;
+}
+
+.equipment-average-value strong {
+  font-size: 20px;
+}
+
+.equipment-average-value span {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.equipment-station-ranking {
+  display: grid;
+  gap: 1px;
+  margin: 20px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 17px;
+  background: #e8eef2;
+}
+
+.equipment-station-ranking > article {
+  display: grid;
+  grid-template-columns: 42px minmax(150px, 0.8fr) minmax(220px, 1.8fr) 52px;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 15px;
+  background: #ffffff;
+}
+
+.equipment-station-ranking > article.top-rank {
+  background: linear-gradient(90deg, #fffaf0, #ffffff 38%);
+}
+
+.equipment-rank-number {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.top-rank .equipment-rank-number {
+  color: #ffffff;
+  background: linear-gradient(145deg, #d97706, #f59e0b);
+}
+
+.equipment-station-copy {
+  min-width: 0;
+}
+
+.equipment-station-copy strong,
+.equipment-station-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.equipment-station-copy strong {
+  color: #1e293b;
+}
+
+.equipment-station-copy small {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.equipment-station-track {
+  height: 11px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f5;
+}
+
+.equipment-station-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #80c8df, #167fb3);
+}
+
+.equipment-station-ranking > article > b {
+  color: #0f172a;
+  text-align: right;
+}
+
+.equipment-distribution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.equipment-distribution-card {
+  overflow: hidden;
+  border: 1px solid #dce7e5;
+  border-radius: 21px;
+  background: #ffffff;
+}
+
+.equipment-distribution-card > p {
+  min-height: 88px;
+  margin: 0;
+  padding: 17px 20px 5px;
+  color: #475569;
+  line-height: 1.75;
+}
+
+.equipment-distribution-card .safety-category-list {
+  padding: 15px 20px 22px;
+}
+
+.equipment-category-row {
+  grid-template-columns: minmax(110px, 0.8fr) minmax(125px, 1.5fr) 80px;
+}
+
+.equipment-typical-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  gap: 22px;
+  padding: 22px;
+  border: 1px solid #dce7e5;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(13, 148, 136, 0.1), transparent 32%),
+    linear-gradient(145deg, #f9fdfc, #ffffff);
+}
+
+.equipment-typical-title > span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.equipment-typical-title h3 {
+  margin: 7px 0 0;
+  color: #0f172a;
+  font-size: 24px;
+}
+
+.equipment-typical-copy > p,
+.equipment-typical-copy blockquote {
+  color: #475569;
+  line-height: 1.8;
+}
+
+.equipment-typical-copy blockquote {
+  margin: 14px 0;
+  padding: 13px 15px;
+  border-left: 4px solid #2a9d8f;
+  border-radius: 0 13px 13px 0;
+  background: #eef8f5;
+}
+
+.equipment-typical-example {
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  background: #ffffff;
+}
+
+.equipment-typical-example span,
+.equipment-typical-example strong,
+.equipment-typical-example small {
+  display: block;
+}
+
+.equipment-typical-example span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.equipment-typical-example strong {
+  margin-top: 5px;
+  color: #0f172a;
+}
+
+.equipment-typical-example p {
+  margin: 7px 0;
+  color: #475569;
+  line-height: 1.65;
+}
+
+.equipment-typical-example small {
+  color: #94a3b8;
+}
+
+.equipment-typical-photo {
+  position: relative;
+  width: 100%;
+  min-height: 280px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background: #e6efed;
+  cursor: zoom-in;
+}
+
+.equipment-typical-photo img {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  object-fit: cover;
+}
+
+.equipment-typical-photo > span {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.74);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.equipment-typical-photo.empty {
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  cursor: default;
+}
+
+.equipment-analysis-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.equipment-analysis-title h4 {
+  margin: 0;
+}
+
 .report-image-preview {
   position: fixed;
   inset: 0;
@@ -3958,6 +4730,24 @@ onBeforeUnmount(() => {
   .finance-distribution-card > p {
     min-height: 0;
   }
+
+  .equipment-region-row {
+    grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1.6fr) 78px;
+    gap: 12px;
+  }
+
+  .equipment-station-ranking > article {
+    grid-template-columns: 38px minmax(130px, 0.8fr) minmax(170px, 1.3fr) 48px;
+  }
+
+  .equipment-distribution-grid,
+  .equipment-typical-card {
+    grid-template-columns: 1fr;
+  }
+
+  .equipment-typical-photo {
+    min-height: 260px;
+  }
 }
 
 @media (max-width: 520px) {
@@ -4202,6 +4992,60 @@ onBeforeUnmount(() => {
   .finance-ai-item-title {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .equipment-subsection-head,
+  .equipment-analysis-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .equipment-chart-legend {
+    justify-content: flex-start;
+  }
+
+  .equipment-region-chart,
+  .equipment-station-ranking {
+    margin: 14px;
+  }
+
+  .equipment-region-row {
+    grid-template-columns: minmax(0, 1fr) 72px;
+    gap: 10px;
+    padding: 13px;
+  }
+
+  .equipment-region-name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .equipment-region-bars {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .equipment-average-value {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .equipment-station-ranking > article {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .equipment-station-track {
+    grid-column: 2 / -1;
+  }
+
+  .equipment-typical-card {
+    padding: 15px;
+  }
+
+  .equipment-typical-photo,
+  .equipment-typical-photo img {
+    min-height: 210px;
   }
 }
 </style>

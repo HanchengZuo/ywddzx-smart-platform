@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.2',
+    date: '2026-07-27',
+    title: '设备设施AI报告',
+    summary: '设备设施检查报告支持按月自动生成。',
+    items: [
+      '按片区统计受检站点、问题和平均问题，并展示站点问题排名。',
+      '按所属区域和检查事项分析问题分布。',
+      'AI筛选高频典型问题，并生成问题分析和工作建议。'
+    ]
+  },
+  {
     version: 'v4.1',
     date: '2026-07-23',
     title: '财务AI检查报告',

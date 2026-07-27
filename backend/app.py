@@ -27,6 +27,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import (
+    generate_equipment_facilities_report_insights,
     generate_feedback_title,
     generate_finance_report_insights,
     generate_quality_measurement_report_insights,
@@ -116,7 +117,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "4.1.0"
+        raw_value = "4.2.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -136,7 +137,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.1.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.2.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7054,6 +7055,11 @@ FINANCE_REPORT_SOURCE_NOTE = (
     "仅统计所选月份内“财务检查表（现场）”中审核通过的问题，"
     "按项目、关键环节、所属单位和站点进行汇总分析。"
 )
+EQUIPMENT_FACILITIES_REPORT_TABLE = "设备设施检查表（现场）"
+EQUIPMENT_FACILITIES_REPORT_SOURCE_NOTE = (
+    "受检站点按所选月份内已确认完成的巡检记录统计；"
+    "问题数量、分类、典型问题和AI分析仅使用审核通过的问题。"
+)
 SAFETY_QUALITY_REPORT_REGION_ORDER = [
     "浦东片区",
     "松金片区",
@@ -7207,6 +7213,7 @@ REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
 QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "onsite-stations-with-video-approved-v3"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
+EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -7270,9 +7277,10 @@ INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
                 "name": "设备设施检查报告",
                 "description": "汇总设备设施现场检查数据。",
                 "target_tables": [
-                    "设备设施检查表（现场）",
+                    EQUIPMENT_FACILITIES_REPORT_TABLE,
                 ],
-                "template_ready": False,
+                "data_scope_note": EQUIPMENT_FACILITIES_REPORT_SOURCE_NOTE,
+                "template_ready": True,
             },
         ),
         (
@@ -7389,6 +7397,11 @@ def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
         and payload.get("data_policy_version") != FINANCE_REPORT_DATA_POLICY_VERSION
     ):
         return None
+    if (
+        report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES
+        and payload.get("data_policy_version") != EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION
+    ):
+        return None
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
@@ -7408,6 +7421,8 @@ def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, r
         normalized_report["data_policy_version"] = SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION
     elif report_type == REPORT_SNAPSHOT_TYPE_FINANCE:
         normalized_report["data_policy_version"] = FINANCE_REPORT_DATA_POLICY_VERSION
+    elif report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
+        normalized_report["data_policy_version"] = EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION
     snapshot_report = attach_report_snapshot_meta(
         normalized_report,
         None,
@@ -8924,6 +8939,379 @@ def build_finance_report_payload(month_start, rows):
             key_link_distribution,
         ),
         "station_reports": build_finance_station_reports(issues),
+    }, issues
+
+
+def format_equipment_report_date(value):
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+    return str(value or "").strip()[:10]
+
+
+def serialize_equipment_report_issue(row):
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    return {
+        "issue_id": int(row.get("id") or 0),
+        "station_id": row.get("station_id"),
+        "station_name": str(sanitize_display_string(row.get("station_name")) or "").strip(),
+        "management_unit_type": unit_type,
+        "management_unit": unit_name,
+        "report_date": format_equipment_report_date(row.get("report_date")),
+        "external_standard_id": row.get("standard_id"),
+        "area_name": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "所属区域"),
+            "未设置所属区域",
+        ),
+        "inspection_item": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "检查事项"),
+            "未设置检查事项",
+        ),
+        "inspection_content": normalize_report_category(
+            get_report_standard_field_value(row.get("standard_detail_text"), "检查内容"),
+            "-",
+        ),
+        "description": str(row.get("description") or "").strip(),
+        "issue_photo": row.get("issue_photo") or "",
+    }
+
+
+def serialize_equipment_inspection_station(row):
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    return {
+        "inspection_id": row.get("inspection_id"),
+        "station_id": row.get("station_id"),
+        "station_name": str(sanitize_display_string(row.get("station_name")) or "").strip(),
+        "management_unit_type": unit_type,
+        "management_unit": unit_name,
+        "report_date": format_equipment_report_date(row.get("report_date")),
+    }
+
+
+def build_equipment_overview(issues, inspection_rows, month_start):
+    station_map = {}
+    for raw_row in inspection_rows:
+        station = serialize_equipment_inspection_station(raw_row)
+        station_key = station.get("station_id") or station.get("station_name")
+        existing = station_map.get(station_key)
+        if not existing:
+            station["inspection_dates"] = []
+            station["issue_count"] = 0
+            station_map[station_key] = station
+            existing = station
+        if station.get("report_date") and station["report_date"] not in existing["inspection_dates"]:
+            existing["inspection_dates"].append(station["report_date"])
+
+    issue_counts = {}
+    for issue in issues:
+        station_key = issue.get("station_id") or issue.get("station_name")
+        issue_counts[station_key] = issue_counts.get(station_key, 0) + 1
+
+    for station_key, station in station_map.items():
+        station["inspection_dates"].sort()
+        station["issue_count"] = issue_counts.get(station_key, 0)
+        station["date_range"] = (
+            f"{station['inspection_dates'][0]} 至 {station['inspection_dates'][-1]}"
+            if len(station["inspection_dates"]) > 1
+            else (station["inspection_dates"][0] if station["inspection_dates"] else "-")
+        )
+
+    region_map = {}
+    for station in station_map.values():
+        unit_key = f"{station['management_unit_type']}:{station['management_unit']}"
+        region = region_map.setdefault(
+            unit_key,
+            {
+                "unit_type": station["management_unit_type"],
+                "unit_name": station["management_unit"],
+                "station_count": 0,
+                "issue_count": 0,
+            },
+        )
+        region["station_count"] += 1
+        region["issue_count"] += station["issue_count"]
+
+    region_rows = []
+    for region in region_map.values():
+        region["average_issue_count"] = round(
+            region["issue_count"] / region["station_count"],
+            1,
+        ) if region["station_count"] else 0
+        region_rows.append(region)
+    region_rows.sort(
+        key=lambda item: finance_unit_sort_key(
+            {
+                "unit_type": item["unit_type"],
+                "unit_name": item["unit_name"],
+            }
+        )
+    )
+
+    station_ranking = sorted(
+        station_map.values(),
+        key=lambda item: (-item["issue_count"], item["station_name"]),
+    )
+    for index, station in enumerate(station_ranking, start=1):
+        station["rank"] = index
+
+    report_dates = sorted(
+        {
+            station_date
+            for station in station_map.values()
+            for station_date in station.get("inspection_dates") or []
+            if station_date
+        }
+    )
+    date_from = report_dates[0] if report_dates else ""
+    date_to = report_dates[-1] if report_dates else ""
+    date_range = (
+        f"{date_from} 至 {date_to}"
+        if date_from and date_to and date_from != date_to
+        else date_from or "当前月份暂无已完成巡检记录"
+    )
+    average_issue_count = round(
+        len(issues) / len(station_map),
+        1,
+    ) if station_map else 0
+    region_phrases = [
+        (
+            f"{item['unit_name']}受检{item['station_count']}座站点，"
+            f"发现{item['issue_count']}项问题，平均{item['average_issue_count']:.1f}项"
+        )
+        for item in region_rows
+    ]
+    overview_text = (
+        f"{format_report_month_label(month_start)}，巡检时间为{date_range}，"
+        f"共完成{len(station_map)}座站点的设备设施检查，"
+        f"发现审核通过问题{len(issues)}项，平均每座站点{average_issue_count:.1f}项。"
+        if station_map
+        else f"{format_report_month_label(month_start)}暂无已确认完成的设备设施巡检记录。"
+    )
+    region_text = (
+        f"按片区及管理单位统计，{join_chinese_list(region_phrases)}。"
+        if region_phrases
+        else "当前月份暂无片区统计数据。"
+    )
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_range": date_range,
+        "station_count": len(station_map),
+        "unit_count": len(region_rows),
+        "total_issue_count": len(issues),
+        "average_issue_count": average_issue_count,
+        "overview_text": overview_text,
+        "region_text": region_text,
+        "region_rows": region_rows,
+        "station_ranking": station_ranking,
+    }
+
+
+def build_equipment_report_ai_context(
+    month_start,
+    issues,
+    area_distribution,
+    item_distribution,
+):
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "total_issue_count": len(issues),
+        "area_distribution": area_distribution,
+        "item_distribution": item_distribution,
+        "issues": [
+            {
+                "issue_id": issue["issue_id"],
+                "station_name": issue["station_name"],
+                "management_unit": issue["management_unit"],
+                "area_name": issue["area_name"],
+                "inspection_item": issue["inspection_item"],
+                "inspection_content": issue["inspection_content"][:260],
+                "description": issue["description"][:320],
+                "has_photo": bool(issue["issue_photo"]),
+            }
+            for issue in issues
+        ],
+    }
+
+
+def build_local_equipment_typical_issue(issues, item_distribution):
+    if not issues:
+        return None
+    top_item = item_distribution[0]["name"] if item_distribution else issues[0]["inspection_item"]
+    selected = [issue for issue in issues if issue["inspection_item"] == top_item]
+    return {
+        "title": top_item,
+        "summary": f"{top_item}是本月设备设施检查中出现频次较高的问题类别。",
+        "issues": selected[:100],
+        "ai_generated": False,
+    }
+
+
+def build_equipment_typical_finding(issues, item_distribution, ai_payload):
+    issue_map = {issue["issue_id"]: issue for issue in issues}
+    ai_entry = ai_payload.get("typical_issue") if isinstance(ai_payload, dict) else None
+    selected = []
+    if isinstance(ai_entry, dict):
+        for issue_id in normalize_report_ai_issue_ids(ai_entry.get("issue_ids")):
+            issue = issue_map.get(issue_id)
+            if issue:
+                selected.append(issue)
+            if len(selected) >= 100:
+                break
+
+    local_entry = build_local_equipment_typical_issue(issues, item_distribution)
+    ai_generated = bool(selected)
+    if not selected and local_entry:
+        selected = local_entry["issues"]
+    if not selected:
+        return {
+            "title": "暂无典型问题",
+            "summary": "当前月份暂无可用于典型问题分析的数据。",
+            "issue_count": 0,
+            "station_count": 0,
+            "percentage": 0,
+            "area_names": [],
+            "management_units": [],
+            "representative_issue": None,
+            "ai_generated": False,
+        }
+
+    station_ids = {
+        issue.get("station_id") or issue.get("station_name")
+        for issue in selected
+        if issue.get("station_id") or issue.get("station_name")
+    }
+    area_names = list(OrderedDict.fromkeys(
+        issue["area_name"] for issue in selected if issue.get("area_name")
+    ))
+    management_units = list(OrderedDict.fromkeys(
+        issue["management_unit"] for issue in selected if issue.get("management_unit")
+    ))
+    representative_issue = next(
+        (issue for issue in selected if issue.get("issue_photo")),
+        selected[0],
+    )
+    return {
+        "title": str((ai_entry or {}).get("title") or "").strip()
+        or (local_entry or {}).get("title")
+        or selected[0]["inspection_item"],
+        "summary": str((ai_entry or {}).get("summary") or "").strip()
+        or (local_entry or {}).get("summary")
+        or "",
+        "issue_count": len(selected),
+        "station_count": len(station_ids),
+        "percentage": round(len(selected) / len(issues) * 100, 1) if issues else 0,
+        "area_names": area_names,
+        "management_units": management_units,
+        "representative_issue": representative_issue,
+        "ai_generated": ai_generated,
+    }
+
+
+def build_equipment_deep_analysis(
+    issues,
+    area_distribution,
+    item_distribution,
+    ai_result,
+):
+    top_areas = join_chinese_list([item["name"] for item in area_distribution[:3]]) or "设备设施重点区域"
+    top_items = join_chinese_list([item["name"] for item in item_distribution[:3]]) or "重点检查事项"
+    local_analysis = [
+        {
+            "title": "高频问题分布较集中",
+            "content": f"本月设备设施问题主要集中在{top_areas}，涉及{top_items}，应结合发生频次和风险程度安排专项复查。",
+            "ai_generated": False,
+        },
+        {
+            "title": "日常维护仍有薄弱点",
+            "content": "部分问题反映站点设备巡查、预防性维护和异常处置不够及时，现场管理标准仍需进一步落实。",
+            "ai_generated": False,
+        },
+        {
+            "title": "监督闭环需要加强",
+            "content": "片区和专业条线应加强高频问题复核，对重复发生的问题明确整改责任和验证标准。",
+            "ai_generated": False,
+        },
+    ] if issues else []
+    local_suggestions = [
+        {
+            "title": "开展重点区域专项排查",
+            "content": f"围绕{top_areas}组织专项排查，逐项核对设备状态、维护记录和现场防护措施。",
+            "ai_generated": False,
+        },
+        {
+            "title": "强化高频事项预防维护",
+            "content": f"将{top_items}纳入日常巡检重点，建立周期性维护和异常问题快速处置机制。",
+            "ai_generated": False,
+        },
+        {
+            "title": "落实整改复核闭环",
+            "content": "对本月问题建立整改清单，明确责任人和完成时限，由片区复核整改质量并跟踪重复问题。",
+            "ai_generated": False,
+        },
+    ] if issues else []
+    ai_payload = (ai_result or {}).get("payload")
+    problem_analysis = normalize_safety_quality_ai_text_items(
+        ai_payload.get("problem_analysis") if isinstance(ai_payload, dict) else None,
+        local_analysis,
+    )
+    work_suggestions = normalize_safety_quality_ai_text_items(
+        ai_payload.get("work_suggestions") if isinstance(ai_payload, dict) else None,
+        local_suggestions,
+    )
+    typical_finding = build_equipment_typical_finding(
+        issues,
+        item_distribution,
+        ai_payload,
+    )
+    return {
+        "ai_generated": bool(
+            typical_finding.get("ai_generated")
+            or any(item.get("ai_generated") for item in problem_analysis)
+            or any(item.get("ai_generated") for item in work_suggestions)
+        ),
+        "ai_message": (ai_result or {}).get("message") or "",
+        "typical_finding": typical_finding,
+        "problem_analysis": problem_analysis,
+        "work_suggestions": work_suggestions,
+    }
+
+
+def build_equipment_facilities_report_payload(month_start, issue_rows, inspection_rows):
+    issues = [serialize_equipment_report_issue(row) for row in issue_rows]
+    overview = build_equipment_overview(issues, inspection_rows, month_start)
+    area_distribution = build_finance_distribution(issues, "area_name")
+    item_distribution = build_finance_distribution(issues, "inspection_item")
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "title": f"{month_start.month}月设备设施检查报告",
+        "target_tables": [EQUIPMENT_FACILITIES_REPORT_TABLE],
+        "data_scope_note": EQUIPMENT_FACILITIES_REPORT_SOURCE_NOTE,
+        "summary": {
+            "date_from": overview["date_from"],
+            "date_to": overview["date_to"],
+            "date_range": overview["date_range"],
+            "unit_count": overview["unit_count"],
+            "station_count": overview["station_count"],
+            "total_issue_count": overview["total_issue_count"],
+            "average_issue_count": overview["average_issue_count"],
+            "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
+        },
+        "overview_text": overview["overview_text"],
+        "region_text": overview["region_text"],
+        "region_rows": overview["region_rows"],
+        "station_ranking": overview["station_ranking"],
+        "area_distribution": area_distribution,
+        "area_distribution_text": build_finance_distribution_text(
+            "所属区域",
+            area_distribution,
+        ),
+        "item_distribution": item_distribution,
+        "item_distribution_text": build_finance_distribution_text(
+            "检查事项",
+            item_distribution,
+        ),
     }, issues
 
 
@@ -24852,6 +25240,233 @@ def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_k
         close_db_resources(cur, conn)
 
 
+def generate_equipment_facilities_report_job(
+    task_id,
+    user_id,
+    report_month,
+    snapshot_scope_key,
+):
+    month_start, month_end = parse_report_month(report_month)
+    conn = None
+    cur = None
+    issue_rows = []
+    inspection_rows = []
+    user = None
+    try:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            12,
+            "正在读取设备设施已完成巡检记录和审核通过问题",
+        )
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if not has_permission(cur, user, "view_inspection_reports"):
+            raise PermissionError("当前账号无权生成巡检报告。")
+
+        issue_where_clauses = [
+            "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') = %s",
+            "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+            "COALESCE(i.audit_status, 'pending') = 'approved'",
+        ]
+        issue_params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            EQUIPMENT_FACILITIES_REPORT_TABLE,
+        ]
+        issue_table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            issue_where_clauses,
+            issue_params,
+            "i.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        issue_region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            issue_where_clauses,
+            issue_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        if issue_table_scope_allowed and issue_region_scope_allowed:
+            issue_where_clause = f"WHERE {' AND '.join(issue_where_clauses)}"
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        i.id,
+                        i.station_id,
+                        s.station_name,
+                        s.region,
+                        s.address,
+                        t.table_name,
+                        i.standard_id,
+                        i.standard_detail_text,
+                        i.description,
+                        i.photo_path AS issue_photo,
+                        COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+                    FROM issues i
+                    JOIN inspections ins ON i.inspection_id = ins.id
+                    JOIN stations s ON i.station_id = s.id
+                    JOIN inspection_tables t ON i.inspection_table_id = t.id
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
+                        s.region ASC NULLS LAST,
+                        s.station_name ASC,
+                        i.id ASC;
+                    """
+                ).format(where_clause=sql.SQL(issue_where_clause)),
+                issue_params,
+            )
+            issue_rows = [dict(row) for row in cur.fetchall()]
+
+        inspection_where_clauses = [
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') = %s",
+            "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+        ]
+        inspection_params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            EQUIPMENT_FACILITIES_REPORT_TABLE,
+        ]
+        inspection_table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            inspection_where_clauses,
+            inspection_params,
+            "ins.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        inspection_region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            inspection_where_clauses,
+            inspection_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        if inspection_table_scope_allowed and inspection_region_scope_allowed:
+            inspection_where_clause = f"WHERE {' AND '.join(inspection_where_clauses)}"
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        ins.id AS inspection_id,
+                        ins.station_id,
+                        s.station_name,
+                        s.region,
+                        s.address,
+                        COALESCE(ins.inspection_date::date, ins.created_at::date) AS report_date
+                    FROM inspections ins
+                    JOIN stations s ON ins.station_id = s.id
+                    JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(ins.inspection_date::date, ins.created_at::date) ASC,
+                        s.region ASC NULLS LAST,
+                        s.station_name ASC,
+                        ins.id ASC;
+                    """
+                ).format(where_clause=sql.SQL(inspection_where_clause)),
+                inspection_params,
+            )
+            inspection_rows = [dict(row) for row in cur.fetchall()]
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        38,
+        (
+            f"已汇总 {len(inspection_rows)} 条已完成巡检记录和 "
+            f"{len(issue_rows)} 条审核通过问题，正在统计片区、站点和问题分类"
+        ),
+    )
+    report, equipment_issues = build_equipment_facilities_report_payload(
+        month_start,
+        issue_rows,
+        inspection_rows,
+    )
+    insight_result = None
+    if equipment_issues:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            52,
+            "正在调用 DeepSeek 识别高频典型问题并生成分析建议",
+        )
+        ai_context = build_equipment_report_ai_context(
+            month_start,
+            equipment_issues,
+            report.get("area_distribution") or [],
+            report.get("item_distribution") or [],
+        )
+        insight_result = generate_equipment_facilities_report_insights(ai_context)
+    else:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            72,
+            "当前月份暂无审核通过问题，正在生成基础统计报告",
+        )
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        84,
+        "AI 分析已完成，正在编排设备设施检查报告五个章节",
+    )
+    report["deep_analysis"] = build_equipment_deep_analysis(
+        equipment_issues,
+        report.get("area_distribution") or [],
+        report.get("item_distribution") or [],
+        insight_result,
+    )
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if equipment_issues and insight_result:
+            record_ai_usage_log(
+                cur,
+                user,
+                insight_result,
+                "AI报告生成",
+                "设备设施检查报告分析",
+                f"{report.get('month_label')} · 问题{len(equipment_issues)}项",
+            )
+        save_inspection_report_snapshot(
+            cur,
+            REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
+            report_month,
+            snapshot_scope_key,
+            report,
+            user,
+        )
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+
 def run_inspection_report_generation_job(task_id):
     conn = None
     cur = None
@@ -24882,6 +25497,13 @@ def run_inspection_report_generation_job(task_id):
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_FINANCE:
             generate_finance_report_job(
+                task_id,
+                job.get("requested_by"),
+                job.get("report_month"),
+                job.get("scope_key"),
+            )
+        elif report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
+            generate_equipment_facilities_report_job(
                 task_id,
                 job.get("requested_by"),
                 job.get("report_month"),
