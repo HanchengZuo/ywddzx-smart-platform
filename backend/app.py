@@ -729,7 +729,14 @@ PERMISSION_CATALOG = [
         "key": "view_inspection_reports",
         "name": "查看页面",
         "category": "AI报告生成",
-        "description": "访问AI报告生成页面，查看和重新生成月度监督检查报告。",
+        "description": "访问AI报告生成页面，查看已生成的月度监督检查报告。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "generate_inspection_reports",
+        "name": "生成AI报告",
+        "category": "AI报告生成",
+        "description": "生成或重新生成月度监督检查报告；未授权账号只能查看已有报告。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -923,6 +930,7 @@ PERMISSION_DEPENDENCIES = {
     "adjust_station_scores": "view_station_scores",
     "reset_station_account_password": "manage_stations",
     "manage_peer_review_tasks": "view_peer_reviews",
+    "generate_inspection_reports": "view_inspection_reports",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -7359,6 +7367,17 @@ def attach_report_snapshot_meta(report, snapshot_row=None, cached=False, generat
     return normalized_report
 
 
+def is_inspection_report_snapshot_current(report_type, payload):
+    expected_policy_versions = {
+        REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT: QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION,
+        REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY: SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION,
+        REPORT_SNAPSHOT_TYPE_FINANCE: FINANCE_REPORT_DATA_POLICY_VERSION,
+        REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES: EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION,
+    }
+    expected_version = expected_policy_versions.get(report_type)
+    return not expected_version or payload.get("data_policy_version") == expected_version
+
+
 def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
     if not report_snapshot_table_available(cur):
         return None
@@ -7382,25 +7401,35 @@ def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
     payload = normalize_report_snapshot_payload(row.get("report_payload"))
     if not payload:
         return None
-    if (
-        report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
-        and payload.get("data_policy_version") != QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION
-    ):
+    if not is_inspection_report_snapshot_current(report_type, payload):
         return None
-    if (
-        report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY
-        and payload.get("data_policy_version") != SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION
-    ):
+    return attach_report_snapshot_meta(payload, row, cached=True)
+
+
+def get_latest_inspection_report_snapshot(cur, report_type, report_month):
+    if not report_snapshot_table_available(cur):
         return None
-    if (
-        report_type == REPORT_SNAPSHOT_TYPE_FINANCE
-        and payload.get("data_policy_version") != FINANCE_REPORT_DATA_POLICY_VERSION
-    ):
+    cur.execute(
+        """
+        SELECT
+            report_payload,
+            generated_by_name,
+            generated_at
+        FROM inspection_report_snapshots
+        WHERE report_type = %s
+          AND report_month = %s
+        ORDER BY generated_at DESC, updated_at DESC
+        LIMIT 1;
+        """,
+        (report_type, report_month),
+    )
+    row = cur.fetchone()
+    if not row:
         return None
-    if (
-        report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES
-        and payload.get("data_policy_version") != EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION
-    ):
+    payload = normalize_report_snapshot_payload(row.get("report_payload"))
+    if not payload:
+        return None
+    if not is_inspection_report_snapshot_current(report_type, payload):
         return None
     return attach_report_snapshot_meta(payload, row, cached=True)
 
@@ -25601,10 +25630,11 @@ def get_inspection_report_types():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur)
         return jsonify({
             "success": True,
             "report_types": list(INSPECTION_REPORT_TYPE_CONFIGS.values()),
+            "can_generate": has_permission(cur, user, "generate_inspection_reports"),
         })
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -25634,13 +25664,14 @@ def get_inspection_report_status():
         report = None
         job = None
         if config.get("template_ready"):
-            report = get_inspection_report_snapshot(cur, report_type, report_month, snapshot_scope_key)
+            report = get_latest_inspection_report_snapshot(cur, report_type, report_month)
             job = get_active_inspection_report_job(cur, report_type, report_month, snapshot_scope_key)
         return jsonify({
             "success": True,
             "report_type": config,
             "report": report,
             "job": serialize_inspection_report_job(job),
+            "can_generate": has_permission(cur, user, "generate_inspection_reports"),
         })
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -25670,6 +25701,8 @@ def create_inspection_report_generation_job():
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
+        if not has_permission(cur, user, "generate_inspection_reports"):
+            raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
@@ -25754,6 +25787,8 @@ def get_quality_measurement_report_summary():
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
+        if not has_permission(cur, user, "generate_inspection_reports"):
+            raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
@@ -25774,6 +25809,10 @@ def get_quality_measurement_report_summary():
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 503
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
     except Exception as exc:
         if conn:
             conn.rollback()

@@ -14,11 +14,15 @@
         <button
           type="button"
           class="regenerate-report-btn"
-          :disabled="loading || templateUnavailable"
+          :disabled="loading || templateUnavailable || !canGenerateReports"
+          :title="!canGenerateReports ? '当前账号只有查看权限' : ''"
           @click="startGeneration({ force: true })"
         >
-          {{ templateUnavailable ? '模板待配置' : '重新生成' }}
+          {{ templateUnavailable ? '模板待配置' : (canGenerateReports ? '重新生成' : '只读查看') }}
         </button>
+        <small v-if="!canGenerateReports" class="report-readonly-note">
+          当前账号可查看已有报告，生成权限需由管理员分配。
+        </small>
       </div>
     </section>
 
@@ -1168,7 +1172,8 @@
     <section v-else class="state-card card-surface">
       <div class="state-orb"></div>
       <h3>暂未生成报告</h3>
-      <p>点击重新生成，后台会开始整理当前月份的巡检数据。</p>
+      <p v-if="canGenerateReports">点击重新生成，后台会开始整理当前月份的巡检数据。</p>
+      <p v-else>当前月份暂无已生成报告，请等待有生成权限的账号完成生成。</p>
     </section>
 
     <teleport to="body">
@@ -1183,6 +1188,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
+
+const currentRole = localStorage.getItem('user_role') || ''
+let storedPermissions = {}
+try {
+  storedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
+} catch {
+  storedPermissions = {}
+}
 
 const DEFAULT_REPORT_TYPES = [
   {
@@ -1271,6 +1284,9 @@ const reportTypes = ref(DEFAULT_REPORT_TYPES)
 const loading = ref(false)
 const error = ref('')
 const activeJob = ref(null)
+const canGenerateReports = ref(
+  currentRole === 'root' || Boolean(storedPermissions.generate_inspection_reports)
+)
 const imagePreview = ref({
   visible: false,
   src: '',
@@ -1791,7 +1807,7 @@ const pollActiveJob = async () => {
 }
 
 const startGeneration = async (options = {}) => {
-  if (!selectedMonth.value || templateUnavailable.value) return
+  if (!selectedMonth.value || templateUnavailable.value || !canGenerateReports.value) return
   const requestId = ++contextRequestId
   clearPolling()
   loading.value = true
@@ -1851,6 +1867,7 @@ const loadReportState = async ({ autoStart = true } = {}) => {
     if (!response.data?.success) {
       throw new Error(response.data?.error || '读取报告状态失败。')
     }
+    canGenerateReports.value = Boolean(response.data?.can_generate)
     report.value = response.data?.report || createEmptyReport()
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
@@ -1858,7 +1875,7 @@ const loadReportState = async ({ autoStart = true } = {}) => {
       return
     }
     loading.value = false
-    if (!response.data?.report && autoStart) {
+    if (!response.data?.report && autoStart && canGenerateReports.value) {
       await startGeneration()
     }
   } catch (err) {
@@ -1885,6 +1902,7 @@ const loadReportTypes = async () => {
     const response = await axios.get('/api/inspection-reports/types')
     if (response.data?.success && Array.isArray(response.data.report_types) && response.data.report_types.length) {
       reportTypes.value = response.data.report_types
+      canGenerateReports.value = Boolean(response.data?.can_generate)
     }
   } catch {
     reportTypes.value = DEFAULT_REPORT_TYPES
@@ -2000,6 +2018,14 @@ onBeforeUnmount(() => {
 .regenerate-report-btn:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.report-readonly-note {
+  display: block;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: center;
 }
 
 .report-type-panel {

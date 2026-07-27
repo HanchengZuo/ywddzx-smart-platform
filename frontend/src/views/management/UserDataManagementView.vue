@@ -789,7 +789,8 @@ const dependentPermissionMap = {
   edit_own_certificates: 'view_own_certificates',
   adjust_station_scores: 'view_station_scores',
   reset_station_account_password: 'manage_stations',
-  manage_peer_review_tasks: 'view_peer_reviews'
+  manage_peer_review_tasks: 'view_peer_reviews',
+  generate_inspection_reports: 'view_inspection_reports'
 }
 
 const anyDependentPermissionMap = {
