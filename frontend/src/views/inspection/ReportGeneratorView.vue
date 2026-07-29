@@ -18,7 +18,7 @@
           :title="!canGenerateReports ? '当前账号只有查看权限' : ''"
           @click="startGeneration({ force: true })"
         >
-          {{ templateUnavailable ? '模板待配置' : (canGenerateReports ? '重新生成' : '只读查看') }}
+          {{ templateUnavailable ? '模板待配置' : (canGenerateReports ? (hasReport ? '重新生成' : '生成报告') : '只读查看') }}
         </button>
         <small v-if="!canGenerateReports" class="report-readonly-note">
           当前账号可查看已有报告，生成权限需由管理员分配。
@@ -49,6 +49,77 @@
             <span>关联检查表</span>
             <em v-for="tableName in item.target_tables" :key="`${item.key}-${tableName}`">{{ tableName }}</em>
           </div>
+        </button>
+      </div>
+    </section>
+
+    <section v-if="!templateUnavailable" class="report-source-panel card-surface">
+      <div class="report-source-main">
+        <div class="report-source-icon" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="report-source-copy">
+          <span class="source-panel-kicker">DATA SOURCE</span>
+          <div class="source-panel-title-row">
+            <h3>本次报告数据来源</h3>
+            <span :class="['source-mode-badge', sourceSelectionMode]">
+              {{ sourceSelectionMode === 'custom' ? '自定义范围' : '全部可用站点' }}
+            </span>
+          </div>
+          <p v-if="sourceLoading">正在核对当前月份可用于报告的站点数据...</p>
+          <p v-else-if="sourceError" class="source-inline-error">{{ sourceError }}</p>
+          <p v-else>
+            {{ sourceSelectionDescription }}
+          </p>
+          <div v-if="sourceSelectionMode === 'custom' && selectedSourceStations.length" class="source-station-preview">
+            <span
+              v-for="station in selectedSourceStations.slice(0, 6)"
+              :key="`source-preview-${station.station_id}`"
+            >
+              {{ station.station_name }}
+            </span>
+            <em v-if="selectedSourceStations.length > 6">
+              另有 {{ selectedSourceStations.length - 6 }} 个
+            </em>
+          </div>
+          <div v-if="sourceSelectionDirty" class="source-dirty-note">
+            数据范围已调整，重新生成报告后生效。
+          </div>
+        </div>
+      </div>
+      <div class="report-source-actions">
+        <div class="source-summary-grid">
+          <div>
+            <span>站点</span>
+            <strong>{{ effectiveSourceSummary.station_count }}</strong>
+          </div>
+          <div>
+            <span>片区</span>
+            <strong>{{ effectiveSourceSummary.region_count }}</strong>
+          </div>
+          <div>
+            <span>问题</span>
+            <strong>{{ effectiveSourceSummary.issue_count }}</strong>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="source-configure-btn"
+          :disabled="sourceLoading"
+          @click="openSourceDialog"
+        >
+          {{ canGenerateReports ? '设置数据来源' : '查看数据来源' }}
+        </button>
+        <button
+          v-if="canGenerateReports && sourceSelectionDirty"
+          type="button"
+          class="source-apply-generate-btn"
+          :disabled="loading || sourceLoading"
+          @click="startGeneration({ force: true })"
+        >
+          按此范围生成
         </button>
       </div>
     </section>
@@ -1177,6 +1248,138 @@
     </section>
 
     <teleport to="body">
+      <div v-if="sourceDialogVisible" class="report-source-dialog-layer">
+        <section class="report-source-dialog" role="dialog" aria-modal="true" aria-label="设置报告数据来源">
+          <button type="button" class="source-dialog-close" aria-label="关闭" @click="closeSourceDialog">×</button>
+          <header class="source-dialog-head">
+            <div>
+              <span>REPORT DATA SCOPE</span>
+              <h3>{{ canGenerateReports ? '设置报告数据来源' : '查看报告数据来源' }}</h3>
+              <p>候选站点已按报告模板、月份和当前账号权限自动筛选。</p>
+            </div>
+            <div class="source-dialog-total">
+              <strong>{{ sourceStations.length }}</strong>
+              <span>个可用站点</span>
+            </div>
+          </header>
+
+          <div class="source-mode-switch">
+            <button
+              type="button"
+              :class="{ active: sourceDraftMode === 'all' }"
+              :disabled="!canGenerateReports"
+              @click="setSourceDraftMode('all')"
+            >
+              <strong>全部可用站点</strong>
+              <span>自动包含当前月份全部可统计站点</span>
+            </button>
+            <button
+              type="button"
+              :class="{ active: sourceDraftMode === 'custom' }"
+              :disabled="!canGenerateReports"
+              @click="setSourceDraftMode('custom')"
+            >
+              <strong>自定义选择</strong>
+              <span>按片区或站点精确控制报告数据</span>
+            </button>
+          </div>
+
+          <div class="source-dialog-toolbar">
+            <label class="source-search-box">
+              <span aria-hidden="true"></span>
+              <input v-model.trim="sourceKeyword" type="search" placeholder="搜索站点名称或片区" />
+            </label>
+            <select v-model="sourceRegionFilter">
+              <option value="">全部片区</option>
+              <option v-for="region in sourceRegions" :key="region" :value="region">{{ region }}</option>
+            </select>
+            <label class="source-selected-toggle">
+              <input v-model="sourceOnlySelected" type="checkbox" />
+              <span>只看已选</span>
+            </label>
+          </div>
+
+          <div class="source-dialog-batch">
+            <div>
+              <strong>
+                {{ sourceDraftMode === 'all' ? sourceStations.length : sourceDraftIds.length }}
+              </strong>
+              <span>个站点将纳入报告</span>
+            </div>
+            <div v-if="canGenerateReports && sourceDraftMode === 'custom'">
+              <button type="button" @click="selectVisibleSourceStations">全选当前结果</button>
+              <button type="button" @click="invertVisibleSourceStations">反选当前结果</button>
+              <button type="button" class="danger" @click="sourceDraftIds = []">清空</button>
+            </div>
+          </div>
+
+          <div class="source-station-list">
+            <div v-if="!filteredSourceStations.length" class="source-list-empty">
+              当前筛选条件下没有站点。
+            </div>
+            <section
+              v-for="group in groupedSourceStations"
+              :key="`source-region-${group.region}`"
+              class="source-region-group"
+            >
+              <div class="source-region-head">
+                <strong>{{ group.region }}</strong>
+                <span>{{ group.stations.length }} 个站点</span>
+              </div>
+              <div class="source-station-grid">
+                <label
+                  v-for="station in group.stations"
+                  :key="`source-station-${station.station_id}`"
+                  :class="[
+                    'source-station-option',
+                    {
+                      selected: isDraftSourceStationSelected(station.station_id),
+                      readonly: !canGenerateReports || sourceDraftMode === 'all'
+                    }
+                  ]"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="isDraftSourceStationSelected(station.station_id)"
+                    :disabled="!canGenerateReports || sourceDraftMode === 'all'"
+                    @change="toggleDraftSourceStation(station.station_id)"
+                  />
+                  <span class="source-checkbox-mark"></span>
+                  <span class="source-station-info">
+                    <strong>{{ station.station_name }}</strong>
+                    <small>
+                      {{ station.inspection_count }} 条巡检记录 · {{ station.issue_count }} 项问题
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </section>
+          </div>
+
+          <footer class="source-dialog-footer">
+            <p v-if="sourceDraftMode === 'custom' && !sourceDraftIds.length">
+              自定义范围至少保留一个站点。
+            </p>
+            <p v-else>
+              当前选择不会修改原始巡检数据，只影响下一次报告生成。
+            </p>
+            <div>
+              <button type="button" class="source-cancel-btn" @click="closeSourceDialog">
+                {{ canGenerateReports ? '取消' : '关闭' }}
+              </button>
+              <button
+                v-if="canGenerateReports"
+                type="button"
+                class="source-confirm-btn"
+                :disabled="sourceDraftMode === 'custom' && !sourceDraftIds.length"
+                @click="applySourceSelection"
+              >
+                应用选择
+              </button>
+            </div>
+          </footer>
+        </section>
+      </div>
       <div v-if="imagePreview.visible" class="report-image-preview" @click.self="closeImagePreview">
         <img :src="imagePreview.src" :alt="imagePreview.title || '问题照片预览'" />
       </div>
@@ -1252,6 +1455,7 @@ const createEmptyReport = () => ({
   title: '',
   target_tables: [],
   data_scope_note: '',
+  source_selection: {},
   summary: {},
   overview_text: '',
   finding_summary: {},
@@ -1293,6 +1497,17 @@ const imagePreview = ref({
   title: ''
 })
 const report = ref(createEmptyReport())
+const sourceStations = ref([])
+const sourceLoading = ref(false)
+const sourceError = ref('')
+const sourceSelectionMode = ref('all')
+const selectedSourceStationIds = ref([])
+const sourceDialogVisible = ref(false)
+const sourceDraftMode = ref('all')
+const sourceDraftIds = ref([])
+const sourceKeyword = ref('')
+const sourceRegionFilter = ref('')
+const sourceOnlySelected = ref(false)
 let pollTimer = null
 let contextRequestId = 0
 
@@ -1321,6 +1536,65 @@ const generationStageMessage = computed(() => (
 ))
 
 const reportSnapshot = computed(() => report.value.snapshot || {})
+const reportSourceSelection = computed(() => report.value.source_selection || {})
+const sourceRegions = computed(() => (
+  [...new Set(sourceStations.value.map((item) => item.region).filter(Boolean))]
+))
+const selectedSourceStations = computed(() => {
+  if (sourceSelectionMode.value === 'all') return sourceStations.value
+  const selectedIds = new Set(selectedSourceStationIds.value.map(Number))
+  return sourceStations.value.filter((item) => selectedIds.has(Number(item.station_id)))
+})
+const effectiveSourceSummary = computed(() => {
+  const stations = selectedSourceStations.value
+  return {
+    station_count: stations.length,
+    region_count: new Set(stations.map((item) => item.region).filter(Boolean)).size,
+    issue_count: stations.reduce((total, item) => total + Number(item.issue_count || 0), 0),
+    inspection_count: stations.reduce((total, item) => total + Number(item.inspection_count || 0), 0)
+  }
+})
+const sourceSelectionDescription = computed(() => {
+  const summary = effectiveSourceSummary.value
+  if (!sourceStations.value.length) return '当前月份暂无符合报告口径的可用站点数据。'
+  if (sourceSelectionMode.value === 'custom') {
+    return `已选择 ${summary.station_count} 个站点，覆盖 ${summary.region_count} 个片区；下一次生成只统计这些站点。`
+  }
+  return `使用当前月份全部 ${summary.station_count} 个可用站点，覆盖 ${summary.region_count} 个片区。`
+})
+const sourceSelectionDirty = computed(() => {
+  if (!hasReport.value) return false
+  const savedMode = reportSourceSelection.value.mode === 'custom' ? 'custom' : 'all'
+  if (savedMode !== sourceSelectionMode.value) return true
+  if (savedMode !== 'custom') return false
+  const savedIds = [...(reportSourceSelection.value.station_ids || [])].map(Number).sort((a, b) => a - b)
+  const currentIds = [...selectedSourceStationIds.value].map(Number).sort((a, b) => a - b)
+  return JSON.stringify(savedIds) !== JSON.stringify(currentIds)
+})
+const filteredSourceStations = computed(() => {
+  const keyword = sourceKeyword.value.toLowerCase()
+  const selectedIds = new Set(sourceDraftIds.value.map(Number))
+  return sourceStations.value.filter((item) => {
+    if (sourceRegionFilter.value && item.region !== sourceRegionFilter.value) return false
+    if (sourceOnlySelected.value && sourceDraftMode.value === 'custom' && !selectedIds.has(Number(item.station_id))) {
+      return false
+    }
+    if (!keyword) return true
+    return `${item.station_name} ${item.region}`.toLowerCase().includes(keyword)
+  })
+})
+const groupedSourceStations = computed(() => {
+  const groups = []
+  filteredSourceStations.value.forEach((station) => {
+    let group = groups.find((item) => item.region === station.region)
+    if (!group) {
+      group = { region: station.region || '未设置片区', stations: [] }
+      groups.push(group)
+    }
+    group.stations.push(station)
+  })
+  return groups
+})
 const reportGeneratedAt = computed(() => (
   reportSnapshot.value.generated_at
   || report.value.summary?.generated_at
@@ -1762,6 +2036,120 @@ const closeImagePreview = () => {
   }
 }
 
+const normalizeSourceIds = (values) => (
+  [...new Set((values || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
+    .sort((a, b) => a - b)
+)
+
+const syncSourceSelection = (savedSelection = {}, jobOptions = {}) => {
+  const options = jobOptions && typeof jobOptions === 'object' ? jobOptions : {}
+  const selection = savedSelection && typeof savedSelection === 'object' ? savedSelection : {}
+  const hasActiveCustomSelection = Boolean(options.station_filter_enabled)
+  const mode = hasActiveCustomSelection
+    ? 'custom'
+    : (selection.mode === 'custom' ? 'custom' : 'all')
+  const candidateIds = hasActiveCustomSelection
+    ? options.station_ids
+    : selection.station_ids
+  const availableIds = new Set(sourceStations.value.map((item) => Number(item.station_id)))
+  const ids = normalizeSourceIds(candidateIds).filter((stationId) => availableIds.has(stationId))
+  sourceSelectionMode.value = mode === 'custom' && ids.length ? 'custom' : 'all'
+  selectedSourceStationIds.value = sourceSelectionMode.value === 'custom' ? ids : []
+}
+
+const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId = contextRequestId) => {
+  sourceLoading.value = true
+  sourceError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/source-options', {
+      params: {
+        report_type: selectedReportType.value,
+        month: selectedMonth.value
+      }
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) {
+      throw new Error(response.data?.error || '读取报告数据来源失败。')
+    }
+    sourceStations.value = Array.isArray(response.data?.stations) ? response.data.stations : []
+    syncSourceSelection(savedSelection, jobOptions)
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    sourceStations.value = []
+    sourceSelectionMode.value = 'all'
+    selectedSourceStationIds.value = []
+    sourceError.value = err?.response?.data?.error || err?.message || '读取报告数据来源失败。'
+  } finally {
+    if (requestId === contextRequestId) sourceLoading.value = false
+  }
+}
+
+const openSourceDialog = () => {
+  sourceDraftMode.value = sourceSelectionMode.value
+  sourceDraftIds.value = sourceSelectionMode.value === 'custom'
+    ? [...selectedSourceStationIds.value]
+    : sourceStations.value.map((item) => Number(item.station_id))
+  sourceKeyword.value = ''
+  sourceRegionFilter.value = ''
+  sourceOnlySelected.value = false
+  sourceDialogVisible.value = true
+}
+
+const closeSourceDialog = () => {
+  sourceDialogVisible.value = false
+}
+
+const setSourceDraftMode = (mode) => {
+  if (!canGenerateReports.value) return
+  sourceDraftMode.value = mode === 'custom' ? 'custom' : 'all'
+  if (sourceDraftMode.value === 'custom' && !sourceDraftIds.value.length) {
+    sourceDraftIds.value = sourceStations.value.map((item) => Number(item.station_id))
+  }
+}
+
+const isDraftSourceStationSelected = (stationId) => (
+  sourceDraftMode.value === 'all'
+  || sourceDraftIds.value.map(Number).includes(Number(stationId))
+)
+
+const toggleDraftSourceStation = (stationId) => {
+  if (!canGenerateReports.value || sourceDraftMode.value !== 'custom') return
+  const targetId = Number(stationId)
+  const selectedIds = new Set(sourceDraftIds.value.map(Number))
+  if (selectedIds.has(targetId)) selectedIds.delete(targetId)
+  else selectedIds.add(targetId)
+  sourceDraftIds.value = [...selectedIds].sort((a, b) => a - b)
+}
+
+const selectVisibleSourceStations = () => {
+  const selectedIds = new Set(sourceDraftIds.value.map(Number))
+  filteredSourceStations.value.forEach((item) => selectedIds.add(Number(item.station_id)))
+  sourceDraftIds.value = [...selectedIds].sort((a, b) => a - b)
+}
+
+const invertVisibleSourceStations = () => {
+  const selectedIds = new Set(sourceDraftIds.value.map(Number))
+  filteredSourceStations.value.forEach((item) => {
+    const stationId = Number(item.station_id)
+    if (selectedIds.has(stationId)) selectedIds.delete(stationId)
+    else selectedIds.add(stationId)
+  })
+  sourceDraftIds.value = [...selectedIds].sort((a, b) => a - b)
+}
+
+const applySourceSelection = () => {
+  if (!canGenerateReports.value) {
+    closeSourceDialog()
+    return
+  }
+  if (sourceDraftMode.value === 'custom' && !sourceDraftIds.value.length) return
+  sourceSelectionMode.value = sourceDraftMode.value
+  selectedSourceStationIds.value = sourceDraftMode.value === 'custom'
+    ? normalizeSourceIds(sourceDraftIds.value)
+    : []
+  closeSourceDialog()
+}
+
 const clearPolling = () => {
   if (pollTimer) {
     window.clearTimeout(pollTimer)
@@ -1820,7 +2208,13 @@ const startGeneration = async (options = {}) => {
     const response = await axios.post('/api/inspection-reports/generate', {
       report_type: selectedReportType.value,
       month: selectedMonth.value,
-      force: options?.force === true
+      force: options?.force === true,
+      generation_options: {
+        station_filter_enabled: sourceSelectionMode.value === 'custom',
+        station_ids: sourceSelectionMode.value === 'custom'
+          ? selectedSourceStationIds.value
+          : []
+      }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) {
@@ -1828,6 +2222,7 @@ const startGeneration = async (options = {}) => {
     }
     if (response.data?.report && !response.data?.job) {
       report.value = response.data.report
+      syncSourceSelection(report.value.source_selection || {}, {})
       activeJob.value = null
       loading.value = false
       return
@@ -1845,13 +2240,16 @@ const startGeneration = async (options = {}) => {
   }
 }
 
-const loadReportState = async ({ autoStart = true } = {}) => {
+const loadReportState = async () => {
   const requestId = ++contextRequestId
   clearPolling()
   activeJob.value = null
   error.value = ''
   if (templateUnavailable.value) {
     report.value = createEmptyReport()
+    sourceStations.value = []
+    sourceSelectionMode.value = 'all'
+    selectedSourceStationIds.value = []
     loading.value = false
     return
   }
@@ -1869,15 +2267,18 @@ const loadReportState = async ({ autoStart = true } = {}) => {
     }
     canGenerateReports.value = Boolean(response.data?.can_generate)
     report.value = response.data?.report || createEmptyReport()
+    await loadSourceOptions(
+      response.data?.report?.source_selection || {},
+      response.data?.job?.generation_options || {},
+      requestId
+    )
+    if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
       scheduleJobPoll()
       return
     }
     loading.value = false
-    if (!response.data?.report && autoStart && canGenerateReports.value) {
-      await startGeneration()
-    }
   } catch (err) {
     if (requestId !== contextRequestId) return
     loading.value = false
@@ -1889,11 +2290,13 @@ const selectReportType = async (reportType) => {
   if (selectedReportType.value === reportType) return
   selectedReportType.value = reportType
   report.value = createEmptyReport()
+  sourceStations.value = []
   await loadReportState()
 }
 
 const handleReportContextChange = async () => {
   report.value = createEmptyReport()
+  sourceStations.value = []
   await loadReportState()
 }
 
@@ -2162,6 +2565,609 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-style: normal;
   line-height: 1.4;
+}
+
+.report-source-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 24px;
+  border-radius: 24px;
+  border-color: rgba(20, 184, 166, 0.24);
+  background:
+    radial-gradient(circle at 6% 20%, rgba(20, 184, 166, 0.13), transparent 32%),
+    linear-gradient(135deg, #f8fffd 0%, #ffffff 58%, #f0fdfa 100%);
+}
+
+.report-source-main {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.report-source-icon {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  border-radius: 18px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  background: linear-gradient(145deg, #0f766e, #14b8a6);
+  box-shadow: 0 12px 24px rgba(13, 148, 136, 0.2);
+}
+
+.report-source-icon span {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.report-source-icon span:nth-child(2) {
+  width: 70%;
+}
+
+.report-source-icon span:nth-child(3) {
+  width: 86%;
+}
+
+.report-source-copy {
+  min-width: 0;
+}
+
+.source-panel-kicker {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.source-panel-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 5px;
+}
+
+.source-panel-title-row h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.source-mode-badge {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.source-mode-badge.custom {
+  color: #0f766e;
+  background: #ccfbf1;
+}
+
+.report-source-copy > p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.report-source-copy .source-inline-error {
+  color: #b91c1c;
+}
+
+.source-station-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.source-station-preview span {
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #115e59;
+  background: rgba(204, 251, 241, 0.74);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.source-station-preview em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.source-dirty-note {
+  width: fit-content;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  color: #9a3412;
+  background: #ffedd5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.report-source-actions {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.source-summary-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(62px, 1fr));
+  gap: 8px;
+}
+
+.source-summary-grid > div {
+  padding: 9px 10px;
+  border: 1px solid rgba(13, 148, 136, 0.14);
+  border-radius: 12px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.source-summary-grid span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.source-summary-grid strong {
+  display: block;
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.source-configure-btn,
+.source-apply-generate-btn {
+  min-height: 40px;
+  padding: 0 15px;
+  border-radius: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.source-configure-btn {
+  border: 1px solid #99f6e4;
+  color: #0f766e;
+  background: #f0fdfa;
+}
+
+.source-apply-generate-btn {
+  border: 1px solid #0f766e;
+  color: #ffffff;
+  background: #0f766e;
+}
+
+.source-configure-btn:disabled,
+.source-apply-generate-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.report-source-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 15000;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(8px);
+}
+
+.report-source-dialog {
+  position: relative;
+  width: min(1120px, calc(100vw - 68px));
+  max-height: min(860px, calc(100vh - 68px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 28px;
+  background: #f8fafc;
+  box-shadow: 0 36px 100px rgba(15, 23, 42, 0.3);
+}
+
+.source-dialog-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.9);
+  font-size: 27px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.source-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 24px 78px 20px 26px;
+  border-bottom: 1px solid #e2e8f0;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(20, 184, 166, 0.16), transparent 36%),
+    #ffffff;
+}
+
+.source-dialog-head > div:first-child > span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.source-dialog-head h3 {
+  margin: 5px 0;
+  color: #0f172a;
+  font-size: 23px;
+}
+
+.source-dialog-head p {
+  margin: 0;
+  color: #64748b;
+}
+
+.source-dialog-total {
+  min-width: 100px;
+  padding: 11px 14px;
+  border-radius: 15px;
+  text-align: center;
+  color: #115e59;
+  background: #ccfbf1;
+}
+
+.source-dialog-total strong,
+.source-dialog-total span {
+  display: block;
+}
+
+.source-dialog-total strong {
+  font-size: 24px;
+}
+
+.source-dialog-total span {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.source-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px 24px 12px;
+}
+
+.source-mode-switch button {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  color: #475569;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-mode-switch button.active {
+  border-color: #14b8a6;
+  color: #115e59;
+  background: #f0fdfa;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
+}
+
+.source-mode-switch button:disabled {
+  cursor: default;
+}
+
+.source-mode-switch strong,
+.source-mode-switch span {
+  display: block;
+}
+
+.source-mode-switch strong {
+  font-size: 15px;
+}
+
+.source-mode-switch span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.source-dialog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 190px auto;
+  gap: 10px;
+  padding: 0 24px 12px;
+}
+
+.source-search-box {
+  position: relative;
+}
+
+.source-search-box > span {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #94a3b8;
+  border-radius: 50%;
+  transform: translateY(-58%);
+}
+
+.source-search-box > span::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 2px;
+  right: -5px;
+  bottom: -2px;
+  border-radius: 2px;
+  background: #94a3b8;
+  transform: rotate(45deg);
+}
+
+.source-search-box input,
+.source-dialog-toolbar select {
+  width: 100%;
+  height: 42px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  color: #0f172a;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.source-search-box input {
+  padding: 0 14px 0 40px;
+}
+
+.source-dialog-toolbar select {
+  padding: 0 12px;
+}
+
+.source-selected-toggle {
+  height: 42px;
+  padding: 0 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.source-dialog-batch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 24px 12px;
+  padding: 10px 13px;
+  border-radius: 13px;
+  color: #475569;
+  background: #e8f2f2;
+}
+
+.source-dialog-batch > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-dialog-batch strong {
+  color: #0f766e;
+  font-size: 19px;
+}
+
+.source-dialog-batch button {
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 8px;
+  color: #0f766e;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.source-dialog-batch button.danger {
+  color: #b91c1c;
+}
+
+.source-station-list {
+  min-height: 160px;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 24px 20px;
+}
+
+.source-region-group + .source-region-group {
+  margin-top: 16px;
+}
+
+.source-region-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.source-region-head strong {
+  color: #334155;
+  font-size: 14px;
+}
+
+.source-region-head span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.source-station-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.source-station-option {
+  position: relative;
+  min-width: 0;
+  padding: 12px 12px 12px 40px;
+  border: 1px solid #e2e8f0;
+  border-radius: 13px;
+  color: #334155;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.source-station-option.selected {
+  border-color: #5eead4;
+  background: #f0fdfa;
+}
+
+.source-station-option.readonly {
+  cursor: default;
+}
+
+.source-station-option input {
+  position: absolute;
+  opacity: 0;
+}
+
+.source-checkbox-mark {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #94a3b8;
+  border-radius: 5px;
+  background: #ffffff;
+  transform: translateY(-50%);
+}
+
+.source-station-option.selected .source-checkbox-mark {
+  border-color: #0d9488;
+  background: #0d9488;
+}
+
+.source-station-option.selected .source-checkbox-mark::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.source-station-info,
+.source-station-info strong,
+.source-station-info small {
+  display: block;
+  min-width: 0;
+}
+
+.source-station-info strong {
+  overflow: hidden;
+  color: #0f172a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-station-info small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.source-list-empty {
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+}
+
+.source-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.source-dialog-footer p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.source-dialog-footer > div {
+  display: flex;
+  gap: 9px;
+}
+
+.source-cancel-btn,
+.source-confirm-btn {
+  min-width: 94px;
+  height: 40px;
+  border-radius: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.source-cancel-btn {
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  background: #ffffff;
+}
+
+.source-confirm-btn {
+  border: 1px solid #0f766e;
+  color: #ffffff;
+  background: #0f766e;
+}
+
+.source-confirm-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .template-placeholder {
@@ -4655,6 +5661,23 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
+  .report-source-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .report-source-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .source-configure-btn,
+  .source-apply-generate-btn {
+    width: 100%;
+  }
+
+  .source-station-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .ai-generation-state {
     grid-template-columns: 150px minmax(0, 1fr);
     gap: 24px;
@@ -4780,6 +5803,133 @@ onBeforeUnmount(() => {
   .report-type-panel {
     padding: 16px;
     border-radius: 20px;
+  }
+
+  .report-source-panel {
+    padding: 18px 16px;
+    border-radius: 20px;
+    gap: 16px;
+  }
+
+  .report-source-main {
+    gap: 12px;
+  }
+
+  .report-source-icon {
+    width: 46px;
+    height: 46px;
+    flex-basis: 46px;
+    border-radius: 15px;
+  }
+
+  .source-panel-title-row h3 {
+    font-size: 17px;
+  }
+
+  .report-source-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .source-summary-grid {
+    grid-column: auto;
+  }
+
+  .report-source-dialog-layer {
+    padding: 10px;
+    align-items: center;
+  }
+
+  .report-source-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 22px;
+  }
+
+  .source-dialog-close {
+    top: 12px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .source-dialog-head {
+    align-items: flex-start;
+    padding: 20px 60px 16px 18px;
+  }
+
+  .source-dialog-head h3 {
+    font-size: 20px;
+  }
+
+  .source-dialog-head p {
+    font-size: 12px;
+  }
+
+  .source-dialog-total {
+    display: none;
+  }
+
+  .source-mode-switch {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 14px 14px 10px;
+  }
+
+  .source-mode-switch button {
+    padding: 11px 13px;
+  }
+
+  .source-dialog-toolbar {
+    grid-template-columns: 1fr 1fr;
+    padding: 0 14px 10px;
+  }
+
+  .source-search-box {
+    grid-column: 1 / -1;
+  }
+
+  .source-selected-toggle {
+    justify-content: center;
+  }
+
+  .source-dialog-batch {
+    align-items: flex-start;
+    flex-direction: column;
+    margin: 0 14px 10px;
+  }
+
+  .source-dialog-batch > div:last-child {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .source-dialog-batch button {
+    min-height: 34px;
+  }
+
+  .source-station-list {
+    padding: 0 14px 14px;
+  }
+
+  .source-station-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .source-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px 14px;
+  }
+
+  .source-dialog-footer > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .source-cancel-btn,
+  .source-confirm-btn {
+    width: 100%;
   }
 
   .report-type-panel-head {

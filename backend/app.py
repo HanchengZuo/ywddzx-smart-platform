@@ -117,7 +117,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "4.2.0"
+        raw_value = "4.3.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -137,7 +137,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.2.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.3.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7312,6 +7312,283 @@ class InspectionReportJobSchemaUnavailable(RuntimeError):
     pass
 
 
+def normalize_inspection_report_generation_options(value):
+    raw_options = value if isinstance(value, dict) else {}
+    station_filter_enabled = bool(raw_options.get("station_filter_enabled"))
+    station_ids = []
+    seen_station_ids = set()
+    for raw_station_id in raw_options.get("station_ids") or []:
+        try:
+            station_id = int(raw_station_id)
+        except (TypeError, ValueError):
+            continue
+        if station_id <= 0 or station_id in seen_station_ids:
+            continue
+        seen_station_ids.add(station_id)
+        station_ids.append(station_id)
+        if len(station_ids) >= 1000:
+            break
+    station_ids.sort()
+    if station_filter_enabled and not station_ids:
+        raise ValueError("自定义数据来源时，请至少选择一个站点。")
+    return {
+        "station_filter_enabled": station_filter_enabled,
+        "station_ids": station_ids if station_filter_enabled else [],
+    }
+
+
+def append_inspection_report_station_filter(
+    where_clauses,
+    params,
+    column_sql,
+    generation_options,
+):
+    options = normalize_inspection_report_generation_options(generation_options)
+    if not options["station_filter_enabled"]:
+        return
+    where_clauses.append(f"{column_sql} = ANY(%s)")
+    params.append(options["station_ids"])
+
+
+def get_inspection_report_source_station_options(
+    cur,
+    user,
+    report_type,
+    month_start,
+    month_end,
+):
+    config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
+    if not config or not config.get("template_ready"):
+        return []
+
+    target_tables = list(config.get("target_tables") or [])
+    if not target_tables:
+        return []
+
+    if report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
+        where_clauses = [
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') = ANY(%s)",
+            "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+        ]
+        params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            target_tables,
+        ]
+        table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "ins.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        if not table_scope_allowed or not region_scope_allowed:
+            return []
+        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    s.id AS station_id,
+                    s.station_name,
+                    s.region,
+                    COUNT(DISTINCT ins.id) AS inspection_count,
+                    COUNT(DISTINCT CASE
+                        WHEN COALESCE(i.audit_status, 'pending') = 'approved' THEN i.id
+                        ELSE NULL
+                    END) AS issue_count
+                FROM inspections ins
+                JOIN stations s ON ins.station_id = s.id
+                JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                LEFT JOIN issues i ON i.inspection_id = ins.id
+                {where_clause}
+                GROUP BY s.id, s.station_name, s.region
+                ORDER BY s.region ASC NULLS LAST, s.station_name ASC, s.id ASC;
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            params,
+        )
+        source_rows = [dict(row) for row in cur.fetchall()]
+    else:
+        where_clauses = [
+            "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') = ANY(%s)",
+            "COALESCE(i.audit_status, 'pending') = 'approved'",
+        ]
+        params = [
+            month_start,
+            month_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            target_tables,
+        ]
+        table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "i.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            where_clauses,
+            params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        if not table_scope_allowed or not region_scope_allowed:
+            return []
+        where_clause = f"WHERE {' AND '.join(where_clauses)}"
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    s.id AS station_id,
+                    s.station_name,
+                    s.region,
+                    REPLACE(t.table_name, %s, '') AS table_name,
+                    COUNT(DISTINCT ins.id) AS inspection_count,
+                    COUNT(DISTINCT i.id) AS issue_count
+                FROM issues i
+                JOIN inspections ins ON i.inspection_id = ins.id
+                JOIN stations s ON i.station_id = s.id
+                JOIN inspection_tables t ON i.inspection_table_id = t.id
+                {where_clause}
+                GROUP BY s.id, s.station_name, s.region, REPLACE(t.table_name, %s, '')
+                ORDER BY s.region ASC NULLS LAST, s.station_name ASC, s.id ASC;
+                """
+            ).format(where_clause=sql.SQL(where_clause)),
+            [DISPLAY_REMOVED_STATION_PHRASE, *params, DISPLAY_REMOVED_STATION_PHRASE],
+        )
+        grouped = {}
+        onsite_station_ids = set()
+        for row in cur.fetchall():
+            item = dict(row)
+            station_id = int(item["station_id"])
+            if (
+                report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
+                and item.get("table_name") == QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE
+            ):
+                onsite_station_ids.add(station_id)
+            target = grouped.setdefault(
+                station_id,
+                {
+                    "station_id": station_id,
+                    "station_name": item.get("station_name"),
+                    "region": item.get("region"),
+                    "inspection_count": 0,
+                    "issue_count": 0,
+                },
+            )
+            target["inspection_count"] += int(item.get("inspection_count") or 0)
+            target["issue_count"] += int(item.get("issue_count") or 0)
+        source_rows = list(grouped.values())
+        if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
+            source_rows = [
+                row
+                for row in source_rows
+                if int(row["station_id"]) in onsite_station_ids
+            ]
+
+    result = []
+    for row in source_rows:
+        result.append(
+            {
+                "station_id": int(row.get("station_id") or 0),
+                "station_name": str(
+                    sanitize_display_string(row.get("station_name")) or ""
+                ).strip(),
+                "region": normalize_management_region(row.get("region")),
+                "inspection_count": int(row.get("inspection_count") or 0),
+                "issue_count": int(row.get("issue_count") or 0),
+            }
+        )
+    result.sort(
+        key=lambda row: (
+            REPORT_MANAGEMENT_REGIONS.index(row["region"])
+            if row["region"] in REPORT_MANAGEMENT_REGIONS
+            else len(REPORT_MANAGEMENT_REGIONS),
+            row["region"],
+            row["station_name"],
+            row["station_id"],
+        )
+    )
+    return result
+
+
+def resolve_inspection_report_source_selection(
+    cur,
+    user,
+    report_type,
+    month_start,
+    month_end,
+    generation_options,
+):
+    options = normalize_inspection_report_generation_options(generation_options)
+    source_stations = get_inspection_report_source_station_options(
+        cur,
+        user,
+        report_type,
+        month_start,
+        month_end,
+    )
+    available_station_ids = {
+        int(item["station_id"])
+        for item in source_stations
+    }
+    if options["station_filter_enabled"]:
+        unavailable_station_ids = [
+            station_id
+            for station_id in options["station_ids"]
+            if station_id not in available_station_ids
+        ]
+        if unavailable_station_ids:
+            raise ValueError(
+                "部分所选站点在当前月份没有可统计数据，或已超出当前账号的数据权限，请重新选择。"
+            )
+        selected_station_ids = set(options["station_ids"])
+        selected_stations = [
+            item
+            for item in source_stations
+            if int(item["station_id"]) in selected_station_ids
+        ]
+        mode = "custom"
+    else:
+        selected_stations = source_stations
+        mode = "all"
+
+    regions = []
+    for item in selected_stations:
+        if item["region"] not in regions:
+            regions.append(item["region"])
+    selection = {
+        "mode": mode,
+        "station_ids": [item["station_id"] for item in selected_stations],
+        "station_count": len(selected_stations),
+        "available_station_count": len(source_stations),
+        "region_count": len(regions),
+        "regions": regions,
+        "station_names": [item["station_name"] for item in selected_stations],
+        "issue_count": sum(item["issue_count"] for item in selected_stations),
+        "inspection_count": sum(item["inspection_count"] for item in selected_stations),
+    }
+    return source_stations, selection
+
+
 def report_snapshot_table_available(cur):
     cur.execute("SELECT to_regclass('public.inspection_report_snapshots') AS table_name;")
     row = cur.fetchone()
@@ -7504,6 +7781,9 @@ def serialize_inspection_report_job(row):
         "progress": max(0, min(100, int(row.get("progress") or 0))),
         "stage_message": row.get("stage_message") or "等待后台处理",
         "error_message": row.get("error_message") or "",
+        "generation_options": normalize_inspection_report_generation_options(
+            row.get("generation_options")
+        ),
         "created_at": format_report_snapshot_time(row.get("created_at")),
         "started_at": format_report_snapshot_time(row.get("started_at")),
         "finished_at": format_report_snapshot_time(row.get("finished_at")),
@@ -7537,7 +7817,8 @@ def get_inspection_report_job(cur, task_id):
             created_at,
             started_at,
             finished_at,
-            updated_at
+            updated_at,
+            generation_options
         FROM inspection_report_jobs
         WHERE task_id = %s
         LIMIT 1;
@@ -7564,7 +7845,8 @@ def get_active_inspection_report_job(cur, report_type, report_month, scope_key):
             created_at,
             started_at,
             finished_at,
-            updated_at
+            updated_at,
+            generation_options
         FROM inspection_report_jobs
         WHERE report_type = %s
           AND report_month = %s
@@ -24818,7 +25100,13 @@ def get_issues():
         close_db_resources(cur, conn)
 
 
-def generate_quality_measurement_report_job(task_id, user_id, report_month, snapshot_scope_key):
+def generate_quality_measurement_report_job(
+    task_id,
+    user_id,
+    report_month,
+    snapshot_scope_key,
+    generation_options=None,
+):
     month_start, month_end = parse_report_month(report_month)
     conn = None
     cur = None
@@ -24833,6 +25121,14 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
             raise ValueError("生成任务所属用户不存在。")
         if not has_permission(cur, user, "view_inspection_reports"):
             raise PermissionError("当前账号无权生成巡检报告。")
+        _, source_selection = resolve_inspection_report_source_selection(
+            cur,
+            user,
+            REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+            month_start,
+            month_end,
+            generation_options,
+        )
 
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -24863,6 +25159,12 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
             params,
             "s.region",
             "limit_plan_station_region_scope",
+        )
+        append_inspection_report_station_filter(
+            where_clauses,
+            params,
+            "i.station_id",
+            generation_options,
         )
         if table_scope_allowed and region_scope_allowed:
             where_clause = f"WHERE {' AND '.join(where_clauses)}"
@@ -24901,6 +25203,7 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
 
     update_inspection_report_job(task_id, "running", 38, f"已汇总 {len(rows)} 条审核通过问题，正在整理报告结构")
     report = build_quality_measurement_report_payload(month_start, rows)
+    report["source_selection"] = source_selection
     distribution = report.get("finding_summary", {}).get("business_flow_distribution") or []
     insight_result = None
     if rows:
@@ -24948,7 +25251,13 @@ def generate_quality_measurement_report_job(task_id, user_id, report_month, snap
         close_db_resources(cur, conn)
 
 
-def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_scope_key):
+def generate_safety_quality_report_job(
+    task_id,
+    user_id,
+    report_month,
+    snapshot_scope_key,
+    generation_options=None,
+):
     month_start, month_end = parse_report_month(report_month)
     conn = None
     cur = None
@@ -24968,6 +25277,14 @@ def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_
             raise ValueError("生成任务所属用户不存在。")
         if not has_permission(cur, user, "view_inspection_reports"):
             raise PermissionError("当前账号无权生成巡检报告。")
+        _, source_selection = resolve_inspection_report_source_selection(
+            cur,
+            user,
+            REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,
+            month_start,
+            month_end,
+            generation_options,
+        )
 
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -24997,6 +25314,12 @@ def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_
             params,
             "s.region",
             "limit_plan_station_region_scope",
+        )
+        append_inspection_report_station_filter(
+            where_clauses,
+            params,
+            "i.station_id",
+            generation_options,
         )
         if table_scope_allowed and region_scope_allowed:
             where_clause = f"WHERE {' AND '.join(where_clauses)}"
@@ -25051,6 +25374,7 @@ def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_
         f"已汇总 {len(rows)} 条审核通过问题，正在分别统计视频与现场数据",
     )
     report, private_sections = build_safety_quality_report_payload(month_start, rows)
+    report["source_selection"] = source_selection
     insight_result = None
     if rows:
         update_inspection_report_job(
@@ -25111,7 +25435,13 @@ def generate_safety_quality_report_job(task_id, user_id, report_month, snapshot_
         close_db_resources(cur, conn)
 
 
-def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_key):
+def generate_finance_report_job(
+    task_id,
+    user_id,
+    report_month,
+    snapshot_scope_key,
+    generation_options=None,
+):
     month_start, month_end = parse_report_month(report_month)
     conn = None
     cur = None
@@ -25131,6 +25461,14 @@ def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_k
             raise ValueError("生成任务所属用户不存在。")
         if not has_permission(cur, user, "view_inspection_reports"):
             raise PermissionError("当前账号无权生成巡检报告。")
+        _, source_selection = resolve_inspection_report_source_selection(
+            cur,
+            user,
+            REPORT_SNAPSHOT_TYPE_FINANCE,
+            month_start,
+            month_end,
+            generation_options,
+        )
 
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -25159,6 +25497,12 @@ def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_k
             params,
             "s.region",
             "limit_plan_station_region_scope",
+        )
+        append_inspection_report_station_filter(
+            where_clauses,
+            params,
+            "i.station_id",
+            generation_options,
         )
         if table_scope_allowed and region_scope_allowed:
             where_clause = f"WHERE {' AND '.join(where_clauses)}"
@@ -25203,6 +25547,7 @@ def generate_finance_report_job(task_id, user_id, report_month, snapshot_scope_k
         f"已汇总 {len(rows)} 条审核通过问题，正在统计单位、站点、项目和关键环节",
     )
     report, finance_issues = build_finance_report_payload(month_start, rows)
+    report["source_selection"] = source_selection
     insight_result = None
     if finance_issues:
         update_inspection_report_job(
@@ -25274,6 +25619,7 @@ def generate_equipment_facilities_report_job(
     user_id,
     report_month,
     snapshot_scope_key,
+    generation_options=None,
 ):
     month_start, month_end = parse_report_month(report_month)
     conn = None
@@ -25295,6 +25641,14 @@ def generate_equipment_facilities_report_job(
             raise ValueError("生成任务所属用户不存在。")
         if not has_permission(cur, user, "view_inspection_reports"):
             raise PermissionError("当前账号无权生成巡检报告。")
+        _, source_selection = resolve_inspection_report_source_selection(
+            cur,
+            user,
+            REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
+            month_start,
+            month_end,
+            generation_options,
+        )
 
         issue_where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -25324,6 +25678,12 @@ def generate_equipment_facilities_report_job(
             issue_params,
             "s.region",
             "limit_plan_station_region_scope",
+        )
+        append_inspection_report_station_filter(
+            issue_where_clauses,
+            issue_params,
+            "i.station_id",
+            generation_options,
         )
         if issue_table_scope_allowed and issue_region_scope_allowed:
             issue_where_clause = f"WHERE {' AND '.join(issue_where_clauses)}"
@@ -25386,6 +25746,12 @@ def generate_equipment_facilities_report_job(
             "s.region",
             "limit_plan_station_region_scope",
         )
+        append_inspection_report_station_filter(
+            inspection_where_clauses,
+            inspection_params,
+            "ins.station_id",
+            generation_options,
+        )
         if inspection_table_scope_allowed and inspection_region_scope_allowed:
             inspection_where_clause = f"WHERE {' AND '.join(inspection_where_clauses)}"
             cur.execute(
@@ -25430,6 +25796,7 @@ def generate_equipment_facilities_report_job(
         issue_rows,
         inspection_rows,
     )
+    report["source_selection"] = source_selection
     insight_result = None
     if equipment_issues:
         update_inspection_report_job(
@@ -25516,6 +25883,7 @@ def run_inspection_report_generation_job(task_id):
                 job.get("requested_by"),
                 job.get("report_month"),
                 job.get("scope_key"),
+                job.get("generation_options"),
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
             generate_safety_quality_report_job(
@@ -25523,6 +25891,7 @@ def run_inspection_report_generation_job(task_id):
                 job.get("requested_by"),
                 job.get("report_month"),
                 job.get("scope_key"),
+                job.get("generation_options"),
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_FINANCE:
             generate_finance_report_job(
@@ -25530,6 +25899,7 @@ def run_inspection_report_generation_job(task_id):
                 job.get("requested_by"),
                 job.get("report_month"),
                 job.get("scope_key"),
+                job.get("generation_options"),
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
             generate_equipment_facilities_report_job(
@@ -25537,6 +25907,7 @@ def run_inspection_report_generation_job(task_id):
                 job.get("requested_by"),
                 job.get("report_month"),
                 job.get("scope_key"),
+                job.get("generation_options"),
             )
         else:
             raise ValueError("该报告模板尚未配置，暂时不能生成。")
@@ -25562,7 +25933,17 @@ def start_inspection_report_generation_job(task_id):
     thread.start()
 
 
-def queue_or_get_inspection_report_job(cur, user, report_type, report_month, force_regenerate=False):
+def queue_or_get_inspection_report_job(
+    cur,
+    user,
+    report_type,
+    report_month,
+    force_regenerate=False,
+    generation_options=None,
+):
+    normalized_generation_options = normalize_inspection_report_generation_options(
+        generation_options
+    )
     snapshot_scope_key = build_report_snapshot_scope_key(user)
     if not force_regenerate:
         cached_report = get_inspection_report_snapshot(
@@ -25594,13 +25975,14 @@ def queue_or_get_inspection_report_job(cur, user, report_type, report_month, for
             report_month,
             scope_key,
             requested_by,
+            generation_options,
             status,
             progress,
             stage_message,
             created_at,
             updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        VALUES (%s, %s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         """,
         (
             task_id,
@@ -25608,6 +25990,7 @@ def queue_or_get_inspection_report_job(cur, user, report_type, report_month, for
             report_month,
             snapshot_scope_key,
             user.get("id"),
+            Json(normalized_generation_options),
             "任务已提交，等待后台启动",
         ),
     )
@@ -25683,6 +26066,58 @@ def get_inspection_report_status():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/inspection-reports/source-options")
+def get_inspection_report_source_options():
+    report_type = str(
+        request.args.get("report_type") or REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
+    ).strip()
+    config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
+    if not config:
+        return jsonify({"success": False, "error": "报告类型不存在。"}), 400
+    month_start, month_end = parse_report_month(request.args.get("month", ""))
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        stations = get_inspection_report_source_station_options(
+            cur,
+            user,
+            report_type,
+            month_start,
+            month_end,
+        )
+        regions = []
+        for station in stations:
+            if station["region"] not in regions:
+                regions.append(station["region"])
+        return jsonify(
+            {
+                "success": True,
+                "month": month_start.strftime("%Y-%m"),
+                "stations": stations,
+                "summary": {
+                    "station_count": len(stations),
+                    "region_count": len(regions),
+                    "issue_count": sum(item["issue_count"] for item in stations),
+                    "inspection_count": sum(
+                        item["inspection_count"] for item in stations
+                    ),
+                },
+            }
+        )
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception as exc:
+        logging.exception("Failed to load inspection report source options.")
+        return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/inspection-reports/generate", methods=["POST"])
 def create_inspection_report_generation_job():
     data = request.get_json(silent=True) or {}
@@ -25692,9 +26127,12 @@ def create_inspection_report_generation_job():
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能生成。"}), 409
-    month_start, _ = parse_report_month(data.get("month", ""))
+    month_start, month_end = parse_report_month(data.get("month", ""))
     report_month = month_start.strftime("%Y-%m")
     force_regenerate = bool(data.get("force"))
+    generation_options = normalize_inspection_report_generation_options(
+        data.get("generation_options")
+    )
     conn = None
     cur = None
     try:
@@ -25703,12 +26141,21 @@ def create_inspection_report_generation_job():
         user = get_authorized_inspection_report_user(cur)
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
+        resolve_inspection_report_source_selection(
+            cur,
+            user,
+            report_type,
+            month_start,
+            month_end,
+            generation_options,
+        )
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
             report_type,
             report_month,
             force_regenerate,
+            generation_options,
         )
         conn.commit()
         if created and job:
@@ -25727,6 +26174,10 @@ def create_inspection_report_generation_job():
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
     except InspectionReportJobSchemaUnavailable as exc:
         if conn:
             conn.rollback()

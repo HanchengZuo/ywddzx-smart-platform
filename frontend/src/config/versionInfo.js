@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.3',
+    date: '2026-07-29',
+    title: 'AI报告数据范围自选',
+    summary: '生成报告前可以自由选择需要统计的站点。',
+    items: [
+      '可按片区和站点筛选数据来源，不需要的站点可以排除。',
+      '站点选择会随报告保存，再次打开能看到当时的数据范围。'
+    ]
+  },
+  {
     version: 'v4.2',
     date: '2026-07-27',
     title: '设备设施AI报告',
