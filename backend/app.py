@@ -26130,9 +26130,7 @@ def create_inspection_report_generation_job():
     month_start, month_end = parse_report_month(data.get("month", ""))
     report_month = month_start.strftime("%Y-%m")
     force_regenerate = bool(data.get("force"))
-    generation_options = normalize_inspection_report_generation_options(
-        data.get("generation_options")
-    )
+    raw_generation_options = data.get("generation_options")
     conn = None
     cur = None
     try:
@@ -26141,6 +26139,9 @@ def create_inspection_report_generation_job():
         user = get_authorized_inspection_report_user(cur)
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
+        generation_options = normalize_inspection_report_generation_options(
+            raw_generation_options
+        )
         resolve_inspection_report_source_selection(
             cur,
             user,
