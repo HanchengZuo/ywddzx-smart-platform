@@ -1013,6 +1013,257 @@
         </article>
       </template>
 
+      <template v-else-if="isOnSiteServiceReport">
+        <div class="summary-cards service-summary-cards">
+          <article v-for="card in summaryCards" :key="card.label" class="summary-card">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.value }}</strong>
+            <small>{{ card.desc }}</small>
+          </article>
+        </div>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第一章　{{ reportMonthNumber }}月检查基本情况</div>
+          <p class="chapter-lead">{{ report.overview_text }}</p>
+          <div class="service-mode-overview-grid">
+            <article v-for="mode in serviceModeSummaries" :key="`service-overview-${mode.mode}`">
+              <div :class="['service-mode-mark', mode.mode]">{{ mode.mode === 'video' ? 'VIDEO' : 'ON SITE' }}</div>
+              <div>
+                <span>{{ mode.label }}</span>
+                <strong>{{ mode.station_count }}座站点</strong>
+                <p>{{ mode.issue_count }}项问题 · 站均{{ Number(mode.average_issue_count || 0).toFixed(1) }}项</p>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第二章　{{ reportMonthNumber }}月检查基本情况-单位问题对比</div>
+          <div class="service-section-intro">
+            <div>
+              <span>UNIT COMPARISON</span>
+              <h3>各片区及股权单位问题数量与站均问题数量</h3>
+            </div>
+            <strong>{{ serviceUnitRows.length }}个单位</strong>
+          </div>
+          <div v-if="serviceUnitRows.length" class="service-unit-comparison">
+            <article v-for="unit in serviceUnitRows" :key="`service-unit-${unit.unit_type}-${unit.unit_name}`">
+              <div class="service-unit-name">
+                <small>{{ unit.unit_type_label }}</small>
+                <strong>{{ unit.unit_name }}</strong>
+                <span>{{ unit.station_count }}座站点</span>
+              </div>
+              <div class="service-unit-bars">
+                <div>
+                  <span>问题总数</span>
+                  <div><i class="issue" :style="{ width: `${getServiceUnitBarWidth('issue_count', unit.issue_count)}%` }"></i></div>
+                  <b>{{ unit.issue_count }}</b>
+                </div>
+                <div>
+                  <span>站均问题</span>
+                  <div><i class="average" :style="{ width: `${getServiceUnitBarWidth('average_issue_count', unit.average_issue_count)}%` }"></i></div>
+                  <b>{{ Number(unit.average_issue_count || 0).toFixed(1) }}</b>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div v-else class="safety-chart-empty">当前月份暂无可用于单位对比的巡检数据。</div>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第三章　{{ reportMonthNumber }}月检查基本情况-上月整改情况</div>
+          <p class="chapter-lead">{{ servicePreviousRectification.narrative }}</p>
+          <div class="service-rectification-legend">
+            <span><i class="unreceived"></i>未签收</span>
+            <span><i class="pending"></i>未整改</span>
+            <span><i class="rectified"></i>已整改</span>
+          </div>
+          <div v-if="serviceRectificationRows.length" class="service-rectification-grid">
+            <article v-for="unit in serviceRectificationRows" :key="`service-rectification-${unit.unit_type}-${unit.unit_name}`">
+              <div>
+                <small>{{ unit.unit_type_label }}</small>
+                <strong>{{ unit.unit_name }}</strong>
+                <span>共{{ unit.total_count }}项</span>
+              </div>
+              <div class="service-rectification-counts">
+                <span class="unreceived"><b>{{ unit.unreceived_count }}</b>未签收</span>
+                <span class="pending"><b>{{ unit.pending_count }}</b>未整改</span>
+                <span class="rectified"><b>{{ unit.rectified_count }}</b>已整改</span>
+              </div>
+              <div class="service-stacked-track" aria-hidden="true">
+                <i class="unreceived" :style="{ width: `${getRectificationWidth(unit, 'unreceived_count')}%` }"></i>
+                <i class="pending" :style="{ width: `${getRectificationWidth(unit, 'pending_count')}%` }"></i>
+                <i class="rectified" :style="{ width: `${getRectificationWidth(unit, 'rectified_count')}%` }"></i>
+              </div>
+            </article>
+          </div>
+          <div v-else class="safety-chart-empty">上月暂无可统计的整改数据。</div>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第四章　{{ reportMonthNumber }}月检查基本情况-片区汇总</div>
+          <section v-for="mode in serviceModeSummaries" :key="`service-mode-${mode.mode}`" class="service-mode-section">
+            <div class="service-section-intro">
+              <div>
+                <span>{{ mode.mode === 'video' ? 'VIDEO INSPECTION' : 'ON-SITE INSPECTION' }}</span>
+                <h3>{{ mode.label }}片区汇总</h3>
+              </div>
+              <strong>站均{{ Number(mode.average_issue_count || 0).toFixed(1) }}项</strong>
+            </div>
+            <p>{{ mode.narrative }}</p>
+            <div v-if="mode.units?.length" class="service-average-chart">
+              <article v-for="unit in mode.units" :key="`service-mode-unit-${mode.mode}-${unit.unit_name}`">
+                <strong>{{ unit.unit_name }}</strong>
+                <div><span :style="{ width: `${getServiceModeAverageWidth(mode, unit.average_issue_count)}%` }"></span></div>
+                <b>{{ Number(unit.average_issue_count || 0).toFixed(1) }}</b>
+              </article>
+            </div>
+            <div v-else class="safety-chart-empty">当前模式暂无片区汇总数据。</div>
+          </section>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第五章　{{ reportMonthNumber }}月检查基本情况-分环节汇总</div>
+          <section v-for="section in serviceCategorySections" :key="`service-category-${section.mode}`" class="service-category-section">
+            <div class="service-section-intro">
+              <div>
+                <span>{{ section.mode === 'video' ? 'VIDEO CATEGORY' : 'ON-SITE CATEGORY' }}</span>
+                <h3>{{ section.label }}分环节统计</h3>
+              </div>
+              <strong>{{ section.total_issue_count }}项问题</strong>
+            </div>
+            <p>{{ section.narrative }}</p>
+            <div v-if="section.items?.length" class="service-category-grid">
+              <article v-for="item in section.items" :key="`service-category-${section.mode}-${item.name}`">
+                <div class="service-category-head">
+                  <strong>{{ item.name }}</strong>
+                  <span>{{ item.count }}项 · {{ formatPercent(item.percentage) }}</span>
+                </div>
+                <div class="service-category-track">
+                  <i :style="{ width: `${getServiceCategoryWidth(section, item.count)}%` }"></i>
+                </div>
+                <div class="service-category-children">
+                  <span v-for="child in item.children" :key="`service-child-${section.mode}-${item.name}-${child.name}`">
+                    <b>{{ child.name }}</b>
+                    <em>{{ child.count }}</em>
+                  </span>
+                </div>
+              </article>
+            </div>
+            <div v-else class="safety-chart-empty">当前模式暂无分类问题。</div>
+          </section>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第六章　各片区问题分析</div>
+          <div class="content-source-row">
+            <span>按单位与四大服务板块筛选突出问题，原始描述和照片均来自巡检问题</span>
+            <AiContentBadge
+              :generated="Boolean(serviceDeepAnalysis.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="service-region-analysis-list">
+            <article v-for="unit in serviceUnitAnalyses" :key="`service-analysis-${unit.unit_type}-${unit.unit_name}`" class="service-region-analysis">
+              <header>
+                <div>
+                  <small>{{ unit.unit_type_label }}</small>
+                  <h3>{{ unit.unit_name }}</h3>
+                  <p>涉及{{ unit.station_names?.length || 0 }}座站点，共{{ unit.issue_count }}项问题</p>
+                </div>
+                <span>{{ unit.service_areas?.length || 0 }}个板块</span>
+              </header>
+              <section v-for="area in unit.service_areas" :key="`service-area-${unit.unit_name}-${area.service_area}`" class="service-area-analysis">
+                <div class="service-area-head">
+                  <div>
+                    <span>{{ area.service_area }}</span>
+                    <strong>发现问题{{ area.issue_count }}项</strong>
+                  </div>
+                  <AiContentBadge :generated="Boolean(area.ai_generated)" ai-label="AI筛选" fallback-label="规则筛选" compact />
+                </div>
+                <p>{{ area.summary }}</p>
+                <div class="service-highlight-grid">
+                  <article v-for="(highlight, highlightIndex) in area.highlights" :key="`service-highlight-${unit.unit_name}-${area.service_area}-${highlightIndex}`">
+                    <div class="service-highlight-title">
+                      <span>{{ highlightIndex + 1 }}</span>
+                      <div>
+                        <h4>{{ highlight.title }}</h4>
+                        <p>{{ highlight.analysis }}</p>
+                      </div>
+                    </div>
+                    <div class="service-highlight-issues">
+                      <div v-for="issue in highlight.issues" :key="`service-highlight-issue-${issue.issue_id}`">
+                        <div>
+                          <strong>{{ issue.station_name }}</strong>
+                          <span>{{ issue.description }}</span>
+                        </div>
+                        <button
+                          v-if="issue.issue_photo"
+                          type="button"
+                          @click="openImagePreview(issue.issue_photo, `${issue.station_name}问题照片`)"
+                        >
+                          <img :src="resolveImage(issue.issue_photo)" :alt="`${issue.station_name}问题照片`" />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </article>
+            <div v-if="!serviceUnitAnalyses.length" class="safety-chart-empty">当前月份暂无可用于片区问题分析的数据。</div>
+          </div>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第七章　问题总结</div>
+          <div class="content-source-row">
+            <span>结合视频、现场、单位分布与高频问题综合分析</span>
+            <AiContentBadge
+              :generated="serviceProblemSummary.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="service-summary-list">
+            <article v-for="(item, index) in serviceProblemSummary" :key="`service-summary-${index}-${item.title}`">
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <div>
+                <div class="service-ai-title">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="chapter-card service-chapter">
+          <div class="chapter-banner">第八章　下一步建议</div>
+          <div class="content-source-row">
+            <span>依据本月问题分布、突出问题和整改情况生成</span>
+            <AiContentBadge
+              :generated="serviceNextSteps.some((item) => item.ai_generated)"
+              ai-label="AI生成"
+              fallback-label="规则生成"
+            />
+          </div>
+          <div class="work-plan-list service-work-list">
+            <article v-for="(item, index) in serviceNextSteps" :key="`service-next-${index}-${item.title}`" class="work-plan-card">
+              <span>{{ index + 1 }}</span>
+              <div>
+                <div class="work-plan-title-row">
+                  <h4>{{ item.title }}</h4>
+                  <AiContentBadge :generated="Boolean(item.ai_generated)" ai-label="AI生成" fallback-label="规则生成" compact />
+                </div>
+                <p>{{ item.content }}</p>
+              </div>
+            </article>
+          </div>
+        </article>
+      </template>
+
       <template v-else-if="isEquipmentFacilitiesReport">
         <div class="summary-cards equipment-summary-cards">
           <article v-for="card in summaryCards" :key="card.label" class="summary-card">
@@ -1430,7 +1681,8 @@ const DEFAULT_REPORT_TYPES = [
     name: '现场服务检查报告',
     description: '汇总现场服务视频与现场检查数据。',
     target_tables: ['现场检查明细表（视频）', '现场检查明细表（现场）'],
-    template_ready: false
+    data_scope_note: '站点覆盖按所选月份内已确认完成的视频与现场巡检记录统计；问题数量、分类、上月整改对比和AI分析仅使用审核通过的问题。',
+    template_ready: true
   },
   {
     key: 'equipment_facilities',
@@ -1470,6 +1722,10 @@ const createEmptyReport = () => ({
   station_ranking: [],
   area_distribution: [],
   item_distribution: [],
+  unit_comparison: [],
+  previous_month_rectification: {},
+  mode_summaries: [],
+  category_sections: [],
   rows: [],
   total_row: {}
 })
@@ -1519,6 +1775,7 @@ const templateUnavailable = computed(() => currentReportType.value.template_read
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
 const isFinanceReport = computed(() => selectedReportType.value === 'finance')
+const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const hasReport = computed(() => Boolean(report.value?.month))
 const reportTitleFallback = computed(() => {
@@ -1723,6 +1980,43 @@ const equipmentWorkSuggestions = computed(() => (
     ? equipmentDeepAnalysis.value.work_suggestions
     : []
 ))
+const reportMonthNumber = computed(() => {
+  const monthValue = String(report.value.month || selectedMonth.value || '').split('-')[1]
+  return Number.parseInt(monthValue || '', 10) || '-'
+})
+const serviceUnitRows = computed(() => (
+  Array.isArray(report.value.unit_comparison) ? report.value.unit_comparison : []
+))
+const servicePreviousRectification = computed(() => (
+  report.value.previous_month_rectification || {}
+))
+const serviceRectificationRows = computed(() => (
+  Array.isArray(servicePreviousRectification.value.units)
+    ? servicePreviousRectification.value.units
+    : []
+))
+const serviceModeSummaries = computed(() => (
+  Array.isArray(report.value.mode_summaries) ? report.value.mode_summaries : []
+))
+const serviceCategorySections = computed(() => (
+  Array.isArray(report.value.category_sections) ? report.value.category_sections : []
+))
+const serviceDeepAnalysis = computed(() => report.value.deep_analysis || {})
+const serviceUnitAnalyses = computed(() => (
+  Array.isArray(serviceDeepAnalysis.value.unit_analyses)
+    ? serviceDeepAnalysis.value.unit_analyses
+    : []
+))
+const serviceProblemSummary = computed(() => (
+  Array.isArray(serviceDeepAnalysis.value.problem_summary)
+    ? serviceDeepAnalysis.value.problem_summary
+    : []
+))
+const serviceNextSteps = computed(() => (
+  Array.isArray(serviceDeepAnalysis.value.next_steps)
+    ? serviceDeepAnalysis.value.next_steps
+    : []
+))
 const targetTableText = computed(() => {
   const tables = Array.isArray(report.value.target_tables) ? report.value.target_tables : []
   const fallbackTables = Array.isArray(currentReportType.value.target_tables) ? currentReportType.value.target_tables : []
@@ -1808,6 +2102,30 @@ const summaryCards = computed(() => {
         label: '平均问题',
         value: Number(summary.average_issue_count || 0).toFixed(1),
         desc: '平均每座受检站点'
+      }
+    ]
+  }
+  if (isOnSiteServiceReport.value) {
+    return [
+      {
+        label: '检查站次',
+        value: summary.station_visit_count ?? 0,
+        desc: '视频与现场分别统计'
+      },
+      {
+        label: '视频巡检',
+        value: summary.video_station_count ?? 0,
+        desc: `${summary.video_issue_count ?? 0}项问题 · 站均${Number(summary.video_average_issue_count || 0).toFixed(1)}`
+      },
+      {
+        label: '现场巡检',
+        value: summary.onsite_station_count ?? 0,
+        desc: `${summary.onsite_issue_count ?? 0}项问题 · 站均${Number(summary.onsite_average_issue_count || 0).toFixed(1)}`
+      },
+      {
+        label: '发现问题',
+        value: summary.total_issue_count ?? 0,
+        desc: '仅统计审核通过问题'
       }
     ]
   }
@@ -1982,6 +2300,41 @@ const getEquipmentStationBarWidth = (value) => {
   )
   return Number(value || 0) > 0
     ? Math.max(2, Math.min(100, Number(value || 0) / max * 100))
+    : 0
+}
+
+const getServiceUnitBarWidth = (field, value) => {
+  const max = Math.max(
+    ...serviceUnitRows.value.map((item) => Number(item?.[field] || 0)),
+    1
+  )
+  return Number(value || 0) > 0
+    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
+    : 0
+}
+
+const getRectificationWidth = (unit, field) => {
+  const total = Number(unit?.total_count || 0)
+  return total > 0 ? Math.max(0, Number(unit?.[field] || 0) / total * 100) : 0
+}
+
+const getServiceModeAverageWidth = (mode, value) => {
+  const max = Math.max(
+    ...(mode?.units || []).map((item) => Number(item.average_issue_count || 0)),
+    1
+  )
+  return Number(value || 0) > 0
+    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
+    : 0
+}
+
+const getServiceCategoryWidth = (section, value) => {
+  const max = Math.max(
+    ...(section?.items || []).map((item) => Number(item.count || 0)),
+    1
+  )
+  return Number(value || 0) > 0
+    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
     : 0
 }
 
@@ -5582,6 +5935,684 @@ onBeforeUnmount(() => {
   line-height: 1.9;
 }
 
+.service-summary-cards .summary-card {
+  border-color: #dbe8e5;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.08), transparent 38%),
+    #ffffff;
+}
+
+.service-chapter {
+  border-color: #dce8e4;
+}
+
+.service-mode-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.service-mode-overview-grid > article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #dce8e4;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #f8fcfb, #ffffff);
+}
+
+.service-mode-mark {
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border-radius: 17px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #0e7490, #22a6b3);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.service-mode-mark.onsite {
+  background: linear-gradient(145deg, #b45309, #e99a3f);
+}
+
+.service-mode-overview-grid span,
+.service-mode-overview-grid strong,
+.service-mode-overview-grid p {
+  display: block;
+  margin: 0;
+}
+
+.service-mode-overview-grid span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.service-mode-overview-grid strong {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 22px;
+}
+
+.service-mode-overview-grid p {
+  margin-top: 5px;
+  color: #0f766e;
+  font-size: 13px;
+}
+
+.service-section-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.service-section-intro span {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.service-section-intro h3 {
+  margin: 5px 0 0;
+  color: #0f172a;
+  font-size: 20px;
+}
+
+.service-section-intro > strong {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border-radius: 12px;
+  color: #0f766e;
+  background: #e9f7f3;
+  font-size: 13px;
+}
+
+.service-unit-comparison {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #dfe9e6;
+  border-radius: 18px;
+  background: #dfe9e6;
+}
+
+.service-unit-comparison > article {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(360px, 2.2fr);
+  align-items: center;
+  gap: 20px;
+  padding: 14px 17px;
+  background: #ffffff;
+}
+
+.service-unit-name small,
+.service-unit-name strong,
+.service-unit-name span {
+  display: block;
+}
+
+.service-unit-name small {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.service-unit-name strong {
+  margin: 4px 0;
+  color: #1e293b;
+}
+
+.service-unit-name span {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.service-unit-bars {
+  display: grid;
+  gap: 9px;
+}
+
+.service-unit-bars > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.service-unit-bars > div > div {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf3f1;
+}
+
+.service-unit-bars i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.service-unit-bars i.issue {
+  background: linear-gradient(90deg, #64b5a7, #0f766e);
+}
+
+.service-unit-bars i.average {
+  background: linear-gradient(90deg, #f7c978, #d97706);
+}
+
+.service-unit-bars b {
+  color: #334155;
+  text-align: right;
+}
+
+.service-rectification-legend {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: -8px 0 16px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.service-rectification-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.service-rectification-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 4px;
+}
+
+.service-rectification-legend .unreceived,
+.service-stacked-track .unreceived {
+  background: #94a3b8;
+}
+
+.service-rectification-legend .pending,
+.service-stacked-track .pending {
+  background: #e18c3b;
+}
+
+.service-rectification-legend .rectified,
+.service-stacked-track .rectified {
+  background: #2f9b6d;
+}
+
+.service-rectification-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.service-rectification-grid > article {
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 17px;
+  background: #fbfdff;
+}
+
+.service-rectification-grid > article > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.service-rectification-grid small {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.service-rectification-grid strong {
+  color: #1e293b;
+}
+
+.service-rectification-grid > article > div:first-child span {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.service-rectification-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 13px 0 10px;
+}
+
+.service-rectification-counts span {
+  padding: 8px 6px;
+  border-radius: 10px;
+  color: #64748b;
+  background: #f1f5f9;
+  font-size: 10px;
+  text-align: center;
+}
+
+.service-rectification-counts b {
+  display: block;
+  margin-bottom: 2px;
+  color: #334155;
+  font-size: 16px;
+}
+
+.service-stacked-track {
+  height: 8px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f4;
+}
+
+.service-stacked-track i {
+  display: block;
+  height: 100%;
+}
+
+.service-mode-section,
+.service-category-section {
+  overflow: hidden;
+  padding: 19px;
+  border: 1px solid #dfe9e6;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #f9fcfb, #ffffff);
+}
+
+.service-mode-section + .service-mode-section,
+.service-category-section + .service-category-section {
+  margin-top: 20px;
+}
+
+.service-mode-section > p,
+.service-category-section > p {
+  margin: -4px 0 18px;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.service-average-chart {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  background: #e2e8f0;
+}
+
+.service-average-chart > article {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 2fr) 46px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  background: #ffffff;
+}
+
+.service-average-chart strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.service-average-chart > article > div {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf3f1;
+}
+
+.service-average-chart span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7dcabc, #0f766e);
+}
+
+.service-average-chart b {
+  color: #0f766e;
+  text-align: right;
+}
+
+.service-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.service-category-grid > article {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.service-category-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-category-head strong {
+  color: #1e293b;
+}
+
+.service-category-head span {
+  flex: 0 0 auto;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.service-category-track {
+  height: 9px;
+  margin: 12px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf3f1;
+}
+
+.service-category-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8ed4c8, #16867c);
+}
+
+.service-category-children {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.service-category-children span {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  color: #64748b;
+  background: #f3f7f6;
+  font-size: 11px;
+}
+
+.service-category-children b {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-category-children em {
+  flex: 0 0 auto;
+  color: #0f766e;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.service-region-analysis-list {
+  display: grid;
+  gap: 20px;
+}
+
+.service-region-analysis {
+  overflow: hidden;
+  border: 1px solid #dce8e4;
+  border-radius: 22px;
+  background: #ffffff;
+}
+
+.service-region-analysis > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e2ebe8;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(15, 118, 110, 0.1), transparent 36%),
+    #f5faf8;
+}
+
+.service-region-analysis > header small,
+.service-region-analysis > header h3,
+.service-region-analysis > header p {
+  margin: 0;
+}
+
+.service-region-analysis > header small {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.service-region-analysis > header h3 {
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 21px;
+}
+
+.service-region-analysis > header p {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.service-region-analysis > header > span {
+  padding: 8px 11px;
+  border-radius: 12px;
+  color: #0f766e;
+  background: #dff3ed;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.service-area-analysis {
+  padding: 18px 20px;
+}
+
+.service-area-analysis + .service-area-analysis {
+  border-top: 1px dashed #dbe5e2;
+}
+
+.service-area-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.service-area-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.service-area-head > div > span {
+  color: #0f766e;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.service-area-head > div > strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.service-area-analysis > p {
+  margin: 10px 0 14px;
+  color: #475569;
+  line-height: 1.75;
+}
+
+.service-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.service-highlight-grid > article {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fbfdff;
+}
+
+.service-highlight-title {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.service-highlight-title > span {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #ffffff;
+  background: #0f766e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.service-highlight-title h4,
+.service-highlight-title p {
+  margin: 0;
+}
+
+.service-highlight-title h4 {
+  color: #1e293b;
+}
+
+.service-highlight-title p {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.service-highlight-issues {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.service-highlight-issues > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border-radius: 12px;
+  background: #f3f7f6;
+}
+
+.service-highlight-issues strong,
+.service-highlight-issues span {
+  display: block;
+}
+
+.service-highlight-issues strong {
+  margin-bottom: 4px;
+  color: #1e293b;
+  font-size: 12px;
+}
+
+.service-highlight-issues span {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.service-highlight-issues button {
+  width: 74px;
+  height: 62px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #dce7e4;
+  cursor: zoom-in;
+}
+
+.service-highlight-issues img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.service-summary-list {
+  display: grid;
+  gap: 12px;
+}
+
+.service-summary-list > article {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 14px;
+  padding: 17px;
+  border: 1px solid #dfe9e6;
+  border-radius: 17px;
+  background: linear-gradient(145deg, #f8fcfb, #ffffff);
+}
+
+.service-summary-list > article > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #0f766e, #2aa393);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.service-ai-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.service-ai-title h4,
+.service-summary-list p {
+  margin: 0;
+}
+
+.service-ai-title h4 {
+  color: #1e293b;
+}
+
+.service-summary-list p {
+  margin-top: 7px;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.service-work-list .work-plan-card > span {
+  background: linear-gradient(145deg, #0f766e, #2aa393);
+}
+
 @keyframes pulseOrb {
   0%, 100% {
     transform: scale(0.94);
@@ -5796,6 +6827,16 @@ onBeforeUnmount(() => {
 
   .equipment-typical-photo {
     min-height: 260px;
+  }
+
+  .service-unit-comparison > article {
+    grid-template-columns: minmax(130px, 0.7fr) minmax(260px, 1.8fr);
+  }
+
+  .service-rectification-grid,
+  .service-category-grid,
+  .service-highlight-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -6222,6 +7263,124 @@ onBeforeUnmount(() => {
   .equipment-typical-photo,
   .equipment-typical-photo img {
     min-height: 210px;
+  }
+
+  .service-mode-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-mode-overview-grid > article {
+    grid-template-columns: 68px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .service-mode-mark {
+    height: 56px;
+    border-radius: 15px;
+  }
+
+  .service-section-intro,
+  .service-region-analysis > header,
+  .service-area-head,
+  .service-ai-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .service-section-intro > strong,
+  .service-region-analysis > header > span {
+    align-self: flex-start;
+  }
+
+  .service-unit-comparison > article {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .service-unit-name {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 2px 10px;
+  }
+
+  .service-unit-name small {
+    grid-column: 1;
+  }
+
+  .service-unit-name strong {
+    grid-column: 1;
+  }
+
+  .service-unit-name span {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+
+  .service-unit-bars > div {
+    grid-template-columns: 64px minmax(0, 1fr) 34px;
+    gap: 8px;
+  }
+
+  .service-rectification-legend {
+    justify-content: flex-start;
+  }
+
+  .service-rectification-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-mode-section,
+  .service-category-section {
+    padding: 15px;
+    border-radius: 17px;
+  }
+
+  .service-average-chart > article {
+    grid-template-columns: minmax(96px, 0.75fr) minmax(100px, 1.5fr) 38px;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .service-category-grid,
+  .service-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-region-analysis {
+    border-radius: 18px;
+  }
+
+  .service-region-analysis > header,
+  .service-area-analysis {
+    padding: 15px;
+  }
+
+  .service-area-head > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .service-highlight-issues > div {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+
+  .service-highlight-issues button {
+    width: 64px;
+    height: 58px;
+  }
+
+  .service-summary-list > article {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 11px;
+    padding: 14px;
+  }
+
+  .service-summary-list > article > span {
+    width: 36px;
+    height: 36px;
   }
 }
 </style>

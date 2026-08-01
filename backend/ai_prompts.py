@@ -39,6 +39,14 @@ EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "必须只输出 JSON，不要解释，不要使用 Markdown。"
 )
 
+ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的现场服务月度检查报告分析助手。"
+    "请严格基于系统提供的审核通过问题，按管理片区或控参股单位、服务板块分析现场服务问题，"
+    "筛选真实突出问题，并形成正式的问题总结和下一步建议。"
+    "只能引用输入数据中真实存在的问题ID、站点和分类，不允许编造任何信息。"
+    "必须只输出 JSON，不要解释，不要使用 Markdown。"
+)
+
 
 def build_inspection_standard_recommendation_prompt(issue_description, standards):
     standards_payload = json.dumps(
@@ -244,4 +252,50 @@ def build_equipment_facilities_report_insight_prompt(report_context):
         "4. work_suggestions 输出 3-5 条，明确排查对象、整改动作、复核要求和责任落实。\n"
         "5. 所有文字使用正式企业设备设施检查报告语气，不要像聊天回复。\n"
         "6. 只能输出 JSON 本身。"
+    )
+
+
+def build_on_site_service_report_insight_prompt(report_context):
+    context_payload = json.dumps(
+        report_context,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是现场服务检查报告的结构化巡检问题数据 JSON，所有问题均已审核通过。\n"
+        "unit_blocks 按所属管理片区或控参股单位组织，service_area 仅包含"
+        "暖心服务、快捷服务、整洁舒心、其他管理。"
+        "issues 中 issue_id=问题ID，station_name=站点名称，mode=video或onsite，"
+        "primary_category和secondary_category=检查表中的真实分类，description=原始问题描述，"
+        "has_photo=是否有问题照片。\n"
+        f"{context_payload}\n\n"
+        "请返回如下 JSON 对象：\n"
+        "{"
+        "\"region_highlights\":["
+        "{"
+        "\"unit_name\":\"必须来自输入的真实单位名称\","
+        "\"service_area\":\"必须来自对应单位的真实服务板块\","
+        "\"summary\":\"该单位该板块的总体概括，控制在90字内\","
+        "\"highlights\":["
+        "{\"title\":\"突出问题小标题，控制在18字内\","
+        "\"issue_ids\":[1,2,3],"
+        "\"analysis\":\"突出问题表现，控制在80字内\"}"
+        "]"
+        "}"
+        "],"
+        "\"problem_summary\":["
+        "{\"title\":\"总结标题，控制在26字内\",\"content\":\"共性问题总结，控制在150字内\"}"
+        "],"
+        "\"next_steps\":["
+        "{\"title\":\"建议标题，控制在24字内\",\"content\":\"具体可执行的下一步建议，控制在180字内\"}"
+        "]"
+        "}\n"
+        "要求：\n"
+        "1. region_highlights 覆盖每个有问题的单位及其有数据的服务板块；每个板块输出1-3个突出问题。\n"
+        "2. 每个突出问题引用1-5个同一单位、同一服务板块内的真实问题ID，不得跨组引用。\n"
+        "3. 优先归纳重复出现、影响服务体验或存在现场风险的问题，不要只选择描述最长的问题。\n"
+        "4. problem_summary 输出3-6条，覆盖服务规范、安全劝导、响应效率、现场秩序等真实薄弱点。\n"
+        "5. next_steps 输出3-5条，明确责任、培训、整改闭环、复核或迎检准备等可执行动作。\n"
+        "6. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
+        "7. 只能输出 JSON 本身。"
     )

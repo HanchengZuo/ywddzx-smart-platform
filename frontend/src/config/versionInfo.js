@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.4',
+    date: '2026-08-01',
+    title: '现场服务AI报告',
+    summary: '现场服务检查报告支持按月自动生成。',
+    items: [
+      '视频和现场数据分开统计，并展示单位对比、上月整改和分环节情况。',
+      'AI按片区筛选重点问题和照片，自动生成问题总结与下一步建议。',
+      '报告只使用审核通过的问题，支持自选站点和保留上次生成结果。'
+    ]
+  },
+  {
     version: 'v4.3',
     date: '2026-07-29',
     title: 'AI报告数据范围自选',
