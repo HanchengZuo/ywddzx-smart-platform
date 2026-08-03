@@ -2260,6 +2260,11 @@ const fetchIssues = async () => {
   }
 }
 
+const removeIssueFromList = (issueId) => {
+  const normalizedIssueId = Number(issueId)
+  list.value = list.value.filter((row) => Number(row.id) !== normalizedIssueId)
+}
+
 const refreshIssueData = async () => {
   await Promise.allSettled([
     fetchIssueFilterOptions({ force: true }),
@@ -3377,12 +3382,13 @@ const deleteIssue = async (item) => {
   try {
     deletingIssueId.value = item.id
     const userId = localStorage.getItem('user_id') || ''
-    await axios.delete(`/api/issues/${item.id}`, {
+    const response = await axios.delete(`/api/issues/${item.id}`, {
       data: { user_id: userId }
     })
     preserveFullscreen = beginFullscreenDomPreservation()
-    showActionMessage('巡检问题已删除。', 'success')
-    await fetchIssues()
+    removeIssueFromList(item.id)
+    showActionMessage(response.data?.message || '巡检问题已删除。', 'success')
+    fetchIssueFilterOptions({ force: true }).catch(() => {})
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '删除巡检问题失败。', 'error')
