@@ -113,6 +113,10 @@ const routes = [
     component: () => import('../views/management/PageVisibilityManagementView.vue')
   },
   {
+    path: '/management/security',
+    component: () => import('../views/management/SecurityManagementView.vue')
+  },
+  {
     path: '/management/backups',
     component: () => import('../views/management/BackupManagementView.vue')
   },
@@ -141,6 +145,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
   if (path === '/management/auto-audit') return hasPermission(role, permissions, 'manage_auto_audit_rules')
   if (path === '/management/ai-usage') return hasPermission(role, permissions, 'manage_ai_usage')
+  if (path === '/management/security') return hasPermission(role, permissions, 'manage_security')
   if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
   if (path === '/inspection/station-map') return hasPermission(role, permissions, 'view_station_map')
@@ -219,6 +224,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
   if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
+  if (permissions.manage_security) candidates.push('/management/security')
   if (role === 'root') {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
   }

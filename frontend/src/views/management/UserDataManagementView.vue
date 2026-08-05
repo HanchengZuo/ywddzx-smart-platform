@@ -62,7 +62,8 @@
 
             <label class="form-field">
               <span>{{ form.id ? '新密码（不填则不修改）' : '初始密码' }}</span>
-              <input v-model.trim="form.password" type="text" placeholder="默认可填写 123456" />
+              <input v-model="form.password" type="password" autocomplete="new-password"
+                placeholder="至少12位；高权限账号至少15位" />
             </label>
 
             <label class="form-field">

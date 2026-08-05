@@ -161,6 +161,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '管理用户、角色权限、生日信息和账号数据。'
       },
       {
+        key: '/management/security',
+        path: '/management/security',
+        title: '系统安全管理',
+        description: '识别账号风险、维护密码策略并查看安全操作记录。'
+      },
+      {
         key: '/management/stations',
         path: '/management/stations',
         title: '站点数据管理',

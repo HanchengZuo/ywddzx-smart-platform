@@ -15,7 +15,8 @@ const AUTH_STORAGE_KEYS = [
   'region',
   'address',
   'permissions',
-  'must_change_password'
+  'must_change_password',
+  'password_policy'
 ]
 
 const AUTH_MESSAGE_KEY = 'auth_session_message'
@@ -108,6 +109,7 @@ export const storeAuthSession = (user, token, expiresInSeconds = null) => {
   localStorage.setItem('address', user?.address || '')
   localStorage.setItem('permissions', JSON.stringify(user?.permissions || {}))
   localStorage.setItem('must_change_password', user?.must_change_password ? 'true' : 'false')
+  localStorage.setItem('password_policy', JSON.stringify(user?.password_policy || {}))
   localStorage.removeItem(AUTH_MESSAGE_KEY)
   authMeCacheToken = token
   authMeCacheCheckedAt = Date.now()
@@ -195,8 +197,16 @@ export const configureAxiosAuth = () => {
       if (isFrontendVersionExpiredResponse(error)) {
         forceFrontendUpgradeReload(error?.response?.data?.message || '系统已更新，正在刷新页面...')
       }
-      if (status === 401 && !url.includes('/api/login')) {
+      const isPublicPasskeyLogin = url.includes('/api/auth/passkey/login/') || url.includes('/api/auth/passkey/bootstrap/')
+      if (status === 401 && !url.includes('/api/login') && !isPublicPasskeyLogin) {
         notifyAuthSessionExpired(error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE)
+      }
+      if (status === 403 && error?.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+        const alreadyRequired = localStorage.getItem('must_change_password') === 'true'
+        localStorage.setItem('must_change_password', 'true')
+        if (!alreadyRequired) {
+          window.dispatchEvent(new CustomEvent('password-change-required'))
+        }
       }
       return Promise.reject(error)
     }

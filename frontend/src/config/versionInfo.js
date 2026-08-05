@@ -15,6 +15,19 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.5',
+    date: '2026-08-04',
+    title: '账号安全与Passkey登录',
+    summary: '新增系统安全管理，账号登录和密码保护全面升级。',
+    items: [
+      '可查看账号风险、维护密码策略，并追踪安全操作记录。',
+      '支持批量生成独立强初始密码，用户首次登录后必须改密。',
+      '账号风险清单支持搜索、筛选和Passkey绑定状态查看。',
+      '普通账号可用密码或Passkey登录，root绑定后仅允许Passkey登录。',
+      '文件访问、登录防护、跨域策略和系统依赖完成安全加固。'
+    ]
+  },
+  {
     version: 'v4.4',
     date: '2026-08-01',
     title: '现场服务AI报告',

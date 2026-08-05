@@ -19,6 +19,30 @@ REPORT_JOB_COLUMNS = {
     "finished_at",
     "updated_at",
 }
+SECURITY_USER_COLUMNS = {
+    "password_hash",
+    "must_change_password",
+    "force_change_immediately",
+    "password_changed_at",
+    "password_policy_version",
+    "password_risk_flags",
+    "auth_version",
+    "account_status",
+}
+SECURITY_TABLES = {
+    "authentication_rate_limits",
+    "password_security_policies",
+    "user_passkeys",
+    "user_password_history",
+    "security_audit_logs",
+    "webauthn_challenges",
+}
+SECURITY_POLICY_COLUMNS = {
+    "require_uppercase",
+    "require_lowercase",
+    "require_number",
+    "require_special",
+}
 
 
 def get_db_config():
@@ -107,6 +131,50 @@ def get_alembic_version(cur):
     return row[0] if row else "empty"
 
 
+def verify_account_security_schema(cur):
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users';
+        """
+    )
+    user_columns = {row[0] for row in cur.fetchall()}
+    missing_columns = sorted(SECURITY_USER_COLUMNS - user_columns)
+    if missing_columns:
+        raise RuntimeError("public.users security columns missing: " + ", ".join(missing_columns))
+    for table_name in sorted(SECURITY_TABLES):
+        cur.execute("SELECT to_regclass(%s);", (f"public.{table_name}",))
+        if cur.fetchone()[0] is None:
+            raise RuntimeError(f"required security table public.{table_name} does not exist")
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'password_security_policies';
+        """
+    )
+    policy_columns = {row[0] for row in cur.fetchall()}
+    missing_policy_columns = sorted(SECURITY_POLICY_COLUMNS - policy_columns)
+    if missing_policy_columns:
+        raise RuntimeError(
+            "public.password_security_policies columns missing: "
+            + ", ".join(missing_policy_columns)
+        )
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'password'
+        LIMIT 1;
+        """
+    )
+    if cur.fetchone():
+        raise RuntimeError("legacy plaintext credential column public.users.password still exists")
+
+
 def main():
     config = get_db_config()
     target = (
@@ -127,11 +195,12 @@ def main():
                 alembic_version = get_alembic_version(cur)
                 ensure_inspection_report_jobs(cur)
                 verify_inspection_report_jobs(cur)
+                verify_account_security_schema(cur)
         print(
             "Runtime schema ready: "
             f"database={database_name}, schema={schema_name}, "
             f"user={database_user}, alembic={alembic_version}, "
-            "inspection_report_jobs=ready",
+            "inspection_report_jobs=ready, account_security=ready",
             flush=True,
         )
     except Exception as exc:

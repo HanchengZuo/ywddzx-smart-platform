@@ -1,4 +1,4 @@
-from flask import Flask, g, jsonify, request, send_file, send_from_directory
+from flask import Flask, abort, g, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import fcntl
 import hashlib
@@ -36,6 +36,44 @@ from ai_utils import (
     generate_standard_recommendations,
 )
 from ai_usage import get_ai_pricing_table
+from account_security import (
+    DEFAULT_WEAK_PASSWORDS,
+    PasswordPolicyError,
+    generate_strong_initial_password,
+    get_risk_level,
+    get_risk_reasons,
+    hash_password,
+    normalize_weak_passwords,
+)
+from credential_exports import build_initial_credentials_workbook
+from security_service import (
+    build_password_policy_summary,
+    fetch_password_policy,
+    is_password_change_enforced,
+    record_security_event,
+    update_user_password,
+    validate_and_hash_password,
+    verify_user_password,
+)
+from passkey_service import (
+    PasskeyConfigurationError,
+    PasskeyError,
+    count_user_passkeys,
+    fetch_user_passkeys,
+    generate_passkey_authentication,
+    generate_passkey_registration,
+    normalize_credential_name,
+    serialize_passkey,
+    verify_and_store_passkey,
+    verify_passkey_authentication,
+)
+from auth_rate_limit import (
+    AuthenticationRateLimitExceeded,
+    check_password_login_allowed,
+    clear_successful_password_login,
+    consume_public_auth_budget,
+    record_password_login_failure,
+)
 
 try:
     from qcloud_cos import CosConfig, CosS3Client
@@ -44,11 +82,52 @@ except Exception:
     CosS3Client = None
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get(
-    "APP_SECRET_KEY",
-    os.environ.get("SECRET_KEY", "ywddzx-smart-platform-dev-secret"),
+APP_ENV = str(os.environ.get("APP_ENV", "development")).strip().lower()
+APP_SECRET_KEY = str(os.environ.get("APP_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip()
+if not APP_SECRET_KEY:
+    if APP_ENV == "production":
+        raise RuntimeError("APP_SECRET_KEY must be configured in production")
+    APP_SECRET_KEY = "ywddzx-smart-platform-local-development-only"
+    logging.warning("APP_SECRET_KEY is using the local-development fallback.")
+app.config["SECRET_KEY"] = APP_SECRET_KEY
+app.config["MAX_CONTENT_LENGTH"] = 550 * 1024 * 1024
+app.config["MAX_FORM_MEMORY_SIZE"] = 2 * 1024 * 1024
+app.config["MAX_FORM_PARTS"] = 100
+
+
+def get_cors_allowed_origins():
+    configured = [
+        item.strip().rstrip("/")
+        for item in str(os.environ.get("CORS_ALLOWED_ORIGINS", "")).split(",")
+        if item.strip()
+    ]
+    if any(item == "*" for item in configured):
+        raise RuntimeError("CORS_ALLOWED_ORIGINS must not contain a wildcard")
+    if configured:
+        return list(dict.fromkeys(configured))
+
+    origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    webauthn_origin = str(os.environ.get("WEBAUTHN_ORIGIN", "")).strip().rstrip("/")
+    if webauthn_origin and webauthn_origin not in origins:
+        origins.append(webauthn_origin)
+    return origins
+
+
+CORS(
+    app,
+    resources={"/api/*": {"origins": get_cors_allowed_origins()}},
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Frontend-Version"],
+    expose_headers=["Content-Disposition", "Retry-After"],
+    supports_credentials=False,
+    allow_private_network=False,
+    max_age=600,
 )
-CORS(app)
+
+
+@app.errorhandler(413)
+def request_payload_too_large(_):
+    return jsonify({"success": False, "error": "上传内容超过系统允许的大小。"}), 413
 db = SQLAlchemy()
 migrate = Migrate()
 
@@ -103,22 +182,24 @@ DEFAULT_USER_BIRTHDAYS = [
 ]
 ISSUE_EXPORT_RETENTION_DAYS = 7
 ISSUE_EXPORT_CLEANUP_INTERVAL_SECONDS = 60 * 60
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_MAX_LENGTH = 32
 AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS = int(
     os.environ.get("AUTH_TOKEN_NORMAL_MAX_AGE_SECONDS", str(8 * 60 * 60))
 )
 AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS = int(
     os.environ.get("AUTH_TOKEN_PRIVILEGED_MAX_AGE_SECONDS", str(4 * 60 * 60))
 )
-AUTH_TOKEN_SALT = "ywddzx-auth-token-v1"
+AUTH_TOKEN_SALT = "ywddzx-auth-token-v2"
+FILE_ACCESS_TOKEN_SALT = "ywddzx-file-access-token-v1"
+PASSKEY_BOOTSTRAP_TOKEN_SALT = "ywddzx-passkey-bootstrap-v1"
+PASSKEY_MANAGEMENT_TOKEN_SALT = "ywddzx-passkey-management-v1"
+PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS = 5 * 60
 PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 
 
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "4.4.0"
+        raw_value = "4.5.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -138,7 +219,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.4.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.5.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -158,11 +239,39 @@ SERVER_ONLINE_TOUCH_INTERVAL_SECONDS = max(
     5,
     int(os.environ.get("SERVER_ONLINE_TOUCH_INTERVAL_SECONDS", "15")),
 )
+TRUST_PROXY_HEADERS = str(os.environ.get("TRUST_PROXY_HEADERS", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+FILE_ACCESS_COOKIE_NAME = "ywddzx_file_session"
+FILE_ACCESS_COOKIE_PATH = "/storage"
+FILE_ACCESS_ALLOWED_CATEGORIES = {
+    "issues",
+    "rectifications",
+    "signatures",
+    "inspection_originals",
+    "training_materials",
+    "feedback_screenshots",
+}
+PUBLIC_AUTH_RATE_LIMIT_PATHS = {
+    "/api/login": "password_login",
+    "/api/auth/passkey/login/options": "passkey_login",
+    "/api/auth/passkey/login/verify": "passkey_login",
+    "/api/auth/passkey/bootstrap/options": "passkey_bootstrap",
+    "/api/auth/passkey/bootstrap/verify": "passkey_bootstrap",
+}
 LEGACY_FRONTEND_API_PATHS = {
     "/api/feedbacks/unread-count",
     "/api/assessment/peer-reviews/pending-count",
     "/api/my-issues/pending-rectification-count",
     "/api/inspection-plan-assignments/my-pending",
+}
+FORCED_PASSWORD_CHANGE_ALLOWED_PATHS = {
+    "/api/auth/me",
+    "/api/auth/logout",
+    "/api/users/change-password",
 }
 QUIET_ACCESS_LOG_PATHS = LEGACY_FRONTEND_API_PATHS | {
     "/api/auth/me",
@@ -861,9 +970,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "reset_station_account_password",
-        "name": "重置站点账号密码",
+        "name": "强制站点账号改密",
         "category": "站点数据管理",
-        "description": "在站点数据管理页面把绑定站点账号的密码重置为 123456。",
+        "description": "要求绑定站点账号下次登录立即修改密码，并使现有登录会话失效。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -892,6 +1001,13 @@ PERMISSION_CATALOG = [
         "name": "查看 AI 调用统计",
         "category": "AI调用统计",
         "description": "查看系统内 DeepSeek AI 调用次数、使用位置、字符量、估算 token 和费用。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "manage_security",
+        "name": "管理账号密码安全",
+        "category": "系统安全管理",
+        "description": "查看账号风险、维护密码策略、执行账号安全操作并查看安全审计记录。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
 ]
@@ -2226,8 +2342,64 @@ def get_auth_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt=AUTH_TOKEN_SALT)
 
 
-def get_password_fingerprint(password):
-    return hashlib.sha256(str(password or "").encode("utf-8")).hexdigest()[:24]
+def get_file_access_serializer():
+    return URLSafeTimedSerializer(
+        app.config["SECRET_KEY"],
+        salt=FILE_ACCESS_TOKEN_SALT,
+    )
+
+
+def get_passkey_bootstrap_serializer():
+    return URLSafeTimedSerializer(
+        app.config["SECRET_KEY"],
+        salt=PASSKEY_BOOTSTRAP_TOKEN_SALT,
+    )
+
+
+def get_passkey_management_serializer():
+    return URLSafeTimedSerializer(
+        app.config["SECRET_KEY"],
+        salt=PASSKEY_MANAGEMENT_TOKEN_SALT,
+    )
+
+
+def create_short_passkey_token(user, *, token_type):
+    payload = {
+        "uid": int(user["id"]),
+        "username": user["username"],
+        "av": int(user.get("auth_version") or 1),
+        "type": token_type,
+        "iat": current_epoch_seconds(),
+    }
+    serializer = (
+        get_passkey_bootstrap_serializer()
+        if token_type == "bootstrap"
+        else get_passkey_management_serializer()
+    )
+    return serializer.dumps(payload)
+
+
+def verify_short_passkey_token(token, user, *, token_type):
+    serializer = (
+        get_passkey_bootstrap_serializer()
+        if token_type == "bootstrap"
+        else get_passkey_management_serializer()
+    )
+    try:
+        payload = serializer.loads(
+            str(token or ""),
+            max_age=PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS,
+        )
+    except BadSignature as exc:
+        raise PasskeyError("安全验证已过期，请重新操作。") from exc
+    if (
+        payload.get("type") != token_type
+        or int(payload.get("uid") or 0) != int(user["id"])
+        or payload.get("username") != user["username"]
+        or int(payload.get("av") or 0) != int(user.get("auth_version") or 1)
+    ):
+        raise PasskeyError("账号安全状态已经变化，请重新操作。")
+    return payload
 
 
 def get_auth_token_ttl_seconds(user):
@@ -2246,14 +2418,22 @@ def fetch_auth_user_by_id(cur, user_id):
         SELECT
             u.id,
             u.username,
-            u.password,
+            u.password_hash,
             u.role,
             u.real_name,
             u.phone,
             u.station_id,
+            u.must_change_password,
+            u.force_change_immediately,
+            u.password_changed_at,
+            u.password_policy_version,
+            u.password_risk_flags,
+            u.auth_version,
+            u.account_status,
             s.station_name,
             s.region,
-            s.address
+            s.address,
+            s.hos_station_code
         FROM users u
         LEFT JOIN stations s ON u.station_id = s.id
         WHERE u.id = %s
@@ -2264,18 +2444,88 @@ def fetch_auth_user_by_id(cur, user_id):
     return cur.fetchone()
 
 
-def create_auth_token(user):
+def create_auth_token(user, authentication_method="password"):
     issued_at = current_epoch_seconds()
     expires_at = issued_at + get_auth_token_ttl_seconds(user)
     payload = {
         "uid": int(user["id"]),
         "username": user["username"],
         "role": user["role"],
-        "pwd": get_password_fingerprint(user.get("password")),
+        "av": int(user.get("auth_version") or 1),
+        "amr": "passkey" if authentication_method == "passkey" else "password",
         "iat": issued_at,
         "exp": expires_at,
     }
     return get_auth_serializer().dumps(payload)
+
+
+def is_request_secure():
+    if request.is_secure:
+        return True
+    if TRUST_PROXY_HEADERS:
+        return str(request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip() == "https"
+    return False
+
+
+def attach_file_access_cookie(response, token, expires_in=None):
+    if not token:
+        return response
+    try:
+        auth_payload = get_auth_serializer().loads(token)
+        file_token = get_file_access_serializer().dumps(
+            {
+                "uid": int(auth_payload["uid"]),
+                "av": int(auth_payload.get("av") or 0),
+                "exp": int(auth_payload.get("exp") or 0),
+                "scope": "storage:read",
+            }
+        )
+    except (BadSignature, KeyError, TypeError, ValueError):
+        return response
+    try:
+        max_age = max(1, int(expires_in or 0))
+    except (TypeError, ValueError):
+        max_age = 1
+    response.set_cookie(
+        FILE_ACCESS_COOKIE_NAME,
+        file_token,
+        max_age=max_age,
+        secure=is_request_secure(),
+        httponly=True,
+        samesite="Strict",
+        path=FILE_ACCESS_COOKIE_PATH,
+    )
+    return response
+
+
+def build_authenticated_response(payload, token):
+    response = jsonify(payload)
+    return attach_file_access_cookie(response, token, payload.get("expires_in"))
+
+
+def clear_file_access_cookie(response):
+    response.delete_cookie(
+        FILE_ACCESS_COOKIE_NAME,
+        path=FILE_ACCESS_COOKIE_PATH,
+        secure=is_request_secure(),
+        httponly=True,
+        samesite="Strict",
+    )
+    return response
+
+
+def authentication_rate_limit_response(exc):
+    response = jsonify(
+        {
+            "success": False,
+            "code": "AUTH_RATE_LIMITED",
+            "error": "登录尝试过于频繁，请稍后再试。",
+        }
+    )
+    response.status_code = 429
+    response.headers["Retry-After"] = str(exc.retry_after)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def get_auth_payload_expires_in(payload):
@@ -2286,8 +2536,10 @@ def get_auth_payload_expires_in(payload):
     return max(0, expires_at - current_epoch_seconds())
 
 
-def build_auth_user_payload(cur, user):
+def build_auth_user_payload(cur, user, authentication_method=None):
     permissions = get_effective_permissions(cur, user)
+    policy = fetch_password_policy(cur)
+    change_required = is_password_change_enforced(user, policy)
     return {
         "id": user["id"],
         "username": user["username"],
@@ -2299,7 +2551,12 @@ def build_auth_user_payload(cur, user):
         "region": user.get("region"),
         "address": user.get("address"),
         "permissions": permissions,
-        "must_change_password": user.get("password") == DEFAULT_INITIAL_PASSWORD,
+        "must_change_password": change_required,
+        "password_change_pending": bool(user.get("must_change_password")),
+        "password_policy": build_password_policy_summary(policy, user.get("role")),
+        "account_status": user.get("account_status") or "active",
+        "authentication_method": authentication_method,
+        "passkey_only": user.get("role") == "root",
         "birthday_event": get_user_birthday_event(cur, user),
     }
 
@@ -2434,9 +2691,49 @@ def verify_auth_token(token):
     if expires_at <= now:
         raise PermissionError("登录已过期，请重新登录。")
 
-    cached_auth = get_cached_auth_token_user(token, payload, now)
-    if cached_auth:
-        return cached_auth
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = fetch_auth_user_by_id(cur, user_id)
+        if user:
+            user = dict(user)
+            user["_password_change_enforced"] = is_password_change_enforced(
+                user,
+                fetch_password_policy(cur),
+            )
+    finally:
+        close_db_resources(cur, conn)
+
+    if not user:
+        raise PermissionError("登录已过期，请重新登录。")
+    if user.get("account_status") != "active":
+        raise PermissionError("登录已过期，请重新登录。")
+    if payload.get("username") != user["username"]:
+        raise PermissionError("登录已过期，请重新登录。")
+    if payload.get("role") != user["role"]:
+        raise PermissionError("登录已过期，请重新登录。")
+    try:
+        token_auth_version = int(payload.get("av") or 0)
+    except (TypeError, ValueError):
+        token_auth_version = 0
+    if token_auth_version != int(user.get("auth_version") or 1):
+        raise PermissionError("登录已过期，请重新登录。")
+    return dict(user), dict(payload)
+
+
+def verify_file_access_token(token):
+    try:
+        payload = get_file_access_serializer().loads(str(token or ""))
+        user_id = int(payload.get("uid") or 0)
+        auth_version = int(payload.get("av") or 0)
+        expires_at = int(payload.get("exp") or 0)
+    except (BadSignature, TypeError, ValueError) as exc:
+        raise PermissionError("文件访问会话已失效。") from exc
+
+    if payload.get("scope") != "storage:read" or not user_id or expires_at <= current_epoch_seconds():
+        raise PermissionError("文件访问会话已失效。")
 
     conn = None
     cur = None
@@ -2444,19 +2741,22 @@ def verify_auth_token(token):
         conn = get_db_connection()
         cur = conn.cursor()
         user = fetch_auth_user_by_id(cur, user_id)
+        if user:
+            user = dict(user)
+            user["_password_change_enforced"] = is_password_change_enforced(
+                user,
+                fetch_password_policy(cur),
+            )
     finally:
         close_db_resources(cur, conn)
 
-    if not user:
-        raise PermissionError("登录已过期，请重新登录。")
-    if payload.get("username") != user["username"]:
-        raise PermissionError("登录已过期，请重新登录。")
-    if payload.get("role") != user["role"]:
-        raise PermissionError("登录已过期，请重新登录。")
-    if payload.get("pwd") != get_password_fingerprint(user.get("password")):
-        raise PermissionError("登录已过期，请重新登录。")
-    set_cached_auth_token_user(token, user, payload)
-    return dict(user), dict(payload)
+    if (
+        not user
+        or user.get("account_status") != "active"
+        or auth_version != int(user.get("auth_version") or 1)
+    ):
+        raise PermissionError("文件访问会话已失效。")
+    return user
 
 
 def normalize_identity_for_compare(value):
@@ -2497,11 +2797,47 @@ def is_public_api_path(path):
     if path in LEGACY_FRONTEND_API_PATHS:
         return True
     return path in {
-        "/api/health",
-        "/api/db-test",
         "/api/login",
+        "/api/auth/passkey/login/options",
+        "/api/auth/passkey/login/verify",
+        "/api/auth/passkey/bootstrap/options",
+        "/api/auth/passkey/bootstrap/verify",
         "/api/version",
     }
+
+
+@app.before_request
+def enforce_public_authentication_rate_limit():
+    if request.method == "OPTIONS":
+        return None
+    endpoint_group = PUBLIC_AUTH_RATE_LIMIT_PATHS.get(request.path)
+    if not endpoint_group:
+        return None
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        consume_public_auth_budget(
+            cur,
+            app.config["SECRET_KEY"],
+            get_request_client_ip(),
+            endpoint_group,
+        )
+        conn.commit()
+        return None
+    except AuthenticationRateLimitExceeded as exc:
+        if conn:
+            conn.commit()
+        return authentication_rate_limit_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Public authentication rate limiter failed.")
+        return jsonify({"success": False, "error": "登录安全服务暂时不可用。"}), 503
+    finally:
+        close_db_resources(cur, conn)
 
 
 @app.before_request
@@ -2525,6 +2861,17 @@ def require_signed_api_token():
     g.current_user = user
     g.auth_payload = payload
     touch_online_user_presence(user)
+    if user.get("_password_change_enforced") and request.path not in FORCED_PASSWORD_CHANGE_ALLOWED_PATHS:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "code": "PASSWORD_CHANGE_REQUIRED",
+                    "error": "当前账号必须先完成密码修改。",
+                }
+            ),
+            403,
+        )
     current_user_id = normalize_identity_for_compare(user["id"])
     for key, value in iter_request_identity_values():
         requested_user_id = normalize_identity_for_compare(value)
@@ -2540,6 +2887,25 @@ def require_signed_api_token():
             )
 
     return None
+
+
+@app.after_request
+def apply_security_response_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(self), geolocation=(self), microphone=()",
+    )
+    if request.path.startswith("/api/") and request.path != "/api/version":
+        response.headers.setdefault("Cache-Control", "no-store")
+    if is_request_secure():
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
 
 
 @app.before_request
@@ -4972,9 +5338,28 @@ def confirm_inspection_participant(cur, inspection_id, inspector_id):
 def get_user_by_id(cur, user_id):
     cur.execute(
         """
-        SELECT id, username, role, real_name, phone, station_id
-        FROM users
-        WHERE id = %s
+        SELECT
+            u.id,
+            u.username,
+            u.role,
+            u.real_name,
+            u.phone,
+            u.station_id,
+            u.password_hash,
+            u.must_change_password,
+            u.force_change_immediately,
+            u.password_changed_at,
+            u.password_policy_version,
+            u.password_risk_flags,
+            u.auth_version,
+            u.account_status,
+            s.station_name,
+            s.region,
+            s.address,
+            s.hos_station_code
+        FROM users u
+        LEFT JOIN stations s ON s.id = u.station_id
+        WHERE u.id = %s
         LIMIT 1;
         """,
         (user_id,),
@@ -5089,14 +5474,33 @@ def ensure_user_security_schema(cur):
     if USER_SECURITY_SCHEMA_READY:
         return
 
-    cur.execute(
-        """
-        INSERT INTO users (username, password, role, real_name, phone, station_id)
-        VALUES ('root', %s, 'root', '系统管理员', '18801800773', NULL)
-        ON CONFLICT (username) DO NOTHING;
-        """,
-        (DEFAULT_INITIAL_PASSWORD,),
-    )
+    cur.execute("SELECT 1 FROM users WHERE username = 'root' LIMIT 1;")
+    if not cur.fetchone():
+        initial_root_hash = hash_password(DEFAULT_INITIAL_PASSWORD)
+        cur.execute(
+            """
+            INSERT INTO users (
+            username,
+            password_hash,
+            role,
+            real_name,
+            phone,
+            station_id,
+            must_change_password,
+            password_policy_version,
+            password_risk_flags,
+            auth_version,
+            account_status
+        )
+        VALUES (
+            'root', %s, 'root', '系统管理员', '18801800773', NULL,
+            TRUE, 0, '["initial_password", "too_short", "policy_outdated"]'::jsonb,
+            1, 'active'
+        )
+            ON CONFLICT (username) DO NOTHING;
+            """,
+            (initial_root_hash,),
+        )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS user_permissions (
@@ -12784,6 +13188,49 @@ def get_current_request_user():
     return user
 
 
+def get_request_client_ip():
+    forwarded_for = str(request.headers.get("X-Forwarded-For") or "").strip()
+    if TRUST_PROXY_HEADERS and forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()[:120]
+    return str(request.remote_addr or "")[:120]
+
+
+def persist_security_failure_event(
+    actor,
+    action_type,
+    failure_reason,
+    *,
+    target=None,
+    affected_count=0,
+    details=None,
+):
+    """Write a failure audit after the business transaction has rolled back."""
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        record_security_event(
+            cur,
+            actor,
+            action_type,
+            "failure",
+            target=target,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            affected_count=affected_count,
+            failure_reason=str(failure_reason or "安全操作未完成")[:500],
+            details=details,
+        )
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Unable to persist security failure audit for %s.", action_type)
+    finally:
+        close_db_resources(cur, conn)
+
+
 def build_feedback_author_snapshot(user):
     return {
         "author_name": normalize_text(
@@ -12830,31 +13277,6 @@ def serialize_feedback_row(row, screenshots=None, comments=None, can_delete=Fals
     item["can_accept"] = bool(can_delete)
     item["is_accepted"] = bool(item.get("accepted_at"))
     return item
-
-
-def validate_new_login_password(username, new_password, confirm_password):
-    password = normalize_text(new_password)
-    confirm = normalize_text(confirm_password)
-    username_text = normalize_text(username)
-
-    if not password:
-        raise ValueError("请填写新密码。")
-    if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
-        raise ValueError(
-            f"新密码长度需为 {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} 位。"
-        )
-    if re.search(r"\s", password):
-        raise ValueError("新密码不能包含空格。")
-    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        raise ValueError("新密码需同时包含字母和数字。")
-    if password == DEFAULT_INITIAL_PASSWORD:
-        raise ValueError("新密码不能继续使用初始密码 123456。")
-    if username_text and password.lower() == username_text.lower():
-        raise ValueError("新密码不能与用户名相同。")
-    if password != confirm:
-        raise ValueError("两次输入的新密码不一致。")
-
-    return password
 
 
 def normalize_decimal_text(value):
@@ -13363,9 +13785,12 @@ def build_management_user_payload(data, is_create=False):
     if not username:
         raise ValueError("请填写用户名。")
 
-    password = normalize_text(data.get("password"), 120)
+    raw_password = data.get("password")
+    password = raw_password if isinstance(raw_password, str) else ""
     if is_create and not password:
         raise ValueError("请填写初始密码。")
+    if len(password) > 256:
+        raise ValueError("密码长度超出允许范围。")
 
     role = normalize_user_role(data.get("role"))
     real_name = normalize_text(data.get("real_name"), 80)
@@ -18232,12 +18657,12 @@ def build_inspection_standard_ai_catalog(cur, usage_mode=None):
 
 @app.route("/")
 def home():
-    return jsonify({"message": "业务督导中心数智管理平台后端运行中"})
+    abort(404)
 
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({"success": True, "status": "ok"})
 
 
 @app.route("/api/version")
@@ -18361,39 +18786,273 @@ def get_system_resources():
 
 @app.route("/api/db-test")
 def db_test():
+    conn = None
+    cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT current_database() AS db_name, version() AS version;")
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        return jsonify(
+        require_management_user(cur, str(g.current_user["id"]), "manage_security")
+        cur.execute("SELECT 1 AS healthy;")
+        return jsonify({"success": True, "status": "ok"})
+    except PermissionError:
+        return jsonify({"success": False, "error": "无权执行数据库连通性检查。"}), 403
+    except Exception:
+        logging.exception("Database connectivity check failed.")
+        return jsonify({"success": False, "error": "数据库连通性检查失败。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def get_webauthn_request_origin():
+    return str(request.headers.get("Origin") or request.host_url or "").strip().rstrip("/")
+
+
+def load_passkey_bootstrap_user(cur, setup_token):
+    try:
+        payload = get_passkey_bootstrap_serializer().loads(
+            str(setup_token or ""),
+            max_age=PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS,
+        )
+    except BadSignature as exc:
+        raise PasskeyError("Passkey首次绑定资格已过期，请重新验证root密码。") from exc
+    user = fetch_auth_user_by_id(cur, payload.get("uid"))
+    if not user:
+        raise PasskeyError("Passkey首次绑定资格已失效。")
+    user = dict(user)
+    verify_short_passkey_token(setup_token, user, token_type="bootstrap")
+    if user.get("role") != "root" or user.get("account_status") != "active":
+        raise PasskeyError("Passkey首次绑定资格已失效。")
+    if count_user_passkeys(cur, user["id"]) > 0:
+        raise PasskeyError("root账号已经绑定Passkey，请直接使用Passkey登录。")
+    return user
+
+
+def authorize_passkey_management(cur, user, data):
+    passkey_count = count_user_passkeys(cur, user["id"])
+    if user.get("role") == "root" and passkey_count > 0:
+        verify_short_passkey_token(
+            data.get("management_token"),
+            user,
+            token_type="management",
+        )
+        return
+    if not verify_user_password(user, data.get("current_password")):
+        raise PasskeyError("当前密码验证失败，无法执行Passkey安全操作。")
+
+
+def passkey_error_response(exc, *, authentication=False):
+    status = 503 if isinstance(exc, PasskeyConfigurationError) else (401 if authentication else 400)
+    return jsonify({"success": False, "error": str(exc)}), status
+
+
+@app.route("/api/auth/passkey/login/options", methods=["POST"])
+def create_passkey_login_options():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        flow_id, options = generate_passkey_authentication(
+            cur,
+            get_webauthn_request_origin(),
+            purpose="authentication",
+        )
+        conn.commit()
+        return jsonify({"success": True, "flow_id": flow_id, "public_key": options})
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        return passkey_error_response(exc, authentication=True)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey login options failed.")
+        return jsonify({"success": False, "error": "Passkey登录暂时不可用，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkey/login/verify", methods=["POST"])
+def verify_passkey_login():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    user = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = verify_passkey_authentication(
+            cur,
+            get_webauthn_request_origin(),
+            flow_id=data.get("flow_id"),
+            credential=data.get("credential"),
+            purpose="authentication",
+        )
+        if user.get("role") == "root":
+            cur.execute(
+                """
+                UPDATE users
+                SET must_change_password = FALSE,
+                    force_change_immediately = FALSE,
+                    password_risk_flags = '[]'::jsonb,
+                    last_login_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (user["id"],),
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (user["id"],),
+            )
+        record_security_event(
+            cur,
+            user,
+            "passkey_login",
+            "success",
+            target=user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"authentication_method": "passkey"},
+        )
+        conn.commit()
+        refreshed_user = dict(fetch_auth_user_by_id(cur, user["id"]) or user)
+        token = create_auth_token(refreshed_user, "passkey")
+        invalidate_auth_caches_for_user(refreshed_user["id"])
+        touch_online_user_presence(refreshed_user)
+        return build_authenticated_response(
             {
                 "success": True,
-                "database": row["db_name"],
-                "version": row["version"],
-            }
+                "token": token,
+                "expires_in": get_auth_token_ttl_seconds(refreshed_user),
+                "user": build_auth_user_payload(cur, refreshed_user, "passkey"),
+            },
+            token,
         )
-    except Exception as e:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": str(e),
-                }
-            ),
-            500,
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        if user:
+            persist_security_failure_event(user, "passkey_login", str(exc), target=user)
+        return passkey_error_response(exc, authentication=True)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey login verification failed.")
+        return jsonify({"success": False, "error": "Passkey登录验证失败，请重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkey/bootstrap/options", methods=["POST"])
+def create_root_passkey_bootstrap_options():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = load_passkey_bootstrap_user(cur, data.get("setup_token"))
+        flow_id, options = generate_passkey_registration(
+            cur,
+            user,
+            get_webauthn_request_origin(),
+            purpose="bootstrap_registration",
         )
+        conn.commit()
+        return jsonify({"success": True, "flow_id": flow_id, "public_key": options})
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Root Passkey bootstrap options failed.")
+        return jsonify({"success": False, "error": "root Passkey首次绑定暂时不可用。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkey/bootstrap/verify", methods=["POST"])
+def verify_root_passkey_bootstrap():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    user = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = load_passkey_bootstrap_user(cur, data.get("setup_token"))
+        verify_and_store_passkey(
+            cur,
+            user,
+            get_webauthn_request_origin(),
+            flow_id=data.get("flow_id"),
+            credential=data.get("credential"),
+            credential_name=data.get("credential_name") or "root主Passkey",
+            purpose="bootstrap_registration",
+        )
+        cur.execute(
+            """
+            UPDATE users
+            SET must_change_password = FALSE,
+                force_change_immediately = FALSE,
+                password_risk_flags = '[]'::jsonb,
+                auth_version = auth_version + 1,
+                last_login_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (user["id"],),
+        )
+        record_security_event(
+            cur,
+            user,
+            "root_passkey_bootstrap",
+            "success",
+            target=user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"password_session_issued": False},
+        )
+        conn.commit()
+        refreshed_user = dict(fetch_auth_user_by_id(cur, user["id"]))
+        token = create_auth_token(refreshed_user, "passkey")
+        invalidate_auth_caches_for_user(refreshed_user["id"])
+        touch_online_user_presence(refreshed_user)
+        return build_authenticated_response(
+            {
+                "success": True,
+                "token": token,
+                "expires_in": get_auth_token_ttl_seconds(refreshed_user),
+                "message": "root Passkey绑定成功，已通过Passkey安全登录。",
+                "user": build_auth_user_payload(cur, refreshed_user, "passkey"),
+            },
+            token,
+        )
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        if user:
+            persist_security_failure_event(user, "root_passkey_bootstrap", str(exc), target=user)
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Root Passkey bootstrap verification failed.")
+        return jsonify({"success": False, "error": "root Passkey绑定失败，请重新操作。"}), 500
+    finally:
+        close_db_resources(cur, conn)
 
 
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
     username = str(data.get("username", "")).strip()
-    password = str(data.get("password", "")).strip()
+    password = data.get("password")
 
-    if not username or not password:
+    if not username or not isinstance(password, str) or not password:
         return (
             jsonify(
                 {
@@ -18412,29 +19071,62 @@ def login():
         cur = conn.cursor()
         ensure_user_security_schema(cur)
         conn.commit()
+        client_ip = get_request_client_ip()
+        try:
+            check_password_login_allowed(
+                cur,
+                app.config["SECRET_KEY"],
+                client_ip,
+                username,
+            )
+            conn.commit()
+        except AuthenticationRateLimitExceeded as exc:
+            conn.commit()
+            return authentication_rate_limit_response(exc)
         cur.execute(
             """
             SELECT
                 u.id,
                 u.username,
-                u.password,
+                u.password_hash,
                 u.role,
                 u.real_name,
                 u.phone,
                 u.station_id,
+                u.must_change_password,
+                u.force_change_immediately,
+                u.password_changed_at,
+                u.password_policy_version,
+                u.password_risk_flags,
+                u.auth_version,
+                u.account_status,
                 s.station_name,
                 s.region,
-                s.address
+                s.address,
+                s.hos_station_code
             FROM users u
             LEFT JOIN stations s ON u.station_id = s.id
-            WHERE u.username = %s AND u.password = %s
+            WHERE u.username = %s
             LIMIT 1;
         """,
-            (username, password),
+            (username,),
         )
         user = cur.fetchone()
 
-        if not user:
+        if not user or user.get("account_status") != "active":
+            rate_error = None
+            try:
+                record_password_login_failure(
+                    cur,
+                    app.config["SECRET_KEY"],
+                    client_ip,
+                    username,
+                )
+            except AuthenticationRateLimitExceeded as exc:
+                rate_error = exc
+            conn.commit()
+            if rate_error:
+                return authentication_rate_limit_response(rate_error)
             return (
                 jsonify(
                     {
@@ -18445,22 +19137,103 @@ def login():
                 401,
             )
 
-        token = create_auth_token(user)
+        if not verify_user_password(user, password):
+            rate_error = None
+            try:
+                record_password_login_failure(
+                    cur,
+                    app.config["SECRET_KEY"],
+                    client_ip,
+                    username,
+                )
+            except AuthenticationRateLimitExceeded as exc:
+                rate_error = exc
+            conn.commit()
+            if rate_error:
+                return authentication_rate_limit_response(rate_error)
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "用户名或密码错误。",
+                    }
+                ),
+                401,
+            )
+
+        if user.get("role") == "root" and count_user_passkeys(cur, user["id"]) > 0:
+            clear_successful_password_login(
+                cur,
+                app.config["SECRET_KEY"],
+                client_ip,
+                username,
+            )
+            conn.commit()
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "code": "PASSKEY_ONLY_ACCOUNT",
+                        "error": "root账号仅支持Passkey登录。",
+                    }
+                ),
+                403,
+            )
+
+        if user.get("role") == "root":
+            clear_successful_password_login(
+                cur,
+                app.config["SECRET_KEY"],
+                client_ip,
+                username,
+            )
+            conn.commit()
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "code": "PASSKEY_SETUP_REQUIRED",
+                        "message": "root账号需要先绑定Passkey，完成设备验证后才能登录。",
+                        "setup_token": create_short_passkey_token(user, token_type="bootstrap"),
+                        "setup_expires_in": PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS,
+                        "user": {
+                            "username": user["username"],
+                            "real_name": user.get("real_name") or user["username"],
+                        },
+                    }
+                ),
+                409,
+            )
+
+        clear_successful_password_login(
+            cur,
+            app.config["SECRET_KEY"],
+            client_ip,
+            username,
+        )
+        cur.execute(
+            "UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s;",
+            (user["id"],),
+        )
+        conn.commit()
+        token = create_auth_token(user, "password")
         touch_online_user_presence(user)
-        return jsonify(
+        return build_authenticated_response(
             {
                 "success": True,
                 "token": token,
                 "expires_in": get_auth_token_ttl_seconds(user),
-                "user": build_auth_user_payload(cur, user),
-            }
+                "user": build_auth_user_payload(cur, user, "password"),
+            },
+            token,
         )
-    except Exception as e:
+    except Exception:
+        logging.exception("Login service failed.")
         return (
             jsonify(
                 {
                     "success": False,
-                    "error": str(e),
+                    "error": "登录服务暂时不可用，请稍后重试。",
                 }
             ),
             500,
@@ -18472,7 +19245,7 @@ def login():
 @app.route("/api/auth/logout", methods=["POST"])
 def logout_authenticated_user():
     remove_online_user_presence(g.current_user.get("id"))
-    return jsonify({"success": True})
+    return clear_file_access_cookie(jsonify({"success": True}))
 
 
 @app.route("/api/auth/me", methods=["GET"])
@@ -18481,7 +19254,11 @@ def get_authenticated_user():
     cached_payload = get_cached_auth_me_payload(g.current_user["id"], token)
     if cached_payload:
         cached_payload["expires_in"] = get_auth_payload_expires_in(getattr(g, "auth_payload", {}))
-        return jsonify(cached_payload)
+        return attach_file_access_cookie(
+            jsonify(cached_payload),
+            token,
+            cached_payload["expires_in"],
+        )
 
     conn = None
     cur = None
@@ -18498,12 +19275,324 @@ def get_authenticated_user():
             "success": True,
             "token": token,
             "expires_in": get_auth_payload_expires_in(getattr(g, "auth_payload", {})),
-            "user": build_auth_user_payload(cur, user),
+            "user": build_auth_user_payload(
+                cur,
+                user,
+                getattr(g, "auth_payload", {}).get("amr") or "password",
+            ),
         }
         set_cached_auth_me_payload(user["id"], token, response_payload)
-        return jsonify(response_payload)
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        return attach_file_access_cookie(
+            jsonify(response_payload),
+            token,
+            response_payload["expires_in"],
+        )
+    except Exception:
+        logging.exception("Authenticated user profile read failed.")
+        return jsonify({"success": False, "error": "身份信息读取失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkeys", methods=["GET"])
+def list_current_user_passkeys():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = dict(fetch_auth_user_by_id(cur, g.current_user["id"]) or {})
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        items = [serialize_passkey(item) for item in fetch_user_passkeys(cur, user["id"])]
+        return jsonify(
+            {
+                "success": True,
+                "items": items,
+                "count": len(items),
+                "passkey_only": user.get("role") == "root",
+                "requires_password_for_changes": user.get("role") != "root" or not items,
+                "backup_recommended": user.get("role") == "root" and len(items) < 2,
+            }
+        )
+    except Exception:
+        logging.exception("Passkey list failed.")
+        return jsonify({"success": False, "error": "Passkey信息读取失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkey/reauth/options", methods=["POST"])
+def create_passkey_reauthentication_options():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = dict(fetch_auth_user_by_id(cur, g.current_user["id"]) or {})
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        flow_id, options = generate_passkey_authentication(
+            cur,
+            get_webauthn_request_origin(),
+            user_id=user["id"],
+            purpose="management_reauthentication",
+        )
+        conn.commit()
+        return jsonify({"success": True, "flow_id": flow_id, "public_key": options})
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey reauthentication options failed.")
+        return jsonify({"success": False, "error": "Passkey身份复核暂时不可用。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkey/reauth/verify", methods=["POST"])
+def verify_passkey_reauthentication():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = verify_passkey_authentication(
+            cur,
+            get_webauthn_request_origin(),
+            flow_id=data.get("flow_id"),
+            credential=data.get("credential"),
+            purpose="management_reauthentication",
+            expected_user_id=g.current_user["id"],
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "success": True,
+                "management_token": create_short_passkey_token(user, token_type="management"),
+                "expires_in": PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS,
+            }
+        )
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey reauthentication verification failed.")
+        return jsonify({"success": False, "error": "Passkey身份复核失败，请重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkeys/registration/options", methods=["POST"])
+def create_current_user_passkey_registration_options():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    user = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = dict(fetch_auth_user_by_id(cur, g.current_user["id"]) or {})
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        authorize_passkey_management(cur, user, data)
+        flow_id, options = generate_passkey_registration(
+            cur,
+            user,
+            get_webauthn_request_origin(),
+            purpose="registration",
+        )
+        conn.commit()
+        return jsonify({"success": True, "flow_id": flow_id, "public_key": options})
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        if user:
+            persist_security_failure_event(user, "passkey_registration", str(exc), target=user)
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey registration options failed.")
+        return jsonify({"success": False, "error": "Passkey绑定暂时不可用。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkeys/registration/verify", methods=["POST"])
+def verify_current_user_passkey_registration():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    user = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = dict(fetch_auth_user_by_id(cur, g.current_user["id"]) or {})
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        passkey_id = verify_and_store_passkey(
+            cur,
+            user,
+            get_webauthn_request_origin(),
+            flow_id=data.get("flow_id"),
+            credential=data.get("credential"),
+            credential_name=data.get("credential_name"),
+            purpose="registration",
+        )
+        cur.execute(
+            """
+            UPDATE users
+            SET auth_version = auth_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (user["id"],),
+        )
+        record_security_event(
+            cur,
+            user,
+            "passkey_registration",
+            "success",
+            target=user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"passkey_id": passkey_id},
+        )
+        conn.commit()
+        invalidate_auth_caches_for_user(user["id"])
+        remove_online_user_presence(user["id"])
+        return jsonify(
+            {
+                "success": True,
+                "message": "Passkey绑定成功。为保护账号安全，请重新登录。",
+                "session_invalidated": True,
+            }
+        )
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        if user:
+            persist_security_failure_event(user, "passkey_registration", str(exc), target=user)
+        return passkey_error_response(exc)
+    except psycopg2.IntegrityError:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": "该Passkey已经绑定，无需重复添加。"}), 409
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey registration verification failed.")
+        return jsonify({"success": False, "error": "Passkey绑定验证失败，请重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkeys/<int:passkey_id>", methods=["PATCH"])
+def rename_current_user_passkey(passkey_id):
+    data = request.get_json(silent=True) or {}
+    name = normalize_credential_name(data.get("credential_name"), "")
+    if not name:
+        return jsonify({"success": False, "error": "请填写Passkey名称。"}), 400
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE user_passkeys
+            SET credential_name = %s
+            WHERE id = %s AND user_id = %s
+            RETURNING id
+            """,
+            (name, passkey_id, g.current_user["id"]),
+        )
+        if not cur.fetchone():
+            return jsonify({"success": False, "error": "Passkey不存在。"}), 404
+        record_security_event(
+            cur,
+            g.current_user,
+            "passkey_rename",
+            "success",
+            target=g.current_user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"passkey_id": passkey_id},
+        )
+        conn.commit()
+        return jsonify({"success": True, "message": "Passkey名称已更新。"})
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey rename failed.")
+        return jsonify({"success": False, "error": "Passkey名称更新失败。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/passkeys/<int:passkey_id>", methods=["DELETE"])
+def delete_current_user_passkey(passkey_id):
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    user = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = dict(fetch_auth_user_by_id(cur, g.current_user["id"]) or {})
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        authorize_passkey_management(cur, user, data)
+        passkeys = fetch_user_passkeys(cur, user["id"], for_update=True)
+        target = next((item for item in passkeys if int(item["id"]) == passkey_id), None)
+        if not target:
+            return jsonify({"success": False, "error": "Passkey不存在。"}), 404
+        if user.get("role") == "root" and len(passkeys) <= 1:
+            raise PasskeyError("root账号必须至少保留一个Passkey，不能删除最后一个凭据。")
+        cur.execute("DELETE FROM user_passkeys WHERE id = %s AND user_id = %s", (passkey_id, user["id"]))
+        cur.execute(
+            "UPDATE users SET auth_version = auth_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (user["id"],),
+        )
+        record_security_event(
+            cur,
+            user,
+            "passkey_delete",
+            "success",
+            target=user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"passkey_id": passkey_id},
+        )
+        conn.commit()
+        invalidate_auth_caches_for_user(user["id"])
+        remove_online_user_presence(user["id"])
+        return jsonify(
+            {
+                "success": True,
+                "message": "Passkey已删除。为保护账号安全，请重新登录。",
+                "session_invalidated": True,
+            }
+        )
+    except (PasskeyError, PasskeyConfigurationError) as exc:
+        if conn:
+            conn.rollback()
+        if user:
+            persist_security_failure_event(user, "passkey_delete", str(exc), target=user)
+        return passkey_error_response(exc)
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Passkey delete failed.")
+        return jsonify({"success": False, "error": "Passkey删除失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -18511,20 +19600,20 @@ def get_authenticated_user():
 @app.route("/api/users/change-password", methods=["POST"])
 def change_own_password():
     data = request.get_json(silent=True) or {}
+    current_user = get_current_request_user()
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    confirm_password = data.get("confirm_password")
 
-    try:
-        user_id = int(get_authenticated_request_user_id(data.get("user_id")) or 0)
-    except (TypeError, ValueError):
-        user_id = 0
-
-    current_password = normalize_text(data.get("current_password"), 120)
-    new_password = normalize_text(data.get("new_password"), 120)
-    confirm_password = normalize_text(data.get("confirm_password"), 120)
-
-    if user_id <= 0:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-    if not current_password:
+    if not isinstance(current_password, str) or not current_password:
+        persist_security_failure_event(current_user, "password_change", "未填写当前密码")
         return jsonify({"success": False, "error": "请填写当前密码。"}), 400
+    if not isinstance(new_password, str) or not isinstance(confirm_password, str):
+        persist_security_failure_event(current_user, "password_change", "新密码或确认密码未填写")
+        return jsonify({"success": False, "error": "请填写并确认新密码。"}), 400
+    if new_password != confirm_password:
+        persist_security_failure_event(current_user, "password_change", "两次新密码输入不一致")
+        return jsonify({"success": False, "error": "两次输入的新密码不一致。"}), 400
 
     conn = None
     cur = None
@@ -18537,55 +19626,91 @@ def change_own_password():
 
         cur.execute(
             """
-            SELECT id, username, password
-            FROM users
-            WHERE id = %s
+            SELECT
+                u.id, u.username, u.role, u.real_name, u.phone, u.station_id,
+                u.password_hash, u.auth_version, u.account_status,
+                s.hos_station_code
+            FROM users u
+            LEFT JOIN stations s ON s.id = u.station_id
+            WHERE u.id = %s
             LIMIT 1;
             """,
-            (user_id,),
+            (current_user["id"],),
         )
         user = cur.fetchone()
 
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
-        if user["password"] != current_password:
+        if not verify_user_password(user, current_password):
+            record_security_event(
+                cur,
+                current_user,
+                "password_change",
+                "failure",
+                target=user,
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                failure_reason="当前密码验证失败",
+            )
+            conn.commit()
             return jsonify({"success": False, "error": "当前密码不正确。"}), 400
-
-        validated_password = validate_new_login_password(
-            user["username"], new_password, confirm_password
-        )
-        if validated_password == current_password:
+        if verify_user_password(user, new_password):
+            record_security_event(
+                cur,
+                current_user,
+                "password_change",
+                "failure",
+                target=user,
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                failure_reason="新密码与当前密码重复",
+            )
+            conn.commit()
             return jsonify({"success": False, "error": "新密码不能与当前密码相同。"}), 400
 
-        cur.execute(
-            """
-            UPDATE users
-            SET password = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s;
-            """,
-            (validated_password, user_id),
+        update_user_password(cur, user, new_password)
+        record_security_event(
+            cur,
+            current_user,
+            "password_change",
+            "success",
+            target=user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"all_sessions_invalidated": True},
         )
         conn.commit()
-        invalidate_auth_caches_for_user(user_id)
-
-        updated_user = fetch_auth_user_by_id(cur, user_id)
-        token = create_auth_token(updated_user)
+        invalidate_auth_caches_for_user(user["id"])
+        remove_online_user_presence(user["id"])
         return jsonify(
             {
                 "success": True,
-                "token": token,
-                "expires_in": get_auth_token_ttl_seconds(updated_user),
                 "must_change_password": False,
-                "user": build_auth_user_payload(cur, updated_user),
+                "reauthentication_required": True,
+                "message": "密码修改成功，请使用新密码重新登录。",
             }
         )
-    except ValueError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-    except Exception as e:
+    except (PasswordPolicyError, ValueError) as e:
         if conn:
             conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        persist_security_failure_event(
+            current_user,
+            "password_change",
+            str(e),
+            target={"id": current_user.get("id"), "username": current_user.get("username")},
+        )
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Password change failed for user %s.", current_user.get("id"))
+        persist_security_failure_event(
+            current_user,
+            "password_change",
+            "密码修改服务处理异常",
+            target={"id": current_user.get("id"), "username": current_user.get("username")},
+        )
+        return jsonify({"success": False, "error": "密码修改失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -19079,6 +20204,1002 @@ def get_stations():
             ),
             500,
         )
+    finally:
+        close_db_resources(cur, conn)
+
+
+SECURITY_RISK_LABELS = {
+    "critical": "严重",
+    "high": "高风险",
+    "remediation": "待整改",
+    "normal": "正常",
+    "disabled": "已禁用",
+}
+SECURITY_ACCOUNT_ACTIONS = {
+    "force_change": "强制下次登录改密",
+    "force_change_immediately": "立即执行强制改密",
+    "cancel_force_change": "取消强制改密",
+    "invalidate_sessions": "使现有登录会话失效",
+    "suspend": "暂停账号",
+    "restore": "恢复账号",
+}
+SECURITY_PASSWORD_INITIALIZATION_LOCK_ID = 2026080402
+
+
+def require_current_security_manager(cur):
+    current_user = get_current_request_user()
+    actor = get_user_by_id(cur, current_user["id"])
+    if not actor:
+        raise PermissionError("请先登录。")
+    if not can_manage_system(cur, actor, "manage_security"):
+        raise PermissionError("当前账号无权访问系统安全管理。")
+    return actor
+
+
+def fetch_security_account_rows(cur):
+    cur.execute(
+        """
+        SELECT
+            u.id,
+            u.username,
+            u.real_name,
+            u.role,
+            u.phone,
+            u.station_id,
+            s.station_name,
+            s.region AS station_region,
+            u.must_change_password,
+            u.force_change_immediately,
+            u.password_policy_version,
+            u.password_risk_flags,
+            u.account_status,
+            COALESCE(passkey_stats.passkey_count, 0) AS passkey_count,
+            TO_CHAR(u.password_changed_at, 'YYYY-MM-DD HH24:MI') AS password_changed_at,
+            TO_CHAR(u.last_login_at, 'YYYY-MM-DD HH24:MI') AS last_login_at
+        FROM users u
+        LEFT JOIN stations s ON s.id = u.station_id
+        LEFT JOIN (
+            SELECT user_id, COUNT(*) AS passkey_count
+            FROM user_passkeys
+            GROUP BY user_id
+        ) passkey_stats ON passkey_stats.user_id = u.id
+        ORDER BY
+            CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END,
+            u.id ASC
+        """
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def serialize_security_account(row):
+    risk_flags = list(row.get("password_risk_flags") or [])
+    passkey_count = int(row.get("passkey_count") or 0)
+    risk_level = get_risk_level(
+        row.get("account_status"),
+        row.get("must_change_password"),
+        risk_flags,
+    )
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "real_name": row.get("real_name"),
+        "role": row.get("role"),
+        "role_label": ROLE_LABELS.get(row.get("role"), row.get("role")),
+        "station_id": row.get("station_id"),
+        "station_name": row.get("station_name"),
+        "station_region": row.get("station_region"),
+        "risk_level": risk_level,
+        "risk_label": SECURITY_RISK_LABELS[risk_level],
+        "risk_reasons": get_risk_reasons(risk_flags, risk_level),
+        "must_change_password": bool(row.get("must_change_password")),
+        "force_change_immediately": bool(row.get("force_change_immediately")),
+        "password_changed_at": row.get("password_changed_at") or "尚未记录",
+        "password_policy_version": int(row.get("password_policy_version") or 0),
+        "account_status": row.get("account_status") or "active",
+        "account_status_label": "正常" if row.get("account_status") == "active" else "已暂停",
+        "last_login_at": row.get("last_login_at") or "尚未登录",
+        "passkey_count": passkey_count,
+        "passkey_bound": passkey_count > 0,
+        "login_method_label": (
+            "仅Passkey"
+            if row.get("role") == "root"
+            else ("密码 + Passkey" if passkey_count > 0 else "仅密码")
+        ),
+    }
+
+
+def filter_security_accounts(accounts, filters):
+    keyword = normalize_text(filters.get("keyword"), 100).casefold()
+    role = normalize_text(filters.get("role"), 40)
+    risk_level = normalize_text(filters.get("risk_level"), 40)
+    account_status = normalize_text(filters.get("account_status"), 40)
+    station_id = normalize_text(filters.get("station_id"), 40)
+    station_region = normalize_text(filters.get("station_region"), 100)
+    must_change_password = normalize_text(filters.get("must_change_password"), 20).lower()
+    passkey_status = normalize_text(filters.get("passkey_status"), 20).lower()
+    result = []
+    for account in accounts:
+        if keyword and keyword not in " ".join(
+            str(account.get(key) or "").casefold()
+            for key in ("username", "real_name", "station_name", "station_region")
+        ):
+            continue
+        if role and account.get("role") != role:
+            continue
+        if risk_level:
+            if risk_level == "high_risk":
+                if account.get("risk_level") not in {"critical", "high"}:
+                    continue
+            elif account.get("risk_level") != risk_level:
+                continue
+        if account_status and account.get("account_status") != account_status:
+            continue
+        if station_id and str(account.get("station_id") or "") != station_id:
+            continue
+        if station_region and account.get("station_region") != station_region:
+            continue
+        if must_change_password in {"true", "false"}:
+            expected = must_change_password == "true"
+            if bool(account.get("must_change_password")) != expected:
+                continue
+        if passkey_status in {"bound", "unbound"}:
+            expected = passkey_status == "bound"
+            if bool(account.get("passkey_bound")) != expected:
+                continue
+        result.append(account)
+    return result
+
+
+def build_security_account_stats(accounts):
+    return {
+        "total": len(accounts),
+        "high_risk": sum(1 for item in accounts if item["risk_level"] in {"critical", "high"}),
+        "must_change": sum(1 for item in accounts if item["must_change_password"]),
+        "compliant": sum(1 for item in accounts if item["risk_level"] == "normal"),
+        "disabled": sum(1 for item in accounts if item["account_status"] != "active"),
+    }
+
+
+def fetch_security_target_user(cur, target_user_id):
+    cur.execute(
+        """
+        SELECT
+            u.id, u.username, u.real_name, u.role, u.phone, u.station_id,
+            u.password_hash, u.must_change_password, u.force_change_immediately,
+            u.password_policy_version, u.password_risk_flags, u.auth_version,
+            u.account_status, s.hos_station_code
+        FROM users u
+        LEFT JOIN stations s ON s.id = u.station_id
+        WHERE u.id = %s
+        LIMIT 1
+        """,
+        (target_user_id,),
+    )
+    return cur.fetchone()
+
+
+def verify_security_reauthentication(cur, actor, password):
+    if not isinstance(password, str) or not password:
+        return False
+    refreshed_actor = fetch_security_target_user(cur, actor["id"])
+    return bool(refreshed_actor and verify_user_password(refreshed_actor, password))
+
+
+def apply_security_account_action(cur, actor, target, action):
+    if action not in SECURITY_ACCOUNT_ACTIONS:
+        raise ValueError("账号安全操作类型不正确。")
+    if target["id"] == actor["id"] and action in {"suspend", "force_change_immediately"}:
+        raise ValueError("不能对当前登录账号执行该操作。")
+    if target["role"] == "root" and action == "suspend":
+        raise ValueError("root 系统管理员账号不能被暂停。")
+
+    if action == "force_change":
+        cur.execute(
+            """
+            UPDATE users
+            SET must_change_password = TRUE,
+                force_change_immediately = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (target["id"],),
+        )
+    elif action == "force_change_immediately":
+        cur.execute(
+            """
+            UPDATE users
+            SET must_change_password = TRUE,
+                force_change_immediately = TRUE,
+                auth_version = auth_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (target["id"],),
+        )
+    elif action == "cancel_force_change":
+        cur.execute(
+            """
+            UPDATE users
+            SET must_change_password = FALSE,
+                force_change_immediately = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (target["id"],),
+        )
+    elif action == "invalidate_sessions":
+        cur.execute(
+            "UPDATE users SET auth_version = auth_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (target["id"],),
+        )
+    elif action == "suspend":
+        cur.execute(
+            """
+            UPDATE users
+            SET account_status = 'suspended',
+                auth_version = auth_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (target["id"],),
+        )
+    elif action == "restore":
+        cur.execute(
+            """
+            UPDATE users
+            SET account_status = 'active',
+                auth_version = auth_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (target["id"],),
+        )
+
+
+@app.route("/api/management/security/accounts", methods=["GET"])
+def get_security_accounts():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        policy = fetch_password_policy(cur)
+        accounts = [serialize_security_account(row) for row in fetch_security_account_rows(cur)]
+        filtered = filter_security_accounts(accounts, request.args)
+        page = max(1, int(request.args.get("page") or 1))
+        page_size = min(100, max(5, int(request.args.get("page_size") or 10)))
+        total = len(filtered)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        start = (page - 1) * page_size
+        role_options = sorted(
+            ({"value": item["role"], "label": item["role_label"]} for item in accounts),
+            key=lambda item: item["label"],
+        )
+        role_options = list({item["value"]: item for item in role_options}.values())
+        cur.execute(
+            """
+            SELECT id, station_name, region
+            FROM stations
+            ORDER BY region ASC NULLS LAST, station_name ASC
+            """
+        )
+        return jsonify(
+            {
+                "success": True,
+                "stats": build_security_account_stats(accounts),
+                "items": filtered[start : start + page_size],
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+                "options": {
+                    "roles": role_options,
+                    "stations": [dict(row) for row in cur.fetchall()],
+                    "risk_levels": [
+                        {"value": key, "label": label} for key, label in SECURITY_RISK_LABELS.items()
+                    ],
+                },
+                "policy_mode": policy.get("enforcement_mode"),
+                "can_manage_security": bool(actor),
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "筛选或分页参数不正确。"}), 400
+    except Exception:
+        logging.exception("Security account list failed.")
+        return jsonify({"success": False, "error": "账号安全数据读取失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/accounts/<int:target_user_id>/action", methods=["POST"])
+def run_security_account_action(target_user_id):
+    data = request.get_json(silent=True) or {}
+    action = normalize_text(data.get("action"), 80)
+    conn = None
+    cur = None
+    actor = None
+    target = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        target = fetch_security_target_user(cur, target_user_id)
+        if not target:
+            return jsonify({"success": False, "error": "目标账号不存在。"}), 404
+        if action == "force_change_immediately" and not verify_security_reauthentication(
+            cur, actor, data.get("current_password")
+        ):
+            record_security_event(
+                cur,
+                actor,
+                action,
+                "failure",
+                target=target,
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                failure_reason="当前管理员密码验证失败",
+            )
+            conn.commit()
+            return jsonify({"success": False, "error": "当前管理员密码验证失败。"}), 403
+        apply_security_account_action(cur, actor, target, action)
+        record_security_event(
+            cur,
+            actor,
+            action,
+            "success",
+            target=target,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"action_label": SECURITY_ACCOUNT_ACTIONS.get(action)},
+        )
+        conn.commit()
+        invalidate_auth_caches_for_user(target_user_id)
+        if action in {"invalidate_sessions", "suspend", "force_change_immediately"}:
+            remove_online_user_presence(target_user_id)
+        return jsonify({"success": True, "message": f"已完成：{SECURITY_ACCOUNT_ACTIONS[action]}。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        if actor:
+            persist_security_failure_event(
+                actor,
+                action or "account_security_action",
+                str(exc),
+                target=target,
+            )
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Security account action failed.")
+        return jsonify({"success": False, "error": "账号安全操作失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def resolve_security_batch_targets(cur, actor, data):
+    accounts = [serialize_security_account(row) for row in fetch_security_account_rows(cur)]
+    raw_ids = data.get("user_ids")
+    if isinstance(raw_ids, list) and raw_ids:
+        selected_ids = set()
+        for value in raw_ids:
+            try:
+                selected_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        accounts = [item for item in accounts if item["id"] in selected_ids]
+    else:
+        filters = data.get("filters") if isinstance(data.get("filters"), dict) else {}
+        accounts = filter_security_accounts(accounts, filters)
+    return [item for item in accounts if item["id"] != actor["id"]]
+
+
+def fetch_password_initialization_targets(cur, actor):
+    cur.execute(
+        """
+        SELECT
+            u.id,
+            u.username,
+            u.real_name,
+            u.role,
+            u.phone,
+            u.station_id,
+            u.password_hash,
+            u.account_status,
+            s.station_name,
+            s.region AS station_region,
+            s.hos_station_code
+        FROM users u
+        LEFT JOIN stations s ON s.id = u.station_id
+        WHERE u.role <> 'root'
+          AND u.id <> %s
+        ORDER BY
+            CASE u.role WHEN 'supervisor' THEN 1 WHEN 'station_manager' THEN 2 ELSE 3 END,
+            u.id ASC
+        """,
+        (actor["id"],),
+    )
+    targets = []
+    for row in cur.fetchall():
+        target = dict(row)
+        target["role_label"] = ROLE_LABELS.get(target.get("role"), target.get("role"))
+        target["account_status_label"] = (
+            "正常" if target.get("account_status") == "active" else "已暂停"
+        )
+        targets.append(target)
+    return targets
+
+
+@app.route("/api/management/security/accounts/batch-preview", methods=["POST"])
+def preview_security_batch_action():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        targets = resolve_security_batch_targets(cur, actor, data)
+        return jsonify(
+            {
+                "success": True,
+                "affected_count": len(targets),
+                "high_risk_count": sum(
+                    1 for item in targets if item["risk_level"] in {"critical", "high"}
+                ),
+                "excluded_current_user": True,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        logging.exception("Security batch preview failed.")
+        return jsonify({"success": False, "error": "批量操作影响范围计算失败。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/accounts/batch-action", methods=["POST"])
+def run_security_batch_action():
+    data = request.get_json(silent=True) or {}
+    action = normalize_text(data.get("action"), 80)
+    if action not in {"force_change", "invalidate_sessions"}:
+        return jsonify({"success": False, "error": "当前批量操作类型不受支持。"}), 400
+    conn = None
+    cur = None
+    actor = None
+    targets = []
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        targets = resolve_security_batch_targets(cur, actor, data)
+        if not targets:
+            record_security_event(
+                cur,
+                actor,
+                f"batch_{action}",
+                "failure",
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                affected_count=0,
+                failure_reason="当前范围没有可处理账号",
+            )
+            conn.commit()
+            return jsonify({"success": False, "error": "当前筛选范围内没有可处理账号。"}), 400
+        if not verify_security_reauthentication(cur, actor, data.get("current_password")):
+            record_security_event(
+                cur,
+                actor,
+                f"batch_{action}",
+                "failure",
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                affected_count=len(targets),
+                failure_reason="当前管理员密码验证失败",
+            )
+            conn.commit()
+            return jsonify({"success": False, "error": "当前管理员密码验证失败。"}), 403
+        target_ids = [item["id"] for item in targets]
+        if action == "force_change":
+            cur.execute(
+                """
+                UPDATE users
+                SET must_change_password = TRUE,
+                    force_change_immediately = FALSE,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ANY(%s)
+                """,
+                (target_ids,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE users
+                SET auth_version = auth_version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ANY(%s)
+                """,
+                (target_ids,),
+            )
+        record_security_event(
+            cur,
+            actor,
+            f"batch_{action}",
+            "success",
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            affected_count=len(targets),
+            details={"target_user_ids": target_ids[:200]},
+        )
+        conn.commit()
+        for target_id in target_ids:
+            invalidate_auth_caches_for_user(target_id)
+            if action == "invalidate_sessions":
+                remove_online_user_presence(target_id)
+        return jsonify({"success": True, "message": f"批量操作完成，共处理 {len(targets)} 个账号。"})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Security batch action failed.")
+        return jsonify({"success": False, "error": "批量安全操作失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/password-initialization/preview", methods=["POST"])
+def preview_password_initialization():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        targets = fetch_password_initialization_targets(cur, actor)
+        role_counts = {}
+        for target in targets:
+            label = target.get("role_label") or target.get("role") or "未分类"
+            role_counts[label] = role_counts.get(label, 0) + 1
+        return jsonify(
+            {
+                "success": True,
+                "affected_count": len(targets),
+                "active_count": sum(
+                    1 for target in targets if target.get("account_status") == "active"
+                ),
+                "suspended_count": sum(
+                    1 for target in targets if target.get("account_status") != "active"
+                ),
+                "role_counts": role_counts,
+                "excluded_root_accounts": True,
+                "excluded_current_user": True,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        logging.exception("Password initialization preview failed.")
+        return jsonify({"success": False, "error": "初始化影响范围读取失败。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/password-initialization/export", methods=["POST"])
+def initialize_passwords_and_export_credentials():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    actor = None
+    targets = []
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        targets = fetch_password_initialization_targets(cur, actor)
+        if not targets:
+            return jsonify({"success": False, "error": "当前没有可初始化的普通账号。"}), 400
+        if not verify_security_reauthentication(cur, actor, data.get("current_password")):
+            record_security_event(
+                cur,
+                actor,
+                "bulk_password_initialization",
+                "failure",
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                affected_count=len(targets),
+                failure_reason="当前管理员密码验证失败",
+            )
+            conn.commit()
+            return jsonify({"success": False, "error": "当前管理员密码验证失败。"}), 403
+
+        cur.execute(
+            "SELECT pg_try_advisory_xact_lock(%s) AS acquired;",
+            (SECURITY_PASSWORD_INITIALIZATION_LOCK_ID,),
+        )
+        if not bool(cur.fetchone()["acquired"]):
+            return jsonify(
+                {"success": False, "error": "另一个密码初始化任务正在运行，请稍后再试。"}
+            ), 409
+
+        policy = fetch_password_policy(cur)
+        credentials = []
+        generated_passwords = set()
+        role_counts = {}
+        for target in targets:
+            initial_password = generate_strong_initial_password(target, policy)
+            while initial_password in generated_passwords:
+                initial_password = generate_strong_initial_password(target, policy)
+            generated_passwords.add(initial_password)
+            update_user_password(
+                cur,
+                target,
+                initial_password,
+                policy=policy,
+                must_change_password=True,
+                force_change_immediately=True,
+            )
+            credentials.append({**target, "initial_password": initial_password})
+            role_label = target.get("role_label") or target.get("role") or "未分类"
+            role_counts[role_label] = role_counts.get(role_label, 0) + 1
+
+        generated_at = beijing_now()
+        workbook_stream = build_initial_credentials_workbook(
+            credentials,
+            generated_at.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        record_security_event(
+            cur,
+            actor,
+            "bulk_password_initialization",
+            "success",
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            affected_count=len(targets),
+            details={
+                "root_accounts_excluded": True,
+                "current_user_excluded": True,
+                "credentials_stored_as_plaintext": False,
+                "forced_change_on_next_login": True,
+                "role_counts": role_counts,
+            },
+        )
+        conn.commit()
+
+        for target in targets:
+            invalidate_auth_caches_for_user(target["id"])
+            remove_online_user_presence(target["id"])
+
+        filename = f"用户初始登录凭据_{generated_at.strftime('%Y%m%d_%H%M%S')}.xlsx"
+        response = send_file(
+            workbook_stream,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename,
+            max_age=0,
+        )
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Initialized-Account-Count"] = str(len(targets))
+        return response
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except (PasswordPolicyError, ValueError) as exc:
+        if conn:
+            conn.rollback()
+        if actor:
+            persist_security_failure_event(
+                actor,
+                "bulk_password_initialization",
+                str(exc),
+            )
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Bulk password initialization failed.")
+        if actor:
+            persist_security_failure_event(
+                actor,
+                "bulk_password_initialization",
+                "批量初始化处理异常",
+            )
+        return jsonify(
+            {"success": False, "error": "账号密码初始化失败，数据已回滚，请稍后重试。"}
+        ), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def normalize_password_policy_payload(data, current_policy):
+    try:
+        normal_min = int(data.get("normal_min_length", current_policy["normal_min_length"]))
+        privileged_min = int(data.get("privileged_min_length", current_policy["privileged_min_length"]))
+        max_length = int(data.get("max_length", current_policy["max_length"]))
+        history_count = int(data.get("history_count", current_policy["history_count"]))
+        grace_days = int(data.get("grace_period_days", current_policy["grace_period_days"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("密码策略数值格式不正确。") from exc
+    if normal_min < 8 or normal_min > 64:
+        raise ValueError("普通账号最短密码长度需设置为 8-64 位。")
+    if privileged_min < normal_min or privileged_min > 64:
+        raise ValueError("高权限账号最短密码长度不能低于普通账号，且不能超过64位。")
+    if max_length < 64 or max_length > 256 or max_length < privileged_min:
+        raise ValueError("最大密码长度需设置为 64-256 位，且不能低于最短密码长度。")
+    if history_count < 0 or history_count > 20:
+        raise ValueError("密码历史次数需设置为 0-20 次。")
+    if grace_days < 0 or grace_days > 365:
+        raise ValueError("密码整改宽限期需设置为 0-365 天。")
+    enforcement_mode = normalize_text(data.get("enforcement_mode"), 20) or current_policy["enforcement_mode"]
+    if enforcement_mode not in {"observe", "enforce"}:
+        raise ValueError("执行模式只能选择观察模式或正式执行。")
+    weak_passwords = normalize_weak_passwords(data.get("weak_passwords"))
+    if not weak_passwords:
+        weak_passwords = list(DEFAULT_WEAK_PASSWORDS)
+    return {
+        "enforcement_mode": enforcement_mode,
+        "normal_min_length": normal_min,
+        "privileged_min_length": privileged_min,
+        "max_length": max_length,
+        "require_uppercase": bool(data.get("require_uppercase", True)),
+        "require_lowercase": bool(data.get("require_lowercase", True)),
+        "require_number": bool(data.get("require_number", True)),
+        "require_special": bool(data.get("require_special", True)),
+        "weak_passwords": weak_passwords,
+        "forbid_identity_similarity": bool(data.get("forbid_identity_similarity", True)),
+        "history_count": history_count,
+        "grace_period_days": grace_days,
+        "logout_other_sessions": bool(data.get("logout_other_sessions", True)),
+    }
+
+
+@app.route("/api/management/security/policy", methods=["GET"])
+def get_security_password_policy():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_current_security_manager(cur)
+        return jsonify({"success": True, "policy": fetch_password_policy(cur)})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        logging.exception("Password policy read failed.")
+        return jsonify({"success": False, "error": "密码策略读取失败。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/policy", methods=["PUT"])
+def update_security_password_policy():
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    actor = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_current_security_manager(cur)
+        current_policy = fetch_password_policy(cur)
+        if not verify_security_reauthentication(cur, actor, data.get("current_password")):
+            record_security_event(
+                cur,
+                actor,
+                "password_policy_update",
+                "failure",
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                failure_reason="当前管理员密码验证失败",
+            )
+            conn.commit()
+            return jsonify({"success": False, "error": "当前管理员密码验证失败。"}), 403
+        policy = normalize_password_policy_payload(data, current_policy)
+        version_fields = {
+            "normal_min_length",
+            "privileged_min_length",
+            "max_length",
+            "require_uppercase",
+            "require_lowercase",
+            "require_number",
+            "require_special",
+            "weak_passwords",
+            "forbid_identity_similarity",
+            "history_count",
+        }
+        version_changed = any(policy[key] != current_policy.get(key) for key in version_fields)
+        new_version = int(current_policy.get("version") or 1) + (1 if version_changed else 0)
+        cur.execute(
+            """
+            UPDATE password_security_policies
+            SET enforcement_mode = %s,
+                normal_min_length = %s,
+                privileged_min_length = %s,
+                max_length = %s,
+                require_uppercase = %s,
+                require_lowercase = %s,
+                require_number = %s,
+                require_special = %s,
+                weak_passwords = %s,
+                forbid_identity_similarity = %s,
+                history_count = %s,
+                grace_period_days = %s,
+                logout_other_sessions = %s,
+                version = %s,
+                updated_by = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            (
+                policy["enforcement_mode"],
+                policy["normal_min_length"],
+                policy["privileged_min_length"],
+                policy["max_length"],
+                policy["require_uppercase"],
+                policy["require_lowercase"],
+                policy["require_number"],
+                policy["require_special"],
+                Json(policy["weak_passwords"]),
+                policy["forbid_identity_similarity"],
+                policy["history_count"],
+                policy["grace_period_days"],
+                policy["logout_other_sessions"],
+                new_version,
+                actor["id"],
+            ),
+        )
+        if version_changed:
+            cur.execute(
+                """
+                UPDATE users
+                SET must_change_password = TRUE,
+                    password_risk_flags = CASE
+                        WHEN password_risk_flags ? 'policy_outdated' THEN password_risk_flags
+                        ELSE password_risk_flags || '["policy_outdated"]'::jsonb
+                    END
+                WHERE password_policy_version < %s
+                """,
+                (new_version,),
+            )
+        record_security_event(
+            cur,
+            actor,
+            "password_policy_update",
+            "success",
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            affected_count=cur.rowcount if version_changed else 0,
+            details={
+                "old_mode": current_policy.get("enforcement_mode"),
+                "new_mode": policy["enforcement_mode"],
+                "policy_version": new_version,
+                "version_changed": version_changed,
+            },
+        )
+        conn.commit()
+        invalidate_auth_caches_for_user()
+        return jsonify(
+            {
+                "success": True,
+                "message": "密码策略已保存。",
+                "policy": fetch_password_policy(cur),
+            }
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        if actor:
+            persist_security_failure_event(
+                actor,
+                "password_policy_update",
+                str(exc),
+            )
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Password policy update failed.")
+        return jsonify({"success": False, "error": "密码策略保存失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/management/security/logs", methods=["GET"])
+def get_security_audit_logs():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        require_current_security_manager(cur)
+        page = max(1, int(request.args.get("page") or 1))
+        page_size = min(100, max(10, int(request.args.get("page_size") or 20)))
+        clauses = ["1=1"]
+        params = []
+        keyword = normalize_text(request.args.get("keyword"), 100)
+        action_type = normalize_text(request.args.get("action_type"), 120)
+        action_result = normalize_text(request.args.get("action_result"), 20)
+        target_user_id = normalize_text(request.args.get("target_user_id"), 40)
+        if keyword:
+            clauses.append("(actor_username ILIKE %s OR target_username ILIKE %s OR action_type ILIKE %s)")
+            params.extend([f"%{keyword}%"] * 3)
+        if action_type:
+            clauses.append("action_type = %s")
+            params.append(action_type)
+        if action_result in {"success", "failure"}:
+            clauses.append("action_result = %s")
+            params.append(action_result)
+        if target_user_id:
+            try:
+                parsed_target_user_id = int(target_user_id)
+            except ValueError as exc:
+                raise ValueError("目标账号筛选参数不正确。") from exc
+            clauses.append("target_user_id = %s")
+            params.append(parsed_target_user_id)
+        where_sql = " AND ".join(clauses)
+        cur.execute(f"SELECT COUNT(*) AS total FROM security_audit_logs WHERE {where_sql}", params)
+        total = int(cur.fetchone()["total"] or 0)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        cur.execute(
+            f"""
+            SELECT
+                id,
+                actor_user_id,
+                actor_username,
+                actor_role,
+                target_user_id,
+                target_username,
+                action_type,
+                action_result,
+                failure_reason,
+                request_ip,
+                user_agent,
+                affected_count,
+                details,
+                TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at
+            FROM security_audit_logs
+            WHERE {where_sql}
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s OFFSET %s
+            """,
+            [*params, page_size, (page - 1) * page_size],
+        )
+        return jsonify(
+            {
+                "success": True,
+                "items": [dict(row) for row in cur.fetchall()],
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": total_pages,
+            }
+        )
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        logging.exception("Security audit log read failed.")
+        return jsonify({"success": False, "error": "安全操作记录读取失败。"}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -19675,11 +21796,14 @@ def export_management_users():
             SELECT
                 u.id,
                 u.username,
-                u.password,
                 u.role,
                 u.real_name,
                 u.phone,
                 u.station_id,
+                u.must_change_password,
+                u.force_change_immediately,
+                u.password_policy_version,
+                u.account_status,
                 s.station_name,
                 s.hos_station_code,
                 TO_CHAR(u.created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
@@ -19708,7 +21832,6 @@ def export_management_users():
                 {
                     "id": row["id"],
                     "username": row["username"],
-                    "password": row["password"],
                     "role": row["role"],
                     "real_name": row["real_name"],
                     "phone": row["phone"],
@@ -19717,7 +21840,10 @@ def export_management_users():
                     "hos_station_code": row["hos_station_code"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
-                    "must_change_password": row["password"] == DEFAULT_INITIAL_PASSWORD,
+                    "must_change_password": bool(row["must_change_password"]),
+                    "force_change_immediately": bool(row["force_change_immediately"]),
+                    "password_policy_version": int(row["password_policy_version"] or 0),
+                    "account_status": row["account_status"],
                     "permission_overrides": get_permission_overrides(cur, row["id"]),
                     "permissions": get_effective_permissions(cur, row),
                     "inspection_table_scope_ids": get_user_inspection_table_scope_overrides(cur, row["id"]),
@@ -19738,11 +21864,11 @@ def export_management_users():
         response = jsonify(
             {
                 "backup_type": "ywddzx_users",
-                "version": 1,
+                "version": 2,
                 "exported_at": now.isoformat(),
-                "includes_passwords": True,
-                "password_backup_mode": "database_current_value",
-                "default_password_policy": "password == 123456 triggers forced password change on next login",
+                "includes_passwords": False,
+                "password_backup_mode": "credentials_excluded_for_security",
+                "credential_restore_note": "导入时保留系统内同名账号现有凭据；新增账号必须由管理员单独创建并设置合规初始密码。",
                 "role_permission_overrides": get_role_permission_overrides_map(cur),
                 "role_inspection_table_scope_ids": get_role_inspection_table_scope_overrides_map(cur),
                 "role_station_region_scope_values": get_role_station_region_scope_overrides_map(cur),
@@ -19789,7 +21915,9 @@ def import_management_users():
             if (raw_username == "root") != (raw_role == "root"):
                 raise ValueError("root 账号备份记录必须同时使用用户名 root 和角色 root。")
 
-            user_data = build_management_user_payload(raw_user, is_create=True)
+            if raw_user.get("password_hash"):
+                raise ValueError("用户备份文件不得包含密码哈希。")
+            user_data = build_management_user_payload(raw_user, is_create=False)
 
             raw_permissions = raw_user.get("permissions")
             if raw_permissions in (None, ""):
@@ -19877,7 +22005,8 @@ def import_management_users():
 
                 cur.execute(
                     """
-                    SELECT id, password
+                    SELECT id, username, role, real_name, phone, station_id,
+                           password_hash, auth_version, account_status
                     FROM users
                     WHERE username = 'root'
                     LIMIT 1;
@@ -19887,14 +22016,13 @@ def import_management_users():
                 if not root_user:
                     raise ValueError("系统内置 root 账号不存在，请先检查用户表初始化状态。")
 
-                if root_user["id"] == actor["id"] and root_user["password"] != user_data["password"]:
+                if root_user["id"] == actor["id"] and user_data["password"]:
                     auth_invalidated = True
 
                 cur.execute(
                     """
                     UPDATE users
-                    SET password = %(password)s,
-                        role = 'root',
+                    SET role = 'root',
                         real_name = %(real_name)s,
                         phone = %(phone)s,
                         station_id = NULL,
@@ -19905,6 +22033,24 @@ def import_management_users():
                     {**user_data, "root_user_id": root_user["id"]},
                 )
                 target_user_id = cur.fetchone()["id"]
+                if user_data["password"]:
+                    update_user_password(
+                        cur,
+                        root_user,
+                        user_data["password"],
+                        must_change_password=True,
+                        force_change_immediately=True,
+                    )
+                    record_security_event(
+                        cur,
+                        actor,
+                        "administrator_password_reset",
+                        "success",
+                        target=root_user,
+                        request_ip=get_request_client_ip(),
+                        user_agent=request.headers.get("User-Agent"),
+                        details={"source": "legacy_user_backup_import"},
+                    )
                 cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
                 cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user_id,))
                 cur.execute("DELETE FROM user_station_region_scopes WHERE user_id = %s;", (target_user_id,))
@@ -19927,7 +22073,8 @@ def import_management_users():
 
             cur.execute(
                 """
-                SELECT id, role
+                SELECT id, username, role, real_name, phone, station_id,
+                       password_hash, auth_version, account_status
                 FROM users
                 WHERE username = %s
                 LIMIT 1;
@@ -19946,8 +22093,7 @@ def import_management_users():
                 cur.execute(
                     """
                     UPDATE users
-                    SET password = %(password)s,
-                        role = %(role)s,
+                    SET role = %(role)s,
                         real_name = %(real_name)s,
                         phone = %(phone)s,
                         station_id = %(station_id)s,
@@ -19958,7 +22104,53 @@ def import_management_users():
                     {**user_data, "target_user_id": target_user_id},
                 )
                 target_user_id = cur.fetchone()["id"]
+                if user_data["password"]:
+                    credential_user = {
+                        **dict(existing_by_username),
+                        "username": user_data["username"],
+                        "role": user_data["role"],
+                        "phone": user_data["phone"],
+                    }
+                    update_user_password(
+                        cur,
+                        credential_user,
+                        user_data["password"],
+                        must_change_password=True,
+                        force_change_immediately=True,
+                    )
+                    record_security_event(
+                        cur,
+                        actor,
+                        "administrator_password_reset",
+                        "success",
+                        target=credential_user,
+                        request_ip=get_request_client_ip(),
+                        user_agent=request.headers.get("User-Agent"),
+                        details={"source": "legacy_user_backup_import"},
+                    )
             else:
+                if not user_data["password"]:
+                    raise ValueError(
+                        f"备份中的新账号 {user_data['username']} 不含登录凭据；请先在系统中创建该账号后再导入。"
+                    )
+                credential_user = {
+                    "username": user_data["username"],
+                    "role": user_data["role"],
+                    "phone": user_data["phone"],
+                    "hos_station_code": None,
+                }
+                if user_data["station_id"]:
+                    cur.execute(
+                        "SELECT hos_station_code FROM stations WHERE id = %s LIMIT 1;",
+                        (user_data["station_id"],),
+                    )
+                    station_row = cur.fetchone()
+                    credential_user["hos_station_code"] = (station_row or {}).get("hos_station_code")
+                password_hash, password_policy = validate_and_hash_password(
+                    cur,
+                    credential_user,
+                    user_data["password"],
+                )
                 backup_user_id = user_data["user_id"]
                 if backup_user_id:
                     cur.execute(
@@ -19980,28 +22172,45 @@ def import_management_users():
                         INSERT INTO users (
                             id,
                             username,
-                            password,
+                            password_hash,
                             role,
                             real_name,
                             phone,
                             station_id,
+                            must_change_password,
+                            force_change_immediately,
+                            password_policy_version,
+                            password_risk_flags,
+                            auth_version,
+                            account_status,
                             created_at,
                             updated_at
                         )
                         VALUES (
                             %(user_id)s,
                             %(username)s,
-                            %(password)s,
+                            %(password_hash)s,
                             %(role)s,
                             %(real_name)s,
                             %(phone)s,
                             %(station_id)s,
+                            TRUE,
+                            TRUE,
+                            %(password_policy_version)s,
+                            '[]'::jsonb,
+                            1,
+                            'active',
                             COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
                             COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
                         )
                         RETURNING id;
                         """,
-                        {**user_data, "user_id": backup_user_id},
+                        {
+                            **user_data,
+                            "user_id": backup_user_id,
+                            "password_hash": password_hash,
+                            "password_policy_version": int(password_policy.get("version") or 1),
+                        },
                     )
                     target_user_id = cur.fetchone()["id"]
                 else:
@@ -20009,29 +22218,52 @@ def import_management_users():
                         """
                         INSERT INTO users (
                             username,
-                            password,
+                            password_hash,
                             role,
                             real_name,
                             phone,
                             station_id,
+                            must_change_password,
+                            force_change_immediately,
+                            password_policy_version,
+                            password_risk_flags,
+                            auth_version,
+                            account_status,
                             created_at,
                             updated_at
                         )
                         VALUES (
                             %(username)s,
-                            %(password)s,
+                            %(password_hash)s,
                             %(role)s,
                             %(real_name)s,
                             %(phone)s,
                             %(station_id)s,
+                            TRUE,
+                            TRUE,
+                            %(password_policy_version)s,
+                            '[]'::jsonb,
+                            1,
+                            'active',
                             COALESCE(NULLIF(%(created_at)s, '')::timestamp, CURRENT_TIMESTAMP),
                             COALESCE(NULLIF(%(updated_at)s, '')::timestamp, CURRENT_TIMESTAMP)
                         )
                         RETURNING id;
                         """,
-                        user_data,
+                        {
+                            **user_data,
+                            "password_hash": password_hash,
+                            "password_policy_version": int(password_policy.get("version") or 1),
+                        },
                     )
                     target_user_id = cur.fetchone()["id"]
+                cur.execute(
+                    """
+                    INSERT INTO user_password_history (user_id, password_hash, created_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP);
+                    """,
+                    (target_user_id, password_hash),
+                )
 
             target_user = {
                 "id": target_user_id,
@@ -20104,6 +22336,7 @@ def create_management_user():
     user_id = str(data.get("user_id", "")).strip()
     conn = None
     cur = None
+    actor = None
 
     try:
         user_data = build_management_user_payload(data, is_create=True)
@@ -20118,31 +22351,80 @@ def create_management_user():
         ensure_user_security_schema(cur)
         actor = require_management_user(cur, user_id, "manage_users")
 
+        password_policy = fetch_password_policy(cur)
+        credential_user = {
+            "username": user_data["username"],
+            "role": user_data["role"],
+            "phone": user_data["phone"],
+            "hos_station_code": None,
+        }
+        if user_data["station_id"]:
+            cur.execute(
+                "SELECT hos_station_code FROM stations WHERE id = %s LIMIT 1;",
+                (user_data["station_id"],),
+            )
+            station_row = cur.fetchone()
+            credential_user["hos_station_code"] = (station_row or {}).get("hos_station_code")
+        password_hash, _ = validate_and_hash_password(
+            cur,
+            credential_user,
+            user_data["password"],
+            password_policy,
+        )
+
         cur.execute(
             """
             INSERT INTO users (
                 username,
-                password,
+                password_hash,
                 role,
                 real_name,
                 phone,
                 station_id,
+                must_change_password,
+                force_change_immediately,
+                password_policy_version,
+                password_risk_flags,
+                auth_version,
+                account_status,
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (
+                %s, %s, %s, %s, %s, %s,
+                TRUE, TRUE, %s, '[]'::jsonb, 1, 'active',
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
             RETURNING id, username, role;
             """,
             (
                 user_data["username"],
-                user_data["password"],
+                password_hash,
                 user_data["role"],
                 user_data["real_name"],
                 user_data["phone"],
                 user_data["station_id"],
+                int(password_policy.get("version") or 1),
             ),
         )
         created_user = cur.fetchone()
+        cur.execute(
+            """
+            INSERT INTO user_password_history (user_id, password_hash, created_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP);
+            """,
+            (created_user["id"], password_hash),
+        )
+        record_security_event(
+            cur,
+            actor,
+            "account_password_initialization",
+            "success",
+            target=created_user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"forced_change_on_next_login": True},
+        )
         apply_user_permission_updates(cur, created_user, permissions, actor["id"])
         apply_user_inspection_table_scope_updates(cur, created_user, scope_ids, actor["id"])
         apply_user_station_region_scope_updates(cur, created_user, region_scope_values, actor["id"])
@@ -20159,6 +22441,13 @@ def create_management_user():
     except ValueError as exc:
         if conn:
             conn.rollback()
+        if actor and bool(data.get("password")):
+            persist_security_failure_event(
+                actor,
+                "account_password_initialization",
+                str(exc),
+                target={"username": normalize_text(data.get("username"), 80)},
+            )
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as e:
         if conn:
@@ -20176,6 +22465,8 @@ def update_management_user(target_user_id):
     user_id = str(data.get("user_id", "")).strip()
     conn = None
     cur = None
+    actor = None
+    target_user = None
 
     try:
         user_data = build_management_user_payload(data, is_create=False)
@@ -20190,9 +22481,13 @@ def update_management_user(target_user_id):
 
         cur.execute(
             """
-            SELECT id, username, role
-            FROM users
-            WHERE id = %s
+            SELECT
+                u.id, u.username, u.role, u.real_name, u.phone, u.station_id,
+                u.password_hash, u.account_status, u.auth_version,
+                s.hos_station_code
+            FROM users u
+            LEFT JOIN stations s ON s.id = u.station_id
+            WHERE u.id = %s
             LIMIT 1;
             """,
             (target_user_id,),
@@ -20207,53 +22502,61 @@ def update_management_user(target_user_id):
         if target_user["role"] != "root" and user_data["role"] == "root":
             return jsonify({"success": False, "error": "不能将普通用户升级为 root 系统管理员。"}), 400
 
-        if user_data["password"]:
-            cur.execute(
-                """
-                UPDATE users
-                SET username = %s,
-                    password = %s,
-                    role = %s,
-                    real_name = %s,
-                    phone = %s,
-                    station_id = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                RETURNING id, username, role;
-                """,
-                (
-                    user_data["username"],
-                    user_data["password"],
-                    user_data["role"],
-                    user_data["real_name"],
-                    user_data["phone"],
-                    user_data["station_id"],
-                    target_user_id,
-                ),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE users
-                SET username = %s,
-                    role = %s,
-                    real_name = %s,
-                    phone = %s,
-                    station_id = %s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                RETURNING id, username, role;
-                """,
-                (
-                    user_data["username"],
-                    user_data["role"],
-                    user_data["real_name"],
-                    user_data["phone"],
-                    user_data["station_id"],
-                    target_user_id,
-                ),
-            )
+        cur.execute(
+            """
+            UPDATE users
+            SET username = %s,
+                role = %s,
+                real_name = %s,
+                phone = %s,
+                station_id = %s,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id, username, role;
+            """,
+            (
+                user_data["username"],
+                user_data["role"],
+                user_data["real_name"],
+                user_data["phone"],
+                user_data["station_id"],
+                target_user_id,
+            ),
+        )
         updated_user = cur.fetchone()
+        if user_data["password"]:
+            credential_user = {
+                **dict(target_user),
+                "username": user_data["username"],
+                "role": user_data["role"],
+                "phone": user_data["phone"],
+                "station_id": user_data["station_id"],
+                "hos_station_code": None,
+            }
+            if user_data["station_id"]:
+                cur.execute(
+                    "SELECT hos_station_code FROM stations WHERE id = %s LIMIT 1;",
+                    (user_data["station_id"],),
+                )
+                station_row = cur.fetchone()
+                credential_user["hos_station_code"] = (station_row or {}).get("hos_station_code")
+            update_user_password(
+                cur,
+                credential_user,
+                user_data["password"],
+                must_change_password=True,
+                force_change_immediately=True,
+            )
+            record_security_event(
+                cur,
+                actor,
+                "administrator_password_reset",
+                "success",
+                target={"id": target_user_id, "username": user_data["username"]},
+                request_ip=get_request_client_ip(),
+                user_agent=request.headers.get("User-Agent"),
+                details={"forced_change_on_next_login": True},
+            )
         apply_user_permission_updates(cur, updated_user, permissions, actor["id"])
         apply_user_inspection_table_scope_updates(cur, updated_user, scope_ids, actor["id"])
         apply_user_station_region_scope_updates(cur, updated_user, region_scope_values, actor["id"])
@@ -20271,6 +22574,13 @@ def update_management_user(target_user_id):
     except ValueError as exc:
         if conn:
             conn.rollback()
+        if actor and bool(data.get("password")):
+            persist_security_failure_event(
+                actor,
+                "administrator_password_reset",
+                str(exc),
+                target=target_user or {"id": target_user_id},
+            )
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as e:
         if conn:
@@ -21570,7 +23880,7 @@ def reset_management_station_account_password(station_id):
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_station_management_columns(cur)
-        require_management_user(cur, user_id, "reset_station_account_password")
+        actor = require_management_user(cur, user_id, "reset_station_account_password")
 
         cur.execute(
             """
@@ -21587,18 +23897,34 @@ def reset_management_station_account_password(station_id):
         cur.execute(
             """
             UPDATE users
-            SET password = %s,
+            SET must_change_password = TRUE,
+                force_change_immediately = TRUE,
+                password_risk_flags = CASE
+                    WHEN password_risk_flags ? 'policy_outdated' THEN password_risk_flags
+                    ELSE password_risk_flags || '["policy_outdated"]'::jsonb
+                END,
+                auth_version = auth_version + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE role = 'station_manager'
               AND station_id = %s
             RETURNING id, username, real_name;
             """,
-            (DEFAULT_INITIAL_PASSWORD, station_id),
+            (station_id,),
         )
         accounts = cur.fetchall()
         if not accounts:
             return jsonify({"success": False, "error": "该站点暂无绑定站点账号。"}), 400
 
+        record_security_event(
+            cur,
+            actor,
+            "force_password_change",
+            "success",
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            affected_count=len(accounts),
+            details={"station_id": station_id, "immediate": True},
+        )
         conn.commit()
         for account in accounts:
             invalidate_auth_caches_for_user(account.get("id"))
@@ -21606,7 +23932,7 @@ def reset_management_station_account_password(station_id):
         return jsonify(
             {
                 "success": True,
-                "message": f"已将【{station['station_name']}】绑定站点账号密码重置为 123456，下次登录需重新设置密码。",
+                "message": f"已要求【{station['station_name']}】绑定站点账号下次登录立即修改密码，并注销其现有会话。",
                 "reset_count": len(accounts),
                 "usernames": usernames,
             }
@@ -31634,12 +33960,35 @@ def submit_review(issue_id):
         close_db_resources(cur, conn)
 
 
-# ===== 原有静态文件上传API =====
-
-
 @app.route("/storage/<path:filename>")
 def uploaded_file(filename):
-    return send_from_directory(STORAGE_ROOT, filename)
+    token = str(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or "").strip()
+    if not token:
+        return jsonify({"success": False, "error": "请先登录后查看文件。"}), 401
+
+    try:
+        user = verify_file_access_token(token)
+    except PermissionError:
+        response = jsonify({"success": False, "error": "文件访问会话已失效，请重新登录。"})
+        response.status_code = 401
+        return clear_file_access_cookie(response)
+
+    if user.get("_password_change_enforced"):
+        return jsonify({"success": False, "error": "请先完成密码修改。"}), 403
+
+    normalized = str(filename or "").replace("\\", "/").strip().lstrip("/")
+    path_parts = [part for part in normalized.split("/") if part]
+    if (
+        not path_parts
+        or any(part in {".", ".."} or part.startswith(".") for part in path_parts)
+        or path_parts[0] not in FILE_ACCESS_ALLOWED_CATEGORIES
+    ):
+        abort(404)
+
+    response = send_from_directory(STORAGE_ROOT, "/".join(path_parts), conditional=True)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 if __name__ == "__main__":

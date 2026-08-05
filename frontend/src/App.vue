@@ -37,26 +37,64 @@
         </div>
       </section>
 
-      <form class="login-card" @submit.prevent="handleLogin">
-        <div class="login-card-header">
-          <div class="login-card-kicker">工作台登录</div>
-          <h2>账号登录</h2>
-          <p>使用业务督导中心账号继续处理今日工作。</p>
-        </div>
+      <form class="login-card" autocomplete="on" @submit.prevent="handleLogin">
+        <template v-if="rootPasskeySetup.active">
+          <div class="login-card-header root-passkey-setup-head">
+            <div class="login-card-kicker">root首次安全设置</div>
+            <h2>绑定登录Passkey</h2>
+            <p>密码验证已完成。创建Passkey后，root将只允许使用Passkey登录。</p>
+          </div>
+          <div class="root-passkey-identity">
+            <span>正在为以下账号绑定</span>
+            <strong>{{ rootPasskeySetup.realName || rootPasskeySetup.username }}</strong>
+          </div>
+          <div class="form-item">
+            <label>Passkey名称</label>
+            <input v-model.trim="rootPasskeySetup.credentialName" maxlength="80"
+              placeholder="例如：root办公电脑" />
+          </div>
+          <div class="root-passkey-notice">
+            私钥和生物特征只保留在您的设备中，系统仅保存用于验证的公钥。
+          </div>
+          <div v-if="loginError" class="login-error">{{ loginError }}</div>
+          <button class="btn btn-primary login-btn passkey-action-button" type="button"
+            :disabled="passkeyLoginLoading" @click="handleRootPasskeySetup">
+            {{ passkeyLoginLoading ? '正在等待设备验证...' : '创建Passkey并登录' }}
+          </button>
+          <button class="root-passkey-cancel" type="button" :disabled="passkeyLoginLoading"
+            @click="cancelRootPasskeySetup">返回登录</button>
+        </template>
 
-        <div class="form-item">
-          <label>用户名</label>
-          <input v-model.trim="loginForm.username" type="text" placeholder="请输入用户名" />
-        </div>
+        <template v-else>
+          <div class="login-card-header">
+            <div class="login-card-kicker">工作台登录</div>
+            <h2>账号登录</h2>
+            <p>使用密码或Passkey继续处理今日工作。</p>
+          </div>
 
-        <div class="form-item">
-          <label>密码</label>
-          <input v-model="loginForm.password" type="password" placeholder="请输入密码" />
-        </div>
+          <div class="form-item">
+            <label>用户名</label>
+            <input v-model.trim="loginForm.username" name="username" type="text" autocomplete="username webauthn"
+              placeholder="请输入用户名" />
+          </div>
 
-        <div v-if="loginError" class="login-error">{{ loginError }}</div>
+          <div class="form-item">
+            <label>密码</label>
+            <input v-model="loginForm.password" name="password" type="password" autocomplete="current-password"
+              placeholder="请输入密码" />
+          </div>
 
-        <button class="btn btn-primary login-btn" type="submit">登录系统</button>
+          <div v-if="loginError" class="login-error">{{ loginError }}</div>
+
+          <button class="btn btn-primary login-btn" type="submit">密码登录</button>
+          <div class="login-method-divider"><span>或使用免密方式</span></div>
+          <button class="passkey-login-button" type="button" :disabled="passkeyLoginLoading"
+            @click="handlePasskeyLogin">
+            <span class="passkey-login-icon"><i></i></span>
+            <span><strong>{{ passkeyLoginLoading ? '正在等待设备验证...' : '使用Passkey登录' }}</strong><small>指纹、面容、设备解锁或安全密钥</small></span>
+          </button>
+          <p class="root-passkey-login-tip">root账号仅支持Passkey登录</p>
+        </template>
       </form>
     </div>
 
@@ -108,6 +146,7 @@
         <span class="server-resource-dot"></span>
         {{ mobileServerResourceLabel }}
       </div>
+      <button class="mobile-passkey-button" type="button" title="Passkey管理" @click="passkeyManagerOpen = true">钥</button>
       <button class="btn btn-secondary btn-sm mobile-logout-btn" type="button" @click="handleLogout">退出</button>
     </header>
 
@@ -295,6 +334,12 @@
           <span class="nav-item-icon">用</span>
           <span v-if="!sidebarCollapsed">用户数据管理</span>
         </button>
+        <button v-if="canManageSecurity" class="nav-item"
+          :class="{ active: isActive('/management/security'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/security')" :title="sidebarCollapsed ? '系统安全管理' : ''">
+          <span class="nav-item-icon">安</span>
+          <span v-if="!sidebarCollapsed">系统安全管理</span>
+        </button>
         <button v-if="canManageStations" class="nav-item"
           :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/stations')" :title="sidebarCollapsed ? '站点数据管理' : ''">
@@ -430,21 +475,24 @@
               </div>
             </div>
           </div>
+          <button class="header-passkey-button" type="button" @click="passkeyManagerOpen = true">
+            <span></span>Passkey
+          </button>
           <button class="btn btn-secondary btn-sm" type="button" @click="handleLogout">退出登录</button>
         </div>
       </header>
 
       <main class="content">
-        <router-view />
+        <router-view v-if="!authState.mustChangePassword" />
       </main>
     </div>
 
     <div v-if="authState.mustChangePassword" class="force-password-overlay" role="dialog" aria-modal="true">
-      <form class="force-password-card" @submit.prevent="handlePasswordChange">
-        <div class="force-password-eyebrow">初始/重置密码安全校验</div>
+      <form class="force-password-card" autocomplete="on" @submit.prevent="handlePasswordChange">
+        <div class="force-password-eyebrow">账号密码安全更新</div>
         <h2>请先设置新密码</h2>
         <p class="force-password-subtitle">
-          当前账号仍在使用初始密码或管理员重置密码。为了保护业务数据安全，完成密码更新后再进入系统。
+          当前账号已被要求更新密码。完成修改后，旧会话会全部失效，请使用新密码重新登录。
         </p>
 
         <div class="force-password-user">
@@ -455,26 +503,29 @@
         <div class="force-password-fields">
           <label>
             <span>当前密码</span>
-            <input v-model="passwordChangeForm.currentPassword" type="password" autocomplete="current-password"
-              placeholder="请输入当前密码" />
+            <input v-model="passwordChangeForm.currentPassword" name="current_password" type="password"
+              autocomplete="current-password" placeholder="请输入当前密码" />
           </label>
           <label>
             <span>新密码</span>
-            <input v-model="passwordChangeForm.newPassword" type="password" autocomplete="new-password"
-              placeholder="8-32 位，包含字母和数字" />
+            <input v-model="passwordChangeForm.newPassword" name="new_password" type="password"
+              autocomplete="new-password" :placeholder="`${passwordPolicyMinLength}-${passwordPolicyMaxLength} 位，支持长密码短语`" />
           </label>
           <label>
             <span>确认新密码</span>
-            <input v-model="passwordChangeForm.confirmPassword" type="password" autocomplete="new-password"
-              placeholder="请再次输入新密码" />
+            <input v-model="passwordChangeForm.confirmPassword" name="confirm_password" type="password"
+              autocomplete="new-password" placeholder="请再次输入新密码" />
           </label>
         </div>
 
         <div class="force-password-rules">
-          <span :class="{ passed: passwordRuleStatus.length }">8-32 位</span>
-          <span :class="{ passed: passwordRuleStatus.letterAndNumber }">包含字母和数字</span>
-          <span :class="{ passed: passwordRuleStatus.noWhitespace }">不含空格</span>
-          <span :class="{ passed: passwordRuleStatus.notDefaultOrUsername }">不使用初始密码或用户名</span>
+          <span :class="{ passed: passwordRuleStatus.length }">{{ passwordPolicyMinLength }}-{{ passwordPolicyMaxLength }} 位</span>
+          <span v-if="passwordRequiresUppercase" :class="{ passed: passwordRuleStatus.uppercase }">包含大写字母</span>
+          <span v-if="passwordRequiresLowercase" :class="{ passed: passwordRuleStatus.lowercase }">包含小写字母</span>
+          <span v-if="passwordRequiresNumber" :class="{ passed: passwordRuleStatus.number }">包含数字</span>
+          <span v-if="passwordRequiresSpecial" :class="{ passed: passwordRuleStatus.special }">包含特殊字符</span>
+          <span :class="{ passed: passwordRuleStatus.notIdentityRelated }">不包含用户名、手机号等关联信息</span>
+          <span>服务端会检查弱密码与近期密码历史</span>
           <span :class="{ passed: passwordRuleStatus.confirmed }">两次输入一致</span>
         </div>
 
@@ -491,6 +542,9 @@
         </div>
       </form>
     </div>
+
+    <PasskeyManagerModal :visible="passkeyManagerOpen && !authState.mustChangePassword"
+      @close="passkeyManagerOpen = false" @session-invalidated="handlePasskeySessionInvalidated" />
 
     <div v-if="birthdayBlessing.visible && !authState.mustChangePassword" class="birthday-blessing-overlay"
       role="dialog" aria-modal="true">
@@ -578,6 +632,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
+import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import {
   AUTH_SESSION_EXPIRED_EVENT,
   clearAuthSession,
@@ -595,6 +650,13 @@ import {
   getPageVisibilitySnapshot,
   PAGE_VISIBILITY_UPDATED_EVENT
 } from './utils/pageVisibility'
+import {
+  friendlyPasskeyError,
+  getPasskeyUnavailableMessage,
+  passkeyClientAvailable,
+  runPasskeyAuthentication,
+  runPasskeyRegistration
+} from './utils/passkeyClient'
 
 const router = useRouter()
 const route = useRoute()
@@ -611,13 +673,21 @@ const passwordChangeForm = reactive({
 })
 
 const loginError = ref('')
+const passkeyLoginLoading = ref(false)
+const passkeyManagerOpen = ref(false)
+const rootPasskeySetup = reactive({
+  active: false,
+  setupToken: '',
+  username: '',
+  realName: '',
+  credentialName: 'root主Passkey'
+})
 const passwordChangeError = ref('')
 const passwordChangeSuccess = ref('')
 const passwordChangeSaving = ref(false)
 const sidebarCollapsed = ref(false)
 const mobileMenuOpen = ref(false)
 const loginVersionModalOpen = ref(false)
-const defaultInitialPassword = '123456'
 const sessionCheckIntervalMs = 60 * 1000
 const notificationRefreshIntervalMs = 60 * 1000
 const notificationCacheTtlMs = 15 * 1000
@@ -728,6 +798,13 @@ const parseStoredPermissions = () => {
 }
 
 const getStoredMustChangePassword = () => localStorage.getItem('must_change_password') === 'true'
+const getStoredPasswordPolicy = () => {
+  try {
+    return JSON.parse(localStorage.getItem('password_policy') || '{}')
+  } catch {
+    return {}
+  }
+}
 
 const authState = reactive({
   token: localStorage.getItem('auth_token') || '',
@@ -741,28 +818,40 @@ const authState = reactive({
   region: localStorage.getItem('region') || '',
   address: localStorage.getItem('address') || '',
   mustChangePassword: getStoredMustChangePassword(),
+  passwordPolicy: getStoredPasswordPolicy(),
   permissions: parseStoredPermissions()
 })
 
 syncAxiosAuthHeader()
 
 const isLoginPage = computed(() => route.path === '/login')
+const isPasswordChangeModeActive = () => Boolean(
+  authState.mustChangePassword || getStoredMustChangePassword()
+)
 const currentUsername = computed(() => authState.realName || authState.username || '未命名用户')
 const localPermissions = computed(() => authState.permissions || {})
+const passwordPolicyMinLength = computed(() => Number(authState.passwordPolicy?.min_length || 12))
+const passwordPolicyMaxLength = computed(() => Number(authState.passwordPolicy?.max_length || 64))
+const passwordRequiresUppercase = computed(() => authState.passwordPolicy?.require_uppercase !== false)
+const passwordRequiresLowercase = computed(() => authState.passwordPolicy?.require_lowercase !== false)
+const passwordRequiresNumber = computed(() => authState.passwordPolicy?.require_number !== false)
+const passwordRequiresSpecial = computed(() => authState.passwordPolicy?.require_special !== false)
 const passwordRuleStatus = computed(() => {
   const password = passwordChangeForm.newPassword
   const confirmPassword = passwordChangeForm.confirmPassword
   const username = authState.username || ''
+  const phone = String(authState.phone || '').replace(/\D/g, '')
+  const normalizedPassword = password.toLowerCase().replace(/[^0-9a-z\u4e00-\u9fff]+/g, '')
+  const normalizedUsername = username.toLowerCase().replace(/[^0-9a-z\u4e00-\u9fff]+/g, '')
+  const identityValues = [normalizedUsername, phone, phone.length >= 6 ? phone.slice(-6) : ''].filter((item) => item.length >= 4)
 
   return {
-    length: password.length >= 8 && password.length <= 32,
-    letterAndNumber: /[A-Za-z]/.test(password) && /\d/.test(password),
-    noWhitespace: password.length > 0 && !/\s/.test(password),
-    notDefaultOrUsername: Boolean(
-      password &&
-      password !== defaultInitialPassword &&
-      (!username || password.toLowerCase() !== username.toLowerCase())
-    ),
+    length: password.length >= passwordPolicyMinLength.value && password.length <= passwordPolicyMaxLength.value,
+    uppercase: /[A-Z]/.test(password),
+    lowercase: /[a-z]/.test(password),
+    number: /\d/.test(password),
+    special: /[^\p{L}\p{N}\s]/u.test(password),
+    notIdentityRelated: Boolean(password && !identityValues.some((item) => normalizedPassword.includes(item))),
     confirmed: Boolean(confirmPassword && password === confirmPassword)
   }
 })
@@ -834,6 +923,7 @@ const canViewVehicle = computed(() => (isRoot.value || isSupervisor.value) && is
 const canViewFeedback = computed(() => isPageVisible('/feedback'))
 const canViewCommonSection = computed(() => canViewFeedback.value)
 const canManageUsers = computed(() => isRoot.value && isPageVisible('/management/users'))
+const canManageSecurity = computed(() => hasPermissionKey('manage_security') && isPageVisible('/management/security'))
 const canManageStations = computed(() => hasPermissionKey('manage_stations') && isPageVisible('/management/stations'))
 const canManageChecklists = computed(() => hasPermissionKey('manage_checklists') && isPageVisible('/management/checklists'))
 const canManageInternalStandards = computed(() => hasPermissionKey('manage_internal_standards') && isPageVisible('/management/internal-standards'))
@@ -844,6 +934,7 @@ const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && i
 const canManagePageVisibility = computed(() => isRoot.value)
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
+  canManageSecurity.value ||
   canManageStations.value ||
   canManageChecklists.value ||
   canManageInternalStandards.value ||
@@ -1021,6 +1112,7 @@ const syncAuthState = () => {
   authState.region = localStorage.getItem('region') || ''
   authState.address = localStorage.getItem('address') || ''
   authState.mustChangePassword = getStoredMustChangePassword()
+  authState.passwordPolicy = getStoredPasswordPolicy()
   authState.permissions = parseStoredPermissions()
 }
 
@@ -1030,7 +1122,7 @@ const resetPageVisibilityState = () => {
 }
 
 const refreshPageVisibilityState = async ({ force = false } = {}) => {
-  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(getStoredAuthToken())) {
     resetPageVisibilityState()
     return {}
   }
@@ -1277,16 +1369,28 @@ const handleAuthSessionExpired = (event) => {
 }
 
 const handleAuthStorageChange = (event) => {
-  if (!['auth_token', 'auth_expires_at', 'user_id', 'permissions'].includes(event.key)) return
+  if (!['auth_token', 'auth_expires_at', 'user_id', 'permissions', 'must_change_password', 'password_policy'].includes(event.key)) return
   syncAuthState()
   if (isLoginPage.value) return
   if (isUsableAuthToken(getStoredAuthToken())) {
     lastUserActivityAt = Date.now()
     scheduleIdleLogout()
     verifySessionSilently()
-    refreshNotificationSummary({ force: true })
+    if (!isPasswordChangeModeActive()) {
+      refreshNotificationSummary({ force: true })
+    }
   } else {
     stopIdleLogoutTimer()
+  }
+}
+
+const handlePasswordChangeRequired = () => {
+  const wasRequired = authState.mustChangePassword
+  syncAuthState()
+  if (!wasRequired && authState.mustChangePassword) {
+    passwordChangeError.value = ''
+    passwordChangeSuccess.value = ''
+    passwordChangeSaving.value = false
   }
 }
 
@@ -1312,7 +1416,7 @@ const applyNotificationSummary = (payload = {}) => {
 }
 
 const markFeedbackRead = async ({ force = false } = {}) => {
-  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(getStoredAuthToken())) {
     feedbackUnreadCount.value = 0
     return
   }
@@ -1345,7 +1449,7 @@ const markFeedbackRead = async ({ force = false } = {}) => {
 }
 
 const refreshNotificationSummary = async ({ force = false, markFeedback = route.path === '/feedback' } = {}) => {
-  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(getStoredAuthToken())) {
     resetNotificationCounts()
     return
   }
@@ -1404,7 +1508,7 @@ const applyServerResourceState = (payload = {}) => {
 }
 
 const refreshServerResources = async ({ force = false } = {}) => {
-  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
+  if (isLoginPage.value || isPasswordChangeModeActive() || !isUsableAuthToken(getStoredAuthToken())) {
     resetServerResourceState()
     return
   }
@@ -1484,6 +1588,7 @@ watch(
 
 onMounted(() => {
   window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
+  window.addEventListener('password-change-required', handlePasswordChangeRequired)
   window.addEventListener('storage', handleAuthStorageChange)
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
@@ -1523,6 +1628,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
+  window.removeEventListener('password-change-required', handlePasswordChangeRequired)
   window.removeEventListener('storage', handleAuthStorageChange)
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
@@ -1597,6 +1703,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
   if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
+  if (permissions.manage_security) candidates.push('/management/security')
   if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')
   candidates.push('/feedback')
   return candidates.find((path) => isPageVisible(path)) || (role === 'root' ? '/management/page-visibility' : '/feedback')
@@ -1641,10 +1748,14 @@ const resetPasswordChangeForm = () => {
 const getPasswordChangeClientError = () => {
   if (!passwordChangeForm.currentPassword) return '请输入当前密码。'
   if (!passwordChangeForm.newPassword) return '请填写新密码。'
-  if (!passwordRuleStatus.value.length) return '新密码长度需为 8-32 位。'
-  if (!passwordRuleStatus.value.noWhitespace) return '新密码不能包含空格。'
-  if (!passwordRuleStatus.value.letterAndNumber) return '新密码需同时包含字母和数字。'
-  if (!passwordRuleStatus.value.notDefaultOrUsername) return '新密码不能使用初始密码或用户名。'
+  if (!passwordRuleStatus.value.length) return `新密码长度需为 ${passwordPolicyMinLength.value}-${passwordPolicyMaxLength.value} 位。`
+  const missingTypes = []
+  if (passwordRequiresUppercase.value && !passwordRuleStatus.value.uppercase) missingTypes.push('大写字母')
+  if (passwordRequiresLowercase.value && !passwordRuleStatus.value.lowercase) missingTypes.push('小写字母')
+  if (passwordRequiresNumber.value && !passwordRuleStatus.value.number) missingTypes.push('数字')
+  if (passwordRequiresSpecial.value && !passwordRuleStatus.value.special) missingTypes.push('特殊字符')
+  if (missingTypes.length) return `新密码还需包含：${missingTypes.join('、')}。`
+  if (!passwordRuleStatus.value.notIdentityRelated) return '新密码不能包含用户名、手机号等账号关联信息。'
   if (!passwordRuleStatus.value.confirmed) return '两次输入的新密码不一致。'
   if (passwordChangeForm.currentPassword === passwordChangeForm.newPassword) return '新密码不能与当前密码相同。'
   return ''
@@ -1663,29 +1774,130 @@ const handlePasswordChange = async () => {
   try {
     passwordChangeSaving.value = true
     const response = await axios.post('/api/users/change-password', {
-      user_id: authState.userId,
       current_password: passwordChangeForm.currentPassword,
       new_password: passwordChangeForm.newPassword,
       confirm_password: passwordChangeForm.confirmPassword
     })
 
-    if (response.data?.token && response.data?.user) {
-      storeAuthSession(response.data.user, response.data.token, response.data.expires_in)
-      showBirthdayBlessing(response.data.user?.birthday_event)
-    } else {
-      localStorage.setItem('must_change_password', 'false')
-      syncAxiosAuthHeader()
-    }
-
-    passwordChangeSuccess.value = '新密码已保存，正在进入系统。'
+    passwordChangeSuccess.value = response.data?.message || '密码修改成功，请重新登录。'
     window.setTimeout(() => {
-      syncAuthState()
+      clearAuthSession('密码修改成功，请使用新密码重新登录。')
       resetPasswordChangeForm()
+      syncAuthState()
+      router.replace('/login')
     }, 650)
   } catch (error) {
     passwordChangeError.value = error?.response?.data?.error || '密码修改失败，请稍后重试。'
     passwordChangeSaving.value = false
   }
+}
+
+const finishAuthenticatedLogin = async (responseData, submittedPassword = '') => {
+  const user = responseData?.user
+  const token = responseData?.token
+  if (!token || !user) throw new Error('登录响应缺少完整的服务端会话信息。')
+
+  storeAuthSession(user, token, responseData.expires_in)
+  showBirthdayBlessing(user?.birthday_event)
+  resetSessionNotice()
+  resetPasswordChangeForm()
+  syncAuthState()
+  if (authState.mustChangePassword) {
+    passwordChangeForm.currentPassword = submittedPassword
+    resetPageVisibilityState()
+    resetNotificationCounts()
+    resetServerResourceState()
+  } else {
+    pageVisibilitySettings.value = await fetchPageVisibility({ force: true })
+  }
+  lastUserActivityAt = Date.now()
+  lastIdleActivityMarkedAt = Date.now()
+  scheduleIdleLogout()
+  loginForm.password = ''
+  await router.push(resolveHomePath(user))
+}
+
+const resetRootPasskeySetup = () => {
+  Object.assign(rootPasskeySetup, {
+    active: false,
+    setupToken: '',
+    username: '',
+    realName: '',
+    credentialName: 'root主Passkey'
+  })
+}
+
+const cancelRootPasskeySetup = () => {
+  resetRootPasskeySetup()
+  loginForm.password = ''
+  loginError.value = ''
+}
+
+const handlePasskeyLogin = async () => {
+  loginError.value = ''
+  if (!passkeyClientAvailable()) {
+    loginError.value = getPasskeyUnavailableMessage()
+    return
+  }
+  passkeyLoginLoading.value = true
+  try {
+    consumeAuthSessionMessage()
+    const optionsResponse = await axios.post('/api/auth/passkey/login/options')
+    const credential = await runPasskeyAuthentication(optionsResponse.data.public_key)
+    const verifyResponse = await axios.post('/api/auth/passkey/login/verify', {
+      flow_id: optionsResponse.data.flow_id,
+      credential
+    })
+    await finishAuthenticatedLogin(verifyResponse.data)
+  } catch (error) {
+    loginError.value = friendlyPasskeyError(error, '暂时无法使用Passkey登录，请重试。')
+  } finally {
+    passkeyLoginLoading.value = false
+  }
+}
+
+const handleRootPasskeySetup = async () => {
+  loginError.value = ''
+  if (!rootPasskeySetup.credentialName) {
+    loginError.value = '请填写Passkey名称。'
+    return
+  }
+  if (!passkeyClientAvailable()) {
+    loginError.value = getPasskeyUnavailableMessage()
+    return
+  }
+  passkeyLoginLoading.value = true
+  try {
+    const optionsResponse = await axios.post('/api/auth/passkey/bootstrap/options', {
+      setup_token: rootPasskeySetup.setupToken
+    })
+    const credential = await runPasskeyRegistration(optionsResponse.data.public_key)
+    const verifyResponse = await axios.post('/api/auth/passkey/bootstrap/verify', {
+      setup_token: rootPasskeySetup.setupToken,
+      flow_id: optionsResponse.data.flow_id,
+      credential,
+      credential_name: rootPasskeySetup.credentialName
+    })
+    resetRootPasskeySetup()
+    await finishAuthenticatedLogin(verifyResponse.data)
+  } catch (error) {
+    loginError.value = friendlyPasskeyError(error, 'root Passkey绑定失败，请重新操作。')
+  } finally {
+    passkeyLoginLoading.value = false
+  }
+}
+
+const handlePasskeySessionInvalidated = (message) => {
+  passkeyManagerOpen.value = false
+  clearAuthSession(message || 'Passkey安全设置已更改，请重新登录。')
+  resetSessionNotice()
+  resetPasswordChangeForm()
+  resetNotificationCounts()
+  resetServerResourceState()
+  resetPageVisibilityState()
+  resetBirthdayBlessing()
+  syncAuthState()
+  router.replace('/login')
 }
 
 const handleLogin = async () => {
@@ -1702,38 +1914,35 @@ const handleLogin = async () => {
   try {
     loginError.value = ''
     consumeAuthSessionMessage()
+    const submittedPassword = loginForm.password
 
     const response = await axios.post('/api/login', {
       username: loginForm.username,
-      password: loginForm.password
+      password: submittedPassword
     })
 
-    const user = response.data.user
-    const token = response.data.token
-    if (!token) {
-      loginError.value = '登录响应缺少服务端令牌，请联系管理员。'
+    await finishAuthenticatedLogin(response.data, submittedPassword)
+  } catch (error) {
+    if (error?.response?.data?.code === 'PASSKEY_SETUP_REQUIRED') {
+      Object.assign(rootPasskeySetup, {
+        active: true,
+        setupToken: error.response.data.setup_token,
+        username: error.response.data.user?.username || loginForm.username,
+        realName: error.response.data.user?.real_name || '',
+        credentialName: 'root主Passkey'
+      })
+      loginForm.password = ''
+      loginError.value = ''
       return
     }
-
-    storeAuthSession(user, token, response.data.expires_in)
-    showBirthdayBlessing(user?.birthday_event)
-
-    resetSessionNotice()
-    resetPasswordChangeForm()
-    syncAuthState()
-    pageVisibilitySettings.value = await fetchPageVisibility({ force: true })
-    lastUserActivityAt = Date.now()
-    lastIdleActivityMarkedAt = Date.now()
-    scheduleIdleLogout()
-    loginForm.password = ''
-    router.push(resolveHomePath(user))
-  } catch (error) {
     const message = error?.response?.data?.error || '登录失败，请稍后重试。'
     loginError.value = message
   }
 }
 
 const handleLogout = async () => {
+  passkeyManagerOpen.value = false
+  resetRootPasskeySetup()
   stopIdleLogoutTimer()
   const token = getStoredAuthToken()
   if (isUsableAuthToken(token)) {
@@ -3997,6 +4206,52 @@ textarea:focus {
   min-width: 0;
 }
 
+.header-passkey-button,
+.mobile-passkey-button {
+  flex-shrink: 0;
+  border: 1px solid #bcd9d5;
+  background: #eff8f6;
+  color: #0f6861;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.header-passkey-button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.header-passkey-button span {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  position: relative;
+}
+
+.header-passkey-button span::after {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 7px;
+  height: 2px;
+  background: currentColor;
+  transform: translateY(-50%);
+}
+
+.mobile-passkey-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  padding: 0;
+}
+
 .header-user-avatar {
   width: 36px;
   height: 36px;
@@ -4096,6 +4351,147 @@ textarea:focus {
   border-radius: 14px;
   font-size: 15px;
   font-weight: 700;
+}
+
+.login-method-divider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 15px 0 12px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.login-method-divider::before {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.login-method-divider span {
+  position: relative;
+  padding: 0 10px;
+  background: #fdfefe;
+}
+
+.passkey-login-button {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  padding: 8px 14px;
+  border: 1px solid #b7d8d2;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #effaf7, #f7fbff);
+  color: #144c55;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.passkey-login-button:hover:not(:disabled) {
+  border-color: #5ba99d;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, .11);
+  transform: translateY(-1px);
+}
+
+.passkey-login-button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
+.passkey-login-button > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.passkey-login-button strong { font-size: 14px; }
+.passkey-login-button small { color: #6c7b8d; font-size: 11px; }
+
+.passkey-login-icon {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #0f766e, #164a72);
+}
+
+.passkey-login-icon i {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  position: relative;
+}
+
+.passkey-login-icon i::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 9px;
+  height: 2px;
+  background: #fff;
+  box-shadow: 4px 4px 0 #fff;
+  transform: translateY(-50%);
+}
+
+.root-passkey-login-tip {
+  margin: 9px 0 0;
+  color: #7c8797;
+  font-size: 11px;
+  text-align: center;
+}
+
+.root-passkey-setup-head { margin-bottom: 18px; }
+
+.root-passkey-identity,
+.root-passkey-notice {
+  margin-bottom: 16px;
+  padding: 13px 14px;
+  border-radius: 14px;
+}
+
+.root-passkey-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #edf7f5;
+  color: #587078;
+  font-size: 12px;
+}
+
+.root-passkey-identity strong { color: #0f615b; font-size: 14px; }
+
+.root-passkey-notice {
+  border: 1px solid #dbe7ec;
+  background: #f8fafc;
+  color: #667587;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.passkey-action-button {
+  background: linear-gradient(135deg, #0f766e, #164a72);
+  border-color: #0f766e;
+}
+
+.root-passkey-cancel {
+  min-height: 40px;
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
 }
 
 .login-version {

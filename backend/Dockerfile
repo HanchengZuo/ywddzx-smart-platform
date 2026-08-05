@@ -8,7 +8,11 @@ RUN apt-get update \
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade \
+        pip==26.2 \
+        setuptools==83.0.0 \
+        wheel==0.47.0 \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 

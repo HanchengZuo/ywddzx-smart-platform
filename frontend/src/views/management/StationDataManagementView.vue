@@ -412,7 +412,7 @@
                       <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                         :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                         @click="resetStationPassword(station)">
-                        {{ resettingStationId === station.id ? '重置中' : getStationUsernames(station).length ? '重置密码' : '无账号' }}
+                        {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '强制改密' : '无账号' }}
                       </button>
                       <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === station.id"
                         @click="deleteStation(station)">
@@ -498,7 +498,7 @@
                   <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                     :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                     @click="resetStationPassword(station)">
-                    {{ resettingStationId === station.id ? '重置中' : getStationUsernames(station).length ? '重置密码' : '无账号' }}
+                    {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '强制改密' : '无账号' }}
                   </button>
                   <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === station.id"
                     @click="deleteStation(station)">
@@ -991,7 +991,7 @@ const resetStationPassword = async (station) => {
     setMessage('该站点暂无绑定站点账号。', 'error')
     return
   }
-  const confirmed = window.confirm(`确定将【${station.station_name}】绑定站点账号密码重置为 123456 吗？该账号下次登录需要重新设置密码。`)
+  const confirmed = window.confirm(`确定要求【${station.station_name}】绑定站点账号下次登录立即修改密码吗？其现有登录会话会同时失效。`)
   if (!confirmed) return
 
   try {

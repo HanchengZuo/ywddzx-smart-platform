@@ -3,6 +3,18 @@ set -e
 
 cd "$(dirname "$0")"
 
+required_vars="APP_SECRET_KEY DB_PASSWORD WEBAUTHN_RP_ID WEBAUTHN_ORIGIN CORS_ALLOWED_ORIGINS"
+for variable_name in $required_vars; do
+  eval "variable_value=\${$variable_name:-}"
+  if [ -z "$variable_value" ]; then
+    echo "❌ 生产部署缺少环境变量：$variable_name"
+    exit 1
+  fi
+done
+
+export APP_ENV=production
+export TRUST_PROXY_HEADERS=true
+
 echo "📥 拉取最新代码..."
 git pull
 
