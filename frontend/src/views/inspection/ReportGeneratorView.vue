@@ -1668,17 +1668,9 @@
             <div class="export-feature-grid">
               <div><span class="feature-dot chart"></span><strong>原生图表</strong><small>可继续编辑</small></div>
               <div><span class="feature-dot table"></span><strong>分页表格</strong><small>自动控制版面</small></div>
+              <div><span class="feature-dot photo"></span><strong>问题照片</strong><small>固定完整导出</small></div>
               <div><span class="feature-dot ai"></span><strong>AI标识</strong><small>来源清楚可见</small></div>
             </div>
-
-            <label :class="['export-photo-option', { disabled: exportBusy }]">
-              <input v-model="exportIncludePhotos" type="checkbox" :disabled="exportBusy" />
-              <span class="export-checkbox"></span>
-              <span>
-                <strong>导出问题照片</strong>
-                <small>照片会嵌入PPT，文件体积和生成时间会相应增加。</small>
-              </span>
-            </label>
 
             <div v-if="exportTask" :class="['export-task-panel', exportTask.status]">
               <div class="export-task-head">
@@ -1699,7 +1691,7 @@
             </div>
 
             <p v-if="exportError" class="export-error-message">{{ exportError }}</p>
-            <p class="export-dialog-note">PPT根据当前已保存报告生成，不会重新调用AI，也不会修改报告数据。</p>
+            <p class="export-dialog-note">PPT固定包含报告中的问题照片，并根据当前已保存报告生成；不会重新调用AI，也不会修改报告数据。</p>
           </div>
 
           <footer class="export-dialog-footer">
@@ -1868,7 +1860,6 @@ const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
 const exportDialogVisible = ref(false)
-const exportIncludePhotos = ref(true)
 const exportTask = ref(null)
 const exportError = ref('')
 const exportSubmitting = ref(false)
@@ -2670,7 +2661,6 @@ const loadLatestPptExport = async () => {
       throw new Error(response.data?.error || '读取PPT导出状态失败。')
     }
     exportTask.value = response.data.task || null
-    if (exportTask.value) exportIncludePhotos.value = exportTask.value.include_photos !== false
     if (exportBusy.value) scheduleExportPoll()
   } catch (err) {
     exportTask.value = null
@@ -2696,8 +2686,7 @@ const startPptExport = async () => {
   try {
     const response = await axios.post('/api/inspection-reports/exports', {
       report_type: selectedReportType.value,
-      month: selectedMonth.value,
-      include_photos: exportIncludePhotos.value
+      month: selectedMonth.value
     })
     if (!response.data?.success || !response.data?.task) {
       throw new Error(response.data?.error || 'PPT导出任务提交失败。')
@@ -3549,7 +3538,7 @@ onBeforeUnmount(() => {
 
 .export-feature-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 9px;
 }
 
@@ -3587,72 +3576,8 @@ onBeforeUnmount(() => {
 
 .feature-dot.chart { background: #0e7490; }
 .feature-dot.table { background: #14b8a6; }
+.feature-dot.photo { background: #2563eb; }
 .feature-dot.ai { background: #f59e0b; }
-
-.export-photo-option {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 14px 15px;
-  border: 1px solid #cbd5e1;
-  border-radius: 16px;
-  background: #ffffff;
-  cursor: pointer;
-}
-
-.export-photo-option.disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.export-photo-option input {
-  position: absolute;
-  opacity: 0;
-}
-
-.export-checkbox {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  border: 1px solid #94a3b8;
-  border-radius: 7px;
-  background: #ffffff;
-}
-
-.export-photo-option input:checked + .export-checkbox {
-  position: relative;
-  border-color: #0d9488;
-  background: #0d9488;
-}
-
-.export-photo-option input:checked + .export-checkbox::after {
-  content: '';
-  position: absolute;
-  left: 7px;
-  top: 3px;
-  width: 5px;
-  height: 10px;
-  border: solid #ffffff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.export-photo-option strong,
-.export-photo-option small {
-  display: block;
-}
-
-.export-photo-option strong {
-  color: #334155;
-  font-size: 13px;
-}
-
-.export-photo-option small {
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 11px;
-}
 
 .export-task-panel {
   padding: 15px;
@@ -8105,15 +8030,12 @@ onBeforeUnmount(() => {
   }
 
   .export-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
   .export-feature-grid > div {
     padding: 10px 8px;
-  }
-
-  .export-photo-option {
-    align-items: flex-start;
   }
 
   .export-task-head {

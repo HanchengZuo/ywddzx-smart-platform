@@ -8596,7 +8596,6 @@ def run_inspection_report_export_task(task_id):
                 report_type,
                 report_month,
                 report_payload,
-                include_photos,
                 file_name
             FROM inspection_report_exports
             WHERE task_id = %s
@@ -8628,7 +8627,6 @@ def run_inspection_report_export_task(task_id):
             report=report_payload,
             storage_root=STORAGE_ROOT,
             output_path=abs_path,
-            include_photos=bool(task.get("include_photos")),
         )
         update_inspection_report_export_task(
             task_id,
@@ -29906,7 +29904,6 @@ def create_inspection_report_powerpoint_export():
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能导出PPT。"}), 409
     month_start, _ = parse_report_month(data.get("month", ""))
     report_month = month_start.strftime("%Y-%m")
-    include_photos = data.get("include_photos") is not False
     conn = None
     cur = None
     try:
@@ -29997,7 +29994,7 @@ def create_inspection_report_powerpoint_export():
                 snapshot.get("scope_key"),
                 user["id"],
                 "任务已提交，等待后台生成PPT",
-                include_photos,
+                True,
                 file_name,
                 snapshot.get("generated_at"),
                 Json(

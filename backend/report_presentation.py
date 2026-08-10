@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import base64
+import math
 import os
 import re
+import tempfile
+import zipfile
 from io import BytesIO
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from PIL import Image
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
@@ -58,6 +61,35 @@ def _chunks(values: Sequence, size: int):
         yield values[index : index + size]
 
 
+def _split_text(value, limit=280):
+    """Split long Chinese narrative text without dropping report content."""
+    normalized = _text(value, "")
+    if not normalized:
+        return []
+    sentences = [item.strip() for item in re.split(r"(?<=[。！？；])", normalized) if item.strip()]
+    if not sentences:
+        sentences = [normalized]
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        while len(sentence) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(sentence[:limit])
+            sentence = sentence[limit:]
+        if not current:
+            current = sentence
+        elif len(current) + len(sentence) <= limit:
+            current += sentence
+        else:
+            chunks.append(current)
+            current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _as_int(value):
     try:
         return int(value or 0)
@@ -79,11 +111,10 @@ def _format_metric(value):
 
 
 class InspectionReportPresentation:
-    def __init__(self, report_type, report, storage_root, include_photos=True):
+    def __init__(self, report_type, report, storage_root):
         self.report_type = str(report_type or "").strip()
         self.report = report if isinstance(report, dict) else {}
         self.storage_root = os.path.abspath(storage_root)
-        self.include_photos = bool(include_photos)
         self.prs = Presentation()
         self.prs.slide_width = SLIDE_WIDTH
         self.prs.slide_height = SLIDE_HEIGHT
@@ -106,7 +137,40 @@ class InspectionReportPresentation:
         self._add_ending()
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         self.prs.save(output_path)
+        self._normalize_chart_axis_ids(output_path)
         return {"slide_count": len(self.prs.slides)}
+
+    @staticmethod
+    def _normalize_chart_axis_ids(output_path):
+        """Convert python-pptx signed axis IDs into spec-compliant UInt32 values."""
+        output_path = os.path.abspath(output_path)
+        with tempfile.NamedTemporaryFile(
+            prefix="report_ppt_",
+            suffix=".pptx",
+            dir=os.path.dirname(output_path),
+            delete=False,
+        ) as temp_file:
+            temp_path = temp_file.name
+        try:
+            with zipfile.ZipFile(output_path, "r") as source_zip, zipfile.ZipFile(
+                temp_path, "w", zipfile.ZIP_DEFLATED
+            ) as target_zip:
+                for item in source_zip.infolist():
+                    payload = source_zip.read(item.filename)
+                    if item.filename.startswith("ppt/charts/chart") and item.filename.endswith(".xml"):
+                        payload = re.sub(
+                            rb'(axId|crossAx) val="(-\d+)"',
+                            lambda match: (
+                                match.group(1)
+                                + f' val="{int(match.group(2)) + 2 ** 32}"'.encode("ascii")
+                            ),
+                            payload,
+                        )
+                    target_zip.writestr(item, payload)
+            os.replace(temp_path, output_path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def _blank_slide(self, background=PAPER, footer=True):
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[6])
@@ -217,10 +281,12 @@ class InspectionReportPresentation:
         accent.fill.solid()
         accent.fill.fore_color.rgb = TEAL
         accent.line.fill.background()
-        self._add_text(slide, kicker.upper(), 0.86, 0.52, 5.8, 0.24, size=9, color=TEAL, bold=True)
-        self._add_text(slide, title, 0.83, 0.76, 10.8, 0.62, size=24, bold=True)
+        normalized_title = _text(title, "报告内容")
+        title_size = 30 if len(normalized_title) <= 22 else 26
+        self._add_text(slide, kicker.upper(), 0.86, 0.5, 5.8, 0.26, size=10, color=TEAL, bold=True)
+        self._add_text(slide, normalized_title, 0.83, 0.76, 10.35, 0.64, size=title_size, bold=True)
         if subtitle:
-            self._add_text(slide, subtitle, 0.85, 1.35, 11.6, 0.38, size=10, color=MUTED)
+            self._add_text(slide, _short(subtitle, 150), 0.85, 1.4, 11.55, 0.36, size=11, color=MUTED)
         if ai:
             self._add_ai_badge(slide)
 
@@ -259,9 +325,9 @@ class InspectionReportPresentation:
         glow = slide.shapes.add_shape(
             MSO_SHAPE.OVAL,
             Inches(9.1),
-            Inches(-1.5),
-            Inches(5.6),
-            Inches(5.6),
+            Inches(0),
+            Inches(4.15),
+            Inches(4.15),
         )
         glow.fill.solid()
         glow.fill.fore_color.rgb = BLUE
@@ -335,7 +401,9 @@ class InspectionReportPresentation:
         marker.fill.fore_color.rgb = accent
         marker.line.fill.background()
         self._add_text(slide, heading, x + 0.46, y + 0.2, width - 0.7, 0.28, size=11, color=accent, bold=True)
-        self._add_text(slide, body, x + 0.46, y + 0.52, width - 0.7, height - 0.68, size=13, color=SLATE, valign=MSO_ANCHOR.MIDDLE)
+        body_text = _text(body)
+        body_size = 16 if len(body_text) <= 150 else 14 if len(body_text) <= 260 else 12
+        self._add_text(slide, body_text, x + 0.46, y + 0.52, width - 0.7, height - 0.68, size=body_size, color=SLATE, valign=MSO_ANCHOR.MIDDLE)
 
     def _add_kpis(self, slide, metrics, y=2.0):
         metrics = list(metrics)
@@ -365,29 +433,53 @@ class InspectionReportPresentation:
     def _add_narrative_slide(self, title, narrative, *, kicker="OVERVIEW", ai=False, metrics=None):
         slide = self._blank_slide()
         self._add_title(slide, title, kicker, ai=ai)
-        self._add_panel(slide, 0.82, 1.9, 11.7, 2.12, "情况概述", _text(narrative), TEAL)
+        self._add_panel(slide, 0.82, 1.9, 11.7, 1.78, "情况概述", _text(narrative), TEAL)
         if metrics:
-            self._add_kpis(slide, metrics, y=4.4)
+            self._add_kpis(slide, metrics, y=4.02)
         return slide
+
+    def _add_insight_strip(self, slide, narrative, y=1.56):
+        body = _short(narrative, 165)
+        strip = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(0.84),
+            Inches(y),
+            Inches(11.64),
+            Inches(0.56),
+        )
+        strip.fill.solid()
+        strip.fill.fore_color.rgb = RGBColor(236, 254, 255)
+        strip.line.color.rgb = RGBColor(165, 243, 252)
+        self._add_text(slide, "核心发现", 1.02, y + 0.13, 0.78, 0.28, size=10, color=BLUE, bold=True)
+        self._add_text(slide, body, 1.86, y + 0.11, 10.36, 0.32, size=12, color=SLATE)
 
     def _add_chart_slides(self, title, items, *, name_key="name", value_keys=("count",), series_names=("问题数量",), kicker="DATA ANALYSIS", narrative="", chunk_size=12):
         items = [item for item in (items or []) if isinstance(item, dict)]
         if not items:
             self._add_empty_slide(title, "当前范围暂无可展示的统计数据。", kicker)
             return
-        for page_index, chunk in enumerate(_chunks(items, chunk_size), 1):
+        longest_label = max(len(_text(item.get(name_key), "")) for item in items)
+        effective_chunk_size = min(chunk_size, 8 if longest_label >= 9 else 10)
+        for page_index, chunk in enumerate(_chunks(items, effective_chunk_size), 1):
             slide = self._blank_slide()
-            page_title = title if len(items) <= chunk_size else f"{title}（{page_index}）"
-            self._add_title(slide, page_title, kicker, subtitle=narrative if page_index == 1 else "")
+            page_title = title if len(items) <= effective_chunk_size else f"{title}（{page_index}）"
+            self._add_title(slide, page_title, kicker)
+            page_narrative = narrative if page_index == 1 else ""
+            if page_narrative:
+                self._add_insight_strip(slide, page_narrative)
             chart_data = ChartData()
-            chart_data.categories = [_short(item.get(name_key), 14) for item in chunk]
+            chart_data.categories = [_short(item.get(name_key), 18) for item in chunk]
+            all_values = []
             for series_index, value_key in enumerate(value_keys):
                 values = [_as_float(item.get(value_key)) for item in chunk]
+                all_values.extend(values)
                 chart_data.add_series(series_names[series_index], values)
-            y = 2.03 if narrative else 1.85
-            height = 4.62 if narrative else 4.8
+            use_bar_chart = longest_label >= 8 or len(chunk) >= 9
+            chart_type = XL_CHART_TYPE.BAR_CLUSTERED if use_bar_chart else XL_CHART_TYPE.COLUMN_CLUSTERED
+            y = 2.3 if page_narrative else 1.78
+            height = 4.32 if page_narrative else 4.86
             chart = slide.shapes.add_chart(
-                XL_CHART_TYPE.COLUMN_CLUSTERED,
+                chart_type,
                 Inches(0.86),
                 Inches(y),
                 Inches(11.55),
@@ -399,57 +491,140 @@ class InspectionReportPresentation:
                 chart.legend.position = XL_LEGEND_POSITION.BOTTOM
                 chart.legend.include_in_layout = False
                 chart.legend.font.name = FONT_FAMILY
-                chart.legend.font.size = Pt(9)
+                chart.legend.font.size = Pt(10)
+            chart.value_axis.minimum_scale = 0
             chart.value_axis.has_major_gridlines = True
             chart.value_axis.major_gridlines.format.line.color.rgb = LINE
+            chart.value_axis.format.line.color.rgb = RGBColor(203, 213, 225)
             chart.value_axis.tick_labels.font.name = FONT_FAMILY
-            chart.value_axis.tick_labels.font.size = Pt(9)
+            chart.value_axis.tick_labels.font.size = Pt(10)
+            chart.category_axis.format.line.color.rgb = RGBColor(203, 213, 225)
             chart.category_axis.tick_labels.font.name = FONT_FAMILY
-            chart.category_axis.tick_labels.font.size = Pt(9)
-            chart.plots[0].has_data_labels = True
+            chart.category_axis.tick_labels.font.size = Pt(10)
+            if use_bar_chart:
+                chart.category_axis.reverse_order = True
+            has_decimal = any(value and not float(value).is_integer() for value in all_values)
             for series_index, series in enumerate(chart.series):
                 series.format.fill.solid()
                 series.format.fill.fore_color.rgb = CHART_COLORS[series_index % len(CHART_COLORS)]
                 series.format.line.fill.background()
-            labels = chart.plots[0].data_labels
-            labels.position = 0
-            labels.font.name = FONT_FAMILY
-            labels.font.size = Pt(9)
+            for plot in chart.plots:
+                plot.gap_width = 72 if use_bar_chart else 58
+                plot.has_data_labels = True
+                labels = plot.data_labels
+                labels.position = XL_LABEL_POSITION.OUTSIDE_END
+                labels.font.name = FONT_FAMILY
+                labels.font.size = Pt(9 if len(value_keys) > 1 else 10)
+                labels.font.bold = True
+                labels.font.color.rgb = SLATE
+                labels.number_format = "0.0" if has_decimal else "0"
+                labels.number_format_is_linked = False
+
+    @staticmethod
+    def _is_narrative_column(header):
+        return any(keyword in _text(header, "") for keyword in ("描述", "摘要", "规定", "内容", "说明", "分析", "建议"))
+
+    def _table_column_weights(self, headers, rows):
+        weights = []
+        for index, header in enumerate(headers):
+            name = _text(header, "")
+            values = [_text(row[index] if index < len(row) else "", "") for row in rows]
+            average_length = sum(len(value) for value in values) / max(1, len(values))
+            if self._is_narrative_column(name):
+                weight = 3.6
+            elif any(keyword in name for keyword in ("问题数量", "问题合计", "受检站点", "排名", "类型")):
+                weight = 0.9
+            elif any(keyword in name for keyword in ("站点", "单位", "项目", "环节", "日期", "时间")):
+                weight = 1.45
+            else:
+                weight = min(2.2, max(1.0, 0.9 + average_length / 18))
+            weights.append(weight)
+        return weights
+
+    def _table_row_units(self, row, headers, weights):
+        required_lines = 1
+        for index, value in enumerate(row):
+            text_value = _text(value, "")
+            characters_per_line = max(7, int(13 * weights[index]))
+            required_lines = max(required_lines, math.ceil(len(text_value) / characters_per_line))
+        return max(1, min(4, required_lines))
+
+    def _paginate_table_rows(self, rows, headers, weights, unit_limit):
+        pages = []
+        current = []
+        current_units = 0
+        for row in rows:
+            units = self._table_row_units(row, headers, weights)
+            if current and current_units + units > unit_limit:
+                pages.append(current)
+                current = []
+                current_units = 0
+            current.append((row, units))
+            current_units += units
+        if current:
+            pages.append(current)
+        return pages
 
     def _add_table_slides(self, title, headers, rows, *, kicker="DATA TABLE", rows_per_slide=11, ai=False):
         normalized_rows = [list(row) for row in (rows or [])]
         if not normalized_rows:
             self._add_empty_slide(title, "当前范围暂无明细数据。", kicker)
             return
-        for page_index, chunk in enumerate(_chunks(normalized_rows, rows_per_slide), 1):
+        weights = self._table_column_weights(headers, normalized_rows)
+        pages = self._paginate_table_rows(normalized_rows, headers, weights, rows_per_slide)
+        total_width = int(Inches(11.88))
+        allocated_width = 0
+        for page_index, page in enumerate(pages, 1):
+            chunk = [row for row, _ in page]
+            row_units = [units for _, units in page]
             slide = self._blank_slide()
-            page_title = title if len(normalized_rows) <= rows_per_slide else f"{title}（{page_index}）"
+            page_title = title if len(pages) == 1 else f"{title}（{page_index}/{len(pages)}）"
             self._add_title(slide, page_title, kicker, ai=ai)
             shape = slide.shapes.add_table(
                 len(chunk) + 1,
                 len(headers),
                 Inches(0.72),
-                Inches(1.75),
+                Inches(1.78),
                 Inches(11.88),
-                Inches(5.08),
+                Inches(4.98),
             )
             table = shape.table
-            column_width = int(Inches(11.88) / max(1, len(headers)))
-            for column in table.columns:
+            total_weight = sum(weights)
+            allocated_width = 0
+            for column_index, column in enumerate(table.columns):
+                if column_index == len(table.columns) - 1:
+                    column_width = total_width - allocated_width
+                else:
+                    column_width = int(total_width * weights[column_index] / total_weight)
+                    allocated_width += column_width
                 column.width = column_width
+            table.rows[0].height = Inches(0.54)
+            available_height = 4.44
+            unit_height = available_height / max(1, sum(row_units))
+            for row_index, units in enumerate(row_units, 1):
+                table.rows[row_index].height = Inches(unit_height * units)
             for column_index, header in enumerate(headers):
                 cell = table.cell(0, column_index)
                 cell.fill.solid()
                 cell.fill.fore_color.rgb = BLUE
-                self._set_cell_text(cell, header, 9, WHITE, True)
+                self._set_cell_text(cell, header, 10, WHITE, True)
             for row_index, row in enumerate(chunk, 1):
                 for column_index in range(len(headers)):
                     cell = table.cell(row_index, column_index)
                     cell.fill.solid()
                     cell.fill.fore_color.rgb = WHITE if row_index % 2 else RGBColor(241, 245, 249)
-                    self._set_cell_text(cell, _short(row[column_index] if column_index < len(row) else "", 80), 8, SLATE)
+                    value = row[column_index] if column_index < len(row) else ""
+                    narrative_column = self._is_narrative_column(headers[column_index])
+                    body_size = 9 if len(_text(value, "")) > 110 else 10
+                    self._set_cell_text(
+                        cell,
+                        value,
+                        body_size,
+                        SLATE,
+                        align=PP_ALIGN.LEFT if narrative_column else PP_ALIGN.CENTER,
+                    )
 
-    def _set_cell_text(self, cell, value, size, color, bold=False):
+    def _set_cell_text(self, cell, value, size, color, bold=False, align=PP_ALIGN.CENTER):
         cell.margin_left = Inches(0.05)
         cell.margin_right = Inches(0.05)
         cell.margin_top = Inches(0.04)
@@ -460,7 +635,7 @@ class InspectionReportPresentation:
         frame.word_wrap = True
         paragraph = frame.paragraphs[0]
         paragraph.text = str(value or "")
-        paragraph.alignment = PP_ALIGN.CENTER
+        paragraph.alignment = align
         paragraph.font.name = FONT_FAMILY
         paragraph.font.size = Pt(size)
         paragraph.font.bold = bold
@@ -473,7 +648,7 @@ class InspectionReportPresentation:
 
     def _resolve_image_source(self, raw_path):
         value = str(raw_path or "").strip()
-        if not value or not self.include_photos:
+        if not value:
             return None
         if value.startswith("data:image/") and ";base64," in value:
             try:
@@ -493,13 +668,19 @@ class InspectionReportPresentation:
         return candidate if os.path.isfile(candidate) else None
 
     def _add_picture_contain(self, slide, image_source, x, y, width, height):
+        frame = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(x),
+            Inches(y),
+            Inches(width),
+            Inches(height),
+        )
+        frame.fill.solid()
+        frame.fill.fore_color.rgb = RGBColor(241, 245, 249)
+        frame.line.color.rgb = RGBColor(203, 213, 225)
         source = self._resolve_image_source(image_source)
         if not source:
-            placeholder = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(width), Inches(height))
-            placeholder.fill.solid()
-            placeholder.fill.fore_color.rgb = RGBColor(241, 245, 249)
-            placeholder.line.color.rgb = LINE
-            self._set_shape_text(placeholder, "暂无照片" if self.include_photos else "照片未导出", 10, MUTED)
+            self._set_shape_text(frame, "暂无问题照片", 11, MUTED)
             return
         try:
             if hasattr(source, "seek"):
@@ -508,72 +689,187 @@ class InspectionReportPresentation:
                 image_width, image_height = image.size
             if hasattr(source, "seek"):
                 source.seek(0)
-            ratio = min(width / image_width, height / image_height)
+            padding = 0.07
+            inner_width = max(0.1, width - padding * 2)
+            inner_height = max(0.1, height - padding * 2)
+            ratio = min(inner_width / image_width, inner_height / image_height)
             target_width = image_width * ratio
             target_height = image_height * ratio
             left = x + (width - target_width) / 2
             top = y + (height - target_height) / 2
             slide.shapes.add_picture(source, Inches(left), Inches(top), Inches(target_width), Inches(target_height))
         except Exception:
-            placeholder = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(width), Inches(height))
-            placeholder.fill.solid()
-            placeholder.fill.fore_color.rgb = RGBColor(254, 242, 242)
-            placeholder.line.color.rgb = RGBColor(254, 202, 202)
-            self._set_shape_text(placeholder, "照片读取失败", 10, RED)
+            frame.fill.fore_color.rgb = RGBColor(254, 242, 242)
+            frame.line.color.rgb = RGBColor(254, 202, 202)
+            self._set_shape_text(frame, "照片读取失败", 11, RED)
+
+    @staticmethod
+    def _issue_description(issue):
+        return _text(
+            issue.get("description")
+            or issue.get("inspection_content")
+            or issue.get("summary"),
+            "暂无问题描述",
+        )
+
+    def _collect_nested_issues(self, value, *, defaults=None):
+        """Collect selected issue records from report-specific nested analysis data."""
+        defaults = dict(defaults or {})
+        collected = []
+        if isinstance(value, list):
+            for item in value:
+                collected.extend(self._collect_nested_issues(item, defaults=defaults))
+            return collected
+        if not isinstance(value, dict):
+            return collected
+
+        inherited = dict(defaults)
+        for source_key, target_key in (
+            ("unit_name", "unit_name"),
+            ("station_name", "station_name"),
+            ("area_name", "service_area"),
+            ("service_area", "service_area"),
+            ("category_name", "category_name"),
+            ("title", "category_name"),
+        ):
+            if value.get(source_key) and not inherited.get(target_key):
+                inherited[target_key] = value.get(source_key)
+
+        is_issue = bool(
+            value.get("issue_id")
+            or value.get("issue_photo")
+            or value.get("description")
+            or value.get("inspection_content")
+        )
+        if is_issue:
+            issue = dict(value)
+            for key, default_value in inherited.items():
+                issue.setdefault(key, default_value)
+            collected.append(issue)
+            return collected
+
+        for child_key in (
+            "issues",
+            "highlighted_issues",
+            "highlights",
+            "areas",
+            "area_analyses",
+            "service_areas",
+        ):
+            child_value = value.get(child_key)
+            if child_value:
+                collected.extend(self._collect_nested_issues(child_value, defaults=inherited))
+        return collected
+
+    def _issue_pages(self, issues):
+        pages = []
+        paired = []
+        for issue in issues:
+            if len(self._issue_description(issue)) > 190:
+                if paired:
+                    pages.append(paired)
+                    paired = []
+                pages.append([issue])
+                continue
+            paired.append(issue)
+            if len(paired) == 2:
+                pages.append(paired)
+                paired = []
+        if paired:
+            pages.append(paired)
+        return pages
 
     def _add_issue_slides(self, title, issues, *, kicker="TYPICAL ISSUES", ai=False, subtitle="", max_issues=12):
         issues = [item for item in (issues or []) if isinstance(item, dict)][:max_issues]
         if not issues:
             self._add_empty_slide(title, "当前范围暂无可展示的问题。", kicker)
             return
-        per_slide = 4 if self.include_photos else 6
-        for page_index, chunk in enumerate(_chunks(issues, per_slide), 1):
+        pages = self._issue_pages(issues)
+        for page_index, chunk in enumerate(pages, 1):
             slide = self._blank_slide()
-            page_title = title if len(issues) <= per_slide else f"{title}（{page_index}）"
+            page_title = title if len(pages) == 1 else f"{title}（{page_index}/{len(pages)}）"
             self._add_title(slide, page_title, kicker, subtitle=subtitle if page_index == 1 else "", ai=ai)
-            columns = 2
-            card_width = 5.7
-            card_height = 2.2 if per_slide == 4 else 1.4
-            start_y = 1.85
+            start_y = 1.98 if subtitle and page_index == 1 else 1.78
+            if len(chunk) == 1:
+                issue = chunk[0]
+                station = issue.get("station_name") or issue.get("unit_name") or issue.get("management_unit") or "问题明细"
+                category = issue.get("category_name") or issue.get("inspection_item") or issue.get("project") or issue.get("service_area") or ""
+                self._add_picture_contain(slide, issue.get("issue_photo"), 0.82, start_y, 5.45, 4.86)
+                self._add_text(slide, _short(station, 28), 6.6, start_y + 0.1, 5.65, 0.5, size=20, color=BLUE, bold=True)
+                if category:
+                    self._add_text(slide, _short(category, 42), 6.62, start_y + 0.68, 5.55, 0.36, size=13, color=TEAL, bold=True)
+                self._add_text(slide, "原始问题描述", 6.62, start_y + 1.24, 2.1, 0.3, size=11, color=MUTED, bold=True)
+                description = self._issue_description(issue)
+                description_size = 16 if len(description) <= 150 else 14 if len(description) <= 260 else 12
+                self._add_text(slide, description, 6.6, start_y + 1.62, 5.68, 2.98, size=description_size, color=SLATE)
+                continue
+
             for index, issue in enumerate(chunk):
-                row = index // columns
-                column = index % columns
-                x = 0.82 + column * 5.95
-                y = start_y + row * (card_height + 0.18)
-                card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(card_width), Inches(card_height))
+                x = 0.72 + index * 6.12
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(x),
+                    Inches(start_y),
+                    Inches(5.82),
+                    Inches(4.9),
+                )
                 card.fill.solid()
                 card.fill.fore_color.rgb = WHITE
                 card.line.color.rgb = LINE
-                photo_width = 1.65 if self.include_photos else 0
-                if self.include_photos:
-                    self._add_picture_contain(slide, issue.get("issue_photo"), x + 0.16, y + 0.16, photo_width, card_height - 0.32)
-                text_x = x + 0.18 + photo_width + (0.14 if self.include_photos else 0)
-                text_width = card_width - (text_x - x) - 0.16
+                self._add_picture_contain(slide, issue.get("issue_photo"), x + 0.18, start_y + 0.18, 5.46, 2.58)
                 station = issue.get("station_name") or issue.get("unit_name") or issue.get("management_unit") or "问题明细"
                 category = issue.get("category_name") or issue.get("inspection_item") or issue.get("project") or issue.get("service_area") or ""
-                heading = f"{station}{f' · {category}' if category else ''}"
-                self._add_text(slide, _short(heading, 34), text_x, y + 0.18, text_width, 0.34, size=11, color=BLUE, bold=True)
-                description = issue.get("description") or issue.get("inspection_content") or issue.get("summary") or "暂无问题描述"
-                self._add_text(slide, _short(description, 135), text_x, y + 0.57, text_width, card_height - 0.75, size=10, color=SLATE)
+                self._add_text(slide, _short(station, 24), x + 0.24, start_y + 2.94, 5.34, 0.38, size=15, color=BLUE, bold=True)
+                if category:
+                    self._add_text(slide, _short(category, 38), x + 0.24, start_y + 3.36, 5.34, 0.3, size=11, color=TEAL, bold=True)
+                description = self._issue_description(issue)
+                self._add_text(slide, _short(description, 190), x + 0.23, start_y + 3.72, 5.36, 0.95, size=11, color=SLATE)
 
     def _add_analysis_cards(self, title, items, *, kicker="AI ANALYSIS", ai=True):
         items = [item for item in (items or []) if isinstance(item, dict)]
         if not items:
             self._add_empty_slide(title, "当前报告暂无可展示的分析内容。", kicker)
             return
-        for page_index, chunk in enumerate(_chunks(items, 4), 1):
+        expanded_items = []
+        for item in items:
+            item_title = _text(item.get("title"), "分析事项")
+            content_chunks = _split_text(item.get("content"), 270) or ["暂无详细内容"]
+            for chunk_index, content in enumerate(content_chunks):
+                expanded_items.append(
+                    {
+                        "title": item_title if chunk_index == 0 else f"{item_title}（续）",
+                        "content": content,
+                        "ai_generated": item.get("ai_generated", True),
+                    }
+                )
+        pages = list(_chunks(expanded_items, 2))
+        for page_index, chunk in enumerate(pages, 1):
             slide = self._blank_slide()
-            page_title = title if len(items) <= 4 else f"{title}（{page_index}）"
+            page_title = title if len(pages) == 1 else f"{title}（{page_index}/{len(pages)}）"
             self._add_title(slide, page_title, kicker, ai=ai and any(item.get("ai_generated", True) for item in chunk))
+            gap = 0.2
+            card_height = (4.94 - gap * (len(chunk) - 1)) / len(chunk)
             for index, item in enumerate(chunk):
-                y = 1.82 + index * 1.22
-                number = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.85), Inches(y), Inches(0.62), Inches(0.62))
+                y = 1.78 + index * (card_height + gap)
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(0.82),
+                    Inches(y),
+                    Inches(11.7),
+                    Inches(card_height),
+                )
+                card.fill.solid()
+                card.fill.fore_color.rgb = WHITE
+                card.line.color.rgb = LINE
+                number = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.02), Inches(y + 0.22), Inches(0.62), Inches(0.62))
                 number.fill.solid()
                 number.fill.fore_color.rgb = RGBColor(204, 251, 241)
                 number.line.fill.background()
-                self._set_shape_text(number, f"{(page_index - 1) * 4 + index + 1:02d}", 11, TEAL, True)
-                self._add_text(slide, _text(item.get("title"), "分析事项"), 1.68, y - 0.02, 10.5, 0.38, size=14, bold=True)
-                self._add_text(slide, _short(item.get("content"), 220), 1.68, y + 0.38, 10.55, 0.72, size=11, color=SLATE)
+                self._set_shape_text(number, f"{(page_index - 1) * 2 + index + 1:02d}", 12, TEAL, True)
+                self._add_text(slide, item.get("title"), 1.84, y + 0.18, 10.2, 0.44, size=17 if len(chunk) == 1 else 15, bold=True)
+                content = _text(item.get("content"), "暂无详细内容")
+                content_size = 16 if len(chunk) == 1 and len(content) <= 180 else 14 if len(content) <= 210 else 13
+                self._add_text(slide, content, 1.84, y + 0.72, 10.25, card_height - 0.92, size=content_size, color=SLATE)
 
     def _build_quality_measurement(self):
         summary = self.report.get("summary") or {}
@@ -771,14 +1067,16 @@ class InspectionReportPresentation:
         deep = self.report.get("deep_analysis") or {}
         self._add_section("CHAPTER 03", "各单位问题分析", "AI按服务环节筛选重点问题并保留原始描述与照片。")
         for unit in (deep.get("unit_analyses") or [])[:20]:
-            areas = unit.get("areas") or unit.get("area_analyses") or []
-            issues = []
-            for area in areas:
-                for issue in area.get("issues") or area.get("highlighted_issues") or []:
-                    item = dict(issue)
-                    item.setdefault("station_name", unit.get("unit_name"))
-                    item.setdefault("service_area", area.get("area_name") or area.get("name"))
-                    issues.append(item)
+            areas = (
+                unit.get("service_areas")
+                or unit.get("areas")
+                or unit.get("area_analyses")
+                or []
+            )
+            issues = self._collect_nested_issues(
+                areas,
+                defaults={"unit_name": unit.get("unit_name")},
+            )
             self._add_issue_slides(f"{unit.get('unit_name') or '单位'} · 重点问题", issues, ai=bool(unit.get("ai_generated", True)), subtitle=unit.get("summary") or "", max_issues=8)
         self._add_section("CHAPTER 04", "问题总结与下一步建议")
         self._add_analysis_cards("问题总结", deep.get("problem_summary") or [], ai=True)
@@ -791,11 +1089,10 @@ class InspectionReportPresentation:
         self._add_text(slide, "本演示文稿由业务督导中心数智管理平台生成", 0.84, 5.72, 8.0, 0.4, size=12, color=RGBColor(148, 163, 184))
 
 
-def build_inspection_report_presentation(report_type, report, storage_root, output_path, include_photos=True):
+def build_inspection_report_presentation(report_type, report, storage_root, output_path):
     builder = InspectionReportPresentation(
         report_type=report_type,
         report=report,
         storage_root=storage_root,
-        include_photos=include_photos,
     )
     return builder.build(output_path)
