@@ -3,6 +3,12 @@ set -e
 
 cd "$(dirname "$0")"
 
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+
 required_vars="APP_SECRET_KEY DB_PASSWORD WEBAUTHN_RP_ID WEBAUTHN_ORIGIN CORS_ALLOWED_ORIGINS"
 for variable_name in $required_vars; do
   eval "variable_value=\${$variable_name:-}"

@@ -20,6 +20,16 @@
         >
           {{ templateUnavailable ? '模板待配置' : (canGenerateReports ? (hasReport ? '重新生成' : '生成报告') : '只读查看') }}
         </button>
+        <button
+          type="button"
+          class="export-ppt-btn"
+          :disabled="!hasReport || loading || templateUnavailable"
+          :title="!hasReport ? '请先生成当前月份的报告' : '导出当前保存的报告快照'"
+          @click="openExportDialog"
+        >
+          <span class="ppt-file-mark">P</span>
+          {{ exportBusy ? `PPT生成中 ${exportTask?.progress || 0}%` : '导出PPT' }}
+        </button>
         <small v-if="!canGenerateReports" class="report-readonly-note">
           当前账号可查看已有报告，生成权限需由管理员分配。
         </small>
@@ -1631,6 +1641,99 @@
           </footer>
         </section>
       </div>
+      <div v-if="exportDialogVisible" class="report-export-dialog-layer">
+        <section class="report-export-dialog" role="dialog" aria-modal="true" aria-label="导出报告PPT">
+          <button type="button" class="export-dialog-close" aria-label="关闭" @click="closeExportDialog">×</button>
+          <header class="export-dialog-head">
+            <div class="export-dialog-icon" aria-hidden="true">
+              <span>P</span>
+            </div>
+            <div>
+              <span>PRESENTATION EXPORT</span>
+              <h3>导出报告PPT</h3>
+              <p>系统会在后台把当前报告编排为专业的 16:9 演示文稿。</p>
+            </div>
+          </header>
+
+          <div class="export-dialog-body">
+            <div class="export-snapshot-card">
+              <div>
+                <span>导出内容</span>
+                <strong>{{ report.title || currentReportType.name }}</strong>
+                <small>{{ selectedMonth }} · 报告生成于 {{ reportGeneratedAt }}</small>
+              </div>
+              <div class="export-snapshot-status">已保存快照</div>
+            </div>
+
+            <div class="export-feature-grid">
+              <div><span class="feature-dot chart"></span><strong>原生图表</strong><small>可继续编辑</small></div>
+              <div><span class="feature-dot table"></span><strong>分页表格</strong><small>自动控制版面</small></div>
+              <div><span class="feature-dot ai"></span><strong>AI标识</strong><small>来源清楚可见</small></div>
+            </div>
+
+            <label :class="['export-photo-option', { disabled: exportBusy }]">
+              <input v-model="exportIncludePhotos" type="checkbox" :disabled="exportBusy" />
+              <span class="export-checkbox"></span>
+              <span>
+                <strong>导出问题照片</strong>
+                <small>照片会嵌入PPT，文件体积和生成时间会相应增加。</small>
+              </span>
+            </label>
+
+            <div v-if="exportTask" :class="['export-task-panel', exportTask.status]">
+              <div class="export-task-head">
+                <div>
+                  <span>{{ exportStatusLabel }}</span>
+                  <strong>{{ exportTask.stage_message || '正在准备演示文稿' }}</strong>
+                </div>
+                <b>{{ exportTask.progress || 0 }}%</b>
+              </div>
+              <div class="export-progress-track">
+                <span :style="{ width: `${exportTask.progress || 0}%` }"></span>
+              </div>
+              <div v-if="exportTask.status === 'completed'" class="export-result-meta">
+                <span>{{ exportTask.slide_count || 0 }} 页幻灯片</span>
+                <span>{{ exportTask.file_size_text || '文件已就绪' }}</span>
+                <span>保留至 {{ exportTask.expires_at || '7天后' }}</span>
+              </div>
+            </div>
+
+            <p v-if="exportError" class="export-error-message">{{ exportError }}</p>
+            <p class="export-dialog-note">PPT根据当前已保存报告生成，不会重新调用AI，也不会修改报告数据。</p>
+          </div>
+
+          <footer class="export-dialog-footer">
+            <button type="button" class="export-secondary-btn" @click="closeExportDialog">稍后处理</button>
+            <button
+              v-if="exportTask?.status === 'completed'"
+              type="button"
+              class="export-secondary-btn"
+              :disabled="exportSubmitting"
+              @click="startPptExport"
+            >
+              重新创建
+            </button>
+            <button
+              v-if="exportTask?.status === 'completed'"
+              type="button"
+              class="export-primary-btn download"
+              :disabled="exportDownloading"
+              @click="downloadExportPpt"
+            >
+              {{ exportDownloading ? '正在下载...' : '下载PPT' }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="export-primary-btn"
+              :disabled="exportBusy || exportSubmitting"
+              @click="startPptExport"
+            >
+              {{ exportBusy || exportSubmitting ? '后台生成中...' : '创建PPT' }}
+            </button>
+          </footer>
+        </section>
+      </div>
       <div v-if="imagePreview.visible" class="report-image-preview" @click.self="closeImagePreview">
         <img :src="imagePreview.src" :alt="imagePreview.title || '问题照片预览'" />
       </div>
@@ -1648,7 +1751,7 @@ let storedPermissions = {}
 try {
   storedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
 } catch {
-  storedPermissions = {}
+  // Keep the safe empty permission map when local data is malformed.
 }
 
 const DEFAULT_REPORT_TYPES = [
@@ -1764,7 +1867,14 @@ const sourceDraftIds = ref([])
 const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
+const exportDialogVisible = ref(false)
+const exportIncludePhotos = ref(true)
+const exportTask = ref(null)
+const exportError = ref('')
+const exportSubmitting = ref(false)
+const exportDownloading = ref(false)
 let pollTimer = null
+let exportPollTimer = null
 let contextRequestId = 0
 
 const currentReportType = computed(() => (
@@ -1778,6 +1888,16 @@ const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const hasReport = computed(() => Boolean(report.value?.month))
+const exportBusy = computed(() => ['queued', 'running'].includes(exportTask.value?.status))
+const exportStatusLabel = computed(() => {
+  const labels = {
+    queued: '等待后台处理',
+    running: '正在生成演示文稿',
+    completed: '演示文稿已就绪',
+    failed: '生成未完成'
+  }
+  return labels[exportTask.value?.status] || '导出准备'
+})
 const reportTitleFallback = computed(() => {
   const monthNumber = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
   const monthPrefix = Number.isFinite(monthNumber) ? `${monthNumber}月` : ''
@@ -2503,6 +2623,121 @@ const applySourceSelection = () => {
   closeSourceDialog()
 }
 
+const clearExportPolling = () => {
+  if (exportPollTimer) {
+    window.clearTimeout(exportPollTimer)
+    exportPollTimer = null
+  }
+}
+
+const scheduleExportPoll = () => {
+  clearExportPolling()
+  if (!exportDialogVisible.value || !exportBusy.value) return
+  exportPollTimer = window.setTimeout(pollPptExport, 1800)
+}
+
+const pollPptExport = async () => {
+  const taskId = exportTask.value?.task_id
+  if (!taskId || !exportDialogVisible.value) return
+  try {
+    const response = await axios.get(`/api/inspection-reports/exports/${taskId}`)
+    if (exportTask.value?.task_id !== taskId) return
+    if (!response.data?.success || !response.data?.task) {
+      throw new Error(response.data?.error || '读取PPT生成进度失败。')
+    }
+    exportTask.value = response.data.task
+    exportError.value = exportTask.value.status === 'failed'
+      ? (exportTask.value.error_message || 'PPT生成失败，请稍后重试。')
+      : ''
+    if (exportBusy.value) scheduleExportPoll()
+    else clearExportPolling()
+  } catch (err) {
+    exportError.value = err?.response?.data?.error || err?.message || '读取PPT生成进度失败，后台任务仍可能在继续。'
+    scheduleExportPoll()
+  }
+}
+
+const loadLatestPptExport = async () => {
+  exportError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/exports/latest', {
+      params: {
+        report_type: selectedReportType.value,
+        month: selectedMonth.value
+      }
+    })
+    if (!response.data?.success) {
+      throw new Error(response.data?.error || '读取PPT导出状态失败。')
+    }
+    exportTask.value = response.data.task || null
+    if (exportTask.value) exportIncludePhotos.value = exportTask.value.include_photos !== false
+    if (exportBusy.value) scheduleExportPoll()
+  } catch (err) {
+    exportTask.value = null
+    exportError.value = err?.response?.data?.error || err?.message || '读取PPT导出状态失败。'
+  }
+}
+
+const openExportDialog = async () => {
+  if (!hasReport.value || loading.value || templateUnavailable.value) return
+  exportDialogVisible.value = true
+  await loadLatestPptExport()
+}
+
+const closeExportDialog = () => {
+  exportDialogVisible.value = false
+  clearExportPolling()
+}
+
+const startPptExport = async () => {
+  if (!hasReport.value || exportBusy.value || exportSubmitting.value) return
+  exportSubmitting.value = true
+  exportError.value = ''
+  try {
+    const response = await axios.post('/api/inspection-reports/exports', {
+      report_type: selectedReportType.value,
+      month: selectedMonth.value,
+      include_photos: exportIncludePhotos.value
+    })
+    if (!response.data?.success || !response.data?.task) {
+      throw new Error(response.data?.error || 'PPT导出任务提交失败。')
+    }
+    exportTask.value = response.data.task
+    scheduleExportPoll()
+  } catch (err) {
+    exportError.value = err?.response?.data?.error || err?.message || 'PPT导出任务提交失败，请稍后重试。'
+  } finally {
+    exportSubmitting.value = false
+  }
+}
+
+const downloadExportPpt = async () => {
+  const taskId = exportTask.value?.task_id
+  if (!taskId || exportTask.value?.status !== 'completed' || exportDownloading.value) return
+  exportDownloading.value = true
+  exportError.value = ''
+  try {
+    const response = await axios.get(`/api/inspection-reports/exports/${taskId}/download`, {
+      responseType: 'blob'
+    })
+    const blob = new Blob([response.data], {
+      type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    })
+    const blobUrl = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = exportTask.value.file_name || `${selectedMonth.value}_${currentReportType.value.name}.pptx`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1200)
+  } catch (err) {
+    exportError.value = err?.response?.data?.error || err?.message || 'PPT下载失败，请稍后重试。'
+  } finally {
+    exportDownloading.value = false
+  }
+}
+
 const clearPolling = () => {
   if (pollTimer) {
     window.clearTimeout(pollTimer)
@@ -2641,6 +2876,9 @@ const loadReportState = async () => {
 
 const selectReportType = async (reportType) => {
   if (selectedReportType.value === reportType) return
+  closeExportDialog()
+  exportTask.value = null
+  exportError.value = ''
   selectedReportType.value = reportType
   report.value = createEmptyReport()
   sourceStations.value = []
@@ -2648,6 +2886,9 @@ const selectReportType = async (reportType) => {
 }
 
 const handleReportContextChange = async () => {
+  closeExportDialog()
+  exportTask.value = null
+  exportError.value = ''
   report.value = createEmptyReport()
   sourceStations.value = []
   await loadReportState()
@@ -2673,6 +2914,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   contextRequestId += 1
   clearPolling()
+  clearExportPolling()
 })
 </script>
 
@@ -2774,6 +3016,44 @@ onBeforeUnmount(() => {
 .regenerate-report-btn:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.export-ppt-btn {
+  height: 42px;
+  border: 1px solid rgba(94, 234, 212, 0.38);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #ccfbf1;
+  background: rgba(13, 148, 136, 0.2);
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.export-ppt-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(94, 234, 212, 0.7);
+  background: rgba(13, 148, 136, 0.34);
+}
+
+.export-ppt-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ppt-file-mark {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: #0f172a !important;
+  background: #5eead4;
+  font-size: 12px !important;
+  font-weight: 950;
 }
 
 .report-readonly-note {
@@ -3122,6 +3402,393 @@ onBeforeUnmount(() => {
   padding: 34px;
   background: rgba(15, 23, 42, 0.58);
   backdrop-filter: blur(8px);
+}
+
+.report-export-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 16000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.64);
+  backdrop-filter: blur(10px);
+}
+
+.report-export-dialog {
+  position: relative;
+  width: min(660px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 28px;
+  background: #f8fafc;
+  box-shadow: 0 36px 110px rgba(2, 6, 23, 0.42);
+}
+
+.export-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.9);
+  font-size: 27px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.export-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 76px 21px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(20, 184, 166, 0.2), transparent 44%),
+    #ffffff;
+}
+
+.export-dialog-icon {
+  width: 54px;
+  height: 62px;
+  flex: 0 0 54px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: linear-gradient(145deg, #0f766e, #0e7490);
+  box-shadow: 0 12px 26px rgba(13, 148, 136, 0.26);
+}
+
+.export-dialog-icon span {
+  font-size: 23px;
+  font-weight: 950;
+}
+
+.export-dialog-head > div:last-child > span {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.export-dialog-head h3 {
+  margin: 4px 0 5px;
+  color: #0f172a;
+  font-size: 23px;
+}
+
+.export-dialog-head p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.export-dialog-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px 24px 18px;
+}
+
+.export-snapshot-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.export-snapshot-card > div:first-child,
+.export-snapshot-card span,
+.export-snapshot-card strong,
+.export-snapshot-card small {
+  display: block;
+  min-width: 0;
+}
+
+.export-snapshot-card span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.export-snapshot-card strong {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-snapshot-card small {
+  margin-top: 5px;
+  color: #94a3b8;
+}
+
+.export-snapshot-status {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.export-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.export-feature-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  background: #ffffff;
+}
+
+.export-feature-grid strong,
+.export-feature-grid small {
+  display: block;
+}
+
+.export-feature-grid strong {
+  margin-top: 8px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.export-feature-grid small {
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.feature-dot {
+  width: 18px;
+  height: 6px;
+  border-radius: 999px;
+  display: block;
+}
+
+.feature-dot.chart { background: #0e7490; }
+.feature-dot.table { background: #14b8a6; }
+.feature-dot.ai { background: #f59e0b; }
+
+.export-photo-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 15px;
+  border: 1px solid #cbd5e1;
+  border-radius: 16px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.export-photo-option.disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.export-photo-option input {
+  position: absolute;
+  opacity: 0;
+}
+
+.export-checkbox {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border: 1px solid #94a3b8;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.export-photo-option input:checked + .export-checkbox {
+  position: relative;
+  border-color: #0d9488;
+  background: #0d9488;
+}
+
+.export-photo-option input:checked + .export-checkbox::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 3px;
+  width: 5px;
+  height: 10px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.export-photo-option strong,
+.export-photo-option small {
+  display: block;
+}
+
+.export-photo-option strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.export-photo-option small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.export-task-panel {
+  padding: 15px;
+  border: 1px solid #bae6fd;
+  border-radius: 17px;
+  background: #f0f9ff;
+}
+
+.export-task-panel.completed {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.export-task-panel.failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.export-task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.export-task-head span,
+.export-task-head strong {
+  display: block;
+}
+
+.export-task-head span {
+  color: #0284c7;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.export-task-head strong {
+  margin-top: 4px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.export-task-head b {
+  color: #0e7490;
+  font-size: 19px;
+}
+
+.export-progress-track {
+  height: 8px;
+  margin-top: 13px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.export-progress-track span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #14b8a6);
+  transition: width 0.35s ease;
+}
+
+.export-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.export-result-meta span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #0f766e;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.export-error-message,
+.export-dialog-note {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.export-error-message {
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #b91c1c;
+  background: #fee2e2;
+  font-size: 12px;
+}
+
+.export-dialog-note {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.export-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 15px 24px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.export-secondary-btn,
+.export-primary-btn {
+  min-width: 112px;
+  height: 42px;
+  border-radius: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.export-secondary-btn {
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  background: #ffffff;
+}
+
+.export-primary-btn {
+  border: 1px solid #0f766e;
+  color: #ffffff;
+  background: #0f766e;
+}
+
+.export-primary-btn.download {
+  border-color: #0369a1;
+  background: #0369a1;
+}
+
+.export-primary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .report-source-dialog {
@@ -7381,6 +8048,88 @@ onBeforeUnmount(() => {
   .service-summary-list > article > span {
     width: 36px;
     height: 36px;
+  }
+
+  .report-export-dialog-layer {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .report-export-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 24px;
+  }
+
+  .export-dialog-close {
+    top: 12px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .export-dialog-head {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 18px 56px 16px 16px;
+  }
+
+  .export-dialog-icon {
+    width: 44px;
+    height: 51px;
+    flex-basis: 44px;
+    border-radius: 12px;
+  }
+
+  .export-dialog-head h3 {
+    font-size: 20px;
+  }
+
+  .export-dialog-head p {
+    font-size: 12px;
+  }
+
+  .export-dialog-body {
+    gap: 11px;
+    padding: 15px;
+  }
+
+  .export-snapshot-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .export-snapshot-card strong {
+    white-space: normal;
+  }
+
+  .export-feature-grid {
+    gap: 6px;
+  }
+
+  .export-feature-grid > div {
+    padding: 10px 8px;
+  }
+
+  .export-photo-option {
+    align-items: flex-start;
+  }
+
+  .export-task-head {
+    align-items: flex-start;
+  }
+
+  .export-dialog-footer {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    padding: 12px 15px 16px;
+  }
+
+  .export-secondary-btn,
+  .export-primary-btn {
+    width: 100%;
+    min-width: 0;
   }
 }
 </style>

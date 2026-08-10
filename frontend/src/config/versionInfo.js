@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.6',
+    date: '2026-08-10',
+    title: 'AI报告支持PPT导出',
+    summary: '已生成的AI报告可以在后台整理成演示文稿并下载。',
+    items: [
+      'PPT自动编排章节、统计图表、明细表格和问题照片。',
+      'AI生成内容在演示文稿中保留明确标识。',
+      '导出在后台运行，切换页面不会中断，文件保留7天。'
+    ]
+  },
+  {
     version: 'v4.5',
     date: '2026-08-04',
     title: '账号安全与Passkey登录',
