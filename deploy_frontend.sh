@@ -20,5 +20,12 @@ rm -rf /var/www/ywddzx/*
 echo "📂 拷贝新文件..."
 cp -r dist/* /var/www/ywddzx/
 
+cd ..
+if docker-compose ps -q frontend 2>/dev/null | grep -q .; then
+  echo "🔒 停止并移除生产环境中不再需要的 Vite 开发容器..."
+  docker-compose stop frontend
+  docker-compose rm -f frontend
+fi
+
 echo "ℹ️ 请确认 Nginx server 已 include deploy/nginx/ywddzx-cache.conf 和 ywddzx-security.conf。"
 echo "✅ 前端部署完成！"
