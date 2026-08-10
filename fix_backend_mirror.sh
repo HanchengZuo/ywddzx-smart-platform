@@ -1,30 +1,6 @@
 #!/bin/bash
 set -e
 
-cd "$(dirname "$0")"
-
-echo "🔧 开始修补 backend/Dockerfile 国内镜像源..."
-
-cat > backend/Dockerfile <<'EOF'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
-    && sed -i 's|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-
-COPY . .
-
-EXPOSE 5000
-
-CMD ["sh", "/app/docker-entrypoint.sh"]
-EOF
-
-echo "✅ backend/Dockerfile 已修补完成"
+# Dockerfile is versioned so deployments remain reproducible. Mirror changes
+# must be reviewed and committed instead of mutating a production worktree.
+echo "backend/Dockerfile 已由 Git 统一管理，无需动态修补镜像源。"

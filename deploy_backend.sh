@@ -24,9 +24,6 @@ export TRUST_PROXY_HEADERS=true
 echo "📥 拉取最新代码..."
 git pull
 
-echo "🔧 修补 Dockerfile 国内镜像源..."
-./fix_backend_mirror.sh
-
 echo "🚀 重建并启动后端服务..."
 docker-compose up --build --force-recreate -d backend
 
