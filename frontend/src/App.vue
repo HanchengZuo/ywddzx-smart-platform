@@ -93,7 +93,6 @@
             <span class="passkey-login-icon"><i></i></span>
             <span><strong>{{ passkeyLoginLoading ? '正在等待设备验证...' : '使用Passkey登录' }}</strong><small>指纹、面容、设备解锁或安全密钥</small></span>
           </button>
-          <p class="root-passkey-login-tip">root账号仅支持Passkey登录</p>
         </template>
       </form>
     </div>
@@ -4442,13 +4441,6 @@ textarea:focus {
   background: #fff;
   box-shadow: 4px 4px 0 #fff;
   transform: translateY(-50%);
-}
-
-.root-passkey-login-tip {
-  margin: 9px 0 0;
-  color: #7c8797;
-  font-size: 11px;
-  text-align: center;
 }
 
 .root-passkey-setup-head { margin-bottom: 18px; }
