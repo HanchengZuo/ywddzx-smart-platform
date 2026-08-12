@@ -21034,7 +21034,14 @@ def preview_security_batch_action():
 def run_security_batch_action():
     data = request.get_json(silent=True) or {}
     action = normalize_text(data.get("action"), 80)
-    if action not in {"force_change", "invalidate_sessions"}:
+    if action == "force_change":
+        return jsonify(
+            {
+                "success": False,
+                "error": "批量强制下次登录改密功能已停用，请按账号单独处理。",
+            }
+        ), 410
+    if action != "invalidate_sessions":
         return jsonify({"success": False, "error": "当前批量操作类型不受支持。"}), 400
     conn = None
     cur = None
@@ -21072,27 +21079,15 @@ def run_security_batch_action():
             conn.commit()
             return jsonify({"success": False, "error": "当前管理员密码验证失败。"}), 403
         target_ids = [item["id"] for item in targets]
-        if action == "force_change":
-            cur.execute(
-                """
-                UPDATE users
-                SET must_change_password = TRUE,
-                    force_change_immediately = FALSE,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ANY(%s)
-                """,
-                (target_ids,),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE users
-                SET auth_version = auth_version + 1,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ANY(%s)
-                """,
-                (target_ids,),
-            )
+        cur.execute(
+            """
+            UPDATE users
+            SET auth_version = auth_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ANY(%s)
+            """,
+            (target_ids,),
+        )
         record_security_event(
             cur,
             actor,
@@ -21106,8 +21101,7 @@ def run_security_batch_action():
         conn.commit()
         for target_id in target_ids:
             invalidate_auth_caches_for_user(target_id)
-            if action == "invalidate_sessions":
-                remove_online_user_presence(target_id)
+            remove_online_user_presence(target_id)
         return jsonify({"success": True, "message": f"批量操作完成，共处理 {len(targets)} 个账号。"})
     except PermissionError as exc:
         if conn:

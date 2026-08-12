@@ -116,14 +116,11 @@
           <div>
             <span>账号密码安全</span>
             <h3>账号风险清单</h3>
-            <p>当前筛选结果 {{ pagination.total }} 个账号；勾选账号后可批量处理，也可直接按筛选结果处理。</p>
+            <p>当前筛选结果 {{ pagination.total }} 个账号，可在清单中查看风险并管理单个账号。</p>
           </div>
           <div class="account-batch-actions">
             <button class="btn initialize-button" type="button" :disabled="accountsLoading || !stats.total" @click="openInitializationDialog">
-              初始化密码并导出 Excel
-            </button>
-            <button class="btn batch-button" type="button" :disabled="accountsLoading || !pagination.total" @click="openBatchDialog">
-              批量强制下次登录改密
+              所有用户一键初始化为强密码并导出 Excel
             </button>
           </div>
         </div>
@@ -132,12 +129,10 @@
         <div v-else-if="!accounts.length" class="state-panel empty"><strong>当前没有符合条件的账号</strong><span>可调整筛选条件后重新查询。</span></div>
         <div v-else class="account-table-wrap">
           <div class="account-table account-table-head">
-            <div><input type="checkbox" :checked="pageAllSelected" @change="togglePageSelection($event.target.checked)" /></div>
             <div>用户名 / 姓名</div><div>角色</div><div>所属站点</div><div>风险等级与原因</div>
             <div>登录方式</div><div>必须改密</div><div>最后改密</div><div>账号状态</div><div>操作</div>
           </div>
           <article v-for="account in accounts" :key="account.id" class="account-table account-row">
-            <div class="select-cell"><input type="checkbox" :checked="selectedIds.has(account.id)" @change="toggleSelection(account.id, $event.target.checked)" /></div>
             <div data-label="账号"><strong>{{ account.username }}</strong><small>{{ account.real_name || '-' }}</small></div>
             <div data-label="角色"><span class="role-chip">{{ account.role_label }}</span></div>
             <div data-label="所属站点"><strong>{{ account.station_name || '-' }}</strong><small>{{ account.station_region || '未关联站点' }}</small></div>
@@ -255,7 +250,6 @@ const logsLoading = ref(false)
 const initialCredentialExporting = ref(false)
 const accounts = ref([])
 const logs = ref([])
-const selectedIds = reactive(new Set())
 const currentUserId = Number(localStorage.getItem('user_id') || 0)
 const stats = reactive({ total: 0, high_risk: 0, must_change: 0, compliant: 0, disabled: 0 })
 const options = reactive({ roles: [], stations: [], risk_levels: [] })
@@ -290,7 +284,6 @@ const visiblePages = computed(() => {
   const start = Math.max(1, Math.min(pagination.page - 2, pagination.total_pages - 4))
   return Array.from({ length: Math.min(5, pagination.total_pages) }, (_, index) => start + index)
 })
-const pageAllSelected = computed(() => accounts.value.length > 0 && accounts.value.every((item) => selectedIds.has(item.id)))
 const regionOptions = computed(() => [...new Set(
   options.stations.map((item) => item.region).filter(Boolean)
 )].sort((left, right) => left.localeCompare(right, 'zh-CN')))
@@ -375,13 +368,11 @@ const loadLogs = async (page = logPagination.page) => {
 const switchTab = (tab) => { activeTab.value = tab; if (tab === 'policy') loadPolicy(); if (tab === 'logs') loadLogs(1) }
 const applyFilters = () => {
   Object.assign(appliedFilters, filters)
-  selectedIds.clear()
   loadAccounts(1)
 }
 const resetFilters = () => {
   Object.assign(filters, emptyAccountFilters())
   Object.assign(appliedFilters, emptyAccountFilters())
-  selectedIds.clear()
   loadAccounts(1)
 }
 const applyQuickFilter = (key, value) => {
@@ -398,11 +389,8 @@ const handleRegionChange = () => {
 const removeAppliedFilter = (key) => {
   filters[key] = ''
   appliedFilters[key] = ''
-  selectedIds.clear()
   loadAccounts(1)
 }
-const toggleSelection = (id, checked) => { if (checked) selectedIds.add(id); else selectedIds.delete(id) }
-const togglePageSelection = (checked) => accounts.value.forEach((item) => toggleSelection(item.id, checked))
 const closeDialog = () => { if (dialog.saving) return; Object.assign(dialog, { visible: false, type: '', title: '', description: '', account: null, requirePassword: false, currentPassword: '', affectedCount: null, highRiskCount: 0, suspendedCount: 0, roleCounts: {} }) }
 const runAccountAction = async (account, action) => {
   const labels = { force_change: '强制下次登录改密', cancel_force_change: '取消强制改密', invalidate_sessions: '注销全部现有会话', suspend: '暂停账号', restore: '恢复账号' }
@@ -411,20 +399,13 @@ const runAccountAction = async (account, action) => {
   catch (error) { showToast(error?.response?.data?.error || '账号安全操作失败。', 'error') }
 }
 const openImmediateDialog = (account) => Object.assign(dialog, { visible: true, type: 'immediate', title: '立即执行强制改密', description: `账号【${account.username}】的现有会话会立即失效，下次登录只能修改密码或退出。`, account, requirePassword: true, currentPassword: '', affectedCount: 1, highRiskCount: 1, saving: false })
-const openBatchDialog = async () => {
-  try {
-    const payload = selectedIds.size ? { user_ids: [...selectedIds] } : { filters: { ...appliedFilters } }
-    const response = await axios.post('/api/management/security/accounts/batch-preview', payload)
-    Object.assign(dialog, { visible: true, type: 'batch', title: '批量强制下次登录改密', description: selectedIds.size ? '将处理已勾选账号；当前登录账号会自动排除。' : '将处理当前全部筛选结果；当前登录账号会自动排除。', requirePassword: true, currentPassword: '', affectedCount: response.data.affected_count, highRiskCount: response.data.high_risk_count, saving: false })
-  } catch (error) { showToast(error?.response?.data?.error || '批量影响范围计算失败。', 'error') }
-}
 const openInitializationDialog = async () => {
   try {
     const response = await axios.post('/api/management/security/password-initialization/preview')
     Object.assign(dialog, {
       visible: true,
       type: 'initialization',
-      title: '一键初始化用户密码',
+      title: '所有用户一键初始化为强密码',
       description: '这是系统级高风险操作。确认后将为所有可处理账号生成独立强密码，并立即下载初始登录凭据。',
       requirePassword: true,
       currentPassword: '',
@@ -463,14 +444,13 @@ const confirmDialog = async () => {
   try {
     let response
     if (dialog.type === 'immediate') response = await axios.post(`/api/management/security/accounts/${dialog.account.id}/action`, { action: 'force_change_immediately', current_password: dialog.currentPassword })
-    if (dialog.type === 'batch') response = await axios.post('/api/management/security/accounts/batch-action', { action: 'force_change', current_password: dialog.currentPassword, ...(selectedIds.size ? { user_ids: [...selectedIds] } : { filters: { ...appliedFilters } }) })
     if (dialog.type === 'initialization') {
       initialCredentialExporting.value = true
       try {
         response = await axios.post('/api/management/security/password-initialization/export', { current_password: dialog.currentPassword }, { responseType: 'blob', timeout: 120000 })
         downloadCredentialWorkbook(response)
       } catch (error) {
-        throw new Error(await readDownloadError(error))
+        throw new Error(await readDownloadError(error), { cause: error })
       } finally {
         initialCredentialExporting.value = false
       }
@@ -483,7 +463,6 @@ const confirmDialog = async () => {
     showToast(response?.data?.message || '安全操作已完成。')
     dialog.saving = false
     closeDialog()
-    selectedIds.clear()
     await loadAccounts()
   } catch (error) { dialog.saving = false; showToast(error?.response?.data?.error || error?.message || '安全操作失败。', 'error') }
   finally { policySaving.value = false }
@@ -524,7 +503,7 @@ onMounted(async () => { await Promise.all([loadAccounts(1), loadPolicy()]) })
 @media(max-width:720px){.account-search-row{padding:13px;gap:13px}.quick-filter-group>div{display:grid;grid-template-columns:1fr}.filter-card .filter-grid{grid-template-columns:1fr}.applied-filter-strip{align-items:stretch}.applied-filter-strip button{max-width:100%;justify-content:flex-start}.applied-filter-count{width:100%;margin-left:0;padding-top:3px}}
 
 @media(min-width:721px){
-  .account-table{grid-template-columns:36px minmax(140px,1.05fr) minmax(100px,.75fr) minmax(145px,1fr) minmax(200px,1.45fr) minmax(110px,.8fr) 90px 110px 86px minmax(170px,1.25fr);min-width:1280px}
+  .account-table{grid-template-columns:minmax(140px,1.05fr) minmax(100px,.75fr) minmax(145px,1fr) minmax(200px,1.45fr) minmax(110px,.8fr) 90px 110px 86px minmax(170px,1.25fr);min-width:1240px}
 }
 .login-method-chip{display:inline-flex;width:max-content;padding:5px 9px;border-radius:999px;background:#eef2f5;color:#617080;font-size:11px;font-weight:900}
 .login-method-chip.passkey{background:#e1f5f1;color:#08766c}
