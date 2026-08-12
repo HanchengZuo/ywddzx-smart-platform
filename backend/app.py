@@ -30,6 +30,7 @@ from ai_utils import (
     generate_equipment_facilities_report_insights,
     generate_feedback_title,
     generate_finance_report_insights,
+    generate_non_oil_report_insights,
     generate_on_site_service_report_insights,
     generate_quality_measurement_report_insights,
     generate_safety_quality_report_insights,
@@ -202,7 +203,7 @@ PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
 def normalize_frontend_app_version(value):
     raw_value = str(value or "").strip()
     if not raw_value:
-        raw_value = "4.6.0"
+        raw_value = "4.7.0"
     if raw_value.lower().startswith("v"):
         raw_value = raw_value[1:]
     parts = raw_value.split(".")
@@ -222,7 +223,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.6.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.7.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7485,6 +7486,12 @@ ON_SITE_SERVICE_REPORT_SOURCE_NOTE = (
     "站点覆盖按所选月份内已确认完成的视频与现场巡检记录统计；"
     "问题数量、分类、上月整改对比和AI分析仅使用审核通过的问题。"
 )
+NON_OIL_REPORT_GROUP_PURCHASE_TABLE = "非油合规性检查（团购）"
+NON_OIL_REPORT_ONSITE_TABLE = "非油检查表（现场）"
+NON_OIL_REPORT_SOURCE_NOTE = (
+    "巡检周期按上月25日至本月24日统计；站点覆盖以已确认完成的非油团购与现场检查记录为准，"
+    "问题数量、分类、典型问题和AI分析仅使用审核通过的问题。"
+)
 SAFETY_QUALITY_REPORT_REGION_ORDER = [
     "浦东片区",
     "松金片区",
@@ -7509,6 +7516,22 @@ def parse_report_month(value):
     else:
         month_end = month_start.replace(month=month_start.month + 1)
     return month_start, month_end
+
+
+def parse_non_oil_report_period(value):
+    month_start, _month_end = parse_report_month(value)
+    if month_start.month == 1:
+        period_start = date(month_start.year - 1, 12, 25)
+    else:
+        period_start = date(month_start.year, month_start.month - 1, 25)
+    period_end = date(month_start.year, month_start.month, 25)
+    return period_start, period_end
+
+
+def get_inspection_report_date_range(report_type, value):
+    if report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
+        return parse_non_oil_report_period(value)
+    return parse_report_month(value)
 
 
 def format_report_month_label(month_start):
@@ -7640,6 +7663,7 @@ SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
 ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-eight-chapters-v1"
+NON_OIL_REPORT_DATA_POLICY_VERSION = "cycle25-24-completed-approved-five-chapters-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -7717,10 +7741,11 @@ INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
                 "name": "非油检查报告",
                 "description": "汇总非油团购合规与现场检查数据。",
                 "target_tables": [
-                    "非油合规性检查（团购）",
-                    "非油检查表（现场）",
+                    NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
+                    NON_OIL_REPORT_ONSITE_TABLE,
                 ],
-                "template_ready": False,
+                "data_scope_note": NON_OIL_REPORT_SOURCE_NOTE,
+                "template_ready": True,
             },
         ),
     ]
@@ -7791,6 +7816,7 @@ def get_inspection_report_source_station_options(
     if report_type in {
         REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
         REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE,
+        REPORT_SNAPSHOT_TYPE_NON_OIL,
     }:
         where_clauses = [
             "COALESCE(ins.inspection_date::date, ins.created_at::date) >= %s",
@@ -8077,6 +8103,7 @@ def is_inspection_report_snapshot_current(report_type, payload):
         REPORT_SNAPSHOT_TYPE_FINANCE: FINANCE_REPORT_DATA_POLICY_VERSION,
         REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE: ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION,
         REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES: EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION,
+        REPORT_SNAPSHOT_TYPE_NON_OIL: NON_OIL_REPORT_DATA_POLICY_VERSION,
     }
     expected_version = expected_policy_versions.get(report_type)
     return not expected_version or payload.get("data_policy_version") == expected_version
@@ -8158,6 +8185,8 @@ def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, r
         normalized_report["data_policy_version"] = ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION
     elif report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
         normalized_report["data_policy_version"] = EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION
+    elif report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
+        normalized_report["data_policy_version"] = NON_OIL_REPORT_DATA_POLICY_VERSION
     snapshot_report = attach_report_snapshot_meta(
         normalized_report,
         None,
@@ -11044,6 +11073,570 @@ def build_equipment_facilities_report_payload(month_start, issue_rows, inspectio
             item_distribution,
         ),
     }, issues
+
+
+NON_OIL_REPORT_CATEGORIES = [
+    "店销商品摆放情况",
+    "商品订单、入库、盘点等情况",
+    "便利店卫生情况",
+    "销售行为",
+    "台账、报表情况",
+    "仓库管理情况",
+]
+
+
+def classify_non_oil_report_category(source_project, detail_text, description):
+    combined = " ".join(
+        str(value or "").strip()
+        for value in (source_project, detail_text, description)
+    )
+    exact_project = str(source_project or "").strip()
+    if exact_project in NON_OIL_REPORT_CATEGORIES:
+        return exact_project
+    keyword_groups = [
+        (
+            "仓库管理情况",
+            ("仓库", "库房", "库位", "存放安全", "积灰"),
+        ),
+        (
+            "便利店卫生情况",
+            ("卫生", "保洁", "清洁", "污渍", "垃圾", "虫害"),
+        ),
+        (
+            "台账、报表情况",
+            ("台账", "报表", "记录", "登记", "留痕", "资料"),
+        ),
+        (
+            "销售行为",
+            ("销售行为", "服务", "开口", "员工形象", "销售过期", "促销"),
+        ),
+        (
+            "商品订单、入库、盘点等情况",
+            (
+                "订单", "入库", "盘点", "盘盈", "盘亏", "账实", "团购",
+                "过机", "先货后款", "审批单", "资金", "交接",
+            ),
+        ),
+        (
+            "店销商品摆放情况",
+            (
+                "摆放", "陈列", "货架", "价签", "标签", "临期", "过期",
+                "保质期", "补货", "堆头", "商品", "冰柜", "未展示",
+            ),
+        ),
+    ]
+    for category_name, keywords in keyword_groups:
+        if any(keyword in combined for keyword in keywords):
+            return category_name
+    if "团购" in exact_project or "稽核" in combined:
+        return "商品订单、入库、盘点等情况"
+    return "店销商品摆放情况"
+
+
+def serialize_non_oil_report_issue(row):
+    table_name = str(row.get("table_name") or "").strip()
+    detail_text = row.get("standard_detail_text")
+    source_project = get_report_standard_field_value_any(
+        detail_text,
+        ("稽核项目", "检查项目"),
+    ) or "未设置检查项目"
+    source_content = get_report_standard_field_value_any(
+        detail_text,
+        ("稽核内容", "检查内容", "检查细则"),
+    ) or "-"
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    description = str(row.get("description") or "").strip()
+    report_date = row.get("report_date")
+    return {
+        "issue_id": int(row.get("id") or 0),
+        "station_id": row.get("station_id"),
+        "station_name": str(sanitize_display_string(row.get("station_name")) or "").strip(),
+        "unit_type": unit_type,
+        "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
+        "unit_name": unit_name,
+        "table_name": table_name,
+        "source_project": normalize_report_category(source_project, "未设置检查项目"),
+        "source_content": normalize_report_category(source_content, "-"),
+        "category_name": classify_non_oil_report_category(
+            source_project,
+            detail_text,
+            description,
+        ),
+        "description": description,
+        "issue_photo": row.get("issue_photo") or "",
+        "report_date": report_date.strftime("%Y-%m-%d")
+        if isinstance(report_date, (datetime, date))
+        else str(report_date or "")[:10],
+        "status": str(row.get("status") or "").strip(),
+        "rectification_result": str(row.get("rectification_result") or "").strip(),
+        "review_result": str(row.get("review_result") or "").strip(),
+        "sign_status": str(row.get("sign_status") or "").strip(),
+    }
+
+
+def serialize_non_oil_inspection_station(row):
+    unit_type, unit_name = identify_report_secondary_unit(row)
+    report_date = row.get("report_date")
+    return {
+        "inspection_id": row.get("inspection_id"),
+        "station_id": row.get("station_id"),
+        "station_name": str(sanitize_display_string(row.get("station_name")) or "").strip(),
+        "unit_type": unit_type,
+        "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
+        "unit_name": unit_name,
+        "table_name": str(row.get("table_name") or "").strip(),
+        "report_date": report_date.strftime("%Y-%m-%d")
+        if isinstance(report_date, (datetime, date))
+        else str(report_date or "")[:10],
+    }
+
+
+def non_oil_unit_sort_key(item):
+    return finance_unit_sort_key(
+        {"unit_type": item.get("unit_type"), "unit_name": item.get("unit_name")}
+    )
+
+
+def build_non_oil_unit_rows(issues, inspection_rows):
+    grouped = OrderedDict()
+
+    def ensure_group(unit_type, unit_name, unit_type_label):
+        key = f"{unit_type}:{unit_name}"
+        return grouped.setdefault(
+            key,
+            {
+                "unit_type": unit_type,
+                "unit_type_label": unit_type_label,
+                "unit_name": unit_name,
+                "_stations": OrderedDict(),
+                "issues": [],
+            },
+        )
+
+    for raw_row in inspection_rows or []:
+        station = serialize_non_oil_inspection_station(raw_row)
+        group = ensure_group(station["unit_type"], station["unit_name"], station["unit_type_label"])
+        station_key = station.get("station_id") or station.get("station_name")
+        group["_stations"][station_key] = station.get("station_name") or "未命名站点"
+
+    for issue in issues or []:
+        group = ensure_group(issue["unit_type"], issue["unit_name"], issue["unit_type_label"])
+        station_key = issue.get("station_id") or issue.get("station_name")
+        group["_stations"][station_key] = issue.get("station_name") or "未命名站点"
+        group["issues"].append(issue)
+
+    total_issue_count = len(issues or [])
+    rows = []
+    for group in grouped.values():
+        station_names = sorted(group.pop("_stations").values())
+        issue_count = len(group["issues"])
+        rows.append(
+            {
+                "unit_type": group["unit_type"],
+                "unit_type_label": group["unit_type_label"],
+                "unit_name": group["unit_name"],
+                "station_count": len(station_names),
+                "station_names": station_names,
+                "issue_count": issue_count,
+                "average_issue_count": round(issue_count / len(station_names), 1)
+                if station_names
+                else 0,
+                "percentage": round(issue_count / total_issue_count * 100, 1)
+                if total_issue_count
+                else 0,
+            }
+        )
+    rows.sort(key=non_oil_unit_sort_key)
+    return rows
+
+
+def classify_non_oil_rectification(row):
+    status = str(row.get("status") or "").strip()
+    rectification_result = str(row.get("rectification_result") or "").strip()
+    review_result = str(row.get("review_result") or "").strip()
+    if status in {"已闭环", "已整改", "站经无法整改"} or review_result:
+        return "completed"
+    if status == "待复核" or rectification_result:
+        return "pending_acceptance"
+    if status == "待整改":
+        return "pending_rectification"
+    return "other"
+
+
+def build_non_oil_previous_rectification(report_month_start, previous_rows):
+    issues = [serialize_non_oil_report_issue(row) for row in previous_rows or []]
+    grouped = OrderedDict()
+    for issue in issues:
+        key = f"{issue['unit_type']}:{issue['unit_name']}"
+        target = grouped.setdefault(
+            key,
+            {
+                "unit_type": issue["unit_type"],
+                "unit_type_label": issue["unit_type_label"],
+                "unit_name": issue["unit_name"],
+                "total_count": 0,
+                "pending_acceptance_count": 0,
+                "pending_rectification_count": 0,
+            },
+        )
+        target["total_count"] += 1
+        status = classify_non_oil_rectification(issue)
+        if status in {"pending_acceptance", "pending_rectification"}:
+            target[f"{status}_count"] += 1
+    units = sorted(grouped.values(), key=non_oil_unit_sort_key)
+    totals = {
+        "total_count": sum(item["total_count"] for item in units),
+        "pending_acceptance_count": sum(item["pending_acceptance_count"] for item in units),
+        "pending_rectification_count": sum(item["pending_rectification_count"] for item in units),
+    }
+    previous_month = (
+        report_month_start.replace(year=report_month_start.year - 1, month=12)
+        if report_month_start.month == 1
+        else report_month_start.replace(month=report_month_start.month - 1)
+    )
+    narrative = (
+        f"{previous_month.month}月各片区整改情况：非油现场检查与非油团购累计发现问题"
+        f"{totals['total_count']}项，待验收问题{totals['pending_acceptance_count']}项，"
+        f"待整改问题{totals['pending_rectification_count']}项。请各片区尽快完成问题整改。"
+        if totals["total_count"]
+        else f"{previous_month.month}月暂无可统计的非油审核通过问题整改记录。"
+    )
+    return {
+        "month": previous_month.strftime("%Y-%m"),
+        "month_label": format_report_month_label(previous_month),
+        "narrative": narrative,
+        "units": units,
+        "totals": totals,
+    }
+
+
+def build_non_oil_category_distribution(issues):
+    counts = {name: 0 for name in NON_OIL_REPORT_CATEGORIES}
+    for issue in issues or []:
+        category_name = issue.get("category_name") or NON_OIL_REPORT_CATEGORIES[0]
+        counts[category_name] = counts.get(category_name, 0) + 1
+    total = sum(counts.values())
+    return [
+        {
+            "name": name,
+            "count": count,
+            "percentage": round(count / total * 100, 1) if total else 0,
+        }
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], NON_OIL_REPORT_CATEGORIES.index(item[0])))
+    ]
+
+
+def build_non_oil_project_matrix(issues):
+    grouped = OrderedDict()
+    for issue in issues or []:
+        source_project = issue.get("source_project") or "未设置检查项目"
+        target = grouped.setdefault(
+            source_project,
+            {name: 0 for name in NON_OIL_REPORT_CATEGORIES},
+        )
+        target[issue["category_name"]] += 1
+    rows = []
+    for source_project, category_counts in grouped.items():
+        total = sum(category_counts.values())
+        rows.append(
+            {
+                "source_project": source_project,
+                "total_count": total,
+                "category_counts": category_counts,
+            }
+        )
+    rows.sort(key=lambda item: (-item["total_count"], item["source_project"]))
+    return rows
+
+
+def build_non_oil_ai_context(month_start, issues, unit_rows, category_distribution):
+    unit_blocks = []
+    for unit in unit_rows:
+        unit_issues = [issue for issue in issues if issue["unit_name"] == unit["unit_name"]]
+        unit_blocks.append(
+            {
+                "unit_name": unit["unit_name"],
+                "station_count": unit["station_count"],
+                "issue_count": unit["issue_count"],
+                "issues": [
+                    {
+                        "issue_id": issue["issue_id"],
+                        "station_name": issue["station_name"],
+                        "source_project": issue["source_project"],
+                        "category_name": issue["category_name"],
+                        "description": issue["description"][:360],
+                        "has_photo": bool(issue["issue_photo"]),
+                    }
+                    for issue in unit_issues
+                ],
+            }
+        )
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "month_label": format_report_month_label(month_start),
+        "total_issue_count": len(issues),
+        "category_distribution": category_distribution,
+        "unit_blocks": unit_blocks,
+    }
+
+
+def build_local_non_oil_deep_analysis(issues, unit_rows, category_distribution):
+    unit_highlights = []
+    for unit in unit_rows:
+        unit_issues = [issue for issue in issues if issue["unit_name"] == unit["unit_name"]]
+        unit_issues.sort(key=lambda item: (not bool(item.get("issue_photo")), item["issue_id"]))
+        unit_category_distribution = build_non_oil_category_distribution(unit_issues)
+        top_categories = unit_category_distribution[:2]
+        category_text = join_chinese_list(
+            [item["name"] for item in top_categories if item["count"]]
+        ) or "非油现场管理"
+        unit_highlights.append(
+            {
+                **{key: unit[key] for key in (
+                    "unit_type", "unit_type_label", "unit_name", "station_count",
+                    "station_names", "issue_count", "average_issue_count", "percentage",
+                )},
+                "summary": f"问题主要集中在{category_text}。",
+                "category_distribution": [
+                    item for item in unit_category_distribution if item["count"]
+                ],
+                "highlighted_issues": unit_issues[:4],
+                "ai_generated": False,
+            }
+        )
+    typical_issues = []
+    for distribution in category_distribution[:4]:
+        if not distribution["count"]:
+            continue
+        selected = [
+            issue for issue in issues if issue["category_name"] == distribution["name"]
+        ]
+        selected.sort(key=lambda item: (not bool(item.get("issue_photo")), item["issue_id"]))
+        station_ids = {issue.get("station_id") or issue.get("station_name") for issue in selected}
+        typical_issues.append(
+            {
+                "title": distribution["name"],
+                "category_name": distribution["name"],
+                "summary": f"该类问题在{len(station_ids)}座站点共发现{len(selected)}项，是本期非油检查的高频问题。",
+                "issues": selected[:8],
+                "issue_count": len(selected),
+                "station_count": len(station_ids),
+                "percentage": distribution["percentage"],
+                "ai_generated": False,
+            }
+        )
+    return {
+        "ai_generated": False,
+        "ai_message": "未使用AI，当前展示规则生成的非油分析。",
+        "unit_highlights": unit_highlights,
+        "typical_issues": typical_issues,
+        "analysis_method": [
+            {"title": "定量评估", "content": "统计各类问题发生频次，识别高风险和高频问题领域。"},
+            {"title": "关联分析", "content": "建立典型问题与检查项目的映射关系，追溯重点问题发生环节。"},
+            {"title": "风险识别", "content": "结合原始描述判断问题影响，按频次和代表性展示典型问题。"},
+            {"title": "归因优化", "content": "从流程、执行、风险认知和监督闭环角度提出改进方向。"},
+        ],
+        "attribution_analysis": [
+            {"title": "流程惯性影响", "content": "部分站点的盘点、商品陈列和台账维护仍依赖旧有操作习惯，基础管理动作未能与非油业务节奏同步。", "ai_generated": False},
+            {"title": "业绩与合规平衡不足", "content": "日常运营容易优先关注显性销售任务，对盘点、临期商品和流程留痕等合规动作的执行动力不足。", "ai_generated": False},
+            {"title": "风险认知与监督偏弱", "content": "部分人员对账实不符、临期处置和团购审批的后果认识不足，日常复核和问题追踪机制需要加强。", "ai_generated": False},
+        ] if issues else [],
+        "improvement_suggestions": [
+            {"title": "强化执行落地", "content": "固化盘点、入库、临期商品和台账维护节点，通过系统留痕和超时预警减少习惯性违规。", "ai_generated": False},
+            {"title": "降低抵触情绪", "content": "结合盘亏、客诉和资金风险案例开展培训，引导员工理解合规动作是业务保护而非额外负担。", "ai_generated": False},
+            {"title": "推广成熟经验", "content": "总结优秀站点在临期管理、月度盘点和团购流程中的做法，形成可复制的操作指引并跟踪执行效果。", "ai_generated": False},
+        ] if issues else [],
+    }
+
+
+def build_non_oil_deep_analysis(issues, unit_rows, category_distribution, ai_result):
+    fallback = build_local_non_oil_deep_analysis(issues, unit_rows, category_distribution)
+    ai_payload = (ai_result or {}).get("payload")
+    if not isinstance(ai_payload, dict):
+        fallback["ai_message"] = (ai_result or {}).get("message") or fallback["ai_message"]
+        return fallback
+    issue_map = {issue["issue_id"]: issue for issue in issues}
+    valid_categories = {item["name"] for item in category_distribution}
+    valid_units = {item["unit_name"] for item in unit_rows}
+
+    unit_highlights = []
+    ai_unit_map = {
+        str(item.get("unit_name") or "").strip(): item
+        for item in (ai_payload.get("unit_highlights") or [])
+        if isinstance(item, dict)
+    }
+    for fallback_unit in fallback["unit_highlights"]:
+        unit_name = fallback_unit["unit_name"]
+        ai_unit = ai_unit_map.get(unit_name) if unit_name in valid_units else None
+        selected = []
+        if ai_unit:
+            for issue_id in normalize_report_ai_issue_ids(ai_unit.get("highlight_issue_ids")):
+                issue = issue_map.get(issue_id)
+                if issue and issue["unit_name"] == unit_name:
+                    selected.append(issue)
+                if len(selected) >= 4:
+                    break
+        unit_highlights.append(
+            {
+                **fallback_unit,
+                "summary": str((ai_unit or {}).get("summary") or "").strip() or fallback_unit["summary"],
+                "highlighted_issues": selected or fallback_unit["highlighted_issues"],
+                "ai_generated": bool(selected),
+            }
+        )
+
+    typical_issues = []
+    for item in (ai_payload.get("typical_issues") or [])[:6]:
+        if not isinstance(item, dict):
+            continue
+        category_name = str(item.get("category_name") or "").strip()
+        if category_name not in valid_categories:
+            continue
+        selected = []
+        for issue_id in normalize_report_ai_issue_ids(item.get("issue_ids")):
+            issue = issue_map.get(issue_id)
+            if issue and issue["category_name"] == category_name:
+                selected.append(issue)
+            if len(selected) >= 8:
+                break
+        if not selected:
+            continue
+        all_category_issues = [issue for issue in issues if issue["category_name"] == category_name]
+        station_ids = {issue.get("station_id") or issue.get("station_name") for issue in selected}
+        typical_issues.append(
+            {
+                "title": str(item.get("title") or "").strip() or category_name,
+                "category_name": category_name,
+                "summary": str(item.get("summary") or "").strip(),
+                "issues": selected,
+                "issue_count": len(all_category_issues),
+                "station_count": len(station_ids),
+                "percentage": round(len(all_category_issues) / len(issues) * 100, 1) if issues else 0,
+                "ai_generated": True,
+            }
+        )
+
+    def normalize_ai_text_items(key, fallback_items, limit):
+        items = []
+        for item in (ai_payload.get(key) or [])[:limit]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if title and content:
+                items.append({"title": title, "content": content, "ai_generated": True})
+        return items or fallback_items
+
+    attribution = normalize_ai_text_items(
+        "attribution_analysis",
+        fallback["attribution_analysis"],
+        5,
+    )
+    suggestions = normalize_ai_text_items(
+        "improvement_suggestions",
+        fallback["improvement_suggestions"],
+        5,
+    )
+    return {
+        "ai_generated": bool(
+            any(item.get("ai_generated") for item in unit_highlights)
+            or typical_issues
+            or any(item.get("ai_generated") for item in attribution)
+            or any(item.get("ai_generated") for item in suggestions)
+        ),
+        "ai_message": (ai_result or {}).get("message") or "",
+        "unit_highlights": unit_highlights,
+        "typical_issues": typical_issues or fallback["typical_issues"],
+        "analysis_method": fallback["analysis_method"],
+        "attribution_analysis": attribution,
+        "improvement_suggestions": suggestions,
+    }
+
+
+def build_non_oil_report_payload(
+    report_month_start,
+    period_start,
+    period_end,
+    issue_rows,
+    inspection_rows,
+    previous_issue_rows,
+):
+    issues = [serialize_non_oil_report_issue(row) for row in issue_rows]
+    unit_rows = build_non_oil_unit_rows(issues, inspection_rows)
+    category_distribution = build_non_oil_category_distribution(issues)
+    unique_stations = {
+        row.get("station_id") or row.get("station_name")
+        for row in inspection_rows
+        if row.get("station_id") or row.get("station_name")
+    }
+    region_count = sum(1 for item in unit_rows if item["unit_type"] == "region")
+    holding_unit_count = sum(1 for item in unit_rows if item["unit_type"] == "holding")
+    date_range = f"{period_start.strftime('%Y年%m月%d日')} - {(period_end - timedelta(days=1)).strftime('%Y年%m月%d日')}"
+    region_names = [item["unit_name"] for item in unit_rows if item["unit_type"] == "region"]
+    holding_names = [item["unit_name"] for item in unit_rows if item["unit_type"] == "holding"]
+    scope_parts = []
+    if region_names:
+        scope_parts.append(f"{len(region_names)}个管理片区（{'、'.join(region_names)}）")
+    if holding_names:
+        scope_parts.append(f"{len(holding_names)}个控（参）股单位（{'、'.join(holding_names)}）")
+    scope_text = (
+        f"{report_month_start.month}月非油现场与团购检查共覆盖{len(unique_stations)}座站点，涉及"
+        f"{join_chinese_list(scope_parts)}。"
+        if unique_stations
+        else f"{report_month_start.month}月非油检查暂无已确认完成的巡检记录。"
+    )
+    unit_phrases = [
+        f"{item['unit_name']}检查{item['station_count']}座站点，共涉问题{item['issue_count']}个，站平均问题{item['average_issue_count']:.1f}个"
+        for item in unit_rows
+    ]
+    issue_overview_text = (
+        f"检查共发现{len(issues)}项审核通过问题，其中，{'；'.join(unit_phrases)}。"
+        if unit_phrases
+        else "当前巡检期间暂无审核通过的非油问题。"
+    )
+    return (
+        {
+            "month": report_month_start.strftime("%Y-%m"),
+            "month_label": format_report_month_label(report_month_start),
+            "title": f"{report_month_start.month}月非油检查报告",
+            "target_tables": [NON_OIL_REPORT_GROUP_PURCHASE_TABLE, NON_OIL_REPORT_ONSITE_TABLE],
+            "data_scope_note": NON_OIL_REPORT_SOURCE_NOTE,
+            "source_selection": {
+                "inspection_count": len(inspection_rows),
+                "issue_count": len(issues),
+                "station_count": len(unique_stations),
+                "region_count": region_count,
+            },
+            "summary": {
+                "date_from": period_start.strftime("%Y-%m-%d"),
+                "date_to": (period_end - timedelta(days=1)).strftime("%Y-%m-%d"),
+                "date_range": date_range,
+                "region_count": region_count,
+                "holding_unit_count": holding_unit_count,
+                "unit_count": len(unit_rows),
+                "station_count": len(unique_stations),
+                "total_issue_count": len(issues),
+                "category_count": sum(1 for item in category_distribution if item["count"]),
+                "average_issue_count": round(len(issues) / len(unique_stations), 1) if unique_stations else 0,
+                "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
+            },
+            "period_text": f"{report_month_start.month}月巡检，{date_range}",
+            "scope_text": scope_text,
+            "issue_overview_text": issue_overview_text,
+            "units": unit_rows,
+            "previous_month_rectification": build_non_oil_previous_rectification(
+                report_month_start,
+                previous_issue_rows,
+            ),
+            "category_distribution": category_distribution,
+            "category_distribution_text": build_finance_distribution_text(
+                "非油检查项目",
+                category_distribution,
+            ),
+            "project_matrix": build_non_oil_project_matrix(issues),
+        },
+        issues,
+    )
 
 
 def build_issue_export_table_field_map(cur, rows):
@@ -29512,6 +30105,285 @@ def generate_equipment_facilities_report_job(
         close_db_resources(cur, conn)
 
 
+def generate_non_oil_report_job(
+    task_id,
+    user_id,
+    report_month,
+    snapshot_scope_key,
+    generation_options=None,
+):
+    report_month_start, _ = parse_report_month(report_month)
+    period_start, period_end = parse_non_oil_report_period(report_month)
+    previous_month_start = (
+        report_month_start.replace(year=report_month_start.year - 1, month=12)
+        if report_month_start.month == 1
+        else report_month_start.replace(month=report_month_start.month - 1)
+    )
+    previous_period_start, previous_period_end = parse_non_oil_report_period(
+        previous_month_start.strftime("%Y-%m")
+    )
+    conn = None
+    cur = None
+    issue_rows = []
+    inspection_rows = []
+    previous_issue_rows = []
+    user = None
+    try:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            12,
+            "正在读取非油已完成巡检记录和审核通过问题",
+        )
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if not has_permission(cur, user, "view_inspection_reports"):
+            raise PermissionError("当前账号无权生成巡检报告。")
+        _, source_selection = resolve_inspection_report_source_selection(
+            cur,
+            user,
+            REPORT_SNAPSHOT_TYPE_NON_OIL,
+            period_start,
+            period_end,
+            generation_options,
+        )
+
+        def fetch_issue_rows(date_from, date_to, apply_station_filter=True):
+            where_clauses = [
+                "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+                "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+                "REPLACE(t.table_name, %s, '') IN (%s, %s)",
+                "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+                "COALESCE(i.audit_status, 'pending') = 'approved'",
+            ]
+            params = [
+                date_from,
+                date_to,
+                DISPLAY_REMOVED_STATION_PHRASE,
+                NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
+                NON_OIL_REPORT_ONSITE_TABLE,
+            ]
+            table_scope_allowed = append_inspection_table_scope_filter(
+                cur,
+                user,
+                where_clauses,
+                params,
+                "i.inspection_table_id",
+                "limit_plan_inspection_table_scope",
+            )
+            region_scope_allowed = append_station_region_scope_filter(
+                cur,
+                user,
+                where_clauses,
+                params,
+                "s.region",
+                "limit_plan_station_region_scope",
+            )
+            if apply_station_filter:
+                append_inspection_report_station_filter(
+                    where_clauses,
+                    params,
+                    "i.station_id",
+                    generation_options,
+                )
+            if not table_scope_allowed or not region_scope_allowed:
+                return []
+            where_clause = f"WHERE {' AND '.join(where_clauses)}"
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        i.id,
+                        i.station_id,
+                        s.station_name,
+                        s.region,
+                        s.address,
+                        t.table_name,
+                        i.standard_id,
+                        i.standard_detail_text,
+                        i.description,
+                        i.photo_path AS issue_photo,
+                        i.status,
+                        i.rectification_result,
+                        i.review_result,
+                        ins.sign_status,
+                        COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+                    FROM issues i
+                    JOIN inspections ins ON i.inspection_id = ins.id
+                    JOIN stations s ON i.station_id = s.id
+                    JOIN inspection_tables t ON i.inspection_table_id = t.id
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
+                        s.region ASC NULLS LAST,
+                        s.station_name ASC,
+                        i.id ASC;
+                    """
+                ).format(where_clause=sql.SQL(where_clause)),
+                params,
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+        issue_rows = fetch_issue_rows(period_start, period_end)
+        previous_issue_rows = fetch_issue_rows(
+            previous_period_start,
+            previous_period_end,
+        )
+
+        inspection_where_clauses = [
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) >= %s",
+            "COALESCE(ins.inspection_date::date, ins.created_at::date) < %s",
+            "REPLACE(t.table_name, %s, '') IN (%s, %s)",
+            "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+        ]
+        inspection_params = [
+            period_start,
+            period_end,
+            DISPLAY_REMOVED_STATION_PHRASE,
+            NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
+            NON_OIL_REPORT_ONSITE_TABLE,
+        ]
+        inspection_table_scope_allowed = append_inspection_table_scope_filter(
+            cur,
+            user,
+            inspection_where_clauses,
+            inspection_params,
+            "ins.inspection_table_id",
+            "limit_plan_inspection_table_scope",
+        )
+        inspection_region_scope_allowed = append_station_region_scope_filter(
+            cur,
+            user,
+            inspection_where_clauses,
+            inspection_params,
+            "s.region",
+            "limit_plan_station_region_scope",
+        )
+        append_inspection_report_station_filter(
+            inspection_where_clauses,
+            inspection_params,
+            "ins.station_id",
+            generation_options,
+        )
+        if inspection_table_scope_allowed and inspection_region_scope_allowed:
+            inspection_where_clause = f"WHERE {' AND '.join(inspection_where_clauses)}"
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        ins.id AS inspection_id,
+                        ins.station_id,
+                        s.station_name,
+                        s.region,
+                        s.address,
+                        t.table_name,
+                        COALESCE(ins.inspection_date::date, ins.created_at::date) AS report_date
+                    FROM inspections ins
+                    JOIN stations s ON ins.station_id = s.id
+                    JOIN inspection_tables t ON ins.inspection_table_id = t.id
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(ins.inspection_date::date, ins.created_at::date) ASC,
+                        s.region ASC NULLS LAST,
+                        s.station_name ASC,
+                        ins.id ASC;
+                    """
+                ).format(where_clause=sql.SQL(inspection_where_clause)),
+                inspection_params,
+            )
+            inspection_rows = [dict(row) for row in cur.fetchall()]
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        38,
+        (
+            f"已汇总 {len(inspection_rows)} 条已完成巡检记录和 "
+            f"{len(issue_rows)} 条审核通过问题，正在统计单位、整改和六类非油问题"
+        ),
+    )
+    report, non_oil_issues = build_non_oil_report_payload(
+        report_month_start,
+        period_start,
+        period_end,
+        issue_rows,
+        inspection_rows,
+        previous_issue_rows,
+    )
+    report["source_selection"] = source_selection
+    insight_result = None
+    if non_oil_issues:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            52,
+            "正在调用 DeepSeek 筛选重点问题并生成归因分析",
+        )
+        unit_rows = report.get("units") or []
+        category_distribution = report.get("category_distribution") or []
+        ai_context = build_non_oil_ai_context(
+            report_month_start,
+            non_oil_issues,
+            unit_rows,
+            category_distribution,
+        )
+        insight_result = generate_non_oil_report_insights(ai_context)
+    else:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            72,
+            "当前巡检周期暂无审核通过问题，正在生成基础统计报告",
+        )
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        84,
+        "AI 分析已完成，正在编排非油检查报告五个章节",
+    )
+    report["deep_analysis"] = build_non_oil_deep_analysis(
+        non_oil_issues,
+        report.get("units") or [],
+        report.get("category_distribution") or [],
+        insight_result,
+    )
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, user_id)
+        if not user:
+            raise ValueError("生成任务所属用户不存在。")
+        if non_oil_issues and insight_result:
+            record_ai_usage_log(
+                cur,
+                user,
+                insight_result,
+                "AI报告生成",
+                "非油检查报告分析",
+                f"{report.get('month_label')} · 问题{len(non_oil_issues)}项",
+            )
+        save_inspection_report_snapshot(
+            cur,
+            REPORT_SNAPSHOT_TYPE_NON_OIL,
+            report_month,
+            snapshot_scope_key,
+            report,
+            user,
+        )
+        conn.commit()
+    finally:
+        close_db_resources(cur, conn)
+
 def run_inspection_report_generation_job(task_id):
     conn = None
     cur = None
@@ -29560,6 +30432,14 @@ def run_inspection_report_generation_job(task_id):
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES:
             generate_equipment_facilities_report_job(
+                task_id,
+                job.get("requested_by"),
+                job.get("report_month"),
+                job.get("scope_key"),
+                job.get("generation_options"),
+            )
+        elif report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
+            generate_non_oil_report_job(
                 task_id,
                 job.get("requested_by"),
                 job.get("report_month"),
@@ -29731,7 +30611,11 @@ def get_inspection_report_source_options():
     config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
     if not config:
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
-    month_start, month_end = parse_report_month(request.args.get("month", ""))
+    report_month_start, _ = parse_report_month(request.args.get("month", ""))
+    month_start, month_end = get_inspection_report_date_range(
+        report_type,
+        request.args.get("month", ""),
+    )
     conn = None
     cur = None
     try:
@@ -29752,7 +30636,7 @@ def get_inspection_report_source_options():
         return jsonify(
             {
                 "success": True,
-                "month": month_start.strftime("%Y-%m"),
+                "month": report_month_start.strftime("%Y-%m"),
                 "stations": stations,
                 "summary": {
                     "station_count": len(stations),
@@ -29784,8 +30668,12 @@ def create_inspection_report_generation_job():
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能生成。"}), 409
-    month_start, month_end = parse_report_month(data.get("month", ""))
-    report_month = month_start.strftime("%Y-%m")
+    report_month_start, _ = parse_report_month(data.get("month", ""))
+    month_start, month_end = get_inspection_report_date_range(
+        report_type,
+        data.get("month", ""),
+    )
+    report_month = report_month_start.strftime("%Y-%m")
     force_regenerate = bool(data.get("force"))
     raw_generation_options = data.get("generation_options")
     conn = None

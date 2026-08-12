@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.7',
+    date: '2026-08-12',
+    title: '非油AI检查报告',
+    summary: '非油检查报告支持按巡检周期自动生成。',
+    items: [
+      '汇总上期整改、巡检范围、各单位问题和站均问题。',
+      '按六类非油业务统计问题，并展示典型问题和原始照片。',
+      'AI辅助归纳重点问题、原因和改善建议。',
+      '报告只使用审核通过的问题，并支持后台导出PPT。'
+    ]
+  },
+  {
     version: 'v4.6',
     date: '2026-08-10',
     title: 'AI报告支持PPT导出',

@@ -129,6 +129,7 @@ class InspectionReportPresentation:
             "finance": self._build_finance,
             "on_site_service": self._build_on_site_service,
             "equipment_facilities": self._build_equipment_facilities,
+            "non_oil": self._build_non_oil,
         }
         builder = builders.get(self.report_type)
         if not builder:
@@ -1081,6 +1082,150 @@ class InspectionReportPresentation:
         self._add_section("CHAPTER 04", "问题总结与下一步建议")
         self._add_analysis_cards("问题总结", deep.get("problem_summary") or [], ai=True)
         self._add_analysis_cards("下一步建议", deep.get("next_steps") or [], ai=True)
+
+    def _build_non_oil(self):
+        summary = self.report.get("summary") or {}
+        self._add_section(
+            "CHAPTER 01",
+            "总体情况概述",
+            "按非油巡检周期汇总站点覆盖、问题数量和上期整改情况。",
+        )
+        self._add_narrative_slide(
+            "非油检查概览",
+            f"{self.report.get('period_text') or ''}\n{self.report.get('scope_text') or ''}",
+            metrics=[
+                ("覆盖站点", summary.get("station_count"), "座"),
+                ("管理单位", summary.get("unit_count"), "个"),
+                ("发现问题", summary.get("total_issue_count"), "项"),
+                ("站均问题", summary.get("average_issue_count"), "项"),
+            ],
+        )
+        previous = self.report.get("previous_month_rectification") or {}
+        self._add_chart_slides(
+            "上期各单位整改情况",
+            previous.get("units") or [],
+            name_key="unit_name",
+            value_keys=(
+                "total_count",
+                "pending_acceptance_count",
+                "pending_rectification_count",
+            ),
+            series_names=("全部问题", "待验收", "待整改"),
+            narrative=previous.get("narrative") or "",
+        )
+        units = self.report.get("units") or []
+        self._add_table_slides(
+            "巡检范围",
+            ["所属单位", "单位类型", "站点数量", "站点"],
+            [
+                [
+                    item.get("unit_name"),
+                    item.get("unit_type_label"),
+                    item.get("station_count"),
+                    "、".join(item.get("station_names") or []),
+                ]
+                for item in units
+            ],
+            rows_per_slide=8,
+        )
+        self._add_chart_slides(
+            "各单位问题与站均问题",
+            units,
+            name_key="unit_name",
+            value_keys=("issue_count", "station_count", "average_issue_count"),
+            series_names=("问题总数", "站点数量", "站均问题"),
+            narrative=self.report.get("issue_overview_text") or "",
+        )
+
+        deep = self.report.get("deep_analysis") or {}
+        self._add_section(
+            "CHAPTER 02",
+            "片区问题汇总",
+            "AI按单位筛选具有代表性的真实问题，保留原始描述与照片。",
+        )
+        for unit in (deep.get("unit_highlights") or [])[:20]:
+            self._add_chart_slides(
+                f"{unit.get('unit_name') or '管理单位'} · 问题分类",
+                unit.get("category_distribution") or [],
+                narrative=unit.get("summary") or "",
+            )
+            self._add_issue_slides(
+                f"{unit.get('unit_name') or '管理单位'} · 重点问题",
+                unit.get("highlighted_issues") or [],
+                ai=bool(unit.get("ai_generated")),
+                subtitle=(
+                    f"涉及{unit.get('station_count') or 0}座站点，共{unit.get('issue_count') or 0}项问题，"
+                    f"站均{_format_metric(unit.get('average_issue_count'))}项。"
+                    f"{unit.get('summary') or ''}"
+                ),
+                max_issues=8,
+            )
+
+        self._add_section(
+            "CHAPTER 03",
+            "重点问题分析",
+            "结合问题频次、覆盖站点和原始描述识别典型问题。",
+        )
+        for typical in (deep.get("typical_issues") or [])[:8]:
+            self._add_issue_slides(
+                typical.get("title") or typical.get("category_name") or "典型问题",
+                typical.get("issues") or [],
+                ai=bool(typical.get("ai_generated")),
+                subtitle=typical.get("summary") or "",
+                max_issues=8,
+            )
+
+        self._add_section(
+            "CHAPTER 04",
+            "具体结果分析",
+            "从六类非油业务问题分布与原始检查项目两个维度分析。",
+        )
+        self._add_chart_slides(
+            "六类非油问题分布",
+            self.report.get("category_distribution") or [],
+            narrative=self.report.get("category_distribution_text") or "",
+        )
+        category_names = [
+            item.get("name") for item in (self.report.get("category_distribution") or [])
+        ]
+        self._add_table_slides(
+            "检查项目与问题分类关联",
+            ["原始检查项目", *category_names, "合计"],
+            [
+                [
+                    item.get("source_project"),
+                    *[
+                        (item.get("category_counts") or {}).get(category_name, 0)
+                        for category_name in category_names
+                    ],
+                    item.get("total_count"),
+                ]
+                for item in (self.report.get("project_matrix") or [])
+            ],
+            rows_per_slide=8,
+        )
+        self._add_analysis_cards(
+            "分析方法",
+            deep.get("analysis_method") or [],
+            kicker="ANALYSIS METHOD",
+            ai=False,
+        )
+
+        self._add_section(
+            "CHAPTER 05",
+            "检查结果分析",
+            "AI结合真实问题完成归因分析并形成可执行的改善建议。",
+        )
+        self._add_analysis_cards(
+            "归因分析框架",
+            deep.get("attribution_analysis") or [],
+            ai=bool(deep.get("ai_generated")),
+        )
+        self._add_analysis_cards(
+            "问题改善建议",
+            deep.get("improvement_suggestions") or [],
+            ai=bool(deep.get("ai_generated")),
+        )
 
     def _add_ending(self):
         slide = self._blank_slide(background=INK, footer=False)

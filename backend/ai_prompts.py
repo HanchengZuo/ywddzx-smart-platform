@@ -47,6 +47,14 @@ ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "必须只输出 JSON，不要解释，不要使用 Markdown。"
 )
 
+NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的非油月度检查报告分析助手。"
+    "请严格基于系统提供的已审核通过问题，按管理片区或控参股单位、非油业务分类分析问题，"
+    "筛选真实典型问题，并形成归因分析和改善建议。"
+    "只能引用输入数据中真实存在的问题ID、站点和分类，不允许编造任何信息。"
+    "必须只输出 JSON，不要解释，不要使用 Markdown。"
+)
+
 
 def build_inspection_standard_recommendation_prompt(issue_description, standards):
     standards_payload = json.dumps(
@@ -298,4 +306,48 @@ def build_on_site_service_report_insight_prompt(report_context):
         "5. next_steps 输出3-5条，明确责任、培训、整改闭环、复核或迎检准备等可执行动作。\n"
         "6. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
         "7. 只能输出 JSON 本身。"
+    )
+
+
+def build_non_oil_report_insight_prompt(report_context):
+    context_payload = json.dumps(
+        report_context,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是非油检查报告的结构化数据 JSON，所有问题均已审核通过。\n"
+        "category_distribution 是六类非油业务问题分布；unit_blocks 按管理片区或控参股单位组织。"
+        "issues 中 issue_id=问题ID，station_name=站点名称，unit_name=所属单位，"
+        "source_project=检查表原始项目，category_name=归一后的非油分类，description=原始问题描述，"
+        "has_photo=是否有问题照片。\n"
+        f"{context_payload}\n\n"
+        "请返回如下 JSON 对象：\n"
+        "{"
+        "\"unit_highlights\":["
+        "{\"unit_name\":\"必须来自输入的真实单位\","
+        "\"summary\":\"该单位问题特征概括，控制在90字内\","
+        "\"highlight_issue_ids\":[1,2,3]}"
+        "],"
+        "\"typical_issues\":["
+        "{\"title\":\"典型问题标题，控制在24字内\","
+        "\"category_name\":\"必须来自输入的真实分类\","
+        "\"issue_ids\":[1,2,3],"
+        "\"summary\":\"共性表现和风险概括，控制在90字内\"}"
+        "],"
+        "\"attribution_analysis\":["
+        "{\"title\":\"归因标题，控制在24字内\",\"content\":\"结合真实数据的归因分析，控制在140字内\"}"
+        "],"
+        "\"improvement_suggestions\":["
+        "{\"title\":\"改善建议标题，控制在24字内\",\"content\":\"具体可执行的改善建议，控制在140字内\"}"
+        "]"
+        "}\n"
+        "要求：\n"
+        "1. unit_highlights 覆盖每个有问题的单位，每个单位挑选1-4个最有代表性的真实问题ID。\n"
+        "2. typical_issues 输出3-6类，优先选择跨站重复、普遍性高或风险明确的问题，"
+        "每类最多引用8个真实问题ID。\n"
+        "3. attribution_analysis 输出3条，分析流程惯性、执行动力、风险认知或监督机制中真实存在的问题。\n"
+        "4. improvement_suggestions 输出3-5条，明确执行动作、责任层级和闭环验证方式。\n"
+        "5. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
+        "6. 只能输出 JSON 本身。"
     )
