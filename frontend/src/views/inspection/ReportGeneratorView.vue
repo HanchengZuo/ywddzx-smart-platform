@@ -547,33 +547,71 @@
 
         <article class="chapter-card non-oil-chapter">
           <div class="chapter-banner">第二章　片区问题汇总</div>
-          <div class="non-oil-unit-summary-grid">
-            <article v-for="unit in nonOilUnitHighlights" :key="`non-oil-summary-${unit.unit_type}-${unit.unit_name}`">
-              <header><div><small>{{ unit.unit_type_label }}</small><h3>{{ unit.unit_name }}</h3></div><strong>{{ unit.percentage }}%</strong></header>
-              <dl>
-                <div><dt>涉及站点数</dt><dd>{{ unit.station_count }}座</dd></div>
-                <div><dt>问题总计</dt><dd>{{ unit.issue_count }}项</dd></div>
-                <div><dt>站平均问题</dt><dd>{{ Number(unit.average_issue_count || 0).toFixed(1) }}项</dd></div>
-              </dl>
-              <p class="non-oil-stations">{{ unit.station_names?.join('、') || '暂无站点' }}</p>
-              <div class="content-source-row"><span>{{ unit.summary }}</span><AiContentBadge :generated="Boolean(unit.ai_generated)" ai-label="AI分类" fallback-label="规则分类" compact /></div>
-              <div class="non-oil-unit-category-chart">
-                <div
-                  v-for="(category, categoryIndex) in unit.category_distribution"
-                  :key="`non-oil-unit-category-${unit.unit_name}-${category.name}`"
-                  :style="{ '--category-color': getFindingFlowColor(categoryIndex) }"
-                >
-                  <span>{{ category.name }}</span>
-                  <i><b :style="{ width: `${category.percentage || 0}%` }"></b></i>
-                  <strong>{{ category.count }}项</strong>
+          <div class="non-oil-unit-summary-intro">
+            <div><span>UNIT REVIEW</span><strong>按管理单位逐项分析</strong></div>
+            <p>每个板块依次展示覆盖站点、问题构成和具有代表性的原始问题。</p>
+          </div>
+          <div class="non-oil-unit-summary-list">
+            <article
+              v-for="(unit, unitIndex) in nonOilUnitHighlights"
+              :key="`non-oil-summary-${unit.unit_type}-${unit.unit_name}`"
+              class="non-oil-unit-report"
+              :style="{ '--unit-accent': getFindingFlowColor(unitIndex) }"
+            >
+              <header class="non-oil-unit-report-head">
+                <div class="non-oil-unit-identity">
+                  <span>{{ String(unitIndex + 1).padStart(2, '0') }}</span>
+                  <div><small>{{ unit.unit_type_label }}</small><h3>{{ unit.unit_name }}</h3></div>
                 </div>
+                <div class="non-oil-unit-share"><strong>{{ formatPercent(unit.percentage) }}</strong><span>占本期问题</span></div>
+              </header>
+
+              <div class="non-oil-unit-report-main">
+                <section class="non-oil-unit-overview">
+                  <dl>
+                    <div><dt>涉及站点</dt><dd><strong>{{ unit.station_count }}</strong>座</dd></div>
+                    <div><dt>问题总计</dt><dd><strong>{{ unit.issue_count }}</strong>项</dd></div>
+                    <div><dt>站均问题</dt><dd><strong>{{ Number(unit.average_issue_count || 0).toFixed(1) }}</strong>项</dd></div>
+                  </dl>
+                  <div class="non-oil-unit-stations">
+                    <span>涉及站点</span>
+                    <p>{{ unit.station_names?.join('、') || '暂无站点' }}</p>
+                  </div>
+                  <div class="non-oil-unit-summary-copy">
+                    <div><span>问题特征</span><AiContentBadge :generated="Boolean(unit.ai_generated)" ai-label="AI归纳" fallback-label="规则归纳" compact /></div>
+                    <p>{{ unit.summary }}</p>
+                  </div>
+                </section>
+
+                <section class="non-oil-unit-category-panel">
+                  <header><div><span>CATEGORY</span><h4>问题构成</h4></div><small>单位内占比</small></header>
+                  <div class="non-oil-unit-category-chart">
+                    <div
+                      v-for="(category, categoryIndex) in unit.category_distribution"
+                      :key="`non-oil-unit-category-${unit.unit_name}-${category.name}`"
+                      :style="{ '--category-color': getFindingFlowColor(categoryIndex) }"
+                    >
+                      <div><span>{{ category.name }}</span><strong>{{ category.count }}项</strong></div>
+                      <i><b :style="{ width: `${category.percentage || 0}%` }"></b></i>
+                      <em>{{ formatPercent(category.percentage) }}</em>
+                    </div>
+                  </div>
+                </section>
               </div>
-              <div class="non-oil-highlight-list">
-                <div v-for="issue in unit.highlighted_issues" :key="`non-oil-unit-issue-${unit.unit_name}-${issue.issue_id}`">
-                  <span>{{ issue.station_name }}</span><p>{{ issue.description }}</p>
-                  <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name}问题照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" loading="lazy" /></button>
+
+              <section v-if="unit.highlighted_issues?.length" class="non-oil-unit-highlights">
+                <header><div><span>REPRESENTATIVE ISSUES</span><h4>代表性问题</h4></div><small>原始描述与现场照片</small></header>
+                <div class="non-oil-highlight-list">
+                  <article
+                    v-for="issue in unit.highlighted_issues"
+                    :key="`non-oil-unit-issue-${unit.unit_name}-${issue.issue_id}`"
+                    :class="{ 'has-photo': Boolean(issue.issue_photo) }"
+                  >
+                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name}问题照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" loading="lazy" /></button>
+                    <div><span>{{ issue.station_name }}</span><p>{{ issue.description }}</p></div>
+                  </article>
                 </div>
-              </div>
+              </section>
             </article>
           </div>
           <div v-if="!nonOilUnitHighlights.length" class="safety-chart-empty">当前周期暂无片区问题数据。</div>
@@ -7535,7 +7573,6 @@ onBeforeUnmount(() => {
 }
 
 .non-oil-section-head,
-.non-oil-unit-summary-grid > article > header,
 .non-oil-typical-grid > article > header,
 .non-oil-analysis-columns section > header {
   display: flex;
@@ -7670,7 +7707,6 @@ onBeforeUnmount(() => {
   margin-top: 18px;
 }
 
-.non-oil-unit-summary-grid,
 .non-oil-typical-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7678,7 +7714,6 @@ onBeforeUnmount(() => {
   margin-top: 22px;
 }
 
-.non-oil-unit-summary-grid > article,
 .non-oil-typical-grid > article {
   padding: 22px;
   border: 1px solid #dfe6eb;
@@ -7687,71 +7722,258 @@ onBeforeUnmount(() => {
   box-shadow: 0 10px 28px rgb(22 50 74 / 7%);
 }
 
-.non-oil-unit-summary-grid header small {
-  color: #8a98a3;
-  letter-spacing: 0.08em;
-}
-
-.non-oil-unit-summary-grid header h3,
 .non-oil-typical-grid h3 {
   margin: 4px 0 0;
   color: var(--non-oil-ink);
 }
 
-.non-oil-unit-summary-grid header > strong {
-  color: var(--non-oil-orange);
+.non-oil-unit-summary-intro {
+  display: flex;
+  justify-content: space-between;
+  gap: 28px;
+  align-items: flex-end;
+  padding: 2px 4px 20px;
+  border-bottom: 1px solid #e2e8eb;
+}
+
+.non-oil-unit-summary-intro > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.non-oil-unit-summary-intro span,
+.non-oil-unit-category-panel header span,
+.non-oil-unit-highlights > header span {
+  color: #8999a3;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.non-oil-unit-summary-intro strong {
+  color: var(--non-oil-ink);
+  font-size: 17px;
+}
+
+.non-oil-unit-summary-intro p {
+  max-width: 620px;
+  margin: 0;
+  color: #647985;
+  line-height: 1.7;
+  text-align: right;
+}
+
+.non-oil-unit-summary-list {
+  display: grid;
+  gap: 26px;
+  margin-top: 26px;
+}
+
+.non-oil-unit-report {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dce5e9;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 13px 34px rgb(26 58 79 / 8%);
+}
+
+.non-oil-unit-report::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--unit-accent);
+  content: '';
+}
+
+.non-oil-unit-report-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  min-height: 82px;
+  padding: 18px 24px 18px 28px;
+  border-bottom: 1px solid #e7edef;
+  background: linear-gradient(90deg, #f7fafb, #fff 58%);
+}
+
+.non-oil-unit-identity {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.non-oil-unit-identity > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 13px;
+  color: #fff;
+  background: var(--unit-accent);
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 7px 16px rgb(28 53 72 / 12%);
+}
+
+.non-oil-unit-identity small {
+  color: #7b8d98;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.non-oil-unit-identity h3 {
+  margin: 4px 0 0;
+  color: var(--non-oil-ink);
+  font-size: 21px;
+}
+
+.non-oil-unit-share {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.non-oil-unit-share strong {
+  color: var(--unit-accent);
   font-size: 24px;
 }
 
-.non-oil-unit-summary-grid dl {
+.non-oil-unit-share span {
+  color: #84949e;
+  font-size: 10px;
+}
+
+.non-oil-unit-report-main {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin: 18px 0 12px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(420px, 1.25fr);
+  gap: 22px;
+  padding: 22px 24px 24px 28px;
 }
 
-.non-oil-unit-summary-grid dl > div {
-  padding: 10px;
-  border-radius: 12px;
-  background: #f4f7f8;
+.non-oil-unit-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
 
-.non-oil-unit-summary-grid dt {
-  color: #7a8b98;
+.non-oil-unit-overview dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin: 0;
+}
+
+.non-oil-unit-overview dl > div {
+  padding: 12px;
+  border: 1px solid #e7edef;
+  border-radius: 13px;
+  background: #f7f9fa;
+}
+
+.non-oil-unit-overview dt {
+  color: #7a8b96;
+  font-size: 10px;
+}
+
+.non-oil-unit-overview dd {
+  margin: 6px 0 0;
+  color: #405867;
   font-size: 11px;
-}
-
-.non-oil-unit-summary-grid dd {
-  margin: 5px 0 0;
-  color: #223b4d;
   font-weight: 800;
 }
 
-.non-oil-stations {
-  min-height: 42px;
-  color: #5b6f7e;
-  line-height: 1.7;
+.non-oil-unit-overview dd strong {
+  margin-right: 3px;
+  color: var(--non-oil-ink);
+  font-size: 21px;
+}
+
+.non-oil-unit-stations,
+.non-oil-unit-summary-copy {
+  padding: 13px 15px;
+  border-radius: 13px;
+  background: #f7f9fa;
+}
+
+.non-oil-unit-stations > span,
+.non-oil-unit-summary-copy > div > span {
+  color: var(--unit-accent);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.non-oil-unit-stations p,
+.non-oil-unit-summary-copy p {
+  margin: 7px 0 0;
+  color: #526a78;
+  line-height: 1.65;
+}
+
+.non-oil-unit-summary-copy > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.non-oil-unit-category-panel {
+  padding: 17px;
+  border: 1px solid #e2e9ec;
+  border-radius: 16px;
+  background: #f8fafb;
+}
+
+.non-oil-unit-category-panel > header,
+.non-oil-unit-highlights > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.non-oil-unit-category-panel h4,
+.non-oil-unit-highlights h4 {
+  margin: 4px 0 0;
+  color: var(--non-oil-ink);
+  font-size: 16px;
+}
+
+.non-oil-unit-category-panel header small,
+.non-oil-unit-highlights > header small {
+  color: #8b9aa3;
+  font-size: 10px;
 }
 
 .non-oil-unit-category-chart {
   display: grid;
-  gap: 9px;
-  margin-top: 16px;
-  padding: 14px;
-  border-radius: 14px;
-  background: #f7f9fa;
+  gap: 13px;
+  margin-top: 18px;
 }
 
 .non-oil-unit-category-chart > div {
   display: grid;
-  grid-template-columns: minmax(116px, 0.9fr) minmax(90px, 1.5fr) 42px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 6px 12px;
   align-items: center;
   color: #425967;
   font-size: 12px;
 }
 
+.non-oil-unit-category-chart > div > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.non-oil-unit-category-chart > div > div strong {
+  flex: 0 0 auto;
+}
+
 .non-oil-unit-category-chart i {
+  grid-column: 1;
   height: 7px;
   overflow: hidden;
   border-radius: 999px;
@@ -7766,19 +7988,22 @@ onBeforeUnmount(() => {
   background: var(--category-color);
 }
 
-.non-oil-unit-category-chart strong {
+.non-oil-unit-category-chart em {
+  grid-column: 2;
+  grid-row: 2;
   color: var(--non-oil-ink);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
   text-align: right;
 }
 
-.non-oil-highlight-list,
 .non-oil-typical-issues {
   display: grid;
   gap: 9px;
   margin-top: 14px;
 }
 
-.non-oil-highlight-list > div,
 .non-oil-typical-issues > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 78px;
@@ -7789,10 +8014,41 @@ onBeforeUnmount(() => {
   background: #f7f9fa;
 }
 
-.non-oil-highlight-list > div > span {
-  color: var(--non-oil-green);
+.non-oil-unit-highlights {
+  padding: 20px 24px 24px 28px;
+  border-top: 1px solid #e7edef;
+  background: #fbfcfc;
+}
+
+.non-oil-highlight-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+  margin-top: 16px;
+}
+
+.non-oil-highlight-list > article {
+  display: block;
+  min-height: 116px;
+  overflow: hidden;
+  border: 1px solid #e1e8eb;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.non-oil-highlight-list > article.has-photo {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.non-oil-highlight-list > article > div {
+  padding: 14px;
+}
+
+.non-oil-highlight-list > article span {
+  color: var(--unit-accent);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .non-oil-highlight-list p,
@@ -7802,7 +8058,17 @@ onBeforeUnmount(() => {
   line-height: 1.55;
 }
 
-.non-oil-highlight-list button,
+.non-oil-highlight-list button {
+  width: 132px;
+  height: 100%;
+  min-height: 116px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: #e9eef1;
+  cursor: zoom-in;
+}
+
 .non-oil-typical-issues button {
   width: 78px;
   height: 62px;
@@ -7814,7 +8080,12 @@ onBeforeUnmount(() => {
   cursor: zoom-in;
 }
 
-.non-oil-highlight-list img,
+.non-oil-highlight-list img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .non-oil-typical-issues img {
   width: 100%;
   height: 100%;
@@ -7971,10 +8242,28 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .non-oil-unit-summary-grid,
   .non-oil-typical-grid,
   .non-oil-distribution-layout,
   .non-oil-analysis-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .non-oil-unit-summary-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .non-oil-unit-summary-intro p {
+    max-width: none;
+    text-align: left;
+  }
+
+  .non-oil-unit-report-main {
+    grid-template-columns: 1fr;
+  }
+
+  .non-oil-highlight-list {
     grid-template-columns: 1fr;
   }
 
@@ -8168,7 +8457,6 @@ onBeforeUnmount(() => {
 
 @media (max-width: 520px) {
   .non-oil-subsection,
-  .non-oil-unit-summary-grid > article,
   .non-oil-typical-grid > article,
   .non-oil-distribution-card,
   .non-oil-method-card,
@@ -8187,21 +8475,98 @@ onBeforeUnmount(() => {
     font-size: 17px;
   }
 
-  .non-oil-unit-summary-grid dl {
-    grid-template-columns: 1fr;
+  .non-oil-unit-summary-intro {
+    padding-bottom: 16px;
+  }
+
+  .non-oil-unit-summary-intro p {
+    font-size: 12px;
+  }
+
+  .non-oil-unit-summary-list {
+    gap: 18px;
+    margin-top: 18px;
+  }
+
+  .non-oil-unit-report {
+    border-radius: 17px;
+  }
+
+  .non-oil-unit-report-head {
+    min-height: 68px;
+    padding: 14px 15px 14px 20px;
+  }
+
+  .non-oil-unit-identity {
+    gap: 10px;
+  }
+
+  .non-oil-unit-identity > span {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+  }
+
+  .non-oil-unit-identity h3 {
+    font-size: 18px;
+  }
+
+  .non-oil-unit-share strong {
+    font-size: 19px;
+  }
+
+  .non-oil-unit-report-main {
+    gap: 14px;
+    padding: 16px 15px 18px 20px;
+  }
+
+  .non-oil-unit-overview dl {
+    gap: 6px;
+  }
+
+  .non-oil-unit-overview dl > div {
+    padding: 9px 7px;
+  }
+
+  .non-oil-unit-overview dd strong {
+    font-size: 17px;
+  }
+
+  .non-oil-unit-stations,
+  .non-oil-unit-summary-copy,
+  .non-oil-unit-category-panel {
+    padding: 12px;
   }
 
   .non-oil-unit-category-chart > div {
-    grid-template-columns: minmax(100px, 1fr) minmax(72px, 1.2fr) 38px;
-    gap: 7px;
+    grid-template-columns: minmax(0, 1fr) 48px;
+    gap: 5px 8px;
   }
 
-  .non-oil-highlight-list > div,
+  .non-oil-unit-highlights {
+    padding: 16px 15px 18px 20px;
+  }
+
+  .non-oil-unit-highlights > header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .non-oil-highlight-list > article.has-photo {
+    grid-template-columns: 1fr;
+  }
+
+  .non-oil-highlight-list button {
+    width: 100%;
+    height: 150px;
+    min-height: 150px;
+  }
+
   .non-oil-typical-issues > div {
     grid-template-columns: minmax(0, 1fr) 68px;
   }
 
-  .non-oil-highlight-list button,
   .non-oil-typical-issues button {
     width: 68px;
     height: 60px;
