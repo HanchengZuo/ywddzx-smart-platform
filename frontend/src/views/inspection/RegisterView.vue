@@ -73,7 +73,16 @@
               <input v-model="standardSearch" type="text" placeholder="输入规范ID搜索" @focus="openStandardDropdown"
                 @input="handleStandardInput" />
               <div v-if="standardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
-                <div v-for="standard in filteredStandards" :key="getStandardIdentity(standard)"
+                <div v-if="standardsLoading" class="search-select-status standard-loading-state">
+                  <span class="standard-loading-dot" aria-hidden="true"></span>
+                  <span>正在加载规范数据...</span>
+                </div>
+                <div v-else-if="standardLoadError" class="search-select-status standard-error-state">
+                  <span>{{ standardLoadError }}</span>
+                  <button type="button" @click.stop="reloadStandardCatalog">重新加载</button>
+                </div>
+                <div v-for="standard in standardsLoading || standardLoadError ? [] : filteredStandards"
+                  :key="getStandardIdentity(standard)"
                   class="search-select-option" @click="selectStandard(standard)">
                   <div class="option-main">
                     {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
@@ -81,7 +90,10 @@
                   <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
                   <div class="option-sub standard-detail-preview">{{ getRegisterStandardPreview(standard) }}</div>
                 </div>
-                <div v-if="filteredStandards.length === 0" class="search-select-empty">无匹配规范</div>
+                <div v-if="!standardsLoading && !standardLoadError && filteredStandards.length === 0"
+                  class="search-select-empty">
+                  {{ standards.length ? '无匹配规范，请检查输入的规范ID。' : '当前规范库暂无可用规范。' }}
+                </div>
               </div>
             </div>
           </div>
@@ -384,12 +396,13 @@ import {
 } from '@/utils/localDraft'
 
 const currentRole = localStorage.getItem('user_role') || ''
-let localPermissions = {}
-try {
-  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
-  localPermissions = {}
-}
+const localPermissions = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch {
+    return {}
+  }
+})()
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_inspections)
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
@@ -401,7 +414,7 @@ const tableDropdownVisible = ref(false)
 const stationSearch = ref('')
 const standardSearch = ref('')
 const tableSearch = ref('')
-const standardSourceMode = ref('internal')
+const standardSourceMode = ref('external')
 const referenceMode = ref('manual')
 const aiMatching = ref(false)
 const aiRecommendations = ref([])
@@ -452,6 +465,8 @@ const submitting = ref(false)
 const stations = ref([])
 const standards = ref([])
 const standardFields = ref([])
+const standardsLoading = ref(false)
+const standardLoadError = ref('')
 const inspectionTables = ref([])
 const STANDARD_SEARCH_RESULT_LIMIT = 80
 const LAST_REGISTER_STATION_KEY = 'inspection_register_last_station'
@@ -519,7 +534,7 @@ const toPinyinText = (value, options = {}) => {
       nonZh: 'consecutive',
       ...options
     })
-  } catch (error) {
+  } catch {
     return ''
   }
 }
@@ -768,6 +783,7 @@ const fetchStandardSourceMode = async () => {
     params: { _ts: Date.now() }
   })
   standardSourceMode.value = response.data?.usage_mode?.mode === 'external' ? 'external' : 'internal'
+  return response.data?.usage_mode || null
 }
 
 const fetchStandards = async () => {
@@ -816,6 +832,42 @@ const fetchStandards = async () => {
   })
 }
 
+const getRequestErrorMessage = (error, fallback) => {
+  return error?.response?.data?.error || error?.response?.data?.message || error?.message || fallback
+}
+
+const loadStandardCatalog = async () => {
+  standardsLoading.value = true
+  standardLoadError.value = ''
+
+  try {
+    try {
+      await fetchStandardSourceMode()
+    } catch {
+      // The external catalog remains usable when the mode setting is temporarily unavailable.
+      standardSourceMode.value = 'external'
+    }
+
+    await fetchStandards()
+    if (!standards.value.length) {
+      standardLoadError.value = `当前${standardSourceModeLabel.value}暂无可用规范，请联系管理员检查规范数据。`
+    }
+  } catch (error) {
+    standards.value = []
+    standardFields.value = []
+    standardLoadError.value = getRequestErrorMessage(error, '规范数据加载失败，请稍后重试。')
+  } finally {
+    standardsLoading.value = false
+  }
+}
+
+const reloadStandardCatalog = async () => {
+  await loadStandardCatalog()
+  if (standards.value.length) {
+    standardDropdownVisible.value = true
+  }
+}
+
 const openStationDropdown = () => {
   if (form.value.stationId || stationSearch.value) {
     form.value.stationId = ''
@@ -824,7 +876,7 @@ const openStationDropdown = () => {
   stationDropdownVisible.value = true
 }
 
-const openStandardDropdown = () => {
+const openStandardDropdown = async () => {
   if (form.value.standardId || standardSearch.value) {
     form.value.inspectionTableId = ''
     form.value.standardId = ''
@@ -833,6 +885,9 @@ const openStandardDropdown = () => {
     clearAiReferenceState()
   }
   standardDropdownVisible.value = true
+  if (!standardsLoading.value && (!standards.value.length || standardLoadError.value)) {
+    await reloadStandardCatalog()
+  }
 }
 
 const openTableDropdown = () => {
@@ -1038,7 +1093,7 @@ const applyRememberedStation = () => {
 
     form.value.stationId = station.id
     stationSearch.value = station.station_name
-  } catch (error) {
+  } catch {
     localStorage.removeItem(LAST_REGISTER_STATION_KEY)
   }
 }
@@ -1084,7 +1139,7 @@ const restoreRegisterDraft = async () => {
           revokeObjectUrl(imagePreviewUrl.value)
           imagePreviewUrl.value = URL.createObjectURL(restoredFile)
         }
-      } catch (error) {
+      } catch {
         imageDraftAsset.value = null
         showSubmitToast('已恢复文字草稿，图片需要重新选择。', 'info')
       }
@@ -1672,15 +1727,21 @@ onMounted(async () => {
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('paste', handleWindowPhotoPaste)
   window.addEventListener('beforeunload', handleRegisterBeforeUnload)
-  try {
-    await Promise.all([fetchStations(), fetchInspectionTables(), fetchStandardSourceMode()])
-    applyRememberedStation()
-    await fetchStandards()
-    await restoreRegisterDraft()
-    registerDraftReady = true
-  } catch (error) {
-    showSubmitToast('初始化站点或规范数据失败，请检查后端服务。', 'error')
-    registerDraftReady = true
+  const [stationResult, tableResult] = await Promise.allSettled([
+    fetchStations(),
+    fetchInspectionTables()
+  ])
+  await loadStandardCatalog()
+  applyRememberedStation()
+  await restoreRegisterDraft()
+  registerDraftReady = true
+
+  if (stationResult.status === 'rejected') {
+    showSubmitToast(getRequestErrorMessage(stationResult.reason, '站点数据加载失败，请稍后重试。'), 'error')
+  } else if (tableResult.status === 'rejected') {
+    showSubmitToast(getRequestErrorMessage(tableResult.reason, '检查表数据加载失败，请稍后重试。'), 'error')
+  } else if (standardLoadError.value) {
+    showSubmitToast(standardLoadError.value, 'error')
   }
 })
 
@@ -2218,6 +2279,60 @@ onBeforeUnmount(() => {
   padding: 12px;
   color: #6b7280;
   font-size: 14px;
+}
+
+.search-select-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.standard-loading-state {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.standard-loading-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+  animation: standard-loading-pulse 1.2s ease-out infinite;
+}
+
+.standard-error-state {
+  flex-wrap: wrap;
+  color: #991b1b;
+  background: #fff1f2;
+}
+
+.standard-error-state button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  color: #991b1b;
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@keyframes standard-loading-pulse {
+  70% {
+    box-shadow: 0 0 0 8px rgba(37, 99, 235, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
 }
 
 .option-table-name {
