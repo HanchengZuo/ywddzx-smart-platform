@@ -17892,7 +17892,7 @@ def serialize_standard_row(field_meta, row, register_field_meta=None):
 
 
 INSPECTION_STANDARD_USAGE_MODES = {"internal", "external"}
-DEFAULT_INSPECTION_STANDARD_USAGE_MODE = "internal"
+DEFAULT_INSPECTION_STANDARD_USAGE_MODE = "external"
 INSPECTION_STANDARD_USAGE_MODE_LABELS = {
     "internal": "内部规范库",
     "external": "外部规范库",
@@ -17909,11 +17909,34 @@ def serialize_inspection_standard_usage_mode(mode, row=None):
     return {
         "mode": normalized_mode,
         "mode_label": INSPECTION_STANDARD_USAGE_MODE_LABELS.get(normalized_mode, "内部规范库"),
+        "configured_mode": normalized_mode,
+        "configured_mode_label": INSPECTION_STANDARD_USAGE_MODE_LABELS.get(normalized_mode, "内部规范库"),
+        "is_fallback": False,
+        "fallback_reason": "",
         "updated_by": row.get("updated_by") if row else None,
         "updated_by_username": row.get("updated_by_username") if row else "",
         "updated_by_name": row.get("updated_by_name") if row else "",
         "updated_at": row.get("updated_at") if row else "",
     }
+
+
+def has_active_internal_inspection_standards(cur):
+    cur.execute("SELECT to_regclass('public.inspection_internal_standards') AS table_name;")
+    table_row = cur.fetchone()
+    if not table_row or not table_row.get("table_name"):
+        return False
+
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM inspection_internal_standards
+            WHERE is_active = TRUE
+        ) AS has_active;
+        """
+    )
+    result = cur.fetchone()
+    return bool(result and result.get("has_active"))
 
 
 def ensure_inspection_standard_usage_settings_schema(cur):
@@ -17964,10 +17987,20 @@ def get_inspection_standard_usage_mode(cur):
     setting = cur.fetchone()
     if not setting:
         return serialize_inspection_standard_usage_mode(DEFAULT_INSPECTION_STANDARD_USAGE_MODE)
-    return serialize_inspection_standard_usage_mode(
+    usage_mode = serialize_inspection_standard_usage_mode(
         setting.get("register_standard_source"),
         setting,
     )
+    if usage_mode["mode"] == "internal" and not has_active_internal_inspection_standards(cur):
+        usage_mode.update(
+            {
+                "mode": "external",
+                "mode_label": INSPECTION_STANDARD_USAGE_MODE_LABELS["external"],
+                "is_fallback": True,
+                "fallback_reason": "内部规范库暂无启用规范，巡检登记已自动使用外部规范库。",
+            }
+        )
+    return usage_mode
 
 
 def save_inspection_standard_usage_mode(cur, mode, user_id):
@@ -27453,7 +27486,10 @@ def get_inspection_internal_standards():
         user = get_current_request_user()
         conn = get_db_connection()
         cur = conn.cursor()
-        if not can_view_inspection_standards(cur, user):
+        if not (
+            can_view_inspection_standards(cur, user)
+            or has_permission(cur, user, "submit_inspections")
+        ):
             return jsonify({"success": False, "error": "当前账号无权访问巡检规范库。"}), 403
 
         cur.execute(
@@ -27631,6 +27667,13 @@ def update_management_internal_standard_usage_mode():
         ensure_inspection_standard_usage_settings_schema(cur)
         conn.commit()
         require_management_user(cur, user_id, "manage_internal_standards")
+        if mode == "internal" and not has_active_internal_inspection_standards(cur):
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "内部规范库暂无启用规范，请先新增并启用内部规范后再切换。",
+                }
+            ), 400
         usage_mode = save_inspection_standard_usage_mode(cur, mode, user_id)
         conn.commit()
         return jsonify(
