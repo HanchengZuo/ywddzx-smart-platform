@@ -7659,7 +7659,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-slides-approved-v4"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-selection-rules-approved-v5"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
@@ -7759,6 +7759,142 @@ class InspectionReportJobSchemaUnavailable(RuntimeError):
 
 class InspectionReportExportSchemaUnavailable(RuntimeError):
     pass
+
+
+QUALITY_REPORT_DEFAULT_SELECTION_SETTINGS = {
+    "sample_counts": {
+        "more_than_20": 8,
+        "more_than_10": 6,
+        "more_than_4": 4,
+        "at_most_4": 2,
+    },
+    "prohibited_standard_priorities": [],
+    "flow_standard_priorities": {},
+}
+
+
+def normalize_quality_report_standard_ids(values, limit=500):
+    result = []
+    seen = set()
+    for raw_value in values if isinstance(values, list) else []:
+        try:
+            standard_id = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if standard_id <= 0 or standard_id in seen:
+            continue
+        seen.add(standard_id)
+        result.append(standard_id)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def normalize_quality_report_selection_settings(value):
+    raw = value if isinstance(value, dict) else {}
+    raw_counts = raw.get("sample_counts") if isinstance(raw.get("sample_counts"), dict) else {}
+    sample_counts = {}
+    for key, default_value in QUALITY_REPORT_DEFAULT_SELECTION_SETTINGS["sample_counts"].items():
+        try:
+            count = int(raw_counts.get(key, default_value))
+        except (TypeError, ValueError):
+            count = default_value
+        sample_counts[key] = max(1, min(12, count))
+
+    flow_priorities = {}
+    raw_flow_priorities = raw.get("flow_standard_priorities")
+    if isinstance(raw_flow_priorities, dict):
+        for raw_flow_name, raw_ids in raw_flow_priorities.items():
+            flow_name = str(raw_flow_name or "").strip()[:80]
+            if not flow_name:
+                continue
+            standard_ids = normalize_quality_report_standard_ids(raw_ids)
+            if standard_ids:
+                flow_priorities[flow_name] = standard_ids
+
+    return {
+        "sample_counts": sample_counts,
+        "prohibited_standard_priorities": normalize_quality_report_standard_ids(
+            raw.get("prohibited_standard_priorities")
+        ),
+        "flow_standard_priorities": flow_priorities,
+    }
+
+
+def quality_report_selection_settings_table_available(cur):
+    cur.execute(
+        "SELECT to_regclass('public.inspection_report_quality_selection_settings') AS table_name;"
+    )
+    row = cur.fetchone()
+    return bool(row and row.get("table_name"))
+
+
+def get_quality_report_selection_settings(cur):
+    default_settings = normalize_quality_report_selection_settings({})
+    if not quality_report_selection_settings_table_available(cur):
+        return {
+            "settings": default_settings,
+            "updated_at": "",
+            "updated_by": None,
+            "updated_by_name": "",
+            "persisted": False,
+        }
+    cur.execute(
+        """
+        SELECT
+            s.settings,
+            s.updated_by,
+            TO_CHAR(s.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+            COALESCE(u.real_name, u.username, '') AS updated_by_name
+        FROM inspection_report_quality_selection_settings s
+        LEFT JOIN users u ON u.id = s.updated_by
+        WHERE s.id = 1;
+        """
+    )
+    row = cur.fetchone()
+    if not row:
+        return {
+            "settings": default_settings,
+            "updated_at": "",
+            "updated_by": None,
+            "updated_by_name": "",
+            "persisted": False,
+        }
+    return {
+        "settings": normalize_quality_report_selection_settings(
+            parse_json_field(row.get("settings"), {})
+        ),
+        "updated_at": row.get("updated_at") or "",
+        "updated_by": row.get("updated_by"),
+        "updated_by_name": row.get("updated_by_name") or "",
+        "persisted": True,
+    }
+
+
+def get_quality_measurement_standard_options(cur):
+    target_tables = {
+        QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+        QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
+    }
+    options = []
+    for item in fetch_external_standard_map(cur).values():
+        table_name = str(sanitize_display_string(item.get("inspection_table_name")) or "").strip()
+        if table_name not in target_tables:
+            continue
+        detail_text = str(item.get("standard_detail_text") or "").strip()
+        options.append(
+            {
+                "standard_id": int(item.get("external_standard_id") or 0),
+                "table_name": table_name,
+                "business_flow": normalize_report_category(
+                    get_report_standard_field_value(detail_text, "业务流程"),
+                    "未设置业务流程",
+                ),
+                "detail_text": detail_text,
+            }
+        )
+    options.sort(key=lambda item: (item["table_name"], item["business_flow"], item["standard_id"]))
+    return options
 
 
 def normalize_inspection_report_generation_options(value):
@@ -8708,21 +8844,85 @@ def start_inspection_report_export_task(task_id):
     thread.start()
 
 
-def build_report_prohibited_examples(rows, limit=10):
+def build_report_prohibited_candidate_groups(rows, selection_settings):
     prohibited_rows = [
         row for row in rows
         if is_prohibited_report_issue(row.get("standard_detail_text"))
         and str(row.get("description") or "").strip()
     ]
-    examples = []
     rows_by_unit = OrderedDict()
     for row in prohibited_rows:
         unit_type, unit_name = identify_report_secondary_unit(row)
         rows_by_unit.setdefault(f"{unit_type}:{unit_name}", []).append(row)
 
-    # A report snapshot freezes this random choice until the user explicitly regenerates it.
-    for candidates in rows_by_unit.values():
-        row = random.choice(candidates)
+    settings = normalize_quality_report_selection_settings(selection_settings)
+    priority_map = {
+        standard_id: index
+        for index, standard_id in enumerate(settings["prohibited_standard_priorities"])
+    }
+    groups = []
+    for unit_key, candidates in rows_by_unit.items():
+        starred = [row for row in candidates if bool(row.get("is_excellent"))]
+        if starred:
+            finalist_rows = starred
+            finalist_reason = "starred"
+        else:
+            ranked = [
+                (priority_map.get(int(row.get("standard_id") or 0)), row)
+                for row in candidates
+            ]
+            configured_ranks = [rank for rank, _ in ranked if rank is not None]
+            if configured_ranks:
+                best_rank = min(configured_ranks)
+                finalist_rows = [row for rank, row in ranked if rank == best_rank]
+                finalist_reason = "standard_priority"
+            else:
+                finalist_rows = list(candidates)
+                finalist_reason = "ai"
+        groups.append(
+            {
+                "unit_key": unit_key,
+                "candidates": candidates,
+                "finalists": finalist_rows,
+                "finalist_reason": finalist_reason,
+            }
+        )
+    return groups
+
+
+def build_report_prohibited_examples(rows, selection_settings, ai_payload=None):
+    ai_decisions = {}
+    if isinstance(ai_payload, dict):
+        for decision in ai_payload.get("prohibited_decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            unit_key = str(decision.get("unit_key") or "").strip()
+            try:
+                issue_id = int(decision.get("issue_id") or 0)
+            except (TypeError, ValueError):
+                issue_id = 0
+            if unit_key and issue_id:
+                ai_decisions[unit_key] = issue_id
+
+    examples = []
+    for group in build_report_prohibited_candidate_groups(rows, selection_settings):
+        finalists = group["finalists"]
+        chosen = finalists[0] if len(finalists) == 1 else None
+        selection_source = group["finalist_reason"]
+        if not chosen:
+            ai_issue_id = ai_decisions.get(group["unit_key"])
+            chosen = next(
+                (row for row in finalists if int(row.get("id") or 0) == ai_issue_id),
+                None,
+            )
+            if chosen:
+                selection_source = "ai"
+            else:
+                # AI is allowed to fail without blocking report generation.
+                chosen = random.choice(finalists)
+                selection_source = "local_fallback"
+
+        row = chosen
         unit_type, unit_name = identify_report_secondary_unit(row)
         description = str(row.get("description") or "").strip()
         station_name = str(row.get("station_name") or "").strip()
@@ -8735,10 +8935,10 @@ def build_report_prohibited_examples(rows, limit=10):
                 "station_name": station_name,
                 "description": f"{station_name}：{description}" if station_name else description,
                 "penalty": "",
+                "standard_id": int(row.get("standard_id") or 0),
+                "selection_source": selection_source,
             }
         )
-        if len(examples) >= limit:
-            break
 
     return examples
 
@@ -8758,12 +8958,14 @@ def serialize_report_issue(row):
         ),
         "description": str(row.get("description") or "").strip(),
         "issue_photo": row.get("issue_photo") or "",
+        "standard_id": int(row.get("standard_id") or 0),
+        "table_name": str(sanitize_display_string(row.get("table_name")) or "").strip(),
         "is_prohibited": is_prohibited_report_issue(row.get("standard_detail_text")),
         "is_marked_typical": bool(row.get("is_excellent")),
     }
 
 
-def build_quality_report_ai_context(month_start, rows, distribution):
+def build_quality_report_ai_context(month_start, rows, distribution, selection_settings):
     serialized_rows = [serialize_report_issue(row) for row in rows]
     trace_candidates = [item for item in serialized_rows if item.get("description")]
     designated_typical_issue_id = (
@@ -8778,6 +8980,7 @@ def build_quality_report_ai_context(month_start, rows, distribution):
                 "station_name": item["station_name"],
                 "unit_name": item["unit_name"],
                 "description": item["description"][:260],
+                "standard_id": item["standard_id"],
                 "is_prohibited": item["is_prohibited"],
                 "is_marked_typical": item["is_marked_typical"],
             }
@@ -8793,26 +8996,55 @@ def build_quality_report_ai_context(month_start, rows, distribution):
             }
         )
 
+    serialized_by_id = {item["issue_id"]: item for item in serialized_rows}
+    prohibited_candidate_groups = []
+    for group in build_report_prohibited_candidate_groups(rows, selection_settings):
+        finalists = group["finalists"]
+        if len(finalists) <= 1:
+            continue
+        first_row = finalists[0]
+        unit_type, unit_name = identify_report_secondary_unit(first_row)
+        prohibited_candidate_groups.append(
+            {
+                "unit_key": group["unit_key"],
+                "unit_name": unit_name,
+                "unit_type": unit_type,
+                "reason": group["finalist_reason"],
+                "candidates": [
+                    {
+                        "issue_id": int(row.get("id") or 0),
+                        "standard_id": int(row.get("standard_id") or 0),
+                        "station_name": serialized_by_id.get(int(row.get("id") or 0), {}).get("station_name", ""),
+                        "description": serialized_by_id.get(int(row.get("id") or 0), {}).get("description", "")[:260],
+                        "is_marked_typical": bool(row.get("is_excellent")),
+                    }
+                    for row in finalists
+                ],
+            }
+        )
+
     return {
         "month": month_start.strftime("%Y-%m"),
         "month_label": format_report_month_label(month_start),
         "total_issue_count": len(serialized_rows),
         "designated_typical_issue_id": designated_typical_issue_id,
         "business_flows": flow_items,
+        "prohibited_candidate_groups": prohibited_candidate_groups,
     }
 
 
-def get_report_highlight_sample_size(issue_count):
+def get_report_highlight_sample_size(issue_count, selection_settings=None):
+    counts = normalize_quality_report_selection_settings(selection_settings)["sample_counts"]
     if issue_count > 20:
-        return 8
+        return counts["more_than_20"]
     if issue_count > 10:
-        return 6
+        return counts["more_than_10"]
     if issue_count > 4:
-        return 4
-    return min(2, issue_count)
+        return counts["more_than_4"]
+    return min(counts["at_most_4"], issue_count)
 
 
-def select_local_report_issues(issues, limit=None):
+def select_local_report_issues(issues, limit=None, priority_standard_ids=None):
     candidates = [item for item in issues if item.get("description")]
     sample_size = min(
         len(candidates),
@@ -8820,7 +9052,20 @@ def select_local_report_issues(issues, limit=None):
     )
     if sample_size <= 0:
         return []
-    return random.sample(candidates, sample_size)
+    priority_map = {
+        standard_id: index
+        for index, standard_id in enumerate(
+            normalize_quality_report_standard_ids(priority_standard_ids)
+        )
+    }
+    random.shuffle(candidates)
+    candidates.sort(
+        key=lambda item: priority_map.get(
+            int(item.get("standard_id") or 0),
+            len(priority_map) + 1,
+        )
+    )
+    return candidates[:sample_size]
 
 
 def normalize_report_ai_issue_ids(raw_ids):
@@ -8837,7 +9082,7 @@ def normalize_report_ai_issue_ids(raw_ids):
     return result
 
 
-def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
+def build_report_flow_highlights(distribution, serialized_rows, ai_payload, selection_settings):
     flow_ai_map = {}
     if isinstance(ai_payload, dict):
         for item in ai_payload.get("flow_highlights") or []:
@@ -8852,11 +9097,16 @@ def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
             }
 
     result = []
+    settings = normalize_quality_report_selection_settings(selection_settings)
     for flow in distribution:
         flow_name = flow["name"]
         flow_issues = [item for item in serialized_rows if item["business_flow"] == flow_name]
         ai_entry = flow_ai_map.get(flow_name, {})
-        selected = select_local_report_issues(flow_issues)
+        selected = select_local_report_issues(
+            flow_issues,
+            limit=get_report_highlight_sample_size(len(flow_issues), settings),
+            priority_standard_ids=settings["flow_standard_priorities"].get(flow_name, []),
+        )
         ai_summary = ai_entry.get("summary") or ""
         result.append(
             {
@@ -9005,11 +9255,17 @@ def build_report_deep_analysis(
     rows,
     distribution,
     ai_result,
+    selection_settings,
     designated_typical_issue_id=None,
 ):
     serialized_rows = [serialize_report_issue(row) for row in rows]
     ai_payload = (ai_result or {}).get("payload")
-    flow_highlights = build_report_flow_highlights(distribution, serialized_rows, ai_payload)
+    flow_highlights = build_report_flow_highlights(
+        distribution,
+        serialized_rows,
+        ai_payload,
+        selection_settings,
+    )
     management_trace = build_report_management_trace(
         serialized_rows,
         ai_payload,
@@ -9101,8 +9357,6 @@ def build_quality_measurement_report_payload(month_start, rows):
     })
     month_label = format_report_month_label(month_start)
     business_flow_distribution = build_report_business_flow_distribution(rows)
-    prohibited_examples = build_report_prohibited_examples(rows)
-
     return {
         "month": month_start.strftime("%Y-%m"),
         "month_label": month_label,
@@ -9135,7 +9389,7 @@ def build_quality_measurement_report_payload(month_start, rows):
             "finding_text": build_report_business_flow_sentence(issue_count, business_flow_distribution, "本次检查发现问题"),
             "station_link_text": build_report_business_flow_sentence(issue_count, business_flow_distribution, "检查发现站点环节问题"),
         },
-        "prohibited_examples": prohibited_examples,
+        "prohibited_examples": [],
         "rows": table_rows,
         "total_row": {
             "sequence": "合计",
@@ -9198,14 +9452,34 @@ def build_quality_measurement_report_slides(report):
         }
     )
 
-    slides = [
-        {
-            "kind": "overall",
-            "title": "总体情况",
-            "narrative": report.get("overview_text") or "",
-            "rows": report.get("rows") or [],
-            "total_row": report.get("total_row") or {},
-        },
+    overall_rows = report.get("rows") or []
+    overall_pages = [overall_rows[index : index + 8] for index in range(0, len(overall_rows), 8)] or [[]]
+    slides = []
+    for page_index, page_rows in enumerate(overall_pages, 1):
+        slides.append(
+            {
+                "kind": "overall",
+                "title": (
+                    "总体情况"
+                    if len(overall_pages) == 1
+                    else f"总体情况（{page_index}/{len(overall_pages)}）"
+                ),
+                "narrative": (
+                    report.get("overview_text") or ""
+                    if page_index == 1
+                    else "二级单位检查情况续表。"
+                ),
+                "rows": page_rows,
+                "total_row": (
+                    report.get("total_row") or {}
+                    if page_index == len(overall_pages)
+                    else None
+                ),
+                "continuation": page_index > 1,
+            }
+        )
+
+    slides.append(
         {
             "kind": "finding_overview",
             "title": "检查发现-发现问题",
@@ -9216,31 +9490,63 @@ def build_quality_measurement_report_slides(report):
                 "运输环节X项：为车辆铅封核对问题，为X项，占比X%。",
             ],
             "rows": finding_table_rows,
-        },
-        {
-            "kind": "prohibited",
-            "title": "检查发现-禁止项问题",
-            "narrative": (
-                f"本次检查发现涉及禁止项问题{prohibited_issue_count}项，其中油库环节X项、"
-                f"运输环节X项、油站环节{prohibited_issue_count}项。"
-            ),
-            "rows": report.get("prohibited_examples") or [],
-        },
+        }
+    )
+
+    prohibited_rows = report.get("prohibited_examples") or []
+    prohibited_pages = [
+        prohibited_rows[index : index + 6]
+        for index in range(0, len(prohibited_rows), 6)
+    ] or [[]]
+    for page_index, page_rows in enumerate(prohibited_pages, 1):
+        slides.append(
+            {
+                "kind": "prohibited",
+                "title": (
+                    "检查发现-禁止项问题"
+                    if len(prohibited_pages) == 1
+                    else f"检查发现-禁止项问题（{page_index}/{len(prohibited_pages)}）"
+                ),
+                "narrative": (
+                    f"本次检查发现涉及禁止项问题{prohibited_issue_count}项，其中油库环节X项、"
+                    f"运输环节X项、油站环节{prohibited_issue_count}项。"
+                ),
+                "rows": page_rows,
+            }
+        )
+
+    slides.append(
         {
             "kind": "flow_chart",
             "title": "检查发现-加油站环节",
             "chart_title": "各类问题数量汇总情况",
             "narrative": station_flow_text,
             "distribution": distribution,
-        },
-    ]
+        }
+    )
 
     deep_analysis = report.get("deep_analysis") or {}
     for flow in deep_analysis.get("flow_highlights") or []:
         issues = flow.get("highlighted_issues") or []
-        page_count = max(1, (len(issues) + 1) // 2)
-        for page_index in range(page_count):
-            page_issues = issues[page_index * 2 : page_index * 2 + 2]
+        issue_pages = []
+        pending_pair = []
+        for issue in issues:
+            if len(str(issue.get("description") or "")) > 120:
+                if pending_pair:
+                    issue_pages.append((pending_pair, "paired" if len(pending_pair) == 2 else "single"))
+                    pending_pair = []
+                issue_pages.append(([issue], "single"))
+                continue
+            pending_pair.append(issue)
+            if len(pending_pair) == 2:
+                issue_pages.append((pending_pair, "paired"))
+                pending_pair = []
+        if pending_pair:
+            issue_pages.append((pending_pair, "single"))
+        if not issue_pages:
+            issue_pages = [([], "empty")]
+        page_count = len(issue_pages)
+        for page_index, (page_issues, layout_variant) in enumerate(issue_pages):
             slides.append(
                 {
                     "kind": "issue_pairs",
@@ -9249,6 +9555,7 @@ def build_quality_measurement_report_slides(report):
                     "continuation": page_index + 1,
                     "continuation_count": page_count,
                     "issues": page_issues,
+                    "layout_variant": layout_variant,
                     "ai_generated": False,
                 }
             )
@@ -9278,7 +9585,7 @@ def build_quality_measurement_report_slides(report):
         }
     )
     work_plan = deep_analysis.get("work_plan") or []
-    work_plan_pages = [work_plan[index : index + 4] for index in range(0, len(work_plan), 4)] or [[]]
+    work_plan_pages = [work_plan[index : index + 3] for index in range(0, len(work_plan), 3)] or [[]]
     for page_index, items in enumerate(work_plan_pages, 1):
         slides.append(
             {
@@ -29222,6 +29529,13 @@ def generate_quality_measurement_report_job(
     cur = None
     rows = []
     user = None
+    selection_settings_record = {
+        "settings": normalize_quality_report_selection_settings({}),
+        "updated_at": "",
+        "updated_by": None,
+        "updated_by_name": "",
+        "persisted": False,
+    }
     try:
         update_inspection_report_job(task_id, "running", 12, "正在读取审核通过的巡检问题和检查表数据")
         conn = get_db_connection()
@@ -29239,6 +29553,7 @@ def generate_quality_measurement_report_job(
             month_end,
             generation_options,
         )
+        selection_settings_record = get_quality_report_selection_settings(cur)
 
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -29319,17 +29634,30 @@ def generate_quality_measurement_report_job(
     ai_context = None
     if rows:
         update_inspection_report_job(task_id, "running", 52, "正在调用 DeepSeek 分析突出问题和管理追溯")
-        ai_context = build_quality_report_ai_context(month_start, rows, distribution)
+        ai_context = build_quality_report_ai_context(
+            month_start,
+            rows,
+            distribution,
+            selection_settings_record["settings"],
+        )
         insight_result = generate_quality_measurement_report_insights(ai_context)
     else:
         update_inspection_report_job(task_id, "running", 72, "当前月份暂无问题，正在生成空白统计报告")
 
     update_inspection_report_job(task_id, "running", 84, "AI 分析已完成，正在编排章节和图表数据")
+    ai_payload = (insight_result or {}).get("payload")
+    report["selection_settings"] = selection_settings_record
+    report["prohibited_examples"] = build_report_prohibited_examples(
+        rows,
+        selection_settings_record["settings"],
+        ai_payload,
+    )
     report["deep_analysis"] = build_report_deep_analysis(
         month_start,
         rows,
         distribution,
         insight_result,
+        selection_settings_record["settings"],
         (ai_context or {}).get("designated_typical_issue_id"),
     )
     report["slides"] = build_quality_measurement_report_slides(report)
@@ -30846,6 +31174,103 @@ def get_inspection_report_source_options():
     except Exception as exc:
         logging.exception("Failed to load inspection report source options.")
         return jsonify({"success": False, "error": str(exc)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route(
+    "/api/inspection-reports/quality-selection-settings",
+    methods=["GET", "PUT"],
+)
+def manage_quality_report_selection_settings():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        can_edit = has_permission(cur, user, "generate_inspection_reports")
+
+        if request.method == "PUT":
+            if not can_edit:
+                raise PermissionError("当前账号只有AI报告查看权限，不能修改选题规则。")
+            if not quality_report_selection_settings_table_available(cur):
+                return jsonify({
+                    "success": False,
+                    "error": "质量计量报告选题规则尚未完成数据库迁移，请重新构建后端。",
+                }), 503
+
+            data = request.get_json(silent=True) or {}
+            settings = normalize_quality_report_selection_settings(data.get("settings"))
+            standard_options = get_quality_measurement_standard_options(cur)
+            standard_map = {int(item["standard_id"]): item for item in standard_options}
+            configured_ids = set(settings["prohibited_standard_priorities"])
+            for values in settings["flow_standard_priorities"].values():
+                configured_ids.update(values)
+            invalid_ids = sorted(configured_ids - set(standard_map))
+            if invalid_ids:
+                raise ValueError(
+                    f"外部规范ID {invalid_ids[0]} 不属于质量计量报告关联检查表，请刷新后重新设置。"
+                )
+            for flow_name, standard_ids in settings["flow_standard_priorities"].items():
+                invalid_flow_ids = [
+                    standard_id
+                    for standard_id in standard_ids
+                    if standard_map[standard_id]["business_flow"] != flow_name
+                ]
+                if invalid_flow_ids:
+                    raise ValueError(
+                        f"外部规范ID {invalid_flow_ids[0]} 不属于“{flow_name}”环节。"
+                    )
+
+            cur.execute(
+                """
+                INSERT INTO inspection_report_quality_selection_settings (
+                    id, settings, updated_by, updated_at
+                )
+                VALUES (1, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    settings = EXCLUDED.settings,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (Json(settings), user["id"]),
+            )
+            conn.commit()
+
+        settings_record = get_quality_report_selection_settings(cur)
+        standard_options = get_quality_measurement_standard_options(cur)
+        flow_names = []
+        for item in standard_options:
+            flow_name = item["business_flow"]
+            if flow_name not in flow_names:
+                flow_names.append(flow_name)
+        return jsonify({
+            "success": True,
+            "settings": settings_record["settings"],
+            "updated_at": settings_record["updated_at"],
+            "updated_by_name": settings_record["updated_by_name"],
+            "persisted": settings_record["persisted"],
+            "can_edit": can_edit,
+            "standards": standard_options,
+            "business_flows": flow_names,
+        })
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to manage quality report selection settings.")
+        return jsonify({
+            "success": False,
+            "error": "质量计量报告选题规则处理失败，请稍后重试。",
+        }), 500
     finally:
         close_db_resources(cur, conn)
 

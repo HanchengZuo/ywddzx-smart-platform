@@ -123,6 +123,14 @@
           {{ canGenerateReports ? '设置数据来源' : '查看数据来源' }}
         </button>
         <button
+          type="button"
+          class="selection-configure-btn"
+          :disabled="selectionSettingsLoading"
+          @click="openSelectionSettingsDialog"
+        >
+          {{ canGenerateReports ? '设置选题规则' : '查看选题规则' }}
+        </button>
+        <button
           v-if="canGenerateReports && sourceSelectionDirty"
           type="button"
           class="source-apply-generate-btn"
@@ -210,7 +218,7 @@
             <div>
               <span>PRESENTATION PREVIEW</span>
               <strong>{{ report.title || reportTitleFallback }}</strong>
-              <small>生成于 {{ reportGeneratedAt }} · 网页预览与导出PPT使用同一份内容</small>
+              <small>生成于 {{ reportGeneratedAt }} · 网页预览与导出PPT使用同一份内容 · 支持键盘 ← → 翻页</small>
             </div>
             <div class="quality-ppt-page-count">{{ activeQualitySlideIndex + 1 }} / {{ qualitySlides.length }}</div>
           </header>
@@ -273,7 +281,7 @@
 
               <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
                 <div class="quality-slide-band">{{ currentQualitySlide.subtitle }}</div>
-                <div class="quality-issue-pair-grid">
+                <div :class="['quality-issue-pair-grid', currentQualitySlide.layout_variant || 'paired']">
                   <article v-for="issue in currentQualitySlide.issues" :key="`slide-issue-${issue.issue_id}`">
                     <h3>{{ issue.station_name || '未命名站点' }}</h3><p>{{ issue.description || '暂无问题描述' }}</p>
                     <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" /></button>
@@ -1669,6 +1677,106 @@
           </footer>
         </section>
       </div>
+      <div v-if="selectionSettingsDialogVisible && isQualityMeasurementReport" class="report-selection-dialog-layer">
+        <section class="report-selection-dialog" role="dialog" aria-modal="true" aria-label="质量计量报告选题规则">
+          <button type="button" class="selection-dialog-close" aria-label="关闭" @click="closeSelectionSettingsDialog">×</button>
+          <header class="selection-dialog-head">
+            <div>
+              <span>REPORT ISSUE RULES</span>
+              <h3>{{ canGenerateReports ? '设置质量计量报告选题规则' : '查看质量计量报告选题规则' }}</h3>
+              <p>规则全局共享，保存后在下一次重新生成报告时生效。</p>
+            </div>
+            <div class="selection-updated-meta">
+              <span>最后更新</span>
+              <strong>{{ selectionSettingsMeta.updated_at || '尚未保存' }}</strong>
+              <small>{{ selectionSettingsMeta.updated_by_name || '系统默认规则' }}</small>
+            </div>
+          </header>
+
+          <div v-if="selectionSettingsError" class="selection-settings-message error">{{ selectionSettingsError }}</div>
+          <div v-else-if="selectionSettingsMessage" class="selection-settings-message success">{{ selectionSettingsMessage }}</div>
+
+          <div class="selection-rule-tabs">
+            <button type="button" :class="{ active: selectionRuleTab === 'prohibited' }" @click="selectionRuleTab = 'prohibited'">
+              <strong>禁止项选题</strong>
+              <span>星标优先，其次按外部规范顺序</span>
+            </button>
+            <button type="button" :class="{ active: selectionRuleTab === 'flow' }" @click="selectionRuleTab = 'flow'">
+              <strong>分环节突出问题</strong>
+              <span>控制抽取数量和规范优先级</span>
+            </button>
+          </div>
+
+          <div v-if="selectionSettingsLoading" class="selection-settings-loading">正在读取可配置的外部规范...</div>
+          <template v-else>
+            <section v-if="selectionRuleTab === 'flow'" class="selection-sampling-section">
+              <div class="selection-section-title">
+                <div><span>01</span><div><h4>各档突出问题数量</h4><p>实际问题不足时按真实数量展示，长描述会自动独占一页。</p></div></div>
+              </div>
+              <div class="selection-sampling-grid">
+                <label v-for="item in selectionSampleRuleOptions" :key="item.key">
+                  <span>{{ item.label }}</span>
+                  <div><input v-model.number="selectionSettingsDraft.sample_counts[item.key]" type="number" min="1" max="12" :disabled="!canGenerateReports" /><em>项</em></div>
+                </label>
+              </div>
+            </section>
+
+            <section class="selection-priority-section">
+              <div class="selection-section-title">
+                <div><span>{{ selectionRuleTab === 'flow' ? '02' : '01' }}</span><div><h4>{{ selectionPriorityTitle }}</h4><p>越靠上优先级越高；同级仍无法唯一确定时由AI结合问题内容裁决。</p></div></div>
+              </div>
+
+              <div v-if="selectionRuleTab === 'flow'" class="selection-flow-tabs">
+                <button v-for="flow in selectionBusinessFlows" :key="flow" type="button" :class="{ active: selectionActiveFlow === flow }" @click="selectionActiveFlow = flow">{{ flow }}</button>
+                <span v-if="!selectionBusinessFlows.length">暂无业务流程字段数据</span>
+              </div>
+
+              <div class="selection-standard-toolbar">
+                <label><span>搜索规范</span><input v-model.trim="selectionStandardKeyword" type="search" placeholder="输入外部规范ID或规范内容" /></label>
+                <label><span>检查表</span><select v-model="selectionTableFilter"><option value="">全部检查表</option><option v-for="tableName in selectionTableNames" :key="tableName" :value="tableName">{{ tableName }}</option></select></label>
+              </div>
+
+              <div class="selection-priority-workbench">
+                <div class="selection-standard-pool">
+                  <header><strong>可选外部规范</strong><span>{{ filteredSelectionStandards.length }} 条</span></header>
+                  <div>
+                    <button v-for="standard in filteredSelectionStandards.slice(0, 80)" :key="`candidate-${selectionRuleTab}-${standard.standard_id}`" type="button" :disabled="!canGenerateReports || isSelectionStandardSelected(standard.standard_id)" @click="addSelectionPriority(standard.standard_id)">
+                      <span class="selection-standard-id">{{ standard.standard_id }}</span>
+                      <span><strong>{{ standard.table_name }}</strong><small>{{ standard.business_flow }} · {{ standard.detail_text || '-' }}</small></span>
+                      <b>{{ isSelectionStandardSelected(standard.standard_id) ? '已添加' : '添加' }}</b>
+                    </button>
+                    <p v-if="!filteredSelectionStandards.length">当前条件下没有可选规范。</p>
+                  </div>
+                </div>
+
+                <div class="selection-priority-list">
+                  <header><strong>当前优先级</strong><span>{{ currentSelectionPriorityIds.length }} 条</span></header>
+                  <div>
+                    <article v-for="(standard, index) in currentSelectionPriorityStandards" :key="`priority-${selectionRuleTab}-${standard.standard_id}`">
+                      <span class="selection-rank">{{ index + 1 }}</span>
+                      <div><strong>外部规范ID {{ standard.standard_id }}</strong><small>{{ standard.table_name }} · {{ standard.business_flow }}</small></div>
+                      <div class="selection-rank-actions">
+                        <button type="button" :disabled="!canGenerateReports || index === 0" title="上移" @click="moveSelectionPriority(index, -1)">↑</button>
+                        <button type="button" :disabled="!canGenerateReports || index === currentSelectionPriorityIds.length - 1" title="下移" @click="moveSelectionPriority(index, 1)">↓</button>
+                        <button type="button" class="remove" :disabled="!canGenerateReports" title="移除" @click="removeSelectionPriority(index)">×</button>
+                      </div>
+                    </article>
+                    <p v-if="!currentSelectionPriorityStandards.length">暂未设置规范优先级，将由AI在并列候选中决策。</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </template>
+
+          <footer class="selection-dialog-footer">
+            <p>禁止项始终先选星标问题；规范优先级不会修改原始问题数据。</p>
+            <div>
+              <button type="button" class="selection-cancel-btn" @click="closeSelectionSettingsDialog">{{ canGenerateReports ? '取消' : '关闭' }}</button>
+              <button v-if="canGenerateReports" type="button" class="selection-save-btn" :disabled="selectionSettingsSaving || selectionSettingsLoading" @click="saveSelectionSettings">{{ selectionSettingsSaving ? '保存中...' : '保存选题规则' }}</button>
+            </div>
+          </footer>
+        </section>
+      </div>
       <div v-if="exportDialogVisible" class="report-export-dialog-layer">
         <section class="report-export-dialog" role="dialog" aria-modal="true" aria-label="导出报告PPT">
           <button type="button" class="export-dialog-close" aria-label="关闭" @click="closeExportDialog">×</button>
@@ -1855,6 +1963,34 @@ const createEmptyReport = () => ({
   slides: []
 })
 
+const createDefaultSelectionSettings = () => ({
+  sample_counts: {
+    more_than_20: 8,
+    more_than_10: 6,
+    more_than_4: 4,
+    at_most_4: 2
+  },
+  prohibited_standard_priorities: [],
+  flow_standard_priorities: {}
+})
+
+const cloneSelectionSettings = (value = {}) => {
+  const defaults = createDefaultSelectionSettings()
+  return {
+    sample_counts: {
+      ...defaults.sample_counts,
+      ...(value.sample_counts || {})
+    },
+    prohibited_standard_priorities: [...(value.prohibited_standard_priorities || [])].map(Number),
+    flow_standard_priorities: Object.fromEntries(
+      Object.entries(value.flow_standard_priorities || {}).map(([flowName, ids]) => [
+        flowName,
+        [...(ids || [])].map(Number)
+      ])
+    )
+  }
+}
+
 const getDefaultReportMonth = () => {
   const now = new Date()
   const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
@@ -1889,6 +2025,20 @@ const sourceDraftIds = ref([])
 const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
+const selectionSettingsDialogVisible = ref(false)
+const selectionSettingsLoading = ref(false)
+const selectionSettingsSaving = ref(false)
+const selectionSettingsError = ref('')
+const selectionSettingsMessage = ref('')
+const selectionSettings = ref(createDefaultSelectionSettings())
+const selectionSettingsDraft = ref(createDefaultSelectionSettings())
+const selectionSettingsMeta = ref({ updated_at: '', updated_by_name: '' })
+const selectionStandardOptions = ref([])
+const selectionBusinessFlows = ref([])
+const selectionRuleTab = ref('prohibited')
+const selectionActiveFlow = ref('')
+const selectionStandardKeyword = ref('')
+const selectionTableFilter = ref('')
 const activeQualitySlideIndex = ref(0)
 const exportDialogVisible = ref(false)
 const exportTask = ref(null)
@@ -1918,10 +2068,9 @@ const currentQualitySlide = computed(() => (
 ))
 const qualityOverallRows = computed(() => {
   if (currentQualitySlide.value?.kind !== 'overall') return []
-  return [
-    ...(currentQualitySlide.value.rows || []),
-    currentQualitySlide.value.total_row || {}
-  ]
+  const rows = [...(currentQualitySlide.value.rows || [])]
+  if (currentQualitySlide.value.total_row) rows.push(currentQualitySlide.value.total_row)
+  return rows
 })
 const hasReport = computed(() => Boolean(report.value?.month))
 const exportBusy = computed(() => ['queued', 'running'].includes(exportTask.value?.status))
@@ -1994,6 +2143,44 @@ const filteredSourceStations = computed(() => {
     }
     if (!keyword) return true
     return `${item.station_name} ${item.region}`.toLowerCase().includes(keyword)
+  })
+})
+const selectionSampleRuleOptions = [
+  { key: 'more_than_20', label: '问题数超过20项' },
+  { key: 'more_than_10', label: '问题数11至20项' },
+  { key: 'more_than_4', label: '问题数5至10项' },
+  { key: 'at_most_4', label: '问题数不超过4项' }
+]
+const selectionTableNames = computed(() => (
+  [...new Set(selectionStandardOptions.value.map((item) => item.table_name).filter(Boolean))]
+))
+const selectionStandardMap = computed(() => new Map(
+  selectionStandardOptions.value.map((item) => [Number(item.standard_id), item])
+))
+const currentSelectionPriorityIds = computed(() => {
+  if (selectionRuleTab.value === 'prohibited') {
+    return selectionSettingsDraft.value.prohibited_standard_priorities || []
+  }
+  return selectionSettingsDraft.value.flow_standard_priorities?.[selectionActiveFlow.value] || []
+})
+const currentSelectionPriorityStandards = computed(() => (
+  currentSelectionPriorityIds.value
+    .map((standardId) => selectionStandardMap.value.get(Number(standardId)))
+    .filter(Boolean)
+))
+const selectionPriorityTitle = computed(() => (
+  selectionRuleTab.value === 'prohibited'
+    ? '禁止项外部规范优先级'
+    : `${selectionActiveFlow.value || '当前环节'}规范优先级`
+))
+const filteredSelectionStandards = computed(() => {
+  const keyword = selectionStandardKeyword.value.toLowerCase()
+  return selectionStandardOptions.value.filter((item) => {
+    if (selectionRuleTab.value === 'flow' && selectionActiveFlow.value && item.business_flow !== selectionActiveFlow.value) return false
+    if (selectionTableFilter.value && item.table_name !== selectionTableFilter.value) return false
+    if (!keyword) return true
+    return [item.standard_id, item.table_name, item.business_flow, item.detail_text]
+      .some((value) => String(value || '').toLowerCase().includes(keyword))
   })
 })
 const groupedSourceStations = computed(() => {
@@ -2651,6 +2838,36 @@ const goToQualitySlide = (index) => {
   })
 }
 
+const isKeyboardEditingTarget = (target) => {
+  if (!(target instanceof HTMLElement)) return false
+  return Boolean(
+    target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
+  )
+}
+
+const handleQualitySlideKeydown = (event) => {
+  if (
+    !isQualityMeasurementReport.value
+    || qualitySlides.value.length < 2
+    || event.defaultPrevented
+    || event.ctrlKey
+    || event.metaKey
+    || event.altKey
+    || isKeyboardEditingTarget(event.target)
+    || sourceDialogVisible.value
+    || selectionSettingsDialogVisible.value
+    || exportDialogVisible.value
+    || imagePreview.value.visible
+  ) return
+
+  const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
+  if (!direction) return
+  const targetIndex = activeQualitySlideIndex.value + direction
+  if (targetIndex < 0 || targetIndex >= qualitySlides.value.length) return
+  event.preventDefault()
+  goToQualitySlide(targetIndex)
+}
+
 const getQualityBarHeight = (value) => {
   const values = currentQualitySlide.value?.distribution || []
   const maximum = Math.max(1, ...values.map((item) => Number(item.count) || 0))
@@ -2658,6 +2875,120 @@ const getQualityBarHeight = (value) => {
 }
 
 const stripTracePrefix = (value) => String(value || '暂无分析结论。').replace(/^综上所述[:：]?\s*/, '')
+
+const setCurrentSelectionPriorityIds = (ids) => {
+  const normalized = [...new Set((ids || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
+  if (selectionRuleTab.value === 'prohibited') {
+    selectionSettingsDraft.value.prohibited_standard_priorities = normalized
+    return
+  }
+  selectionSettingsDraft.value.flow_standard_priorities = {
+    ...(selectionSettingsDraft.value.flow_standard_priorities || {}),
+    [selectionActiveFlow.value]: normalized
+  }
+}
+
+const isSelectionStandardSelected = (standardId) => (
+  currentSelectionPriorityIds.value.map(Number).includes(Number(standardId))
+)
+
+const addSelectionPriority = (standardId) => {
+  if (!canGenerateReports.value || isSelectionStandardSelected(standardId)) return
+  setCurrentSelectionPriorityIds([...currentSelectionPriorityIds.value, Number(standardId)])
+}
+
+const removeSelectionPriority = (index) => {
+  if (!canGenerateReports.value) return
+  const ids = [...currentSelectionPriorityIds.value]
+  ids.splice(index, 1)
+  setCurrentSelectionPriorityIds(ids)
+}
+
+const moveSelectionPriority = (index, direction) => {
+  if (!canGenerateReports.value) return
+  const ids = [...currentSelectionPriorityIds.value]
+  const targetIndex = index + direction
+  if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return
+  const [item] = ids.splice(index, 1)
+  ids.splice(targetIndex, 0, item)
+  setCurrentSelectionPriorityIds(ids)
+}
+
+const loadSelectionSettings = async () => {
+  selectionSettingsLoading.value = true
+  selectionSettingsError.value = ''
+  selectionSettingsMessage.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/quality-selection-settings')
+    if (!response.data?.success) throw new Error(response.data?.error || '读取选题规则失败。')
+    selectionSettings.value = cloneSelectionSettings(response.data.settings)
+    selectionSettingsDraft.value = cloneSelectionSettings(response.data.settings)
+    selectionSettingsMeta.value = {
+      updated_at: response.data.updated_at || '',
+      updated_by_name: response.data.updated_by_name || ''
+    }
+    selectionStandardOptions.value = Array.isArray(response.data.standards) ? response.data.standards : []
+    selectionBusinessFlows.value = Array.isArray(response.data.business_flows) ? response.data.business_flows : []
+    if (!selectionBusinessFlows.value.includes(selectionActiveFlow.value)) {
+      selectionActiveFlow.value = selectionBusinessFlows.value[0] || ''
+    }
+  } catch (err) {
+    selectionSettingsError.value = err?.response?.data?.error || err?.message || '读取选题规则失败。'
+  } finally {
+    selectionSettingsLoading.value = false
+  }
+}
+
+const openSelectionSettingsDialog = async () => {
+  if (!isQualityMeasurementReport.value) return
+  selectionSettingsDialogVisible.value = true
+  selectionRuleTab.value = 'prohibited'
+  selectionStandardKeyword.value = ''
+  selectionTableFilter.value = ''
+  await loadSelectionSettings()
+}
+
+const closeSelectionSettingsDialog = () => {
+  selectionSettingsDialogVisible.value = false
+  selectionSettingsError.value = ''
+  selectionSettingsMessage.value = ''
+}
+
+const saveSelectionSettings = async () => {
+  if (!canGenerateReports.value || selectionSettingsSaving.value) return
+  selectionSettingsSaving.value = true
+  selectionSettingsError.value = ''
+  selectionSettingsMessage.value = ''
+  try {
+    const normalizedCounts = {}
+    for (const item of selectionSampleRuleOptions) {
+      const value = Number(selectionSettingsDraft.value.sample_counts?.[item.key])
+      if (!Number.isInteger(value) || value < 1 || value > 12) {
+        throw new Error(`${item.label}的抽取数量必须是1至12之间的整数。`)
+      }
+      normalizedCounts[item.key] = value
+    }
+    const payload = cloneSelectionSettings({
+      ...selectionSettingsDraft.value,
+      sample_counts: normalizedCounts
+    })
+    const response = await axios.put('/api/inspection-reports/quality-selection-settings', {
+      settings: payload
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存选题规则失败。')
+    selectionSettings.value = cloneSelectionSettings(response.data.settings)
+    selectionSettingsDraft.value = cloneSelectionSettings(response.data.settings)
+    selectionSettingsMeta.value = {
+      updated_at: response.data.updated_at || '',
+      updated_by_name: response.data.updated_by_name || ''
+    }
+    selectionSettingsMessage.value = '选题规则已保存，重新生成报告后生效。'
+  } catch (err) {
+    selectionSettingsError.value = err?.response?.data?.error || err?.message || '保存选题规则失败。'
+  } finally {
+    selectionSettingsSaving.value = false
+  }
+}
 
 const normalizeSourceIds = (values) => (
   [...new Set((values || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
@@ -3078,11 +3409,13 @@ const loadReportTypes = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleQualitySlideKeydown)
   await loadReportTypes()
   await loadReportState()
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleQualitySlideKeydown)
   contextRequestId += 1
   clearPolling()
   clearExportPolling()
@@ -3538,6 +3871,7 @@ onBeforeUnmount(() => {
 }
 
 .source-configure-btn,
+.selection-configure-btn,
 .source-apply-generate-btn {
   min-height: 40px;
   padding: 0 15px;
@@ -3552,6 +3886,12 @@ onBeforeUnmount(() => {
   background: #f0fdfa;
 }
 
+.selection-configure-btn {
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
 .source-apply-generate-btn {
   border: 1px solid #0f766e;
   color: #ffffff;
@@ -3559,12 +3899,14 @@ onBeforeUnmount(() => {
 }
 
 .source-configure-btn:disabled,
+.selection-configure-btn:disabled,
 .source-apply-generate-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
-.report-source-dialog-layer {
+.report-source-dialog-layer,
+.report-selection-dialog-layer {
   position: fixed;
   inset: 0;
   z-index: 15000;
@@ -3573,6 +3915,492 @@ onBeforeUnmount(() => {
   padding: 34px;
   background: rgba(15, 23, 42, 0.58);
   backdrop-filter: blur(8px);
+}
+
+.report-selection-dialog-layer {
+  z-index: 15500;
+}
+
+.report-selection-dialog {
+  position: relative;
+  width: min(1180px, calc(100vw - 68px));
+  max-height: min(900px, calc(100dvh - 56px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 28px;
+  background: #f8fafc;
+  box-shadow: 0 38px 110px rgba(15, 23, 42, 0.34);
+}
+
+.selection-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 4;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.92);
+  font-size: 29px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.selection-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 80px 20px 26px;
+  border-bottom: 1px solid #e2e8f0;
+  background:
+    radial-gradient(circle at 14% 0%, rgba(37, 99, 235, 0.14), transparent 38%),
+    #ffffff;
+}
+
+.selection-dialog-head > div:first-child > span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.selection-dialog-head h3 {
+  margin: 5px 0;
+  color: #0f172a;
+  font-size: 23px;
+}
+
+.selection-dialog-head p {
+  margin: 0;
+  color: #64748b;
+}
+
+.selection-updated-meta {
+  min-width: 150px;
+  padding: 11px 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 15px;
+  text-align: right;
+  background: #eff6ff;
+}
+
+.selection-updated-meta span,
+.selection-updated-meta strong,
+.selection-updated-meta small {
+  display: block;
+}
+
+.selection-updated-meta span,
+.selection-updated-meta small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.selection-updated-meta strong {
+  margin: 3px 0;
+  color: #1e3a8a;
+  font-size: 14px;
+}
+
+.selection-settings-message {
+  margin: 12px 24px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selection-settings-message.error {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.selection-settings-message.success {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.selection-rule-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px 24px 12px;
+}
+
+.selection-rule-tabs button {
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid #dbe4ee;
+  border-radius: 15px;
+  text-align: left;
+  color: #475569;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.selection-rule-tabs button.active {
+  border-color: #60a5fa;
+  color: #1e3a8a;
+  background: #eff6ff;
+  box-shadow: inset 4px 0 #2563eb;
+}
+
+.selection-rule-tabs strong,
+.selection-rule-tabs span {
+  display: block;
+}
+
+.selection-rule-tabs strong {
+  font-size: 14px;
+}
+
+.selection-rule-tabs span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.selection-settings-loading {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  color: #64748b;
+}
+
+.selection-sampling-section,
+.selection-priority-section {
+  padding: 6px 24px 14px;
+}
+
+.selection-priority-section {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.selection-section-title > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.selection-section-title > div > span {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.selection-section-title h4,
+.selection-section-title p {
+  margin: 0;
+}
+
+.selection-section-title h4 {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.selection-section-title p {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.selection-sampling-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.selection-sampling-grid label {
+  padding: 11px 12px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.selection-sampling-grid label > span {
+  display: block;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.selection-sampling-grid label > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.selection-sampling-grid input {
+  width: 74px;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  text-align: center;
+  color: #1e3a8a;
+  font-weight: 900;
+  background: #eff6ff;
+}
+
+.selection-sampling-grid em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.selection-flow-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-top: 13px;
+  padding-bottom: 3px;
+}
+
+.selection-flow-tabs button {
+  flex: 0 0 auto;
+  padding: 7px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  color: #475569;
+  background: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.selection-flow-tabs button.active {
+  border-color: #2563eb;
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.selection-standard-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.7fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.selection-standard-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.selection-standard-toolbar input,
+.selection-standard-toolbar select {
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  padding: 0 12px;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.selection-priority-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.selection-standard-pool,
+.selection-priority-list {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dbe4ee;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+.selection-standard-pool > header,
+.selection-priority-list > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.selection-standard-pool > header span,
+.selection-priority-list > header span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.selection-standard-pool > div,
+.selection-priority-list > div {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.selection-standard-pool > div > button,
+.selection-priority-list article {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+  padding: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  text-align: left;
+  background: #ffffff;
+}
+
+.selection-standard-pool > div > button {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
+.selection-standard-pool > div > button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.selection-standard-id,
+.selection-rank {
+  width: 38px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.selection-standard-pool strong,
+.selection-standard-pool small,
+.selection-priority-list strong,
+.selection-priority-list small {
+  display: block;
+  min-width: 0;
+}
+
+.selection-standard-pool small,
+.selection-priority-list small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection-standard-pool b {
+  color: #2563eb;
+  font-size: 11px;
+}
+
+.selection-priority-list article {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.selection-rank-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.selection-rank-actions button {
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #334155;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.selection-rank-actions button.remove {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.selection-rank-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.selection-standard-pool p,
+.selection-priority-list p {
+  margin: 22px 10px;
+  color: #94a3b8;
+  text-align: center;
+  font-size: 12px;
+}
+
+.selection-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 24px 18px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.selection-dialog-footer p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.selection-dialog-footer > div {
+  display: flex;
+  gap: 9px;
+}
+
+.selection-cancel-btn,
+.selection-save-btn {
+  min-width: 112px;
+  height: 40px;
+  border-radius: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.selection-cancel-btn {
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  background: #ffffff;
+}
+
+.selection-save-btn {
+  border: 1px solid #2563eb;
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.selection-save-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .report-export-dialog-layer {
@@ -4643,7 +5471,7 @@ onBeforeUnmount(() => {
 .quality-slide-header h2 {
   margin: 0;
   color: #05080b;
-  font-size: clamp(16px, 2.05vw, 30px);
+  font-size: clamp(20px, 2.25vw, 34px);
   font-weight: 950;
   letter-spacing: 0.02em;
 }
@@ -4673,7 +5501,7 @@ onBeforeUnmount(() => {
 .quality-slide-narrative {
   margin: 0;
   color: #101820;
-  font-size: clamp(8px, 1.25vw, 18px);
+  font-size: clamp(10px, 1.38vw, 20px);
   font-weight: 700;
   line-height: 1.75;
   text-indent: 2em;
@@ -4702,7 +5530,7 @@ onBeforeUnmount(() => {
   border: 1px solid #91a5b4;
   text-align: center;
   vertical-align: middle;
-  font-size: clamp(6px, 0.78vw, 11px);
+  font-size: clamp(7px, 0.88vw, 12px);
   line-height: 1.35;
 }
 
@@ -4747,7 +5575,7 @@ onBeforeUnmount(() => {
 
 .quality-finding-copy p {
   margin: 0 0 1.2em;
-  font-size: clamp(8px, 1.15vw, 17px);
+  font-size: clamp(10px, 1.32vw, 19px);
   font-weight: 700;
   line-height: 1.72;
 }
@@ -4857,7 +5685,7 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid article {
   display: grid;
-  grid-template-rows: auto minmax(0, 0.8fr) minmax(0, 1.4fr);
+  grid-template-rows: auto minmax(0, 0.62fr) minmax(0, 1.75fr);
   min-width: 0;
   padding: 0 5%;
 }
@@ -4868,13 +5696,14 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid h3 {
   margin: 0 0 0.5em;
-  font-size: clamp(9px, 1.25vw, 18px);
+  color: #125f8c;
+  font-size: clamp(11px, 1.45vw, 21px);
 }
 
 .quality-issue-pair-grid p {
   overflow: hidden;
   margin: 0;
-  font-size: clamp(7px, 1vw, 14px);
+  font-size: clamp(9px, 1.12vw, 16px);
   font-weight: 700;
   line-height: 1.55;
 }
@@ -4894,6 +5723,33 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.quality-issue-pair-grid.single article {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 2% 4%;
+  padding: 0 2%;
+}
+
+.quality-issue-pair-grid.single article h3 {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: clamp(13px, 1.7vw, 25px);
+}
+
+.quality-issue-pair-grid.single article p {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: clamp(10px, 1.3vw, 19px);
+  line-height: 1.7;
+}
+
+.quality-issue-pair-grid.single article button,
+.quality-issue-pair-grid.single article .quality-slide-photo-empty {
+  grid-column: 2;
+  grid-row: 1 / 3;
 }
 
 .quality-slide-photo-empty,
@@ -4917,7 +5773,7 @@ onBeforeUnmount(() => {
   min-height: 17%;
   margin: 0 0 2%;
   color: #d60000;
-  font-size: clamp(8px, 1.15vw, 17px);
+  font-size: clamp(10px, 1.32vw, 19px);
   font-weight: 800;
   line-height: 1.55;
 }
@@ -4931,12 +5787,12 @@ onBeforeUnmount(() => {
 
 .quality-trace-layout section strong {
   color: #3477c3;
-  font-size: clamp(8px, 1vw, 14px);
+  font-size: clamp(9px, 1.15vw, 16px);
 }
 
 .quality-trace-layout section p {
   margin: 0;
-  font-size: clamp(7px, 0.95vw, 14px);
+  font-size: clamp(9px, 1.08vw, 16px);
   font-weight: 700;
   line-height: 1.6;
 }
@@ -4953,7 +5809,7 @@ onBeforeUnmount(() => {
 
 .quality-trace-analysis p,
 .quality-trace-analysis li {
-  font-size: clamp(8px, 1.1vw, 16px);
+  font-size: clamp(10px, 1.25vw, 18px);
   font-weight: 700;
   line-height: 1.7;
 }
@@ -4972,12 +5828,12 @@ onBeforeUnmount(() => {
 .quality-work-plan h3 {
   margin: 0;
   color: #3477c3;
-  font-size: clamp(9px, 1.25vw, 18px);
+  font-size: clamp(11px, 1.45vw, 21px);
 }
 
 .quality-work-plan p {
   margin: 0.25em 0 0;
-  font-size: clamp(8px, 1.05vw, 15px);
+  font-size: clamp(10px, 1.28vw, 18px);
   font-weight: 700;
   line-height: 1.55;
 }
@@ -8677,6 +9533,7 @@ onBeforeUnmount(() => {
   }
 
   .source-configure-btn,
+  .selection-configure-btn,
   .source-apply-generate-btn {
     width: 100%;
   }
@@ -9038,7 +9895,8 @@ onBeforeUnmount(() => {
     grid-column: auto;
   }
 
-  .report-source-dialog-layer {
+  .report-source-dialog-layer,
+  .report-selection-dialog-layer {
     padding: 10px;
     align-items: center;
   }
@@ -9047,6 +9905,75 @@ onBeforeUnmount(() => {
     width: calc(100vw - 20px);
     max-height: calc(100dvh - 20px);
     border-radius: 22px;
+  }
+
+  .report-selection-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 22px;
+  }
+
+  .selection-dialog-close {
+    top: 12px;
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .selection-dialog-head {
+    align-items: flex-start;
+    padding: 20px 60px 16px 18px;
+  }
+
+  .selection-dialog-head h3 {
+    font-size: 19px;
+  }
+
+  .selection-dialog-head p,
+  .selection-updated-meta {
+    display: none;
+  }
+
+  .selection-rule-tabs {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding: 12px 14px 8px;
+  }
+
+  .selection-rule-tabs button {
+    padding: 10px 12px;
+  }
+
+  .selection-sampling-section,
+  .selection-priority-section {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .selection-sampling-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .selection-standard-toolbar,
+  .selection-priority-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-standard-pool > div,
+  .selection-priority-list > div {
+    max-height: 220px;
+  }
+
+  .selection-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 11px 14px 14px;
+  }
+
+  .selection-dialog-footer > div,
+  .selection-cancel-btn,
+  .selection-save-btn {
+    width: 100%;
   }
 
   .source-dialog-close {

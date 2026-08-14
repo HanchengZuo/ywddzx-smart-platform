@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.8.1',
+    date: '2026-08-14',
+    title: '质量计量报告选题与排版优化',
+    summary: '报告选题规则可以自定义，PPT文字和照片排版更清楚。',
+    items: [
+      '禁止项按星标、外部规范优先级和AI裁决依次选题。',
+      '分环节突出问题数量和规范优先级支持自定义。',
+      '网页预览和导出PPT会按内容自动分页并放大文字、完整展示照片。'
+    ]
+  },
+  {
     version: 'v4.8',
     date: '2026-08-14',
     title: '质量计量报告改为PPT预览',
