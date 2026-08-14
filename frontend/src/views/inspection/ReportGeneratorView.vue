@@ -63,7 +63,7 @@
       </div>
     </section>
 
-    <section v-if="!templateUnavailable" class="report-source-panel card-surface">
+    <section v-if="isQualityMeasurementReport && !templateUnavailable" class="report-source-panel card-surface">
       <div class="report-source-main">
         <div class="report-source-icon" aria-hidden="true">
           <span></span>
@@ -177,7 +177,7 @@
     </section>
 
     <section v-else-if="hasReport" class="report-document card-surface">
-      <div class="report-document-head">
+      <div v-if="!isQualityMeasurementReport" class="report-document-head">
         <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
           <h1>{{ report.title || reportTitleFallback }}</h1>
@@ -205,276 +205,111 @@
       </div>
 
       <template v-if="isQualityMeasurementReport">
-      <div class="summary-cards">
-        <article v-for="card in summaryCards" :key="card.label" class="summary-card">
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value }}</strong>
-          <small>{{ card.desc }}</small>
-        </article>
-      </div>
-
-      <article class="chapter-card">
-        <div class="chapter-banner">第一章　总体情况</div>
-        <p class="chapter-lead">{{ report.overview_text || emptyOverviewText }}</p>
-
-        <div class="report-table-wrap">
-          <table class="report-table">
-            <thead>
-              <tr>
-                <th rowspan="2">二级单位</th>
-                <th rowspan="2">检查站点数量</th>
-                <th colspan="2">发现问题数量</th>
-                <th rowspan="2">单库、车、站问题数量</th>
-              </tr>
-              <tr>
-                <th>一般性问题</th>
-                <th>涉及禁止项问题</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!reportRows.length">
-                <td colspan="5" class="empty-cell">当前月份暂无计量稽查问题数据。</td>
-              </tr>
-              <tr v-for="row in reportRows" :key="`${row.unit_type}-${row.unit_name}`">
-                <td>
-                  <div class="unit-cell">
-                    <span :class="['unit-type-pill', row.unit_type]">{{ row.unit_type_label }}</span>
-                    <strong>{{ row.unit_name }}</strong>
-                  </div>
-                </td>
-                <td>{{ row.station_count }}</td>
-                <td>{{ row.general_issue_count }}</td>
-                <td>{{ row.prohibited_issue_count }}</td>
-                <td>{{ row.total_issue_count }}</td>
-              </tr>
-              <tr class="total-row">
-                <td>{{ totalRow.unit_name || '合计' }}</td>
-                <td>{{ totalRow.station_count || 0 }}</td>
-                <td>{{ totalRow.general_issue_count || 0 }}</td>
-                <td>{{ totalRow.prohibited_issue_count || 0 }}</td>
-                <td>{{ totalRow.total_issue_count || 0 }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
-
-      <article class="chapter-card">
-        <div class="chapter-banner">第二章　检查发现-发现问题</div>
-        <p class="chapter-lead">{{ chapterTwoText }}</p>
-        <div class="finding-distribution-chart">
-          <div class="finding-chart-head">
+        <div class="quality-ppt-viewer">
+          <header class="quality-ppt-toolbar">
             <div>
-              <span>问题板块分布</span>
-              <strong>按业务流程统计</strong>
+              <span>PRESENTATION PREVIEW</span>
+              <strong>{{ report.title || reportTitleFallback }}</strong>
+              <small>生成于 {{ reportGeneratedAt }} · 网页预览与导出PPT使用同一份内容</small>
             </div>
-            <div class="finding-chart-total">
-              <strong>{{ findingSummary.total_issue_count || 0 }}</strong>
-              <span>问题总数</span>
-            </div>
-          </div>
+            <div class="quality-ppt-page-count">{{ activeQualitySlideIndex + 1 }} / {{ qualitySlides.length }}</div>
+          </header>
 
-          <div v-if="businessFlowRows.length" class="finding-flow-list">
-            <div
-              v-for="(item, index) in businessFlowRows"
-              :key="`finding-flow-${item.name}`"
-              class="finding-flow-row"
-              :style="{
-                '--flow-color': getFindingFlowColor(index),
-                '--flow-width': `${getFindingFlowWidth(item.count)}%`
-              }"
-            >
-              <div class="finding-flow-label">
-                <span>{{ String(index + 1).padStart(2, '0') }}</span>
-                <strong>{{ item.name }}</strong>
-              </div>
-              <div class="finding-flow-track" aria-hidden="true">
-                <span></span>
-              </div>
-              <div class="finding-flow-value">
-                <strong>{{ item.count }}项</strong>
-                <span>{{ formatPercent(item.percentage) }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-else class="finding-chart-empty">当前月份暂无业务流程分布数据。</div>
-        </div>
-      </article>
+          <div v-if="currentQualitySlide" class="quality-ppt-stage">
+            <article class="quality-ppt-slide" :class="`slide-${currentQualitySlide.kind}`">
+              <header class="quality-slide-header">
+                <h2>{{ currentQualitySlide.title }}</h2>
+                <div class="quality-slide-brand">
+                  <AiContentBadge
+                    v-if="currentQualitySlide.ai_generated"
+                    :generated="true"
+                    ai-label="AI生成"
+                    compact
+                  />
+                  <img src="/report-assets/quality-report-logo.png" alt="品牌标识" />
+                </div>
+              </header>
 
-      <article class="chapter-card">
-        <div class="chapter-banner">第三章　检查发现-禁止项问题</div>
-        <p class="chapter-note">
-          系统从禁止项问题中优先按片区或控（参）股单位去重选取典型问题，最多展示 10 项。
-        </p>
-        <div class="report-table-wrap">
-          <table class="report-table typical-table">
-            <thead>
-              <tr>
-                <th>所属单位（片区/控参股单位）</th>
-                <th>禁止项管理规定（具体问题描述）</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!prohibitedExamples.length">
-                <td colspan="2" class="empty-cell">当前月份暂无可提取的禁止项典型问题。</td>
-              </tr>
-              <tr v-for="item in prohibitedExamples" :key="`prohibited-${item.issue_id}-${item.unit_name}`">
-                <td>
-                  <div class="unit-cell">
-                    <span :class="['unit-type-pill', item.unit_type]">{{ item.unit_type_label }}</span>
-                    <strong>{{ item.unit_name }}</strong>
+              <template v-if="currentQualitySlide.kind === 'overall'">
+                <p class="quality-slide-narrative overall-copy">{{ currentQualitySlide.narrative }}</p>
+                <div class="quality-slide-table-wrap overall-table">
+                  <table>
+                    <thead>
+                      <tr><th rowspan="2">序号</th><th rowspan="2">二级单位</th><th rowspan="2">检查油库数量</th><th rowspan="2">检查加油站数量</th><th rowspan="2">检查运输车辆数量</th><th colspan="3">发现问题数量</th><th rowspan="2">单库、车、站问题数量</th></tr>
+                      <tr><th>一般性问题</th><th>违规违纪问题</th><th>涉及禁止项问题</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in qualityOverallRows" :key="`overall-${row.sequence}-${row.unit_name}`" :class="{ total: row.sequence === '合计' }">
+                        <td>{{ row.sequence }}</td><td>{{ row.unit_name }}</td><td>{{ row.oil_depot_count || 0 }}</td><td>{{ row.station_count || 0 }}</td><td>{{ row.transport_vehicle_count || 0 }}</td><td>{{ row.general_issue_count || 0 }}</td><td>{{ row.violation_issue_count || 0 }}</td><td>{{ row.prohibited_issue_count || 0 }}</td><td>{{ row.total_issue_count || 0 }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'finding_overview'">
+                <div class="quality-finding-layout">
+                  <div class="quality-finding-copy"><p v-for="line in currentQualitySlide.text_lines" :key="line">{{ line }}</p></div>
+                  <div class="quality-slide-table-wrap finding-table"><table><thead><tr><th>序号</th><th>环节排前三</th><th>问题类型</th><th>问题数量</th><th>占比/%</th></tr></thead><tbody><tr v-for="(row, index) in currentQualitySlide.rows" :key="`finding-${index}-${row.problem_type}`" :class="{ total: row.sequence === '合计' }"><td>{{ row.sequence }}</td><td>{{ row.section }}</td><td>{{ row.problem_type }}</td><td>{{ row.count }}</td><td>{{ row.percentage }}</td></tr></tbody></table></div>
+                </div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'prohibited'">
+                <p class="quality-slide-narrative prohibited-copy">{{ currentQualitySlide.narrative }}</p>
+                <div class="quality-slide-table-wrap prohibited-table"><table><thead><tr><th>序号</th><th>环节</th><th>基层单位名称</th><th>禁止项管理规定</th><th>处罚情况</th></tr></thead><tbody><tr v-if="!currentQualitySlide.rows?.length"><td colspan="5">当前月份暂无禁止项问题</td></tr><tr v-for="(row, index) in currentQualitySlide.rows" :key="`prohibited-slide-${row.issue_id}`"><td>{{ index + 1 }}</td><td>加油站环节</td><td>{{ row.unit_name }}</td><td class="align-left">{{ row.description }}</td><td>{{ row.penalty || '' }}</td></tr></tbody></table></div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'flow_chart'">
+                <p class="quality-slide-narrative flow-copy">{{ currentQualitySlide.narrative }}</p>
+                <h3 class="quality-chart-heading">{{ currentQualitySlide.chart_title }}</h3>
+                <div class="quality-ppt-chart">
+                  <div v-for="item in currentQualitySlide.distribution" :key="`ppt-flow-${item.name}`" class="quality-ppt-bar-column">
+                    <div class="quality-ppt-bar-area"><span class="quality-ppt-bar-value" :style="{ bottom: `calc(${getQualityBarHeight(item.count)}% + 8px)` }">{{ item.count }}</span><i :style="{ height: `${getQualityBarHeight(item.count)}%` }"></i></div>
+                    <strong>{{ item.name }}</strong><small>{{ formatPercent(item.percentage) }}</small>
                   </div>
-                </td>
-                <td class="text-cell">{{ item.description }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
+                  <div v-if="!currentQualitySlide.distribution?.length" class="quality-slide-empty">当前月份暂无业务流程分布数据</div>
+                </div>
+              </template>
 
-      <article class="chapter-card station-link-chapter">
-        <div class="chapter-banner">第四章　检查发现-加油站环节</div>
-        <p class="chapter-lead strong-lead">{{ stationLinkText }}</p>
-        <h4 class="chart-title">分布条形图</h4>
-        <div class="bar-chart" :style="{ '--chart-max': chartMax }">
-          <div class="chart-grid">
-            <span v-for="tick in chartTicks" :key="`tick-${tick}`" :style="{ bottom: `${(tick / chartMax) * 100}%` }">
-              {{ tick }}
-            </span>
-          </div>
-          <div class="chart-bars">
-            <div v-for="item in businessFlowRows" :key="`flow-${item.name}`" class="chart-bar-item">
-              <div class="bar-value">{{ item.count }}</div>
-              <div class="bar-track">
-                <div class="bar-fill" :style="{ height: `${getBarHeight(item.count)}%` }"></div>
-              </div>
-              <div class="bar-label">{{ item.name }}</div>
-              <div class="bar-percent">{{ formatPercent(item.percentage) }}</div>
-            </div>
-            <div v-if="!businessFlowRows.length" class="chart-empty">当前月份暂无业务流程分布数据。</div>
-          </div>
-        </div>
-      </article>
+              <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
+                <div class="quality-slide-band">{{ currentQualitySlide.subtitle }}</div>
+                <div class="quality-issue-pair-grid">
+                  <article v-for="issue in currentQualitySlide.issues" :key="`slide-issue-${issue.issue_id}`">
+                    <h3>{{ issue.station_name || '未命名站点' }}</h3><p>{{ issue.description || '暂无问题描述' }}</p>
+                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" /></button>
+                    <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
+                  </article>
+                </div>
+              </template>
 
-      <article class="chapter-card">
-        <div class="chapter-banner">第五章　各环节突出问题</div>
-        <div class="content-source-row">
-          <span>突出问题的筛选和概括会明确标注内容来源</span>
-        </div>
-        <section v-for="flow in flowHighlights" :key="`highlight-${flow.flow_name}`" class="flow-highlight-section">
-          <div class="flow-highlight-head">
-            <div class="flow-highlight-title">
-              <h4>{{ flow.flow_name }}</h4>
-              <AiContentBadge
-                :generated="Boolean(flow.ai_generated)"
-                ai-label="AI辅助筛选"
-                fallback-label="规则筛选"
-                compact
-              />
-            </div>
-            <p>发现问题{{ flow.count || 0 }}项，突出问题{{ flow.highlight_count || 0 }}项：</p>
-          </div>
-          <p v-if="flow.summary" class="flow-highlight-summary">{{ flow.summary }}</p>
-          <div v-if="flow.highlighted_issues?.length" class="highlight-issue-grid">
-            <article v-for="issue in flow.highlighted_issues" :key="`highlight-issue-${flow.flow_name}-${issue.issue_id}`"
-              class="highlight-issue-card">
-              <div class="highlight-issue-text">
-                <span>{{ issue.unit_name || '未设置单位' }}</span>
-                <strong>{{ issue.station_name || '未命名站点' }}</strong>
-                <p>{{ issue.description || '暂无问题描述' }}</p>
-              </div>
-              <button
-                v-if="issue.issue_photo"
-                type="button"
-                class="highlight-photo is-clickable"
-                @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"
-              >
-                <img :src="resolveImage(issue.issue_photo)" alt="问题照片" />
-              </button>
-              <div v-else class="highlight-photo">
-                <span>暂无照片</span>
-              </div>
+              <template v-else-if="currentQualitySlide.kind === 'management_trace'">
+                <div class="quality-trace-layout">
+                  <div><p class="quality-typical-issue"><b>典型问题：</b>{{ formatStationIssue(currentQualitySlide.typical_issue || {}) }}</p><section v-for="item in currentQualitySlide.analysis_items" :key="item.label"><strong>{{ item.label }}</strong><p>{{ item.content || '-' }}</p></section></div>
+                  <button v-if="currentQualitySlide.typical_issue?.issue_photo" type="button" @click="openImagePreview(currentQualitySlide.typical_issue.issue_photo, '典型问题照片')"><img :src="resolveImage(currentQualitySlide.typical_issue.issue_photo)" alt="典型问题照片" /></button>
+                  <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
+                </div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'trace_analysis'">
+                <div class="quality-slide-band wide">{{ currentQualitySlide.subtitle }}</div>
+                <div class="quality-trace-analysis"><h3>综上所述：</h3><p>{{ stripTracePrefix(currentQualitySlide.conclusion) }}</p><h3>改进措施：</h3><ol><li v-for="item in currentQualitySlide.improvement_measures" :key="`${item.level}-${item.content}`"><strong>{{ item.level }}：</strong>{{ item.content }}</li></ol></div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'work_plan'">
+                <ol class="quality-work-plan"><li v-for="item in currentQualitySlide.items" :key="`${item.title}-${item.content}`"><h3>{{ item.title }}</h3><p>{{ item.content }}</p></li></ol>
+              </template>
+
+              <span class="quality-slide-page">{{ activeQualitySlideIndex + 1 }}</span>
             </article>
           </div>
-          <div v-else class="empty-highlight">当前环节暂无可展示的突出问题。</div>
-        </section>
-      </article>
+          <div v-else class="quality-slide-empty">当前报告还没有可展示的幻灯片，请重新生成。</div>
 
-      <article class="chapter-card trace-chapter">
-        <div class="chapter-banner">第六章　管理追溯</div>
-        <div class="content-source-row">
-          <span>典型问题分析、结论和改进措施</span>
-          <AiContentBadge
-            :generated="Boolean(managementTrace.ai_generated)"
-            ai-label="AI参与生成"
-            fallback-label="规则生成"
-          />
+          <nav v-if="qualitySlides.length" class="quality-ppt-pagination" aria-label="报告翻页">
+            <button type="button" :disabled="activeQualitySlideIndex === 0" @click="goToQualitySlide(activeQualitySlideIndex - 1)">上一页</button>
+            <div><button v-for="(slide, index) in qualitySlides" :key="`slide-page-${index}`" type="button" :class="{ active: index === activeQualitySlideIndex }" @click="goToQualitySlide(index)">{{ index + 1 }}</button></div>
+            <button type="button" :disabled="activeQualitySlideIndex >= qualitySlides.length - 1" @click="goToQualitySlide(activeQualitySlideIndex + 1)">下一页</button>
+          </nav>
         </div>
-        <div v-if="managementTrace.typical_issue" class="trace-problem-card">
-          <span>典型问题</span>
-          <strong>{{ formatStationIssue(managementTrace.typical_issue) }}</strong>
-        </div>
-        <div v-else class="trace-problem-card muted">
-          <span>典型问题</span>
-          <strong>当前月份暂无可追溯的典型问题。</strong>
-        </div>
-
-        <div class="trace-analysis-grid">
-          <article>
-            <span>（1）执行层面</span>
-            <p>{{ managementTrace.execution_analysis || '-' }}</p>
-          </article>
-          <article>
-            <span>（2）监督层面</span>
-            <p>{{ managementTrace.supervision_analysis || '-' }}</p>
-          </article>
-          <article>
-            <span>（3）管理层面</span>
-            <p>{{ managementTrace.management_analysis || '-' }}</p>
-          </article>
-        </div>
-
-        <div class="trace-conclusion-card">
-          <h4>典型问题分析</h4>
-          <p>{{ managementTrace.conclusion || '综上所述：当前月份暂无可分析的典型问题。' }}</p>
-          <h4>改进措施</h4>
-          <ol v-if="managementTrace.improvement_measures?.length">
-            <li v-for="item in managementTrace.improvement_measures" :key="`${item.level}-${item.content}`">
-              <strong>{{ item.level }}：</strong>{{ item.content }}
-            </li>
-          </ol>
-          <p v-else>暂无改进措施。</p>
-        </div>
-      </article>
-
-      <article class="chapter-card">
-        <div class="chapter-banner">第七章　工作计划</div>
-        <div class="content-source-row">
-          <span>以本月问题分布与管理分析为依据生成</span>
-          <AiContentBadge
-            :generated="Boolean(deepAnalysis.work_plan_ai_generated)"
-            ai-label="AI生成"
-            fallback-label="规则生成"
-          />
-        </div>
-        <div class="work-plan-list">
-          <article v-for="(item, index) in workPlan" :key="`work-plan-${index}`" class="work-plan-card">
-            <span>{{ index + 1 }}</span>
-            <div>
-              <div class="work-plan-title-row">
-                <h4>{{ item.title }}</h4>
-                <AiContentBadge
-                  :generated="Boolean(item.ai_generated)"
-                  ai-label="AI生成"
-                  fallback-label="规则生成"
-                  compact
-                />
-              </div>
-              <p>{{ item.content }}</p>
-            </div>
-          </article>
-        </div>
-      </article>
       </template>
 
       <template v-else-if="isNonOilReport">
@@ -1702,7 +1537,7 @@
     </section>
 
     <teleport to="body">
-      <div v-if="sourceDialogVisible" class="report-source-dialog-layer">
+      <div v-if="sourceDialogVisible && isQualityMeasurementReport" class="report-source-dialog-layer">
         <section class="report-source-dialog" role="dialog" aria-modal="true" aria-label="设置报告数据来源">
           <button type="button" class="source-dialog-close" aria-label="关闭" @click="closeSourceDialog">×</button>
           <header class="source-dialog-head">
@@ -2016,7 +1851,8 @@ const createEmptyReport = () => ({
   mode_summaries: [],
   category_sections: [],
   rows: [],
-  total_row: {}
+  total_row: {},
+  slides: []
 })
 
 const getDefaultReportMonth = () => {
@@ -2053,6 +1889,7 @@ const sourceDraftIds = ref([])
 const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
+const activeQualitySlideIndex = ref(0)
 const exportDialogVisible = ref(false)
 const exportTask = ref(null)
 const exportError = ref('')
@@ -2073,6 +1910,19 @@ const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const isNonOilReport = computed(() => selectedReportType.value === 'non_oil')
+const qualitySlides = computed(() => (
+  Array.isArray(report.value?.slides) ? report.value.slides : []
+))
+const currentQualitySlide = computed(() => (
+  qualitySlides.value[activeQualitySlideIndex.value] || null
+))
+const qualityOverallRows = computed(() => {
+  if (currentQualitySlide.value?.kind !== 'overall') return []
+  return [
+    ...(currentQualitySlide.value.rows || []),
+    currentQualitySlide.value.total_row || {}
+  ]
+})
 const hasReport = computed(() => Boolean(report.value?.month))
 const exportBusy = computed(() => ['queued', 'running'].includes(exportTask.value?.status))
 const exportStatusLabel = computed(() => {
@@ -2793,6 +2643,22 @@ const closeImagePreview = () => {
   }
 }
 
+const goToQualitySlide = (index) => {
+  const lastIndex = Math.max(0, qualitySlides.value.length - 1)
+  activeQualitySlideIndex.value = Math.max(0, Math.min(lastIndex, Number(index) || 0))
+  window.requestAnimationFrame(() => {
+    document.querySelector('.quality-ppt-stage')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+const getQualityBarHeight = (value) => {
+  const values = currentQualitySlide.value?.distribution || []
+  const maximum = Math.max(1, ...values.map((item) => Number(item.count) || 0))
+  return Math.max(4, Math.round(((Number(value) || 0) / maximum) * 82))
+}
+
+const stripTracePrefix = (value) => String(value || '暂无分析结论。').replace(/^综上所述[:：]?\s*/, '')
+
 const normalizeSourceIds = (values) => (
   [...new Set((values || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
     .sort((a, b) => a - b)
@@ -2815,6 +2681,14 @@ const syncSourceSelection = (savedSelection = {}, jobOptions = {}) => {
 }
 
 const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId = contextRequestId) => {
+  if (!isQualityMeasurementReport.value) {
+    sourceStations.value = []
+    sourceSelectionMode.value = 'all'
+    selectedSourceStationIds.value = []
+    sourceLoading.value = false
+    sourceError.value = ''
+    return
+  }
   sourceLoading.value = true
   sourceError.value = ''
   try {
@@ -2842,6 +2716,7 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
 }
 
 const openSourceDialog = () => {
+  if (!isQualityMeasurementReport.value) return
   sourceDraftMode.value = sourceSelectionMode.value
   sourceDraftIds.value = sourceSelectionMode.value === 'custom'
     ? [...selectedSourceStationIds.value]
@@ -3045,7 +2920,10 @@ const pollActiveJob = async () => {
     activeJob.value = job
     if (job.status === 'completed') {
       clearPolling()
-      if (response.data?.report) report.value = response.data.report
+      if (response.data?.report) {
+        report.value = response.data.report
+        activeQualitySlideIndex.value = 0
+      }
       loading.value = false
       error.value = ''
       return
@@ -3075,24 +2953,27 @@ const startGeneration = async (options = {}) => {
     stage_message: '正在向后台提交 AI 报告生成任务'
   }
   try {
-    const response = await axios.post('/api/inspection-reports/generate', {
+    const payload = {
       report_type: selectedReportType.value,
       month: selectedMonth.value,
-      force: options?.force === true,
-      generation_options: {
+      force: options?.force === true
+    }
+    if (isQualityMeasurementReport.value) {
+      payload.generation_options = {
         station_filter_enabled: sourceSelectionMode.value === 'custom',
         station_ids: sourceSelectionMode.value === 'custom'
           ? selectedSourceStationIds.value
           : []
       }
-    })
+    }
+    const response = await axios.post('/api/inspection-reports/generate', payload)
     if (requestId !== contextRequestId) return
     if (!response.data?.success) {
       throw new Error(response.data?.error || 'AI报告生成任务提交失败。')
     }
     if (response.data?.report && !response.data?.job) {
       report.value = response.data.report
-      syncSourceSelection(report.value.source_selection || {}, {})
+      activeQualitySlideIndex.value = 0
       activeJob.value = null
       loading.value = false
       return
@@ -3137,11 +3018,13 @@ const loadReportState = async () => {
     }
     canGenerateReports.value = Boolean(response.data?.can_generate)
     report.value = response.data?.report || createEmptyReport()
-    await loadSourceOptions(
-      response.data?.report?.source_selection || {},
-      response.data?.job?.generation_options || {},
-      requestId
-    )
+    if (isQualityMeasurementReport.value) {
+      await loadSourceOptions({}, {}, requestId)
+    } else {
+      sourceStations.value = []
+      sourceSelectionMode.value = 'all'
+      selectedSourceStationIds.value = []
+    }
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
@@ -3164,6 +3047,9 @@ const selectReportType = async (reportType) => {
   selectedReportType.value = reportType
   report.value = createEmptyReport()
   sourceStations.value = []
+  sourceSelectionMode.value = 'all'
+  selectedSourceStationIds.value = []
+  activeQualitySlideIndex.value = 0
   await loadReportState()
 }
 
@@ -3173,6 +3059,9 @@ const handleReportContextChange = async () => {
   exportError.value = ''
   report.value = createEmptyReport()
   sourceStations.value = []
+  sourceSelectionMode.value = 'all'
+  selectedSourceStationIds.value = []
+  activeQualitySlideIndex.value = 0
   await loadReportState()
 }
 
@@ -4672,6 +4561,465 @@ onBeforeUnmount(() => {
 
 .state-orb.loading {
   animation: pulseOrb 1.2s ease-in-out infinite;
+}
+
+.quality-ppt-viewer {
+  margin-top: 20px;
+}
+
+.quality-ppt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 15px 18px;
+  border: 1px solid #dbe6ee;
+  border-radius: 18px;
+  background: #f6f9fb;
+}
+
+.quality-ppt-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.quality-ppt-toolbar span {
+  color: #1686bd;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.quality-ppt-toolbar strong {
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.quality-ppt-toolbar small {
+  color: #64748b;
+}
+
+.quality-ppt-page-count {
+  flex: 0 0 auto;
+  padding: 9px 14px;
+  border-radius: 12px;
+  color: #ffffff;
+  background: #125f8c;
+  font-weight: 900;
+}
+
+.quality-ppt-stage {
+  padding: 18px;
+  border-radius: 22px;
+  background: #dfe4e8;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.quality-ppt-slide {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  box-sizing: border-box;
+  padding: 9.2% 4.5% 3.7%;
+  color: #101820;
+  background: #ffffff;
+  box-shadow: 0 15px 38px rgba(15, 23, 42, 0.18);
+}
+
+.quality-slide-header {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 12.5%;
+  padding: 0 3.8% 0 4.6%;
+  border-bottom: 5px solid #2a9bd3;
+}
+
+.quality-slide-header h2 {
+  margin: 0;
+  color: #05080b;
+  font-size: clamp(16px, 2.05vw, 30px);
+  font-weight: 950;
+  letter-spacing: 0.02em;
+}
+
+.quality-slide-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 60%;
+}
+
+.quality-slide-brand img {
+  display: block;
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+}
+
+.quality-slide-page {
+  position: absolute;
+  right: 2.5%;
+  bottom: 1.2%;
+  color: #7b8790;
+  font-size: clamp(7px, 0.7vw, 10px);
+}
+
+.quality-slide-narrative {
+  margin: 0;
+  color: #101820;
+  font-size: clamp(8px, 1.25vw, 18px);
+  font-weight: 700;
+  line-height: 1.75;
+  text-indent: 2em;
+}
+
+.overall-copy {
+  min-height: 22%;
+}
+
+.quality-slide-table-wrap {
+  overflow: hidden;
+  border: 1px solid #7490a5;
+  background: #ffffff;
+}
+
+.quality-slide-table-wrap table {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.quality-slide-table-wrap th,
+.quality-slide-table-wrap td {
+  padding: 0.35em 0.42em;
+  border: 1px solid #91a5b4;
+  text-align: center;
+  vertical-align: middle;
+  font-size: clamp(6px, 0.78vw, 11px);
+  line-height: 1.35;
+}
+
+.quality-slide-table-wrap th {
+  color: #ffffff;
+  background: #13528b;
+  font-weight: 900;
+}
+
+.quality-slide-table-wrap tbody tr:nth-child(even) td {
+  background: #f2f7fb;
+}
+
+.quality-slide-table-wrap tr.total td {
+  color: #0f4e78;
+  background: #e1f0f8;
+  font-weight: 900;
+}
+
+.quality-slide-table-wrap td.align-left {
+  text-align: left;
+}
+
+.overall-table {
+  height: 66%;
+  margin-top: 1.2%;
+}
+
+.overall-table th:nth-child(1) { width: 5%; }
+.overall-table th:nth-child(2) { width: 15%; }
+
+.quality-finding-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
+  gap: 3%;
+  height: 100%;
+}
+
+.quality-finding-copy {
+  padding: 2.5% 0;
+}
+
+.quality-finding-copy p {
+  margin: 0 0 1.2em;
+  font-size: clamp(8px, 1.15vw, 17px);
+  font-weight: 700;
+  line-height: 1.72;
+}
+
+.finding-table {
+  height: 97%;
+}
+
+.prohibited-copy {
+  height: 10%;
+  text-indent: 0;
+}
+
+.prohibited-table {
+  height: 82%;
+  margin-top: 1.6%;
+}
+
+.prohibited-table th:nth-child(1) { width: 6%; }
+.prohibited-table th:nth-child(2) { width: 13%; }
+.prohibited-table th:nth-child(3) { width: 15%; }
+.prohibited-table th:nth-child(4) { width: 54%; }
+
+.flow-copy {
+  min-height: 17%;
+}
+
+.quality-chart-heading {
+  margin: 0.4% 0 1.5%;
+  text-align: center;
+  font-size: clamp(10px, 1.55vw, 22px);
+}
+
+.quality-ppt-chart {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 3%;
+  height: 65%;
+  padding: 0 4%;
+  border-bottom: 1px solid #94a3b8;
+  background: repeating-linear-gradient(to top, transparent 0, transparent 24.5%, #d9e0e5 25%);
+}
+
+.quality-ppt-bar-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  width: min(14%, 118px);
+  min-width: 42px;
+  text-align: center;
+}
+
+.quality-ppt-bar-area {
+  position: relative;
+  height: 100%;
+}
+
+.quality-ppt-bar-area i {
+  position: absolute;
+  right: 14%;
+  bottom: 0;
+  left: 14%;
+  display: block;
+  background: #4c9dd5;
+}
+
+.quality-ppt-bar-value {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  font-size: clamp(7px, 0.95vw, 14px);
+  font-weight: 900;
+}
+
+.quality-ppt-bar-column strong {
+  padding-top: 0.5em;
+  font-size: clamp(7px, 0.9vw, 13px);
+  white-space: nowrap;
+}
+
+.quality-ppt-bar-column small {
+  color: #246f9b;
+  font-size: clamp(6px, 0.75vw, 11px);
+  font-weight: 800;
+}
+
+.quality-slide-band {
+  margin: -1.6% -2.8% 2.5%;
+  padding: 1.15% 1.2%;
+  color: #ffffff;
+  background: #2a89c1;
+  box-shadow: 7px 7px 0 rgba(15, 23, 42, 0.2);
+  font-size: clamp(9px, 1.4vw, 20px);
+  font-weight: 900;
+}
+
+.quality-slide-band.wide {
+  width: 62%;
+}
+
+.quality-issue-pair-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 82%;
+}
+
+.quality-issue-pair-grid article {
+  display: grid;
+  grid-template-rows: auto minmax(0, 0.8fr) minmax(0, 1.4fr);
+  min-width: 0;
+  padding: 0 5%;
+}
+
+.quality-issue-pair-grid article + article {
+  border-left: 1px dashed #7bb6d6;
+}
+
+.quality-issue-pair-grid h3 {
+  margin: 0 0 0.5em;
+  font-size: clamp(9px, 1.25vw, 18px);
+}
+
+.quality-issue-pair-grid p {
+  overflow: hidden;
+  margin: 0;
+  font-size: clamp(7px, 1vw, 14px);
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.quality-issue-pair-grid button,
+.quality-trace-layout > button {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.quality-issue-pair-grid img,
+.quality-trace-layout img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.quality-slide-photo-empty,
+.quality-slide-empty {
+  display: grid;
+  place-items: center;
+  color: #64748b;
+  border: 1px dashed #a9b8c4;
+  background: #f5f8fa;
+  font-size: clamp(7px, 0.9vw, 13px);
+}
+
+.quality-trace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(220px, 0.75fr);
+  gap: 3%;
+  height: 100%;
+}
+
+.quality-typical-issue {
+  min-height: 17%;
+  margin: 0 0 2%;
+  color: #d60000;
+  font-size: clamp(8px, 1.15vw, 17px);
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.quality-trace-layout section {
+  display: grid;
+  grid-template-columns: 18% minmax(0, 1fr);
+  gap: 1%;
+  margin-bottom: 2%;
+}
+
+.quality-trace-layout section strong {
+  color: #3477c3;
+  font-size: clamp(8px, 1vw, 14px);
+}
+
+.quality-trace-layout section p {
+  margin: 0;
+  font-size: clamp(7px, 0.95vw, 14px);
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.quality-trace-analysis {
+  padding: 2% 4%;
+}
+
+.quality-trace-analysis h3 {
+  margin: 0.8em 0 0.3em;
+  color: #3477c3;
+  font-size: clamp(9px, 1.25vw, 18px);
+}
+
+.quality-trace-analysis p,
+.quality-trace-analysis li {
+  font-size: clamp(8px, 1.1vw, 16px);
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.quality-work-plan {
+  display: grid;
+  gap: 1.5%;
+  margin: 0;
+  padding: 1% 4% 0 7%;
+}
+
+.quality-work-plan li {
+  padding-left: 0.5em;
+}
+
+.quality-work-plan h3 {
+  margin: 0;
+  color: #3477c3;
+  font-size: clamp(9px, 1.25vw, 18px);
+}
+
+.quality-work-plan p {
+  margin: 0.25em 0 0;
+  font-size: clamp(8px, 1.05vw, 15px);
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.quality-ppt-pagination {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.quality-ppt-pagination > div {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 3px;
+  scrollbar-width: thin;
+}
+
+.quality-ppt-pagination button {
+  flex: 0 0 auto;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  color: #334155;
+  background: #ffffff;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.quality-ppt-pagination button.active {
+  color: #ffffff;
+  border-color: #1479ae;
+  background: #1479ae;
+}
+
+.quality-ppt-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .report-document {
@@ -8242,6 +8590,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .quality-ppt-stage {
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .quality-ppt-toolbar {
+    align-items: flex-start;
+  }
+
+  .quality-trace-layout {
+    grid-template-columns: minmax(0, 1.9fr) minmax(140px, 0.7fr);
+  }
+
   .non-oil-typical-grid,
   .non-oil-distribution-layout,
   .non-oil-analysis-columns {
@@ -8456,6 +8817,68 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 520px) {
+  .quality-ppt-viewer {
+    margin-top: 8px;
+  }
+
+  .quality-ppt-toolbar {
+    gap: 8px;
+    margin-bottom: 10px;
+    padding: 11px 12px;
+    border-radius: 14px;
+  }
+
+  .quality-ppt-toolbar strong {
+    font-size: 14px;
+  }
+
+  .quality-ppt-toolbar small {
+    font-size: 10px;
+  }
+
+  .quality-ppt-page-count {
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+
+  .quality-ppt-stage {
+    padding: 5px;
+    border-radius: 10px;
+  }
+
+  .quality-slide-header {
+    border-bottom-width: 2px;
+  }
+
+  .quality-slide-header h2 {
+    font-size: 10px;
+  }
+
+  .quality-slide-brand {
+    gap: 3px;
+  }
+
+  .quality-slide-table-wrap th,
+  .quality-slide-table-wrap td {
+    padding: 0.16em;
+    font-size: 5px;
+    line-height: 1.2;
+  }
+
+  .quality-ppt-pagination {
+    grid-template-columns: 64px minmax(0, 1fr) 64px;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .quality-ppt-pagination button {
+    min-width: 32px;
+    height: 34px;
+    padding: 0 7px;
+    border-radius: 9px;
+    font-size: 11px;
+  }
+
   .non-oil-subsection,
   .non-oil-typical-grid > article,
   .non-oil-distribution-card,

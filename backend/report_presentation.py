@@ -121,6 +121,13 @@ class InspectionReportPresentation:
         self.page_number = 0
 
     def build(self, output_path):
+        if self.report_type == "quality_measurement":
+            self._build_quality_measurement()
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            self.prs.save(output_path)
+            self._normalize_chart_axis_ids(output_path)
+            return {"slide_count": len(self.prs.slides)}
+
         self._add_cover()
         self._add_scope_overview()
         builders = {
@@ -165,6 +172,12 @@ class InspectionReportPresentation:
                                 match.group(1)
                                 + f' val="{int(match.group(2)) + 2 ** 32}"'.encode("ascii")
                             ),
+                            payload,
+                        )
+                    if item.filename.startswith("ppt/slides/slide") and item.filename.endswith(".xml"):
+                        payload = re.sub(
+                            rb'(<a:latin typeface="([^"]+)"\s*/>)(?!<a:ea)',
+                            lambda match: match.group(1) + b'<a:ea typeface="' + match.group(2) + b'"/>',
                             payload,
                         )
                     target_zip.writestr(item, payload)
@@ -872,63 +885,206 @@ class InspectionReportPresentation:
                 content_size = 16 if len(chunk) == 1 and len(content) <= 180 else 14 if len(content) <= 210 else 13
                 self._add_text(slide, content, 1.84, y + 0.72, 10.25, card_height - 0.92, size=content_size, color=SLATE)
 
+    def _add_quality_header(self, slide, title, ai=False):
+        self._add_text(slide, title, 0.62, 0.28, 10.9, 0.5, size=25, bold=True)
+        line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0.92), Inches(13.333), Inches(0.05))
+        line.fill.solid()
+        line.fill.fore_color.rgb = RGBColor(42, 155, 211)
+        line.line.fill.background()
+        logo_path = os.path.join(os.path.dirname(__file__), "assets", "report_logo.png")
+        if os.path.isfile(logo_path):
+            slide.shapes.add_picture(logo_path, Inches(12.42), Inches(0.18), height=Inches(0.56))
+        if ai:
+            self._add_ai_badge(slide)
+
+    def _quality_blank_slide(self, title, ai=False):
+        slide = self._blank_slide(background=WHITE, footer=False)
+        self.page_number += 1
+        self._add_quality_header(slide, title, ai=ai)
+        self._add_text(slide, str(self.page_number), 12.45, 7.15, 0.48, 0.2, size=8, color=MUTED, align=PP_ALIGN.RIGHT)
+        return slide
+
+    def _quality_table(self, slide, headers, rows, x, y, width, height, weights=None, narrative_columns=None):
+        rows = [list(row) for row in rows]
+        shape = slide.shapes.add_table(len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(width), Inches(height))
+        table = shape.table
+        weights = weights or [1] * len(headers)
+        total_weight = sum(weights)
+        total_width = int(Inches(width))
+        allocated = 0
+        for index, column in enumerate(table.columns):
+            if index == len(headers) - 1:
+                column.width = total_width - allocated
+            else:
+                column.width = int(total_width * weights[index] / total_weight)
+                allocated += column.width
+        table.rows[0].height = Inches(0.46)
+        body_height = max(0.35, (height - 0.46) / max(1, len(rows)))
+        for index in range(1, len(table.rows)):
+            table.rows[index].height = Inches(body_height)
+        narrative_columns = set(narrative_columns or [])
+        for column_index, header in enumerate(headers):
+            cell = table.cell(0, column_index)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(19, 82, 139)
+            self._set_cell_text(cell, header, 9, WHITE, True)
+        for row_index, row in enumerate(rows, 1):
+            for column_index in range(len(headers)):
+                cell = table.cell(row_index, column_index)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = WHITE if row_index % 2 else RGBColor(242, 247, 251)
+                value = row[column_index] if column_index < len(row) else ""
+                font_size = 7 if len(_text(value, "")) > 80 else 8
+                self._set_cell_text(
+                    cell,
+                    value,
+                    font_size,
+                    INK,
+                    bold=row_index == len(rows),
+                    align=PP_ALIGN.LEFT if column_index in narrative_columns else PP_ALIGN.CENTER,
+                )
+        return table
+
+    def _render_quality_overall(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "总体情况")
+        self._add_text(slide, data.get("narrative"), 0.7, 1.12, 11.95, 1.28, size=12, color=INK)
+        rows = list(data.get("rows") or []) + [data.get("total_row") or {}]
+        table_rows = [[
+            item.get("sequence"), item.get("unit_name"), item.get("oil_depot_count", 0),
+            item.get("station_count", 0), item.get("transport_vehicle_count", 0),
+            item.get("general_issue_count", 0), item.get("violation_issue_count", 0),
+            item.get("prohibited_issue_count", 0), item.get("total_issue_count", 0),
+        ] for item in rows]
+        self._quality_table(
+            slide,
+            ["序号", "二级单位", "检查油库\n数量", "检查加油站\n数量", "检查运输车辆\n数量", "一般性\n问题", "违规违纪\n问题", "涉及禁止项\n问题", "单库、车、站\n问题数量"],
+            table_rows, 0.48, 2.52, 12.36, 4.34,
+            weights=[0.55, 1.45, 0.85, 0.9, 0.95, 0.78, 0.78, 0.9, 1.0],
+        )
+
+    def _render_quality_finding(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "检查发现-发现问题")
+        self._add_rich_lines(slide, data.get("text_lines") or [], 0.62, 1.26, 5.08, 5.75, size=12)
+        rows = [[item.get("sequence"), item.get("section"), item.get("problem_type"), item.get("count"), item.get("percentage")] for item in data.get("rows") or []]
+        self._quality_table(slide, ["序号", "环节排前三", "问题类型", "问题数量", "占比/%"], rows, 5.88, 1.25, 6.84, 5.62, weights=[0.55, 1.15, 1.55, 0.82, 0.75])
+
+    def _render_quality_prohibited(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "检查发现-禁止项问题")
+        self._add_text(slide, data.get("narrative"), 0.72, 1.15, 11.9, 0.72, size=14, bold=True)
+        rows = [[index, "加油站环节", item.get("unit_name"), item.get("description"), item.get("penalty") or ""] for index, item in enumerate(data.get("rows") or [], 1)]
+        if not rows:
+            rows = [["-", "加油站环节", "-", "当前月份暂无禁止项问题", ""]]
+        self._quality_table(slide, ["序号", "环节", "基层单位名称", "禁止项管理规定", "处罚情况"], rows, 0.52, 2.0, 12.28, 4.85, weights=[0.45, 0.9, 1.15, 4.3, 0.9], narrative_columns={3})
+
+    def _render_quality_flow_chart(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "检查发现-加油站环节")
+        self._add_text(slide, data.get("narrative"), 0.78, 1.14, 11.8, 1.05, size=14, bold=True)
+        self._add_text(slide, data.get("chart_title") or "各类问题数量汇总情况", 3.8, 2.18, 5.8, 0.45, size=19, bold=True, align=PP_ALIGN.CENTER)
+        distribution = data.get("distribution") or []
+        if not distribution:
+            self._add_panel(slide, 2.1, 3.25, 9.1, 1.5, "暂无数据", "当前月份暂无业务流程分布数据。", MUTED)
+            return
+        chart_data = ChartData()
+        chart_data.categories = [_short(item.get("name"), 14) for item in distribution]
+        chart_data.add_series("问题数量", [_as_int(item.get("count")) for item in distribution])
+        chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1.05), Inches(2.75), Inches(11.15), Inches(3.75), chart_data).chart
+        chart.has_legend = False
+        chart.value_axis.minimum_scale = 0
+        chart.value_axis.has_major_gridlines = True
+        chart.value_axis.major_gridlines.format.line.color.rgb = LINE
+        chart.value_axis.tick_labels.font.name = FONT_FAMILY
+        chart.value_axis.tick_labels.font.size = Pt(10)
+        chart.category_axis.tick_labels.font.name = FONT_FAMILY
+        chart.category_axis.tick_labels.font.size = Pt(11)
+        series = chart.series[0]
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = RGBColor(76, 157, 213)
+        series.format.line.fill.background()
+        plot = chart.plots[0]
+        plot.gap_width = 75
+        plot.has_data_labels = True
+        plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        plot.data_labels.font.name = FONT_FAMILY
+        plot.data_labels.font.size = Pt(11)
+        plot.data_labels.font.bold = True
+
+    def _render_quality_issue_pairs(self, data):
+        title = data.get("title") or "加油站环节"
+        if int(data.get("continuation_count") or 1) > 1:
+            title = f"{title}（{data.get('continuation')}/{data.get('continuation_count')}）"
+        slide = self._quality_blank_slide(title)
+        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.34), Inches(1.1), Inches(12.45), Inches(0.54))
+        band.fill.solid()
+        band.fill.fore_color.rgb = RGBColor(42, 137, 193)
+        band.line.fill.background()
+        self._add_text(slide, data.get("subtitle"), 0.48, 1.19, 11.9, 0.3, size=13, color=WHITE, bold=True)
+        issues = data.get("issues") or []
+        for index, issue in enumerate(issues):
+            x = 0.58 + index * 6.18
+            if index:
+                divider = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(6.63), Inches(1.9), Inches(0.01), Inches(4.75))
+                divider.fill.solid(); divider.fill.fore_color.rgb = RGBColor(151, 203, 230); divider.line.fill.background()
+            self._add_text(slide, _short(issue.get("station_name"), 28), x, 1.9, 5.65, 0.42, size=16, bold=True)
+            self._add_text(slide, issue.get("description"), x, 2.38, 5.65, 1.25, size=12, color=INK)
+            self._add_picture_contain(slide, issue.get("issue_photo"), x + 1.15, 3.82, 3.35, 2.65)
+        if not issues:
+            self._add_panel(slide, 2.1, 3.0, 9.0, 1.5, "暂无数据", "当前分类暂无可展示的问题。", MUTED)
+
+    def _render_quality_management_trace(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))
+        typical_issue = data.get("typical_issue") or {}
+        description = self._issue_description(typical_issue)
+        station = _text(typical_issue.get("station_name"), "典型问题")
+        self._add_text(slide, "典型问题：", 0.72, 1.25, 1.55, 0.36, size=15, color=RED, bold=True)
+        self._add_text(slide, f"{station}：{description}", 1.85, 1.25, 7.2, 0.82, size=14, color=RED, bold=True)
+        y = 2.18
+        for item in data.get("analysis_items") or []:
+            self._add_text(slide, item.get("label"), 0.88, y, 1.62, 0.36, size=13, color=RGBColor(52, 119, 195), bold=True)
+            self._add_text(slide, item.get("content"), 2.22, y, 6.75, 0.95, size=12, color=INK)
+            y += 1.08
+        self._add_picture_contain(slide, typical_issue.get("issue_photo"), 9.28, 1.58, 3.25, 4.92)
+
+    def _render_quality_trace_analysis(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))
+        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.12), Inches(1.12), Inches(8.2), Inches(0.6))
+        band.fill.solid(); band.fill.fore_color.rgb = RGBColor(42, 137, 193); band.line.fill.background()
+        self._add_text(slide, data.get("subtitle") or "典型问题分析", 0.28, 1.23, 7.6, 0.32, size=16, color=WHITE, bold=True)
+        self._add_text(slide, "综上所述：", 0.92, 2.06, 1.5, 0.36, size=14, color=RGBColor(52, 119, 195), bold=True)
+        conclusion = _text(data.get("conclusion"), "暂无分析结论。")
+        if conclusion.startswith("综上所述："):
+            conclusion = conclusion[len("综上所述："):]
+        self._add_text(slide, conclusion, 2.18, 2.04, 10.1, 1.2, size=14, color=INK)
+        self._add_text(slide, "改进措施：", 0.92, 3.42, 1.5, 0.36, size=14, color=RGBColor(52, 119, 195), bold=True)
+        lines = [f"{index}、{item.get('level')}：{item.get('content')}" for index, item in enumerate(data.get("improvement_measures") or [], 1)]
+        self._add_rich_lines(slide, lines or ["暂无改进措施。"], 1.0, 3.85, 11.35, 2.55, size=13)
+
+    def _render_quality_work_plan(self, data):
+        slide = self._quality_blank_slide(data.get("title") or "工作计划", ai=bool(data.get("ai_generated")))
+        y = 1.3
+        for index, item in enumerate(data.get("items") or [], 1):
+            self._add_text(slide, f"{index}、{item.get('title')}", 1.05, y, 10.95, 0.36, size=15, color=RGBColor(52, 119, 195), bold=True)
+            self._add_text(slide, item.get("content"), 1.05, y + 0.38, 11.1, 0.78, size=12, color=INK)
+            y += 1.3
+
     def _build_quality_measurement(self):
-        summary = self.report.get("summary") or {}
-        self._add_section("CHAPTER 01", "总体情况", _text(self.report.get("overview_text"), "质量计量监督检查总体情况"))
-        self._add_narrative_slide(
-            "总体情况",
-            self.report.get("overview_text"),
-            metrics=[
-                ("受检站点", summary.get("station_count"), "座"),
-                ("发现问题", summary.get("total_issue_count"), "项"),
-                ("一般问题", summary.get("general_issue_count"), "项"),
-                ("禁止项", summary.get("prohibited_issue_count"), "项"),
-            ],
-        )
-        rows = self.report.get("rows") or []
-        self._add_table_slides(
-            "二级单位问题汇总",
-            ["二级单位", "类型", "受检站点", "一般问题", "禁止项", "问题合计"],
-            [[item.get("unit_name"), item.get("unit_type_label"), item.get("station_count"), item.get("general_issue_count"), item.get("prohibited_issue_count"), item.get("total_issue_count")] for item in rows],
-        )
-        self._add_section("CHAPTER 02", "检查发现 · 问题分布")
-        finding = self.report.get("finding_summary") or {}
-        distribution = finding.get("business_flow_distribution") or []
-        self._add_chart_slides("业务流程问题分布", distribution, narrative=finding.get("finding_text") or "")
-        self._add_section("CHAPTER 03", "检查发现 · 禁止项问题")
-        examples = self.report.get("prohibited_examples") or []
-        self._add_table_slides(
-            "禁止项典型问题",
-            ["所属单位", "单位类型", "禁止项管理规定（具体问题描述）"],
-            [[item.get("unit_name"), item.get("unit_type_label"), item.get("description")] for item in examples],
-            rows_per_slide=8,
-        )
-        deep = self.report.get("deep_analysis") or {}
-        self._add_section("CHAPTER 04", "重点问题与管理追溯", "突出问题、管理追溯和工作计划中的AI内容均已明确标识。")
-        for flow in deep.get("flow_highlights") or []:
-            self._add_issue_slides(
-                f"{_text(flow.get('flow_name'), '业务环节')} · 突出问题",
-                flow.get("highlighted_issues") or [],
-                ai=bool(flow.get("ai_generated")),
-                subtitle=_text(flow.get("summary"), ""),
-                max_issues=8,
-            )
-        trace = deep.get("management_trace") or {}
-        trace_items = [
-            {"title": "执行层面", "content": trace.get("execution_analysis"), "ai_generated": trace.get("ai_generated")},
-            {"title": "监督层面", "content": trace.get("supervision_analysis"), "ai_generated": trace.get("ai_generated")},
-            {"title": "管理层面", "content": trace.get("management_analysis"), "ai_generated": trace.get("ai_generated")},
-            {"title": "综合结论", "content": trace.get("conclusion"), "ai_generated": trace.get("ai_generated")},
-        ]
-        self._add_analysis_cards("管理追溯", trace_items, ai=bool(trace.get("ai_generated")))
-        measures = trace.get("improvement_measures") or []
-        if measures:
-            self._add_analysis_cards(
-                "改进措施",
-                [{"title": item.get("level"), "content": item.get("content"), "ai_generated": trace.get("ai_generated")} for item in measures],
-                ai=bool(trace.get("ai_generated")),
-            )
-        self._add_analysis_cards("工作计划", deep.get("work_plan") or [], ai=bool(deep.get("work_plan_ai_generated")))
+        renderers = {
+            "overall": self._render_quality_overall,
+            "finding_overview": self._render_quality_finding,
+            "prohibited": self._render_quality_prohibited,
+            "flow_chart": self._render_quality_flow_chart,
+            "issue_pairs": self._render_quality_issue_pairs,
+            "management_trace": self._render_quality_management_trace,
+            "trace_analysis": self._render_quality_trace_analysis,
+            "work_plan": self._render_quality_work_plan,
+        }
+        slides = [item for item in (self.report.get("slides") or []) if isinstance(item, dict)]
+        if not slides:
+            self._add_empty_slide("质量计量监督检查报告", "当前报告快照尚未生成幻灯片数据，请重新生成报告。")
+            return
+        for slide_data in slides:
+            renderer = renderers.get(slide_data.get("kind"))
+            if renderer:
+                renderer(slide_data)
 
     def _build_safety_quality(self):
         summary = self.report.get("summary") or {}

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.8',
+    date: '2026-08-14',
+    title: '质量计量报告改为PPT预览',
+    summary: '质量计量报告可在网页逐页查看，并按相同版式导出PPT。',
+    items: [
+      '总体情况、问题分类、禁止项和加油站环节按标准幻灯片展示。',
+      '突出问题按分类抽取，AI生成管理追溯和工作计划。',
+      '站点数据来源只用于质量计量报告，切换月份后自动重置。'
+    ]
+  },
+  {
     version: 'v4.7',
     date: '2026-08-12',
     title: '非油AI检查报告',

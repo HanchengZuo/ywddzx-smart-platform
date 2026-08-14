@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -7658,7 +7659,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "onsite-stations-with-video-approved-v3"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-slides-approved-v4"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
@@ -8713,49 +8714,31 @@ def build_report_prohibited_examples(rows, limit=10):
         if is_prohibited_report_issue(row.get("standard_detail_text"))
         and str(row.get("description") or "").strip()
     ]
-    prohibited_rows.sort(
-        key=lambda row: (
-            normalize_management_region(row.get("region")),
-            -len(str(row.get("description") or "")),
-            int(row.get("id") or 0),
-        )
-    )
-
     examples = []
-    used_units = set()
-    used_descriptions = set()
+    rows_by_unit = OrderedDict()
+    for row in prohibited_rows:
+        unit_type, unit_name = identify_report_secondary_unit(row)
+        rows_by_unit.setdefault(f"{unit_type}:{unit_name}", []).append(row)
 
-    def append_example(row):
+    # A report snapshot freezes this random choice until the user explicitly regenerates it.
+    for candidates in rows_by_unit.values():
+        row = random.choice(candidates)
         unit_type, unit_name = identify_report_secondary_unit(row)
         description = str(row.get("description") or "").strip()
-        if not description or description in used_descriptions:
-            return False
+        station_name = str(row.get("station_name") or "").strip()
         examples.append(
             {
                 "issue_id": row.get("id"),
                 "unit_type": unit_type,
                 "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
                 "unit_name": unit_name,
-                "description": description,
+                "station_name": station_name,
+                "description": f"{station_name}：{description}" if station_name else description,
+                "penalty": "",
             }
         )
-        used_descriptions.add(description)
-        used_units.add(f"{unit_type}:{unit_name}")
-        return True
-
-    for row in prohibited_rows:
-        unit_type, unit_name = identify_report_secondary_unit(row)
-        unit_key = f"{unit_type}:{unit_name}"
-        if unit_key in used_units:
-            continue
-        append_example(row)
-        if len(examples) >= limit:
-            return examples
-
-    for row in prohibited_rows:
         if len(examples) >= limit:
             break
-        append_example(row)
 
     return examples
 
@@ -8782,6 +8765,10 @@ def serialize_report_issue(row):
 
 def build_quality_report_ai_context(month_start, rows, distribution):
     serialized_rows = [serialize_report_issue(row) for row in rows]
+    trace_candidates = [item for item in serialized_rows if item.get("description")]
+    designated_typical_issue_id = (
+        random.choice(trace_candidates).get("issue_id") if trace_candidates else 0
+    )
     flow_items = []
     for flow in distribution:
         flow_name = flow["name"]
@@ -8810,21 +8797,30 @@ def build_quality_report_ai_context(month_start, rows, distribution):
         "month": month_start.strftime("%Y-%m"),
         "month_label": format_report_month_label(month_start),
         "total_issue_count": len(serialized_rows),
+        "designated_typical_issue_id": designated_typical_issue_id,
         "business_flows": flow_items,
     }
 
 
-def select_local_report_issues(issues, limit=3):
-    sorted_issues = sorted(
-        issues,
-        key=lambda item: (
-            not item.get("is_marked_typical"),
-            not item.get("is_prohibited"),
-            -len(str(item.get("description") or "")),
-            int(item.get("issue_id") or 0),
-        ),
+def get_report_highlight_sample_size(issue_count):
+    if issue_count > 20:
+        return 8
+    if issue_count > 10:
+        return 6
+    if issue_count > 4:
+        return 4
+    return min(2, issue_count)
+
+
+def select_local_report_issues(issues, limit=None):
+    candidates = [item for item in issues if item.get("description")]
+    sample_size = min(
+        len(candidates),
+        limit if limit is not None else get_report_highlight_sample_size(len(candidates)),
     )
-    return sorted_issues[:limit]
+    if sample_size <= 0:
+        return []
+    return random.sample(candidates, sample_size)
 
 
 def normalize_report_ai_issue_ids(raw_ids):
@@ -8855,22 +8851,12 @@ def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
                 "summary": str(item.get("summary") or "").strip(),
             }
 
-    issue_map = {item["issue_id"]: item for item in serialized_rows if item.get("issue_id")}
     result = []
     for flow in distribution:
         flow_name = flow["name"]
         flow_issues = [item for item in serialized_rows if item["business_flow"] == flow_name]
-        valid_flow_ids = {item["issue_id"] for item in flow_issues}
         ai_entry = flow_ai_map.get(flow_name, {})
-        selected = []
-        for issue_id in ai_entry.get("issue_ids", []):
-            if issue_id in valid_flow_ids and issue_id in issue_map:
-                selected.append(issue_map[issue_id])
-            if len(selected) >= 3:
-                break
-        ai_selected_issue = bool(selected)
-        if not selected:
-            selected = select_local_report_issues(flow_issues, 3)
+        selected = select_local_report_issues(flow_issues)
         ai_summary = ai_entry.get("summary") or ""
         result.append(
             {
@@ -8880,23 +8866,15 @@ def build_report_flow_highlights(distribution, serialized_rows, ai_payload):
                 "summary": ai_summary,
                 "highlight_count": len(selected),
                 "highlighted_issues": selected,
-                "ai_generated": bool(ai_summary or ai_selected_issue),
+                "ai_generated": bool(ai_summary),
             }
         )
     return result
 
 
 def pick_local_management_trace_issue(serialized_rows):
-    candidates = sorted(
-        [item for item in serialized_rows if item.get("description")],
-        key=lambda item: (
-            not item.get("is_marked_typical"),
-            not item.get("is_prohibited"),
-            -len(str(item.get("description") or "")),
-            int(item.get("issue_id") or 0),
-        ),
-    )
-    return candidates[0] if candidates else None
+    candidates = [item for item in serialized_rows if item.get("description")]
+    return random.choice(candidates) if candidates else None
 
 
 def build_local_management_trace(issue):
@@ -8927,18 +8905,14 @@ def build_local_management_trace(issue):
     }
 
 
-def build_report_management_trace(serialized_rows, ai_payload):
+def build_report_management_trace(serialized_rows, ai_payload, designated_typical_issue_id=None):
     issue_map = {item["issue_id"]: item for item in serialized_rows if item.get("issue_id")}
     ai_trace = ai_payload.get("management_trace") if isinstance(ai_payload, dict) else None
-    typical_issue = None
-    ai_selected_typical_issue = False
-    if isinstance(ai_trace, dict):
-        try:
-            typical_issue_id = int(ai_trace.get("typical_issue_id") or 0)
-        except (TypeError, ValueError):
-            typical_issue_id = 0
-        typical_issue = issue_map.get(typical_issue_id)
-        ai_selected_typical_issue = bool(typical_issue)
+    try:
+        typical_issue_id = int(designated_typical_issue_id or 0)
+    except (TypeError, ValueError):
+        typical_issue_id = 0
+    typical_issue = issue_map.get(typical_issue_id)
 
     if not typical_issue:
         typical_issue = pick_local_management_trace_issue(serialized_rows)
@@ -8964,7 +8938,7 @@ def build_report_management_trace(serialized_rows, ai_payload):
         "management_analysis",
         "conclusion",
     )
-    ai_generated = ai_selected_typical_issue or bool(normalized_improvements) or any(
+    ai_generated = bool(normalized_improvements) or any(
         str(ai_trace.get(field) or "").strip() for field in ai_text_fields
     )
 
@@ -9026,11 +9000,21 @@ def build_report_work_plan(month_start, distribution, ai_payload):
     return normalized or local_plan
 
 
-def build_report_deep_analysis(month_start, rows, distribution, ai_result):
+def build_report_deep_analysis(
+    month_start,
+    rows,
+    distribution,
+    ai_result,
+    designated_typical_issue_id=None,
+):
     serialized_rows = [serialize_report_issue(row) for row in rows]
     ai_payload = (ai_result or {}).get("payload")
     flow_highlights = build_report_flow_highlights(distribution, serialized_rows, ai_payload)
-    management_trace = build_report_management_trace(serialized_rows, ai_payload)
+    management_trace = build_report_management_trace(
+        serialized_rows,
+        ai_payload,
+        designated_typical_issue_id,
+    )
     work_plan = build_report_work_plan(month_start, distribution, ai_payload)
     flow_ai_generated = any(item.get("ai_generated") for item in flow_highlights)
     management_ai_generated = bool(management_trace.get("ai_generated"))
@@ -9086,16 +9070,20 @@ def build_quality_measurement_report_payload(month_start, rows):
         return (2, 999, item["unit_name"])
 
     table_rows = []
-    for group in sorted(grouped.values(), key=sort_key):
+    for row_index, group in enumerate(sorted(grouped.values(), key=sort_key), 1):
         general_count = int(group["general_issue_count"])
         prohibited_issue_count = int(group["prohibited_issue_count"])
         table_rows.append(
             {
+                "sequence": row_index,
                 "unit_type": group["unit_type"],
                 "unit_type_label": "控（参）股单位" if group["unit_type"] == "holding" else "管理片区",
                 "unit_name": group["unit_name"],
+                "oil_depot_count": 0,
                 "station_count": len(group["station_ids"]),
+                "transport_vehicle_count": 0,
                 "general_issue_count": general_count,
+                "violation_issue_count": 0,
                 "prohibited_issue_count": prohibited_issue_count,
                 "total_issue_count": general_count + prohibited_issue_count,
             }
@@ -9134,10 +9122,12 @@ def build_quality_measurement_report_payload(month_start, rows):
             "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
         },
         "overview_text": (
-            f"{month_label}，业务督导中心以计量稽查现场检查涉及站点为范围，"
-            "合并同站视频检查数据开展汇总分析，"
-            f"本次问题涉及{region_count}个管理片区、{holding_unit_count}个主要控（参）股单位、"
-            f"{len(station_ids)}座站点，共发现问题{issue_count}项，其中涉及禁止项问题{prohibited_count}项。"
+            f"{month_label}，上海公司开展质量计量监督检查，共检查{region_count}个管理片区、"
+            f"和{holding_unit_count}个主要控（参）股单位的{len(station_ids)}座加油站，"
+            f"X座油库，X台流量计，抽检{len(station_ids)}把加油枪，{len(station_ids)}个油样，"
+            "检查属地昆仑物流X个配送中心，X台承运车辆，"
+            f"共发现问题{issue_count}项，涉及禁止项问题{prohibited_count}项，"
+            "已整改xx项，整改完成率xx%，累计发现问题xxx项，已整改xxx项，整改完成率xx%。"
         ),
         "finding_summary": {
             "total_issue_count": issue_count,
@@ -9148,13 +9138,161 @@ def build_quality_measurement_report_payload(month_start, rows):
         "prohibited_examples": prohibited_examples,
         "rows": table_rows,
         "total_row": {
+            "sequence": "合计",
             "unit_name": "合计",
+            "oil_depot_count": 0,
             "station_count": len(station_ids),
+            "transport_vehicle_count": 0,
             "general_issue_count": issue_count - prohibited_count,
+            "violation_issue_count": 0,
             "prohibited_issue_count": prohibited_count,
             "total_issue_count": issue_count,
         },
     }
+
+
+def build_quality_measurement_report_slides(report):
+    summary = report.get("summary") or {}
+    finding = report.get("finding_summary") or {}
+    distribution = finding.get("business_flow_distribution") or []
+    total_issue_count = int(summary.get("total_issue_count") or 0)
+    prohibited_issue_count = int(summary.get("prohibited_issue_count") or 0)
+
+    flow_names = [str(item.get("name") or "未设置业务流程") for item in distribution]
+    flow_counts = [f"{int(item.get('count') or 0)}项" for item in distribution]
+    flow_percentages = [f"{round(float(item.get('percentage') or 0))}%" for item in distribution]
+    flow_count_text = (
+        f"本次检查发现问题{total_issue_count}项，涉及{join_chinese_list(flow_names)}问题，"
+        f"问题数量分别为{join_chinese_list(flow_counts)}。"
+        if distribution
+        else "本次检查发现问题0项。"
+    )
+    station_flow_text = (
+        f"检查发现加油站环节问题{total_issue_count}项，涉及{join_chinese_list(flow_names)}问题，"
+        f"问题数量分别为{join_chinese_list(flow_counts)}，占比{join_chinese_list(flow_percentages)}。"
+        if distribution
+        else "检查发现加油站环节问题0项。"
+    )
+    finding_table_rows = [
+        {"sequence": "X", "section": "油库环节", "problem_type": "油罐车重车铅封", "count": "", "percentage": ""},
+        {"sequence": "X", "section": "油库环节", "problem_type": "油库发油系统", "count": "", "percentage": ""},
+        {"sequence": "X", "section": "运输环节", "problem_type": "关键控制", "count": "", "percentage": ""},
+    ]
+    finding_table_rows.extend(
+        {
+            "sequence": index,
+            "section": "油站环节",
+            "problem_type": item.get("name"),
+            "count": int(item.get("count") or 0),
+            "percentage": f"{float(item.get('percentage') or 0):.1f}",
+        }
+        for index, item in enumerate(distribution, 1)
+    )
+    finding_table_rows.append(
+        {
+            "sequence": "合计",
+            "section": "/",
+            "problem_type": "/",
+            "count": total_issue_count,
+            "percentage": "",
+        }
+    )
+
+    slides = [
+        {
+            "kind": "overall",
+            "title": "总体情况",
+            "narrative": report.get("overview_text") or "",
+            "rows": report.get("rows") or [],
+            "total_row": report.get("total_row") or {},
+        },
+        {
+            "kind": "finding_overview",
+            "title": "检查发现-发现问题",
+            "text_lines": [
+                f"本次检查发现问题{total_issue_count}项：",
+                f"油站环节{total_issue_count}项：{flow_count_text}",
+                "油库环节X项：油罐车重车铅封类、油库发油系统类问题数量最多，分别为X项、X项，分别占比X%、X%。",
+                "运输环节X项：为车辆铅封核对问题，为X项，占比X%。",
+            ],
+            "rows": finding_table_rows,
+        },
+        {
+            "kind": "prohibited",
+            "title": "检查发现-禁止项问题",
+            "narrative": (
+                f"本次检查发现涉及禁止项问题{prohibited_issue_count}项，其中油库环节X项、"
+                f"运输环节X项、油站环节{prohibited_issue_count}项。"
+            ),
+            "rows": report.get("prohibited_examples") or [],
+        },
+        {
+            "kind": "flow_chart",
+            "title": "检查发现-加油站环节",
+            "chart_title": "各类问题数量汇总情况",
+            "narrative": station_flow_text,
+            "distribution": distribution,
+        },
+    ]
+
+    deep_analysis = report.get("deep_analysis") or {}
+    for flow in deep_analysis.get("flow_highlights") or []:
+        issues = flow.get("highlighted_issues") or []
+        page_count = max(1, (len(issues) + 1) // 2)
+        for page_index in range(page_count):
+            page_issues = issues[page_index * 2 : page_index * 2 + 2]
+            slides.append(
+                {
+                    "kind": "issue_pairs",
+                    "title": f"加油站环节——{flow.get('flow_name') or '其他问题'}",
+                    "subtitle": f"发现问题{int(flow.get('count') or 0)}项，突出问题{len(issues)}项",
+                    "continuation": page_index + 1,
+                    "continuation_count": page_count,
+                    "issues": page_issues,
+                    "ai_generated": False,
+                }
+            )
+
+    management_trace = deep_analysis.get("management_trace") or {}
+    slides.append(
+        {
+            "kind": "management_trace",
+            "title": "管理追溯",
+            "ai_generated": bool(management_trace.get("ai_generated")),
+            "typical_issue": management_trace.get("typical_issue"),
+            "analysis_items": [
+                {"label": "（1）执行层面", "content": management_trace.get("execution_analysis")},
+                {"label": "（2）监督层面", "content": management_trace.get("supervision_analysis")},
+                {"label": "（3）管理层面", "content": management_trace.get("management_analysis")},
+            ],
+        }
+    )
+    slides.append(
+        {
+            "kind": "trace_analysis",
+            "title": "管理追溯",
+            "subtitle": "典型问题分析",
+            "ai_generated": bool(management_trace.get("ai_generated")),
+            "conclusion": management_trace.get("conclusion") or "",
+            "improvement_measures": management_trace.get("improvement_measures") or [],
+        }
+    )
+    work_plan = deep_analysis.get("work_plan") or []
+    work_plan_pages = [work_plan[index : index + 4] for index in range(0, len(work_plan), 4)] or [[]]
+    for page_index, items in enumerate(work_plan_pages, 1):
+        slides.append(
+            {
+                "kind": "work_plan",
+                "title": (
+                    "工作计划"
+                    if len(work_plan_pages) == 1
+                    else f"工作计划（{page_index}/{len(work_plan_pages)}）"
+                ),
+                "ai_generated": bool(deep_analysis.get("work_plan_ai_generated")),
+                "items": items,
+            }
+        )
+    return slides
 
 
 def filter_quality_measurement_report_rows(candidate_rows):
@@ -29178,6 +29316,7 @@ def generate_quality_measurement_report_job(
     report["source_selection"] = source_selection
     distribution = report.get("finding_summary", {}).get("business_flow_distribution") or []
     insight_result = None
+    ai_context = None
     if rows:
         update_inspection_report_job(task_id, "running", 52, "正在调用 DeepSeek 分析突出问题和管理追溯")
         ai_context = build_quality_report_ai_context(month_start, rows, distribution)
@@ -29191,7 +29330,9 @@ def generate_quality_measurement_report_job(
         rows,
         distribution,
         insight_result,
+        (ai_context or {}).get("designated_typical_issue_id"),
     )
+    report["slides"] = build_quality_measurement_report_slides(report)
 
     conn = None
     cur = None
@@ -30521,8 +30662,10 @@ def queue_or_get_inspection_report_job(
     force_regenerate=False,
     generation_options=None,
 ):
-    normalized_generation_options = normalize_inspection_report_generation_options(
-        generation_options
+    normalized_generation_options = (
+        normalize_inspection_report_generation_options(generation_options)
+        if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
+        else normalize_inspection_report_generation_options({})
     )
     snapshot_scope_key = build_report_snapshot_scope_key(user)
     if not force_regenerate:
@@ -30654,6 +30797,11 @@ def get_inspection_report_source_options():
     config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
     if not config:
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
+    if report_type != REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
+        return jsonify({
+            "success": False,
+            "error": "只有质量计量监督检查报告支持自定义站点数据来源。",
+        }), 400
     report_month_start, _ = parse_report_month(request.args.get("month", ""))
     month_start, month_end = get_inspection_report_date_range(
         report_type,
@@ -30727,17 +30875,20 @@ def create_inspection_report_generation_job():
         user = get_authorized_inspection_report_user(cur)
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
-        generation_options = normalize_inspection_report_generation_options(
-            raw_generation_options
-        )
-        resolve_inspection_report_source_selection(
-            cur,
-            user,
-            report_type,
-            month_start,
-            month_end,
-            generation_options,
-        )
+        if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
+            generation_options = normalize_inspection_report_generation_options(
+                raw_generation_options
+            )
+            resolve_inspection_report_source_selection(
+                cur,
+                user,
+                report_type,
+                month_start,
+                month_end,
+                generation_options,
+            )
+        else:
+            generation_options = normalize_inspection_report_generation_options({})
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
