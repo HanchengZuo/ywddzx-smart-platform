@@ -3,6 +3,9 @@ set -e
 
 cd "$(dirname "$0")"
 
+echo "📥 拉取最新代码..."
+git pull
+
 if [ -f .env ]; then
   set -a
   . ./.env
@@ -29,9 +32,6 @@ done
 
 export APP_ENV=production
 export TRUST_PROXY_HEADERS=true
-
-echo "📥 拉取最新代码..."
-git pull
 
 echo "🚀 重建并启动后端服务..."
 docker-compose up --build --force-recreate -d backend
