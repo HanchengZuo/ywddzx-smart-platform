@@ -9,6 +9,15 @@ if [ -f .env ]; then
   set +a
 fi
 
+# The repository package version is the single source of truth for the
+# frontend/backend compatibility check. It must override stale .env values.
+APP_FRONTEND_VERSION="$(python3 -c 'import json; print(json.load(open("frontend/package.json", encoding="utf-8"))["version"])')"
+if [ -z "$APP_FRONTEND_VERSION" ]; then
+  echo "❌ 无法读取前端版本号"
+  exit 1
+fi
+export APP_FRONTEND_VERSION
+
 required_vars="APP_SECRET_KEY DB_PASSWORD WEBAUTHN_RP_ID WEBAUTHN_ORIGIN CORS_ALLOWED_ORIGINS"
 for variable_name in $required_vars; do
   eval "variable_value=\${$variable_name:-}"
