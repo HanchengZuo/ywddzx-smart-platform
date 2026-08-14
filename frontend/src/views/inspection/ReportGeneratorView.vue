@@ -120,7 +120,7 @@
           :disabled="sourceLoading"
           @click="openSourceDialog"
         >
-          {{ canGenerateReports ? '设置数据来源' : '查看数据来源' }}
+          {{ canManageQualityReportSource ? '设置数据来源' : '查看数据来源' }}
         </button>
         <button
           type="button"
@@ -128,10 +128,10 @@
           :disabled="selectionSettingsLoading"
           @click="openSelectionSettingsDialog"
         >
-          {{ canGenerateReports ? '设置选题规则' : '查看选题规则' }}
+          {{ canManageQualityReportSelectionRules ? '设置选题规则' : '查看选题规则' }}
         </button>
         <button
-          v-if="canGenerateReports && sourceSelectionDirty"
+          v-if="canGenerateReports && canManageQualityReportSource && sourceSelectionDirty"
           type="button"
           class="source-apply-generate-btn"
           :disabled="loading || sourceLoading"
@@ -282,18 +282,22 @@
               <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
                 <div class="quality-slide-band">{{ currentQualitySlide.subtitle }}</div>
                 <div :class="['quality-issue-pair-grid', currentQualitySlide.layout_variant || 'paired']">
-                  <article v-for="issue in currentQualitySlide.issues" :key="`slide-issue-${issue.issue_id}`">
+                  <article
+                    v-for="issue in currentQualitySlide.issues"
+                    :key="`slide-issue-${issue.issue_id}`"
+                    :class="getQualityIssueLayoutClasses(issue)"
+                  >
                     <h3>{{ issue.station_name || '未命名站点' }}</h3><p>{{ issue.description || '暂无问题描述' }}</p>
-                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" /></button>
+                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" @load="rememberQualityImageAspect($event, getQualityImageKey(issue))" /></button>
                     <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
                   </article>
                 </div>
               </template>
 
               <template v-else-if="currentQualitySlide.kind === 'management_trace'">
-                <div class="quality-trace-layout">
+                <div :class="['quality-trace-layout', getQualityTraceLayoutClasses(currentQualitySlide)]">
                   <div><p class="quality-typical-issue"><b>典型问题：</b>{{ formatStationIssue(currentQualitySlide.typical_issue || {}) }}</p><section v-for="item in currentQualitySlide.analysis_items" :key="item.label"><strong>{{ item.label }}</strong><p>{{ item.content || '-' }}</p></section></div>
-                  <button v-if="currentQualitySlide.typical_issue?.issue_photo" type="button" @click="openImagePreview(currentQualitySlide.typical_issue.issue_photo, '典型问题照片')"><img :src="resolveImage(currentQualitySlide.typical_issue.issue_photo)" alt="典型问题照片" /></button>
+                  <button v-if="currentQualitySlide.typical_issue?.issue_photo" type="button" @click="openImagePreview(currentQualitySlide.typical_issue.issue_photo, '典型问题照片')"><img :src="resolveImage(currentQualitySlide.typical_issue.issue_photo)" alt="典型问题照片" @load="rememberQualityImageAspect($event, getQualityImageKey(currentQualitySlide.typical_issue, 'trace'))" /></button>
                   <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
                 </div>
               </template>
@@ -1551,7 +1555,7 @@
           <header class="source-dialog-head">
             <div>
               <span>REPORT DATA SCOPE</span>
-              <h3>{{ canGenerateReports ? '设置报告数据来源' : '查看报告数据来源' }}</h3>
+              <h3>{{ canManageQualityReportSource ? '设置报告数据来源' : '查看报告数据来源' }}</h3>
               <p>候选站点已按报告模板、月份和当前账号权限自动筛选。</p>
             </div>
             <div class="source-dialog-total">
@@ -1564,7 +1568,7 @@
             <button
               type="button"
               :class="{ active: sourceDraftMode === 'all' }"
-              :disabled="!canGenerateReports"
+              :disabled="!canManageQualityReportSource"
               @click="setSourceDraftMode('all')"
             >
               <strong>全部可用站点</strong>
@@ -1573,7 +1577,7 @@
             <button
               type="button"
               :class="{ active: sourceDraftMode === 'custom' }"
-              :disabled="!canGenerateReports"
+              :disabled="!canManageQualityReportSource"
               @click="setSourceDraftMode('custom')"
             >
               <strong>自定义选择</strong>
@@ -1603,7 +1607,7 @@
               </strong>
               <span>个站点将纳入报告</span>
             </div>
-            <div v-if="canGenerateReports && sourceDraftMode === 'custom'">
+            <div v-if="canManageQualityReportSource && sourceDraftMode === 'custom'">
               <button type="button" @click="selectVisibleSourceStations">全选当前结果</button>
               <button type="button" @click="invertVisibleSourceStations">反选当前结果</button>
               <button type="button" class="danger" @click="sourceDraftIds = []">清空</button>
@@ -1631,14 +1635,14 @@
                     'source-station-option',
                     {
                       selected: isDraftSourceStationSelected(station.station_id),
-                      readonly: !canGenerateReports || sourceDraftMode === 'all'
+                      readonly: !canManageQualityReportSource || sourceDraftMode === 'all'
                     }
                   ]"
                 >
                   <input
                     type="checkbox"
                     :checked="isDraftSourceStationSelected(station.station_id)"
-                    :disabled="!canGenerateReports || sourceDraftMode === 'all'"
+                    :disabled="!canManageQualityReportSource || sourceDraftMode === 'all'"
                     @change="toggleDraftSourceStation(station.station_id)"
                   />
                   <span class="source-checkbox-mark"></span>
@@ -1658,14 +1662,16 @@
               自定义范围至少保留一个站点。
             </p>
             <p v-else>
-              当前选择不会修改原始巡检数据，只影响下一次报告生成。
+              {{ canManageQualityReportSource
+                ? '当前选择不会修改原始巡检数据，只影响下一次报告生成。'
+                : '当前账号可以查看数据范围，但不能修改。' }}
             </p>
             <div>
               <button type="button" class="source-cancel-btn" @click="closeSourceDialog">
-                {{ canGenerateReports ? '取消' : '关闭' }}
+                {{ canManageQualityReportSource ? '取消' : '关闭' }}
               </button>
               <button
-                v-if="canGenerateReports"
+                v-if="canManageQualityReportSource"
                 type="button"
                 class="source-confirm-btn"
                 :disabled="sourceDraftMode === 'custom' && !sourceDraftIds.length"
@@ -1683,7 +1689,7 @@
           <header class="selection-dialog-head">
             <div>
               <span>REPORT ISSUE RULES</span>
-              <h3>{{ canGenerateReports ? '设置质量计量报告选题规则' : '查看质量计量报告选题规则' }}</h3>
+              <h3>{{ canManageQualityReportSelectionRules ? '设置质量计量报告选题规则' : '查看质量计量报告选题规则' }}</h3>
               <p>规则全局共享，保存后在下一次重新生成报告时生效。</p>
             </div>
             <div class="selection-updated-meta">
@@ -1716,7 +1722,7 @@
               <div class="selection-sampling-grid">
                 <label v-for="item in selectionSampleRuleOptions" :key="item.key">
                   <span>{{ item.label }}</span>
-                  <div><input v-model.number="selectionSettingsDraft.sample_counts[item.key]" type="number" min="1" max="12" :disabled="!canGenerateReports" /><em>项</em></div>
+                  <div><input v-model.number="selectionSettingsDraft.sample_counts[item.key]" type="number" min="1" max="12" :disabled="!canManageQualityReportSelectionRules" /><em>项</em></div>
                 </label>
               </div>
             </section>
@@ -1740,7 +1746,7 @@
                 <div class="selection-standard-pool">
                   <header><strong>可选外部规范</strong><span>{{ filteredSelectionStandards.length }} 条</span></header>
                   <div>
-                    <button v-for="standard in filteredSelectionStandards.slice(0, 80)" :key="`candidate-${selectionRuleTab}-${standard.standard_id}`" type="button" :disabled="!canGenerateReports || isSelectionStandardSelected(standard.standard_id)" @click="addSelectionPriority(standard.standard_id)">
+                    <button v-for="standard in filteredSelectionStandards.slice(0, 80)" :key="`candidate-${selectionRuleTab}-${standard.standard_id}`" type="button" :disabled="!canManageQualityReportSelectionRules || isSelectionStandardSelected(standard.standard_id)" @click="addSelectionPriority(standard.standard_id)">
                       <span class="selection-standard-id">{{ standard.standard_id }}</span>
                       <span><strong>{{ standard.table_name }}</strong><small>{{ standard.business_flow }} · {{ standard.detail_text || '-' }}</small></span>
                       <b>{{ isSelectionStandardSelected(standard.standard_id) ? '已添加' : '添加' }}</b>
@@ -1756,9 +1762,9 @@
                       <span class="selection-rank">{{ index + 1 }}</span>
                       <div><strong>外部规范ID {{ standard.standard_id }}</strong><small>{{ standard.table_name }} · {{ standard.business_flow }}</small></div>
                       <div class="selection-rank-actions">
-                        <button type="button" :disabled="!canGenerateReports || index === 0" title="上移" @click="moveSelectionPriority(index, -1)">↑</button>
-                        <button type="button" :disabled="!canGenerateReports || index === currentSelectionPriorityIds.length - 1" title="下移" @click="moveSelectionPriority(index, 1)">↓</button>
-                        <button type="button" class="remove" :disabled="!canGenerateReports" title="移除" @click="removeSelectionPriority(index)">×</button>
+                        <button type="button" :disabled="!canManageQualityReportSelectionRules || index === 0" title="上移" @click="moveSelectionPriority(index, -1)">↑</button>
+                        <button type="button" :disabled="!canManageQualityReportSelectionRules || index === currentSelectionPriorityIds.length - 1" title="下移" @click="moveSelectionPriority(index, 1)">↓</button>
+                        <button type="button" class="remove" :disabled="!canManageQualityReportSelectionRules" title="移除" @click="removeSelectionPriority(index)">×</button>
                       </div>
                     </article>
                     <p v-if="!currentSelectionPriorityStandards.length">暂未设置规范优先级，将由AI在并列候选中决策。</p>
@@ -1769,10 +1775,12 @@
           </template>
 
           <footer class="selection-dialog-footer">
-            <p>禁止项始终先选星标问题；规范优先级不会修改原始问题数据。</p>
+            <p>{{ canManageQualityReportSelectionRules
+              ? '禁止项始终先选星标问题；规范优先级不会修改原始问题数据。'
+              : '当前账号可以查看选题规则，但不能修改。' }}</p>
             <div>
-              <button type="button" class="selection-cancel-btn" @click="closeSelectionSettingsDialog">{{ canGenerateReports ? '取消' : '关闭' }}</button>
-              <button v-if="canGenerateReports" type="button" class="selection-save-btn" :disabled="selectionSettingsSaving || selectionSettingsLoading" @click="saveSelectionSettings">{{ selectionSettingsSaving ? '保存中...' : '保存选题规则' }}</button>
+              <button type="button" class="selection-cancel-btn" @click="closeSelectionSettingsDialog">{{ canManageQualityReportSelectionRules ? '取消' : '关闭' }}</button>
+              <button v-if="canManageQualityReportSelectionRules" type="button" class="selection-save-btn" :disabled="selectionSettingsSaving || selectionSettingsLoading" @click="saveSelectionSettings">{{ selectionSettingsSaving ? '保存中...' : '保存选题规则' }}</button>
             </div>
           </footer>
         </section>
@@ -2008,6 +2016,24 @@ const activeJob = ref(null)
 const canGenerateReports = ref(
   currentRole === 'root' || Boolean(storedPermissions.generate_inspection_reports)
 )
+const canManageQualityReportSource = ref(
+  currentRole === 'root' || Boolean(storedPermissions.manage_quality_report_source)
+)
+const canManageQualityReportSelectionRules = ref(
+  currentRole === 'root' || Boolean(storedPermissions.manage_quality_report_selection_rules)
+)
+
+const applyReportCapabilities = (payload = {}) => {
+  if (Object.prototype.hasOwnProperty.call(payload, 'can_generate')) {
+    canGenerateReports.value = Boolean(payload.can_generate)
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'can_manage_quality_report_source')) {
+    canManageQualityReportSource.value = Boolean(payload.can_manage_quality_report_source)
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'can_manage_quality_report_selection_rules')) {
+    canManageQualityReportSelectionRules.value = Boolean(payload.can_manage_quality_report_selection_rules)
+  }
+}
 const imagePreview = ref({
   visible: false,
   src: '',
@@ -2040,6 +2066,7 @@ const selectionActiveFlow = ref('')
 const selectionStandardKeyword = ref('')
 const selectionTableFilter = ref('')
 const activeQualitySlideIndex = ref(0)
+const qualityImageAspects = ref({})
 const exportDialogVisible = ref(false)
 const exportTask = ref(null)
 const exportError = ref('')
@@ -2125,6 +2152,7 @@ const sourceSelectionDescription = computed(() => {
   return `使用当前月份全部 ${summary.station_count} 个可用站点，覆盖 ${summary.region_count} 个片区。`
 })
 const sourceSelectionDirty = computed(() => {
+  if (!canManageQualityReportSource.value) return false
   if (!hasReport.value) return false
   const savedMode = reportSourceSelection.value.mode === 'custom' ? 'custom' : 'all'
   if (savedMode !== sourceSelectionMode.value) return true
@@ -2812,6 +2840,47 @@ const formatStationIssue = (issue = {}) => {
   return station || description || '暂无典型问题描述。'
 }
 
+const getQualityImageKey = (issue = {}, prefix = 'issue') => (
+  `${prefix}:${issue.issue_id || issue.id || issue.issue_photo || issue.station_name || 'unknown'}`
+)
+
+const rememberQualityImageAspect = (event, key) => {
+  const image = event?.target
+  if (!image?.naturalWidth || !image?.naturalHeight || !key) return
+  const ratio = image.naturalWidth / image.naturalHeight
+  if (Math.abs((qualityImageAspects.value[key] || 0) - ratio) < 0.01) return
+  qualityImageAspects.value = {
+    ...qualityImageAspects.value,
+    [key]: ratio
+  }
+}
+
+const getQualityCopyClass = (value) => {
+  const length = String(value || '').trim().length
+  if (length >= 150) return 'copy-long'
+  if (length <= 70) return 'copy-short'
+  return 'copy-medium'
+}
+
+const getQualityPhotoClass = (ratio) => {
+  if (ratio >= 2.15) return 'photo-panorama'
+  if (ratio >= 1.35) return 'photo-landscape'
+  if (ratio <= 0.72) return 'photo-portrait'
+  return 'photo-balanced'
+}
+
+const getQualityIssueLayoutClasses = (issue = {}) => {
+  const ratio = qualityImageAspects.value[getQualityImageKey(issue)] || 1.35
+  return [getQualityPhotoClass(ratio), getQualityCopyClass(issue.description)]
+}
+
+const getQualityTraceLayoutClasses = (slide = {}) => {
+  const issue = slide.typical_issue || {}
+  const ratio = qualityImageAspects.value[getQualityImageKey(issue, 'trace')] || 1.35
+  const text = [issue.description, ...(slide.analysis_items || []).map((item) => item.content)].join('')
+  return [getQualityPhotoClass(ratio), getQualityCopyClass(text)]
+}
+
 const openImagePreview = (path, title = '问题照片预览') => {
   const src = resolveImage(path)
   if (!src) return
@@ -2893,19 +2962,19 @@ const isSelectionStandardSelected = (standardId) => (
 )
 
 const addSelectionPriority = (standardId) => {
-  if (!canGenerateReports.value || isSelectionStandardSelected(standardId)) return
+  if (!canManageQualityReportSelectionRules.value || isSelectionStandardSelected(standardId)) return
   setCurrentSelectionPriorityIds([...currentSelectionPriorityIds.value, Number(standardId)])
 }
 
 const removeSelectionPriority = (index) => {
-  if (!canGenerateReports.value) return
+  if (!canManageQualityReportSelectionRules.value) return
   const ids = [...currentSelectionPriorityIds.value]
   ids.splice(index, 1)
   setCurrentSelectionPriorityIds(ids)
 }
 
 const moveSelectionPriority = (index, direction) => {
-  if (!canGenerateReports.value) return
+  if (!canManageQualityReportSelectionRules.value) return
   const ids = [...currentSelectionPriorityIds.value]
   const targetIndex = index + direction
   if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return
@@ -2929,6 +2998,7 @@ const loadSelectionSettings = async () => {
     }
     selectionStandardOptions.value = Array.isArray(response.data.standards) ? response.data.standards : []
     selectionBusinessFlows.value = Array.isArray(response.data.business_flows) ? response.data.business_flows : []
+    canManageQualityReportSelectionRules.value = Boolean(response.data?.can_edit)
     if (!selectionBusinessFlows.value.includes(selectionActiveFlow.value)) {
       selectionActiveFlow.value = selectionBusinessFlows.value[0] || ''
     }
@@ -2955,7 +3025,7 @@ const closeSelectionSettingsDialog = () => {
 }
 
 const saveSelectionSettings = async () => {
-  if (!canGenerateReports.value || selectionSettingsSaving.value) return
+  if (!canManageQualityReportSelectionRules.value || selectionSettingsSaving.value) return
   selectionSettingsSaving.value = true
   selectionSettingsError.value = ''
   selectionSettingsMessage.value = ''
@@ -3034,6 +3104,7 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
       throw new Error(response.data?.error || '读取报告数据来源失败。')
     }
     sourceStations.value = Array.isArray(response.data?.stations) ? response.data.stations : []
+    canManageQualityReportSource.value = Boolean(response.data?.can_edit)
     syncSourceSelection(savedSelection, jobOptions)
   } catch (err) {
     if (requestId !== contextRequestId) return
@@ -3063,7 +3134,7 @@ const closeSourceDialog = () => {
 }
 
 const setSourceDraftMode = (mode) => {
-  if (!canGenerateReports.value) return
+  if (!canManageQualityReportSource.value) return
   sourceDraftMode.value = mode === 'custom' ? 'custom' : 'all'
   if (sourceDraftMode.value === 'custom' && !sourceDraftIds.value.length) {
     sourceDraftIds.value = sourceStations.value.map((item) => Number(item.station_id))
@@ -3076,7 +3147,7 @@ const isDraftSourceStationSelected = (stationId) => (
 )
 
 const toggleDraftSourceStation = (stationId) => {
-  if (!canGenerateReports.value || sourceDraftMode.value !== 'custom') return
+  if (!canManageQualityReportSource.value || sourceDraftMode.value !== 'custom') return
   const targetId = Number(stationId)
   const selectedIds = new Set(sourceDraftIds.value.map(Number))
   if (selectedIds.has(targetId)) selectedIds.delete(targetId)
@@ -3085,12 +3156,14 @@ const toggleDraftSourceStation = (stationId) => {
 }
 
 const selectVisibleSourceStations = () => {
+  if (!canManageQualityReportSource.value) return
   const selectedIds = new Set(sourceDraftIds.value.map(Number))
   filteredSourceStations.value.forEach((item) => selectedIds.add(Number(item.station_id)))
   sourceDraftIds.value = [...selectedIds].sort((a, b) => a - b)
 }
 
 const invertVisibleSourceStations = () => {
+  if (!canManageQualityReportSource.value) return
   const selectedIds = new Set(sourceDraftIds.value.map(Number))
   filteredSourceStations.value.forEach((item) => {
     const stationId = Number(item.station_id)
@@ -3101,7 +3174,7 @@ const invertVisibleSourceStations = () => {
 }
 
 const applySourceSelection = () => {
-  if (!canGenerateReports.value) {
+  if (!canManageQualityReportSource.value) {
     closeSourceDialog()
     return
   }
@@ -3289,7 +3362,7 @@ const startGeneration = async (options = {}) => {
       month: selectedMonth.value,
       force: options?.force === true
     }
-    if (isQualityMeasurementReport.value) {
+    if (isQualityMeasurementReport.value && canManageQualityReportSource.value) {
       payload.generation_options = {
         station_filter_enabled: sourceSelectionMode.value === 'custom',
         station_ids: sourceSelectionMode.value === 'custom'
@@ -3347,7 +3420,7 @@ const loadReportState = async () => {
     if (!response.data?.success) {
       throw new Error(response.data?.error || '读取报告状态失败。')
     }
-    canGenerateReports.value = Boolean(response.data?.can_generate)
+    applyReportCapabilities(response.data)
     report.value = response.data?.report || createEmptyReport()
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
@@ -3401,7 +3474,7 @@ const loadReportTypes = async () => {
     const response = await axios.get('/api/inspection-reports/types')
     if (response.data?.success && Array.isArray(response.data.report_types) && response.data.report_types.length) {
       reportTypes.value = response.data.report_types
-      canGenerateReports.value = Boolean(response.data?.can_generate)
+      applyReportCapabilities(response.data)
     }
   } catch {
     reportTypes.value = DEFAULT_REPORT_TYPES
@@ -5685,9 +5758,18 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid article {
   display: grid;
-  grid-template-rows: auto minmax(0, 0.62fr) minmax(0, 1.75fr);
+  grid-template-rows: auto minmax(0, 0.72fr) minmax(0, 1.85fr);
+  gap: 1.5%;
   min-width: 0;
   padding: 0 5%;
+}
+
+.quality-issue-pair-grid article.copy-short {
+  grid-template-rows: auto minmax(0, 0.48fr) minmax(0, 2.05fr);
+}
+
+.quality-issue-pair-grid article.copy-long {
+  grid-template-rows: auto minmax(0, 1.08fr) minmax(0, 1.55fr);
 }
 
 .quality-issue-pair-grid article + article {
@@ -5701,11 +5783,11 @@ onBeforeUnmount(() => {
 }
 
 .quality-issue-pair-grid p {
-  overflow: hidden;
   margin: 0;
-  font-size: clamp(9px, 1.12vw, 16px);
+  overflow-wrap: anywhere;
+  font-size: clamp(9px, 1.18vw, 17px);
   font-weight: 700;
-  line-height: 1.55;
+  line-height: 1.48;
 }
 
 .quality-issue-pair-grid button,
@@ -5713,8 +5795,9 @@ onBeforeUnmount(() => {
   overflow: hidden;
   min-height: 0;
   padding: 0;
-  border: 0;
-  background: transparent;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #f1f5f9;
   cursor: zoom-in;
 }
 
@@ -5722,15 +5805,52 @@ onBeforeUnmount(() => {
 .quality-trace-layout img {
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
+}
+
+.quality-issue-pair-grid.paired article.photo-portrait.copy-short {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 2.5%;
+}
+
+.quality-issue-pair-grid.paired article.photo-portrait.copy-short h3 {
+  grid-column: 1 / -1;
+}
+
+.quality-issue-pair-grid.paired article.photo-portrait.copy-short p {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: center;
+  font-size: clamp(10px, 1.24vw, 18px);
+}
+
+.quality-issue-pair-grid.paired article.photo-portrait.copy-short button,
+.quality-issue-pair-grid.paired article.photo-portrait.copy-short .quality-slide-photo-empty {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .quality-issue-pair-grid.single article {
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   grid-template-rows: auto minmax(0, 1fr);
   gap: 2% 4%;
   padding: 0 2%;
+}
+
+.quality-issue-pair-grid.single article.photo-portrait {
+  grid-template-columns: minmax(0, 1.68fr) minmax(0, 0.62fr);
+}
+
+.quality-issue-pair-grid.single article.photo-landscape.copy-short {
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+}
+
+.quality-issue-pair-grid.single article.copy-long {
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.8fr);
 }
 
 .quality-issue-pair-grid.single article h3 {
@@ -5752,6 +5872,28 @@ onBeforeUnmount(() => {
   grid-row: 1 / 3;
 }
 
+.quality-issue-pair-grid.single article.photo-panorama.copy-short {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 1.5%;
+}
+
+.quality-issue-pair-grid.single article.photo-panorama.copy-short h3,
+.quality-issue-pair-grid.single article.photo-panorama.copy-short p,
+.quality-issue-pair-grid.single article.photo-panorama.copy-short button,
+.quality-issue-pair-grid.single article.photo-panorama.copy-short .quality-slide-photo-empty {
+  grid-column: 1;
+}
+
+.quality-issue-pair-grid.single article.photo-panorama.copy-short h3 { grid-row: 1; }
+.quality-issue-pair-grid.single article.photo-panorama.copy-short p {
+  grid-row: 2;
+  font-size: clamp(10px, 1.18vw, 17px);
+  line-height: 1.45;
+}
+.quality-issue-pair-grid.single article.photo-panorama.copy-short button,
+.quality-issue-pair-grid.single article.photo-panorama.copy-short .quality-slide-photo-empty { grid-row: 3; }
+
 .quality-slide-photo-empty,
 .quality-slide-empty {
   display: grid;
@@ -5767,6 +5909,20 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1.85fr) minmax(220px, 0.75fr);
   gap: 3%;
   height: 100%;
+}
+
+.quality-trace-layout.photo-portrait {
+  grid-template-columns: minmax(0, 2.05fr) minmax(170px, 0.55fr);
+}
+
+.quality-trace-layout.copy-long {
+  grid-template-columns: minmax(0, 2.15fr) minmax(180px, 0.58fr);
+}
+
+.quality-trace-layout.photo-panorama.copy-short {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 2%;
 }
 
 .quality-typical-issue {

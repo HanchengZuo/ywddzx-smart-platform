@@ -11,7 +11,7 @@ import zipfile
 from io import BytesIO
 from typing import Sequence
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
@@ -119,6 +119,7 @@ class InspectionReportPresentation:
         self.prs.slide_width = SLIDE_WIDTH
         self.prs.slide_height = SLIDE_HEIGHT
         self.page_number = 0
+        self._image_aspect_cache = {}
 
     def build(self, output_path):
         if self.report_type == "quality_measurement":
@@ -681,7 +682,80 @@ class InspectionReportPresentation:
             return None
         return candidate if os.path.isfile(candidate) else None
 
+    @staticmethod
+    def _contain_size(image_width, image_height, box_width, box_height):
+        """Return an uncropped size that stays completely inside the target box."""
+        image_width = max(1.0, float(image_width or 0))
+        image_height = max(1.0, float(image_height or 0))
+        box_width = max(0.1, float(box_width or 0))
+        box_height = max(0.1, float(box_height or 0))
+        scale = min(box_width / image_width, box_height / image_height)
+        return image_width * scale, image_height * scale
+
+    @staticmethod
+    def _fit_quality_text_size(value, width, height, maximum=20, minimum=11, line_height=1.35):
+        """Estimate the largest readable font that fits a Chinese report text box."""
+        text = str(value or "").strip()
+        if not text:
+            return maximum
+        for size in range(int(maximum), int(minimum) - 1, -1):
+            chars_per_line = max(4, int(max(0.4, width) * 72 / max(1, size)))
+            line_count = 0
+            for raw_line in text.splitlines() or [text]:
+                line_count += max(1, math.ceil(len(raw_line) / chars_per_line))
+            required_height = line_count * size * line_height / 72
+            if required_height <= max(0.2, height - 0.08):
+                return size
+        return minimum
+
+    @staticmethod
+    def _bounded_picture_box(x, y, width, height):
+        """Keep report photos inside the visible 16:9 canvas and above the page number."""
+        left = max(0.05, min(float(x), 13.18))
+        top = max(0.05, min(float(y), 6.92))
+        right = min(13.28, max(left + 0.1, float(x) + float(width)))
+        bottom = min(7.02, max(top + 0.1, float(y) + float(height)))
+        return left, top, right - left, bottom - top
+
+    def _prepare_picture_source(self, raw_path):
+        source = self._resolve_image_source(raw_path)
+        if not source:
+            return None, 0, 0
+        try:
+            if hasattr(source, "seek"):
+                source.seek(0)
+            with Image.open(source) as image:
+                orientation = image.getexif().get(274, 1)
+                normalized = ImageOps.exif_transpose(image)
+                image_width, image_height = normalized.size
+                if orientation not in (None, 1):
+                    buffer = BytesIO()
+                    if "A" in normalized.getbands():
+                        normalized.save(buffer, format="PNG", optimize=True)
+                    else:
+                        normalized.convert("RGB").save(buffer, format="JPEG", quality=92, optimize=True)
+                    buffer.seek(0)
+                    source = buffer
+            if hasattr(source, "seek"):
+                source.seek(0)
+            return source, image_width, image_height
+        except Exception:
+            return None, 0, 0
+
+    def _image_aspect_ratio(self, raw_path):
+        value = str(raw_path or "").strip()
+        if not value:
+            return 1.35
+        cache_key = value if len(value) <= 512 else f"data:{hash(value)}"
+        if cache_key in self._image_aspect_cache:
+            return self._image_aspect_cache[cache_key]
+        _source, image_width, image_height = self._prepare_picture_source(raw_path)
+        aspect_ratio = image_width / image_height if image_width and image_height else 1.35
+        self._image_aspect_cache[cache_key] = aspect_ratio
+        return aspect_ratio
+
     def _add_picture_contain(self, slide, image_source, x, y, width, height):
+        x, y, width, height = self._bounded_picture_box(x, y, width, height)
         frame = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
             Inches(x),
@@ -692,30 +766,42 @@ class InspectionReportPresentation:
         frame.fill.solid()
         frame.fill.fore_color.rgb = RGBColor(241, 245, 249)
         frame.line.color.rgb = RGBColor(203, 213, 225)
-        source = self._resolve_image_source(image_source)
+        source, image_width, image_height = self._prepare_picture_source(image_source)
         if not source:
             self._set_shape_text(frame, "暂无问题照片", 11, MUTED)
-            return
+            return None
         try:
-            if hasattr(source, "seek"):
-                source.seek(0)
-            with Image.open(source) as image:
-                image_width, image_height = image.size
-            if hasattr(source, "seek"):
-                source.seek(0)
             padding = 0.07
             inner_width = max(0.1, width - padding * 2)
             inner_height = max(0.1, height - padding * 2)
-            ratio = min(inner_width / image_width, inner_height / image_height)
-            target_width = image_width * ratio
-            target_height = image_height * ratio
+            target_width, target_height = self._contain_size(
+                image_width,
+                image_height,
+                inner_width,
+                inner_height,
+            )
             left = x + (width - target_width) / 2
             top = y + (height - target_height) / 2
-            slide.shapes.add_picture(source, Inches(left), Inches(top), Inches(target_width), Inches(target_height))
+            picture = slide.shapes.add_picture(
+                source,
+                Inches(left),
+                Inches(top),
+                Inches(target_width),
+                Inches(target_height),
+            )
+            return {
+                "shape": picture,
+                "aspect_ratio": image_width / image_height,
+                "left": left,
+                "top": top,
+                "width": target_width,
+                "height": target_height,
+            }
         except Exception:
             frame.fill.fore_color.rgb = RGBColor(254, 242, 242)
             frame.line.color.rgb = RGBColor(254, 202, 202)
             self._set_shape_text(frame, "照片读取失败", 11, RED)
+            return None
 
     @staticmethod
     def _issue_description(issue):
@@ -1044,6 +1130,183 @@ class InspectionReportPresentation:
         plot.data_labels.font.size = Pt(11)
         plot.data_labels.font.bold = True
 
+    def _quality_single_issue_layout(self, issue):
+        description = self._issue_description(issue)
+        aspect_ratio = self._image_aspect_ratio(issue.get("issue_photo"))
+        content = {"x": 0.62, "y": 1.86, "width": 12.08, "height": 4.9}
+        if not issue.get("issue_photo"):
+            return {"mode": "text_only", "text": content, "aspect_ratio": aspect_ratio}
+
+        # Very wide evidence reads better below the copy; regular landscape and portrait
+        # photos use a side layout whose width follows the actual image ratio.
+        if aspect_ratio >= 2.15 and len(description) <= 150:
+            text_height = 1.08 if len(description) <= 70 else 1.48
+            photo_height = content["height"] - text_height - 0.18
+            photo_width = min(content["width"], max(5.6, photo_height * aspect_ratio + 0.14))
+            return {
+                "mode": "stacked",
+                "text": {
+                    "x": content["x"],
+                    "y": content["y"],
+                    "width": content["width"],
+                    "height": text_height,
+                },
+                "photo": {
+                    "x": content["x"] + (content["width"] - photo_width) / 2,
+                    "y": content["y"] + text_height + 0.18,
+                    "width": photo_width,
+                    "height": photo_height,
+                },
+                "aspect_ratio": aspect_ratio,
+            }
+
+        photo_width = max(3.0, min(7.15, content["height"] * aspect_ratio + 0.18))
+        if len(description) >= 190:
+            photo_width = min(photo_width, 4.7)
+        elif len(description) <= 70 and aspect_ratio >= 1:
+            photo_width = max(photo_width, 5.25)
+        text_width = content["width"] - photo_width - 0.28
+        return {
+            "mode": "side",
+            "text": {
+                "x": content["x"],
+                "y": content["y"],
+                "width": text_width,
+                "height": content["height"],
+            },
+            "photo": {
+                "x": content["x"] + text_width + 0.28,
+                "y": content["y"],
+                "width": photo_width,
+                "height": content["height"],
+            },
+            "aspect_ratio": aspect_ratio,
+        }
+
+    def _render_quality_single_issue(self, slide, issue):
+        layout = self._quality_single_issue_layout(issue)
+        text_box = layout["text"]
+        station = _short(issue.get("station_name"), 32)
+        description = self._issue_description(issue)
+        station_height = 0.48
+        if layout["mode"] == "stacked":
+            station_height = 0.42
+        self._add_text(
+            slide,
+            station,
+            text_box["x"],
+            text_box["y"],
+            text_box["width"],
+            station_height,
+            size=22 if len(station) <= 18 else 19,
+            color=BLUE,
+            bold=True,
+        )
+        description_y = text_box["y"] + station_height + 0.08
+        description_height = max(0.34, text_box["height"] - station_height - 0.08)
+        description_size = self._fit_quality_text_size(
+            description,
+            text_box["width"],
+            description_height,
+            maximum=24 if len(description) <= 70 else 20,
+            minimum=13,
+            line_height=1.48,
+        )
+        self._add_text(
+            slide,
+            description,
+            text_box["x"],
+            description_y,
+            text_box["width"],
+            description_height,
+            size=description_size,
+            color=INK,
+            valign=MSO_ANCHOR.MIDDLE if len(description) <= 100 else MSO_ANCHOR.TOP,
+        )
+        if layout.get("photo"):
+            photo_box = layout["photo"]
+            self._add_picture_contain(
+                slide,
+                issue.get("issue_photo"),
+                photo_box["x"],
+                photo_box["y"],
+                photo_box["width"],
+                photo_box["height"],
+            )
+
+    def _render_quality_paired_issue(self, slide, issue, x):
+        station = _short(issue.get("station_name"), 28)
+        description = self._issue_description(issue)
+        aspect_ratio = self._image_aspect_ratio(issue.get("issue_photo"))
+        self._add_text(slide, station, x + 0.12, 1.88, 5.8, 0.46, size=19, color=BLUE, bold=True)
+        body_y = 2.42
+        body_height = 4.25
+
+        if issue.get("issue_photo") and aspect_ratio <= 0.72 and len(description) <= 90:
+            photo_width = max(2.35, min(2.82, body_height * aspect_ratio + 0.08))
+            text_width = 5.78 - photo_width - 0.18
+            description_size = self._fit_quality_text_size(
+                description,
+                text_width,
+                body_height,
+                maximum=17,
+                minimum=12,
+                line_height=1.45,
+            )
+            self._add_text(
+                slide,
+                description,
+                x + 0.12,
+                body_y,
+                text_width,
+                body_height,
+                size=description_size,
+                color=INK,
+                valign=MSO_ANCHOR.MIDDLE if len(description) <= 55 else MSO_ANCHOR.TOP,
+            )
+            self._add_picture_contain(
+                slide,
+                issue.get("issue_photo"),
+                x + 0.12 + text_width + 0.18,
+                body_y,
+                photo_width,
+                body_height,
+            )
+            return
+
+        description_height = min(1.62, max(0.74, 0.62 + len(description) / 105))
+        if not issue.get("issue_photo"):
+            description_height = body_height
+        description_size = self._fit_quality_text_size(
+            description,
+            5.78,
+            description_height,
+            maximum=17,
+            minimum=12,
+            line_height=1.42,
+        )
+        self._add_text(
+            slide,
+            description,
+            x + 0.12,
+            body_y,
+            5.78,
+            description_height,
+            size=description_size,
+            color=INK,
+            valign=MSO_ANCHOR.MIDDLE if len(description) <= 65 else MSO_ANCHOR.TOP,
+        )
+        if issue.get("issue_photo"):
+            photo_y = body_y + description_height + 0.12
+            self._add_picture_contain(
+                slide,
+                issue.get("issue_photo"),
+                x + 0.12,
+                photo_y,
+                5.78,
+                max(0.8, body_y + body_height - photo_y),
+            )
+
     def _render_quality_issue_pairs(self, data):
         title = data.get("title") or "加油站环节"
         if int(data.get("continuation_count") or 1) > 1:
@@ -1060,37 +1323,140 @@ class InspectionReportPresentation:
             if not issue:
                 self._add_panel(slide, 2.1, 3.0, 9.0, 1.5, "暂无数据", "当前分类暂无可展示的问题。", MUTED)
                 return
-            self._add_text(slide, _short(issue.get("station_name"), 32), 0.72, 1.92, 5.0, 0.52, size=21, color=BLUE, bold=True)
-            description = self._issue_description(issue)
-            description_size = 18 if len(description) <= 100 else 16 if len(description) <= 180 else 14
-            self._add_text(slide, description, 0.72, 2.56, 5.08, 3.72, size=description_size, color=INK)
-            self._add_picture_contain(slide, issue.get("issue_photo"), 6.05, 1.86, 6.55, 4.92)
+            self._render_quality_single_issue(slide, issue)
             return
         for index, issue in enumerate(issues):
             x = 0.48 + index * 6.41
             if index:
                 divider = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(6.66), Inches(1.84), Inches(0.01), Inches(4.96))
                 divider.fill.solid(); divider.fill.fore_color.rgb = RGBColor(151, 203, 230); divider.line.fill.background()
-            self._add_text(slide, _short(issue.get("station_name"), 28), x + 0.12, 1.88, 5.8, 0.46, size=19, color=BLUE, bold=True)
-            description = self._issue_description(issue)
-            self._add_text(slide, description, x + 0.12, 2.38, 5.78, 0.92, size=14, color=INK)
-            self._add_picture_contain(slide, issue.get("issue_photo"), x + 0.12, 3.42, 5.78, 3.28)
+            self._render_quality_paired_issue(slide, issue, x)
         if not issues:
             self._add_panel(slide, 2.1, 3.0, 9.0, 1.5, "暂无数据", "当前分类暂无可展示的问题。", MUTED)
+
+    def _render_quality_trace_copy(self, slide, data, x, y, width, height):
+        typical_issue = data.get("typical_issue") or {}
+        description = self._issue_description(typical_issue)
+        station = _text(typical_issue.get("station_name"), "典型问题")
+        typical_text = f"典型问题：{station}：{description}"
+        typical_height = min(1.25, max(0.72, 0.58 + len(typical_text) / 170))
+        typical_size = self._fit_quality_text_size(
+            typical_text,
+            width,
+            typical_height,
+            maximum=18,
+            minimum=13,
+            line_height=1.35,
+        )
+        self._add_text(
+            slide,
+            typical_text,
+            x,
+            y,
+            width,
+            typical_height,
+            size=typical_size,
+            color=RED,
+            bold=True,
+        )
+
+        items = data.get("analysis_items") or []
+        item_y = y + typical_height + 0.16
+        remaining_height = max(0.8, height - typical_height - 0.16)
+        gap = 0.1
+        weights = [max(0.8, min(2.2, len(str(item.get("content") or "")) / 80)) for item in items]
+        weight_total = sum(weights) or 1
+        usable_height = max(0.6, remaining_height - gap * max(0, len(items) - 1))
+        for index, item in enumerate(items):
+            item_height = usable_height * weights[index] / weight_total
+            label_width = min(1.55, max(1.22, width * 0.19))
+            self._add_text(
+                slide,
+                item.get("label"),
+                x,
+                item_y,
+                label_width,
+                item_height,
+                size=14,
+                color=RGBColor(52, 119, 195),
+                bold=True,
+            )
+            content_width = width - label_width - 0.08
+            content = _text(item.get("content"), "-")
+            content_size = self._fit_quality_text_size(
+                content,
+                content_width,
+                item_height,
+                maximum=16,
+                minimum=11,
+                line_height=1.4,
+            )
+            self._add_text(
+                slide,
+                content,
+                x + label_width + 0.08,
+                item_y,
+                content_width,
+                item_height,
+                size=content_size,
+                color=INK,
+            )
+            item_y += item_height + gap
 
     def _render_quality_management_trace(self, data):
         slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))
         typical_issue = data.get("typical_issue") or {}
         description = self._issue_description(typical_issue)
-        station = _text(typical_issue.get("station_name"), "典型问题")
-        self._add_text(slide, "典型问题：", 0.72, 1.24, 1.55, 0.4, size=17, color=RED, bold=True)
-        self._add_text(slide, f"{station}：{description}", 1.92, 1.22, 7.0, 0.88, size=16, color=RED, bold=True)
-        y = 2.18
-        for item in data.get("analysis_items") or []:
-            self._add_text(slide, item.get("label"), 0.78, y, 1.68, 0.4, size=15, color=RGBColor(52, 119, 195), bold=True)
-            self._add_text(slide, item.get("content"), 2.22, y, 6.62, 0.95, size=14, color=INK)
-            y += 1.08
-        self._add_picture_contain(slide, typical_issue.get("issue_photo"), 9.05, 1.5, 3.7, 5.2)
+        aspect_ratio = self._image_aspect_ratio(typical_issue.get("issue_photo"))
+        content_x, content_y, content_width, content_height = 0.72, 1.22, 12.0, 5.52
+        total_copy_length = len(description) + sum(
+            len(str(item.get("content") or "")) for item in data.get("analysis_items") or []
+        )
+        if typical_issue.get("issue_photo") and aspect_ratio >= 2.2 and total_copy_length <= 300:
+            copy_height = 2.7
+            self._render_quality_trace_copy(
+                slide,
+                data,
+                content_x,
+                content_y,
+                content_width,
+                copy_height,
+            )
+            photo_height = content_height - copy_height - 0.16
+            photo_width = min(content_width, max(5.5, photo_height * aspect_ratio + 0.14))
+            self._add_picture_contain(
+                slide,
+                typical_issue.get("issue_photo"),
+                content_x + (content_width - photo_width) / 2,
+                content_y + copy_height + 0.16,
+                photo_width,
+                photo_height,
+            )
+            return
+
+        if typical_issue.get("issue_photo"):
+            photo_width = max(3.0, min(4.85, content_height * aspect_ratio + 0.12))
+            if total_copy_length >= 430:
+                photo_width = min(photo_width, 3.65)
+            copy_width = content_width - photo_width - 0.28
+            self._render_quality_trace_copy(
+                slide,
+                data,
+                content_x,
+                content_y,
+                copy_width,
+                content_height,
+            )
+            self._add_picture_contain(
+                slide,
+                typical_issue.get("issue_photo"),
+                content_x + copy_width + 0.28,
+                content_y,
+                photo_width,
+                content_height,
+            )
+            return
+        self._render_quality_trace_copy(slide, data, content_x, content_y, content_width, content_height)
 
     def _render_quality_trace_analysis(self, data):
         slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))

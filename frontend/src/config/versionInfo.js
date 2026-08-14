@@ -15,6 +15,26 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.8.3',
+    date: '2026-08-14',
+    title: '质量计量PPT自适应排版',
+    summary: '照片完整显示，文字和图片会按内容自动调整空间。',
+    items: [
+      '横版、竖版和长图按原比例完整展示，不再被页面裁切。',
+      '文字、照片和分页会根据内容多少自动调整，减少无效留白。'
+    ]
+  },
+  {
+    version: 'v4.8.2',
+    date: '2026-08-14',
+    title: 'AI报告权限细化',
+    summary: '质量计量报告的数据来源和选题规则可以单独授权。',
+    items: [
+      '查看页面、生成报告、设置数据来源和设置选题规则分别授权。',
+      '没有设置权限时仍可打开查看，但不能修改。'
+    ]
+  },
+  {
     version: 'v4.8.1',
     date: '2026-08-14',
     title: '质量计量报告选题与排版优化',

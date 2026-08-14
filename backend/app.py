@@ -855,6 +855,20 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "manage_quality_report_source",
+        "name": "设置质量计量报告数据来源",
+        "category": "AI报告生成",
+        "description": "调整质量计量监督检查报告在指定月份纳入统计的站点范围；未授权账号仍可查看当前范围。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "manage_quality_report_selection_rules",
+        "name": "设置质量计量报告选题规则",
+        "category": "AI报告生成",
+        "description": "维护质量计量监督检查报告的禁止项和分环节选题规则；未授权账号仍可查看当前规则。",
+        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
         "key": "limit_plan_inspection_table_scope",
         "name": "限定检查表范围",
         "category": "巡检计划",
@@ -1053,6 +1067,8 @@ PERMISSION_DEPENDENCIES = {
     "reset_station_account_password": "manage_stations",
     "manage_peer_review_tasks": "view_peer_reviews",
     "generate_inspection_reports": "view_inspection_reports",
+    "manage_quality_report_source": "view_inspection_reports",
+    "manage_quality_report_selection_rules": "view_inspection_reports",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -31057,6 +31073,45 @@ def get_authorized_inspection_report_user(cur):
     return user
 
 
+def get_inspection_report_capabilities(cur, user):
+    permissions = get_effective_permissions(cur, user)
+    return {
+        "can_generate": bool(permissions.get("generate_inspection_reports")),
+        "can_manage_quality_report_source": bool(
+            permissions.get("manage_quality_report_source")
+        ),
+        "can_manage_quality_report_selection_rules": bool(
+            permissions.get("manage_quality_report_selection_rules")
+        ),
+    }
+
+
+def get_saved_quality_report_generation_options(cur, report_month):
+    report = get_latest_inspection_report_snapshot(
+        cur,
+        REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+        report_month,
+    )
+    source_selection = (report or {}).get("source_selection") or {}
+    return normalize_inspection_report_generation_options(
+        {
+            "station_filter_enabled": source_selection.get("mode") == "custom",
+            "station_ids": source_selection.get("station_ids") or [],
+        }
+    )
+
+
+def get_authorized_quality_report_generation_options(
+    cur,
+    user,
+    report_month,
+    requested_options,
+):
+    if has_permission(cur, user, "manage_quality_report_source"):
+        return normalize_inspection_report_generation_options(requested_options)
+    return get_saved_quality_report_generation_options(cur, report_month)
+
+
 @app.route("/api/inspection-reports/types")
 def get_inspection_report_types():
     conn = None
@@ -31068,7 +31123,7 @@ def get_inspection_report_types():
         return jsonify({
             "success": True,
             "report_types": list(INSPECTION_REPORT_TYPE_CONFIGS.values()),
-            "can_generate": has_permission(cur, user, "generate_inspection_reports"),
+            **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -31105,7 +31160,7 @@ def get_inspection_report_status():
             "report_type": config,
             "report": report,
             "job": serialize_inspection_report_job(job),
-            "can_generate": has_permission(cur, user, "generate_inspection_reports"),
+            **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -31165,6 +31220,9 @@ def get_inspection_report_source_options():
                         item["inspection_count"] for item in stations
                     ),
                 },
+                "can_edit": has_permission(
+                    cur, user, "manage_quality_report_source"
+                ),
             }
         )
     except LookupError as exc:
@@ -31189,11 +31247,13 @@ def manage_quality_report_selection_settings():
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(cur, user, "generate_inspection_reports")
+        can_edit = has_permission(
+            cur, user, "manage_quality_report_selection_rules"
+        )
 
         if request.method == "PUT":
             if not can_edit:
-                raise PermissionError("当前账号只有AI报告查看权限，不能修改选题规则。")
+                raise PermissionError("当前账号无权修改质量计量报告选题规则。")
             if not quality_report_selection_settings_table_available(cur):
                 return jsonify({
                     "success": False,
@@ -31301,8 +31361,11 @@ def create_inspection_report_generation_job():
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
         if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
-            generation_options = normalize_inspection_report_generation_options(
-                raw_generation_options
+            generation_options = get_authorized_quality_report_generation_options(
+                cur,
+                user,
+                report_month,
+                raw_generation_options,
             )
             resolve_inspection_report_source_selection(
                 cur,
