@@ -1,0 +1,52 @@
+import unittest
+
+from app import classify_non_oil_rectification, resolve_issue_review_transition
+
+
+class IssueReviewWorkflowTests(unittest.TestCase):
+    def test_rectified_review_closes_issue_and_requires_photo(self):
+        transition = resolve_issue_review_transition("已整改")
+
+        self.assertEqual(transition["new_status"], "已闭环")
+        self.assertTrue(transition["photo_required"])
+        self.assertFalse(transition["returns_to_station"])
+
+    def test_station_cannot_rectify_finishes_without_photo(self):
+        transition = resolve_issue_review_transition("站级无法整改")
+
+        self.assertEqual(transition["review_result"], "站经无法整改")
+        self.assertEqual(transition["new_status"], "站经无法整改")
+        self.assertFalse(transition["photo_required"])
+
+    def test_rejected_rectification_returns_to_station_without_photo(self):
+        transition = resolve_issue_review_transition("整改不通过")
+
+        self.assertEqual(transition["new_status"], "待整改")
+        self.assertFalse(transition["photo_required"])
+        self.assertTrue(transition["returns_to_station"])
+
+    def test_unknown_review_result_is_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_issue_review_transition("未整改")
+
+    def test_rejected_review_is_pending_rectification_in_reports(self):
+        result = classify_non_oil_rectification(
+            {
+                "status": "待整改",
+                "rectification_result": "已整改",
+                "review_result": "整改不通过",
+            }
+        )
+
+        self.assertEqual(result, "pending_rectification")
+
+    def test_accepted_review_is_completed_in_reports(self):
+        result = classify_non_oil_rectification(
+            {"status": "已闭环", "review_result": "已整改"}
+        )
+
+        self.assertEqual(result, "completed")
+
+
+if __name__ == "__main__":
+    unittest.main()

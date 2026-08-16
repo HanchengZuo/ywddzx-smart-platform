@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <div class="summary-grid">
+    <div class="summary-grid" :class="{ 'summary-grid-station': currentRole === 'station_manager' }">
       <div class="summary-card summary-card-primary card-surface">
         <div class="summary-label">当前待办</div>
         <div class="summary-value">{{ filteredData.length }}</div>
@@ -20,8 +20,23 @@
           {{ currentRole === 'station_manager' ? '站点账号' : '督导组账号' }}
         </div>
         <div class="summary-desc">
-          {{ currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可提交督导组复核结果、复核说明并上传复核照片' }}
+          {{ currentRole === 'station_manager' ? '可填写整改结果、整改说明并上传整改照片' : '可选择复核结论，复核说明选填，照片要求随结论变化' }}
         </div>
+      </div>
+
+      <div v-if="currentRole === 'station_manager'" class="summary-card summary-card-danger card-surface">
+        <div class="summary-label">复核退回</div>
+        <div class="summary-value summary-value-returned">{{ returnedRectificationCount }}</div>
+        <div class="summary-desc">上一轮整改未通过，需要重新处理的问题</div>
+      </div>
+    </div>
+
+    <div v-if="currentRole === 'station_manager' && returnedRectificationCount" class="return-overview-alert card-surface">
+      <div class="return-overview-icon" aria-hidden="true">!</div>
+      <div class="return-overview-copy">
+        <div class="return-overview-kicker">复核退回提醒</div>
+        <h3>有 {{ returnedRectificationCount }} 条问题需要重新整改</h3>
+        <p>督导组已将上一轮整改判定为不通过。请先查看退回原因和历史流转，再重新提交整改。</p>
       </div>
     </div>
 
@@ -114,11 +129,12 @@
       </div>
 
       <div v-else class="mobile-issue-cards">
-        <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface">
+        <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface"
+          :class="{ 'is-review-returned': isReturnedForRectification(item) }">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
               <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
-              <span :class="statusClass(item.status)">{{ item.status }}</span>
+              <span :class="issueStatusClass(item)">{{ issueStatusLabel(item) }}</span>
             </div>
             <div class="mobile-card-code">规范ID：{{ item.standard_id || '暂无' }}</div>
           </div>
@@ -143,6 +159,19 @@
             <div class="mobile-card-row mobile-card-row-top">
               <span>问题描述</span>
               <div class="mobile-card-text">{{ item.description }}</div>
+            </div>
+
+            <div v-if="currentRole === 'station_manager' && isReturnedForRectification(item)"
+              class="mobile-review-return-notice">
+              <div class="mobile-review-return-head">
+                <strong>上一轮整改未通过</strong>
+                <span>待重新整改</span>
+              </div>
+              <p>{{ reviewReturnReason(item) }}</p>
+              <div class="mobile-review-return-foot">
+                <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
+                <button class="status-flow-link" type="button" @click="openActionDrawer(item)">查看完整流转</button>
+              </div>
             </div>
 
             <template v-if="isSupervisorLike">
@@ -179,7 +208,9 @@
           <div class="mobile-card-actions">
             <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
               :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
-              {{ currentRole === 'station_manager' ? '提交整改' : '提交复核' }}
+              {{ currentRole === 'station_manager'
+                ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
+                : '提交复核' }}
             </button>
             <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="mobile-action-tip">
               当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。
@@ -323,13 +354,26 @@
                   </button>
                   <span v-else>暂无</span>
                 </td>
-                <td v-if="isMyIssueColumnVisible('status')" class="nowrap-col">
-                  <span :class="statusClass(item.status)">{{ item.status }}</span>
+                <td v-if="isMyIssueColumnVisible('status')" class="status-flow-col">
+                  <div class="issue-status-flow" :class="{ 'is-returned': isReturnedForRectification(item) }">
+                    <span :class="issueStatusClass(item)">{{ issueStatusLabel(item) }}</span>
+                    <template v-if="currentRole === 'station_manager' && isReturnedForRectification(item)">
+                      <strong>上一轮整改未通过</strong>
+                      <p>{{ reviewReturnReason(item) }}</p>
+                      <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
+                    </template>
+                    <button v-if="currentRole === 'station_manager'" class="status-flow-link" type="button"
+                      @click="openActionDrawer(item)">
+                      {{ isReturnedForRectification(item) ? '查看完整流转' : '查看流转' }}
+                    </button>
+                  </div>
                 </td>
                 <td v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">
                   <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
                     :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
-                    {{ currentRole === 'station_manager' ? '提交整改' : '提交复核' }}
+                    {{ currentRole === 'station_manager'
+                      ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
+                      : '提交复核' }}
                   </button>
                   <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
                     待检查表签名
@@ -398,6 +442,49 @@
             <div><strong>当前状态：</strong>{{ actionDrawer.item.status }}</div>
           </div>
 
+          <div v-if="actionDrawer.item.review_result === '整改不通过'" class="review-return-alert">
+            <div class="review-return-alert-title">上一轮整改未通过复核</div>
+            <p>{{ actionDrawer.item.review_note || '督导组未填写复核说明，请结合整改要求重新核对并提交。' }}</p>
+            <span v-if="actionDrawer.item.review_at">退回时间：{{ actionDrawer.item.review_at }}</span>
+          </div>
+
+          <section class="workflow-history-card">
+            <div class="workflow-history-head">
+              <div>
+                <span>处理轨迹</span>
+                <h4>整改复核流转记录</h4>
+              </div>
+              <small>每次整改与复核均独立留痕</small>
+            </div>
+            <div v-if="flowHistory.loading" class="workflow-history-state">正在读取流转记录...</div>
+            <div v-else-if="flowHistory.error" class="workflow-history-state error">{{ flowHistory.error }}</div>
+            <ol v-else class="workflow-timeline">
+              <li v-for="event in flowHistory.events" :key="event.id || `${event.action_type}-${event.created_at}`"
+                :class="workflowEventClass(event)">
+                <span class="workflow-timeline-dot"></span>
+                <div class="workflow-event-card">
+                  <div class="workflow-event-head">
+                    <strong>{{ event.action_label }}</strong>
+                    <span>{{ event.created_at || '时间未记录' }}</span>
+                  </div>
+                  <div class="workflow-event-meta">
+                    <span>{{ event.actor_display_name }}</span>
+                    <span v-if="event.round_no">第 {{ event.round_no }} 轮</span>
+                    <span v-if="event.result">{{ event.result }}</span>
+                  </div>
+                  <div v-if="event.from_status" class="workflow-status-path">
+                    <span>{{ event.from_status }}</span><b>→</b><span>{{ event.to_status }}</span>
+                  </div>
+                  <p v-if="event.note" class="workflow-event-note">{{ event.note }}</p>
+                  <button v-if="event.photo_path" class="workflow-photo-btn" type="button"
+                    @click="preview(resolveImage(event.photo_path), `${event.action_label}照片`)">
+                    查看本轮照片
+                  </button>
+                </div>
+              </li>
+            </ol>
+          </section>
+
           <template v-if="currentRole === 'station_manager'">
             <div class="form-item">
               <label>整改结果</label>
@@ -464,12 +551,20 @@
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
                 <option value="站经无法整改">站级无法整改</option>
+                <option value="整改不通过">整改不通过</option>
               </select>
             </div>
 
             <div class="form-item">
-              <label>督导组复核说明</label>
-              <textarea v-model="actionForm.reviewNote" rows="4" placeholder="请填写复核说明"></textarea>
+              <label>督导组复核说明 <span class="optional-field-tag">选填</span></label>
+              <textarea v-model="actionForm.reviewNote" rows="4"
+                placeholder="可填写复核依据或退回原因，不填写也可以提交"></textarea>
+              <div class="field-help-text">复核说明允许为空；选择整改不通过时，建议写明需要重新整改的原因。</div>
+            </div>
+
+            <div v-if="reviewOutcomeHint" class="review-outcome-hint" :class="reviewOutcomeHint.type">
+              <strong>{{ reviewOutcomeHint.title }}</strong>
+              <span>{{ reviewOutcomeHint.description }}</span>
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
@@ -511,7 +606,7 @@
               </div>
             </div>
             <div v-else class="drawer-photo-skip-note">
-              已选择站级无法整改，本次无需上传复核照片。
+              {{ reviewPhotoSkipMessage }}
             </div>
           </template>
 
@@ -595,6 +690,14 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
+const isReturnedForRectification = (item) => String(item?.review_result || '').trim() === '整改不通过'
+const reviewReturnReason = (item) => String(item?.review_note || '').trim()
+  || '督导组未填写复核说明，请重新核对问题并提交整改。'
+const issueStatusLabel = (item) => isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
+const issueStatusClass = (item) => isReturnedForRectification(item) ? 'status-tag returned' : statusClass(item?.status)
+const returnedRectificationCount = computed(() => (
+  issues.value.filter((item) => isReturnedForRectification(item)).length
+))
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
@@ -951,6 +1054,13 @@ const actionDrawer = ref({
   item: null
 })
 
+const flowHistory = ref({
+  loading: false,
+  error: '',
+  events: []
+})
+let flowHistoryRequestSequence = 0
+
 const actionForm = ref({
   rectificationResult: '',
   rectificationNote: '',
@@ -962,10 +1072,43 @@ const actionForm = ref({
   reviewPhotoPreview: ''
 })
 
-const noPhotoIssueResults = new Set(['站经无法整改', '站级无法整改', '站级无法完成整改', '站经理无法整改'])
+const noPhotoIssueResults = new Set(['站经无法整改', '站级无法整改', '站级无法完成整改', '站经理无法整改', '整改不通过'])
 const skipsIssuePhotoUpload = (value) => noPhotoIssueResults.has(String(value || '').trim())
 const shouldShowRectificationPhotoUpload = computed(() => !skipsIssuePhotoUpload(actionForm.value.rectificationResult))
-const shouldShowReviewPhotoUpload = computed(() => !skipsIssuePhotoUpload(actionForm.value.reviewResult))
+const shouldShowReviewPhotoUpload = computed(() => actionForm.value.reviewResult === '已整改')
+const reviewPhotoSkipMessage = computed(() => {
+  if (actionForm.value.reviewResult === '整改不通过') {
+    return '整改不通过将退回站经理重新整改，本次无需上传复核照片。'
+  }
+  if (skipsIssuePhotoUpload(actionForm.value.reviewResult)) {
+    return '已选择站级无法整改，本次无需上传复核照片。'
+  }
+  return '选择复核结果后，系统会根据结果提示是否需要上传照片。'
+})
+const reviewOutcomeHint = computed(() => {
+  if (actionForm.value.reviewResult === '整改不通过') {
+    return {
+      type: 'returned',
+      title: '将退回站经理重新整改',
+      description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。'
+    }
+  }
+  if (actionForm.value.reviewResult === '已整改') {
+    return {
+      type: 'closed',
+      title: '将完成问题闭环',
+      description: '确认整改有效后，请上传能够反映复核结果的照片。'
+    }
+  }
+  if (skipsIssuePhotoUpload(actionForm.value.reviewResult)) {
+    return {
+      type: 'unable',
+      title: '将认定为站级无法整改',
+      description: '提交后结束站级整改流转，本次无需上传复核照片。'
+    }
+  }
+  return null
+})
 
 const actionMessage = ref('')
 const actionMessageType = ref('info')
@@ -1000,6 +1143,37 @@ const fetchMyIssues = async () => {
   }
 }
 
+const fetchIssueFlowHistory = async (issueId) => {
+  const requestSequence = ++flowHistoryRequestSequence
+  flowHistory.value = {
+    loading: true,
+    error: '',
+    events: []
+  }
+  try {
+    const response = await axios.get(`/api/issues/${issueId}/flow-history`)
+    if (requestSequence !== flowHistoryRequestSequence) return
+    flowHistory.value = {
+      loading: false,
+      error: '',
+      events: Array.isArray(response.data?.events) ? response.data.events : []
+    }
+  } catch (error) {
+    if (requestSequence !== flowHistoryRequestSequence) return
+    flowHistory.value = {
+      loading: false,
+      error: error?.response?.data?.error || '流转记录读取失败，请稍后重试。',
+      events: []
+    }
+  }
+}
+
+const workflowEventClass = (event) => ({
+  returned: event?.result === '整改不通过',
+  completed: event?.to_status === '已闭环',
+  rectification: event?.action_type === 'rectification_submitted'
+})
+
 const openActionDrawer = (item) => {
   if (currentRole.value === 'station_manager' && !isInspectionSigned(item)) {
     showActionToast('当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。', 'error')
@@ -1020,9 +1194,11 @@ const openActionDrawer = (item) => {
     reviewPhotoFile: null,
     reviewPhotoPreview: ''
   }
+  fetchIssueFlowHistory(item.id)
 }
 
 const closeActionDrawer = () => {
+  flowHistoryRequestSequence += 1
   revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
   revokeObjectUrl(actionForm.value.reviewPhotoPreview)
 
@@ -1032,6 +1208,11 @@ const closeActionDrawer = () => {
   }
   actionMessage.value = ''
   actionMessageType.value = 'info'
+  flowHistory.value = {
+    loading: false,
+    error: '',
+    events: []
+  }
 }
 
 const handleRectificationFileChange = async (event) => {
@@ -1188,11 +1369,7 @@ const submitAction = async () => {
       showActionToast('请选择督导组复核结果。', 'error')
       return
     }
-    if (!actionForm.value.reviewNote.trim()) {
-      showActionToast('请填写复核说明。', 'error')
-      return
-    }
-    const reviewPhotoRequired = !skipsIssuePhotoUpload(actionForm.value.reviewResult)
+    const reviewPhotoRequired = actionForm.value.reviewResult === '已整改'
     if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
       showActionToast('请上传复核照片。', 'error')
       return
@@ -1465,6 +1642,10 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.summary-grid-station {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
 .summary-card {
   padding: 20px;
 }
@@ -1472,6 +1653,10 @@ onBeforeUnmount(() => {
 .summary-card-danger {
   border-color: #fecaca;
   background: linear-gradient(180deg, #fff7f7 0%, #fff 100%);
+}
+
+.summary-value-returned {
+  color: #be123c;
 }
 
 .summary-label {
@@ -1498,6 +1683,57 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
+.return-overview-alert {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  border-color: #fecdd3;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(244, 63, 94, 0.12), transparent 34%),
+    linear-gradient(135deg, #fff1f2 0%, #fff 72%);
+}
+
+.return-overview-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: #be123c;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 900;
+  box-shadow: 0 10px 22px rgba(190, 18, 60, 0.2);
+  flex: 0 0 auto;
+}
+
+.return-overview-copy {
+  min-width: 0;
+}
+
+.return-overview-kicker {
+  margin-bottom: 4px;
+  color: #be123c;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.return-overview-copy h3 {
+  margin: 0;
+  color: #881337;
+  font-size: 18px;
+}
+
+.return-overview-copy p {
+  margin: 6px 0 0;
+  color: #9f1239;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .mobile-issue-list {
   display: none;
 }
@@ -1514,6 +1750,11 @@ onBeforeUnmount(() => {
 
 .mobile-issue-card {
   padding: 16px;
+}
+
+.mobile-issue-card.is-review-returned {
+  border-color: #fecdd3;
+  box-shadow: 0 12px 28px rgba(190, 18, 60, 0.09);
 }
 
 .mobile-card-head {
@@ -1583,6 +1824,50 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   color: #334155;
   text-align: right;
+}
+
+.mobile-review-return-notice {
+  margin-top: 4px;
+  padding: 13px 14px;
+  border: 1px solid #fecdd3;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #fff1f2 0%, #fff 100%);
+}
+
+.mobile-review-return-head,
+.mobile-review-return-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobile-review-return-head strong {
+  color: #9f1239;
+  font-size: 14px;
+}
+
+.mobile-review-return-head span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ffe4e6;
+  color: #be123c;
+  font-size: 11px;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.mobile-review-return-notice p {
+  margin: 9px 0;
+  color: #881337;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.mobile-review-return-foot small {
+  color: #9f1239;
+  font-size: 11px;
 }
 
 .mobile-card-standard-box {
@@ -1897,6 +2182,64 @@ onBeforeUnmount(() => {
   min-width: 110px;
 }
 
+.status-flow-col {
+  min-width: 210px;
+  max-width: 260px;
+  white-space: normal;
+}
+
+.issue-status-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.issue-status-flow.is-returned {
+  padding: 10px 11px;
+  border: 1px solid #fecdd3;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fff1f2 0%, #fff 100%);
+}
+
+.issue-status-flow strong {
+  color: #9f1239;
+  font-size: 12px;
+}
+
+.issue-status-flow p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #881337;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.issue-status-flow small {
+  color: #9f1239;
+  font-size: 11px;
+}
+
+.status-flow-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.status-flow-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
 .action-lock-tip {
   margin-top: 6px;
   font-size: 12px;
@@ -2142,6 +2485,12 @@ onBeforeUnmount(() => {
   color: #475569;
 }
 
+.status-tag.returned {
+  border: 1px solid #fecdd3;
+  background: #ffe4e6;
+  color: #be123c;
+}
+
 .drawer-mask {
   position: fixed;
   inset: 0;
@@ -2204,6 +2553,264 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   color: #334155;
   line-height: 1.8;
+}
+
+.review-return-alert {
+  padding: 15px 16px;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #dc2626;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff7f7 0%, #fff 100%);
+  color: #7f1d1d;
+}
+
+.review-return-alert-title {
+  margin-bottom: 6px;
+  font-weight: 900;
+}
+
+.review-return-alert p {
+  margin: 0;
+  color: #991b1b;
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.review-return-alert span {
+  display: block;
+  margin-top: 8px;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-history-card {
+  padding: 16px;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f8fafc 100%);
+}
+
+.workflow-history-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.workflow-history-head span {
+  display: block;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.workflow-history-head h4 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.workflow-history-head small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.workflow-history-state {
+  padding: 24px 8px 10px;
+  color: #64748b;
+  text-align: center;
+  font-size: 13px;
+}
+
+.workflow-history-state.error {
+  color: #b91c1c;
+}
+
+.workflow-timeline {
+  position: relative;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-timeline::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 12px;
+  left: 7px;
+  width: 2px;
+  background: #dbeafe;
+}
+
+.workflow-timeline li {
+  position: relative;
+  padding: 0 0 14px 28px;
+}
+
+.workflow-timeline li:last-child {
+  padding-bottom: 0;
+}
+
+.workflow-timeline-dot {
+  position: absolute;
+  top: 7px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #64748b;
+  box-shadow: 0 0 0 2px #cbd5e1;
+}
+
+.workflow-timeline li.rectification .workflow-timeline-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 2px #bfdbfe;
+}
+
+.workflow-timeline li.completed .workflow-timeline-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 2px #bbf7d0;
+}
+
+.workflow-timeline li.returned .workflow-timeline-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px #fecaca;
+}
+
+.workflow-event-card {
+  padding: 12px 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.workflow-timeline li.returned .workflow-event-card {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.workflow-event-head,
+.workflow-event-meta,
+.workflow-status-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-event-head {
+  justify-content: space-between;
+}
+
+.workflow-event-head strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.workflow-event-head > span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.workflow-event-meta {
+  margin-top: 7px;
+}
+
+.workflow-event-meta span,
+.workflow-status-path span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workflow-status-path {
+  margin-top: 9px;
+}
+
+.workflow-status-path b {
+  color: #94a3b8;
+}
+
+.workflow-event-note {
+  margin: 9px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.workflow-photo-btn {
+  margin-top: 9px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.optional-field-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-left: 6px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.field-help-text {
+  margin-top: 7px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.review-outcome-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 15px;
+  border: 1px solid #bfdbfe;
+  border-radius: 15px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.review-outcome-hint.returned {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.review-outcome-hint.closed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.review-outcome-hint.unable {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .drawer-upload-card {
@@ -2737,6 +3344,22 @@ onBeforeUnmount(() => {
 
   .drawer-content {
     padding: 16px;
+  }
+
+  .workflow-history-card {
+    padding: 14px;
+  }
+
+  .workflow-history-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .workflow-event-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .drawer-image-preview-panel {

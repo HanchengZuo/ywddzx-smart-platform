@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v4.9',
+    date: '2026-08-16',
+    title: '整改退回与流转追踪',
+    summary: '复核不通过的问题会退回站点，整改与复核过程可全程追溯。',
+    items: [
+      '督导复核新增整改不通过，可选填退回说明且无需上传复核照片。',
+      '每轮整改和复核独立留痕，可查看操作人、时间、说明、照片和状态变化。',
+      '站点待整改页会直接标出被退回的问题，展示退回原因、时间和完整流转。'
+    ]
+  },
+  {
     version: 'v4.8.3',
     date: '2026-08-14',
     title: '质量计量PPT自适应排版',

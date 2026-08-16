@@ -121,6 +121,10 @@
             </button>
           </div>
 
+          <button class="issue-flow-history-trigger mobile" type="button" @click="openIssueFlowHistory(item)">
+            查看整改复核记录
+          </button>
+
           <div v-if="canManageIssues || canAuditIssues" class="mobile-card-actions">
             <template v-if="canAuditIssueRow(item)">
               <template v-if="isIssueAuditPending(item)">
@@ -430,6 +434,7 @@
             <option value="">全部</option>
             <option value="已整改">已整改</option>
             <option value="站经无法整改">站经无法整改</option>
+            <option value="整改不通过">整改不通过</option>
           </select>
         </div>
         <div class="filter-item">
@@ -671,6 +676,9 @@
                 </td>
                 <td v-if="isIssueColumnVisible('status')" class="nowrap-col status-col">
                   <span :class="statusClass(item.status)">{{ item.status }}</span>
+                  <button class="issue-flow-history-trigger" type="button" @click="openIssueFlowHistory(item)">
+                    流转记录
+                  </button>
                 </td>
                 <td v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">
                   <div class="audit-actions">
@@ -1107,6 +1115,7 @@
                 <option value="">暂无/清空</option>
                 <option value="已整改">已整改</option>
                 <option value="站经无法整改">站经无法整改</option>
+                <option value="整改不通过">整改不通过</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
@@ -1280,6 +1289,45 @@
             @click="saveEditIssuePhotoEditor">
             {{ editIssuePhotoEditor.saving ? '生成中...' : '保存拼接照片' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="issueFlowHistory.visible" class="image-modal" @click.self="closeIssueFlowHistory">
+      <div class="image-modal-content issue-flow-history-modal">
+        <div class="image-modal-header">
+          <div class="issue-flow-history-title">
+            <span>整改复核流转记录</span>
+            <small>{{ issueFlowHistory.issue?.station || '-' }}｜问题 ID {{ issueFlowHistory.issue?.id || '-' }}</small>
+          </div>
+          <button class="close-btn" type="button" @click="closeIssueFlowHistory">×</button>
+        </div>
+        <div class="issue-flow-history-body">
+          <div v-if="issueFlowHistory.loading" class="issue-flow-history-state">正在读取流转记录...</div>
+          <div v-else-if="issueFlowHistory.error" class="issue-flow-history-state error">{{ issueFlowHistory.error }}</div>
+          <ol v-else class="issue-flow-timeline">
+            <li v-for="event in issueFlowHistory.events" :key="event.id || `${event.action_type}-${event.created_at}`"
+              :class="issueFlowEventClass(event)">
+              <span class="issue-flow-dot"></span>
+              <article>
+                <header>
+                  <strong>{{ event.action_label }}</strong>
+                  <time>{{ event.created_at || '时间未记录' }}</time>
+                </header>
+                <div class="issue-flow-meta">
+                  <span>{{ event.actor_display_name }}</span>
+                  <span v-if="event.round_no">第 {{ event.round_no }} 轮</span>
+                  <span v-if="event.result">{{ event.result }}</span>
+                </div>
+                <div v-if="event.from_status" class="issue-flow-path">
+                  <span>{{ event.from_status }}</span><b>→</b><span>{{ event.to_status }}</span>
+                </div>
+                <p v-if="event.note">{{ event.note }}</p>
+                <button v-if="event.photo_path" type="button"
+                  @click="preview(resolveImage(event.photo_path), `${event.action_label}照片`)">查看本轮照片</button>
+              </article>
+            </li>
+          </ol>
         </div>
       </div>
     </div>
@@ -1580,6 +1628,15 @@ const rectificationPhotoDialog = ref({
   file: null,
   preview: ''
 })
+
+const issueFlowHistory = ref({
+  visible: false,
+  loading: false,
+  error: '',
+  issue: null,
+  events: []
+})
+let issueFlowHistoryRequestSequence = 0
 
 const exportDialog = ref({
   visible: false,
@@ -3683,6 +3740,54 @@ const handlePreviewWheel = (event) => {
   previewState.value.scale = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
 
+const issueFlowEventClass = (event) => ({
+  returned: event?.result === '整改不通过',
+  completed: event?.to_status === '已闭环',
+  rectification: event?.action_type === 'rectification_submitted'
+})
+
+const openIssueFlowHistory = async (item) => {
+  const requestSequence = ++issueFlowHistoryRequestSequence
+  issueFlowHistory.value = {
+    visible: true,
+    loading: true,
+    error: '',
+    issue: { ...item },
+    events: []
+  }
+  try {
+    const response = await axios.get(`/api/issues/${item.id}/flow-history`)
+    if (requestSequence !== issueFlowHistoryRequestSequence) return
+    issueFlowHistory.value = {
+      visible: true,
+      loading: false,
+      error: '',
+      issue: response.data?.issue || { ...item },
+      events: Array.isArray(response.data?.events) ? response.data.events : []
+    }
+  } catch (error) {
+    if (requestSequence !== issueFlowHistoryRequestSequence) return
+    issueFlowHistory.value = {
+      visible: true,
+      loading: false,
+      error: error?.response?.data?.error || '流转记录读取失败，请稍后重试。',
+      issue: { ...item },
+      events: []
+    }
+  }
+}
+
+const closeIssueFlowHistory = () => {
+  issueFlowHistoryRequestSequence += 1
+  issueFlowHistory.value = {
+    visible: false,
+    loading: false,
+    error: '',
+    issue: null,
+    events: []
+  }
+}
+
 const openStandardDetail = (item) => {
   standardDetailState.value = {
     visible: true,
@@ -5029,6 +5134,29 @@ onBeforeUnmount(() => {
   min-width: 92px;
 }
 
+.issue-flow-history-trigger {
+  display: block;
+  margin: 8px auto 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.issue-flow-history-trigger.mobile {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 13px;
+  background: #eff6ff;
+  font-size: 13px;
+}
+
 .operation-col {
   width: 1%;
   min-width: 104px;
@@ -5879,6 +6007,177 @@ onBeforeUnmount(() => {
   background: #fff;
   border-radius: 18px;
   overflow: hidden;
+}
+
+.issue-flow-history-modal {
+  width: min(720px, 100%);
+  max-height: min(88vh, 820px);
+  display: flex;
+  flex-direction: column;
+}
+
+.issue-flow-history-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.issue-flow-history-title small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-flow-history-body {
+  min-height: 180px;
+  padding: 20px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #fbfdff 0%, #f8fafc 100%);
+}
+
+.issue-flow-history-state {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.issue-flow-history-state.error {
+  color: #b91c1c;
+}
+
+.issue-flow-timeline {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.issue-flow-timeline::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 12px;
+  left: 7px;
+  width: 2px;
+  background: #dbeafe;
+}
+
+.issue-flow-timeline li {
+  position: relative;
+  padding: 0 0 16px 30px;
+}
+
+.issue-flow-timeline li:last-child {
+  padding-bottom: 0;
+}
+
+.issue-flow-dot {
+  position: absolute;
+  top: 8px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #64748b;
+  box-shadow: 0 0 0 2px #cbd5e1;
+}
+
+.issue-flow-timeline li.rectification .issue-flow-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 2px #bfdbfe;
+}
+
+.issue-flow-timeline li.completed .issue-flow-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 2px #bbf7d0;
+}
+
+.issue-flow-timeline li.returned .issue-flow-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 2px #fecaca;
+}
+
+.issue-flow-timeline article {
+  padding: 14px 15px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.issue-flow-timeline li.returned article {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.issue-flow-timeline header,
+.issue-flow-meta,
+.issue-flow-path {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.issue-flow-timeline header {
+  justify-content: space-between;
+}
+
+.issue-flow-timeline header strong {
+  color: #0f172a;
+  font-size: 15px;
+}
+
+.issue-flow-timeline time {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.issue-flow-meta,
+.issue-flow-path {
+  margin-top: 8px;
+}
+
+.issue-flow-meta span,
+.issue-flow-path span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.issue-flow-path b {
+  color: #94a3b8;
+}
+
+.issue-flow-timeline article p {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.issue-flow-timeline article > button {
+  margin-top: 9px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .image-modal-header {
@@ -7031,6 +7330,21 @@ onBeforeUnmount(() => {
 
   .image-modal {
     padding: 12px;
+  }
+
+  .issue-flow-history-modal {
+    max-height: 92vh;
+    border-radius: 20px;
+  }
+
+  .issue-flow-history-body {
+    padding: 14px;
+  }
+
+  .issue-flow-timeline header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .issue-export-modal {

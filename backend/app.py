@@ -224,7 +224,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.7.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.9.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -1132,6 +1132,7 @@ server_online_touch_lock = threading.Lock()
 server_online_touch_cache = {}
 ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
+ISSUE_REVIEW_RESULT_OPTIONS = {*ISSUE_RESULT_OPTIONS, "整改不通过"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
 ISSUE_AUDIT_STATUS_LABELS = {
     "pending": "待审核",
@@ -1143,6 +1144,7 @@ ISSUE_RESULT_ALIASES = {
     "站级无法整改": "站经无法整改",
     "站级无法完成整改": "站经无法整改",
     "站经理无法整改": "站经无法整改",
+    "整改未通过": "整改不通过",
 }
 FEEDBACK_TYPE_OPTIONS = {"功能建议", "Bug反馈", "界面优化", "流程建议", "其他"}
 FEEDBACK_MODULE_OPTIONS = {
@@ -6675,6 +6677,96 @@ def canonical_issue_result(value):
     return ISSUE_RESULT_ALIASES.get(normalized, normalized)
 
 
+def resolve_issue_review_transition(value):
+    review_result = canonical_issue_result(value)
+    if review_result not in ISSUE_REVIEW_RESULT_OPTIONS:
+        raise ValueError("督导组复核结果只能选择已整改、站经无法整改或整改不通过。")
+    if review_result == "已整改":
+        return {
+            "review_result": review_result,
+            "new_status": "已闭环",
+            "photo_required": True,
+            "returns_to_station": False,
+        }
+    if review_result == "整改不通过":
+        return {
+            "review_result": review_result,
+            "new_status": "待整改",
+            "photo_required": False,
+            "returns_to_station": True,
+        }
+    return {
+        "review_result": review_result,
+        "new_status": "站经无法整改",
+        "photo_required": False,
+        "returns_to_station": False,
+    }
+
+
+def get_issue_workflow_round(cur, issue_id, action_type):
+    cur.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM inspection_issue_flow_history
+        WHERE issue_id = %s
+          AND action_type = 'rectification_submitted';
+        """,
+        (issue_id,),
+    )
+    rectification_count = int((cur.fetchone() or {}).get("total") or 0)
+    if action_type == "rectification_submitted":
+        return rectification_count + 1
+    return max(rectification_count, 1)
+
+
+def record_issue_workflow_event(
+    cur,
+    issue_id,
+    actor,
+    action_type,
+    from_status,
+    to_status,
+    result,
+    note="",
+    photo_path=None,
+):
+    round_no = get_issue_workflow_round(cur, issue_id, action_type)
+    cur.execute(
+        """
+        INSERT INTO inspection_issue_flow_history (
+            issue_id,
+            round_no,
+            action_type,
+            from_status,
+            to_status,
+            result,
+            note,
+            photo_path,
+            actor_user_id,
+            actor_username,
+            actor_name,
+            actor_role
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, %s, %s, %s, %s);
+        """,
+        (
+            issue_id,
+            round_no,
+            action_type,
+            canonical_issue_status(from_status),
+            canonical_issue_status(to_status),
+            canonical_issue_result(result),
+            str(note or "").strip(),
+            photo_path,
+            actor.get("id"),
+            str(actor.get("username") or "").strip() or None,
+            str(actor.get("real_name") or "").strip() or None,
+            str(actor.get("role") or "").strip() or None,
+        ),
+    )
+    return round_no
+
+
 def issue_created_by_user(user, issue):
     if not user or not issue:
         return False
@@ -11715,12 +11807,15 @@ def classify_non_oil_rectification(row):
     status = str(row.get("status") or "").strip()
     rectification_result = str(row.get("rectification_result") or "").strip()
     review_result = str(row.get("review_result") or "").strip()
-    if status in {"已闭环", "已整改", "站经无法整改"} or review_result:
+    if (
+        status in {"已闭环", "已整改", "站经无法整改"}
+        or review_result in ISSUE_RESULT_OPTIONS
+    ):
         return "completed"
+    if status == "待整改" or review_result == "整改不通过":
+        return "pending_rectification"
     if status == "待复核" or rectification_result:
         return "pending_acceptance"
-    if status == "待整改":
-        return "pending_rectification"
     return "other"
 
 
@@ -13611,11 +13706,11 @@ def fetch_station_score_standard_context(
     }
 
 
-def normalize_optional_issue_result(value, field_label):
+def normalize_optional_issue_result(value, field_label, allowed_results=None):
     normalized = canonical_issue_result(value)
     if not normalized:
         return None
-    if normalized not in ISSUE_RESULT_OPTIONS:
+    if normalized not in (allowed_results or ISSUE_RESULT_OPTIONS):
         raise ValueError(f"{field_label}参数不合法。")
     return normalized
 
@@ -29085,7 +29180,7 @@ def inspection_register():
 
 @app.route("/api/my-issues")
 def get_my_issues():
-    user_id = str(request.args.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(request.args.get("user_id"))
 
     if not user_id:
         return jsonify({"success": False, "error": "缺少用户信息。"}), 400
@@ -32166,7 +32261,7 @@ def download_issue_export_task(task_id):
 @app.route("/api/issues/<int:issue_id>", methods=["PUT"])
 def update_issue(issue_id):
     data = request.form if request.form else (request.get_json(silent=True) or {})
-    user_id = str(data.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(data.get("user_id"))
     description = str(data.get("description", "")).strip()
     status = canonical_issue_status(data.get("status"))
     rectification_note = str(data.get("rectification_note", "")).strip() or None
@@ -32190,7 +32285,9 @@ def update_issue(issue_id):
             data.get("rectification_result"), "站经理整改结果"
         )
         review_result = normalize_optional_issue_result(
-            data.get("review_result"), "督导组复核结果"
+            data.get("review_result"),
+            "督导组复核结果",
+            ISSUE_REVIEW_RESULT_OPTIONS,
         )
     except ValueError as error:
         return jsonify({"success": False, "error": str(error)}), 400
@@ -35749,9 +35846,173 @@ def get_inspection_issues(inspection_id):
         close_db_resources(cur, conn)
 
 
+def can_user_view_issue_flow_history(cur, user, issue):
+    if is_root_user(user) or user.get("role") == "supervisor":
+        return True
+    if is_station_manager(user):
+        return bool(
+            user.get("station_id")
+            and str(user.get("station_id")) == str(issue.get("station_id"))
+        )
+
+    can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
+    can_view_own = can_view_own_inspection_issues(cur, user)
+    in_user_scope = can_view_all or (
+        can_view_own
+        and (
+            str(user.get("station_id") or "") == str(issue.get("station_id") or "")
+            or str(user.get("id") or "") == str(issue.get("inspector_id") or "")
+        )
+    )
+    if not in_user_scope:
+        return False
+    return bool(
+        is_inspection_table_allowed_for_user(
+            cur,
+            user,
+            issue.get("inspection_table_id"),
+            "limit_issue_inspection_table_scope",
+        )
+        and is_station_region_allowed_for_user(
+            cur,
+            user,
+            issue.get("station_region"),
+            "limit_issue_station_region_scope",
+        )
+    )
+
+
+def serialize_issue_flow_history_event(row):
+    event = dict(row)
+    action_type = str(event.get("action_type") or "").strip()
+    result = canonical_issue_result(event.get("result"))
+    if action_type == "issue_created":
+        action_label = "登记巡检问题"
+    elif action_type == "rectification_submitted":
+        action_label = "站经理提交整改"
+    elif result == "整改不通过":
+        action_label = "督导复核退回整改"
+    else:
+        action_label = "督导组提交复核"
+    event["action_label"] = action_label
+    event["result"] = result or None
+    event["actor_display_name"] = (
+        str(event.get("actor_name") or "").strip()
+        or str(event.get("actor_username") or "").strip()
+        or "历史数据"
+    )
+    event["note"] = str(event.get("note") or "").strip()
+    return event
+
+
+@app.route("/api/issues/<int:issue_id>/flow-history", methods=["GET"])
+def get_issue_flow_history(issue_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_current_request_user()
+        cur.execute(
+            """
+            SELECT
+                i.id,
+                i.station_id,
+                i.inspection_table_id,
+                COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
+                s.region AS station_region,
+                s.station_name,
+                t.table_name AS inspection_table_name,
+                i.standard_id,
+                i.status,
+                i.created_at,
+                creator.id AS creator_user_id,
+                creator.username AS creator_username,
+                creator.real_name AS creator_name,
+                creator.role AS creator_role
+            FROM issues i
+            JOIN inspections ins ON ins.id = i.inspection_id
+            JOIN stations s ON s.id = i.station_id
+            JOIN inspection_tables t ON t.id = i.inspection_table_id
+            LEFT JOIN users creator ON creator.id = COALESCE(i.inspector_id, ins.inspector_id)
+            WHERE i.id = %s
+            LIMIT 1;
+            """,
+            (issue_id,),
+        )
+        issue = cur.fetchone()
+        if not issue:
+            return jsonify({"success": False, "error": "问题不存在。"}), 404
+        if not can_user_view_issue_flow_history(cur, user, issue):
+            return jsonify({"success": False, "error": "当前账号无权查看该问题的流转记录。"}), 403
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                round_no,
+                action_type,
+                from_status,
+                to_status,
+                result,
+                note,
+                photo_path,
+                actor_user_id,
+                actor_username,
+                actor_name,
+                actor_role,
+                TO_CHAR(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') AS created_at
+            FROM inspection_issue_flow_history
+            WHERE issue_id = %s
+            ORDER BY created_at ASC, id ASC;
+            """,
+            (issue_id,),
+        )
+        events = [
+            serialize_issue_flow_history_event(
+                {
+                    "id": f"created-{issue_id}",
+                    "round_no": 0,
+                    "action_type": "issue_created",
+                    "from_status": None,
+                    "to_status": "待整改",
+                    "result": None,
+                    "note": "",
+                    "photo_path": None,
+                    "actor_user_id": issue.get("creator_user_id"),
+                    "actor_username": issue.get("creator_username"),
+                    "actor_name": issue.get("creator_name"),
+                    "actor_role": issue.get("creator_role"),
+                    "created_at": issue.get("created_at").strftime("%Y-%m-%d %H:%M")
+                    if issue.get("created_at")
+                    else "",
+                }
+            )
+        ]
+        events.extend(serialize_issue_flow_history_event(row) for row in cur.fetchall())
+        return jsonify(
+            {
+                "success": True,
+                "issue": {
+                    "id": issue["id"],
+                    "station": issue.get("station_name"),
+                    "inspection_table_name": issue.get("inspection_table_name"),
+                    "standard_id": issue.get("standard_id"),
+                    "status": canonical_issue_status(issue.get("status")),
+                },
+                "events": events,
+            }
+        )
+    except Exception:
+        logging.exception("Failed to load issue flow history for issue %s.", issue_id)
+        return jsonify({"success": False, "error": "问题流转记录读取失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/issues/<int:issue_id>/rectification", methods=["POST"])
 def submit_rectification(issue_id):
-    user_id = str(request.form.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(request.form.get("user_id"))
     rectification_result = canonical_issue_result(
         request.form.get("rectification_result", "")
     )
@@ -35794,7 +36055,7 @@ def submit_rectification(issue_id):
 
         cur.execute(
             """
-            SELECT id, role, station_id
+            SELECT id, username, real_name, role, station_id
             FROM users
             WHERE id = %s
             LIMIT 1;
@@ -35824,7 +36085,8 @@ def submit_rectification(issue_id):
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             WHERE i.id = %s
-            LIMIT 1;
+            LIMIT 1
+            FOR UPDATE OF i;
             """,
             (issue_id,),
         )
@@ -35870,40 +36132,38 @@ def submit_rectification(issue_id):
                 rectification_photo, "rectifications"
             )
 
-        if rectification_photo_path:
-            cur.execute(
-                """
-                UPDATE issues
-                SET rectification_result = %s,
-                    rectification_note = %s,
-                    rectification_at = CURRENT_TIMESTAMP,
-                    rectification_photo_path = %s,
-                    status = '待复核'
-                WHERE id = %s;
-                """,
-                (
-                    rectification_result,
-                    rectification_note,
-                    rectification_photo_path,
-                    issue_id,
-                ),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE issues
-                SET rectification_result = %s,
-                    rectification_note = %s,
-                    rectification_at = CURRENT_TIMESTAMP,
-                    status = '待复核'
-                WHERE id = %s;
-                """,
-                (
-                    rectification_result,
-                    rectification_note,
-                    issue_id,
-                ),
-            )
+        cur.execute(
+            """
+            UPDATE issues
+            SET rectification_result = %s,
+                rectification_note = %s,
+                rectification_at = CURRENT_TIMESTAMP,
+                rectification_photo_path = %s,
+                review_result = NULL,
+                review_note = NULL,
+                review_at = NULL,
+                review_photo_path = NULL,
+                status = '待复核'
+            WHERE id = %s;
+            """,
+            (
+                rectification_result,
+                rectification_note,
+                rectification_photo_path,
+                issue_id,
+            ),
+        )
+        record_issue_workflow_event(
+            cur,
+            issue_id,
+            user,
+            "rectification_submitted",
+            issue["status"],
+            "待复核",
+            rectification_result,
+            rectification_note,
+            rectification_photo_path,
+        )
 
         conn.commit()
         return jsonify({"success": True, "message": "整改提交成功，已转入待复核。"})
@@ -35947,7 +36207,8 @@ def update_rectification_photo(issue_id):
                 rectification_result
             FROM issues
             WHERE id = %s
-            LIMIT 1;
+            LIMIT 1
+            FOR UPDATE;
             """,
             (issue_id,),
         )
@@ -35979,6 +36240,21 @@ def update_rectification_photo(issue_id):
             """,
             (rectification_photo_path, issue_id),
         )
+        cur.execute(
+            """
+            UPDATE inspection_issue_flow_history
+            SET photo_path = %s
+            WHERE id = (
+                SELECT id
+                FROM inspection_issue_flow_history
+                WHERE issue_id = %s
+                  AND action_type = 'rectification_submitted'
+                ORDER BY round_no DESC, created_at DESC, id DESC
+                LIMIT 1
+            );
+            """,
+            (rectification_photo_path, issue_id),
+        )
         conn.commit()
 
         return jsonify(
@@ -35998,7 +36274,7 @@ def update_rectification_photo(issue_id):
 
 @app.route("/api/issues/<int:issue_id>/review", methods=["POST"])
 def submit_review(issue_id):
-    user_id = str(request.form.get("user_id", "")).strip()
+    user_id = get_authenticated_request_user_id(request.form.get("user_id"))
     review_result = canonical_issue_result(request.form.get("review_result", ""))
     review_note = str(request.form.get("review_note", "")).strip()
     review_photo = request.files.get("review_photo")
@@ -36009,21 +36285,12 @@ def submit_review(issue_id):
     if not review_result:
         return jsonify({"success": False, "error": "请选择督导组复核结果。"}), 400
 
-    if review_result not in ISSUE_RESULT_OPTIONS:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "error": "督导组复核结果只能选择已整改或站经无法整改。",
-                }
-            ),
-            400,
-        )
+    try:
+        transition = resolve_issue_review_transition(review_result)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
-    if not review_note:
-        return jsonify({"success": False, "error": "请填写复核说明。"}), 400
-
-    review_photo_required = review_result == "已整改"
+    review_photo_required = transition["photo_required"]
     if review_photo_required and (not review_photo or not review_photo.filename):
         return jsonify({"success": False, "error": "请上传复核照片。"}), 400
 
@@ -36037,7 +36304,7 @@ def submit_review(issue_id):
 
         cur.execute(
             """
-            SELECT id, role
+            SELECT id, username, real_name, role
             FROM users
             WHERE id = %s
             LIMIT 1;
@@ -36061,7 +36328,8 @@ def submit_review(issue_id):
                 , COALESCE(audit_status, 'pending') AS audit_status
             FROM issues
             WHERE id = %s
-            LIMIT 1;
+            LIMIT 1
+            FOR UPDATE;
             """,
             (issue_id,),
         )
@@ -36084,9 +36352,9 @@ def submit_review(issue_id):
                 400,
             )
 
-        new_status = "已闭环" if review_result == "已整改" else "站经无法整改"
+        new_status = transition["new_status"]
         review_photo_path = None
-        if review_photo and review_photo.filename:
+        if review_photo_required and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
         cur.execute(
@@ -36107,12 +36375,29 @@ def submit_review(issue_id):
                 issue_id,
             ),
         )
+        record_issue_workflow_event(
+            cur,
+            issue_id,
+            user,
+            "review_submitted",
+            issue["status"],
+            new_status,
+            review_result,
+            review_note,
+            review_photo_path,
+        )
 
         conn.commit()
+        if transition["returns_to_station"]:
+            message = "复核已提交，问题已退回站经理重新整改。"
+        else:
+            message = f"督导组复核提交成功，问题状态已更新为{new_status}。"
         return jsonify(
             {
                 "success": True,
-                "message": f"督导组复核提交成功，问题状态已更新为{new_status}。",
+                "message": message,
+                "status": new_status,
+                "returned_to_station": transition["returns_to_station"],
             }
         )
     except Exception as e:

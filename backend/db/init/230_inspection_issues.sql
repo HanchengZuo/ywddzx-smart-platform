@@ -15,7 +15,7 @@
 -- - 规范详情统一落为 standard_detail_text，供问题列表/我的问题统一展示
 --
 -- status 说明：
--- - 待整改：问题刚录入，尚未由站点提交整改反馈
+-- - 待整改：问题刚录入，或督导复核不通过后退回站点重新整改
 -- - 待复核：站点已提交整改，等待督导组复核
 -- - 已闭环：督导组确认问题已经整改，流程关闭
 -- - 站经无法整改：督导组确认该问题属于站经理无法整改事项
@@ -41,7 +41,7 @@ CREATE TABLE issues (
     rectification_at TIMESTAMP,                                               -- 站点提交整改时间
     rectification_photo_path TEXT,                                            -- 站点整改照片路径
 
-    review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改
+    review_result TEXT,                                                       -- 督导组复核结果：已整改 / 站经无法整改 / 整改不通过
     review_note TEXT,                                                         -- 督导组复核说明
     review_at TIMESTAMP,                                                      -- 督导组提交复核时间
     review_photo_path TEXT,                                                   -- 督导组复核照片路径
