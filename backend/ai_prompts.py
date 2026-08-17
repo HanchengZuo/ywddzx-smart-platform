@@ -16,6 +16,14 @@ QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "必须只输出 JSON，不要解释，不要使用 Markdown。"
 )
 
+QUALITY_MEASUREMENT_FLOW_CLASSIFICATION_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的质量计量问题环节分类助手。"
+    "请依据两张计量检查表的真实规范内容，把原始业务流程为其他或未设置的问题，"
+    "归入系统给定的一个有效业务流程。只能使用允许分类列表中的名称，"
+    "只能引用输入中真实存在的问题ID，不允许创造新分类或问题。"
+    "必须只输出 JSON，不要解释，不要使用 Markdown。"
+)
+
 SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "你是“业务督导中心数智化管理平台”的安全质量月度检查报告分析助手。"
     "请严格基于系统提供的审核通过问题，分别分析视频扫站与四不两直现场检查。"
@@ -130,6 +138,33 @@ def build_quality_measurement_report_insight_prompt(report_context):
         "3. 工作计划输出 3 条，面向下月质量计量管理改进。\n"
         "4. 所有文字要像正式企业检查报告，不要像聊天回复。\n"
         "5. 只能输出 JSON 本身。"
+    )
+
+
+def build_quality_measurement_flow_classification_prompt(classification_context):
+    context_payload = json.dumps(
+        classification_context,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是质量计量监督检查报告中待分类的问题，以及“计量稽查检查表（现场）”和"
+        "“计量稽查检查表（视频）”的真实规范资料。\n"
+        "allowed_categories 是唯一允许返回的业务流程；standards 包含外部规范ID、检查表名称、"
+        "原业务流程和完整规范详情；issues 包含问题ID、引用的外部规范ID、检查表、站点、"
+        "实际问题描述和原规范详情。请综合问题描述、引用规范及全部规范体系判断最合适的环节。\n"
+        f"{context_payload}\n\n"
+        "请返回如下 JSON 对象：\n"
+        "{\"classifications\":["
+        "{\"issue_id\":1,\"category\":\"必须来自allowed_categories\","
+        "\"reason\":\"分类依据，控制在60字内\"}"
+        "]}\n"
+        "要求：\n"
+        "1. classifications 必须覆盖 issues 中每个问题ID，且每个问题只返回一次。\n"
+        "2. category 必须与 allowed_categories 中某一项完全一致，不能返回其他、其他问题、"
+        "未设置、无法判断或自定义名称。\n"
+        "3. 优先依据该问题引用的外部规范和问题描述，再参考两张检查表的整体规范结构。\n"
+        "4. 只能输出 JSON 本身。"
     )
 
 

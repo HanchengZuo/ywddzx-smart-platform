@@ -142,6 +142,37 @@
       </div>
     </section>
 
+    <section v-if="isQualityMeasurementReport && !templateUnavailable" class="quality-classification-panel card-surface">
+      <div class="classification-panel-intro">
+        <div class="classification-ai-mark" aria-hidden="true">AI</div>
+        <div>
+          <span>FLOW CLASSIFICATION</span>
+          <h3>AI环节分类</h3>
+          <p>原业务流程为“其他”或未设置的问题，由 AI 结合两张计量检查表规范归入具体环节；结果按问题ID长期保留。</p>
+        </div>
+      </div>
+      <div class="classification-panel-stats">
+        <div><span>涉及问题</span><strong>{{ flowClassificationStats.total }}</strong></div>
+        <div><span>AI已分类</span><strong>{{ flowClassificationStats.ai }}</strong></div>
+        <div><span>人工调整</span><strong>{{ flowClassificationStats.manual }}</strong></div>
+        <div :class="{ pending: flowClassificationStats.pending }"><span>待分类</span><strong>{{ flowClassificationStats.pending }}</strong></div>
+      </div>
+      <div class="classification-panel-preview">
+        <span v-if="flowClassificationsLoading">正在读取当前月份分类结果...</span>
+        <span v-else-if="flowClassificationsError" class="classification-panel-error">{{ flowClassificationsError }}</span>
+        <template v-else-if="visibleFlowClassifications.length">
+          <span v-for="item in visibleFlowClassifications.slice(0, 4)" :key="`classification-preview-${item.issue_id}`">
+            ID {{ item.issue_id }} · {{ item.effective_category || '待分类' }}
+          </span>
+          <em v-if="visibleFlowClassifications.length > 4">另有 {{ visibleFlowClassifications.length - 4 }} 条</em>
+        </template>
+        <span v-else>当前月份的数据中没有需要AI重新分类的问题。</span>
+      </div>
+      <button type="button" class="classification-manage-btn" :disabled="flowClassificationsLoading" @click="openFlowClassificationDialog">
+        {{ canManageQualityReportSelectionRules ? '查看与调整分类' : '查看分类结果' }}
+      </button>
+    </section>
+
     <div v-if="error" class="state-card error">{{ error }}</div>
 
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
@@ -248,7 +279,7 @@
                     </thead>
                     <tbody>
                       <tr v-for="row in qualityOverallRows" :key="`overall-${row.sequence}-${row.unit_name}`" :class="{ total: row.sequence === '合计' }">
-                        <td>{{ row.sequence }}</td><td>{{ row.unit_name }}</td><td>{{ row.oil_depot_count || 0 }}</td><td>{{ row.station_count || 0 }}</td><td>{{ row.transport_vehicle_count || 0 }}</td><td>{{ row.general_issue_count || 0 }}</td><td>{{ row.violation_issue_count || 0 }}</td><td>{{ row.prohibited_issue_count || 0 }}</td><td>{{ row.total_issue_count || 0 }}</td>
+                        <td v-if="row.sequence === '合计'" colspan="2">合计</td><template v-else><td>{{ row.sequence }}</td><td>{{ row.unit_name }}</td></template><td>{{ row.oil_depot_count || 0 }}</td><td>{{ row.station_count || 0 }}</td><td>{{ row.transport_vehicle_count || 0 }}</td><td>{{ row.general_issue_count || 0 }}</td><td>{{ row.violation_issue_count || 0 }}</td><td>{{ row.prohibited_issue_count || 0 }}</td><td>{{ row.total_issue_count || 0 }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -264,7 +295,7 @@
 
               <template v-else-if="currentQualitySlide.kind === 'prohibited'">
                 <p class="quality-slide-narrative prohibited-copy">{{ currentQualitySlide.narrative }}</p>
-                <div class="quality-slide-table-wrap prohibited-table"><table><thead><tr><th>序号</th><th>环节</th><th>基层单位名称</th><th>禁止项管理规定</th><th>处罚情况</th></tr></thead><tbody><tr v-if="!currentQualitySlide.rows?.length"><td colspan="5">当前月份暂无禁止项问题</td></tr><tr v-for="(row, index) in currentQualitySlide.rows" :key="`prohibited-slide-${row.issue_id}`"><td>{{ index + 1 }}</td><td>加油站环节</td><td>{{ row.unit_name }}</td><td class="align-left">{{ row.description }}</td><td>{{ row.penalty || '' }}</td></tr></tbody></table></div>
+                <div class="quality-slide-table-wrap prohibited-table"><table><thead><tr><th>序号</th><th>环节</th><th>基层单位名称</th><th>禁止项管理规定</th><th>处罚情况</th></tr></thead><tbody><tr v-if="!currentQualitySlide.rows?.length"><td colspan="5">当前月份暂无禁止项问题</td></tr><tr v-for="row in currentQualitySlide.rows" :key="`prohibited-slide-${row.issue_id}`"><td>{{ row.sequence }}</td><td>加油站环节</td><td>{{ row.unit_name }}</td><td class="align-left">{{ row.description }}</td><td>{{ row.penalty || '' }}</td></tr></tbody></table></div>
               </template>
 
               <template v-else-if="currentQualitySlide.kind === 'flow_chart'">
@@ -1683,6 +1714,44 @@
           </footer>
         </section>
       </div>
+      <div v-if="flowClassificationDialogVisible && isQualityMeasurementReport" class="flow-classification-dialog-layer">
+        <section class="flow-classification-dialog" role="dialog" aria-modal="true" aria-label="AI环节分类结果">
+          <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeFlowClassificationDialog">×</button>
+          <header class="classification-dialog-head">
+            <div>
+              <span>AI FLOW REVIEW</span>
+              <h3>{{ canManageQualityReportSelectionRules ? '查看与调整AI环节分类' : '查看AI环节分类结果' }}</h3>
+              <p>只展示当前月份原业务流程为“其他”或未设置的问题。人工调整会优先于AI结果。</p>
+            </div>
+            <div><strong>{{ visibleFlowClassifications.length }}</strong><span>条问题</span></div>
+          </header>
+          <div class="classification-dialog-toolbar">
+            <label><span>搜索</span><input v-model.trim="flowClassificationKeyword" type="search" placeholder="问题ID、站点、描述或外部规范ID" /></label>
+            <label><span>当前分类</span><select v-model="flowClassificationCategoryFilter"><option value="">全部分类</option><option value="pending">待分类</option><option v-for="category in flowClassificationCategories" :key="`classification-filter-${category}`" :value="category">{{ category }}</option></select></label>
+          </div>
+          <div v-if="flowClassificationsError" class="classification-dialog-message error">{{ flowClassificationsError }}</div>
+          <div v-else-if="flowClassificationMessage" class="classification-dialog-message success">{{ flowClassificationMessage }}</div>
+          <div class="classification-dialog-list">
+            <div v-if="!filteredFlowClassifications.length" class="classification-list-empty">当前筛选条件下没有分类记录。</div>
+            <article v-for="item in filteredFlowClassifications" :key="`classification-row-${item.issue_id}`">
+              <div class="classification-issue-main">
+                <div class="classification-issue-meta"><b>ID {{ item.issue_id }}</b><span>{{ item.station_name }}</span><span>{{ item.table_name }}</span><span>外部规范ID {{ item.external_standard_id }}</span></div>
+                <p>{{ item.description || '暂无问题描述' }}</p>
+                <small v-if="item.reason">分类依据：{{ item.reason }}</small>
+              </div>
+              <div class="classification-result-compare">
+                <div><span>AI分类</span><strong>{{ item.ai_category || (item.classification_source === 'fallback' ? item.effective_category : '待分类') }}</strong></div>
+                <label><span>报告采用</span><select v-model="flowClassificationDrafts[item.issue_id]" :disabled="!canManageQualityReportSelectionRules"><option value="" disabled>请选择环节</option><option v-for="category in flowClassificationCategories" :key="`${item.issue_id}-${category}`" :value="category">{{ category }}</option></select></label>
+                <em :class="item.classification_source">{{ formatFlowClassificationSource(item.classification_source) }}</em>
+              </div>
+            </article>
+          </div>
+          <footer class="classification-dialog-footer">
+            <p>{{ canManageQualityReportSelectionRules ? '保存后将自动重新生成当前月份报告，使统计、图表和PPT同步更新。' : '当前账号仅可查看分类结果。' }}</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeFlowClassificationDialog">关闭</button><button v-if="canManageQualityReportSelectionRules" type="button" class="classification-save-btn" :disabled="flowClassificationsSaving || !hasFlowClassificationChanges" @click="saveFlowClassificationAdjustments">{{ flowClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+          </footer>
+        </section>
+      </div>
       <div v-if="selectionSettingsDialogVisible && isQualityMeasurementReport" class="report-selection-dialog-layer">
         <section class="report-selection-dialog" role="dialog" aria-modal="true" aria-label="质量计量报告选题规则">
           <button type="button" class="selection-dialog-close" aria-label="关闭" @click="closeSelectionSettingsDialog">×</button>
@@ -2065,6 +2134,16 @@ const selectionRuleTab = ref('prohibited')
 const selectionActiveFlow = ref('')
 const selectionStandardKeyword = ref('')
 const selectionTableFilter = ref('')
+const flowClassifications = ref([])
+const flowClassificationCategories = ref([])
+const flowClassificationsLoading = ref(false)
+const flowClassificationsSaving = ref(false)
+const flowClassificationsError = ref('')
+const flowClassificationMessage = ref('')
+const flowClassificationDialogVisible = ref(false)
+const flowClassificationDrafts = ref({})
+const flowClassificationKeyword = ref('')
+const flowClassificationCategoryFilter = ref('')
 const activeQualitySlideIndex = ref(0)
 const qualityImageAspects = ref({})
 const exportDialogVisible = ref(false)
@@ -2161,6 +2240,38 @@ const sourceSelectionDirty = computed(() => {
   const currentIds = [...selectedSourceStationIds.value].map(Number).sort((a, b) => a - b)
   return JSON.stringify(savedIds) !== JSON.stringify(currentIds)
 })
+const visibleFlowClassifications = computed(() => {
+  if (sourceSelectionMode.value !== 'custom') return flowClassifications.value
+  const selectedIds = new Set(selectedSourceStationIds.value.map(Number))
+  return flowClassifications.value.filter((item) => selectedIds.has(Number(item.station_id)))
+})
+const flowClassificationStats = computed(() => {
+  const rows = visibleFlowClassifications.value
+  return {
+    total: rows.length,
+    ai: rows.filter((item) => item.classification_source === 'ai').length,
+    manual: rows.filter((item) => item.classification_source === 'manual').length,
+    pending: rows.filter((item) => !item.effective_category).length
+  }
+})
+const filteredFlowClassifications = computed(() => {
+  const keyword = flowClassificationKeyword.value.toLowerCase()
+  const category = flowClassificationCategoryFilter.value
+  return visibleFlowClassifications.value.filter((item) => {
+    const effectiveCategory = item.effective_category || ''
+    if (category === 'pending' && effectiveCategory) return false
+    if (category && category !== 'pending' && effectiveCategory !== category) return false
+    if (!keyword) return true
+    return [item.issue_id, item.station_name, item.region, item.table_name, item.external_standard_id, item.description]
+      .some((value) => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+const hasFlowClassificationChanges = computed(() => (
+  visibleFlowClassifications.value.some((item) => (
+    String(flowClassificationDrafts.value[item.issue_id] || '')
+      !== String(item.effective_category || '')
+  ))
+))
 const filteredSourceStations = computed(() => {
   const keyword = sourceKeyword.value.toLowerCase()
   const selectedIds = new Set(sourceDraftIds.value.map(Number))
@@ -2925,6 +3036,7 @@ const handleQualitySlideKeydown = (event) => {
     || isKeyboardEditingTarget(event.target)
     || sourceDialogVisible.value
     || selectionSettingsDialogVisible.value
+    || flowClassificationDialogVisible.value
     || exportDialogVisible.value
     || imagePreview.value.visible
   ) return
@@ -3057,6 +3169,119 @@ const saveSelectionSettings = async () => {
     selectionSettingsError.value = err?.response?.data?.error || err?.message || '保存选题规则失败。'
   } finally {
     selectionSettingsSaving.value = false
+  }
+}
+
+const resetFlowClassificationState = () => {
+  flowClassifications.value = []
+  flowClassificationCategories.value = []
+  flowClassificationsError.value = ''
+  flowClassificationMessage.value = ''
+  flowClassificationDialogVisible.value = false
+  flowClassificationDrafts.value = {}
+  flowClassificationKeyword.value = ''
+  flowClassificationCategoryFilter.value = ''
+}
+
+const loadFlowClassifications = async (requestId = contextRequestId) => {
+  if (!isQualityMeasurementReport.value) {
+    resetFlowClassificationState()
+    flowClassificationsLoading.value = false
+    return
+  }
+  flowClassificationsLoading.value = true
+  flowClassificationsError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/quality-flow-classifications', {
+      params: { month: selectedMonth.value }
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) throw new Error(response.data?.error || '读取AI环节分类失败。')
+    flowClassifications.value = Array.isArray(response.data.classifications)
+      ? response.data.classifications
+      : []
+    flowClassificationCategories.value = Array.isArray(response.data.business_flows)
+      ? response.data.business_flows
+      : []
+    flowClassificationDrafts.value = Object.fromEntries(
+      flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+    )
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    flowClassifications.value = []
+    flowClassificationCategories.value = []
+    flowClassificationsError.value = err?.response?.data?.error || err?.message || '读取AI环节分类失败。'
+  } finally {
+    if (requestId === contextRequestId) flowClassificationsLoading.value = false
+  }
+}
+
+const formatFlowClassificationSource = (source) => {
+  const labels = {
+    ai: 'AI分类',
+    manual: '人工调整',
+    fallback: '系统兜底',
+    pending: '等待AI分类'
+  }
+  return labels[source] || '等待AI分类'
+}
+
+const openFlowClassificationDialog = () => {
+  flowClassificationDrafts.value = Object.fromEntries(
+    flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+  )
+  flowClassificationKeyword.value = ''
+  flowClassificationCategoryFilter.value = ''
+  flowClassificationMessage.value = ''
+  flowClassificationDialogVisible.value = true
+}
+
+const closeFlowClassificationDialog = () => {
+  flowClassificationDialogVisible.value = false
+}
+
+const saveFlowClassificationAdjustments = async () => {
+  if (!canManageQualityReportSelectionRules.value || flowClassificationsSaving.value) return
+  const classifications = visibleFlowClassifications.value
+    .filter((item) => (
+      String(flowClassificationDrafts.value[item.issue_id] || '')
+        !== String(item.effective_category || '')
+    ))
+    .map((item) => ({
+      issue_id: item.issue_id,
+      category: flowClassificationDrafts.value[item.issue_id]
+    }))
+    .filter((item) => item.category)
+  if (!classifications.length) return
+  flowClassificationsSaving.value = true
+  flowClassificationsError.value = ''
+  flowClassificationMessage.value = ''
+  try {
+    const response = await axios.put('/api/inspection-reports/quality-flow-classifications', {
+      month: selectedMonth.value,
+      classifications
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存环节分类失败。')
+    flowClassifications.value = Array.isArray(response.data.classifications)
+      ? response.data.classifications
+      : flowClassifications.value
+    flowClassificationCategories.value = Array.isArray(response.data.business_flows)
+      ? response.data.business_flows
+      : flowClassificationCategories.value
+    flowClassificationDrafts.value = Object.fromEntries(
+      flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+    )
+    closeFlowClassificationDialog()
+    if (canGenerateReports.value) {
+      flowClassificationMessage.value = '分类已保存，正在重新生成当前月份报告。'
+      await startGeneration({ force: true })
+    } else {
+      flowClassificationMessage.value = '分类已保存，请由具备生成权限的账号重新生成当前月份报告。'
+    }
+  } catch (err) {
+    flowClassificationsError.value = err?.response?.data?.error || err?.message || '保存环节分类失败。'
+  } finally {
+    flowClassificationsSaving.value = false
   }
 }
 
@@ -3328,6 +3553,9 @@ const pollActiveJob = async () => {
         report.value = response.data.report
         activeQualitySlideIndex.value = 0
       }
+      if (isQualityMeasurementReport.value) {
+        await loadFlowClassifications(contextRequestId)
+      }
       loading.value = false
       error.value = ''
       return
@@ -3405,6 +3633,7 @@ const loadReportState = async () => {
     sourceStations.value = []
     sourceSelectionMode.value = 'all'
     selectedSourceStationIds.value = []
+    resetFlowClassificationState()
     loading.value = false
     return
   }
@@ -3424,10 +3653,12 @@ const loadReportState = async () => {
     report.value = response.data?.report || createEmptyReport()
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
+      await loadFlowClassifications(requestId)
     } else {
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
+      resetFlowClassificationState()
     }
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
@@ -3453,6 +3684,7 @@ const selectReportType = async (reportType) => {
   sourceStations.value = []
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
+  resetFlowClassificationState()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -3465,6 +3697,7 @@ const handleReportContextChange = async () => {
   sourceStations.value = []
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
+  resetFlowClassificationState()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -3978,8 +4211,147 @@ onBeforeUnmount(() => {
   opacity: 0.55;
 }
 
+.quality-classification-panel {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.2fr) minmax(320px, 0.9fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 24px;
+  border-radius: 24px;
+  border-color: rgba(37, 99, 235, 0.2);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(59, 130, 246, 0.13), transparent 34%),
+    linear-gradient(135deg, #f8fbff, #ffffff 58%, #eff6ff);
+}
+
+.classification-panel-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.classification-ai-mark {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  flex: 0 0 50px;
+  border-radius: 17px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #1d4ed8, #0ea5e9);
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.2);
+  font-size: 16px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+}
+
+.classification-panel-intro > div:last-child > span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.classification-panel-intro h3 {
+  margin: 3px 0 5px;
+  color: #0f172a;
+  font-size: 19px;
+}
+
+.classification-panel-intro p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.55;
+}
+
+.classification-panel-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(68px, 1fr));
+  gap: 7px;
+}
+
+.classification-panel-stats > div {
+  padding: 9px 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.classification-panel-stats > div.pending {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.classification-panel-stats span,
+.classification-panel-stats strong {
+  display: block;
+}
+
+.classification-panel-stats span {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.classification-panel-stats strong {
+  margin-top: 2px;
+  color: #0f172a;
+  font-size: 18px;
+}
+
+.classification-panel-preview {
+  grid-column: 1 / 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.classification-panel-preview span,
+.classification-panel-preview em {
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: #1e40af;
+  background: #dbeafe;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.classification-panel-preview > span:first-child:last-child,
+.classification-panel-preview .classification-panel-error {
+  color: #64748b;
+  background: transparent;
+  font-weight: 600;
+}
+
+.classification-panel-preview .classification-panel-error {
+  color: #b91c1c;
+}
+
+.classification-manage-btn {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid #93c5fd;
+  border-radius: 13px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.classification-manage-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .report-source-dialog-layer,
-.report-selection-dialog-layer {
+.report-selection-dialog-layer,
+.flow-classification-dialog-layer {
   position: fixed;
   inset: 0;
   z-index: 15000;
@@ -3993,6 +4365,280 @@ onBeforeUnmount(() => {
 .report-selection-dialog-layer {
   z-index: 15500;
 }
+
+.flow-classification-dialog-layer {
+  z-index: 15600;
+}
+
+.flow-classification-dialog {
+  position: relative;
+  width: min(1180px, calc(100vw - 68px));
+  max-height: min(900px, calc(100dvh - 56px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(147, 197, 253, 0.42);
+  border-radius: 28px;
+  background: #f8fafc;
+  box-shadow: 0 38px 110px rgba(15, 23, 42, 0.34);
+}
+
+.classification-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 4;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  border-radius: 50%;
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.92);
+  font-size: 29px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.classification-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 24px 78px 20px 26px;
+  border-bottom: 1px solid #dbeafe;
+  background: radial-gradient(circle at 15% 0%, rgba(37, 99, 235, 0.15), transparent 40%), #ffffff;
+}
+
+.classification-dialog-head > div:first-child > span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.classification-dialog-head h3 {
+  margin: 5px 0;
+  color: #0f172a;
+  font-size: 23px;
+}
+
+.classification-dialog-head p {
+  margin: 0;
+  color: #64748b;
+}
+
+.classification-dialog-head > div:last-child {
+  min-width: 104px;
+  padding: 10px 13px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  text-align: center;
+  background: #eff6ff;
+}
+
+.classification-dialog-head > div:last-child strong,
+.classification-dialog-head > div:last-child span {
+  display: block;
+}
+
+.classification-dialog-head > div:last-child strong {
+  color: #1d4ed8;
+  font-size: 23px;
+}
+
+.classification-dialog-head > div:last-child span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.classification-dialog-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 220px;
+  gap: 10px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.classification-dialog-toolbar label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.classification-dialog-toolbar span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.classification-dialog-toolbar input,
+.classification-dialog-toolbar select {
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.classification-dialog-message {
+  margin: 12px 24px 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.classification-dialog-message.error { color: #b91c1c; background: #fee2e2; }
+.classification-dialog-message.success { color: #166534; background: #dcfce7; }
+
+.classification-dialog-list {
+  min-height: 220px;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px 24px 22px;
+}
+
+.classification-dialog-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 18px;
+  padding: 15px 16px;
+  border: 1px solid #dbe3ec;
+  border-radius: 15px;
+  background: #ffffff;
+}
+
+.classification-dialog-list article + article {
+  margin-top: 10px;
+}
+
+.classification-issue-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.classification-issue-meta b,
+.classification-issue-meta span {
+  padding: 4px 7px;
+  border-radius: 7px;
+  color: #475569;
+  background: #f1f5f9;
+  font-size: 11px;
+}
+
+.classification-issue-meta b { color: #1d4ed8; background: #dbeafe; }
+
+.classification-issue-main p {
+  margin: 9px 0 5px;
+  color: #0f172a;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.classification-issue-main small {
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.classification-result-compare {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.classification-result-compare > div,
+.classification-result-compare label {
+  display: grid;
+  gap: 5px;
+}
+
+.classification-result-compare span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.classification-result-compare strong,
+.classification-result-compare select {
+  min-height: 38px;
+  padding: 8px 9px;
+  box-sizing: border-box;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  color: #0f172a;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.classification-result-compare em {
+  align-self: center;
+  padding: 5px 7px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.classification-result-compare em.manual { color: #7c3aed; background: #ede9fe; }
+.classification-result-compare em.fallback { color: #9a3412; background: #ffedd5; }
+.classification-result-compare em.pending { color: #64748b; background: #e2e8f0; }
+
+.classification-list-empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  border: 1px dashed #bfdbfe;
+  border-radius: 16px;
+  color: #64748b;
+  background: #ffffff;
+}
+
+.classification-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 24px 18px;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.classification-dialog-footer p {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.classification-dialog-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.classification-cancel-btn,
+.classification-save-btn {
+  min-height: 42px;
+  padding: 0 17px;
+  border-radius: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.classification-cancel-btn { border: 1px solid #cbd5e1; color: #475569; background: #ffffff; }
+.classification-save-btn { border: 1px solid #2563eb; color: #ffffff; background: #2563eb; }
+.classification-save-btn:disabled { cursor: not-allowed; opacity: 0.48; }
 
 .report-selection-dialog {
   position: relative;
@@ -5651,6 +6297,7 @@ onBeforeUnmount(() => {
   font-size: clamp(10px, 1.32vw, 19px);
   font-weight: 700;
   line-height: 1.72;
+  white-space: pre-wrap;
 }
 
 .finding-table {
@@ -5792,6 +6439,9 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid button,
 .quality-trace-layout > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   min-height: 0;
   padding: 0;
@@ -5803,8 +6453,9 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid img,
 .quality-trace-layout img {
-  width: 100%;
-  height: 100%;
+  display: block;
+  width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
@@ -9684,6 +10335,61 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
+  .quality-classification-panel {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .classification-panel-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .classification-panel-preview,
+  .classification-manage-btn {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .classification-manage-btn {
+    width: 100%;
+  }
+
+  .flow-classification-dialog-layer {
+    padding: 18px;
+  }
+
+  .flow-classification-dialog {
+    width: calc(100vw - 36px);
+    max-height: calc(100dvh - 36px);
+    border-radius: 23px;
+  }
+
+  .classification-dialog-head {
+    align-items: flex-start;
+    padding: 20px 68px 17px 20px;
+  }
+
+  .classification-dialog-head > div:last-child {
+    min-width: 82px;
+  }
+
+  .classification-dialog-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 0.55fr);
+    padding: 12px 18px;
+  }
+
+  .classification-dialog-list {
+    padding: 14px 18px 18px;
+  }
+
+  .classification-dialog-list article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .classification-dialog-footer {
+    padding: 13px 18px 16px;
+  }
+
   .report-source-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -9830,6 +10536,126 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 520px) {
+  .quality-classification-panel {
+    gap: 14px;
+    padding: 17px;
+    border-radius: 19px;
+  }
+
+  .classification-panel-intro {
+    gap: 11px;
+  }
+
+  .classification-ai-mark {
+    width: 43px;
+    height: 43px;
+    flex-basis: 43px;
+    border-radius: 14px;
+  }
+
+  .classification-panel-intro h3 {
+    font-size: 17px;
+  }
+
+  .classification-panel-intro p {
+    font-size: 12px;
+  }
+
+  .classification-panel-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .classification-panel-preview {
+    max-height: 68px;
+    overflow: auto;
+  }
+
+  .flow-classification-dialog-layer {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .flow-classification-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 23px;
+  }
+
+  .classification-dialog-close {
+    top: 11px;
+    right: 11px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .classification-dialog-head {
+    display: block;
+    padding: 17px 58px 14px 16px;
+  }
+
+  .classification-dialog-head h3 {
+    font-size: 19px;
+  }
+
+  .classification-dialog-head p {
+    font-size: 12px;
+  }
+
+  .classification-dialog-head > div:last-child {
+    display: none;
+  }
+
+  .classification-dialog-toolbar {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding: 10px 12px;
+  }
+
+  .classification-dialog-toolbar label {
+    min-width: 0;
+  }
+
+  .classification-dialog-message {
+    margin: 9px 12px 0;
+  }
+
+  .classification-dialog-list {
+    padding: 10px 12px 14px;
+  }
+
+  .classification-dialog-list article {
+    gap: 13px;
+    padding: 13px;
+  }
+
+  .classification-result-compare {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    align-items: end;
+  }
+
+  .classification-result-compare em {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .classification-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+    padding: 11px 12px 13px;
+  }
+
+  .classification-dialog-footer > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .classification-cancel-btn,
+  .classification-save-btn {
+    min-width: 0;
+    padding: 0 10px;
+  }
+
   .quality-ppt-viewer {
     margin-top: 8px;
   }

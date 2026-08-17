@@ -1,12 +1,21 @@
+import base64
 import unittest
 from datetime import date
+from io import BytesIO
 from unittest.mock import patch
 
+from PIL import Image
+from ai_prompts import (
+    build_quality_measurement_flow_classification_prompt,
+    build_quality_measurement_report_insight_prompt,
+)
 from app import (
+    apply_quality_report_flow_classifications,
     build_quality_measurement_report_payload,
     build_quality_measurement_report_slides,
     build_report_deep_analysis,
     build_report_flow_highlights,
+    build_quality_report_flow_classification_decisions,
     build_report_prohibited_examples,
     get_authorized_quality_report_generation_options,
 )
@@ -31,6 +40,22 @@ def make_issue(issue_id, flow="人员管理", prohibited=False, standard_id=None
 
 
 class QualityMeasurementReportSlidesTest(unittest.TestCase):
+    def test_quality_ai_prompts_keep_analysis_and_classification_contexts_separate(self):
+        insight_prompt = build_quality_measurement_report_insight_prompt(
+            {"designated_typical_issue_id": 18}
+        )
+        classification_prompt = build_quality_measurement_flow_classification_prompt(
+            {
+                "allowed_categories": ["人员管理"],
+                "standards": [{"external_standard_id": 1001}],
+                "issues": [{"issue_id": 18}],
+            }
+        )
+        self.assertIn("designated_typical_issue_id", insight_prompt)
+        self.assertIn("work_plan", insight_prompt)
+        self.assertIn("allowed_categories", classification_prompt)
+        self.assertIn("external_standard_id", classification_prompt)
+
     @patch("app.get_latest_inspection_report_snapshot")
     @patch("app.has_permission", return_value=False)
     def test_source_readonly_generator_reuses_saved_month_scope(
@@ -122,6 +147,67 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertEqual(report["slides"][-2]["kind"], "trace_analysis")
         self.assertEqual(report["slides"][-1]["kind"], "work_plan")
 
+    def test_other_flow_is_replaced_by_persisted_or_fallback_classification(self):
+        rows = [make_issue(41, "其他"), make_issue(42, "未设置业务流程")]
+        apply_quality_report_flow_classifications(
+            rows,
+            {
+                41: {
+                    "effective_category": "油品接卸",
+                    "classification_source": "manual",
+                }
+            },
+        )
+        fallback_decisions = build_quality_report_flow_classification_decisions(
+            [rows[1]],
+            [
+                {"business_flow": "人员管理"},
+                {"business_flow": "器具管理"},
+            ],
+            None,
+        )
+        apply_quality_report_flow_classifications(
+            [rows[1]],
+            {
+                42: {
+                    "effective_category": fallback_decisions[42]["category"],
+                    "classification_source": "fallback",
+                }
+            },
+        )
+
+        report = build_quality_measurement_report_payload(date(2026, 7, 1), rows)
+        categories = {
+            item["name"]
+            for item in report["finding_summary"]["business_flow_distribution"]
+        }
+        self.assertIn("油品接卸", categories)
+        self.assertNotIn("其他", categories)
+        self.assertNotIn("未设置业务流程", categories)
+
+    def test_finding_percentages_are_blank_and_prohibited_numbers_continue(self):
+        rows = [make_issue(index, "人员管理") for index in range(1, 9)]
+        report = build_quality_measurement_report_payload(date(2026, 7, 1), rows)
+        report["prohibited_examples"] = [
+            {
+                "issue_id": index,
+                "unit_name": "浦东片区",
+                "description": f"第{index}条禁止项",
+                "penalty": "",
+            }
+            for index in range(1, 9)
+        ]
+        slides = build_quality_measurement_report_slides(report)
+        finding_slide = next(item for item in slides if item["kind"] == "finding_overview")
+        prohibited_slides = [item for item in slides if item["kind"] == "prohibited"]
+
+        self.assertTrue(all(item["percentage"] == "" for item in finding_slide["rows"]))
+        self.assertTrue(finding_slide["text_lines"][1].startswith("　　"))
+        self.assertEqual(
+            [row["sequence"] for slide in prohibited_slides for row in slide["rows"]],
+            list(range(1, 9)),
+        )
+
     def test_custom_sample_counts_and_standard_priority(self):
         serialized = [
             {
@@ -207,6 +293,23 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertEqual(table.cell(1, 0).text, "0")
         self.assertEqual(table.cell(1, 1).text, "0")
 
+    def test_ppt_quality_total_row_merges_sequence_and_unit_cells(self):
+        builder = InspectionReportPresentation("quality_measurement", {}, ".")
+        slide = builder._quality_blank_slide("合计行合并测试")
+        table = builder._quality_table(
+            slide,
+            ["序号", "二级单位", "问题数"],
+            [["合计", "", 8]],
+            0.8,
+            1.5,
+            6,
+            1.2,
+            merge_total_leading_cells=True,
+        )
+        self.assertTrue(table.cell(1, 0).is_merge_origin)
+        self.assertTrue(table.cell(1, 1).is_spanned)
+        self.assertEqual(table.cell(1, 0).text, "合计")
+
     def test_ppt_photo_contain_never_crops_or_overflows_target_box(self):
         target_width, target_height = InspectionReportPresentation._contain_size(
             4032,
@@ -231,6 +334,26 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         )
         self.assertLessEqual(edge_x + edge_width, 13.28)
         self.assertLessEqual(edge_y + edge_height, 7.02)
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (480, 1280), "white").save(image_buffer, format="JPEG")
+        image_data = (
+            "data:image/jpeg;base64,"
+            + base64.b64encode(image_buffer.getvalue()).decode("ascii")
+        )
+        builder = InspectionReportPresentation("quality_measurement", {}, ".")
+        slide = builder._quality_blank_slide("竖版照片完整显示测试")
+        picture_result = builder._add_picture_contain(slide, image_data, 0.8, 1.4, 5.5, 4.8)
+        self.assertIsNotNone(picture_result)
+        self.assertAlmostEqual(
+            picture_result["width"] / picture_result["height"],
+            480 / 1280,
+            places=4,
+        )
+        self.assertLessEqual(picture_result["left"] + picture_result["width"], 6.3)
+        self.assertLessEqual(picture_result["top"] + picture_result["height"], 6.2)
+        self.assertEqual(picture_result["shape"].crop_top, 0)
+        self.assertEqual(picture_result["shape"].crop_bottom, 0)
 
     def test_ppt_quality_issue_layout_adapts_to_photo_shape_and_copy_length(self):
         builder = InspectionReportPresentation("quality_measurement", {}, ".")

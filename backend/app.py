@@ -28,6 +28,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import (
+    classify_quality_measurement_report_flows,
     generate_equipment_facilities_report_insights,
     generate_feedback_title,
     generate_finance_report_insights,
@@ -224,7 +225,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "4.9.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.0.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7716,6 +7717,26 @@ def normalize_report_category(value, fallback="未设置"):
     return re.sub(r"\s+", " ", text)
 
 
+def get_quality_report_original_business_flow(row):
+    return normalize_report_category(
+        get_report_standard_field_value(row.get("standard_detail_text"), "业务流程"),
+        "未设置业务流程",
+    )
+
+
+def is_quality_report_unclassified_flow(value):
+    return normalize_report_category(value, "未设置业务流程") in QUALITY_REPORT_OTHER_FLOW_NAMES
+
+
+def get_quality_report_effective_business_flow(row):
+    original_flow = get_quality_report_original_business_flow(row)
+    override_flow = normalize_report_category(row.get("report_business_flow"), "")
+    if is_quality_report_unclassified_flow(original_flow) and override_flow:
+        if not is_quality_report_unclassified_flow(override_flow):
+            return override_flow
+    return original_flow
+
+
 def join_chinese_list(items):
     values = [str(item or "").strip() for item in items if str(item or "").strip()]
     if not values:
@@ -7730,10 +7751,7 @@ def join_chinese_list(items):
 def build_report_business_flow_distribution(rows):
     flow_counts = OrderedDict()
     for row in rows:
-        flow_name = normalize_report_category(
-            get_report_standard_field_value(row.get("standard_detail_text"), "业务流程"),
-            "未设置业务流程",
-        )
+        flow_name = get_quality_report_effective_business_flow(row)
         flow_counts[flow_name] = flow_counts.get(flow_name, 0) + 1
     total = sum(flow_counts.values())
     items = [
@@ -7767,7 +7785,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-selection-rules-approved-v5"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-ai-flow-classification-approved-v6"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
@@ -7879,6 +7897,21 @@ QUALITY_REPORT_DEFAULT_SELECTION_SETTINGS = {
     "prohibited_standard_priorities": [],
     "flow_standard_priorities": {},
 }
+
+QUALITY_REPORT_OTHER_FLOW_NAMES = {
+    "其他",
+    "其他问题",
+    "未设置",
+    "未设置业务流程",
+    "无法判断",
+}
+QUALITY_REPORT_FALLBACK_FLOW_ORDER = [
+    "器具管理",
+    "油品接卸",
+    "计量监控",
+    "人员管理",
+    "质量监控",
+]
 
 
 def normalize_quality_report_standard_ids(values, limit=500):
@@ -8003,6 +8036,251 @@ def get_quality_measurement_standard_options(cur):
         )
     options.sort(key=lambda item: (item["table_name"], item["business_flow"], item["standard_id"]))
     return options
+
+
+def quality_report_flow_classification_table_available(cur):
+    cur.execute(
+        "SELECT to_regclass('public.inspection_report_quality_issue_classifications') AS table_name;"
+    )
+    row = cur.fetchone()
+    return bool(row and row.get("table_name"))
+
+
+def get_quality_report_allowed_flow_categories(standard_options):
+    categories = []
+    for item in standard_options or []:
+        category = normalize_report_category(item.get("business_flow"), "")
+        if not category or is_quality_report_unclassified_flow(category):
+            continue
+        if category not in categories:
+            categories.append(category)
+    ordered = [
+        category
+        for category in QUALITY_REPORT_FALLBACK_FLOW_ORDER
+        if category in categories
+    ]
+    ordered.extend(category for category in categories if category not in ordered)
+    return ordered or list(QUALITY_REPORT_FALLBACK_FLOW_ORDER)
+
+
+def get_quality_report_flow_classification_map(cur, issue_ids):
+    normalized_ids = []
+    for value in issue_ids or []:
+        try:
+            issue_id = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if issue_id > 0 and issue_id not in normalized_ids:
+            normalized_ids.append(issue_id)
+    normalized_ids.sort()
+    if not normalized_ids or not quality_report_flow_classification_table_available(cur):
+        return {}
+    cur.execute(
+        """
+        SELECT
+            c.issue_id,
+            c.original_category,
+            c.ai_category,
+            c.effective_category,
+            c.classification_source,
+            c.reason,
+            c.model_name,
+            c.updated_by,
+            TO_CHAR(c.classified_at, 'YYYY-MM-DD HH24:MI') AS classified_at,
+            TO_CHAR(c.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at,
+            COALESCE(u.real_name, u.username, '') AS updated_by_name
+        FROM inspection_report_quality_issue_classifications c
+        LEFT JOIN users u ON u.id = c.updated_by
+        WHERE c.issue_id = ANY(%s);
+        """,
+        (normalized_ids,),
+    )
+    return {int(row["issue_id"]): dict(row) for row in cur.fetchall()}
+
+
+def apply_quality_report_flow_classifications(rows, classification_map):
+    for row in rows or []:
+        original_flow = get_quality_report_original_business_flow(row)
+        row["original_business_flow"] = original_flow
+        if not is_quality_report_unclassified_flow(original_flow):
+            row["report_business_flow"] = original_flow
+            row["flow_classification_source"] = "original"
+            continue
+        record = classification_map.get(int(row.get("id") or 0)) or {}
+        effective_category = normalize_report_category(
+            record.get("effective_category"),
+            "",
+        )
+        if effective_category and not is_quality_report_unclassified_flow(effective_category):
+            row["report_business_flow"] = effective_category
+            row["flow_classification_source"] = record.get("classification_source") or "ai"
+
+
+def build_quality_report_flow_classification_context(rows, standard_options):
+    allowed_categories = get_quality_report_allowed_flow_categories(standard_options)
+    return {
+        "allowed_categories": allowed_categories,
+        "standards": [
+            {
+                "external_standard_id": int(item.get("standard_id") or 0),
+                "table_name": item.get("table_name") or "",
+                "business_flow": item.get("business_flow") or "",
+                "detail_text": item.get("detail_text") or "",
+            }
+            for item in standard_options or []
+        ],
+        "issues": [
+            {
+                "issue_id": int(row.get("id") or 0),
+                "external_standard_id": int(row.get("standard_id") or 0),
+                "table_name": row.get("table_name") or "",
+                "station_name": row.get("station_name") or "",
+                "description": row.get("description") or "",
+                "standard_detail": row.get("standard_detail_text") or "",
+                "original_business_flow": get_quality_report_original_business_flow(row),
+            }
+            for row in rows or []
+        ],
+    }
+
+
+def classify_quality_report_flow_locally(row, allowed_categories):
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            row.get("description"),
+            row.get("standard_detail_text"),
+            row.get("table_name"),
+        )
+    ).lower()
+    keyword_groups = {
+        "器具管理": ("计量器具", "量器", "量油尺", "温度计", "密度计", "加油机", "加油枪", "检定", "铅封"),
+        "油品接卸": ("接卸", "卸油", "油罐车", "双报告", "油样", "取样", "留样", "铅封号"),
+        "计量监控": ("计量监控", "液位仪", "损溢", "库存", "罐存", "计量数据", "回罐油"),
+        "人员管理": ("人员", "员工", "培训", "证书", "操作规程", "交接班", "岗位"),
+        "质量监控": ("质量监控", "油品质量", "质量验收", "化验", "检验", "油品异常"),
+    }
+    ranked = []
+    for order, category in enumerate(allowed_categories):
+        keywords = keyword_groups.get(category, (category,))
+        score = sum(2 if keyword == category else 1 for keyword in keywords if keyword.lower() in haystack)
+        ranked.append((score, -order, category))
+    ranked.sort(reverse=True)
+    return ranked[0][2] if ranked else QUALITY_REPORT_FALLBACK_FLOW_ORDER[0]
+
+
+def normalize_quality_report_ai_flow_decisions(ai_result, rows, allowed_categories):
+    issue_ids = {int(row.get("id") or 0) for row in rows or []}
+    allowed = set(allowed_categories)
+    payload = (ai_result or {}).get("payload")
+    decisions = {}
+    if not isinstance(payload, dict):
+        return decisions
+    for item in payload.get("classifications") or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            issue_id = int(item.get("issue_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        category = normalize_report_category(item.get("category"), "")
+        if issue_id not in issue_ids or category not in allowed:
+            continue
+        decisions[issue_id] = {
+            "category": category,
+            "reason": str(item.get("reason") or "").strip()[:500],
+            "source": "ai",
+        }
+    return decisions
+
+
+def build_quality_report_flow_classification_decisions(rows, standard_options, ai_result):
+    allowed_categories = get_quality_report_allowed_flow_categories(standard_options)
+    decisions = normalize_quality_report_ai_flow_decisions(
+        ai_result,
+        rows,
+        allowed_categories,
+    )
+    for row in rows or []:
+        issue_id = int(row.get("id") or 0)
+        if issue_id in decisions:
+            continue
+        decisions[issue_id] = {
+            "category": classify_quality_report_flow_locally(row, allowed_categories),
+            "reason": "AI未返回有效分类，系统根据问题描述和规范关键词完成兜底分类。",
+            "source": "fallback",
+        }
+    return decisions
+
+
+def persist_quality_report_flow_classifications(cur, rows, decisions):
+    if not quality_report_flow_classification_table_available(cur):
+        raise InspectionReportJobSchemaUnavailable(
+            "质量计量问题AI分类表尚未完成数据库迁移，请重新部署后端。"
+        )
+    row_map = {int(row.get("id") or 0): row for row in rows or []}
+    for issue_id, decision in decisions.items():
+        row = row_map.get(int(issue_id))
+        if not row:
+            continue
+        category = normalize_report_category(decision.get("category"), "")
+        if not category or is_quality_report_unclassified_flow(category):
+            continue
+        source = decision.get("source") if decision.get("source") in {"ai", "fallback"} else "fallback"
+        cur.execute(
+            """
+            INSERT INTO inspection_report_quality_issue_classifications (
+                issue_id,
+                original_category,
+                ai_category,
+                effective_category,
+                classification_source,
+                reason,
+                model_name,
+                classified_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (issue_id) DO UPDATE SET
+                original_category = EXCLUDED.original_category,
+                ai_category = CASE
+                    WHEN inspection_report_quality_issue_classifications.ai_category IS NULL
+                      OR inspection_report_quality_issue_classifications.classification_source = 'fallback'
+                    THEN EXCLUDED.ai_category
+                    ELSE inspection_report_quality_issue_classifications.ai_category
+                END,
+                effective_category = CASE
+                    WHEN inspection_report_quality_issue_classifications.classification_source = 'manual'
+                    THEN inspection_report_quality_issue_classifications.effective_category
+                    ELSE EXCLUDED.effective_category
+                END,
+                classification_source = CASE
+                    WHEN inspection_report_quality_issue_classifications.classification_source = 'manual'
+                    THEN 'manual'
+                    ELSE EXCLUDED.classification_source
+                END,
+                reason = CASE
+                    WHEN inspection_report_quality_issue_classifications.classification_source = 'manual'
+                    THEN inspection_report_quality_issue_classifications.reason
+                    ELSE EXCLUDED.reason
+                END,
+                model_name = CASE
+                    WHEN inspection_report_quality_issue_classifications.classification_source = 'manual'
+                    THEN inspection_report_quality_issue_classifications.model_name
+                    ELSE EXCLUDED.model_name
+                END,
+                updated_at = CURRENT_TIMESTAMP;
+            """,
+            (
+                issue_id,
+                get_quality_report_original_business_flow(row),
+                category if source == "ai" else None,
+                category,
+                source,
+                decision.get("reason") or "",
+                "deepseek-v4-pro" if source == "ai" else "local-fallback-v1",
+            ),
+        )
 
 
 def normalize_inspection_report_generation_options(value):
@@ -9060,10 +9338,9 @@ def serialize_report_issue(row):
         "unit_type": unit_type,
         "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
         "unit_name": unit_name,
-        "business_flow": normalize_report_category(
-            get_report_standard_field_value(row.get("standard_detail_text"), "业务流程"),
-            "未设置业务流程",
-        ),
+        "business_flow": get_quality_report_effective_business_flow(row),
+        "original_business_flow": get_quality_report_original_business_flow(row),
+        "flow_classification_source": row.get("flow_classification_source") or "original",
         "description": str(row.get("description") or "").strip(),
         "issue_photo": row.get("issue_photo") or "",
         "standard_id": int(row.get("standard_id") or 0),
@@ -9546,7 +9823,7 @@ def build_quality_measurement_report_slides(report):
             "section": "油站环节",
             "problem_type": item.get("name"),
             "count": int(item.get("count") or 0),
-            "percentage": f"{float(item.get('percentage') or 0):.1f}",
+            "percentage": "",
         }
         for index, item in enumerate(distribution, 1)
     )
@@ -9593,9 +9870,9 @@ def build_quality_measurement_report_slides(report):
             "title": "检查发现-发现问题",
             "text_lines": [
                 f"本次检查发现问题{total_issue_count}项：",
-                f"油站环节{total_issue_count}项：{flow_count_text}",
-                "油库环节X项：油罐车重车铅封类、油库发油系统类问题数量最多，分别为X项、X项，分别占比X%、X%。",
-                "运输环节X项：为车辆铅封核对问题，为X项，占比X%。",
+                f"　　油站环节{total_issue_count}项：{flow_count_text}",
+                "　　油库环节X项：油罐车重车铅封类、油库发油系统类问题数量最多，分别为X项、X项，分别占比X%、X%。",
+                "　　运输环节X项：为车辆铅封核对问题，为X项，占比X%。",
             ],
             "rows": finding_table_rows,
         }
@@ -9607,6 +9884,10 @@ def build_quality_measurement_report_slides(report):
         for index in range(0, len(prohibited_rows), 6)
     ] or [[]]
     for page_index, page_rows in enumerate(prohibited_pages, 1):
+        numbered_rows = [
+            {**row, "sequence": (page_index - 1) * 6 + row_index + 1}
+            for row_index, row in enumerate(page_rows)
+        ]
         slides.append(
             {
                 "kind": "prohibited",
@@ -9619,7 +9900,7 @@ def build_quality_measurement_report_slides(report):
                     f"本次检查发现涉及禁止项问题{prohibited_issue_count}项，其中油库环节X项、"
                     f"运输环节X项、油站环节{prohibited_issue_count}项。"
                 ),
-                "rows": page_rows,
+                "rows": numbered_rows,
             }
         )
 
@@ -29640,6 +29921,9 @@ def generate_quality_measurement_report_job(
     cur = None
     rows = []
     user = None
+    standard_options = []
+    classification_candidates = []
+    classification_ai_result = None
     selection_settings_record = {
         "settings": normalize_quality_report_selection_settings({}),
         "updated_at": "",
@@ -29665,6 +29949,7 @@ def generate_quality_measurement_report_job(
             generation_options,
         )
         selection_settings_record = get_quality_report_selection_settings(cur)
+        standard_options = get_quality_measurement_standard_options(cur)
 
         where_clauses = [
             "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
@@ -29733,9 +30018,74 @@ def generate_quality_measurement_report_job(
             )
             candidate_rows = [dict(row) for row in cur.fetchall()]
             rows = filter_quality_measurement_report_rows(candidate_rows)
+            classification_map = get_quality_report_flow_classification_map(
+                cur,
+                [row.get("id") for row in rows],
+            )
+            apply_quality_report_flow_classifications(rows, classification_map)
+            classification_candidates = [
+                row
+                for row in rows
+                if is_quality_report_unclassified_flow(
+                    get_quality_report_original_business_flow(row)
+                )
+                and (
+                    int(row.get("id") or 0) not in classification_map
+                    or classification_map[int(row.get("id") or 0)].get(
+                        "classification_source"
+                    ) == "fallback"
+                )
+            ]
         conn.commit()
     finally:
         close_db_resources(cur, conn)
+
+    if classification_candidates:
+        update_inspection_report_job(
+            task_id,
+            "running",
+            26,
+            f"正在调用 DeepSeek 为 {len(classification_candidates)} 条其他问题识别业务环节",
+        )
+        classification_context = build_quality_report_flow_classification_context(
+            classification_candidates,
+            standard_options,
+        )
+        classification_ai_result = classify_quality_measurement_report_flows(
+            classification_context
+        )
+        decisions = build_quality_report_flow_classification_decisions(
+            classification_candidates,
+            standard_options,
+            classification_ai_result,
+        )
+        conn = None
+        cur = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            persist_quality_report_flow_classifications(
+                cur,
+                classification_candidates,
+                decisions,
+            )
+            if classification_ai_result:
+                record_ai_usage_log(
+                    cur,
+                    user,
+                    classification_ai_result,
+                    "AI报告生成",
+                    "质量计量问题环节分类",
+                    f"{format_report_month_label(month_start)} · 问题{len(classification_candidates)}项",
+                )
+            conn.commit()
+            classification_map = get_quality_report_flow_classification_map(
+                cur,
+                [row.get("id") for row in rows],
+            )
+            apply_quality_report_flow_classifications(rows, classification_map)
+        finally:
+            close_db_resources(cur, conn)
 
     update_inspection_report_job(task_id, "running", 38, f"已汇总 {len(rows)} 条审核通过问题，正在整理报告结构")
     report = build_quality_measurement_report_payload(month_start, rows)
@@ -31426,6 +31776,239 @@ def manage_quality_report_selection_settings():
             "success": False,
             "error": "质量计量报告选题规则处理失败，请稍后重试。",
         }), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def get_quality_report_flow_classification_rows(cur, user, month_start, month_end):
+    if not quality_report_flow_classification_table_available(cur):
+        raise InspectionReportJobSchemaUnavailable(
+            "质量计量问题AI分类表尚未完成数据库迁移，请重新部署后端。"
+        )
+    where_clauses = [
+        "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+        "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+        "REPLACE(t.table_name, %s, '') IN (%s, %s)",
+        "t.checklist_mode IN ('online', 'offline')",
+        "COALESCE(i.audit_status, 'pending') = 'approved'",
+    ]
+    params = [
+        month_start,
+        month_end,
+        DISPLAY_REMOVED_STATION_PHRASE,
+        QUALITY_MEASUREMENT_REPORT_ONSITE_TABLE,
+        QUALITY_MEASUREMENT_REPORT_VIDEO_TABLE,
+    ]
+    table_scope_allowed = append_inspection_table_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "i.inspection_table_id",
+        "limit_plan_inspection_table_scope",
+    )
+    region_scope_allowed = append_station_region_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "s.region",
+        "limit_plan_station_region_scope",
+    )
+    if not table_scope_allowed or not region_scope_allowed:
+        return [], get_quality_report_allowed_flow_categories(
+            get_quality_measurement_standard_options(cur)
+        )
+    where_clause = f"WHERE {' AND '.join(where_clauses)}"
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT
+                i.id,
+                i.station_id,
+                s.station_name,
+                s.region,
+                s.address,
+                REPLACE(t.table_name, %s, '') AS table_name,
+                t.checklist_mode,
+                i.standard_id,
+                i.standard_detail_text,
+                i.description,
+                COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON i.station_id = s.id
+            JOIN inspection_tables t ON i.inspection_table_id = t.id
+            {where_clause}
+            ORDER BY s.region ASC NULLS LAST, s.station_name ASC, i.id ASC;
+            """
+        ).format(where_clause=sql.SQL(where_clause)),
+        [DISPLAY_REMOVED_STATION_PHRASE, *params],
+    )
+    candidate_rows = [dict(row) for row in cur.fetchall()]
+    scoped_rows = filter_quality_measurement_report_rows(candidate_rows)
+    other_rows = [
+        row
+        for row in scoped_rows
+        if is_quality_report_unclassified_flow(
+            get_quality_report_original_business_flow(row)
+        )
+    ]
+    classification_map = get_quality_report_flow_classification_map(
+        cur,
+        [row.get("id") for row in other_rows],
+    )
+    results = []
+    for row in other_rows:
+        issue_id = int(row.get("id") or 0)
+        record = classification_map.get(issue_id) or {}
+        results.append(
+            {
+                "issue_id": issue_id,
+                "station_id": row.get("station_id"),
+                "station_name": row.get("station_name") or "",
+                "region": row.get("region") or "",
+                "table_name": row.get("table_name") or "",
+                "external_standard_id": int(row.get("standard_id") or 0),
+                "description": row.get("description") or "",
+                "original_category": get_quality_report_original_business_flow(row),
+                "ai_category": record.get("ai_category") or "",
+                "effective_category": record.get("effective_category") or "",
+                "classification_source": record.get("classification_source") or "pending",
+                "reason": record.get("reason") or "",
+                "classified_at": record.get("classified_at") or "",
+                "updated_at": record.get("updated_at") or "",
+                "updated_by_name": record.get("updated_by_name") or "",
+            }
+        )
+    standard_options = get_quality_measurement_standard_options(cur)
+    return results, get_quality_report_allowed_flow_categories(standard_options)
+
+
+@app.route(
+    "/api/inspection-reports/quality-flow-classifications",
+    methods=["GET", "PUT"],
+)
+def manage_quality_report_flow_classifications():
+    data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
+    month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
+    month_start, month_end = parse_report_month(month_value)
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        can_edit = has_permission(
+            cur,
+            user,
+            "manage_quality_report_selection_rules",
+        )
+        rows, categories = get_quality_report_flow_classification_rows(
+            cur,
+            user,
+            month_start,
+            month_end,
+        )
+        if request.method == "PUT":
+            if not can_edit:
+                raise PermissionError("当前账号无权调整质量计量问题环节分类。")
+            adjustments = data.get("classifications")
+            if not isinstance(adjustments, list) or not adjustments:
+                raise ValueError("请选择需要调整的问题分类。")
+            if len(adjustments) > 500:
+                raise ValueError("单次最多调整500条问题分类。")
+            eligible_rows = {int(row["issue_id"]): row for row in rows}
+            category_set = set(categories)
+            normalized_adjustments = []
+            seen_ids = set()
+            for item in adjustments:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    issue_id = int(item.get("issue_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                category = normalize_report_category(item.get("category"), "")
+                if issue_id in seen_ids:
+                    continue
+                if issue_id not in eligible_rows:
+                    raise ValueError(f"问题ID {issue_id} 不属于当前月份可调整的数据范围。")
+                if category not in category_set:
+                    raise ValueError(f"问题ID {issue_id} 的目标环节不在允许范围内。")
+                seen_ids.add(issue_id)
+                normalized_adjustments.append((issue_id, category))
+            if not normalized_adjustments:
+                raise ValueError("没有有效的分类调整内容。")
+            for issue_id, category in normalized_adjustments:
+                original_category = eligible_rows[issue_id]["original_category"]
+                cur.execute(
+                    """
+                    INSERT INTO inspection_report_quality_issue_classifications (
+                        issue_id,
+                        original_category,
+                        effective_category,
+                        classification_source,
+                        reason,
+                        updated_by,
+                        classified_at,
+                        updated_at
+                    )
+                    VALUES (%s, %s, %s, 'manual', %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (issue_id) DO UPDATE SET
+                        original_category = EXCLUDED.original_category,
+                        effective_category = EXCLUDED.effective_category,
+                        classification_source = 'manual',
+                        reason = EXCLUDED.reason,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = CURRENT_TIMESTAMP;
+                    """,
+                    (
+                        issue_id,
+                        original_category,
+                        category,
+                        "人工调整质量计量报告业务环节分类。",
+                        user.get("id"),
+                    ),
+                )
+            conn.commit()
+            rows, categories = get_quality_report_flow_classification_rows(
+                cur,
+                user,
+                month_start,
+                month_end,
+            )
+        return jsonify(
+            {
+                "success": True,
+                "month": month_start.strftime("%Y-%m"),
+                "classifications": rows,
+                "business_flows": categories,
+                "can_edit": can_edit,
+                "regeneration_required": request.method == "PUT",
+            }
+        )
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except InspectionReportJobSchemaUnavailable as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to manage quality report flow classifications.")
+        return jsonify(
+            {"success": False, "error": "质量计量问题环节分类处理失败，请稍后重试。"}
+        ), 500
     finally:
         close_db_resources(cur, conn)
 

@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.0',
+    date: '2026-08-17',
+    title: '质量计量报告分类与PPT优化',
+    summary: '其他问题可由AI分类并人工调整，PPT表格、编号和照片展示更准确。',
+    items: [
+      '其他环节问题会结合两张计量检查表规范由AI分类，结果按问题ID保留。',
+      '可在数据来源下方查看和调整AI分类，保存后自动重新生成当月报告。',
+      '总计行合并显示，禁止项跨页编号连续，问题照片按原比例完整展示。'
+    ]
+  },
+  {
     version: 'v4.9',
     date: '2026-08-16',
     title: '整改退回与流转追踪',

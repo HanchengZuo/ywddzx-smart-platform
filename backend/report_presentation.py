@@ -782,12 +782,23 @@ class InspectionReportPresentation:
             )
             left = x + (width - target_width) / 2
             top = y + (height - target_height) / 2
-            picture = slide.shapes.add_picture(
-                source,
-                Inches(left),
-                Inches(top),
-                Inches(target_width),
-                Inches(target_height),
+            # Pass only the limiting dimension so PowerPoint preserves the
+            # source aspect ratio and never introduces an implicit crop.
+            width_limited = (inner_width / image_width) <= (inner_height / image_height)
+            picture = (
+                slide.shapes.add_picture(
+                    source,
+                    Inches(left),
+                    Inches(top),
+                    width=Inches(target_width),
+                )
+                if width_limited
+                else slide.shapes.add_picture(
+                    source,
+                    Inches(left),
+                    Inches(top),
+                    height=Inches(target_height),
+                )
             )
             return {
                 "shape": picture,
@@ -1001,7 +1012,19 @@ class InspectionReportPresentation:
         self._add_text(slide, str(self.page_number), 12.45, 7.15, 0.48, 0.2, size=8, color=MUTED, align=PP_ALIGN.RIGHT)
         return slide
 
-    def _quality_table(self, slide, headers, rows, x, y, width, height, weights=None, narrative_columns=None):
+    def _quality_table(
+        self,
+        slide,
+        headers,
+        rows,
+        x,
+        y,
+        width,
+        height,
+        weights=None,
+        narrative_columns=None,
+        merge_total_leading_cells=False,
+    ):
         rows = [list(row) for row in rows]
         shape = slide.shapes.add_table(len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(width), Inches(height))
         table = shape.table
@@ -1047,6 +1070,17 @@ class InspectionReportPresentation:
                     bold=is_total_row,
                     align=PP_ALIGN.LEFT if column_index in narrative_columns else PP_ALIGN.CENTER,
                 )
+            if merge_total_leading_cells and is_total_row and len(headers) >= 2:
+                table.cell(row_index, 0).merge(table.cell(row_index, 1))
+                merged_cell = table.cell(row_index, 0)
+                self._set_cell_text(
+                    merged_cell,
+                    "合计",
+                    body_base_size,
+                    INK,
+                    bold=True,
+                    align=PP_ALIGN.CENTER,
+                )
         return table
 
     def _render_quality_overall(self, data):
@@ -1068,7 +1102,7 @@ class InspectionReportPresentation:
         if data.get("total_row"):
             rows.append(data.get("total_row"))
         table_rows = [[
-            item.get("sequence"), item.get("unit_name"), item.get("oil_depot_count", 0),
+            item.get("sequence"), "" if item.get("sequence") == "合计" else item.get("unit_name"), item.get("oil_depot_count", 0),
             item.get("station_count", 0), item.get("transport_vehicle_count", 0),
             item.get("general_issue_count", 0), item.get("violation_issue_count", 0),
             item.get("prohibited_issue_count", 0), item.get("total_issue_count", 0),
@@ -1082,6 +1116,7 @@ class InspectionReportPresentation:
             12.36,
             5.05 if is_continuation else 4.45,
             weights=[0.55, 1.45, 0.85, 0.9, 0.95, 0.78, 0.78, 0.9, 1.0],
+            merge_total_leading_cells=True,
         )
 
     def _render_quality_finding(self, data):
@@ -1093,7 +1128,7 @@ class InspectionReportPresentation:
     def _render_quality_prohibited(self, data):
         slide = self._quality_blank_slide(data.get("title") or "检查发现-禁止项问题")
         self._add_text(slide, data.get("narrative"), 0.72, 1.14, 11.9, 0.78, size=16, bold=True)
-        rows = [[index, "加油站环节", item.get("unit_name"), item.get("description"), item.get("penalty") or ""] for index, item in enumerate(data.get("rows") or [], 1)]
+        rows = [[item.get("sequence"), "加油站环节", item.get("unit_name"), item.get("description"), item.get("penalty") or ""] for item in data.get("rows") or []]
         if not rows:
             rows = [["-", "加油站环节", "-", "当前月份暂无禁止项问题", ""]]
         self._quality_table(slide, ["序号", "环节", "基层单位名称", "禁止项管理规定", "处罚情况"], rows, 0.52, 2.0, 12.28, 4.85, weights=[0.45, 0.9, 1.15, 4.3, 0.9], narrative_columns={3})
