@@ -311,7 +311,7 @@
               </template>
 
               <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
-                <div class="quality-slide-band">{{ currentQualitySlide.subtitle }}</div>
+                <div class="quality-slide-band quality-issue-band">{{ currentQualitySlide.subtitle }}</div>
                 <div :class="['quality-issue-pair-grid', currentQualitySlide.layout_variant || 'paired']">
                   <article
                     v-for="issue in currentQualitySlide.issues"
@@ -6398,25 +6398,32 @@ onBeforeUnmount(() => {
 }
 
 .quality-issue-pair-grid {
+  position: absolute;
+  top: 24.8%;
+  right: 3.6%;
+  bottom: 9.3%;
+  left: 3.6%;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  height: 82%;
+  height: auto;
 }
 
 .quality-issue-pair-grid article {
   display: grid;
-  grid-template-rows: auto minmax(0, 0.72fr) minmax(0, 1.85fr);
-  gap: 1.5%;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 2.2%;
   min-width: 0;
-  padding: 0 5%;
+  min-height: 0;
+  padding: 0 2%;
+  overflow: hidden;
 }
 
 .quality-issue-pair-grid article.copy-short {
-  grid-template-rows: auto minmax(0, 0.48fr) minmax(0, 2.05fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .quality-issue-pair-grid article.copy-long {
-  grid-template-rows: auto minmax(0, 1.08fr) minmax(0, 1.55fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .quality-issue-pair-grid article + article {
@@ -6437,13 +6444,22 @@ onBeforeUnmount(() => {
   line-height: 1.48;
 }
 
+.quality-issue-pair-grid article.copy-long p {
+  font-size: clamp(8px, 1.02vw, 15px);
+  line-height: 1.4;
+}
+
 .quality-issue-pair-grid button,
 .quality-trace-layout > button {
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
+  box-sizing: border-box;
   padding: 0;
   border: 1px solid #cbd5e1;
   border-radius: 12px;
@@ -6454,11 +6470,25 @@ onBeforeUnmount(() => {
 .quality-issue-pair-grid img,
 .quality-trace-layout img {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
+}
+
+.quality-issue-band {
+  position: absolute;
+  top: 14.67%;
+  right: 2.9%;
+  left: 2.55%;
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  height: 7.2%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 1.2%;
 }
 
 .quality-issue-pair-grid.paired article.photo-portrait.copy-short {
@@ -6549,6 +6579,9 @@ onBeforeUnmount(() => {
 .quality-slide-empty {
   display: grid;
   place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   color: #64748b;
   border: 1px dashed #a9b8c4;
   background: #f5f8fa;
