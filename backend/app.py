@@ -225,7 +225,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.0.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.1.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7785,7 +7785,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-ai-flow-classification-approved-v6"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-template-v51-approved-v7"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
@@ -9837,23 +9837,81 @@ def build_quality_measurement_report_slides(report):
         }
     )
 
+    month_value = str(report.get("month") or "").strip()
+    try:
+        month_year, month_number = [int(part) for part in month_value.split("-", 1)]
+    except (TypeError, ValueError):
+        month_year, month_number = datetime.now(BEIJING_TZ).year, datetime.now(BEIJING_TZ).month
+    month_label = str(report.get("month_label") or f"{month_number}月份")
+    scope_text = (
+        f"共检查{int(summary.get('region_count') or 0)}个管理片区、"
+        f"和{int(summary.get('holding_unit_count') or 0)}个主要控（参）股单位的"
+        f"{int(summary.get('station_count') or 0)}座加油站"
+    )
+    issue_summary_text = (
+        f"共发现问题{total_issue_count}项，"
+        f"涉及禁止项问题{prohibited_issue_count}项"
+    )
+    overall_runs = [
+        {"text": f"{month_label}，上海公司开展质量计量监督检查，", "tone": "ink"},
+        {"text": scope_text, "tone": "red"},
+        {
+            "text": (
+                f"，X座油库，X台流量计，抽检{int(summary.get('station_count') or 0)}把加油枪，"
+                f"{int(summary.get('station_count') or 0)}个油样，检查属地昆仑物流X个配送中心，X台承运车辆，"
+            ),
+            "tone": "ink",
+        },
+        {"text": issue_summary_text, "tone": "red"},
+        {
+            "text": "，已整改xx项，整改完成率xx%，累计发现问题xxx项，已整改xxx项，整改完成率xx%。",
+            "tone": "ink",
+        },
+    ]
+    agenda_sections = [
+        {"number": "一", "label": "总体情况"},
+        {"number": "二", "label": "检查发现"},
+        {"number": "三", "label": "管理追溯"},
+        {"number": "四", "label": "工作计划"},
+    ]
+    slides = [
+        {
+            "kind": "cover",
+            "title": f"上海销售{month_number}月质量计量监督检查报告",
+            "period_label": f"{month_year}年{month_number}月",
+        },
+        {
+            "kind": "agenda",
+            "active_section": 1,
+            "sections": agenda_sections,
+            "details": [],
+        },
+    ]
     overall_rows = report.get("rows") or []
-    overall_pages = [overall_rows[index : index + 8] for index in range(0, len(overall_rows), 8)] or [[]]
-    slides = []
+    overall_pages = [overall_rows[index : index + 10] for index in range(0, len(overall_rows), 10)] or [[]]
     for page_index, page_rows in enumerate(overall_pages, 1):
         slides.append(
             {
                 "kind": "overall",
                 "title": (
-                    "总体情况"
+                    "一、总体情况"
                     if len(overall_pages) == 1
-                    else f"总体情况（{page_index}/{len(overall_pages)}）"
+                    else f"一、总体情况（{page_index}/{len(overall_pages)}）"
                 ),
+                "title_prefix": (
+                    "一、总体情况"
+                    if len(overall_pages) == 1
+                    else f"一、总体情况（{page_index}/{len(overall_pages)}）"
+                ),
+                "title_accent": "",
                 "narrative": (
                     report.get("overview_text") or ""
                     if page_index == 1
                     else "二级单位检查情况续表。"
                 ),
+                "narrative_runs": overall_runs if page_index == 1 else [
+                    {"text": "二级单位检查情况续表。", "tone": "ink"}
+                ],
                 "rows": page_rows,
                 "total_row": (
                     report.get("total_row") or {}
@@ -9866,14 +9924,49 @@ def build_quality_measurement_report_slides(report):
 
     slides.append(
         {
+            "kind": "agenda",
+            "active_section": 2,
+            "sections": agenda_sections,
+            "details": [
+                {"label": "典型做法", "tone": "ink"},
+                {"label": "发现问题", "tone": "red"},
+            ],
+        }
+    )
+    finding_text_blocks = [
+        {"runs": [{"text": f"本次检查发现问题{total_issue_count}项：", "tone": "ink"}]},
+        {
+            "runs": [
+                {"text": f"　　油站环节{total_issue_count}项：", "tone": "blue"},
+                {"text": flow_count_text, "tone": "red"},
+            ]
+        },
+        {
+            "runs": [
+                {"text": "　　油库环节X项：", "tone": "blue"},
+                {"text": "油罐车重车铅封类、油库发油系统类问题数量最多，分别为X项、X项，分别占比X%、X%。", "tone": "ink"},
+            ]
+        },
+        {
+            "runs": [
+                {"text": "　　运输环节X项：", "tone": "blue"},
+                {"text": "为车辆铅封核对问题，为X项，占比X%。", "tone": "ink"},
+            ]
+        },
+    ]
+    slides.append(
+        {
             "kind": "finding_overview",
-            "title": "检查发现-发现问题",
+            "title": "二、检查发现-发现问题",
+            "title_prefix": "二、检查发现-",
+            "title_accent": "发现问题",
             "text_lines": [
                 f"本次检查发现问题{total_issue_count}项：",
                 f"　　油站环节{total_issue_count}项：{flow_count_text}",
                 "　　油库环节X项：油罐车重车铅封类、油库发油系统类问题数量最多，分别为X项、X项，分别占比X%、X%。",
                 "　　运输环节X项：为车辆铅封核对问题，为X项，占比X%。",
             ],
+            "text_blocks": finding_text_blocks,
             "rows": finding_table_rows,
         }
     )
@@ -9891,10 +9984,13 @@ def build_quality_measurement_report_slides(report):
         slides.append(
             {
                 "kind": "prohibited",
-                "title": (
-                    "检查发现-禁止项问题"
+                "title": "二、检查发现-发现问题",
+                "title_prefix": "二、检查发现-",
+                "title_accent": "发现问题",
+                "subtitle": (
+                    "1.禁止项问题"
                     if len(prohibited_pages) == 1
-                    else f"检查发现-禁止项问题（{page_index}/{len(prohibited_pages)}）"
+                    else f"1.禁止项问题（{page_index}/{len(prohibited_pages)}）"
                 ),
                 "narrative": (
                     f"本次检查发现涉及禁止项问题{prohibited_issue_count}项，其中油库环节X项、"
@@ -9907,7 +10003,9 @@ def build_quality_measurement_report_slides(report):
     slides.append(
         {
             "kind": "flow_chart",
-            "title": "检查发现-加油站环节",
+            "title": "二、检查发现-加油站环节",
+            "title_prefix": "二、检查发现-",
+            "title_accent": "加油站环节",
             "chart_title": "各类问题数量汇总情况",
             "narrative": station_flow_text,
             "distribution": distribution,
@@ -9939,8 +10037,13 @@ def build_quality_measurement_report_slides(report):
             slides.append(
                 {
                     "kind": "issue_pairs",
-                    "title": f"加油站环节——{flow.get('flow_name') or '其他问题'}",
-                    "subtitle": f"发现问题{int(flow.get('count') or 0)}项，突出问题{len(issues)}项",
+                    "title": "二、检查发现-加油站环节",
+                    "title_prefix": "二、检查发现-",
+                    "title_accent": "加油站环节",
+                    "subtitle": (
+                        f"3.加油站环节——{flow.get('flow_name') or '其他问题'}"
+                        f"　·　发现问题{int(flow.get('count') or 0)}项，突出问题{len(issues)}项"
+                    ),
                     "continuation": page_index + 1,
                     "continuation_count": page_count,
                     "issues": page_issues,
@@ -9953,7 +10056,9 @@ def build_quality_measurement_report_slides(report):
     slides.append(
         {
             "kind": "management_trace",
-            "title": "管理追溯",
+            "title": "三、管理追溯",
+            "title_prefix": "三、管理追溯",
+            "title_accent": "",
             "ai_generated": bool(management_trace.get("ai_generated")),
             "typical_issue": management_trace.get("typical_issue"),
             "analysis_items": [
@@ -9966,7 +10071,9 @@ def build_quality_measurement_report_slides(report):
     slides.append(
         {
             "kind": "trace_analysis",
-            "title": "管理追溯",
+            "title": "三、管理追溯",
+            "title_prefix": "三、管理追溯",
+            "title_accent": "",
             "subtitle": "典型问题分析",
             "ai_generated": bool(management_trace.get("ai_generated")),
             "conclusion": management_trace.get("conclusion") or "",
@@ -9980,10 +10087,16 @@ def build_quality_measurement_report_slides(report):
             {
                 "kind": "work_plan",
                 "title": (
-                    "工作计划"
+                    "四、工作计划"
                     if len(work_plan_pages) == 1
-                    else f"工作计划（{page_index}/{len(work_plan_pages)}）"
+                    else f"四、工作计划（{page_index}/{len(work_plan_pages)}）"
                 ),
+                "title_prefix": (
+                    "四、工作计划"
+                    if len(work_plan_pages) == 1
+                    else f"四、工作计划（{page_index}/{len(work_plan_pages)}）"
+                ),
+                "title_accent": "",
                 "ai_generated": bool(deep_analysis.get("work_plan_ai_generated")),
                 "items": items,
             }

@@ -140,9 +140,21 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertIn("X座油库", report["overview_text"])
         self.assertIn("抽检4把加油枪", report["overview_text"])
         self.assertEqual(
-            [slide["kind"] for slide in report["slides"][:4]],
-            ["overall", "finding_overview", "prohibited", "flow_chart"],
+            [slide["kind"] for slide in report["slides"][:7]],
+            [
+                "cover",
+                "agenda",
+                "overall",
+                "agenda",
+                "finding_overview",
+                "prohibited",
+                "flow_chart",
+            ],
         )
+        self.assertEqual(report["slides"][0]["period_label"], "2026年7月")
+        self.assertEqual(report["slides"][2]["title"], "一、总体情况")
+        self.assertEqual(report["slides"][3]["active_section"], 2)
+        self.assertEqual(report["slides"][4]["title_accent"], "发现问题")
         self.assertEqual(report["slides"][-3]["kind"], "management_trace")
         self.assertEqual(report["slides"][-2]["kind"], "trace_analysis")
         self.assertEqual(report["slides"][-1]["kind"], "work_plan")
@@ -309,6 +321,28 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertTrue(table.cell(1, 0).is_merge_origin)
         self.assertTrue(table.cell(1, 1).is_spanned)
         self.assertEqual(table.cell(1, 0).text, "合计")
+
+    def test_ppt_quality_overall_table_has_two_level_merged_header(self):
+        builder = InspectionReportPresentation("quality_measurement", {}, ".")
+        slide = builder._quality_blank_slide("一、总体情况")
+        table = builder._quality_overall_table(
+            slide,
+            [["合计", "", 0, 3, 0, 7, 0, 2, 9]],
+            1.1,
+            2.5,
+            11.1,
+            1.5,
+        )
+
+        self.assertTrue(table.cell(0, 5).is_merge_origin)
+        self.assertTrue(table.cell(0, 6).is_spanned)
+        self.assertTrue(table.cell(0, 7).is_spanned)
+        self.assertEqual(table.cell(0, 5).text, "发现问题数量")
+        self.assertTrue(table.cell(0, 0).is_merge_origin)
+        self.assertTrue(table.cell(1, 0).is_spanned)
+        self.assertTrue(table.cell(2, 0).is_merge_origin)
+        self.assertTrue(table.cell(2, 1).is_spanned)
+        self.assertEqual(table.cell(2, 0).text, "合计")
 
     def test_ppt_photo_contain_never_crops_or_overflows_target_box(self):
         target_width, target_height = InspectionReportPresentation._contain_size(

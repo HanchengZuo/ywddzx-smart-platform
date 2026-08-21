@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.1',
+    date: '2026-08-21',
+    title: '质量计量PPT模板统一',
+    summary: '新增封面和目录，网页预览与导出PPT使用同一套页序和版式。',
+    items: [
+      '封面月份和报告时间会根据当月数据自动更新。',
+      '保留一、总体情况，二、检查发现，三、管理追溯，四、工作计划的章节顺序。',
+      '总体情况表格补齐两级合并表头，发现问题和禁止项页按标准模板排版。'
+    ]
+  },
+  {
     version: 'v5.0',
     date: '2026-08-17',
     title: '质量计量报告分类与PPT优化',

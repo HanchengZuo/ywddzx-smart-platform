@@ -256,8 +256,8 @@
 
           <div v-if="currentQualitySlide" class="quality-ppt-stage">
             <article class="quality-ppt-slide" :class="`slide-${currentQualitySlide.kind}`">
-              <header class="quality-slide-header">
-                <h2>{{ currentQualitySlide.title }}</h2>
+              <header v-if="!['cover', 'agenda'].includes(currentQualitySlide.kind)" class="quality-slide-header">
+                <h2><span>{{ currentQualitySlide.title_prefix || currentQualitySlide.title }}</span><em v-if="currentQualitySlide.title_accent">{{ currentQualitySlide.title_accent }}</em></h2>
                 <div class="quality-slide-brand">
                   <AiContentBadge
                     v-if="currentQualitySlide.ai_generated"
@@ -269,10 +269,31 @@
                 </div>
               </header>
 
-              <template v-if="currentQualitySlide.kind === 'overall'">
-                <p class="quality-slide-narrative overall-copy">{{ currentQualitySlide.narrative }}</p>
+              <template v-if="currentQualitySlide.kind === 'cover'">
+                <img class="quality-cover-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
+                <h2 class="quality-cover-title">{{ currentQualitySlide.title }}</h2>
+                <p class="quality-cover-period">{{ currentQualitySlide.period_label }}</p>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'agenda'">
+                <div class="quality-agenda-rule"></div>
+                <img class="quality-agenda-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
+                <div class="quality-agenda-list">
+                  <div v-for="(section, index) in currentQualitySlide.sections" :key="`agenda-${section.number}`" :class="{ active: Number(currentQualitySlide.active_section) === index + 1 }">
+                    {{ section.number }}、{{ section.label }}
+                  </div>
+                </div>
+                <div v-if="currentQualitySlide.details?.length" class="quality-agenda-details">
+                  <i aria-hidden="true"></i>
+                  <span v-for="item in currentQualitySlide.details" :key="item.label" :class="`tone-${item.tone || 'ink'}`">{{ item.label }}</span>
+                </div>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'overall'">
+                <p class="quality-slide-narrative overall-copy"><template v-for="(run, index) in currentQualitySlide.narrative_runs || [{ text: currentQualitySlide.narrative, tone: 'ink' }]" :key="`overall-run-${index}`"><span :class="`tone-${run.tone || 'ink'}`">{{ run.text }}</span></template></p>
                 <div class="quality-slide-table-wrap overall-table">
                   <table>
+                    <colgroup><col style="width: 5%" /><col style="width: 17%" /><col style="width: 10%" /><col style="width: 10%" /><col style="width: 11%" /><col style="width: 9%" /><col style="width: 9%" /><col style="width: 10%" /><col style="width: 9%" /></colgroup>
                     <thead>
                       <tr><th rowspan="2">序号</th><th rowspan="2">二级单位</th><th rowspan="2">检查油库数量</th><th rowspan="2">检查加油站数量</th><th rowspan="2">检查运输车辆数量</th><th colspan="3">发现问题数量</th><th rowspan="2">单库、车、站问题数量</th></tr>
                       <tr><th>一般性问题</th><th>违规违纪问题</th><th>涉及禁止项问题</th></tr>
@@ -288,12 +309,13 @@
 
               <template v-else-if="currentQualitySlide.kind === 'finding_overview'">
                 <div class="quality-finding-layout">
-                  <div class="quality-finding-copy"><p v-for="line in currentQualitySlide.text_lines" :key="line">{{ line }}</p></div>
-                  <div class="quality-slide-table-wrap finding-table"><table><thead><tr><th>序号</th><th>环节排前三</th><th>问题类型</th><th>问题数量</th><th>占比/%</th></tr></thead><tbody><tr v-for="(row, index) in currentQualitySlide.rows" :key="`finding-${index}-${row.problem_type}`" :class="{ total: row.sequence === '合计' }"><td>{{ row.sequence }}</td><td>{{ row.section }}</td><td>{{ row.problem_type }}</td><td>{{ row.count }}</td><td>{{ row.percentage }}</td></tr></tbody></table></div>
+                  <div class="quality-finding-copy"><p v-for="(block, blockIndex) in currentQualitySlide.text_blocks || currentQualitySlide.text_lines.map((line) => ({ runs: [{ text: line, tone: 'ink' }] }))" :key="`finding-copy-${blockIndex}`"><span v-for="(run, runIndex) in block.runs" :key="`finding-run-${blockIndex}-${runIndex}`" :class="`tone-${run.tone || 'ink'}`">{{ run.text }}</span></p></div>
+                  <div class="quality-slide-table-wrap finding-table"><table><thead><tr><th>序号</th><th>环节排前三</th><th>问题类型</th><th>问题数量</th><th>占比/%</th></tr></thead><tbody><tr v-for="(row, index) in currentQualitySlide.rows" :key="`finding-${index}-${row.problem_type}`" :class="{ total: row.sequence === '合计', 'oil-station-row': row.section === '油站环节' }"><td>{{ row.sequence }}</td><td>{{ row.section }}</td><td>{{ row.problem_type }}</td><td>{{ row.count }}</td><td>{{ row.percentage }}</td></tr></tbody></table></div>
                 </div>
               </template>
 
               <template v-else-if="currentQualitySlide.kind === 'prohibited'">
+                <div class="quality-prohibited-band">{{ currentQualitySlide.subtitle || '1.禁止项问题' }}</div>
                 <p class="quality-slide-narrative prohibited-copy">{{ currentQualitySlide.narrative }}</p>
                 <div class="quality-slide-table-wrap prohibited-table"><table><thead><tr><th>序号</th><th>环节</th><th>基层单位名称</th><th>禁止项管理规定</th><th>处罚情况</th></tr></thead><tbody><tr v-if="!currentQualitySlide.rows?.length"><td colspan="5">当前月份暂无禁止项问题</td></tr><tr v-for="row in currentQualitySlide.rows" :key="`prohibited-slide-${row.issue_id}`"><td>{{ row.sequence }}</td><td>加油站环节</td><td>{{ row.unit_name }}</td><td class="align-left">{{ row.description }}</td><td>{{ row.penalty || '' }}</td></tr></tbody></table></div>
               </template>
@@ -342,7 +364,6 @@
                 <ol class="quality-work-plan"><li v-for="item in currentQualitySlide.items" :key="`${item.title}-${item.content}`"><h3>{{ item.title }}</h3><p>{{ item.content }}</p></li></ol>
               </template>
 
-              <span class="quality-slide-page">{{ activeQualitySlideIndex + 1 }}</span>
             </article>
           </div>
           <div v-else class="quality-slide-empty">当前报告还没有可展示的幻灯片，请重新生成。</div>
@@ -6195,6 +6216,11 @@ onBeforeUnmount(() => {
   letter-spacing: 0.02em;
 }
 
+.quality-slide-header h2 em {
+  color: #3477c3;
+  font-style: normal;
+}
+
 .quality-slide-brand {
   display: flex;
   align-items: center;
@@ -6217,6 +6243,106 @@ onBeforeUnmount(() => {
   font-size: clamp(7px, 0.7vw, 10px);
 }
 
+.tone-ink { color: #101820; }
+.tone-blue { color: #3477c3; }
+.tone-red { color: #ef1f24; }
+.tone-muted { color: #64748b; }
+
+.slide-cover,
+.slide-agenda {
+  padding: 0;
+}
+
+.quality-cover-logo {
+  position: absolute;
+  top: 3.2%;
+  left: 2.5%;
+  width: auto;
+  height: 9.7%;
+  object-fit: contain;
+}
+
+.quality-cover-title {
+  position: absolute;
+  top: 39%;
+  right: 8%;
+  left: 8%;
+  margin: 0;
+  color: #000000;
+  font-size: clamp(23px, 3.5vw, 52px);
+  font-weight: 950;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.quality-cover-period {
+  position: absolute;
+  right: 36%;
+  bottom: 14.5%;
+  left: 36%;
+  margin: 0;
+  color: #000000;
+  font-size: clamp(14px, 1.9vw, 28px);
+  font-weight: 850;
+  text-align: center;
+}
+
+.quality-agenda-rule {
+  position: absolute;
+  top: 11.7%;
+  right: 0;
+  left: 0;
+  height: 0.7%;
+  background: #2a9bd3;
+}
+
+.quality-agenda-logo {
+  position: absolute;
+  top: 3%;
+  right: 3.1%;
+  width: auto;
+  height: 8.5%;
+  object-fit: contain;
+}
+
+.quality-agenda-list {
+  position: absolute;
+  top: 27%;
+  bottom: 20%;
+  left: 35.2%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: #080808;
+  font-size: clamp(18px, 2.25vw, 34px);
+  font-weight: 950;
+  line-height: 1;
+}
+
+.quality-agenda-list > div.active {
+  color: #3477c3;
+}
+
+.quality-agenda-details {
+  position: absolute;
+  top: 33.7%;
+  left: 56%;
+  display: grid;
+  grid-template-columns: 32px auto;
+  grid-template-rows: repeat(2, auto);
+  gap: 4.5vh 20px;
+  font-size: clamp(12px, 1.42vw, 21px);
+  font-weight: 850;
+}
+
+.quality-agenda-details i {
+  grid-row: 1 / 3;
+  width: 24px;
+  border-top: 1px solid #111827;
+  border-bottom: 1px solid #111827;
+  border-left: 1px solid #111827;
+}
+
 .quality-slide-narrative {
   margin: 0;
   color: #101820;
@@ -6227,7 +6353,14 @@ onBeforeUnmount(() => {
 }
 
 .overall-copy {
-  min-height: 22%;
+  position: absolute;
+  top: 15.2%;
+  right: 5.4%;
+  left: 5.4%;
+  min-height: 0;
+  font-size: clamp(10px, 1.3vw, 19px);
+  line-height: 1.62;
+  text-indent: 2em;
 }
 
 .quality-slide-table-wrap {
@@ -6274,18 +6407,41 @@ onBeforeUnmount(() => {
 }
 
 .overall-table {
-  height: 66%;
-  margin-top: 1.2%;
+  position: absolute;
+  top: 39.8%;
+  right: 8.4%;
+  bottom: 8.7%;
+  left: 8.4%;
+  height: auto;
+  margin: 0;
+}
+
+.overall-table th {
+  color: #ffffff;
+  background: #5b9bd5;
+}
+
+.overall-table tbody tr:nth-child(odd) td {
+  background: #dce6f2;
+}
+
+.overall-table tbody tr:nth-child(even) td {
+  background: #ebf1f8;
 }
 
 .overall-table th:nth-child(1) { width: 5%; }
 .overall-table th:nth-child(2) { width: 15%; }
 
 .quality-finding-layout {
+  position: absolute;
+  top: 16.2%;
+  right: 5.6%;
+  bottom: 9.5%;
+  left: 5.8%;
   display: grid;
-  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
-  gap: 3%;
-  height: 100%;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 4%;
+  height: auto;
 }
 
 .quality-finding-copy {
@@ -6294,24 +6450,67 @@ onBeforeUnmount(() => {
 
 .quality-finding-copy p {
   margin: 0 0 1.2em;
-  font-size: clamp(10px, 1.32vw, 19px);
-  font-weight: 700;
-  line-height: 1.72;
+  font-size: clamp(10px, 1.25vw, 18px);
+  font-weight: 850;
+  line-height: 1.7;
   white-space: pre-wrap;
 }
 
 .finding-table {
-  height: 97%;
+  height: 92%;
+  align-self: start;
+}
+
+.finding-table th,
+.prohibited-table th {
+  color: #101820;
+  background: #84d8e8;
+}
+
+.finding-table tbody tr td,
+.prohibited-table tbody tr td,
+.finding-table tbody tr:nth-child(even) td,
+.prohibited-table tbody tr:nth-child(even) td {
+  background: #ffffff;
+}
+
+.finding-table tr.oil-station-row td {
+  color: #ef1f24;
 }
 
 .prohibited-copy {
-  height: 10%;
+  position: absolute;
+  top: 24.8%;
+  right: 5.2%;
+  left: 5.2%;
+  height: auto;
   text-indent: 0;
 }
 
+.quality-prohibited-band {
+  position: absolute;
+  top: 14.4%;
+  right: 6.4%;
+  left: 4.4%;
+  display: flex;
+  align-items: center;
+  height: 7.5%;
+  padding: 0 1.1%;
+  color: #ffffff;
+  background: #3477c3;
+  box-shadow: 7px 7px 0 rgba(15, 23, 42, 0.2);
+  font-size: clamp(12px, 1.85vw, 27px);
+  font-weight: 950;
+}
+
 .prohibited-table {
-  height: 82%;
-  margin-top: 1.6%;
+  position: absolute;
+  top: 33%;
+  right: 6.3%;
+  bottom: 9.2%;
+  left: 4.4%;
+  height: auto;
+  margin: 0;
 }
 
 .prohibited-table th:nth-child(1) { width: 6%; }

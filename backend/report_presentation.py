@@ -44,6 +44,10 @@ CHART_COLORS = [
     RGBColor(239, 68, 68),
     RGBColor(100, 116, 139),
 ]
+TEMPLATE_BLUE = RGBColor(52, 119, 195)
+TEMPLATE_CYAN = RGBColor(132, 216, 232)
+TEMPLATE_HEADER_BLUE = RGBColor(91, 155, 213)
+TEMPLATE_LIGHT_BLUE = RGBColor(220, 230, 242)
 
 
 def _text(value, fallback="-"):
@@ -263,6 +267,73 @@ class InspectionReportPresentation:
         paragraph.font.size = Pt(size)
         paragraph.font.bold = bold
         paragraph.font.color.rgb = color
+        return box
+
+    @staticmethod
+    def _quality_tone_color(tone):
+        return {
+            "red": RED,
+            "blue": TEMPLATE_BLUE,
+            "muted": MUTED,
+            "white": WHITE,
+        }.get(str(tone or "").strip().lower(), INK)
+
+    def _add_quality_runs(
+        self,
+        slide,
+        runs,
+        x,
+        y,
+        width,
+        height,
+        *,
+        size=16,
+        bold=True,
+        line_spacing=1.3,
+        valign=MSO_ANCHOR.TOP,
+        align=PP_ALIGN.LEFT,
+    ):
+        box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(height))
+        frame = box.text_frame
+        frame.clear()
+        frame.word_wrap = True
+        frame.margin_left = Inches(0.02)
+        frame.margin_right = Inches(0.02)
+        frame.margin_top = Inches(0.02)
+        frame.margin_bottom = Inches(0.02)
+        frame.vertical_anchor = valign
+        paragraph = frame.paragraphs[0]
+        paragraph.alignment = align
+        paragraph.line_spacing = line_spacing
+        for item in runs or []:
+            run = paragraph.add_run()
+            run.text = str((item or {}).get("text") or "")
+            run.font.name = FONT_FAMILY
+            run.font.size = Pt(size)
+            run.font.bold = bool((item or {}).get("bold", bold))
+            run.font.color.rgb = self._quality_tone_color((item or {}).get("tone"))
+        return box
+
+    def _add_quality_text_blocks(self, slide, blocks, x, y, width, height, size=16):
+        box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(height))
+        frame = box.text_frame
+        frame.clear()
+        frame.word_wrap = True
+        frame.margin_left = Inches(0.02)
+        frame.margin_right = Inches(0.02)
+        frame.margin_top = Inches(0.02)
+        frame.margin_bottom = Inches(0.02)
+        for block_index, block in enumerate(blocks or []):
+            paragraph = frame.paragraphs[0] if block_index == 0 else frame.add_paragraph()
+            paragraph.line_spacing = 1.45
+            paragraph.space_after = Pt(8)
+            for item in (block or {}).get("runs") or []:
+                run = paragraph.add_run()
+                run.text = str((item or {}).get("text") or "")
+                run.font.name = FONT_FAMILY
+                run.font.size = Pt(size)
+                run.font.bold = True
+                run.font.color.rgb = self._quality_tone_color((item or {}).get("tone"))
         return box
 
     def _add_rich_lines(self, slide, lines, x, y, width, height, size=14, bullet=False):
@@ -982,35 +1053,130 @@ class InspectionReportPresentation:
                 content_size = 16 if len(chunk) == 1 and len(content) <= 180 else 14 if len(content) <= 210 else 13
                 self._add_text(slide, content, 1.84, y + 0.72, 10.25, card_height - 0.92, size=content_size, color=SLATE)
 
-    def _add_quality_header(self, slide, title, ai=False):
+    def _add_quality_logo(self, slide, x=12.42, y=0.18, height=0.56):
+        logo_path = os.path.join(os.path.dirname(__file__), "assets", "report_logo.png")
+        if os.path.isfile(logo_path):
+            slide.shapes.add_picture(
+                logo_path,
+                Inches(x),
+                Inches(y),
+                height=Inches(height),
+            )
+
+    def _add_quality_header(self, slide, title, ai=False, title_accent=""):
         title_text = _text(title, "报告内容")
-        self._add_text(
+        accent_text = str(title_accent or "")
+        prefix_text = title_text[:-len(accent_text)] if accent_text and title_text.endswith(accent_text) else title_text
+        title_size = 27 if len(title_text) <= 22 else 24
+        title_runs = [{"text": prefix_text, "tone": "ink"}]
+        if accent_text:
+            title_runs.append({"text": accent_text, "tone": "blue"})
+        self._add_quality_runs(
             slide,
-            title_text,
-            0.62,
-            0.22,
+            title_runs,
+            0.74,
+            0.2,
             10.9,
             0.62,
-            size=30 if len(title_text) <= 22 else 26,
-            bold=True,
+            size=title_size,
             valign=MSO_ANCHOR.MIDDLE,
         )
         line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0.92), Inches(13.333), Inches(0.05))
         line.fill.solid()
         line.fill.fore_color.rgb = RGBColor(42, 155, 211)
         line.line.fill.background()
-        logo_path = os.path.join(os.path.dirname(__file__), "assets", "report_logo.png")
-        if os.path.isfile(logo_path):
-            slide.shapes.add_picture(logo_path, Inches(12.42), Inches(0.18), height=Inches(0.56))
+        self._add_quality_logo(slide)
         if ai:
             self._add_ai_badge(slide)
 
-    def _quality_blank_slide(self, title, ai=False):
+    def _quality_blank_slide(self, title, ai=False, title_accent=""):
         slide = self._blank_slide(background=WHITE, footer=False)
         self.page_number += 1
-        self._add_quality_header(slide, title, ai=ai)
-        self._add_text(slide, str(self.page_number), 12.45, 7.15, 0.48, 0.2, size=8, color=MUTED, align=PP_ALIGN.RIGHT)
+        self._add_quality_header(slide, title, ai=ai, title_accent=title_accent)
         return slide
+
+    def _render_quality_cover(self, data):
+        slide = self._blank_slide(background=WHITE, footer=False)
+        self.page_number += 1
+        self._add_quality_logo(slide, x=0.3, y=0.24, height=0.72)
+        self._add_text(
+            slide,
+            data.get("title") or "上海销售质量计量监督检查报告",
+            1.15,
+            2.3,
+            11.0,
+            0.9,
+            size=38,
+            color=RGBColor(0, 0, 0),
+            bold=True,
+            align=PP_ALIGN.CENTER,
+            valign=MSO_ANCHOR.MIDDLE,
+        )
+        self._add_text(
+            slide,
+            data.get("period_label") or "-",
+            4.85,
+            5.45,
+            3.65,
+            0.52,
+            size=22,
+            color=RGBColor(0, 0, 0),
+            bold=True,
+            align=PP_ALIGN.CENTER,
+            valign=MSO_ANCHOR.MIDDLE,
+        )
+
+    def _render_quality_agenda(self, data):
+        slide = self._blank_slide(background=WHITE, footer=False)
+        self.page_number += 1
+        line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0),
+            Inches(0.88),
+            Inches(13.333),
+            Inches(0.05),
+        )
+        line.fill.solid()
+        line.fill.fore_color.rgb = RGBColor(42, 155, 211)
+        line.line.fill.background()
+        self._add_quality_logo(slide, x=12.0, y=0.22, height=0.58)
+        active_section = int(data.get("active_section") or 1)
+        sections = data.get("sections") or []
+        start_y = 1.72
+        for index, item in enumerate(sections, 1):
+            tone = "blue" if index == active_section else "ink"
+            self._add_quality_runs(
+                slide,
+                [{"text": f"{item.get('number')}、{item.get('label')}", "tone": tone}],
+                4.38,
+                start_y + (index - 1) * 0.98,
+                4.2,
+                0.55,
+                size=25,
+                valign=MSO_ANCHOR.MIDDLE,
+            )
+        details = data.get("details") or []
+        if details:
+            brace = slide.shapes.add_shape(
+                MSO_SHAPE.LEFT_BRACE,
+                Inches(6.88),
+                Inches(2.3),
+                Inches(0.34),
+                Inches(1.4),
+            )
+            brace.fill.background()
+            brace.line.color.rgb = RGBColor(0, 0, 0)
+            for index, item in enumerate(details):
+                self._add_quality_runs(
+                    slide,
+                    [{"text": item.get("label"), "tone": item.get("tone")}],
+                    7.58,
+                    2.36 + index * 0.78,
+                    2.4,
+                    0.42,
+                    size=18,
+                    valign=MSO_ANCHOR.MIDDLE,
+                )
 
     def _quality_table(
         self,
@@ -1024,6 +1190,10 @@ class InspectionReportPresentation:
         weights=None,
         narrative_columns=None,
         merge_total_leading_cells=False,
+        header_fill=None,
+        header_color=None,
+        body_fills=None,
+        row_text_colors=None,
     ):
         rows = [list(row) for row in rows]
         shape = slide.shapes.add_table(len(rows) + 1, len(headers), Inches(x), Inches(y), Inches(width), Inches(height))
@@ -1043,19 +1213,23 @@ class InspectionReportPresentation:
         for index in range(1, len(table.rows)):
             table.rows[index].height = Inches(body_height)
         narrative_columns = set(narrative_columns or [])
+        header_fill = header_fill or RGBColor(19, 82, 139)
+        header_color = header_color or WHITE
+        body_fills = body_fills or (WHITE, RGBColor(242, 247, 251))
+        row_text_colors = row_text_colors or {}
         header_size = 11 if len(headers) <= 6 else 10
         body_base_size = 11 if len(rows) <= 6 else 10 if len(rows) <= 9 else 9
         for column_index, header in enumerate(headers):
             cell = table.cell(0, column_index)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(19, 82, 139)
-            self._set_cell_text(cell, header, header_size, WHITE, True)
+            cell.fill.fore_color.rgb = header_fill
+            self._set_cell_text(cell, header, header_size, header_color, True)
         for row_index, row in enumerate(rows, 1):
             is_total_row = bool(row) and _text(row[0], "") == "合计"
             for column_index in range(len(headers)):
                 cell = table.cell(row_index, column_index)
                 cell.fill.solid()
-                cell.fill.fore_color.rgb = WHITE if row_index % 2 else RGBColor(242, 247, 251)
+                cell.fill.fore_color.rgb = body_fills[(row_index - 1) % len(body_fills)]
                 value = row[column_index] if column_index < len(row) else ""
                 value_length = len(_text(value, ""))
                 if column_index in narrative_columns:
@@ -1066,7 +1240,7 @@ class InspectionReportPresentation:
                     cell,
                     value,
                     font_size,
-                    INK,
+                    row_text_colors.get(row_index - 1, INK),
                     bold=is_total_row,
                     align=PP_ALIGN.LEFT if column_index in narrative_columns else PP_ALIGN.CENTER,
                 )
@@ -1083,20 +1257,93 @@ class InspectionReportPresentation:
                 )
         return table
 
+    def _quality_overall_table(self, slide, rows, x, y, width, height):
+        headers = [
+            "序号",
+            "二级单位",
+            "检查油库数量",
+            "检查加油站数量",
+            "检查运输车辆数量",
+            "一般性问题",
+            "违规违纪问题",
+            "涉及禁止项问题",
+            "单库、车、站问题数量",
+        ]
+        shape = slide.shapes.add_table(
+            len(rows) + 2,
+            len(headers),
+            Inches(x),
+            Inches(y),
+            Inches(width),
+            Inches(height),
+        )
+        table = shape.table
+        weights = [0.55, 1.75, 1.0, 1.0, 1.1, 0.95, 0.95, 1.0, 1.05]
+        total_weight = sum(weights)
+        total_width = int(Inches(width))
+        allocated = 0
+        for index, column in enumerate(table.columns):
+            if index == len(headers) - 1:
+                column.width = total_width - allocated
+            else:
+                column.width = int(total_width * weights[index] / total_weight)
+                allocated += column.width
+        table.rows[0].height = Inches(0.38)
+        table.rows[1].height = Inches(0.38)
+        body_height = max(0.26, (height - 0.76) / max(1, len(rows)))
+        for row_index in range(2, len(table.rows)):
+            table.rows[row_index].height = Inches(body_height)
+
+        for column_index in (0, 1, 2, 3, 4, 8):
+            table.cell(0, column_index).merge(table.cell(1, column_index))
+        table.cell(0, 5).merge(table.cell(0, 7))
+
+        for row_index in range(2):
+            for column_index in range(len(headers)):
+                cell = table.cell(row_index, column_index)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = TEMPLATE_HEADER_BLUE
+        for column_index in (0, 1, 2, 3, 4, 8):
+            self._set_cell_text(table.cell(0, column_index), headers[column_index], 9, WHITE, True)
+        self._set_cell_text(table.cell(0, 5), "发现问题数量", 10, WHITE, True)
+        for column_index in (5, 6, 7):
+            self._set_cell_text(table.cell(1, column_index), headers[column_index], 9, WHITE, True)
+
+        for row_offset, row in enumerate(rows):
+            row_index = row_offset + 2
+            is_total_row = bool(row) and _text(row[0], "") == "合计"
+            for column_index in range(len(headers)):
+                cell = table.cell(row_index, column_index)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = (
+                    TEMPLATE_LIGHT_BLUE if row_offset % 2 == 0 else RGBColor(235, 241, 248)
+                )
+                value = row[column_index] if column_index < len(row) else ""
+                self._set_cell_text(cell, value, 9, INK, bold=is_total_row)
+            if is_total_row:
+                table.cell(row_index, 0).merge(table.cell(row_index, 1))
+                self._set_cell_text(table.cell(row_index, 0), "合计", 9, INK, True)
+        return table
+
     def _render_quality_overall(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "总体情况")
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "一、总体情况",
+            title_accent=data.get("title_accent") or "",
+        )
         is_continuation = bool(data.get("continuation"))
-        narrative_height = 0.56 if is_continuation else 1.2
-        self._add_text(
+        narrative_height = 0.56 if is_continuation else 1.62
+        narrative_runs = data.get("narrative_runs") or [
+            {"text": data.get("narrative") or "", "tone": "ink"}
+        ]
+        self._add_quality_runs(
             slide,
-            data.get("narrative"),
-            0.7,
+            narrative_runs,
+            0.72,
             1.12,
-            11.95,
+            11.9,
             narrative_height,
             size=16 if is_continuation else 15,
-            color=INK,
-            bold=is_continuation,
+            line_spacing=1.42,
         )
         rows = list(data.get("rows") or [])
         if data.get("total_row"):
@@ -1107,34 +1354,97 @@ class InspectionReportPresentation:
             item.get("general_issue_count", 0), item.get("violation_issue_count", 0),
             item.get("prohibited_issue_count", 0), item.get("total_issue_count", 0),
         ] for item in rows]
-        self._quality_table(
+        self._quality_overall_table(
             slide,
-            ["序号", "二级单位", "检查油库\n数量", "检查加油站\n数量", "检查运输车辆\n数量", "一般性\n问题", "违规违纪\n问题", "涉及禁止项\n问题", "单库、车、站\n问题数量"],
             table_rows,
-            0.48,
-            1.82 if is_continuation else 2.42,
-            12.36,
-            5.05 if is_continuation else 4.45,
-            weights=[0.55, 1.45, 0.85, 0.9, 0.95, 0.78, 0.78, 0.9, 1.0],
-            merge_total_leading_cells=True,
+            1.12,
+            1.82 if is_continuation else 2.9,
+            11.1,
+            5.0 if is_continuation else 3.95,
         )
 
     def _render_quality_finding(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "检查发现-发现问题")
-        self._add_rich_lines(slide, data.get("text_lines") or [], 0.62, 1.26, 5.18, 5.75, size=14)
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "二、检查发现-",
+            title_accent=data.get("title_accent") or "发现问题",
+        )
+        blocks = data.get("text_blocks") or [
+            {"runs": [{"text": line, "tone": "ink"}]}
+            for line in data.get("text_lines") or []
+        ]
+        self._add_quality_text_blocks(slide, blocks, 0.78, 1.52, 6.05, 5.18, size=16)
         rows = [[item.get("sequence"), item.get("section"), item.get("problem_type"), item.get("count"), item.get("percentage")] for item in data.get("rows") or []]
-        self._quality_table(slide, ["序号", "环节排前三", "问题类型", "问题数量", "占比/%"], rows, 5.95, 1.25, 6.85, 5.62, weights=[0.55, 1.15, 1.55, 0.82, 0.75])
+        emphasized_rows = {
+            index: RED
+            for index, item in enumerate(data.get("rows") or [])
+            if item.get("section") == "油站环节"
+        }
+        self._quality_table(
+            slide,
+            ["序号", "环节排前三", "问题类型", "问题数量", "占比/%"],
+            rows,
+            7.18,
+            1.2,
+            4.65,
+            5.35,
+            weights=[0.55, 1.15, 1.55, 0.82, 0.75],
+            header_fill=TEMPLATE_CYAN,
+            header_color=INK,
+            body_fills=(WHITE,),
+            row_text_colors=emphasized_rows,
+        )
 
     def _render_quality_prohibited(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "检查发现-禁止项问题")
-        self._add_text(slide, data.get("narrative"), 0.72, 1.14, 11.9, 0.78, size=16, bold=True)
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "二、检查发现-",
+            title_accent=data.get("title_accent") or "发现问题",
+        )
+        band = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.58),
+            Inches(1.08),
+            Inches(11.1),
+            Inches(0.56),
+        )
+        band.fill.solid()
+        band.fill.fore_color.rgb = TEMPLATE_BLUE
+        band.line.fill.background()
+        self._add_text(
+            slide,
+            data.get("subtitle") or "1.禁止项问题",
+            0.7,
+            1.15,
+            10.7,
+            0.38,
+            size=21,
+            color=WHITE,
+            bold=True,
+            valign=MSO_ANCHOR.MIDDLE,
+        )
+        self._add_text(slide, data.get("narrative"), 0.66, 1.86, 11.75, 0.54, size=15, bold=True)
         rows = [[item.get("sequence"), "加油站环节", item.get("unit_name"), item.get("description"), item.get("penalty") or ""] for item in data.get("rows") or []]
         if not rows:
             rows = [["-", "加油站环节", "-", "当前月份暂无禁止项问题", ""]]
-        self._quality_table(slide, ["序号", "环节", "基层单位名称", "禁止项管理规定", "处罚情况"], rows, 0.52, 2.0, 12.28, 4.85, weights=[0.45, 0.9, 1.15, 4.3, 0.9], narrative_columns={3})
+        self._quality_table(
+            slide,
+            ["序号", "环节", "基层单位名称", "禁止项管理规定", "处罚情况"],
+            rows,
+            0.58,
+            2.48,
+            11.1,
+            4.05,
+            weights=[0.45, 0.9, 1.15, 4.3, 0.9],
+            narrative_columns={3},
+            header_fill=TEMPLATE_CYAN,
+            header_color=INK,
+            body_fills=(WHITE,),
+        )
 
     def _render_quality_flow_chart(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "检查发现-加油站环节")
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "二、检查发现-",
+            title_accent=data.get("title_accent") or "加油站环节",
+        )
         self._add_text(slide, data.get("narrative"), 0.78, 1.14, 11.8, 1.08, size=16, bold=True)
         self._add_text(slide, data.get("chart_title") or "各类问题数量汇总情况", 3.8, 2.18, 5.8, 0.45, size=19, bold=True, align=PP_ALIGN.CENTER)
         distribution = data.get("distribution") or []
@@ -1343,10 +1653,10 @@ class InspectionReportPresentation:
             )
 
     def _render_quality_issue_pairs(self, data):
-        title = data.get("title") or "加油站环节"
-        if int(data.get("continuation_count") or 1) > 1:
-            title = f"{title}（{data.get('continuation')}/{data.get('continuation_count')}）"
-        slide = self._quality_blank_slide(title)
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "二、检查发现-",
+            title_accent=data.get("title_accent") or "加油站环节",
+        )
         band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.34), Inches(1.1), Inches(12.45), Inches(0.54))
         band.fill.solid()
         band.fill.fore_color.rgb = RGBColor(42, 137, 193)
@@ -1439,7 +1749,11 @@ class InspectionReportPresentation:
             item_y += item_height + gap
 
     def _render_quality_management_trace(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "三、管理追溯",
+            ai=bool(data.get("ai_generated")),
+            title_accent=data.get("title_accent") or "",
+        )
         typical_issue = data.get("typical_issue") or {}
         description = self._issue_description(typical_issue)
         aspect_ratio = self._image_aspect_ratio(typical_issue.get("issue_photo"))
@@ -1494,7 +1808,11 @@ class InspectionReportPresentation:
         self._render_quality_trace_copy(slide, data, content_x, content_y, content_width, content_height)
 
     def _render_quality_trace_analysis(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "管理追溯", ai=bool(data.get("ai_generated")))
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "三、管理追溯",
+            ai=bool(data.get("ai_generated")),
+            title_accent=data.get("title_accent") or "",
+        )
         band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.12), Inches(1.12), Inches(8.2), Inches(0.6))
         band.fill.solid(); band.fill.fore_color.rgb = RGBColor(42, 137, 193); band.line.fill.background()
         self._add_text(slide, data.get("subtitle") or "典型问题分析", 0.28, 1.23, 7.6, 0.32, size=16, color=WHITE, bold=True)
@@ -1508,7 +1826,11 @@ class InspectionReportPresentation:
         self._add_rich_lines(slide, lines or ["暂无改进措施。"], 1.0, 3.85, 11.35, 2.55, size=15)
 
     def _render_quality_work_plan(self, data):
-        slide = self._quality_blank_slide(data.get("title") or "工作计划", ai=bool(data.get("ai_generated")))
+        slide = self._quality_blank_slide(
+            data.get("title_prefix") or data.get("title") or "四、工作计划",
+            ai=bool(data.get("ai_generated")),
+            title_accent=data.get("title_accent") or "",
+        )
         y = 1.3
         for index, item in enumerate(data.get("items") or [], 1):
             self._add_text(slide, f"{index}、{item.get('title')}", 0.95, y, 11.15, 0.42, size=18, color=RGBColor(52, 119, 195), bold=True)
@@ -1517,6 +1839,8 @@ class InspectionReportPresentation:
 
     def _build_quality_measurement(self):
         renderers = {
+            "cover": self._render_quality_cover,
+            "agenda": self._render_quality_agenda,
             "overall": self._render_quality_overall,
             "finding_overview": self._render_quality_finding,
             "prohibited": self._render_quality_prohibited,
