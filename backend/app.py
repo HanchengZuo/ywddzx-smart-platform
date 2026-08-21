@@ -225,7 +225,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.1.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.2.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -337,6 +337,20 @@ def sanitize_display_payload(value):
     return value
 
 
+def should_preserve_quality_report_display_terms(payload):
+    if not request.path.startswith("/api/inspection-reports"):
+        return False
+    report_type = str(request.args.get("report_type") or "").strip()
+    request_payload = request.get_json(silent=True)
+    if not report_type and isinstance(request_payload, dict):
+        report_type = str(request_payload.get("report_type") or "").strip()
+    if not report_type and isinstance(payload, dict):
+        job = payload.get("job") or payload.get("task") or {}
+        if isinstance(job, dict):
+            report_type = str(job.get("report_type") or "").strip()
+    return report_type == "quality_measurement"
+
+
 @app.after_request
 def sanitize_json_display_text(response):
     if response.direct_passthrough:
@@ -346,6 +360,8 @@ def sanitize_json_display_text(response):
 
     payload = response.get_json(silent=True)
     if payload is None:
+        return response
+    if should_preserve_quality_report_display_terms(payload):
         return response
 
     sanitized_payload = sanitize_display_payload(payload)
@@ -7785,7 +7801,7 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-template-v51-approved-v7"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-template-v52-approved-v8"
 SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
@@ -10006,6 +10022,7 @@ def build_quality_measurement_report_slides(report):
             "title": "二、检查发现-加油站环节",
             "title_prefix": "二、检查发现-",
             "title_accent": "加油站环节",
+            "subtitle": "3.加油站环节",
             "chart_title": "各类问题数量汇总情况",
             "narrative": station_flow_text,
             "distribution": distribution,
@@ -10040,9 +10057,9 @@ def build_quality_measurement_report_slides(report):
                     "title": "二、检查发现-加油站环节",
                     "title_prefix": "二、检查发现-",
                     "title_accent": "加油站环节",
-                    "subtitle": (
-                        f"3.加油站环节——{flow.get('flow_name') or '其他问题'}"
-                        f"　·　发现问题{int(flow.get('count') or 0)}项，突出问题{len(issues)}项"
+                    "subtitle": f"3.加油站环节——{flow.get('flow_name') or '其他问题'}",
+                    "summary_text": (
+                        f"发现问题{int(flow.get('count') or 0)}项，突出问题{len(issues)}项："
                     ),
                     "continuation": page_index + 1,
                     "continuation_count": page_count,
@@ -10053,6 +10070,14 @@ def build_quality_measurement_report_slides(report):
             )
 
     management_trace = deep_analysis.get("management_trace") or {}
+    slides.append(
+        {
+            "kind": "agenda",
+            "active_section": 3,
+            "sections": agenda_sections,
+            "details": [],
+        }
+    )
     slides.append(
         {
             "kind": "management_trace",
@@ -10080,6 +10105,14 @@ def build_quality_measurement_report_slides(report):
             "improvement_measures": management_trace.get("improvement_measures") or [],
         }
     )
+    slides.append(
+        {
+            "kind": "agenda",
+            "active_section": 4,
+            "sections": agenda_sections,
+            "details": [],
+        }
+    )
     work_plan = deep_analysis.get("work_plan") or []
     work_plan_pages = [work_plan[index : index + 3] for index in range(0, len(work_plan), 3)] or [[]]
     for page_index, items in enumerate(work_plan_pages, 1):
@@ -10101,6 +10134,12 @@ def build_quality_measurement_report_slides(report):
                 "items": items,
             }
         )
+    slides.append(
+        {
+            "kind": "ending",
+            "title": "通报完毕",
+        }
+    )
     return slides
 
 

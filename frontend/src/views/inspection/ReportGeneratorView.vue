@@ -256,7 +256,7 @@
 
           <div v-if="currentQualitySlide" class="quality-ppt-stage">
             <article class="quality-ppt-slide" :class="`slide-${currentQualitySlide.kind}`">
-              <header v-if="!['cover', 'agenda'].includes(currentQualitySlide.kind)" class="quality-slide-header">
+              <header v-if="!['cover', 'agenda', 'ending'].includes(currentQualitySlide.kind)" class="quality-slide-header">
                 <h2><span>{{ currentQualitySlide.title_prefix || currentQualitySlide.title }}</span><em v-if="currentQualitySlide.title_accent">{{ currentQualitySlide.title_accent }}</em></h2>
                 <div class="quality-slide-brand">
                   <AiContentBadge
@@ -321,12 +321,13 @@
               </template>
 
               <template v-else-if="currentQualitySlide.kind === 'flow_chart'">
+                <div class="quality-slide-band quality-flow-band">{{ currentQualitySlide.subtitle || '3.加油站环节' }}</div>
                 <p class="quality-slide-narrative flow-copy">{{ currentQualitySlide.narrative }}</p>
                 <h3 class="quality-chart-heading">{{ currentQualitySlide.chart_title }}</h3>
                 <div class="quality-ppt-chart">
                   <div v-for="item in currentQualitySlide.distribution" :key="`ppt-flow-${item.name}`" class="quality-ppt-bar-column">
                     <div class="quality-ppt-bar-area"><span class="quality-ppt-bar-value" :style="{ bottom: `calc(${getQualityBarHeight(item.count)}% + 8px)` }">{{ item.count }}</span><i :style="{ height: `${getQualityBarHeight(item.count)}%` }"></i></div>
-                    <strong>{{ item.name }}</strong><small>{{ formatPercent(item.percentage) }}</small>
+                    <strong>{{ item.name }}</strong>
                   </div>
                   <div v-if="!currentQualitySlide.distribution?.length" class="quality-slide-empty">当前月份暂无业务流程分布数据</div>
                 </div>
@@ -334,13 +335,14 @@
 
               <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
                 <div class="quality-slide-band quality-issue-band">{{ currentQualitySlide.subtitle }}</div>
+                <p class="quality-issue-summary">{{ currentQualitySlide.summary_text }}</p>
                 <div :class="['quality-issue-pair-grid', currentQualitySlide.layout_variant || 'paired']">
                   <article
                     v-for="issue in currentQualitySlide.issues"
                     :key="`slide-issue-${issue.issue_id}`"
                     :class="getQualityIssueLayoutClasses(issue)"
                   >
-                    <h3>{{ issue.station_name || '未命名站点' }}</h3><p>{{ issue.description || '暂无问题描述' }}</p>
+                    <h3>{{ issue.station_name || '未命名站点' }}：</h3><p>{{ issue.description || '暂无问题描述' }}</p>
                     <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" @load="rememberQualityImageAspect($event, getQualityImageKey(issue))" /></button>
                     <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
                   </article>
@@ -362,6 +364,15 @@
 
               <template v-else-if="currentQualitySlide.kind === 'work_plan'">
                 <ol class="quality-work-plan"><li v-for="item in currentQualitySlide.items" :key="`${item.title}-${item.content}`"><h3>{{ item.title }}</h3><p>{{ item.content }}</p></li></ol>
+              </template>
+
+              <template v-else-if="currentQualitySlide.kind === 'ending'">
+                <div class="quality-ending-rule"></div>
+                <img class="quality-ending-corner-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
+                <div class="quality-ending-content">
+                  <img src="/report-assets/quality-report-logo.png" alt="品牌标识" />
+                  <strong>{{ currentQualitySlide.title || '通报完毕' }}</strong>
+                </div>
               </template>
 
             </article>
@@ -6249,7 +6260,8 @@ onBeforeUnmount(() => {
 .tone-muted { color: #64748b; }
 
 .slide-cover,
-.slide-agenda {
+.slide-agenda,
+.slide-ending {
   padding: 0;
 }
 
@@ -6341,6 +6353,51 @@ onBeforeUnmount(() => {
   border-top: 1px solid #111827;
   border-bottom: 1px solid #111827;
   border-left: 1px solid #111827;
+}
+
+.quality-ending-rule {
+  position: absolute;
+  top: 11.7%;
+  right: 0;
+  left: 0;
+  height: 0.7%;
+  background: #2a9bd3;
+}
+
+.quality-ending-corner-logo {
+  position: absolute;
+  top: 3%;
+  right: 3.1%;
+  width: auto;
+  height: 8.5%;
+  object-fit: contain;
+}
+
+.quality-ending-content {
+  position: absolute;
+  top: 41%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8%;
+  width: 20%;
+  height: 28%;
+  transform: translateX(-50%);
+}
+
+.quality-ending-content img {
+  display: block;
+  width: auto;
+  height: 70%;
+  object-fit: contain;
+}
+
+.quality-ending-content strong {
+  color: #05080b;
+  font-size: clamp(13px, 1.8vw, 26px);
+  font-weight: 950;
+  white-space: nowrap;
 }
 
 .quality-slide-narrative {
@@ -6518,22 +6575,55 @@ onBeforeUnmount(() => {
 .prohibited-table th:nth-child(3) { width: 15%; }
 .prohibited-table th:nth-child(4) { width: 54%; }
 
+.quality-slide-band.quality-flow-band,
+.quality-slide-band.quality-issue-band {
+  position: absolute;
+  top: 14.1%;
+  right: 4.6%;
+  left: 4.05%;
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  height: 7.45%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 1.2%;
+  box-shadow: 7px 7px 0 rgba(15, 23, 42, 0.34);
+  font-size: clamp(12px, 1.65vw, 24px);
+}
+
 .flow-copy {
-  min-height: 17%;
+  position: absolute;
+  top: 25.1%;
+  right: 6.4%;
+  left: 6.4%;
+  min-height: 0;
+  font-size: clamp(9px, 1.17vw, 17px);
+  line-height: 1.62;
+  text-indent: 2em;
 }
 
 .quality-chart-heading {
-  margin: 0.4% 0 1.5%;
+  position: absolute;
+  top: 40.3%;
+  right: 30%;
+  left: 30%;
+  margin: 0;
   text-align: center;
-  font-size: clamp(10px, 1.55vw, 22px);
+  font-size: clamp(10px, 1.35vw, 20px);
 }
 
 .quality-ppt-chart {
+  position: absolute;
+  top: 46.4%;
+  right: 18%;
+  bottom: 8.8%;
+  left: 18%;
   display: flex;
   align-items: stretch;
   justify-content: center;
   gap: 3%;
-  height: 65%;
+  height: auto;
   padding: 0 4%;
   border-bottom: 1px solid #94a3b8;
   background: repeating-linear-gradient(to top, transparent 0, transparent 24.5%, #d9e0e5 25%);
@@ -6541,7 +6631,7 @@ onBeforeUnmount(() => {
 
 .quality-ppt-bar-column {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   width: min(14%, 118px);
   min-width: 42px;
   text-align: center;
@@ -6598,10 +6688,10 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid {
   position: absolute;
-  top: 24.8%;
-  right: 3.6%;
-  bottom: 9.3%;
-  left: 3.6%;
+  top: 33.9%;
+  right: 4.7%;
+  bottom: 8.5%;
+  left: 4.7%;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   height: auto;
@@ -6631,8 +6721,8 @@ onBeforeUnmount(() => {
 
 .quality-issue-pair-grid h3 {
   margin: 0 0 0.5em;
-  color: #125f8c;
-  font-size: clamp(11px, 1.45vw, 21px);
+  color: #101820;
+  font-size: clamp(10px, 1.3vw, 19px);
 }
 
 .quality-issue-pair-grid p {
@@ -6676,18 +6766,15 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
-.quality-issue-band {
+.quality-issue-summary {
   position: absolute;
-  top: 14.67%;
-  right: 2.9%;
-  left: 2.55%;
-  display: flex;
-  align-items: center;
-  min-height: 0;
-  height: 7.2%;
-  box-sizing: border-box;
+  top: 25.3%;
+  right: 5.6%;
+  left: 5.6%;
   margin: 0;
-  padding: 0 1.2%;
+  color: #101820;
+  font-size: clamp(10px, 1.32vw, 19px);
+  font-weight: 900;
 }
 
 .quality-issue-pair-grid.paired article.photo-portrait.copy-short {

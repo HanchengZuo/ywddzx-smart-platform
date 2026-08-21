@@ -1445,8 +1445,40 @@ class InspectionReportPresentation:
             data.get("title_prefix") or data.get("title") or "二、检查发现-",
             title_accent=data.get("title_accent") or "加油站环节",
         )
-        self._add_text(slide, data.get("narrative"), 0.78, 1.14, 11.8, 1.08, size=16, bold=True)
-        self._add_text(slide, data.get("chart_title") or "各类问题数量汇总情况", 3.8, 2.18, 5.8, 0.45, size=19, bold=True, align=PP_ALIGN.CENTER)
+        band_shadow = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.64),
+            Inches(1.15),
+            Inches(12.05),
+            Inches(0.56),
+        )
+        band_shadow.fill.solid()
+        band_shadow.fill.fore_color.rgb = RGBColor(156, 160, 164)
+        band_shadow.line.fill.background()
+        band = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.54),
+            Inches(1.06),
+            Inches(12.05),
+            Inches(0.56),
+        )
+        band.fill.solid()
+        band.fill.fore_color.rgb = RGBColor(42, 137, 193)
+        band.line.fill.background()
+        self._add_text(
+            slide,
+            data.get("subtitle") or "3.加油站环节",
+            0.62,
+            1.14,
+            10.75,
+            0.34,
+            size=19,
+            color=WHITE,
+            bold=True,
+            valign=MSO_ANCHOR.MIDDLE,
+        )
+        self._add_text(slide, data.get("narrative"), 0.86, 1.88, 11.6, 1.08, size=16, bold=True)
+        self._add_text(slide, data.get("chart_title") or "各类问题数量汇总情况", 3.76, 3.02, 5.8, 0.4, size=17, bold=True, align=PP_ALIGN.CENTER)
         distribution = data.get("distribution") or []
         if not distribution:
             self._add_panel(slide, 2.1, 3.25, 9.1, 1.5, "暂无数据", "当前月份暂无业务流程分布数据。", MUTED)
@@ -1454,7 +1486,7 @@ class InspectionReportPresentation:
         chart_data = ChartData()
         chart_data.categories = [_short(item.get("name"), 14) for item in distribution]
         chart_data.add_series("问题数量", [_as_int(item.get("count")) for item in distribution])
-        chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1.05), Inches(2.75), Inches(11.15), Inches(3.75), chart_data).chart
+        chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(2.4), Inches(3.48), Inches(8.55), Inches(3.05), chart_data).chart
         chart.has_legend = False
         chart.value_axis.minimum_scale = 0
         chart.value_axis.has_major_gridlines = True
@@ -1478,7 +1510,7 @@ class InspectionReportPresentation:
     def _quality_single_issue_layout(self, issue):
         description = self._issue_description(issue)
         aspect_ratio = self._image_aspect_ratio(issue.get("issue_photo"))
-        content = {"x": 0.62, "y": 1.86, "width": 12.08, "height": 4.9}
+        content = {"x": 0.72, "y": 2.54, "width": 11.88, "height": 4.04}
         if not issue.get("issue_photo"):
             return {"mode": "text_only", "text": content, "aspect_ratio": aspect_ratio}
 
@@ -1544,7 +1576,7 @@ class InspectionReportPresentation:
             text_box["width"],
             station_height,
             size=22 if len(station) <= 18 else 19,
-            color=BLUE,
+            color=INK,
             bold=True,
         )
         description_y = text_box["y"] + station_height + 0.08
@@ -1583,9 +1615,10 @@ class InspectionReportPresentation:
         station = _short(issue.get("station_name"), 28)
         description = self._issue_description(issue)
         aspect_ratio = self._image_aspect_ratio(issue.get("issue_photo"))
-        self._add_text(slide, station, x + 0.12, 1.88, 5.8, 0.46, size=19, color=BLUE, bold=True)
-        body_y = 2.42
-        body_height = 4.25
+        station_label = station if station.endswith(("：", ":")) else f"{station}："
+        self._add_text(slide, station_label, x + 0.12, 2.54, 5.8, 0.42, size=17, color=INK, bold=True)
+        body_y = 3.02
+        body_height = 3.56
 
         if issue.get("issue_photo") and aspect_ratio <= 0.72 and len(description) <= 90:
             photo_width = max(2.35, min(2.82, body_height * aspect_ratio + 0.08))
@@ -1657,11 +1690,16 @@ class InspectionReportPresentation:
             data.get("title_prefix") or data.get("title") or "二、检查发现-",
             title_accent=data.get("title_accent") or "加油站环节",
         )
-        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.34), Inches(1.1), Inches(12.45), Inches(0.54))
+        band_shadow = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.64), Inches(1.15), Inches(12.05), Inches(0.56))
+        band_shadow.fill.solid()
+        band_shadow.fill.fore_color.rgb = RGBColor(156, 160, 164)
+        band_shadow.line.fill.background()
+        band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.54), Inches(1.06), Inches(12.05), Inches(0.56))
         band.fill.solid()
         band.fill.fore_color.rgb = RGBColor(42, 137, 193)
         band.line.fill.background()
-        self._add_text(slide, data.get("subtitle"), 0.48, 1.19, 11.9, 0.3, size=13, color=WHITE, bold=True)
+        self._add_text(slide, data.get("subtitle"), 0.62, 1.14, 10.75, 0.34, size=19, color=WHITE, bold=True)
+        self._add_text(slide, data.get("summary_text"), 0.82, 1.9, 11.45, 0.36, size=16, color=INK, bold=True)
         issues = data.get("issues") or []
         if len(issues) == 1 or data.get("layout_variant") == "single":
             issue = issues[0] if issues else None
@@ -1671,9 +1709,9 @@ class InspectionReportPresentation:
             self._render_quality_single_issue(slide, issue)
             return
         for index, issue in enumerate(issues):
-            x = 0.48 + index * 6.41
+            x = 0.66 + index * 6.05
             if index:
-                divider = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(6.66), Inches(1.84), Inches(0.01), Inches(4.96))
+                divider = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(6.66), Inches(2.5), Inches(0.01), Inches(4.12))
                 divider.fill.solid(); divider.fill.fore_color.rgb = RGBColor(151, 203, 230); divider.line.fill.background()
             self._render_quality_paired_issue(slide, issue, x)
         if not issues:
@@ -1837,6 +1875,35 @@ class InspectionReportPresentation:
             self._add_text(slide, item.get("content"), 0.95, y + 0.48, 11.25, 1.02, size=16, color=INK)
             y += 1.72
 
+    def _render_quality_ending(self, data):
+        slide = self._blank_slide(background=WHITE, footer=False)
+        self.page_number += 1
+        line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0),
+            Inches(0.88),
+            Inches(13.333),
+            Inches(0.05),
+        )
+        line.fill.solid()
+        line.fill.fore_color.rgb = RGBColor(42, 155, 211)
+        line.line.fill.background()
+        self._add_quality_logo(slide, x=12.0, y=0.22, height=0.58)
+        self._add_quality_logo(slide, x=5.92, y=2.88, height=1.05)
+        self._add_text(
+            slide,
+            data.get("title") or "通报完毕",
+            4.86,
+            4.12,
+            3.6,
+            0.52,
+            size=23,
+            color=INK,
+            bold=True,
+            align=PP_ALIGN.CENTER,
+            valign=MSO_ANCHOR.MIDDLE,
+        )
+
     def _build_quality_measurement(self):
         renderers = {
             "cover": self._render_quality_cover,
@@ -1849,6 +1916,7 @@ class InspectionReportPresentation:
             "management_trace": self._render_quality_management_trace,
             "trace_analysis": self._render_quality_trace_analysis,
             "work_plan": self._render_quality_work_plan,
+            "ending": self._render_quality_ending,
         }
         slides = [item for item in (self.report.get("slides") or []) if isinstance(item, dict)]
         if not slides:

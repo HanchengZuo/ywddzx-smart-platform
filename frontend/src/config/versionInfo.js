@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.2',
+    date: '2026-08-21',
+    title: '质量计量PPT章节完善',
+    summary: '加油站环节和突出问题按标准模板排版，补齐章节过渡页与结束页。',
+    items: [
+      '加油站环节保留完整标题，图表和问题内容按参考模板展示。',
+      '突出问题页把问题数量移到横梁下方，文字和照片保持左右双栏。',
+      '管理追溯、工作计划增加章节过渡页，报告最后增加通报完毕页。'
+    ]
+  },
+  {
     version: 'v5.1',
     date: '2026-08-21',
     title: '质量计量PPT模板统一',

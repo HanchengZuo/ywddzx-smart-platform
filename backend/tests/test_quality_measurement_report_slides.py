@@ -10,6 +10,7 @@ from ai_prompts import (
     build_quality_measurement_report_insight_prompt,
 )
 from app import (
+    app,
     apply_quality_report_flow_classifications,
     build_quality_measurement_report_payload,
     build_quality_measurement_report_slides,
@@ -18,6 +19,7 @@ from app import (
     build_quality_report_flow_classification_decisions,
     build_report_prohibited_examples,
     get_authorized_quality_report_generation_options,
+    should_preserve_quality_report_display_terms,
 )
 from report_presentation import InspectionReportPresentation
 
@@ -40,6 +42,22 @@ def make_issue(issue_id, flow="人员管理", prohibited=False, standard_id=None
 
 
 class QualityMeasurementReportSlidesTest(unittest.TestCase):
+    def test_quality_report_api_preserves_oil_station_terms(self):
+        with app.test_request_context(
+            "/api/inspection-reports/status?report_type=quality_measurement"
+        ):
+            self.assertTrue(should_preserve_quality_report_display_terms({}))
+        with app.test_request_context(
+            "/api/inspection-reports/status?report_type=finance"
+        ):
+            self.assertFalse(should_preserve_quality_report_display_terms({}))
+        with app.test_request_context("/api/inspection-reports/jobs/task-1"):
+            self.assertTrue(
+                should_preserve_quality_report_display_terms(
+                    {"job": {"report_type": "quality_measurement"}}
+                )
+            )
+
     def test_quality_ai_prompts_keep_analysis_and_classification_contexts_separate(self):
         insight_prompt = build_quality_measurement_report_insight_prompt(
             {"designated_typical_issue_id": 18}
@@ -155,9 +173,25 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertEqual(report["slides"][2]["title"], "一、总体情况")
         self.assertEqual(report["slides"][3]["active_section"], 2)
         self.assertEqual(report["slides"][4]["title_accent"], "发现问题")
-        self.assertEqual(report["slides"][-3]["kind"], "management_trace")
-        self.assertEqual(report["slides"][-2]["kind"], "trace_analysis")
-        self.assertEqual(report["slides"][-1]["kind"], "work_plan")
+        flow_slide = next(item for item in report["slides"] if item["kind"] == "flow_chart")
+        issue_slide = next(item for item in report["slides"] if item["kind"] == "issue_pairs")
+        management_index = next(
+            index for index, item in enumerate(report["slides"])
+            if item["kind"] == "management_trace"
+        )
+        work_plan_index = next(
+            index for index, item in enumerate(report["slides"])
+            if item["kind"] == "work_plan"
+        )
+        self.assertEqual(flow_slide["subtitle"], "3.加油站环节")
+        self.assertTrue(issue_slide["subtitle"].startswith("3.加油站环节——"))
+        self.assertIn("发现问题", issue_slide["summary_text"])
+        self.assertEqual(report["slides"][management_index - 1]["kind"], "agenda")
+        self.assertEqual(report["slides"][management_index - 1]["active_section"], 3)
+        self.assertEqual(report["slides"][work_plan_index - 1]["kind"], "agenda")
+        self.assertEqual(report["slides"][work_plan_index - 1]["active_section"], 4)
+        self.assertEqual(report["slides"][-1]["kind"], "ending")
+        self.assertEqual(report["slides"][-1]["title"], "通报完毕")
 
     def test_other_flow_is_replaced_by_persisted_or_fallback_classification(self):
         rows = [make_issue(41, "其他"), make_issue(42, "未设置业务流程")]
