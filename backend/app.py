@@ -28,6 +28,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
 from ai_utils import (
+    classify_non_oil_report_categories,
     classify_quality_measurement_report_flows,
     generate_equipment_facilities_report_insights,
     generate_feedback_title,
@@ -71,6 +72,10 @@ from passkey_service import (
     verify_passkey_authentication,
 )
 from report_presentation import build_inspection_report_presentation
+from non_oil_report_presentation import (
+    build_non_oil_template_presentation,
+    copy_existing_non_oil_presentation,
+)
 from auth_rate_limit import (
     AuthenticationRateLimitExceeded,
     check_password_login_allowed,
@@ -152,6 +157,7 @@ FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screensh
 ISSUE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issue_exports")
 STATION_SCORE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "station_score_exports")
 INSPECTION_REPORT_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "report_exports")
+INSPECTION_REPORT_PRESENTATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "report_presentations")
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
 BACKUP_PREFIX = "ywddzx_full_backup"
@@ -225,7 +231,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.2.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.3.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -260,6 +266,7 @@ FILE_ACCESS_ALLOWED_CATEGORIES = {
     "inspection_originals",
     "training_materials",
     "feedback_screenshots",
+    "report_presentations",
 }
 PUBLIC_AUTH_RATE_LIMIT_PATHS = {
     "/api/login": "password_login",
@@ -7604,9 +7611,14 @@ ON_SITE_SERVICE_REPORT_SOURCE_NOTE = (
 NON_OIL_REPORT_GROUP_PURCHASE_TABLE = "非油合规性检查（团购）"
 NON_OIL_REPORT_ONSITE_TABLE = "非油检查表（现场）"
 NON_OIL_REPORT_SOURCE_NOTE = (
-    "巡检周期按上月25日至本月24日统计；站点覆盖以已确认完成的非油团购与现场检查记录为准，"
+    "巡检日期范围可在生成前自定义；站点覆盖以已确认完成的非油团购与现场检查记录为准，"
     "问题数量、分类、典型问题和AI分析仅使用审核通过的问题。"
 )
+NON_OIL_REPORT_UNIT_ORDER = [
+    "浦东", "闵普徐", "松金", "嘉青", "南汇", "宝静", "奉贤", "崇明",
+    "中油奉贤", "中油同盛", "中油康桥", "中油农工商", "中油上海", "中油港汇",
+    "中石油上港", "中油浦东", "中油华鑫", "中油中燃",
+]
 SAFETY_QUALITY_REPORT_REGION_ORDER = [
     "浦东片区",
     "松金片区",
@@ -7795,7 +7807,7 @@ SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-
 FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
 ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-eight-chapters-v1"
-NON_OIL_REPORT_DATA_POLICY_VERSION = "cycle25-24-completed-approved-five-chapters-v1"
+NON_OIL_REPORT_DATA_POLICY_VERSION = "ppt-template-v53-date-range-ai-category-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -8307,10 +8319,37 @@ def normalize_inspection_report_generation_options(value):
     station_ids.sort()
     if station_filter_enabled and not station_ids:
         raise ValueError("自定义数据来源时，请至少选择一个站点。")
-    return {
+    date_from = str(raw_options.get("date_from") or "").strip()
+    date_to = str(raw_options.get("date_to") or "").strip()
+    if bool(date_from) != bool(date_to):
+        raise ValueError("自定义日期范围必须同时填写开始日期和结束日期。")
+    if date_from and date_to:
+        try:
+            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").date()
+            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError("自定义日期范围格式不正确。") from exc
+        if parsed_date_to < parsed_date_from:
+            raise ValueError("结束日期不能早于开始日期。")
+        if (parsed_date_to - parsed_date_from).days > 366:
+            raise ValueError("单次报告日期范围不能超过一年。")
+    normalized = {
         "station_filter_enabled": station_filter_enabled,
         "station_ids": station_ids if station_filter_enabled else [],
     }
+    if date_from and date_to:
+        normalized["date_from"] = date_from
+        normalized["date_to"] = date_to
+    return normalized
+
+
+def resolve_non_oil_report_period(report_month, generation_options=None):
+    options = normalize_inspection_report_generation_options(generation_options)
+    if options.get("date_from") and options.get("date_to"):
+        period_start = datetime.strptime(options["date_from"], "%Y-%m-%d").date()
+        period_end = datetime.strptime(options["date_to"], "%Y-%m-%d").date() + timedelta(days=1)
+        return period_start, period_end
+    return parse_non_oil_report_period(report_month)
 
 
 def append_inspection_report_station_filter(
@@ -9179,12 +9218,20 @@ def run_inspection_report_export_task(task_id):
         os.makedirs(INSPECTION_REPORT_EXPORTS_STORAGE_DIR, exist_ok=True)
         disk_name = f"inspection_report_{task_id}.pptx"
         abs_path = os.path.join(INSPECTION_REPORT_EXPORTS_STORAGE_DIR, disk_name)
-        result = build_inspection_report_presentation(
-            report_type=task.get("report_type"),
-            report=report_payload,
-            storage_root=STORAGE_ROOT,
-            output_path=abs_path,
-        )
+        result = None
+        if task.get("report_type") == REPORT_SNAPSHOT_TYPE_NON_OIL:
+            result = copy_existing_non_oil_presentation(
+                report_payload,
+                abs_path,
+                STORAGE_ROOT,
+            )
+        if not result:
+            result = build_inspection_report_presentation(
+                report_type=task.get("report_type"),
+                report=report_payload,
+                storage_root=STORAGE_ROOT,
+                output_path=abs_path,
+            )
         update_inspection_report_export_task(
             task_id,
             "running",
@@ -12051,11 +12098,14 @@ def build_equipment_facilities_report_payload(month_start, issue_rows, inspectio
 
 
 NON_OIL_REPORT_CATEGORIES = [
-    "店销商品摆放情况",
-    "商品订单、入库、盘点等情况",
+    "员工形象及开口服务情况",
     "便利店卫生情况",
+    "店销商品摆放情况",
+    "ETC办理情况",
     "销售行为",
+    "商品订单、入库、盘点等情况",
     "台账、报表情况",
+    "特殊扣分项",
     "仓库管理情况",
 ]
 
@@ -12068,6 +12118,8 @@ def classify_non_oil_report_category(source_project, detail_text, description):
     exact_project = str(source_project or "").strip()
     if exact_project in NON_OIL_REPORT_CATEGORIES:
         return exact_project
+    if exact_project == "其他" or not exact_project or exact_project == "未设置检查项目":
+        return "其他"
     keyword_groups = [
         (
             "仓库管理情况",
@@ -12082,8 +12134,20 @@ def classify_non_oil_report_category(source_project, detail_text, description):
             ("台账", "报表", "记录", "登记", "留痕", "资料"),
         ),
         (
+            "员工形象及开口服务情况",
+            ("员工形象", "开口服务", "仪容", "工装", "服务用语"),
+        ),
+        (
+            "ETC办理情况",
+            ("ETC", "etc", "办理ETC"),
+        ),
+        (
             "销售行为",
-            ("销售行为", "服务", "开口", "员工形象", "销售过期", "促销"),
+            ("销售行为", "促销", "强制搭售", "销售过期"),
+        ),
+        (
+            "特殊扣分项",
+            ("特殊扣分", "重大违规", "一票否决"),
         ),
         (
             "商品订单、入库、盘点等情况",
@@ -12105,11 +12169,154 @@ def classify_non_oil_report_category(source_project, detail_text, description):
             return category_name
     if "团购" in exact_project or "稽核" in combined:
         return "商品订单、入库、盘点等情况"
+    return "其他"
+
+
+def non_oil_report_classification_table_available(cur):
+    cur.execute(
+        "SELECT to_regclass('public.inspection_report_non_oil_issue_classifications') AS table_name;"
+    )
+    result = cur.fetchone()
+    return bool(result and result.get("table_name"))
+
+
+def get_non_oil_report_classification_map(cur, issue_ids):
+    normalized_ids = sorted({int(value) for value in issue_ids or [] if int(value or 0) > 0})
+    if not normalized_ids or not non_oil_report_classification_table_available(cur):
+        return {}
+    cur.execute(
+        """
+        SELECT issue_id, original_category, ai_category, effective_category,
+               classification_source, reason, model_name, updated_at
+        FROM inspection_report_non_oil_issue_classifications
+        WHERE issue_id = ANY(%s);
+        """,
+        (normalized_ids,),
+    )
+    return {int(row["issue_id"]): dict(row) for row in cur.fetchall()}
+
+
+def build_non_oil_category_classification_context(rows, classification_map):
+    issues = []
+    for row in rows or []:
+        issue_id = int(row.get("id") or 0)
+        table_name = str(row.get("table_name") or "").replace(DISPLAY_REMOVED_STATION_PHRASE, "").strip()
+        source_project = get_report_standard_field_value_any(
+            row.get("standard_detail_text"),
+            ("稽核项目", "检查项目"),
+        ) or "未设置检查项目"
+        existing = classification_map.get(issue_id) or {}
+        if (
+            table_name != NON_OIL_REPORT_ONSITE_TABLE
+            or source_project != "其他"
+            or existing.get("classification_source") in {"ai", "manual"}
+        ):
+            continue
+        issues.append(
+            {
+                "issue_id": issue_id,
+                "station_name": str(sanitize_display_string(row.get("station_name")) or ""),
+                "external_standard_id": row.get("standard_id"),
+                "inspection_content": get_report_standard_field_value_any(
+                    row.get("standard_detail_text"),
+                    ("检查内容", "检查细则", "内容"),
+                ) or "-",
+                "description": str(row.get("description") or "")[:500],
+            }
+        )
+    return {"allowed_categories": NON_OIL_REPORT_CATEGORIES, "issues": issues}
+
+
+def local_non_oil_category_fallback(row):
+    combined = " ".join(
+        str(value or "")
+        for value in (row.get("standard_detail_text"), row.get("description"))
+    )
+    mappings = [
+        ("员工形象及开口服务情况", ("员工", "形象", "开口", "服务用语", "工装")),
+        ("便利店卫生情况", ("卫生", "清洁", "污渍", "垃圾", "虫害")),
+        ("ETC办理情况", ("ETC", "etc")),
+        ("商品订单、入库、盘点等情况", ("订单", "入库", "盘点", "账实", "团购", "过机")),
+        ("台账、报表情况", ("台账", "报表", "记录", "登记", "留痕")),
+        ("仓库管理情况", ("仓库", "库房", "库位", "存放")),
+        ("特殊扣分项", ("特殊扣分", "重大违规", "一票否决")),
+        ("销售行为", ("销售", "促销", "搭售")),
+        ("店销商品摆放情况", ("摆放", "陈列", "货架", "价签", "临期", "商品")),
+    ]
+    for category, keywords in mappings:
+        if any(keyword in combined for keyword in keywords):
+            return category
     return "店销商品摆放情况"
 
 
-def serialize_non_oil_report_issue(row):
-    table_name = str(row.get("table_name") or "").strip()
+def build_non_oil_category_classification_decisions(rows, context, ai_result):
+    eligible = {int(item["issue_id"]): item for item in context.get("issues") or []}
+    ai_rows = ((ai_result or {}).get("payload") or {}).get("classifications") or []
+    ai_map = {}
+    for item in ai_rows:
+        if not isinstance(item, dict):
+            continue
+        try:
+            issue_id = int(item.get("issue_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        category = normalize_report_category(item.get("category"), "")
+        if issue_id in eligible and category in NON_OIL_REPORT_CATEGORIES:
+            ai_map[issue_id] = {
+                "category": category,
+                "source": "ai",
+                "reason": str(item.get("reason") or "AI根据问题内容分类。")[:500],
+            }
+    raw_map = {int(row.get("id") or 0): row for row in rows or []}
+    decisions = {}
+    for issue_id in eligible:
+        decisions[issue_id] = ai_map.get(issue_id) or {
+            "category": local_non_oil_category_fallback(raw_map.get(issue_id) or {}),
+            "source": "fallback",
+            "reason": "AI不可用或结果不完整，使用本地关键词规则分类。",
+        }
+    return decisions
+
+
+def persist_non_oil_report_classifications(cur, rows, decisions, user_id=None):
+    if not decisions or not non_oil_report_classification_table_available(cur):
+        return
+    raw_map = {int(row.get("id") or 0): row for row in rows or []}
+    for issue_id, decision in decisions.items():
+        row = raw_map.get(int(issue_id)) or {}
+        cur.execute(
+            """
+            INSERT INTO inspection_report_non_oil_issue_classifications (
+                issue_id, original_category, ai_category, effective_category,
+                classification_source, reason, model_name, updated_by,
+                classified_at, updated_at
+            )
+            VALUES (%s, '其他', %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (issue_id) DO UPDATE SET
+                ai_category = EXCLUDED.ai_category,
+                effective_category = EXCLUDED.effective_category,
+                classification_source = EXCLUDED.classification_source,
+                reason = EXCLUDED.reason,
+                model_name = EXCLUDED.model_name,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE inspection_report_non_oil_issue_classifications.classification_source = 'fallback'
+              AND EXCLUDED.classification_source = 'ai';
+            """,
+            (
+                issue_id,
+                decision.get("category") if decision.get("source") == "ai" else None,
+                decision.get("category"),
+                decision.get("source") or "fallback",
+                decision.get("reason"),
+                "deepseek-v4-pro" if decision.get("source") == "ai" else None,
+                user_id,
+            ),
+        )
+
+
+def serialize_non_oil_report_issue(row, classification_map=None):
+    table_name = str(row.get("table_name") or "").replace(DISPLAY_REMOVED_STATION_PHRASE, "").strip()
     detail_text = row.get("standard_detail_text")
     source_project = get_report_standard_field_value_any(
         detail_text,
@@ -12122,6 +12329,16 @@ def serialize_non_oil_report_issue(row):
     unit_type, unit_name = identify_report_secondary_unit(row)
     description = str(row.get("description") or "").strip()
     report_date = row.get("report_date")
+    category_name = classify_non_oil_report_category(source_project, detail_text, description)
+    classification_source = "original"
+    classification = (classification_map or {}).get(int(row.get("id") or 0))
+    if table_name == NON_OIL_REPORT_ONSITE_TABLE and category_name == "其他":
+        if classification and classification.get("effective_category") in NON_OIL_REPORT_CATEGORIES:
+            category_name = classification.get("effective_category")
+            classification_source = classification.get("classification_source") or "ai"
+        else:
+            category_name = local_non_oil_category_fallback(row)
+            classification_source = "fallback"
     return {
         "issue_id": int(row.get("id") or 0),
         "station_id": row.get("station_id"),
@@ -12130,13 +12347,12 @@ def serialize_non_oil_report_issue(row):
         "unit_type_label": "控（参）股单位" if unit_type == "holding" else "管理片区",
         "unit_name": unit_name,
         "table_name": table_name,
+        "external_standard_id": row.get("standard_id"),
         "source_project": normalize_report_category(source_project, "未设置检查项目"),
         "source_content": normalize_report_category(source_content, "-"),
-        "category_name": classify_non_oil_report_category(
-            source_project,
-            detail_text,
-            description,
-        ),
+        "category_name": category_name,
+        "classification_source": classification_source,
+        "classification_reason": (classification or {}).get("reason") if classification else "",
         "description": description,
         "issue_photo": row.get("issue_photo") or "",
         "report_date": report_date.strftime("%Y-%m-%d")
@@ -12167,9 +12383,12 @@ def serialize_non_oil_inspection_station(row):
 
 
 def non_oil_unit_sort_key(item):
-    return finance_unit_sort_key(
-        {"unit_type": item.get("unit_type"), "unit_name": item.get("unit_name")}
-    )
+    name = str(item.get("unit_name") or "").strip()
+    normalized = name[:-2] if name.endswith("片区") else name
+    try:
+        return NON_OIL_REPORT_UNIT_ORDER.index(normalized), normalized
+    except ValueError:
+        return len(NON_OIL_REPORT_UNIT_ORDER), normalized
 
 
 def build_non_oil_unit_rows(issues, inspection_rows):
@@ -12205,6 +12424,15 @@ def build_non_oil_unit_rows(issues, inspection_rows):
     for group in grouped.values():
         station_names = sorted(group.pop("_stations").values())
         issue_count = len(group["issues"])
+        station_issue_counts = OrderedDict((name, 0) for name in station_names)
+        station_category_counts = OrderedDict((name, OrderedDict()) for name in station_names)
+        for issue in group["issues"]:
+            station_name = issue.get("station_name") or "未命名站点"
+            station_issue_counts[station_name] = station_issue_counts.get(station_name, 0) + 1
+            category_name = issue.get("category_name") or "未分类"
+            category_counts = station_category_counts.setdefault(station_name, OrderedDict())
+            category_counts[category_name] = category_counts.get(category_name, 0) + 1
+        category_distribution = build_non_oil_category_distribution(group["issues"])
         rows.append(
             {
                 "unit_type": group["unit_type"],
@@ -12219,6 +12447,17 @@ def build_non_oil_unit_rows(issues, inspection_rows):
                 "percentage": round(issue_count / total_issue_count * 100, 1)
                 if total_issue_count
                 else 0,
+                "station_issue_rows": [
+                    {
+                        "station_name": name,
+                        "issue_count": count,
+                        "category_counts": dict(station_category_counts.get(name) or {}),
+                    }
+                    for name, count in station_issue_counts.items()
+                ],
+                "category_distribution": [
+                    item for item in category_distribution if item.get("count")
+                ],
             }
         )
     rows.sort(key=non_oil_unit_sort_key)
@@ -12538,10 +12777,18 @@ def build_non_oil_report_payload(
     issue_rows,
     inspection_rows,
     previous_issue_rows,
+    classification_map=None,
 ):
-    issues = [serialize_non_oil_report_issue(row) for row in issue_rows]
+    issues = [
+        serialize_non_oil_report_issue(row, classification_map)
+        for row in issue_rows
+    ]
     unit_rows = build_non_oil_unit_rows(issues, inspection_rows)
-    category_distribution = build_non_oil_category_distribution(issues)
+    onsite_issues = [
+        issue for issue in issues
+        if issue.get("table_name") == NON_OIL_REPORT_ONSITE_TABLE
+    ]
+    category_distribution = build_non_oil_category_distribution(onsite_issues)
     unique_stations = {
         row.get("station_id") or row.get("station_name")
         for row in inspection_rows
@@ -12572,6 +12819,33 @@ def build_non_oil_report_payload(
         if unit_phrases
         else "当前巡检期间暂无审核通过的非油问题。"
     )
+    top_category = next(
+        (item for item in category_distribution if item.get("count")),
+        None,
+    )
+    unit_overview_text = (
+        f"片区（分公司）总数：{len(unit_rows)}个；问题总计：{len(issues)}项；"
+        f"站平均问题数：{round(len(issues) / len(unique_stations), 1) if unique_stations else 0:.1f}项/站。"
+        + (
+            f"非油现场检查问题主要集中在{top_category['name']}，占比{top_category['percentage']:.1f}%。"
+            if top_category else ""
+        )
+    )
+    category_classifications = [
+        {
+            "issue_id": issue["issue_id"],
+            "station_name": issue["station_name"],
+            "unit_name": issue["unit_name"],
+            "external_standard_id": issue.get("external_standard_id"),
+            "description": issue["description"],
+            "original_category": issue["source_project"],
+            "effective_category": issue["category_name"],
+            "classification_source": issue["classification_source"],
+            "reason": issue.get("classification_reason") or "",
+        }
+        for issue in onsite_issues
+        if issue.get("source_project") == "其他"
+    ]
     return (
         {
             "month": report_month_start.strftime("%Y-%m"),
@@ -12601,6 +12875,7 @@ def build_non_oil_report_payload(
             "period_text": f"{report_month_start.month}月巡检，{date_range}",
             "scope_text": scope_text,
             "issue_overview_text": issue_overview_text,
+            "unit_overview_text": unit_overview_text,
             "units": unit_rows,
             "previous_month_rectification": build_non_oil_previous_rectification(
                 report_month_start,
@@ -12612,6 +12887,9 @@ def build_non_oil_report_payload(
                 category_distribution,
             ),
             "project_matrix": build_non_oil_project_matrix(issues),
+            "category_classifications": category_classifications,
+            "key_issue_count": 0,
+            "key_issue_percentage": 0,
         },
         issues,
     )
@@ -31225,7 +31503,10 @@ def generate_non_oil_report_job(
     generation_options=None,
 ):
     report_month_start, _ = parse_report_month(report_month)
-    period_start, period_end = parse_non_oil_report_period(report_month)
+    period_start, period_end = resolve_non_oil_report_period(
+        report_month,
+        generation_options,
+    )
     previous_month_start = (
         report_month_start.replace(year=report_month_start.year - 1, month=12)
         if report_month_start.month == 1
@@ -31239,6 +31520,7 @@ def generate_non_oil_report_job(
     issue_rows = []
     inspection_rows = []
     previous_issue_rows = []
+    classification_map = {}
     user = None
     try:
         update_inspection_report_job(
@@ -31340,6 +31622,10 @@ def generate_non_oil_report_job(
             return [dict(row) for row in cur.fetchall()]
 
         issue_rows = fetch_issue_rows(period_start, period_end)
+        classification_map = get_non_oil_report_classification_map(
+            cur,
+            [row.get("id") for row in issue_rows],
+        )
         previous_issue_rows = fetch_issue_rows(
             previous_period_start,
             previous_period_end,
@@ -31420,6 +31706,45 @@ def generate_non_oil_report_job(
             f"{len(issue_rows)} 条审核通过问题，正在统计单位、整改和六类非油问题"
         ),
     )
+    classification_context = build_non_oil_category_classification_context(
+        issue_rows,
+        classification_map,
+    )
+    classification_ai_result = None
+    if classification_context.get("issues"):
+        update_inspection_report_job(
+            task_id,
+            "running",
+            44,
+            f"正在调用 DeepSeek 分类 {len(classification_context['issues'])} 条‘其他’问题",
+        )
+        classification_ai_result = classify_non_oil_report_categories(
+            classification_context
+        )
+        decisions = build_non_oil_category_classification_decisions(
+            issue_rows,
+            classification_context,
+            classification_ai_result,
+        )
+        conn = None
+        cur = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            persist_non_oil_report_classifications(
+                cur,
+                issue_rows,
+                decisions,
+                user_id,
+            )
+            conn.commit()
+            classification_map = get_non_oil_report_classification_map(
+                cur,
+                [row.get("id") for row in issue_rows],
+            )
+        finally:
+            close_db_resources(cur, conn)
+
     report, non_oil_issues = build_non_oil_report_payload(
         report_month_start,
         period_start,
@@ -31427,6 +31752,7 @@ def generate_non_oil_report_job(
         issue_rows,
         inspection_rows,
         previous_issue_rows,
+        classification_map,
     )
     report["source_selection"] = source_selection
     insight_result = None
@@ -31466,6 +31792,44 @@ def generate_non_oil_report_job(
         report.get("category_distribution") or [],
         insight_result,
     )
+    key_issue_ids = {
+        int(issue.get("issue_id"))
+        for group in (report["deep_analysis"].get("typical_issues") or [])
+        for issue in (group.get("issues") or [])
+        if issue.get("issue_id") is not None
+    }
+    report["key_issue_count"] = len(key_issue_ids)
+    report["key_issue_percentage"] = round(
+        len(key_issue_ids) / len(non_oil_issues) * 100,
+        1,
+    ) if non_oil_issues else 0
+
+    update_inspection_report_job(
+        task_id,
+        "running",
+        91,
+        "正在按非油巡检PPT模板生成同源预览和演示文稿",
+    )
+    presentation_id = f"non_oil_{task_id}"
+    presentation_dir = os.path.join(
+        INSPECTION_REPORT_PRESENTATIONS_STORAGE_DIR,
+        presentation_id,
+    )
+    presentation_ppt_path = os.path.join(presentation_dir, "report.pptx")
+    presentation_result = build_non_oil_template_presentation(
+        report,
+        presentation_dir,
+        presentation_ppt_path,
+    )
+    report["presentation"] = {
+        "id": presentation_id,
+        "slide_count": int(presentation_result.get("slide_count") or 0),
+        "slide_urls": [
+            f"/storage/report_presentations/{presentation_id}/slide-{index:02d}.jpg"
+            for index in range(1, int(presentation_result.get("slide_count") or 0) + 1)
+        ],
+        "ppt_path": f"report_presentations/{presentation_id}/report.pptx",
+    }
 
     conn = None
     cur = None
@@ -31483,6 +31847,15 @@ def generate_non_oil_report_job(
                 "AI报告生成",
                 "非油检查报告分析",
                 f"{report.get('month_label')} · 问题{len(non_oil_issues)}项",
+            )
+        if classification_context.get("issues") and classification_ai_result:
+            record_ai_usage_log(
+                cur,
+                user,
+                classification_ai_result,
+                "AI报告生成",
+                "非油其他问题分类",
+                f"{report.get('month_label')} · 分类{len(classification_context['issues'])}项",
             )
         save_inspection_report_snapshot(
             cur,
@@ -31590,10 +31963,13 @@ def queue_or_get_inspection_report_job(
     force_regenerate=False,
     generation_options=None,
 ):
-    normalized_generation_options = (
-        normalize_inspection_report_generation_options(generation_options)
-        if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
-        else normalize_inspection_report_generation_options({})
+    normalized_generation_options = normalize_inspection_report_generation_options(
+        generation_options
+        if report_type in {
+            REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+            REPORT_SNAPSHOT_TYPE_NON_OIL,
+        }
+        else {}
     )
     snapshot_scope_key = build_report_snapshot_scope_key(user)
     if not force_regenerate:
@@ -32152,6 +32528,121 @@ def manage_quality_report_flow_classifications():
         close_db_resources(cur, conn)
 
 
+@app.route(
+    "/api/inspection-reports/non-oil-category-classifications",
+    methods=["GET", "PUT"],
+)
+def manage_non_oil_report_category_classifications():
+    data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
+    month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
+    month_start, _ = parse_report_month(month_value)
+    report_month = month_start.strftime("%Y-%m")
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        can_edit = has_permission(cur, user, "generate_inspection_reports")
+        report = get_latest_inspection_report_snapshot(
+            cur,
+            REPORT_SNAPSHOT_TYPE_NON_OIL,
+            report_month,
+        )
+        rows = list((report or {}).get("category_classifications") or [])
+        if request.method == "PUT":
+            if not can_edit:
+                raise PermissionError("当前账号无权调整非油报告问题分类。")
+            adjustments = data.get("classifications")
+            if not isinstance(adjustments, list) or not adjustments:
+                raise ValueError("请选择需要调整的问题分类。")
+            eligible = {int(row.get("issue_id") or 0): row for row in rows}
+            normalized = []
+            seen = set()
+            for item in adjustments[:500]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    issue_id = int(item.get("issue_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                category = normalize_report_category(item.get("category"), "")
+                if issue_id in seen:
+                    continue
+                if issue_id not in eligible:
+                    raise ValueError(f"问题ID {issue_id} 不属于当前报告可调整范围。")
+                if category not in NON_OIL_REPORT_CATEGORIES:
+                    raise ValueError(f"问题ID {issue_id} 的目标分类不在允许范围内。")
+                seen.add(issue_id)
+                normalized.append((issue_id, category))
+            if not normalized:
+                raise ValueError("没有有效的分类调整内容。")
+            if not non_oil_report_classification_table_available(cur):
+                raise InspectionReportJobSchemaUnavailable(
+                    "非油报告AI分类表尚未完成数据库迁移，请重新部署后端。"
+                )
+            for issue_id, category in normalized:
+                cur.execute(
+                    """
+                    INSERT INTO inspection_report_non_oil_issue_classifications (
+                        issue_id, original_category, effective_category,
+                        classification_source, reason, updated_by,
+                        classified_at, updated_at
+                    )
+                    VALUES (%s, '其他', %s, 'manual', %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (issue_id) DO UPDATE SET
+                        effective_category = EXCLUDED.effective_category,
+                        classification_source = 'manual',
+                        reason = EXCLUDED.reason,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = CURRENT_TIMESTAMP;
+                    """,
+                    (
+                        issue_id,
+                        category,
+                        "人工调整非油报告检查项目分类。",
+                        user.get("id"),
+                    ),
+                )
+            conn.commit()
+            for row in rows:
+                if int(row.get("issue_id") or 0) in seen:
+                    row["effective_category"] = dict(normalized)[int(row["issue_id"])]
+                    row["classification_source"] = "manual"
+                    row["reason"] = "人工调整非油报告检查项目分类。"
+        return jsonify(
+            {
+                "success": True,
+                "month": report_month,
+                "classifications": rows,
+                "categories": NON_OIL_REPORT_CATEGORIES,
+                "can_edit": can_edit,
+                "regeneration_required": request.method == "PUT",
+            }
+        )
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except InspectionReportJobSchemaUnavailable as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to manage non-oil report category classifications.")
+        return jsonify({"success": False, "error": "非油问题分类处理失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/inspection-reports/generate", methods=["POST"])
 def create_inspection_report_generation_job():
     data = request.get_json(silent=True) or {}
@@ -32192,6 +32683,11 @@ def create_inspection_report_generation_job():
                 month_end,
                 generation_options,
             )
+        elif report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
+            generation_options = normalize_inspection_report_generation_options(
+                raw_generation_options or {}
+            )
+            resolve_non_oil_report_period(report_month, generation_options)
         else:
             generation_options = normalize_inspection_report_generation_options({})
         report, job, created = queue_or_get_inspection_report_job(

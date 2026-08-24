@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.3',
+    date: '2026-08-24',
+    title: '非油检查报告PPT化',
+    summary: '非油报告按标准PPT逐页展示，网页预览与下载内容保持一致。',
+    items: [
+      '报告日期范围可自定义，单位和站点数据按固定顺序自动汇总。',
+      '现场“其他”问题由AI自动分类，并支持查看和人工调整结果。',
+      '报告套用既有PPT模板，统计图、单位页和分析概况按真实数据更新。'
+    ]
+  },
+  {
     version: 'v5.2',
     date: '2026-08-21',
     title: '质量计量PPT章节完善',

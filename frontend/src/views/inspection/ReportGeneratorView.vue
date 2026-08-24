@@ -173,6 +173,60 @@
       </button>
     </section>
 
+    <section v-if="isNonOilReport && !templateUnavailable" class="non-oil-source-panel card-surface">
+      <div class="classification-panel-intro">
+        <div class="classification-ai-mark date-mark" aria-hidden="true">期</div>
+        <div>
+          <span>REPORT DATE RANGE</span>
+          <h3>本次报告数据日期范围</h3>
+          <p>只影响非油检查报告；巡检期间、站点范围、问题统计和图表均按此日期范围重新计算。</p>
+        </div>
+      </div>
+      <div class="non-oil-date-fields">
+        <label><span>开始日期</span><input v-model="nonOilDateFrom" type="date" /></label>
+        <i aria-hidden="true">至</i>
+        <label><span>结束日期</span><input v-model="nonOilDateTo" type="date" /></label>
+      </div>
+      <button
+        v-if="canGenerateReports"
+        type="button"
+        class="source-apply-generate-btn"
+        :disabled="loading || !nonOilDateFrom || !nonOilDateTo"
+        @click="startGeneration({ force: true })"
+      >按此范围生成</button>
+    </section>
+
+    <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel card-surface">
+      <div class="classification-panel-intro">
+        <div class="classification-ai-mark" aria-hidden="true">AI</div>
+        <div>
+          <span>NON-OIL CLASSIFICATION</span>
+          <h3>AI“其他”问题分类</h3>
+          <p>现场检查项目为“其他”的问题会自动归入明确类别，结果按问题ID保留，并支持人工调整。</p>
+        </div>
+      </div>
+      <div class="classification-panel-stats">
+        <div><span>涉及问题</span><strong>{{ nonOilClassificationStats.total }}</strong></div>
+        <div><span>AI已分类</span><strong>{{ nonOilClassificationStats.ai }}</strong></div>
+        <div><span>人工调整</span><strong>{{ nonOilClassificationStats.manual }}</strong></div>
+        <div><span>规则兜底</span><strong>{{ nonOilClassificationStats.fallback }}</strong></div>
+      </div>
+      <div class="classification-panel-preview">
+        <span v-if="nonOilClassificationsLoading">正在读取当前报告分类结果...</span>
+        <span v-else-if="nonOilClassificationsError" class="classification-panel-error">{{ nonOilClassificationsError }}</span>
+        <template v-else-if="nonOilClassifications.length">
+          <span v-for="item in nonOilClassifications.slice(0, 4)" :key="`non-oil-class-preview-${item.issue_id}`">
+            ID {{ item.issue_id }} · {{ item.effective_category }}
+          </span>
+          <em v-if="nonOilClassifications.length > 4">另有 {{ nonOilClassifications.length - 4 }} 条</em>
+        </template>
+        <span v-else>当前报告没有需要重新分类的“其他”问题。</span>
+      </div>
+      <button type="button" class="classification-manage-btn" :disabled="nonOilClassificationsLoading" @click="openNonOilClassificationDialog">
+        {{ canGenerateReports ? '查看与调整分类' : '查看分类结果' }}
+      </button>
+    </section>
+
     <div v-if="error" class="state-card error">{{ error }}</div>
 
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
@@ -216,7 +270,7 @@
     </section>
 
     <section v-else-if="hasReport" class="report-document card-surface">
-      <div v-if="!isQualityMeasurementReport" class="report-document-head">
+      <div v-if="!isQualityMeasurementReport && !isNonOilReport" class="report-document-head">
         <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
           <h1>{{ report.title || reportTitleFallback }}</h1>
@@ -388,196 +442,25 @@
       </template>
 
       <template v-else-if="isNonOilReport">
-        <div class="summary-cards non-oil-summary-cards">
-          <article v-for="card in summaryCards" :key="card.label" class="summary-card">
-            <span>{{ card.label }}</span>
-            <strong>{{ card.value }}</strong>
-            <small>{{ card.desc }}</small>
-          </article>
+        <div class="quality-ppt-viewer non-oil-ppt-viewer">
+          <header class="quality-ppt-toolbar">
+            <div>
+              <span>PRESENTATION PREVIEW</span>
+              <strong>{{ report.title || reportTitleFallback }}</strong>
+              <small>生成于 {{ reportGeneratedAt }} · 网页与导出PPT共用同一批幻灯片 · 支持键盘 ← → 翻页</small>
+            </div>
+            <div class="quality-ppt-page-count">{{ activeQualitySlideIndex + 1 }} / {{ nonOilSlideUrls.length }}</div>
+          </header>
+          <div v-if="currentNonOilSlideUrl" class="quality-ppt-stage non-oil-ppt-stage">
+            <img :src="currentNonOilSlideUrl" :alt="`非油检查报告第${activeQualitySlideIndex + 1}页`" />
+          </div>
+          <div v-else class="quality-slide-empty">当前报告还没有可展示的PPT预览，请重新生成。</div>
+          <nav v-if="nonOilSlideUrls.length" class="quality-ppt-pagination" aria-label="报告翻页">
+            <button type="button" :disabled="activeQualitySlideIndex === 0" @click="goToQualitySlide(activeQualitySlideIndex - 1)">上一页</button>
+            <div><button v-for="(_slide, index) in nonOilSlideUrls" :key="`non-oil-slide-page-${index}`" type="button" :class="{ active: index === activeQualitySlideIndex }" @click="goToQualitySlide(index)">{{ index + 1 }}</button></div>
+            <button type="button" :disabled="activeQualitySlideIndex >= nonOilSlideUrls.length - 1" @click="goToQualitySlide(activeQualitySlideIndex + 1)">下一页</button>
+          </nav>
         </div>
-
-        <article class="chapter-card non-oil-chapter">
-          <div class="chapter-banner">第一章　总体情况概述</div>
-          <section class="non-oil-subsection rectification">
-            <div class="non-oil-section-head">
-              <div><span>01</span><h3>上期整改情况</h3></div>
-              <strong>{{ nonOilPreviousRectification.month_label || '-' }}</strong>
-            </div>
-            <p class="chapter-lead">{{ nonOilPreviousRectification.narrative }}</p>
-            <div v-if="nonOilRectificationRows.length" class="non-oil-rectification-chart">
-              <article v-for="unit in nonOilRectificationRows" :key="`non-oil-rect-${unit.unit_type}-${unit.unit_name}`">
-                <header><strong>{{ unit.unit_name }}</strong><span>{{ unit.total_count }}项</span></header>
-                <div class="non-oil-rectification-bars">
-                  <div><span class="all" :style="{ width: `${getNonOilRectificationWidth('total_count', unit.total_count)}%` }"></span><b>全部 {{ unit.total_count }}</b></div>
-                  <div><span class="acceptance" :style="{ width: `${getNonOilRectificationWidth('pending_acceptance_count', unit.pending_acceptance_count)}%` }"></span><b>待验收 {{ unit.pending_acceptance_count }}</b></div>
-                  <div><span class="pending" :style="{ width: `${getNonOilRectificationWidth('pending_rectification_count', unit.pending_rectification_count)}%` }"></span><b>待整改 {{ unit.pending_rectification_count }}</b></div>
-                </div>
-              </article>
-            </div>
-            <div v-else class="safety-chart-empty">上期暂无非油整改统计数据。</div>
-          </section>
-
-          <section class="non-oil-subsection">
-            <div class="non-oil-section-head">
-              <div><span>02</span><h3>巡检范围</h3></div>
-              <strong>{{ report.period_text || '-' }}</strong>
-            </div>
-            <p class="chapter-lead">{{ report.scope_text }}</p>
-            <div class="report-table-wrap non-oil-scope-table">
-              <table class="report-table">
-                <thead><tr><th>序号</th><th>所属单位</th><th>站点数量</th><th>站点</th></tr></thead>
-                <tbody>
-                  <tr v-if="!nonOilUnitRows.length"><td colspan="4" class="empty-cell">当前周期暂无受检站点。</td></tr>
-                  <tr v-for="(unit, index) in nonOilUnitRows" :key="`non-oil-scope-${unit.unit_type}-${unit.unit_name}`">
-                    <td>{{ index + 1 }}</td><td>{{ unit.unit_name }}</td><td>{{ unit.station_count }}</td><td class="text-cell">{{ unit.station_names?.join('、') || '-' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="non-oil-subsection">
-            <div class="non-oil-section-head">
-              <div><span>03</span><h3>问题概况</h3></div>
-              <strong>{{ nonOilSummary.total_issue_count || 0 }}项</strong>
-            </div>
-            <p class="chapter-lead">{{ report.issue_overview_text }}</p>
-            <div v-if="nonOilUnitRows.length" class="non-oil-unit-chart">
-              <article v-for="unit in nonOilUnitRows" :key="`non-oil-unit-${unit.unit_type}-${unit.unit_name}`">
-                <div class="non-oil-unit-label"><span>{{ unit.unit_type_label }}</span><strong>{{ unit.unit_name }}</strong></div>
-                <div class="non-oil-unit-bars">
-                  <div><i class="issues" :style="{ width: `${getNonOilUnitBarWidth('issue_count', unit.issue_count)}%` }"></i><b>{{ unit.issue_count }}项问题</b></div>
-                  <div><i class="stations" :style="{ width: `${getNonOilUnitBarWidth('station_count', unit.station_count)}%` }"></i><b>{{ unit.station_count }}座站点</b></div>
-                </div>
-                <div class="non-oil-unit-average"><strong>{{ Number(unit.average_issue_count || 0).toFixed(1) }}</strong><span>项/站</span></div>
-              </article>
-            </div>
-          </section>
-        </article>
-
-        <article class="chapter-card non-oil-chapter">
-          <div class="chapter-banner">第二章　片区问题汇总</div>
-          <div class="non-oil-unit-summary-intro">
-            <div><span>UNIT REVIEW</span><strong>按管理单位逐项分析</strong></div>
-            <p>每个板块依次展示覆盖站点、问题构成和具有代表性的原始问题。</p>
-          </div>
-          <div class="non-oil-unit-summary-list">
-            <article
-              v-for="(unit, unitIndex) in nonOilUnitHighlights"
-              :key="`non-oil-summary-${unit.unit_type}-${unit.unit_name}`"
-              class="non-oil-unit-report"
-              :style="{ '--unit-accent': getFindingFlowColor(unitIndex) }"
-            >
-              <header class="non-oil-unit-report-head">
-                <div class="non-oil-unit-identity">
-                  <span>{{ String(unitIndex + 1).padStart(2, '0') }}</span>
-                  <div><small>{{ unit.unit_type_label }}</small><h3>{{ unit.unit_name }}</h3></div>
-                </div>
-                <div class="non-oil-unit-share"><strong>{{ formatPercent(unit.percentage) }}</strong><span>占本期问题</span></div>
-              </header>
-
-              <div class="non-oil-unit-report-main">
-                <section class="non-oil-unit-overview">
-                  <dl>
-                    <div><dt>涉及站点</dt><dd><strong>{{ unit.station_count }}</strong>座</dd></div>
-                    <div><dt>问题总计</dt><dd><strong>{{ unit.issue_count }}</strong>项</dd></div>
-                    <div><dt>站均问题</dt><dd><strong>{{ Number(unit.average_issue_count || 0).toFixed(1) }}</strong>项</dd></div>
-                  </dl>
-                  <div class="non-oil-unit-stations">
-                    <span>涉及站点</span>
-                    <p>{{ unit.station_names?.join('、') || '暂无站点' }}</p>
-                  </div>
-                  <div class="non-oil-unit-summary-copy">
-                    <div><span>问题特征</span><AiContentBadge :generated="Boolean(unit.ai_generated)" ai-label="AI归纳" fallback-label="规则归纳" compact /></div>
-                    <p>{{ unit.summary }}</p>
-                  </div>
-                </section>
-
-                <section class="non-oil-unit-category-panel">
-                  <header><div><span>CATEGORY</span><h4>问题构成</h4></div><small>单位内占比</small></header>
-                  <div class="non-oil-unit-category-chart">
-                    <div
-                      v-for="(category, categoryIndex) in unit.category_distribution"
-                      :key="`non-oil-unit-category-${unit.unit_name}-${category.name}`"
-                      :style="{ '--category-color': getFindingFlowColor(categoryIndex) }"
-                    >
-                      <div><span>{{ category.name }}</span><strong>{{ category.count }}项</strong></div>
-                      <i><b :style="{ width: `${category.percentage || 0}%` }"></b></i>
-                      <em>{{ formatPercent(category.percentage) }}</em>
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-              <section v-if="unit.highlighted_issues?.length" class="non-oil-unit-highlights">
-                <header><div><span>REPRESENTATIVE ISSUES</span><h4>代表性问题</h4></div><small>原始描述与现场照片</small></header>
-                <div class="non-oil-highlight-list">
-                  <article
-                    v-for="issue in unit.highlighted_issues"
-                    :key="`non-oil-unit-issue-${unit.unit_name}-${issue.issue_id}`"
-                    :class="{ 'has-photo': Boolean(issue.issue_photo) }"
-                  >
-                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name}问题照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" loading="lazy" /></button>
-                    <div><span>{{ issue.station_name }}</span><p>{{ issue.description }}</p></div>
-                  </article>
-                </div>
-              </section>
-            </article>
-          </div>
-          <div v-if="!nonOilUnitHighlights.length" class="safety-chart-empty">当前周期暂无片区问题数据。</div>
-        </article>
-
-        <article class="chapter-card non-oil-chapter">
-          <div class="chapter-banner">第三章　重点问题分析</div>
-          <div class="content-source-row"><span>结合问题频次、覆盖站点和原始描述筛选</span><AiContentBadge :generated="nonOilTypicalIssues.some((item) => item.ai_generated)" ai-label="AI筛选" fallback-label="规则筛选" /></div>
-          <div class="non-oil-typical-grid">
-            <article v-for="item in nonOilTypicalIssues" :key="`non-oil-typical-${item.category_name}-${item.title}`">
-              <header><span>{{ item.category_name }}</span><strong>{{ item.issue_count }}项 · {{ item.percentage }}%</strong></header>
-              <h3>{{ item.title }}</h3><p>{{ item.summary }}</p>
-              <div class="non-oil-typical-issues">
-                <div v-for="issue in item.issues" :key="`non-oil-typical-issue-${issue.issue_id}`">
-                  <div><strong>{{ issue.station_name }}</strong><p>{{ issue.description }}</p></div>
-                  <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name}问题照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" loading="lazy" /></button>
-                </div>
-              </div>
-            </article>
-          </div>
-        </article>
-
-        <article class="chapter-card non-oil-chapter">
-          <div class="chapter-banner">第四章　具体结果分析</div>
-          <div class="non-oil-distribution-layout">
-            <section class="non-oil-distribution-card">
-              <div class="non-oil-section-head"><div><span>01</span><h3>问题分布</h3></div><strong>{{ nonOilSummary.category_count || 0 }}类</strong></div>
-              <p>{{ report.category_distribution_text }}</p>
-              <div class="non-oil-category-list">
-                <div v-for="(item, index) in nonOilCategoryRows" :key="`non-oil-category-${item.name}`" :style="{ '--category-color': getFindingFlowColor(index) }">
-                  <div><span>{{ String(index + 1).padStart(2, '0') }}</span><strong>{{ item.name }}</strong></div>
-                  <div class="non-oil-category-track"><i :style="{ width: `${getNonOilCategoryWidth(item.count)}%` }"></i></div>
-                  <b>{{ item.count }}项</b><em>{{ formatPercent(item.percentage) }}</em>
-                </div>
-              </div>
-            </section>
-            <section class="non-oil-method-card">
-              <div class="non-oil-section-head"><div><span>02</span><h3>分析方法</h3></div><strong>数据+风险</strong></div>
-              <div class="non-oil-method-list"><article v-for="(item, index) in nonOilAnalysisMethod" :key="`non-oil-method-${index}-${item.title}`"><span>{{ index + 1 }}</span><div><h4>{{ item.title }}</h4><p>{{ item.content }}</p></div></article></div>
-            </section>
-          </div>
-          <div class="report-table-wrap non-oil-matrix-table">
-            <table class="report-table"><thead><tr><th>原始检查项目</th><th v-for="category in nonOilCategoryRows" :key="`matrix-head-${category.name}`">{{ category.name }}</th><th>合计</th></tr></thead>
-              <tbody><tr v-for="row in nonOilProjectMatrix" :key="`matrix-${row.source_project}`"><td class="text-cell">{{ row.source_project }}</td><td v-for="category in nonOilCategoryRows" :key="`matrix-${row.source_project}-${category.name}`">{{ row.category_counts?.[category.name] || 0 }}</td><td><strong>{{ row.total_count }}</strong></td></tr></tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="chapter-card non-oil-chapter">
-          <div class="chapter-banner">第五章　检查结果分析</div>
-          <div class="content-source-row"><span>围绕执行、流程、风险认知和监督闭环综合分析</span><AiContentBadge :generated="nonOilDeepAnalysis.ai_generated" ai-label="AI生成" fallback-label="规则生成" /></div>
-          <div class="non-oil-analysis-columns">
-            <section><header><span>ROOT CAUSE</span><h3>归因分析框架</h3></header><article v-for="(item, index) in nonOilAttributionAnalysis" :key="`non-oil-cause-${index}-${item.title}`"><span>0{{ index + 1 }}</span><div><h4>{{ item.title }}</h4><p>{{ item.content }}</p></div></article></section>
-            <section class="suggestions"><header><span>ACTION PLAN</span><h3>问题改善建议</h3></header><article v-for="(item, index) in nonOilImprovementSuggestions" :key="`non-oil-suggestion-${index}-${item.title}`"><span>STEP {{ index + 1 }}</span><div><h4>{{ item.title }}</h4><p>{{ item.content }}</p></div></article></section>
-          </div>
-        </article>
       </template>
 
       <template v-else-if="isSafetyQualityReport">
@@ -1784,6 +1667,43 @@
           </footer>
         </section>
       </div>
+      <div v-if="nonOilClassificationDialogVisible && isNonOilReport" class="flow-classification-dialog-layer">
+        <section class="flow-classification-dialog" role="dialog" aria-modal="true" aria-label="非油AI问题分类结果">
+          <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeNonOilClassificationDialog">×</button>
+          <header class="classification-dialog-head">
+            <div>
+              <span>NON-OIL CATEGORY REVIEW</span>
+              <h3>{{ canGenerateReports ? '查看与调整“其他”问题分类' : '查看“其他”问题分类' }}</h3>
+              <p>每条问题必须归入明确类别，报告图表不会再出现“其他”。人工调整保存后会重新生成报告。</p>
+            </div>
+            <div><strong>{{ nonOilClassifications.length }}</strong><span>条问题</span></div>
+          </header>
+          <div class="classification-dialog-toolbar">
+            <label><span>搜索</span><input v-model.trim="nonOilClassificationKeyword" type="search" placeholder="问题ID、站点、描述或外部规范ID" /></label>
+            <label><span>当前分类</span><select v-model="nonOilClassificationFilter"><option value="">全部分类</option><option v-for="category in nonOilClassificationCategories" :key="`non-oil-filter-${category}`" :value="category">{{ category }}</option></select></label>
+          </div>
+          <div v-if="nonOilClassificationsError" class="classification-dialog-message error">{{ nonOilClassificationsError }}</div>
+          <div class="classification-dialog-list">
+            <div v-if="!filteredNonOilClassifications.length" class="classification-list-empty">当前筛选条件下没有分类记录。</div>
+            <article v-for="item in filteredNonOilClassifications" :key="`non-oil-class-row-${item.issue_id}`">
+              <div class="classification-issue-main">
+                <div class="classification-issue-meta"><b>ID {{ item.issue_id }}</b><span>{{ item.station_name }}</span><span>{{ item.unit_name }}</span><span>外部规范ID {{ item.external_standard_id || '-' }}</span></div>
+                <p>{{ item.description || '暂无问题描述' }}</p>
+                <small v-if="item.reason">分类依据：{{ item.reason }}</small>
+              </div>
+              <div class="classification-result-compare">
+                <div><span>系统分类</span><strong>{{ item.effective_category }}</strong></div>
+                <label><span>报告采用</span><select v-model="nonOilClassificationDrafts[item.issue_id]" :disabled="!canGenerateReports"><option v-for="category in nonOilClassificationCategories" :key="`${item.issue_id}-${category}`" :value="category">{{ category }}</option></select></label>
+                <em :class="item.classification_source">{{ formatFlowClassificationSource(item.classification_source) }}</em>
+              </div>
+            </article>
+          </div>
+          <footer class="classification-dialog-footer">
+            <p>{{ canGenerateReports ? '保存后将按当前日期范围重新生成网页预览和PPT。' : '当前账号仅可查看分类结果。' }}</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilClassificationDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilClassificationsSaving || !hasNonOilClassificationChanges" @click="saveNonOilClassificationAdjustments">{{ nonOilClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+          </footer>
+        </section>
+      </div>
       <div v-if="selectionSettingsDialogVisible && isQualityMeasurementReport" class="report-selection-dialog-layer">
         <section class="report-selection-dialog" role="dialog" aria-modal="true" aria-label="质量计量报告选题规则">
           <button type="button" class="selection-dialog-close" aria-label="关闭" @click="closeSelectionSettingsDialog">×</button>
@@ -2069,7 +1989,9 @@ const createEmptyReport = () => ({
   category_sections: [],
   rows: [],
   total_row: {},
-  slides: []
+  slides: [],
+  presentation: {},
+  category_classifications: []
 })
 
 const createDefaultSelectionSettings = () => ({
@@ -2106,6 +2028,15 @@ const getDefaultReportMonth = () => {
   const year = previousMonth.getFullYear()
   const month = String(previousMonth.getMonth() + 1).padStart(2, '0')
   return `${year}-${month}`
+}
+
+const getDefaultNonOilDateRange = (monthValue) => {
+  const [year, month] = String(monthValue || '').split('-').map(Number)
+  if (!year || !month) return { date_from: '', date_to: '' }
+  const start = new Date(year, month - 2, 25)
+  const end = new Date(year, month - 1, 24)
+  const format = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+  return { date_from: format(start), date_to: format(end) }
 }
 
 const selectedMonth = ref(getDefaultReportMonth())
@@ -2176,6 +2107,17 @@ const flowClassificationDialogVisible = ref(false)
 const flowClassificationDrafts = ref({})
 const flowClassificationKeyword = ref('')
 const flowClassificationCategoryFilter = ref('')
+const nonOilDateFrom = ref(getDefaultNonOilDateRange(selectedMonth.value).date_from)
+const nonOilDateTo = ref(getDefaultNonOilDateRange(selectedMonth.value).date_to)
+const nonOilClassifications = ref([])
+const nonOilClassificationCategories = ref([])
+const nonOilClassificationsLoading = ref(false)
+const nonOilClassificationsSaving = ref(false)
+const nonOilClassificationsError = ref('')
+const nonOilClassificationDialogVisible = ref(false)
+const nonOilClassificationDrafts = ref({})
+const nonOilClassificationKeyword = ref('')
+const nonOilClassificationFilter = ref('')
 const activeQualitySlideIndex = ref(0)
 const qualityImageAspects = ref({})
 const exportDialogVisible = ref(false)
@@ -2203,6 +2145,17 @@ const qualitySlides = computed(() => (
 ))
 const currentQualitySlide = computed(() => (
   qualitySlides.value[activeQualitySlideIndex.value] || null
+))
+const nonOilSlideUrls = computed(() => (
+  Array.isArray(report.value?.presentation?.slide_urls)
+    ? report.value.presentation.slide_urls
+    : []
+))
+const currentNonOilSlideUrl = computed(() => (
+  nonOilSlideUrls.value[activeQualitySlideIndex.value] || ''
+))
+const activePresentationSlideCount = computed(() => (
+  isQualityMeasurementReport.value ? qualitySlides.value.length : nonOilSlideUrls.value.length
 ))
 const qualityOverallRows = computed(() => {
   if (currentQualitySlide.value?.kind !== 'overall') return []
@@ -2286,6 +2239,26 @@ const flowClassificationStats = computed(() => {
     pending: rows.filter((item) => !item.effective_category).length
   }
 })
+const nonOilClassificationStats = computed(() => ({
+  total: nonOilClassifications.value.length,
+  ai: nonOilClassifications.value.filter((item) => item.classification_source === 'ai').length,
+  manual: nonOilClassifications.value.filter((item) => item.classification_source === 'manual').length,
+  fallback: nonOilClassifications.value.filter((item) => item.classification_source === 'fallback').length
+}))
+const filteredNonOilClassifications = computed(() => {
+  const keyword = nonOilClassificationKeyword.value.toLowerCase()
+  return nonOilClassifications.value.filter((item) => {
+    if (nonOilClassificationFilter.value && item.effective_category !== nonOilClassificationFilter.value) return false
+    if (!keyword) return true
+    return [item.issue_id, item.station_name, item.unit_name, item.external_standard_id, item.description]
+      .some((value) => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+const hasNonOilClassificationChanges = computed(() => (
+  nonOilClassifications.value.some((item) => (
+    String(nonOilClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || '')
+  ))
+))
 const filteredFlowClassifications = computed(() => {
   const keyword = flowClassificationKeyword.value.toLowerCase()
   const category = flowClassificationCategoryFilter.value
@@ -2492,50 +2465,6 @@ const equipmentProblemAnalysis = computed(() => (
 const equipmentWorkSuggestions = computed(() => (
   Array.isArray(equipmentDeepAnalysis.value.work_suggestions)
     ? equipmentDeepAnalysis.value.work_suggestions
-    : []
-))
-const nonOilSummary = computed(() => report.value.summary || {})
-const nonOilUnitRows = computed(() => (
-  Array.isArray(report.value.units) ? report.value.units : []
-))
-const nonOilPreviousRectification = computed(() => (
-  report.value.previous_month_rectification || {}
-))
-const nonOilRectificationRows = computed(() => (
-  Array.isArray(nonOilPreviousRectification.value.units)
-    ? nonOilPreviousRectification.value.units
-    : []
-))
-const nonOilCategoryRows = computed(() => (
-  Array.isArray(report.value.category_distribution) ? report.value.category_distribution : []
-))
-const nonOilProjectMatrix = computed(() => (
-  Array.isArray(report.value.project_matrix) ? report.value.project_matrix : []
-))
-const nonOilDeepAnalysis = computed(() => report.value.deep_analysis || {})
-const nonOilUnitHighlights = computed(() => (
-  Array.isArray(nonOilDeepAnalysis.value.unit_highlights)
-    ? nonOilDeepAnalysis.value.unit_highlights
-    : []
-))
-const nonOilTypicalIssues = computed(() => (
-  Array.isArray(nonOilDeepAnalysis.value.typical_issues)
-    ? nonOilDeepAnalysis.value.typical_issues
-    : []
-))
-const nonOilAnalysisMethod = computed(() => (
-  Array.isArray(nonOilDeepAnalysis.value.analysis_method)
-    ? nonOilDeepAnalysis.value.analysis_method
-    : []
-))
-const nonOilAttributionAnalysis = computed(() => (
-  Array.isArray(nonOilDeepAnalysis.value.attribution_analysis)
-    ? nonOilDeepAnalysis.value.attribution_analysis
-    : []
-))
-const nonOilImprovementSuggestions = computed(() => (
-  Array.isArray(nonOilDeepAnalysis.value.improvement_suggestions)
-    ? nonOilDeepAnalysis.value.improvement_suggestions
     : []
 ))
 const reportMonthNumber = computed(() => {
@@ -2920,36 +2849,6 @@ const getServiceCategoryWidth = (section, value) => {
     : 0
 }
 
-const getNonOilUnitBarWidth = (field, value) => {
-  const max = Math.max(
-    ...nonOilUnitRows.value.map((item) => Number(item?.[field] || 0)),
-    1
-  )
-  return Number(value || 0) > 0
-    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
-    : 0
-}
-
-const getNonOilRectificationWidth = (field, value) => {
-  const max = Math.max(
-    ...nonOilRectificationRows.value.map((item) => Number(item?.[field] || 0)),
-    1
-  )
-  return Number(value || 0) > 0
-    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
-    : 0
-}
-
-const getNonOilCategoryWidth = (value) => {
-  const max = Math.max(
-    ...nonOilCategoryRows.value.map((item) => Number(item.count || 0)),
-    1
-  )
-  return Number(value || 0) > 0
-    ? Math.max(3, Math.min(100, Number(value || 0) / max * 100))
-    : 0
-}
-
 const buildEquipmentTypicalText = (item) => {
   if (!item?.issue_count) return '当前月份暂无可用于典型问题分析的数据。'
   const areas = joinChineseList(Array.isArray(item.area_names) ? item.area_names : [])
@@ -3043,7 +2942,7 @@ const closeImagePreview = () => {
 }
 
 const goToQualitySlide = (index) => {
-  const lastIndex = Math.max(0, qualitySlides.value.length - 1)
+  const lastIndex = Math.max(0, activePresentationSlideCount.value - 1)
   activeQualitySlideIndex.value = Math.max(0, Math.min(lastIndex, Number(index) || 0))
   window.requestAnimationFrame(() => {
     document.querySelector('.quality-ppt-stage')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -3059,8 +2958,8 @@ const isKeyboardEditingTarget = (target) => {
 
 const handleQualitySlideKeydown = (event) => {
   if (
-    !isQualityMeasurementReport.value
-    || qualitySlides.value.length < 2
+    (!isQualityMeasurementReport.value && !isNonOilReport.value)
+    || activePresentationSlideCount.value < 2
     || event.defaultPrevented
     || event.ctrlKey
     || event.metaKey
@@ -3069,6 +2968,7 @@ const handleQualitySlideKeydown = (event) => {
     || sourceDialogVisible.value
     || selectionSettingsDialogVisible.value
     || flowClassificationDialogVisible.value
+    || nonOilClassificationDialogVisible.value
     || exportDialogVisible.value
     || imagePreview.value.visible
   ) return
@@ -3076,7 +2976,7 @@ const handleQualitySlideKeydown = (event) => {
   const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
   if (!direction) return
   const targetIndex = activeQualitySlideIndex.value + direction
-  if (targetIndex < 0 || targetIndex >= qualitySlides.value.length) return
+  if (targetIndex < 0 || targetIndex >= activePresentationSlideCount.value) return
   event.preventDefault()
   goToQualitySlide(targetIndex)
 }
@@ -3314,6 +3214,81 @@ const saveFlowClassificationAdjustments = async () => {
     flowClassificationsError.value = err?.response?.data?.error || err?.message || '保存环节分类失败。'
   } finally {
     flowClassificationsSaving.value = false
+  }
+}
+
+const resetNonOilClassificationState = () => {
+  nonOilClassifications.value = []
+  nonOilClassificationCategories.value = []
+  nonOilClassificationsError.value = ''
+  nonOilClassificationDialogVisible.value = false
+  nonOilClassificationDrafts.value = {}
+  nonOilClassificationKeyword.value = ''
+  nonOilClassificationFilter.value = ''
+}
+
+const loadNonOilClassifications = async (requestId = contextRequestId) => {
+  if (!isNonOilReport.value) {
+    resetNonOilClassificationState()
+    return
+  }
+  nonOilClassificationsLoading.value = true
+  nonOilClassificationsError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/non-oil-category-classifications', {
+      params: { month: selectedMonth.value }
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) throw new Error(response.data?.error || '读取非油问题分类失败。')
+    nonOilClassifications.value = Array.isArray(response.data.classifications) ? response.data.classifications : []
+    nonOilClassificationCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
+    nonOilClassificationDrafts.value = Object.fromEntries(
+      nonOilClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+    )
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    nonOilClassifications.value = []
+    nonOilClassificationCategories.value = []
+    nonOilClassificationsError.value = err?.response?.data?.error || err?.message || '读取非油问题分类失败。'
+  } finally {
+    if (requestId === contextRequestId) nonOilClassificationsLoading.value = false
+  }
+}
+
+const openNonOilClassificationDialog = () => {
+  nonOilClassificationDrafts.value = Object.fromEntries(
+    nonOilClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+  )
+  nonOilClassificationKeyword.value = ''
+  nonOilClassificationFilter.value = ''
+  nonOilClassificationDialogVisible.value = true
+}
+
+const closeNonOilClassificationDialog = () => {
+  nonOilClassificationDialogVisible.value = false
+}
+
+const saveNonOilClassificationAdjustments = async () => {
+  if (!canGenerateReports.value || nonOilClassificationsSaving.value) return
+  const classifications = nonOilClassifications.value
+    .filter((item) => String(nonOilClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || ''))
+    .map((item) => ({ issue_id: item.issue_id, category: nonOilClassificationDrafts.value[item.issue_id] }))
+    .filter((item) => item.category)
+  if (!classifications.length) return
+  nonOilClassificationsSaving.value = true
+  nonOilClassificationsError.value = ''
+  try {
+    const response = await axios.put('/api/inspection-reports/non-oil-category-classifications', {
+      month: selectedMonth.value,
+      classifications
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存非油问题分类失败。')
+    closeNonOilClassificationDialog()
+    await startGeneration({ force: true })
+  } catch (err) {
+    nonOilClassificationsError.value = err?.response?.data?.error || err?.message || '保存非油问题分类失败。'
+  } finally {
+    nonOilClassificationsSaving.value = false
   }
 }
 
@@ -3587,6 +3562,11 @@ const pollActiveJob = async () => {
       }
       if (isQualityMeasurementReport.value) {
         await loadFlowClassifications(contextRequestId)
+      } else if (isNonOilReport.value) {
+        const summary = response.data.report?.summary || {}
+        nonOilDateFrom.value = summary.date_from || nonOilDateFrom.value
+        nonOilDateTo.value = summary.date_to || nonOilDateTo.value
+        await loadNonOilClassifications(contextRequestId)
       }
       loading.value = false
       error.value = ''
@@ -3628,6 +3608,11 @@ const startGeneration = async (options = {}) => {
         station_ids: sourceSelectionMode.value === 'custom'
           ? selectedSourceStationIds.value
           : []
+      }
+    } else if (isNonOilReport.value) {
+      payload.generation_options = {
+        date_from: nonOilDateFrom.value,
+        date_to: nonOilDateTo.value
       }
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
@@ -3686,11 +3671,22 @@ const loadReportState = async () => {
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
       await loadFlowClassifications(requestId)
+      resetNonOilClassificationState()
+    } else if (isNonOilReport.value) {
+      const defaults = getDefaultNonOilDateRange(selectedMonth.value)
+      nonOilDateFrom.value = report.value?.summary?.date_from || defaults.date_from
+      nonOilDateTo.value = report.value?.summary?.date_to || defaults.date_to
+      await loadNonOilClassifications(requestId)
+      sourceStations.value = []
+      sourceSelectionMode.value = 'all'
+      selectedSourceStationIds.value = []
+      resetFlowClassificationState()
     } else {
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
       resetFlowClassificationState()
+      resetNonOilClassificationState()
     }
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
@@ -3717,6 +3713,7 @@ const selectReportType = async (reportType) => {
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
+  resetNonOilClassificationState()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -3730,6 +3727,10 @@ const handleReportContextChange = async () => {
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
+  resetNonOilClassificationState()
+  const nonOilDefaults = getDefaultNonOilDateRange(selectedMonth.value)
+  nonOilDateFrom.value = nonOilDefaults.date_from
+  nonOilDateTo.value = nonOilDefaults.date_to
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -4241,6 +4242,63 @@ onBeforeUnmount(() => {
 .source-apply-generate-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.non-oil-source-panel {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.35fr) minmax(360px, 0.9fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  border: 1px solid rgba(13, 148, 136, 0.2);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(20, 184, 166, 0.13), transparent 34%),
+    linear-gradient(135deg, #f5fffd, #ffffff 60%, #ecfdf5);
+}
+
+.classification-ai-mark.date-mark {
+  background: linear-gradient(145deg, #0f766e, #14b8a6);
+  box-shadow: 0 12px 24px rgba(13, 148, 136, 0.2);
+}
+
+.non-oil-date-fields {
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) auto minmax(145px, 1fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.non-oil-date-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.non-oil-date-fields label span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.non-oil-date-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid #99f6e4;
+  border-radius: 12px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.9);
+  font: inherit;
+}
+
+.non-oil-date-fields > i {
+  padding-bottom: 12px;
+  color: #0f766e;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .quality-classification-panel {
@@ -6194,6 +6252,24 @@ onBeforeUnmount(() => {
   border-radius: 22px;
   background: #dfe4e8;
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.non-oil-ppt-stage {
+  display: grid;
+  width: 100%;
+  box-sizing: border-box;
+  place-items: center;
+  overflow: hidden;
+}
+
+.non-oil-ppt-stage > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #ffffff;
+  box-shadow: 0 15px 38px rgba(15, 23, 42, 0.18);
 }
 
 .quality-ppt-slide {
@@ -9878,700 +9954,16 @@ onBeforeUnmount(() => {
   }
 }
 
-.non-oil-summary-cards .summary-card {
-  border-top: 4px solid #e69b2d;
-}
-
-.non-oil-chapter {
-  --non-oil-ink: #16324a;
-  --non-oil-orange: #d9771f;
-  --non-oil-green: #16876a;
-  --non-oil-blue: #2966b2;
-}
-
-.non-oil-subsection {
-  margin-top: 28px;
-  padding: 24px;
-  border: 1px solid #dfe7ec;
-  border-radius: 22px;
-  background: linear-gradient(145deg, #ffffff 0%, #f8fbfa 100%);
-}
-
-.non-oil-subsection.rectification {
-  background: linear-gradient(145deg, #fffaf3 0%, #ffffff 65%);
-  border-color: #f0dfc4;
-}
-
-.non-oil-section-head,
-.non-oil-typical-grid > article > header,
-.non-oil-analysis-columns section > header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.non-oil-section-head > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.non-oil-section-head > div > span {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 11px;
-  color: #fff;
-  background: var(--non-oil-ink);
-  font-weight: 800;
-}
-
-.non-oil-section-head h3,
-.non-oil-section-head strong {
-  margin: 0;
-}
-
-.non-oil-section-head h3 {
-  color: var(--non-oil-ink);
-  font-size: 20px;
-}
-
-.non-oil-section-head > strong {
-  color: #607281;
-  font-size: 13px;
-}
-
-.non-oil-rectification-chart,
-.non-oil-unit-chart {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.non-oil-rectification-chart > article,
-.non-oil-unit-chart > article {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.8fr) minmax(360px, 3fr) 76px;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: #fff;
-  border: 1px solid #e5ebef;
-}
-
-.non-oil-rectification-chart > article header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.non-oil-rectification-chart > article header span,
-.non-oil-unit-label span {
-  color: #7a8b98;
-  font-size: 11px;
-}
-
-.non-oil-rectification-bars,
-.non-oil-unit-bars {
-  display: grid;
-  gap: 7px;
-}
-
-.non-oil-rectification-bars > div,
-.non-oil-unit-bars > div {
-  position: relative;
-  height: 24px;
-  overflow: hidden;
-  border-radius: 7px;
-  background: #eef2f4;
-}
-
-.non-oil-rectification-bars span,
-.non-oil-unit-bars i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-}
-
-.non-oil-rectification-bars span.all { background: #486fa3; }
-.non-oil-rectification-bars span.acceptance { background: #e4a035; }
-.non-oil-rectification-bars span.pending { background: #d65b52; }
-.non-oil-unit-bars i.issues { background: linear-gradient(90deg, #d9771f, #efb34c); }
-.non-oil-unit-bars i.stations { background: linear-gradient(90deg, #16876a, #51b498); }
-
-.non-oil-rectification-bars b,
-.non-oil-unit-bars b {
-  position: absolute;
-  inset: 0 9px;
-  display: flex;
-  align-items: center;
-  color: #173144;
-  font-size: 11px;
-}
-
-.non-oil-unit-label,
-.non-oil-unit-average {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.non-oil-unit-average {
-  align-items: center;
-}
-
-.non-oil-unit-average strong {
-  color: var(--non-oil-orange);
-  font-size: 24px;
-}
-
-.non-oil-unit-average span {
-  color: #7a8b98;
-  font-size: 11px;
-}
-
-.non-oil-scope-table {
-  margin-top: 18px;
-}
-
-.non-oil-typical-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 22px;
-}
-
-.non-oil-typical-grid > article {
-  padding: 22px;
-  border: 1px solid #dfe6eb;
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 10px 28px rgb(22 50 74 / 7%);
-}
-
-.non-oil-typical-grid h3 {
-  margin: 4px 0 0;
-  color: var(--non-oil-ink);
-}
-
-.non-oil-unit-summary-intro {
-  display: flex;
-  justify-content: space-between;
-  gap: 28px;
-  align-items: flex-end;
-  padding: 2px 4px 20px;
-  border-bottom: 1px solid #e2e8eb;
-}
-
-.non-oil-unit-summary-intro > div {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.non-oil-unit-summary-intro span,
-.non-oil-unit-category-panel header span,
-.non-oil-unit-highlights > header span {
-  color: #8999a3;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.14em;
-}
-
-.non-oil-unit-summary-intro strong {
-  color: var(--non-oil-ink);
-  font-size: 17px;
-}
-
-.non-oil-unit-summary-intro p {
-  max-width: 620px;
-  margin: 0;
-  color: #647985;
-  line-height: 1.7;
-  text-align: right;
-}
-
-.non-oil-unit-summary-list {
-  display: grid;
-  gap: 26px;
-  margin-top: 26px;
-}
-
-.non-oil-unit-report {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid #dce5e9;
-  border-radius: 22px;
-  background: #fff;
-  box-shadow: 0 13px 34px rgb(26 58 79 / 8%);
-}
-
-.non-oil-unit-report::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 5px;
-  background: var(--unit-accent);
-  content: '';
-}
-
-.non-oil-unit-report-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  align-items: center;
-  min-height: 82px;
-  padding: 18px 24px 18px 28px;
-  border-bottom: 1px solid #e7edef;
-  background: linear-gradient(90deg, #f7fafb, #fff 58%);
-}
-
-.non-oil-unit-identity {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-}
-
-.non-oil-unit-identity > span {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 13px;
-  color: #fff;
-  background: var(--unit-accent);
-  font-size: 13px;
-  font-weight: 900;
-  box-shadow: 0 7px 16px rgb(28 53 72 / 12%);
-}
-
-.non-oil-unit-identity small {
-  color: #7b8d98;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-}
-
-.non-oil-unit-identity h3 {
-  margin: 4px 0 0;
-  color: var(--non-oil-ink);
-  font-size: 21px;
-}
-
-.non-oil-unit-share {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-
-.non-oil-unit-share strong {
-  color: var(--unit-accent);
-  font-size: 24px;
-}
-
-.non-oil-unit-share span {
-  color: #84949e;
-  font-size: 10px;
-}
-
-.non-oil-unit-report-main {
-  display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(420px, 1.25fr);
-  gap: 22px;
-  padding: 22px 24px 24px 28px;
-}
-
-.non-oil-unit-overview {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.non-oil-unit-overview dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 9px;
-  margin: 0;
-}
-
-.non-oil-unit-overview dl > div {
-  padding: 12px;
-  border: 1px solid #e7edef;
-  border-radius: 13px;
-  background: #f7f9fa;
-}
-
-.non-oil-unit-overview dt {
-  color: #7a8b96;
-  font-size: 10px;
-}
-
-.non-oil-unit-overview dd {
-  margin: 6px 0 0;
-  color: #405867;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.non-oil-unit-overview dd strong {
-  margin-right: 3px;
-  color: var(--non-oil-ink);
-  font-size: 21px;
-}
-
-.non-oil-unit-stations,
-.non-oil-unit-summary-copy {
-  padding: 13px 15px;
-  border-radius: 13px;
-  background: #f7f9fa;
-}
-
-.non-oil-unit-stations > span,
-.non-oil-unit-summary-copy > div > span {
-  color: var(--unit-accent);
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.non-oil-unit-stations p,
-.non-oil-unit-summary-copy p {
-  margin: 7px 0 0;
-  color: #526a78;
-  line-height: 1.65;
-}
-
-.non-oil-unit-summary-copy > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
-.non-oil-unit-category-panel {
-  padding: 17px;
-  border: 1px solid #e2e9ec;
-  border-radius: 16px;
-  background: #f8fafb;
-}
-
-.non-oil-unit-category-panel > header,
-.non-oil-unit-highlights > header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.non-oil-unit-category-panel h4,
-.non-oil-unit-highlights h4 {
-  margin: 4px 0 0;
-  color: var(--non-oil-ink);
-  font-size: 16px;
-}
-
-.non-oil-unit-category-panel header small,
-.non-oil-unit-highlights > header small {
-  color: #8b9aa3;
-  font-size: 10px;
-}
-
-.non-oil-unit-category-chart {
-  display: grid;
-  gap: 13px;
-  margin-top: 18px;
-}
-
-.non-oil-unit-category-chart > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 58px;
-  gap: 6px 12px;
-  align-items: center;
-  color: #425967;
-  font-size: 12px;
-}
-
-.non-oil-unit-category-chart > div > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.non-oil-unit-category-chart > div > div strong {
-  flex: 0 0 auto;
-}
-
-.non-oil-unit-category-chart i {
-  grid-column: 1;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #dfe7eb;
-}
-
-.non-oil-unit-category-chart i b {
-  display: block;
-  min-width: 3px;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--category-color);
-}
-
-.non-oil-unit-category-chart em {
-  grid-column: 2;
-  grid-row: 2;
-  color: var(--non-oil-ink);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 800;
-  text-align: right;
-}
-
-.non-oil-typical-issues {
-  display: grid;
-  gap: 9px;
-  margin-top: 14px;
-}
-
-.non-oil-typical-issues > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 78px;
-  gap: 12px;
-  align-items: center;
-  padding: 11px;
-  border-radius: 13px;
-  background: #f7f9fa;
-}
-
-.non-oil-unit-highlights {
-  padding: 20px 24px 24px 28px;
-  border-top: 1px solid #e7edef;
-  background: #fbfcfc;
-}
-
-.non-oil-highlight-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px;
-  margin-top: 16px;
-}
-
-.non-oil-highlight-list > article {
-  display: block;
-  min-height: 116px;
-  overflow: hidden;
-  border: 1px solid #e1e8eb;
-  border-radius: 14px;
-  background: #fff;
-}
-
-.non-oil-highlight-list > article.has-photo {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-}
-
-.non-oil-highlight-list > article > div {
-  padding: 14px;
-}
-
-.non-oil-highlight-list > article span {
-  color: var(--unit-accent);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.non-oil-highlight-list p,
-.non-oil-typical-issues p {
-  margin: 4px 0 0;
-  color: #425967;
-  line-height: 1.55;
-}
-
-.non-oil-highlight-list button {
-  width: 132px;
-  height: 100%;
-  min-height: 116px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  background: #e9eef1;
-  cursor: zoom-in;
-}
-
-.non-oil-typical-issues button {
-  width: 78px;
-  height: 62px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: 10px;
-  background: #e9eef1;
-  cursor: zoom-in;
-}
-
-.non-oil-highlight-list img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.non-oil-typical-issues img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.non-oil-typical-grid > article {
-  border-top: 4px solid var(--non-oil-orange);
-}
-
-.non-oil-typical-grid header span {
-  color: var(--non-oil-green);
-  font-weight: 800;
-}
-
-.non-oil-typical-grid header strong {
-  color: #a65f1f;
-  font-size: 13px;
-}
-
-.non-oil-typical-grid > article > p {
-  color: #5e7180;
-  line-height: 1.7;
-}
-
-.non-oil-distribution-layout,
-.non-oil-analysis-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr);
-  gap: 18px;
-  margin-top: 22px;
-}
-
-.non-oil-distribution-card,
-.non-oil-method-card,
-.non-oil-analysis-columns > section {
-  padding: 22px;
-  border: 1px solid #dfe6eb;
-  border-radius: 20px;
-  background: #fff;
-}
-
-.non-oil-distribution-card > p {
-  color: #5e7180;
-  line-height: 1.7;
-}
-
-.non-oil-category-list {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.non-oil-category-list > div {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(120px, 1.6fr) 58px 58px;
-  gap: 12px;
-  align-items: center;
-}
-
-.non-oil-category-list > div > div:first-child {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.non-oil-category-list > div > div:first-child span {
-  color: var(--category-color);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.non-oil-category-track {
-  height: 12px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: #edf1f3;
-}
-
-.non-oil-category-track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--category-color);
-}
-
-.non-oil-category-list em {
-  color: #7c8c97;
-  font-style: normal;
-}
-
-.non-oil-method-list,
-.non-oil-analysis-columns section {
-  display: grid;
-  gap: 12px;
-}
-
-.non-oil-method-list article,
-.non-oil-analysis-columns section > article {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px;
-  border-radius: 14px;
-  background: #f5f8f8;
-}
-
-.non-oil-method-list article > span,
-.non-oil-analysis-columns section > article > span {
-  color: var(--non-oil-orange);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.non-oil-method-list h4,
-.non-oil-analysis-columns h4 {
-  margin: 0;
-  color: var(--non-oil-ink);
-}
-
-.non-oil-method-list p,
-.non-oil-analysis-columns p {
-  margin: 6px 0 0;
-  color: #536977;
-  line-height: 1.65;
-}
-
-.non-oil-matrix-table {
-  margin-top: 20px;
-}
-
-.non-oil-matrix-table table {
-  min-width: 980px;
-}
-
-.non-oil-analysis-columns > section:first-child {
-  border-top: 5px solid var(--non-oil-blue);
-}
-
-.non-oil-analysis-columns > section.suggestions {
-  border-top: 5px solid var(--non-oil-green);
-}
-
-.non-oil-analysis-columns section > header span {
-  color: #8a98a3;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-}
-
-.non-oil-analysis-columns section > header h3 {
-  margin: 4px 0 0;
-  color: var(--non-oil-ink);
-}
-
 @media (max-width: 900px) {
+  .non-oil-source-panel {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .non-oil-source-panel .source-apply-generate-btn {
+    justify-self: stretch;
+  }
+
   .quality-ppt-stage {
     padding: 10px;
     border-radius: 16px;
@@ -10583,43 +9975,6 @@ onBeforeUnmount(() => {
 
   .quality-trace-layout {
     grid-template-columns: minmax(0, 1.9fr) minmax(140px, 0.7fr);
-  }
-
-  .non-oil-typical-grid,
-  .non-oil-distribution-layout,
-  .non-oil-analysis-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .non-oil-unit-summary-intro {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .non-oil-unit-summary-intro p {
-    max-width: none;
-    text-align: left;
-  }
-
-  .non-oil-unit-report-main {
-    grid-template-columns: 1fr;
-  }
-
-  .non-oil-highlight-list {
-    grid-template-columns: 1fr;
-  }
-
-  .non-oil-rectification-chart > article,
-  .non-oil-unit-chart > article {
-    grid-template-columns: minmax(110px, 0.8fr) minmax(300px, 2fr) 68px;
-    min-width: 570px;
-  }
-
-  .non-oil-rectification-chart,
-  .non-oil-unit-chart {
-    overflow-x: auto;
-    padding-bottom: 6px;
   }
 
   .report-hero,
@@ -10855,6 +10210,22 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 520px) {
+  .non-oil-source-panel {
+    gap: 16px;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .non-oil-date-fields {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .non-oil-date-fields > i {
+    display: none;
+  }
+
   .quality-classification-panel {
     gap: 14px;
     padding: 17px;
@@ -11035,131 +10406,6 @@ onBeforeUnmount(() => {
     padding: 0 7px;
     border-radius: 9px;
     font-size: 11px;
-  }
-
-  .non-oil-subsection,
-  .non-oil-typical-grid > article,
-  .non-oil-distribution-card,
-  .non-oil-method-card,
-  .non-oil-analysis-columns > section {
-    padding: 16px;
-    border-radius: 17px;
-  }
-
-  .non-oil-section-head {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .non-oil-section-head h3 {
-    font-size: 17px;
-  }
-
-  .non-oil-unit-summary-intro {
-    padding-bottom: 16px;
-  }
-
-  .non-oil-unit-summary-intro p {
-    font-size: 12px;
-  }
-
-  .non-oil-unit-summary-list {
-    gap: 18px;
-    margin-top: 18px;
-  }
-
-  .non-oil-unit-report {
-    border-radius: 17px;
-  }
-
-  .non-oil-unit-report-head {
-    min-height: 68px;
-    padding: 14px 15px 14px 20px;
-  }
-
-  .non-oil-unit-identity {
-    gap: 10px;
-  }
-
-  .non-oil-unit-identity > span {
-    width: 36px;
-    height: 36px;
-    border-radius: 11px;
-  }
-
-  .non-oil-unit-identity h3 {
-    font-size: 18px;
-  }
-
-  .non-oil-unit-share strong {
-    font-size: 19px;
-  }
-
-  .non-oil-unit-report-main {
-    gap: 14px;
-    padding: 16px 15px 18px 20px;
-  }
-
-  .non-oil-unit-overview dl {
-    gap: 6px;
-  }
-
-  .non-oil-unit-overview dl > div {
-    padding: 9px 7px;
-  }
-
-  .non-oil-unit-overview dd strong {
-    font-size: 17px;
-  }
-
-  .non-oil-unit-stations,
-  .non-oil-unit-summary-copy,
-  .non-oil-unit-category-panel {
-    padding: 12px;
-  }
-
-  .non-oil-unit-category-chart > div {
-    grid-template-columns: minmax(0, 1fr) 48px;
-    gap: 5px 8px;
-  }
-
-  .non-oil-unit-highlights {
-    padding: 16px 15px 18px 20px;
-  }
-
-  .non-oil-unit-highlights > header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .non-oil-highlight-list > article.has-photo {
-    grid-template-columns: 1fr;
-  }
-
-  .non-oil-highlight-list button {
-    width: 100%;
-    height: 150px;
-    min-height: 150px;
-  }
-
-  .non-oil-typical-issues > div {
-    grid-template-columns: minmax(0, 1fr) 68px;
-  }
-
-  .non-oil-typical-issues button {
-    width: 68px;
-    height: 60px;
-  }
-
-  .non-oil-category-list > div {
-    grid-template-columns: minmax(0, 1fr) 46px 50px;
-  }
-
-  .non-oil-category-track {
-    grid-column: 1 / -1;
-    grid-row: 2;
   }
 
   .report-type-panel {

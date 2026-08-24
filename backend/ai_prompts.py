@@ -63,6 +63,13 @@ NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT = (
     "必须只输出 JSON，不要解释，不要使用 Markdown。"
 )
 
+NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的非油检查问题分类助手。"
+    "请把原检查项目为‘其他’的问题归入系统给定的一个有效非油检查类别。"
+    "只能使用允许分类列表中的完整名称，只能引用输入中真实存在的问题ID，"
+    "不允许保留‘其他’，不允许创造新分类或问题。必须只输出JSON，不要解释。"
+)
+
 
 def build_inspection_standard_recommendation_prompt(issue_description, standards):
     standards_payload = json.dumps(
@@ -385,4 +392,20 @@ def build_non_oil_report_insight_prompt(report_context):
         "4. improvement_suggestions 输出3-5条，明确执行动作、责任层级和闭环验证方式。\n"
         "5. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
         "6. 只能输出 JSON 本身。"
+    )
+
+
+def build_non_oil_category_classification_prompt(classification_context):
+    payload = json.dumps(
+        classification_context or {},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是非油检查表中原检查项目为‘其他’的问题数据。\n"
+        f"{payload}\n\n"
+        "请返回JSON对象："
+        "{\"classifications\":[{\"issue_id\":1,\"category\":\"允许分类中的完整名称\","
+        "\"reason\":\"不超过50字的分类依据\"}]}。\n"
+        "要求每个输入问题都返回一次，category必须来自allowed_categories，不能输出‘其他’。"
     )

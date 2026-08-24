@@ -8,6 +8,7 @@ from ai_prompts import (
     FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT,
     INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT,
     NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT,
+    NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT,
     ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT,
     QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT,
     QUALITY_MEASUREMENT_FLOW_CLASSIFICATION_SYSTEM_PROMPT,
@@ -16,6 +17,7 @@ from ai_prompts import (
     build_finance_report_insight_prompt,
     build_inspection_standard_recommendation_prompt,
     build_non_oil_report_insight_prompt,
+    build_non_oil_category_classification_prompt,
     build_on_site_service_report_insight_prompt,
     build_quality_measurement_report_insight_prompt,
     build_quality_measurement_flow_classification_prompt,
@@ -626,6 +628,64 @@ def classify_quality_measurement_report_flows(classification_context):
                 "message": "AI 问题环节分类失败，未分类问题将使用本地规则处理。",
                 "payload": None,
             },
+            prompt_text=prompt_text,
+            ai_called=True,
+            fallback_used=True,
+            status_code=status_code,
+        )
+
+
+def classify_non_oil_report_categories(classification_context):
+    prompt = build_non_oil_category_classification_prompt(classification_context or {})
+    prompt_text = f"{NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT}\n{prompt}"
+    try:
+        client = get_deepseek_client()
+    except Exception as exc:
+        logging.exception("DeepSeek client initialization failed for non-oil classification: %s", exc)
+        return with_ai_usage_meta(
+            {"generated": False, "message": "AI服务初始化失败，已使用本地规则分类。", "payload": None},
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
+    if not client:
+        return with_ai_usage_meta(
+            {"generated": False, "message": "未配置AI服务，已使用本地规则分类。", "payload": None},
+            prompt_text=prompt_text,
+            fallback_used=True,
+        )
+    try:
+        response = client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[
+                {"role": "system", "content": NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+            reasoning_effort="high",
+            extra_body={"thinking": {"type": "enabled"}},
+        )
+        raw_content = response.choices[0].message.content
+        payload = extract_json_from_ai_text(raw_content)
+        if not isinstance(payload, dict):
+            return with_ai_usage_meta(
+                {"generated": False, "message": "AI分类结果无法识别，已使用本地规则分类。", "payload": None},
+                prompt_text=prompt_text,
+                completion_text=raw_content,
+                ai_called=True,
+                fallback_used=True,
+            )
+        return with_ai_usage_meta(
+            {"generated": True, "message": "AI非油问题分类完成。", "payload": payload},
+            prompt_text=prompt_text,
+            completion_text=raw_content,
+            ai_called=True,
+            success=True,
+        )
+    except Exception as exc:
+        status_code = get_ai_error_status_code(exc)
+        logging.exception("DeepSeek non-oil category classification failed. status=%s error=%s", status_code, exc)
+        return with_ai_usage_meta(
+            {"generated": False, "message": "AI问题分类失败，已使用本地规则分类。", "payload": None},
             prompt_text=prompt_text,
             ai_called=True,
             fallback_used=True,
