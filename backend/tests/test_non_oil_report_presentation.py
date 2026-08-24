@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from ai_prompts import (
     build_non_oil_category_classification_prompt,
@@ -84,6 +85,30 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 self.assertEqual(image.size, CANVAS_SIZE)
             presentation = Presentation(ppt_path)
             self.assertEqual(len(presentation.slides), result["slide_count"])
+            self.assertTrue(
+                any(shape.has_text_frame for shape in presentation.slides[0].shapes)
+            )
+            self.assertTrue(
+                any(shape.has_table for shape in presentation.slides[4].shapes)
+            )
+            self.assertGreaterEqual(
+                sum(
+                    shape.shape_type == MSO_SHAPE_TYPE.CHART
+                    for shape in presentation.slides[8].shapes
+                ),
+                2,
+            )
+            self.assertGreaterEqual(
+                sum(
+                    shape.shape_type == MSO_SHAPE_TYPE.CHART
+                    for shape in presentation.slides[9].shapes
+                ),
+                2,
+            )
+            self.assertFalse(
+                len(presentation.slides[0].shapes) == 1
+                and presentation.slides[0].shapes[0].shape_type == MSO_SHAPE_TYPE.PICTURE
+            )
 
             copied_path = root / "exports" / "copy.pptx"
             copied = copy_existing_non_oil_presentation(
