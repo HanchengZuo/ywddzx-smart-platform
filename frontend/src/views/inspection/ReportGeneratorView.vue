@@ -9,8 +9,17 @@
       <div class="report-month-control">
         <label>
           <span>报告月份</span>
-          <input v-model="selectedMonth" type="month" @change="handleReportContextChange" />
+          <input
+            v-model="selectedMonth"
+            type="month"
+            :disabled="isNonOilReport && nonOilUsesCustomDateRange"
+            :title="isNonOilReport && nonOilUsesCustomDateRange ? '已使用自定义日期范围，请先恢复为当月范围' : ''"
+            @change="handleReportContextChange"
+          />
         </label>
+        <small v-if="isNonOilReport && nonOilUsesCustomDateRange" class="report-month-custom-note">
+          已使用自定义日期范围，报告月份暂时锁定。
+        </small>
         <button
           type="button"
           class="regenerate-report-btn"
@@ -186,6 +195,10 @@
         <label><span>开始日期</span><input v-model="nonOilDateFrom" type="date" /></label>
         <i aria-hidden="true">至</i>
         <label><span>结束日期</span><input v-model="nonOilDateTo" type="date" /></label>
+        <div v-if="nonOilUsesCustomDateRange" class="non-oil-custom-range-note">
+          <span>当前日期已偏离 {{ nonOilDefaultMonthLabel }} 的自然月范围，报告月份已锁定。</span>
+          <button type="button" @click="resetNonOilDateRange">恢复为当月范围</button>
+        </div>
       </div>
       <button
         v-if="canGenerateReports"
@@ -2033,8 +2046,8 @@ const getDefaultReportMonth = () => {
 const getDefaultNonOilDateRange = (monthValue) => {
   const [year, month] = String(monthValue || '').split('-').map(Number)
   if (!year || !month) return { date_from: '', date_to: '' }
-  const start = new Date(year, month - 2, 25)
-  const end = new Date(year, month - 1, 24)
+  const start = new Date(year, month - 1, 1)
+  const end = new Date(year, month, 0)
   const format = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
   return { date_from: format(start), date_to: format(end) }
 }
@@ -2140,6 +2153,19 @@ const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const isNonOilReport = computed(() => selectedReportType.value === 'non_oil')
+const nonOilDefaultDateRange = computed(() => getDefaultNonOilDateRange(selectedMonth.value))
+const nonOilUsesCustomDateRange = computed(() => (
+  isNonOilReport.value
+  && Boolean(nonOilDateFrom.value || nonOilDateTo.value)
+  && (
+    nonOilDateFrom.value !== nonOilDefaultDateRange.value.date_from
+    || nonOilDateTo.value !== nonOilDefaultDateRange.value.date_to
+  )
+))
+const nonOilDefaultMonthLabel = computed(() => {
+  const month = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
+  return Number.isFinite(month) ? `${month}月` : '当前月份'
+})
 const qualitySlides = computed(() => (
   Array.isArray(report.value?.slides) ? report.value.slides : []
 ))
@@ -3564,8 +3590,7 @@ const pollActiveJob = async () => {
         await loadFlowClassifications(contextRequestId)
       } else if (isNonOilReport.value) {
         const summary = response.data.report?.summary || {}
-        nonOilDateFrom.value = summary.date_from || nonOilDateFrom.value
-        nonOilDateTo.value = summary.date_to || nonOilDateTo.value
+        syncNonOilDateRangeFromReport(summary)
         await loadNonOilClassifications(contextRequestId)
       }
       loading.value = false
@@ -3610,10 +3635,12 @@ const startGeneration = async (options = {}) => {
           : []
       }
     } else if (isNonOilReport.value) {
-      payload.generation_options = {
-        date_from: nonOilDateFrom.value,
-        date_to: nonOilDateTo.value
-      }
+      payload.generation_options = nonOilUsesCustomDateRange.value
+        ? {
+            date_from: nonOilDateFrom.value,
+            date_to: nonOilDateTo.value
+          }
+        : {}
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
     if (requestId !== contextRequestId) return
@@ -3673,9 +3700,7 @@ const loadReportState = async () => {
       await loadFlowClassifications(requestId)
       resetNonOilClassificationState()
     } else if (isNonOilReport.value) {
-      const defaults = getDefaultNonOilDateRange(selectedMonth.value)
-      nonOilDateFrom.value = report.value?.summary?.date_from || defaults.date_from
-      nonOilDateTo.value = report.value?.summary?.date_to || defaults.date_to
+      syncNonOilDateRangeFromReport(report.value?.summary || {})
       await loadNonOilClassifications(requestId)
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
@@ -3718,6 +3743,22 @@ const selectReportType = async (reportType) => {
   await loadReportState()
 }
 
+const resetNonOilDateRange = () => {
+  nonOilDateFrom.value = nonOilDefaultDateRange.value.date_from
+  nonOilDateTo.value = nonOilDefaultDateRange.value.date_to
+}
+
+const syncNonOilDateRangeFromReport = (summary = {}) => {
+  const defaults = getDefaultNonOilDateRange(selectedMonth.value)
+  if (summary.date_range_customized === true && summary.date_from && summary.date_to) {
+    nonOilDateFrom.value = summary.date_from
+    nonOilDateTo.value = summary.date_to
+    return
+  }
+  nonOilDateFrom.value = defaults.date_from
+  nonOilDateTo.value = defaults.date_to
+}
+
 const handleReportContextChange = async () => {
   closeExportDialog()
   exportTask.value = null
@@ -3728,9 +3769,7 @@ const handleReportContextChange = async () => {
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
   resetNonOilClassificationState()
-  const nonOilDefaults = getDefaultNonOilDateRange(selectedMonth.value)
-  nonOilDateFrom.value = nonOilDefaults.date_from
-  nonOilDateTo.value = nonOilDefaults.date_to
+  resetNonOilDateRange()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -3837,6 +3876,19 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 800;
   color: #0f172a;
+}
+
+.report-month-control input:disabled {
+  cursor: not-allowed;
+  color: #64748b;
+  background: #cbd5e1;
+  opacity: 0.82;
+}
+
+.report-month-control .report-month-custom-note {
+  color: #fde68a;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .regenerate-report-btn {
@@ -4299,6 +4351,35 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-style: normal;
   font-weight: 900;
+}
+
+.non-oil-custom-range-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #fcd34d;
+  border-radius: 11px;
+  color: #92400e;
+  background: #fffbeb;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.non-oil-custom-range-note button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 9px;
+  color: #92400e;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .quality-classification-panel {
@@ -6268,6 +6349,7 @@ onBeforeUnmount(() => {
   height: auto;
   aspect-ratio: 16 / 9;
   object-fit: contain;
+  image-rendering: auto;
   background: #ffffff;
   box-shadow: 0 15px 38px rgba(15, 23, 42, 0.18);
 }
@@ -10224,6 +10306,15 @@ onBeforeUnmount(() => {
 
   .non-oil-date-fields > i {
     display: none;
+  }
+
+  .non-oil-custom-range-note {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .non-oil-custom-range-note button {
+    width: 100%;
   }
 
   .quality-classification-panel {

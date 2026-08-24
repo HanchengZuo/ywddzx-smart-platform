@@ -36,7 +36,7 @@ TEMPLATE_FILE = (
     / "non_oil_report_template"
     / "non_oil_report_template.pptx"
 )
-CANVAS_SIZE = (1280, 720)
+CANVAS_SIZE = (2560, 1440)
 UNIT_ORDER = [
     "浦东", "闵普徐", "松金", "嘉青", "南汇", "宝静", "奉贤", "崇明",
     "中油奉贤", "中油同盛", "中油康桥", "中油农工商", "中油上海", "中油港汇",
@@ -272,6 +272,54 @@ def _fill_table(shape, headers, rows, font_size=11):
     shape.height = target_height
 
 
+def _visual_text_units(value):
+    units = 0.0
+    for character in str(value or ""):
+        if character == "\n":
+            continue
+        units += 0.55 if ord(character) < 128 else 1.0
+    return units
+
+
+def _estimate_scope_text_height(lines, width_inches, font_size):
+    usable_width_points = max(120, (width_inches - 0.2) * 72)
+    characters_per_line = max(12, usable_width_points / max(font_size, 1))
+    wrapped_lines = sum(
+        max(
+            1,
+            int(
+                (_visual_text_units(line) + characters_per_line - 1)
+                // characters_per_line
+            ),
+        )
+        for line in lines
+    )
+    return wrapped_lines * font_size * 1.22 / 72 + 0.12
+
+
+def _set_scope_text(text_frame, period_text, scope_text, font_size):
+    text_frame.clear()
+    text_frame.word_wrap = True
+    text_frame.margin_top = Inches(0.04)
+    text_frame.margin_bottom = Inches(0.04)
+    for index, (label, value) in enumerate(
+        (("巡检期间：", period_text), ("巡检范围：", scope_text))
+    ):
+        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        paragraph.alignment = PP_ALIGN.LEFT
+        paragraph.line_spacing = 1.15
+        label_run = paragraph.add_run()
+        label_run.text = label
+        label_run.font.size = Pt(font_size)
+        label_run.font.bold = True
+        _set_run_typeface(label_run, FONT_SERIF)
+        value_run = paragraph.add_run()
+        value_run.text = str(value or "-")
+        value_run.font.size = Pt(font_size)
+        value_run.font.bold = False
+        _set_run_typeface(value_run, FONT_SERIF)
+
+
 def _set_chart_fonts(chart, category_size=9):
     try:
         chart.category_axis.tick_labels.font.size = Pt(category_size)
@@ -431,11 +479,6 @@ def _edit_scope_slide(slide, report):
         ),
         None,
     )
-    if text_shape:
-        _set_text_frame(
-            text_shape.text_frame,
-            f"巡检期间：{report.get('period_text') or '-'}\n巡检范围：{report.get('scope_text') or '-'}",
-        )
     table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
     units = sorted(report.get("units") or [], key=_unit_sort_key)
     rows = [
@@ -447,11 +490,53 @@ def _edit_scope_slide(slide, report):
         ]
         for index, item in enumerate(units, 1)
     ]
+    if text_shape:
+        period_text = report.get("period_text") or "-"
+        scope_text = report.get("scope_text") or "-"
+        content_bottom = Inches(7.28)
+        gap = Inches(0.1)
+        minimum_table_height = Inches(
+            min(4.85, max(3.35, 0.48 + max(1, len(rows)) * 0.2))
+        )
+        maximum_text_height = max(
+            Inches(0.72),
+            content_bottom - text_shape.top - gap - minimum_table_height,
+        )
+        selected_font_size = 15
+        estimated_text_height = maximum_text_height / 914400
+        for candidate_size in (20, 19, 18, 17, 16, 15):
+            candidate_height = _estimate_scope_text_height(
+                (period_text, scope_text),
+                text_shape.width / 914400,
+                candidate_size,
+            )
+            if Inches(candidate_height) <= maximum_text_height:
+                selected_font_size = candidate_size
+                estimated_text_height = candidate_height
+                break
+        text_shape.height = min(
+            maximum_text_height,
+            Inches(max(0.72, estimated_text_height)),
+        )
+        _set_scope_text(
+            text_shape.text_frame,
+            period_text,
+            scope_text,
+            selected_font_size,
+        )
+        table_shape.top = text_shape.top + text_shape.height + gap
+        table_shape.height = max(Inches(3.2), content_bottom - table_shape.top)
+    table_font_size = (
+        7 if len(rows) > 16
+        else 8 if len(rows) > 13
+        else 9 if len(rows) > 10
+        else 10
+    )
     _fill_table(
         table_shape,
         ["序号", "所属片区", "站点数量", "站点"],
         rows,
-        font_size=8 if len(rows) > 14 else (10 if len(rows) > 12 else 11),
+        font_size=table_font_size,
     )
 
 
@@ -682,7 +767,7 @@ def _render_presentation_preview(pptx_path, output_dir):
                 "-scale-to-y",
                 str(CANVAS_SIZE[1]),
                 "-jpegopt",
-                "quality=92",
+                "quality=95",
                 str(pdf_path),
                 str(prefix),
             ],

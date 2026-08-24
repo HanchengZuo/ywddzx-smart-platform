@@ -12,6 +12,9 @@ from ai_prompts import (
 )
 from non_oil_report_presentation import (
     CANVAS_SIZE,
+    TEMPLATE_FILE,
+    UNIT_ORDER,
+    _edit_scope_slide,
     build_non_oil_template_presentation,
     copy_existing_non_oil_presentation,
 )
@@ -25,7 +28,7 @@ class NonOilReportPresentationTest(unittest.TestCase):
         ]
         return {
             "month": "2026-07",
-            "period_text": "7月巡检，2026年6月25日-2026年7月24日",
+            "period_text": "7月巡检，2026年7月1日-2026年7月31日",
             "scope_text": "7月非油现场抽检2座站点，涉及1个管理片区。",
             "unit_overview_text": "本次非油巡检共发现5项问题。",
             "summary": {"total_issue_count": 5, "category_count": 2},
@@ -110,6 +113,18 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 and presentation.slides[0].shapes[0].shape_type == MSO_SHAPE_TYPE.PICTURE
             )
 
+            scope_slide = presentation.slides[4]
+            scope_text = next(
+                shape for shape in scope_slide.shapes
+                if getattr(shape, "has_text_frame", False) and "巡检期间" in shape.text
+            )
+            scope_table = next(shape for shape in scope_slide.shapes if shape.has_table)
+            self.assertLessEqual(scope_text.top + scope_text.height, scope_table.top)
+            self.assertLessEqual(
+                scope_table.top + scope_table.height,
+                presentation.slide_height,
+            )
+
             copied_path = root / "exports" / "copy.pptx"
             copied = copy_existing_non_oil_presentation(
                 {
@@ -123,6 +138,42 @@ class NonOilReportPresentationTest(unittest.TestCase):
             )
             self.assertEqual(copied["slide_count"], result["slide_count"])
             self.assertEqual(copied_path.read_bytes(), ppt_path.read_bytes())
+
+    def test_scope_slide_adapts_to_all_supported_units_without_overlap(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        report = self.make_report()
+        report["scope_text"] = (
+            "7月非油现场与团购检查覆盖96座站点，涉及8个管理片区"
+            "（浦东、闵普徐、松金、嘉青、南汇、宝静、奉贤、崇明）和10个控（参）股单位"
+            "（中油奉贤、中油同盛、中油康桥、中油农工商、中油上海、中油港汇、"
+            "中石油上港、中油浦东、中油华鑫、中油中燃）。"
+        )
+        report["units"] = [
+            {
+                "unit_name": unit_name,
+                "station_count": 4,
+                "station_names": [
+                    f"{unit_name}一站",
+                    f"{unit_name}二站",
+                    f"{unit_name}三站",
+                    f"{unit_name}四站",
+                ],
+            }
+            for unit_name in UNIT_ORDER
+        ]
+        slide = presentation.slides[4]
+        _edit_scope_slide(slide, report)
+        text_shape = next(
+            shape for shape in slide.shapes
+            if getattr(shape, "has_text_frame", False) and "巡检期间" in shape.text
+        )
+        table_shape = next(shape for shape in slide.shapes if shape.has_table)
+        self.assertEqual(len(table_shape.table.rows), len(UNIT_ORDER) + 1)
+        self.assertLessEqual(text_shape.top + text_shape.height, table_shape.top)
+        self.assertLessEqual(
+            table_shape.top + table_shape.height,
+            presentation.slide_height,
+        )
 
 
 if __name__ == "__main__":

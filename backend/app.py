@@ -7646,13 +7646,7 @@ def parse_report_month(value):
 
 
 def parse_non_oil_report_period(value):
-    month_start, _month_end = parse_report_month(value)
-    if month_start.month == 1:
-        period_start = date(month_start.year - 1, 12, 25)
-    else:
-        period_start = date(month_start.year, month_start.month - 1, 25)
-    period_end = date(month_start.year, month_start.month, 25)
-    return period_start, period_end
+    return parse_report_month(value)
 
 
 def get_inspection_report_date_range(report_type, value):
@@ -31797,6 +31791,13 @@ def generate_non_oil_report_job(
         inspection_rows,
         previous_issue_rows,
         classification_map,
+    )
+    normalized_generation_options = normalize_inspection_report_generation_options(
+        generation_options or {}
+    )
+    report["summary"]["date_range_customized"] = bool(
+        normalized_generation_options.get("date_from")
+        and normalized_generation_options.get("date_to")
     )
     report["source_selection"] = source_selection
     insight_result = None
