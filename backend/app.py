@@ -12228,10 +12228,21 @@ def build_non_oil_category_classification_context(rows, classification_map):
 
 
 def local_non_oil_category_fallback(row):
+    table_name = str(row.get("table_name") or "").replace(
+        DISPLAY_REMOVED_STATION_PHRASE,
+        "",
+    ).strip()
     combined = " ".join(
         str(value or "")
-        for value in (row.get("standard_detail_text"), row.get("description"))
+        for value in (
+            row.get("source_project"),
+            row.get("source_content"),
+            row.get("standard_detail_text"),
+            row.get("description"),
+        )
     )
+    if table_name == NON_OIL_REPORT_GROUP_PURCHASE_TABLE:
+        return "商品订单、入库、盘点等情况"
     mappings = [
         ("员工形象及开口服务情况", ("员工", "形象", "开口", "服务用语", "工装")),
         ("便利店卫生情况", ("卫生", "清洁", "污渍", "垃圾", "虫害")),
@@ -12247,6 +12258,13 @@ def local_non_oil_category_fallback(row):
         if any(keyword in combined for keyword in keywords):
             return category
     return "店销商品摆放情况"
+
+
+def normalize_non_oil_effective_category(category_name, row=None):
+    normalized = normalize_report_category(category_name, "")
+    if normalized in NON_OIL_REPORT_CATEGORIES:
+        return normalized
+    return local_non_oil_category_fallback(row or {})
 
 
 def build_non_oil_category_classification_decisions(rows, context, ai_result):
@@ -12339,6 +12357,18 @@ def serialize_non_oil_report_issue(row, classification_map=None):
         else:
             category_name = local_non_oil_category_fallback(row)
             classification_source = "fallback"
+    normalized_category = normalize_non_oil_effective_category(
+        category_name,
+        {
+            **row,
+            "table_name": table_name,
+            "source_project": source_project,
+            "source_content": source_content,
+        },
+    )
+    if normalized_category != category_name:
+        category_name = normalized_category
+        classification_source = "fallback"
     return {
         "issue_id": int(row.get("id") or 0),
         "station_id": row.get("station_id"),
@@ -12530,16 +12560,26 @@ def build_non_oil_previous_rectification(report_month_start, previous_rows):
 def build_non_oil_category_distribution(issues):
     counts = {name: 0 for name in NON_OIL_REPORT_CATEGORIES}
     for issue in issues or []:
-        category_name = issue.get("category_name") or NON_OIL_REPORT_CATEGORIES[0]
-        counts[category_name] = counts.get(category_name, 0) + 1
+        category_name = normalize_non_oil_effective_category(
+            issue.get("category_name"),
+            issue,
+        )
+        counts[category_name] += 1
     total = sum(counts.values())
+    category_order = {
+        category_name: index
+        for index, category_name in enumerate(NON_OIL_REPORT_CATEGORIES)
+    }
     return [
         {
             "name": name,
             "count": count,
             "percentage": round(count / total * 100, 1) if total else 0,
         }
-        for name, count in sorted(counts.items(), key=lambda item: (-item[1], NON_OIL_REPORT_CATEGORIES.index(item[0])))
+        for name, count in sorted(
+            counts.items(),
+            key=lambda item: (-item[1], category_order[item[0]]),
+        )
     ]
 
 
@@ -12551,7 +12591,11 @@ def build_non_oil_project_matrix(issues):
             source_project,
             {name: 0 for name in NON_OIL_REPORT_CATEGORIES},
         )
-        target[issue["category_name"]] += 1
+        category_name = normalize_non_oil_effective_category(
+            issue.get("category_name"),
+            issue,
+        )
+        target[category_name] += 1
     rows = []
     for source_project, category_counts in grouped.items():
         total = sum(category_counts.values())
