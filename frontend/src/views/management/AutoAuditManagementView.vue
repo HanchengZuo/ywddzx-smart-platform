@@ -4,7 +4,7 @@
       <div>
         <div class="page-kicker">管理系统</div>
         <h2>白名单自动审核管理</h2>
-        <p>用外部规范ID或问题描述关键词建立规则，帮助审核人员自动处理明确、重复的问题。</p>
+        <p>用唯一外部规范ID建立平级规则，自动处理结论明确、重复出现的问题。</p>
       </div>
       <button class="btn btn-primary create-rule-btn" type="button" @click="openCreateDialog">
         <span>+</span>新增自动审核规则
@@ -25,11 +25,11 @@
         <div class="workflow-steps" aria-label="自动审核流程">
           <div><strong>1</strong><span>检查人全部确认</span></div>
           <i></i>
-          <div><strong>2</strong><span>按优先级匹配规则</span></div>
+          <div><strong>2</strong><span>精确匹配外部规范ID</span></div>
           <i></i>
           <div><strong>3</strong><span>自动通过或否决</span></div>
         </div>
-        <div class="workflow-note">优先级数字越小越先执行；同一问题只使用第一条命中规则。</div>
+        <div class="workflow-note">所有规则层级一致；外部规范ID全量精确匹配，不会通过问题描述推测结论。</div>
       </article>
 
       <div class="metric-grid">
@@ -61,7 +61,7 @@
         <div>
           <div class="section-kicker">规则中心</div>
           <h3>自动审核规则</h3>
-          <p>相同触发条件只能建立一条规则，需要改变结论时请直接编辑。</p>
+          <p>每个外部规范ID只能建立一条规则，需要改变结论时请直接编辑。</p>
         </div>
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchData">
           {{ loading ? '刷新中...' : '刷新数据' }}
@@ -76,10 +76,6 @@
       </div>
       <div v-else class="rule-list">
         <article v-for="rule in rules" :key="rule.id" class="rule-row" :class="{ disabled: !rule.is_enabled }">
-          <div class="priority-block">
-            <span>优先级</span>
-            <strong>{{ rule.priority }}</strong>
-          </div>
           <div class="rule-main">
             <div class="rule-title-line">
               <h4>{{ rule.rule_name }}</h4>
@@ -89,8 +85,8 @@
               </span>
             </div>
             <div class="condition-line">
-              <span>{{ matchTypeLabel(rule.match_type) }}</span>
-              <strong>{{ rule.match_value }}</strong>
+              <span>外部规范ID</span>
+              <strong>{{ rule.external_standard_id }}</strong>
             </div>
             <p v-if="rule.remark">{{ rule.remark }}</p>
             <div class="rule-meta">
@@ -191,7 +187,7 @@
               <td class="description-cell">{{ item.issue_description || '-' }}</td>
               <td>
                 <strong>{{ item.rule_name }}</strong>
-                <small>{{ matchTypeLabel(item.match_type) }}：{{ item.match_value }}</small>
+                <small>外部规范ID：{{ item.external_standard_id || '-' }}</small>
               </td>
               <td><span :class="['decision-chip', item.decision]">{{ decisionLabel(item.decision) }}</span></td>
             </tr>
@@ -240,20 +236,9 @@
           </label>
 
           <label>
-            <span>触发指标</span>
-            <select v-model="dialog.form.match_type" @change="dialog.form.match_value = ''">
-              <option value="external_standard_id">外部规范ID</option>
-              <option value="description_keyword">问题描述关键词</option>
-            </select>
-            <small>{{ matchTypeHelp(dialog.form.match_type) }}</small>
-          </label>
-
-          <label>
-            <span>{{ dialog.form.match_type === 'external_standard_id' ? '完整外部规范ID' : '连续关键词' }}</span>
-            <input v-model.trim="dialog.form.match_value"
-              :type="dialog.form.match_type === 'external_standard_id' ? 'number' : 'text'"
-              :placeholder="dialog.form.match_type === 'external_standard_id' ? '例如：1000' : '例如：未张贴公示牌'" />
-            <small>{{ dialog.form.match_type === 'external_standard_id' ? '只有ID完全相等才会命中。' : '不区分英文大小写，需至少2个字符。' }}</small>
+            <span>完整外部规范ID</span>
+            <input v-model.trim="dialog.form.external_standard_id" type="number" min="1" placeholder="例如：1000" />
+            <small>只有ID完全相等才会命中，每个ID只能配置一条规则。</small>
           </label>
 
           <fieldset class="decision-field field-wide">
@@ -269,12 +254,6 @@
               <small>问题不再参与巡检记录统计和后续流转。</small>
             </label>
           </fieldset>
-
-          <label>
-            <span>执行优先级</span>
-            <input v-model.number="dialog.form.priority" type="number" min="1" max="9999" />
-            <small>数字越小越先执行，建议按 10、20、30 留出调整空间。</small>
-          </label>
 
           <label class="enabled-field">
             <span>规则状态</span>
@@ -332,10 +311,8 @@ const notice = reactive({ text: '', type: 'success', timer: null })
 
 const createEmptyRuleForm = () => ({
   rule_name: '',
-  match_type: 'external_standard_id',
-  match_value: '',
+  external_standard_id: '',
   decision: 'approved',
-  priority: 100,
   is_enabled: true,
   remark: ''
 })
@@ -379,10 +356,6 @@ const showNotice = (text, type = 'success') => {
   }, 3200)
 }
 
-const matchTypeLabel = (value) => value === 'external_standard_id' ? '外部规范ID' : '问题描述关键词'
-const matchTypeHelp = (value) => value === 'external_standard_id'
-  ? '适合针对某一条明确的外部规范建立固定结论。'
-  : '问题描述中出现连续关键词时命中，配置前请避免使用过于宽泛的词。'
 const decisionLabel = (value) => value === 'rejected' ? '自动否决' : '自动通过'
 
 const getDownloadFileName = (disposition) => {
@@ -494,10 +467,8 @@ const openEditDialog = (rule) => {
   dialog.ruleId = rule.id
   dialog.form = {
     rule_name: rule.rule_name || '',
-    match_type: rule.match_type || 'external_standard_id',
-    match_value: String(rule.match_value || ''),
+    external_standard_id: String(rule.external_standard_id || ''),
     decision: rule.decision || 'approved',
-    priority: Number(rule.priority) || 100,
     is_enabled: Boolean(rule.is_enabled),
     remark: rule.remark || ''
   }
@@ -514,10 +485,8 @@ const closeDialog = () => {
 const buildRulePayload = (form) => ({
   user_id: localStorage.getItem('user_id') || '',
   rule_name: form.rule_name,
-  match_type: form.match_type,
-  match_value: String(form.match_value || '').trim(),
+  external_standard_id: String(form.external_standard_id || '').trim(),
   decision: form.decision,
-  priority: Number(form.priority),
   is_enabled: Boolean(form.is_enabled),
   remark: form.remark
 })
@@ -692,12 +661,9 @@ onBeforeUnmount(() => {
 .empty-state.rich strong { color: #29485d; font-size: 18px; }
 
 .rule-list { display: grid; gap: 11px; }
-.rule-row { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: stretch; min-height: 132px; border: 1px solid var(--audit-line); border-radius: 15px; overflow: hidden; transition: 0.2s ease; }
+.rule-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; min-height: 132px; border: 1px solid var(--audit-line); border-radius: 15px; overflow: hidden; transition: 0.2s ease; }
 .rule-row:hover { border-color: #9fc5d2; box-shadow: 0 10px 24px rgba(32, 80, 102, 0.09); transform: translateY(-1px); }
 .rule-row.disabled { opacity: 0.68; background: #f8fafb; }
-.priority-block { display: grid; place-content: center; text-align: center; background: #eff6f8; border-right: 1px solid var(--audit-line); }
-.priority-block span { color: #76909e; font-size: 11px; font-weight: 800; }
-.priority-block strong { margin-top: 3px; font-size: 25px; color: var(--audit-blue); }
 .rule-main { min-width: 0; padding: 17px 19px; }
 .rule-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .rule-title-line h4 { margin: 0 4px 0 0; font-size: 17px; }
@@ -810,10 +776,9 @@ onBeforeUnmount(() => {
   .history-head { align-items: stretch; flex-direction: column; }
   .history-actions { justify-content: space-between; }
   .history-export-btn { flex: 1; min-width: 0; }
-  .rule-row { grid-template-columns: 62px minmax(0, 1fr); }
-  .priority-block { grid-row: 1 / 3; }
+  .rule-row { grid-template-columns: minmax(0, 1fr); }
   .rule-main { padding: 14px; }
-  .rule-actions { grid-column: 2; justify-content: flex-end; flex-wrap: wrap; padding: 0 14px 14px; border: 0; }
+  .rule-actions { grid-column: 1; justify-content: flex-end; flex-wrap: wrap; padding: 0 14px 14px; border: 0; }
   .history-filters { grid-template-columns: 1fr; }
   .keyword-filter { grid-column: auto; }
   .reset-filter-btn { width: 100%; justify-self: stretch; }

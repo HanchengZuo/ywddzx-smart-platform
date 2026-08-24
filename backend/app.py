@@ -1029,7 +1029,7 @@ PERMISSION_CATALOG = [
         "key": "manage_auto_audit_rules",
         "name": "管理自动审核规则",
         "category": "白名单自动审核管理",
-        "description": "配置外部规范ID或问题描述关键词的自动通过、否决规则，并查看自动审核记录。",
+        "description": "按唯一外部规范ID配置自动通过、否决规则，并查看自动审核记录。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -4744,25 +4744,11 @@ def save_inspection_completion_config(cur, data, user_id):
     return get_inspection_completion_config(cur)
 
 
-AUTO_AUDIT_MATCH_TYPES = {"external_standard_id", "description_keyword"}
 AUTO_AUDIT_DECISIONS = {"approved", "rejected"}
 
 
 def auto_audit_match_summary(rule):
-    if rule.get("match_type") == "external_standard_id":
-        return f"外部规范ID = {rule.get('match_value') or '-'}"
-    return f"问题描述包含“{rule.get('match_value') or '-'}”"
-
-
-def issue_matches_auto_audit_rule(issue, rule):
-    match_value = str(rule.get("match_value") or "").strip()
-    if not match_value:
-        return False
-    if rule.get("match_type") == "external_standard_id":
-        return str(issue.get("standard_id") or "").strip() == match_value
-    if rule.get("match_type") == "description_keyword":
-        return match_value.casefold() in str(issue.get("description") or "").casefold()
-    return False
+    return f"外部规范ID = {rule.get('external_standard_id') or '-'}"
 
 
 def apply_auto_audit_rules_for_inspection(cur, inspection_id):
@@ -4781,18 +4767,20 @@ def apply_auto_audit_rules_for_inspection(cur, inspection_id):
 
     cur.execute(
         """
-        SELECT id, rule_name, match_type, match_value, decision, priority
+        SELECT id, rule_name, external_standard_id, decision
         FROM inspection_auto_audit_rules
         WHERE is_enabled = TRUE
-        ORDER BY
-            priority ASC,
-            CASE WHEN decision = 'rejected' THEN 0 ELSE 1 END ASC,
-            id ASC;
+        ORDER BY id ASC;
         """
     )
     rules = cur.fetchall()
     if not rules:
         return 0
+    rules_by_standard_id = {
+        int(rule["external_standard_id"]): rule
+        for rule in rules
+        if rule.get("external_standard_id") is not None
+    }
 
     cur.execute(
         """
@@ -4817,9 +4805,10 @@ def apply_auto_audit_rules_for_inspection(cur, inspection_id):
     audited_count = 0
 
     for issue in issues:
-        matched_rule = next(
-            (rule for rule in rules if issue_matches_auto_audit_rule(issue, rule)),
-            None,
+        matched_rule = (
+            rules_by_standard_id.get(int(issue["standard_id"]))
+            if issue.get("standard_id")
+            else None
         )
         if not matched_rule:
             continue
@@ -4877,8 +4866,8 @@ def apply_auto_audit_rules_for_inspection(cur, inspection_id):
                 issue["inspection_id"],
                 matched_rule["id"],
                 matched_rule["rule_name"],
-                matched_rule["match_type"],
-                matched_rule["match_value"],
+                "external_standard_id",
+                str(matched_rule["external_standard_id"]),
                 decision,
                 issue.get("station_name"),
                 issue.get("inspection_table_name"),
@@ -12791,7 +12780,6 @@ def write_issue_export_xlsx(
                 "description",
                 "rectification_note",
                 "review_note",
-                "auto_audit_match_value",
             }:
                 width = 34
             if key in ISSUE_EXPORT_PHOTO_KEYS:
@@ -12806,7 +12794,6 @@ def write_issue_export_xlsx(
                 cell.border = thin_border
                 cell.alignment = long_text_alignment if (
                     key in ISSUE_EXPORT_LONG_TEXT_KEYS
-                    or key == "auto_audit_match_value"
                     or key.startswith("external_field::")
                 ) else wrap_alignment
 
@@ -34131,35 +34118,21 @@ def normalize_auto_audit_rule_payload(data):
     if len(rule_name) > 80:
         raise ValueError("规则名称不能超过 80 个字符。")
 
-    match_type = str(data.get("match_type") or "").strip()
-    if match_type not in AUTO_AUDIT_MATCH_TYPES:
-        raise ValueError("触发条件类型不正确。")
+    legacy_match_type = str(data.get("match_type") or "").strip()
+    if legacy_match_type and legacy_match_type != "external_standard_id":
+        raise ValueError("自动审核规则只支持外部规范ID。")
 
-    match_value = str(data.get("match_value") or "").strip()
-    if match_type == "external_standard_id":
-        try:
-            standard_id = int(match_value)
-        except (TypeError, ValueError):
-            raise ValueError("外部规范ID必须是完整数字。")
-        if standard_id <= 0:
-            raise ValueError("外部规范ID必须大于 0。")
-        match_value = str(standard_id)
-    else:
-        if len(match_value) < 2:
-            raise ValueError("问题描述关键词至少填写 2 个字符。")
-        if len(match_value) > 120:
-            raise ValueError("问题描述关键词不能超过 120 个字符。")
+    external_standard_id = data.get("external_standard_id", data.get("match_value"))
+    try:
+        external_standard_id = int(str(external_standard_id).strip())
+    except (TypeError, ValueError):
+        raise ValueError("外部规范ID必须是完整数字。")
+    if external_standard_id <= 0:
+        raise ValueError("外部规范ID必须大于 0。")
 
     decision = str(data.get("decision") or "").strip()
     if decision not in AUTO_AUDIT_DECISIONS:
         raise ValueError("自动审核结果必须是通过或否决。")
-
-    try:
-        priority = int(data.get("priority", 100))
-    except (TypeError, ValueError):
-        raise ValueError("优先级必须是数字。")
-    if priority < 1 or priority > 9999:
-        raise ValueError("优先级需设置为 1-9999。")
 
     remark = str(data.get("remark") or "").strip()
     if len(remark) > 500:
@@ -34167,17 +34140,15 @@ def normalize_auto_audit_rule_payload(data):
 
     return {
         "rule_name": rule_name,
-        "match_type": match_type,
-        "match_value": match_value,
+        "external_standard_id": external_standard_id,
         "decision": decision,
-        "priority": priority,
         "is_enabled": data.get("is_enabled") is not False,
         "remark": remark,
     }
 
 
 def ensure_auto_audit_rule_unique(cur, rule, exclude_rule_id=None):
-    params = [rule["match_type"], rule["match_value"]]
+    params = [rule["external_standard_id"]]
     exclude_sql = ""
     if exclude_rule_id is not None:
         exclude_sql = "AND id <> %s"
@@ -34186,15 +34157,14 @@ def ensure_auto_audit_rule_unique(cur, rule, exclude_rule_id=None):
         f"""
         SELECT id
         FROM inspection_auto_audit_rules
-        WHERE match_type = %s
-          AND LOWER(TRIM(match_value)) = LOWER(TRIM(%s))
+        WHERE external_standard_id = %s
           {exclude_sql}
         LIMIT 1;
         """,
         params,
     )
     if cur.fetchone():
-        raise ValueError("相同触发条件已存在，请直接编辑原规则。")
+        raise ValueError("该外部规范ID已存在规则，请直接编辑原规则。")
 
 
 def build_auto_audit_history_filter(decision="", rule_id="", keyword=""):
@@ -34240,8 +34210,7 @@ AUTO_AUDIT_EXPORT_COLUMNS = [
     ("巡检记录ID", "auto_audit_inspection_id"),
     ("自动审核执行时间", "auto_audit_triggered_at"),
     ("命中规则", "auto_audit_rule_name"),
-    ("触发指标", "auto_audit_match_type"),
-    ("触发内容", "auto_audit_match_value"),
+    ("命中外部规范ID", "auto_audit_external_standard_id"),
     ("自动审核结论", "auto_audit_decision"),
     ("原问题记录", "auto_audit_record_state"),
 ]
@@ -34271,10 +34240,8 @@ def get_management_auto_audit():
             SELECT
                 r.id,
                 r.rule_name,
-                r.match_type,
-                r.match_value,
+                r.external_standard_id,
                 r.decision,
-                r.priority,
                 r.is_enabled,
                 COALESCE(r.remark, '') AS remark,
                 COALESCE(creator.real_name, creator.username, '') AS created_by_name,
@@ -34288,7 +34255,7 @@ def get_management_auto_audit():
             LEFT JOIN users updater ON updater.id = r.updated_by
             LEFT JOIN inspection_auto_audit_logs log ON log.rule_id = r.id
             GROUP BY r.id, creator.real_name, creator.username, updater.real_name, updater.username
-            ORDER BY r.priority ASC, r.id ASC;
+            ORDER BY r.external_standard_id ASC, r.id ASC;
             """
         )
         rules = cur.fetchall()
@@ -34335,8 +34302,6 @@ def get_management_auto_audit():
                 log.inspection_reference_id,
                 log.rule_id,
                 log.rule_name,
-                log.match_type,
-                log.match_value,
                 log.decision,
                 COALESCE(log.station_name, '') AS station_name,
                 COALESCE(log.inspection_table_name, '') AS inspection_table_name,
@@ -34401,8 +34366,6 @@ def export_management_auto_audit_history():
                 log.issue_reference_id,
                 log.inspection_reference_id,
                 log.rule_name,
-                log.match_type,
-                log.match_value,
                 log.decision,
                 COALESCE(log.station_name, '') AS station_name,
                 COALESCE(log.inspection_table_name, '') AS inspection_table_name,
@@ -34456,12 +34419,7 @@ def export_management_auto_audit_history():
                     "auto_audit_inspection_id": log["inspection_reference_id"],
                     "auto_audit_triggered_at": log.get("triggered_at") or "-",
                     "auto_audit_rule_name": log.get("rule_name") or "-",
-                    "auto_audit_match_type": (
-                        "外部规范ID"
-                        if log.get("match_type") == "external_standard_id"
-                        else "问题描述关键词"
-                    ),
-                    "auto_audit_match_value": log.get("match_value") or "-",
+                    "auto_audit_external_standard_id": log.get("external_standard_id") or "-",
                     "auto_audit_decision": (
                         "自动通过" if log.get("decision") == "approved" else "自动否决"
                     ),
@@ -34532,15 +34490,15 @@ def create_management_auto_audit_rule():
         cur.execute(
             """
             INSERT INTO inspection_auto_audit_rules (
-                rule_name, match_type, match_value, decision, priority,
+                rule_name, external_standard_id, decision,
                 is_enabled, remark, created_by, updated_by, created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING id;
             """,
             (
-                rule["rule_name"], rule["match_type"], rule["match_value"], rule["decision"],
-                rule["priority"], rule["is_enabled"], rule["remark"], actor["id"], actor["id"],
+                rule["rule_name"], rule["external_standard_id"], rule["decision"],
+                rule["is_enabled"], rule["remark"], actor["id"], actor["id"],
             ),
         )
         rule_id = cur.fetchone()["id"]
@@ -34557,7 +34515,7 @@ def create_management_auto_audit_rule():
     except psycopg2.IntegrityError:
         if conn:
             conn.rollback()
-        return jsonify({"success": False, "error": "相同触发条件已存在，请直接编辑原规则。"}), 400
+        return jsonify({"success": False, "error": "该外部规范ID已存在规则，请直接编辑原规则。"}), 400
     except Exception as exc:
         if conn:
             conn.rollback()
@@ -34581,10 +34539,8 @@ def update_management_auto_audit_rule(rule_id):
             """
             UPDATE inspection_auto_audit_rules
             SET rule_name = %s,
-                match_type = %s,
-                match_value = %s,
+                external_standard_id = %s,
                 decision = %s,
-                priority = %s,
                 is_enabled = %s,
                 remark = %s,
                 updated_by = %s,
@@ -34592,8 +34548,8 @@ def update_management_auto_audit_rule(rule_id):
             WHERE id = %s;
             """,
             (
-                rule["rule_name"], rule["match_type"], rule["match_value"], rule["decision"],
-                rule["priority"], rule["is_enabled"], rule["remark"], actor["id"], rule_id,
+                rule["rule_name"], rule["external_standard_id"], rule["decision"],
+                rule["is_enabled"], rule["remark"], actor["id"], rule_id,
             ),
         )
         if cur.rowcount == 0:
@@ -34615,7 +34571,7 @@ def update_management_auto_audit_rule(rule_id):
     except psycopg2.IntegrityError:
         if conn:
             conn.rollback()
-        return jsonify({"success": False, "error": "相同触发条件已存在，请直接编辑原规则。"}), 400
+        return jsonify({"success": False, "error": "该外部规范ID已存在规则，请直接编辑原规则。"}), 400
     except Exception as exc:
         if conn:
             conn.rollback()
