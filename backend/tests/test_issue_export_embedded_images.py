@@ -31,6 +31,7 @@ class IssueExportEmbeddedImageTests(unittest.TestCase):
                         "rectification_photo": True,
                         "review_photo": True,
                     },
+                    "photo_mode": "embedded",
                 }
             )
             rows = [
@@ -73,6 +74,50 @@ class IssueExportEmbeddedImageTests(unittest.TestCase):
             self.assertEqual(sheet_xml.count(' t="e" vm="'), 3)
             self.assertEqual(second_sheet_xml.count(' t="e" vm="'), 3)
             self.assertNotIn("<f>", sheet_xml)
+
+    def test_issue_photos_default_to_compatible_drawing_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage_root = Path(temp_dir)
+            image_path = storage_root / "issue.png"
+            Image.new("RGB", (160, 90), "#2563eb").save(image_path)
+
+            export_options = normalize_issue_export_options(
+                {
+                    "include_fields": {
+                        "id": True,
+                        "issue_photo": True,
+                    },
+                    "include_photos": {
+                        "issue_photo": True,
+                    },
+                }
+            )
+            rows = [
+                {
+                    "id": 21,
+                    "inspection_table_id": 3,
+                    "inspection_table_name": "兼容模式检查表",
+                    "issue_photo": "/issue.png",
+                }
+            ]
+            output = BytesIO()
+
+            with patch("app.STORAGE_ROOT", str(storage_root)):
+                write_issue_export_xlsx(output, rows, export_options, {})
+
+            output.seek(0)
+            with zipfile.ZipFile(output) as archive:
+                names = set(archive.namelist())
+                sheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+                drawing_xml = archive.read("xl/drawings/drawing1.xml").decode("utf-8")
+
+            self.assertEqual(export_options["photo_mode"], "compatible")
+            self.assertFalse(any(name.startswith("xl/richData/") for name in names))
+            self.assertTrue(any(name.startswith("xl/media/image") for name in names))
+            self.assertIn("xl/drawings/drawing1.xml", names)
+            self.assertIn("<drawing", sheet_xml)
+            self.assertIn("twoCellAnchor", drawing_xml)
+            self.assertNotIn(' t="e" vm="', sheet_xml)
 
 
 if __name__ == "__main__":

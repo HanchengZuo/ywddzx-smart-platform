@@ -806,7 +806,7 @@
             <div class="export-notice">
               <div>
                 <strong>导出说明</strong>
-                <p>默认导出当前筛选后的文字数据，并按不同检查表拆分为多个 Sheet；外部规范详情会按检查表原字段展开为独立列。照片导出会明显增加生成时间和文件体积，仅授权用户可勾选，并会以“置于单元格中”的嵌入式照片导出。嵌入式照片请使用 Excel 365（2023年及以后版本）查看。</p>
+                <p>默认导出当前筛选后的文字数据，并按不同检查表拆分为多个 Sheet；外部规范详情会按检查表原字段展开为独立列。照片导出会明显增加生成时间和文件体积，仅授权用户可勾选。默认使用兼容模式，避免旧版 Excel 或 WPS 显示 #VALUE!。</p>
               </div>
               <span>Excel</span>
             </div>
@@ -826,6 +826,28 @@
                 <span>保存期限</span>
                 <strong>7天</strong>
                 <em>到期自动清理</em>
+              </div>
+            </div>
+
+            <div v-if="hasSelectedExportPhotoField" class="export-photo-mode-panel">
+              <div class="export-section-title">照片写入方式</div>
+              <div class="export-photo-mode-options">
+                <label class="export-photo-mode-option" :class="{ active: exportDialog.photoMode === 'compatible' }">
+                  <input v-model="exportDialog.photoMode" type="radio" value="compatible"
+                    :disabled="Boolean(exportDialog.taskId)" />
+                  <span>
+                    <strong>兼容模式（推荐）</strong>
+                    <em>图片固定在对应单元格范围内并随行列移动、缩放，兼容更多版本的 Excel 和 WPS。</em>
+                  </span>
+                </label>
+                <label class="export-photo-mode-option" :class="{ active: exportDialog.photoMode === 'embedded' }">
+                  <input v-model="exportDialog.photoMode" type="radio" value="embedded"
+                    :disabled="Boolean(exportDialog.taskId)" />
+                  <span>
+                    <strong>新版嵌入模式</strong>
+                    <em>使用真正的“置于单元格中”图片，仅建议 Excel 365（2023 年以后）、Excel 2024 或支持该格式的新版 WPS。</em>
+                  </span>
+                </label>
               </div>
             </div>
 
@@ -1651,7 +1673,8 @@ const exportDialog = ref({
   fileSizeLabel: '',
   expiresAt: '',
   filterSummary: {},
-  includeFields: {}
+  includeFields: {},
+  photoMode: 'compatible'
 })
 let exportPollTimer = null
 
@@ -2584,6 +2607,10 @@ const selectedExportFieldCount = computed(() => (
   exportFieldOptions.filter((option) => Boolean(exportDialog.value.includeFields[option.key])).length
 ))
 
+const hasSelectedExportPhotoField = computed(() => (
+  exportPhotoFieldKeys.some((key) => Boolean(exportDialog.value.includeFields[key]))
+))
+
 const setAllExportFields = (checked) => {
   exportDialog.value.includeFields = Object.fromEntries(
     exportFieldOptions.map((option) => [
@@ -2619,7 +2646,8 @@ const resetExportDialogForCurrentFilters = () => {
     fileSizeLabel: '',
     expiresAt: '',
     filterSummary: buildCurrentExportFilterSummary(),
-    includeFields: createDefaultExportFieldOptions()
+    includeFields: createDefaultExportFieldOptions(),
+    photoMode: 'compatible'
   }
 }
 
@@ -2663,6 +2691,7 @@ const applyExportTask = (task = {}) => {
   exportDialog.value.expiresAt = task.expires_at || exportDialog.value.expiresAt
   exportDialog.value.filterSummary = task.filter_summary || exportDialog.value.filterSummary || {}
   exportDialog.value.includeFields = normalizeExportFieldOptions(task.export_options)
+  exportDialog.value.photoMode = task.export_options?.photo_mode === 'embedded' ? 'embedded' : 'compatible'
   exportDialog.value.error = task.error_message || ''
 }
 
@@ -2713,7 +2742,8 @@ const submitIssueExportTask = async () => {
       filter_summary: buildCurrentExportFilterSummary(),
       export_options: {
         include_fields: { ...exportDialog.value.includeFields },
-        include_photos: buildExportPhotoOptionsFromFields()
+        include_photos: buildExportPhotoOptionsFromFields(),
+        photo_mode: exportDialog.value.photoMode
       }
     })
     applyExportTask(response.data?.task || {})
@@ -6299,12 +6329,74 @@ onBeforeUnmount(() => {
 
 .export-filter-panel,
 .export-field-panel,
+.export-photo-mode-panel,
 .export-task-panel {
   margin-top: 14px;
   padding: 16px;
   border: 1px solid #dbe4ee;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.92);
+}
+
+.export-photo-mode-panel {
+  border-color: #bae6fd;
+  background: linear-gradient(135deg, #f0f9ff 0%, #ffffff 72%);
+}
+
+.export-photo-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.export-photo-mode-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid #dbe4ee;
+  border-radius: 15px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.export-photo-mode-option.active {
+  border-color: #38bdf8;
+  box-shadow: 0 8px 22px rgba(14, 165, 233, 0.12);
+  transform: translateY(-1px);
+}
+
+.export-photo-mode-option input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: #0284c7;
+}
+
+.export-photo-mode-option span,
+.export-photo-mode-option strong,
+.export-photo-mode-option em {
+  display: block;
+  min-width: 0;
+}
+
+.export-photo-mode-option strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.export-photo-mode-option em {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.65;
 }
 
 .export-field-panel-head {
@@ -7379,6 +7471,10 @@ onBeforeUnmount(() => {
   }
 
   .export-field-options {
+    grid-template-columns: 1fr;
+  }
+
+  .export-photo-mode-options {
     grid-template-columns: 1fr;
   }
 
