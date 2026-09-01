@@ -192,9 +192,9 @@
         </div>
       </div>
       <div class="non-oil-date-fields">
-        <label><span>开始日期</span><input v-model="nonOilDateFrom" type="date" /></label>
+        <label><span>开始日期</span><input v-model="nonOilDateFrom" type="date" @change="handleNonOilDateRangeChange" /></label>
         <i aria-hidden="true">至</i>
-        <label><span>结束日期</span><input v-model="nonOilDateTo" type="date" /></label>
+        <label><span>结束日期</span><input v-model="nonOilDateTo" type="date" @change="handleNonOilDateRangeChange" /></label>
         <div v-if="nonOilUsesCustomDateRange" class="non-oil-custom-range-note">
           <span>当前日期已偏离 {{ nonOilDefaultMonthLabel }} 的自然月范围，报告月份已锁定。</span>
           <button type="button" @click="resetNonOilDateRange">恢复为当月范围</button>
@@ -207,6 +207,37 @@
         :disabled="loading || !nonOilDateFrom || !nonOilDateTo"
         @click="startGeneration({ force: true })"
       >按此范围生成</button>
+    </section>
+
+    <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-issue-library-panel card-surface">
+      <div class="classification-panel-intro">
+        <div class="classification-ai-mark library-mark" aria-hidden="true">库</div>
+        <div>
+          <span>REPORT ISSUE LIBRARY</span>
+          <h3>报告问题库</h3>
+          <p>按检查项目归类展示当前日期范围内的审核通过问题，可自由选择哪些问题参与报告。</p>
+        </div>
+      </div>
+      <div class="classification-panel-stats">
+        <div><span>可用问题</span><strong>{{ nonOilIssueLibraryStats.total }}</strong></div>
+        <div><span>已选参与</span><strong>{{ nonOilIssueLibraryStats.included }}</strong></div>
+        <div :class="{ pending: nonOilIssueLibraryStats.excluded }"><span>已排除</span><strong>{{ nonOilIssueLibraryStats.excluded }}</strong></div>
+        <div><span>问题类别</span><strong>{{ nonOilIssueLibraryStats.categories }}</strong></div>
+      </div>
+      <div class="classification-panel-preview issue-library-preview">
+        <span v-if="nonOilIssueLibraryLoading">正在读取当前日期范围的问题库...</span>
+        <span v-else-if="nonOilIssueLibraryError" class="classification-panel-error">{{ nonOilIssueLibraryError }}</span>
+        <template v-else-if="nonOilIssueCategories.length">
+          <span v-for="category in nonOilIssueCategories.slice(0, 5)" :key="`issue-library-preview-${category.name}`">
+            {{ category.display_name }} {{ category.included_count }}/{{ category.total_count }}
+          </span>
+          <em v-if="nonOilIssueCategories.length > 5">另有 {{ nonOilIssueCategories.length - 5 }} 类</em>
+        </template>
+        <span v-else>当前日期范围暂无可用的审核通过问题。</span>
+      </div>
+      <button type="button" class="classification-manage-btn issue-library-manage-btn" :disabled="nonOilIssueLibraryLoading" @click="openNonOilIssueLibraryDialog">
+        {{ canGenerateReports ? '查看与选择问题' : '查看问题库' }}
+      </button>
     </section>
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel card-surface">
@@ -1711,6 +1742,80 @@
           </footer>
         </section>
       </div>
+      <div v-if="nonOilIssueLibraryDialogVisible && isNonOilReport" class="flow-classification-dialog-layer non-oil-issue-library-layer">
+        <section class="flow-classification-dialog non-oil-issue-library-dialog" role="dialog" aria-modal="true" aria-label="非油报告问题库">
+          <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeNonOilIssueLibraryDialog">×</button>
+          <header class="classification-dialog-head issue-library-dialog-head">
+            <div>
+              <span>REPORT ISSUE LIBRARY</span>
+              <h3>{{ canGenerateReports ? '选择参与非油报告的问题' : '查看非油报告问题库' }}</h3>
+              <p>数据只包含当前日期范围内、检查人已确认且审核通过的问题。选择不会改动原始问题数据。</p>
+            </div>
+            <div><strong>{{ nonOilIssueSelectionDraftIds.length }}/{{ nonOilIssueLibrary.length }}</strong><span>已选问题</span></div>
+          </header>
+          <div class="issue-library-toolbar">
+            <label class="issue-library-search"><span>搜索问题</span><input v-model.trim="nonOilIssueLibraryKeyword" type="search" placeholder="问题ID、站点、描述或外部规范ID" /></label>
+            <label><span>参与状态</span><select v-model="nonOilIssueLibrarySelectionFilter"><option value="">全部问题</option><option value="included">仅看已选</option><option value="excluded">仅看未选</option></select></label>
+            <div class="issue-library-batch-actions" v-if="canGenerateReports">
+              <button type="button" @click="selectVisibleNonOilIssues(true)">全选当前类别</button>
+              <button type="button" @click="selectVisibleNonOilIssues(false)">清空当前类别</button>
+              <button type="button" @click="selectAllNonOilIssues">恢复全部参与</button>
+            </div>
+          </div>
+          <div v-if="nonOilIssueLibraryError" class="classification-dialog-message error">{{ nonOilIssueLibraryError }}</div>
+          <div class="issue-library-workspace">
+            <nav class="issue-library-categories" aria-label="问题类别">
+              <button type="button" :class="{ active: !nonOilIssueLibraryCategory }" @click="nonOilIssueLibraryCategory = ''">
+                <span>全部类别</span><strong>{{ selectedNonOilIssueCountForCategory('') }}/{{ nonOilIssueLibrary.length }}</strong>
+              </button>
+              <button
+                v-for="category in nonOilIssueCategories"
+                :key="`issue-library-category-${category.name}`"
+                type="button"
+                :class="{ active: nonOilIssueLibraryCategory === category.name }"
+                @click="nonOilIssueLibraryCategory = category.name"
+              >
+                <span>{{ category.display_name }}</span><strong>{{ selectedNonOilIssueCountForCategory(category.name) }}/{{ category.total_count }}</strong>
+              </button>
+            </nav>
+            <div class="issue-library-list">
+              <div v-if="nonOilIssueLibraryLoading" class="classification-list-empty">正在整理问题数据库...</div>
+              <div v-else-if="!filteredNonOilIssueLibrary.length" class="classification-list-empty">当前类别和筛选条件下没有问题。</div>
+              <article
+                v-for="item in filteredNonOilIssueLibrary"
+                :key="`issue-library-row-${item.issue_id}`"
+                :class="{ selected: isNonOilIssueSelected(item.issue_id), excluded: !isNonOilIssueSelected(item.issue_id) }"
+              >
+                <label class="issue-library-checkbox">
+                  <input
+                    type="checkbox"
+                    :checked="isNonOilIssueSelected(item.issue_id)"
+                    :disabled="!canGenerateReports"
+                    @change="toggleNonOilIssueSelection(item.issue_id, $event.target.checked)"
+                  />
+                  <span aria-hidden="true"></span>
+                </label>
+                <div class="classification-issue-main">
+                  <div class="classification-issue-meta">
+                    <b>ID {{ item.issue_id }}</b><span>{{ item.category_display_name }}</span><span>{{ item.station_name }}</span><span>{{ item.unit_name }}</span><span>{{ item.report_date }}</span><span>外部规范ID {{ item.external_standard_id || '-' }}</span>
+                  </div>
+                  <p>{{ item.description || '暂无问题描述' }}</p>
+                  <small>{{ item.table_name }}</small>
+                </div>
+                <button v-if="item.issue_photo" type="button" class="issue-library-photo" @click="openImagePreview(item.issue_photo, `${item.station_name || '问题'}照片`)">
+                  <img :src="resolveImage(item.issue_photo)" alt="问题照片" loading="lazy" />
+                  <span>查看照片</span>
+                </button>
+                <div v-else class="issue-library-photo empty">无照片</div>
+              </article>
+            </div>
+          </div>
+          <footer class="classification-dialog-footer issue-library-dialog-footer">
+            <p>{{ canGenerateReports ? `已选 ${nonOilIssueSelectionDraftIds.length} 条，未选 ${nonOilIssueLibrary.length - nonOilIssueSelectionDraftIds.length} 条。保存后将重新生成当前日期范围的网页预览和PPT。` : '当前账号仅可查看问题库和参与状态。' }}</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilIssueLibraryDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilIssueLibrarySaving || !hasNonOilIssueSelectionChanges" @click="saveNonOilIssueSelection">{{ nonOilIssueLibrarySaving ? '保存中...' : '保存并重新生成' }}</button></div>
+          </footer>
+        </section>
+      </div>
       <div v-if="nonOilClassificationDialogVisible && isNonOilReport" class="flow-classification-dialog-layer">
         <section class="flow-classification-dialog" role="dialog" aria-modal="true" aria-label="非油AI问题分类结果">
           <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeNonOilClassificationDialog">×</button>
@@ -2190,6 +2295,16 @@ const flowClassificationKeyword = ref('')
 const flowClassificationCategoryFilter = ref('')
 const nonOilDateFrom = ref(getDefaultNonOilDateRange(selectedMonth.value).date_from)
 const nonOilDateTo = ref(getDefaultNonOilDateRange(selectedMonth.value).date_to)
+const nonOilIssueLibrary = ref([])
+const nonOilIssueCategories = ref([])
+const nonOilIssueLibraryLoading = ref(false)
+const nonOilIssueLibrarySaving = ref(false)
+const nonOilIssueLibraryError = ref('')
+const nonOilIssueLibraryDialogVisible = ref(false)
+const nonOilIssueSelectionDraftIds = ref([])
+const nonOilIssueLibraryCategory = ref('')
+const nonOilIssueLibraryKeyword = ref('')
+const nonOilIssueLibrarySelectionFilter = ref('')
 const nonOilClassifications = ref([])
 const nonOilClassificationCategories = ref([])
 const nonOilClassificationsLoading = ref(false)
@@ -2218,6 +2333,7 @@ const exportDownloading = ref(false)
 let pollTimer = null
 let exportPollTimer = null
 let contextRequestId = 0
+let nonOilIssueLibraryRequestId = 0
 
 const currentReportType = computed(() => (
   reportTypes.value.find((item) => item.key === selectedReportType.value)
@@ -2327,6 +2443,38 @@ const sourceSelectionDirty = computed(() => {
   const savedIds = [...(reportSourceSelection.value.station_ids || [])].map(Number).sort((a, b) => a - b)
   const currentIds = [...selectedSourceStationIds.value].map(Number).sort((a, b) => a - b)
   return JSON.stringify(savedIds) !== JSON.stringify(currentIds)
+})
+const nonOilIssueLibraryStats = computed(() => ({
+  total: nonOilIssueLibrary.value.length,
+  included: nonOilIssueLibrary.value.filter((item) => item.included).length,
+  excluded: nonOilIssueLibrary.value.filter((item) => !item.included).length,
+  categories: nonOilIssueCategories.value.length
+}))
+const nonOilIssueSelectionDraftSet = computed(() => new Set(
+  nonOilIssueSelectionDraftIds.value.map(Number)
+))
+const filteredNonOilIssueLibrary = computed(() => {
+  const keyword = nonOilIssueLibraryKeyword.value.toLowerCase()
+  const selectedIds = nonOilIssueSelectionDraftSet.value
+  return nonOilIssueLibrary.value.filter((item) => {
+    if (nonOilIssueLibraryCategory.value && item.category_name !== nonOilIssueLibraryCategory.value) return false
+    const selected = selectedIds.has(Number(item.issue_id))
+    if (nonOilIssueLibrarySelectionFilter.value === 'included' && !selected) return false
+    if (nonOilIssueLibrarySelectionFilter.value === 'excluded' && selected) return false
+    if (!keyword) return true
+    return [item.issue_id, item.station_name, item.unit_name, item.table_name, item.external_standard_id, item.description]
+      .some((value) => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+const hasNonOilIssueSelectionChanges = computed(() => {
+  const savedIds = nonOilIssueLibrary.value
+    .filter((item) => item.included)
+    .map((item) => Number(item.issue_id))
+    .sort((a, b) => a - b)
+  const draftIds = [...nonOilIssueSelectionDraftIds.value]
+    .map(Number)
+    .sort((a, b) => a - b)
+  return JSON.stringify(savedIds) !== JSON.stringify(draftIds)
 })
 const visibleFlowClassifications = computed(() => {
   if (sourceSelectionMode.value !== 'custom') return flowClassifications.value
@@ -3269,6 +3417,141 @@ const saveFlowClassificationAdjustments = async () => {
   }
 }
 
+const resetNonOilIssueLibraryState = () => {
+  nonOilIssueLibraryRequestId += 1
+  nonOilIssueLibrary.value = []
+  nonOilIssueCategories.value = []
+  nonOilIssueLibraryError.value = ''
+  nonOilIssueLibraryDialogVisible.value = false
+  nonOilIssueSelectionDraftIds.value = []
+  nonOilIssueLibraryCategory.value = ''
+  nonOilIssueLibraryKeyword.value = ''
+  nonOilIssueLibrarySelectionFilter.value = ''
+}
+
+const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
+  if (!isNonOilReport.value || !nonOilDateFrom.value || !nonOilDateTo.value) {
+    if (!isNonOilReport.value) resetNonOilIssueLibraryState()
+    return
+  }
+  const libraryRequestId = ++nonOilIssueLibraryRequestId
+  nonOilIssueLibraryLoading.value = true
+  nonOilIssueLibraryError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/non-oil-issue-selection', {
+      params: {
+        month: selectedMonth.value,
+        date_from: nonOilDateFrom.value,
+        date_to: nonOilDateTo.value
+      }
+    })
+    if (requestId !== contextRequestId || libraryRequestId !== nonOilIssueLibraryRequestId) return
+    if (!response.data?.success) throw new Error(response.data?.error || '读取非油报告问题库失败。')
+    nonOilIssueLibrary.value = Array.isArray(response.data.issues) ? response.data.issues : []
+    nonOilIssueCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
+    nonOilIssueSelectionDraftIds.value = nonOilIssueLibrary.value
+      .filter((item) => item.included)
+      .map((item) => Number(item.issue_id))
+  } catch (err) {
+    if (requestId !== contextRequestId || libraryRequestId !== nonOilIssueLibraryRequestId) return
+    nonOilIssueLibrary.value = []
+    nonOilIssueCategories.value = []
+    nonOilIssueSelectionDraftIds.value = []
+    nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '读取非油报告问题库失败。'
+  } finally {
+    if (requestId === contextRequestId && libraryRequestId === nonOilIssueLibraryRequestId) {
+      nonOilIssueLibraryLoading.value = false
+    }
+  }
+}
+
+const openNonOilIssueLibraryDialog = async () => {
+  nonOilIssueLibraryCategory.value = ''
+  nonOilIssueLibraryKeyword.value = ''
+  nonOilIssueLibrarySelectionFilter.value = ''
+  nonOilIssueLibraryDialogVisible.value = true
+  await loadNonOilIssueLibrary(contextRequestId)
+}
+
+const closeNonOilIssueLibraryDialog = () => {
+  nonOilIssueLibraryDialogVisible.value = false
+}
+
+const isNonOilIssueSelected = (issueId) => (
+  nonOilIssueSelectionDraftSet.value.has(Number(issueId))
+)
+
+const toggleNonOilIssueSelection = (issueId, selected) => {
+  if (!canGenerateReports.value) return
+  const next = new Set(nonOilIssueSelectionDraftIds.value.map(Number))
+  if (selected) next.add(Number(issueId))
+  else next.delete(Number(issueId))
+  nonOilIssueSelectionDraftIds.value = [...next].sort((a, b) => a - b)
+}
+
+const selectedNonOilIssueCountForCategory = (categoryName) => (
+  nonOilIssueLibrary.value.filter((item) => (
+    (!categoryName || item.category_name === categoryName)
+    && isNonOilIssueSelected(item.issue_id)
+  )).length
+)
+
+const selectVisibleNonOilIssues = (selected) => {
+  if (!canGenerateReports.value) return
+  const targetIds = nonOilIssueLibrary.value
+    .filter((item) => !nonOilIssueLibraryCategory.value || item.category_name === nonOilIssueLibraryCategory.value)
+    .map((item) => Number(item.issue_id))
+  const next = new Set(nonOilIssueSelectionDraftIds.value.map(Number))
+  targetIds.forEach((issueId) => {
+    if (selected) next.add(issueId)
+    else next.delete(issueId)
+  })
+  nonOilIssueSelectionDraftIds.value = [...next].sort((a, b) => a - b)
+}
+
+const selectAllNonOilIssues = () => {
+  if (!canGenerateReports.value) return
+  nonOilIssueSelectionDraftIds.value = nonOilIssueLibrary.value
+    .map((item) => Number(item.issue_id))
+    .sort((a, b) => a - b)
+}
+
+const saveNonOilIssueSelection = async () => {
+  if (!canGenerateReports.value || nonOilIssueLibrarySaving.value) return
+  nonOilIssueLibrarySaving.value = true
+  nonOilIssueLibraryError.value = ''
+  try {
+    const selectedIds = new Set(nonOilIssueSelectionDraftIds.value.map(Number))
+    const excludedIssueIds = nonOilIssueLibrary.value
+      .map((item) => Number(item.issue_id))
+      .filter((issueId) => !selectedIds.has(issueId))
+    const response = await axios.put('/api/inspection-reports/non-oil-issue-selection', {
+      month: selectedMonth.value,
+      date_from: nonOilDateFrom.value,
+      date_to: nonOilDateTo.value,
+      excluded_issue_ids: excludedIssueIds
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存报告问题选择失败。')
+    nonOilIssueLibrary.value = Array.isArray(response.data.issues) ? response.data.issues : []
+    nonOilIssueCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
+    nonOilIssueSelectionDraftIds.value = nonOilIssueLibrary.value
+      .filter((item) => item.included)
+      .map((item) => Number(item.issue_id))
+    closeNonOilIssueLibraryDialog()
+    await startGeneration({ force: true })
+  } catch (err) {
+    nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '保存报告问题选择失败。'
+  } finally {
+    nonOilIssueLibrarySaving.value = false
+  }
+}
+
+const handleNonOilDateRangeChange = async () => {
+  if (!nonOilDateFrom.value || !nonOilDateTo.value) return
+  if (nonOilDateFrom.value > nonOilDateTo.value) return
+  await loadNonOilIssueLibrary(contextRequestId)
+}
+
 const resetNonOilClassificationState = () => {
   nonOilClassifications.value = []
   nonOilClassificationCategories.value = []
@@ -3692,6 +3975,7 @@ const pollActiveJob = async () => {
       } else if (isNonOilReport.value) {
         const summary = response.data.report?.summary || {}
         syncNonOilDateRangeFromReport(summary)
+        await loadNonOilIssueLibrary(contextRequestId)
         await loadNonOilClassifications(contextRequestId)
         await loadNonOilKeyClassifications(contextRequestId)
       }
@@ -3780,6 +4064,7 @@ const loadReportState = async () => {
     sourceSelectionMode.value = 'all'
     selectedSourceStationIds.value = []
     resetFlowClassificationState()
+    resetNonOilIssueLibraryState()
     resetNonOilClassificationState()
     resetNonOilKeyClassificationState()
     loading.value = false
@@ -3802,10 +4087,12 @@ const loadReportState = async () => {
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
       await loadFlowClassifications(requestId)
+      resetNonOilIssueLibraryState()
       resetNonOilClassificationState()
       resetNonOilKeyClassificationState()
     } else if (isNonOilReport.value) {
       syncNonOilDateRangeFromReport(report.value?.summary || {})
+      await loadNonOilIssueLibrary(requestId)
       await loadNonOilClassifications(requestId)
       await loadNonOilKeyClassifications(requestId)
       sourceStations.value = []
@@ -3817,6 +4104,7 @@ const loadReportState = async () => {
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
       resetFlowClassificationState()
+      resetNonOilIssueLibraryState()
       resetNonOilClassificationState()
       resetNonOilKeyClassificationState()
     }
@@ -3845,15 +4133,17 @@ const selectReportType = async (reportType) => {
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
+  resetNonOilIssueLibraryState()
   resetNonOilClassificationState()
   resetNonOilKeyClassificationState()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
 
-const resetNonOilDateRange = () => {
+const resetNonOilDateRange = async () => {
   nonOilDateFrom.value = nonOilDefaultDateRange.value.date_from
   nonOilDateTo.value = nonOilDefaultDateRange.value.date_to
+  await loadNonOilIssueLibrary(contextRequestId)
 }
 
 const syncNonOilDateRangeFromReport = (summary = {}) => {
@@ -3876,9 +4166,11 @@ const handleReportContextChange = async () => {
   sourceSelectionMode.value = 'all'
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
+  resetNonOilIssueLibraryState()
   resetNonOilClassificationState()
   resetNonOilKeyClassificationState()
-  resetNonOilDateRange()
+  nonOilDateFrom.value = nonOilDefaultDateRange.value.date_from
+  nonOilDateTo.value = nonOilDefaultDateRange.value.date_to
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -4435,6 +4727,38 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 24px rgba(217, 119, 6, 0.2);
 }
 
+.non-oil-issue-library-panel {
+  border-color: rgba(8, 145, 178, 0.24);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(34, 211, 238, 0.14), transparent 34%),
+    linear-gradient(135deg, #f3fcff, #ffffff 58%, #ecfeff);
+}
+
+.classification-ai-mark.library-mark {
+  background: linear-gradient(145deg, #0e7490, #06b6d4);
+  box-shadow: 0 12px 24px rgba(8, 145, 178, 0.22);
+}
+
+.non-oil-issue-library-panel .classification-panel-intro > div:last-child > span {
+  color: #0e7490;
+}
+
+.non-oil-issue-library-panel .classification-panel-stats > div {
+  border-color: #bae6fd;
+}
+
+.issue-library-preview span,
+.issue-library-preview em {
+  color: #155e75;
+  background: #cffafe;
+}
+
+.issue-library-manage-btn {
+  border-color: #67e8f9;
+  color: #0e7490;
+  background: #ecfeff;
+}
+
 .non-oil-key-panel .classification-panel-intro > div:last-child > span {
   color: #b45309;
 }
@@ -4687,6 +5011,252 @@ onBeforeUnmount(() => {
   border-radius: 28px;
   background: #f8fafc;
   box-shadow: 0 38px 110px rgba(15, 23, 42, 0.34);
+}
+
+.non-oil-issue-library-layer {
+  z-index: 15700;
+}
+
+.non-oil-issue-library-dialog {
+  width: min(1320px, calc(100vw - 68px));
+  max-height: min(930px, calc(100dvh - 42px));
+  border-color: rgba(34, 211, 238, 0.42);
+}
+
+.issue-library-dialog-head {
+  border-bottom-color: #bae6fd;
+  background: radial-gradient(circle at 15% 0%, rgba(6, 182, 212, 0.16), transparent 42%), #ffffff;
+}
+
+.issue-library-dialog-head > div:first-child > span {
+  color: #0e7490;
+}
+
+.issue-library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(160px, 0.34fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px 24px;
+  border-bottom: 1px solid #dbeafe;
+  background: #f8fafc;
+}
+
+.issue-library-toolbar label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.issue-library-toolbar label > span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.issue-library-toolbar input,
+.issue-library-toolbar select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  color: #0f172a;
+  background: #ffffff;
+  font: inherit;
+}
+
+.issue-library-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.issue-library-batch-actions button {
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid #a5f3fc;
+  border-radius: 10px;
+  color: #0e7490;
+  background: #ecfeff;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.issue-library-workspace {
+  min-height: 260px;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.issue-library-categories {
+  overflow: auto;
+  padding: 16px 12px;
+  border-right: 1px solid #dbeafe;
+  background: linear-gradient(180deg, #f0f9ff, #f8fafc);
+}
+
+.issue-library-categories button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: #475569;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.issue-library-categories button + button {
+  margin-top: 5px;
+}
+
+.issue-library-categories button.active {
+  border-color: #67e8f9;
+  color: #155e75;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(8, 145, 178, 0.1);
+}
+
+.issue-library-categories span {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.issue-library-categories strong {
+  flex: 0 0 auto;
+  color: #0891b2;
+  font-size: 11px;
+}
+
+.issue-library-list {
+  overflow: auto;
+  padding: 15px 18px 20px;
+  background: #f8fafc;
+}
+
+.issue-library-list article {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 14px;
+  border: 1px solid #dbe3ec;
+  border-radius: 15px;
+  background: #ffffff;
+  transition: border-color 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+}
+
+.issue-library-list article + article {
+  margin-top: 9px;
+}
+
+.issue-library-list article.selected {
+  border-color: #a5f3fc;
+  background: linear-gradient(100deg, #f0fdff, #ffffff 32%);
+}
+
+.issue-library-list article.excluded {
+  opacity: 0.64;
+  background: #f1f5f9;
+}
+
+.issue-library-checkbox {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.issue-library-checkbox input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.issue-library-checkbox span {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #94a3b8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.issue-library-checkbox input:checked + span {
+  border-color: #0891b2;
+  background: #0891b2;
+}
+
+.issue-library-checkbox input:checked + span::after {
+  content: '';
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.issue-library-checkbox input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.issue-library-photo {
+  width: 112px;
+  height: 78px;
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 11px;
+  background: #e2e8f0;
+  cursor: zoom-in;
+}
+
+.issue-library-photo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.issue-library-photo span {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.76);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.issue-library-photo.empty {
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  cursor: default;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.issue-library-dialog-footer {
+  border-top-color: #bae6fd;
 }
 
 .classification-dialog-close {
@@ -11323,6 +11893,105 @@ onBeforeUnmount(() => {
   .export-primary-btn {
     width: 100%;
     min-width: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .non-oil-issue-library-dialog {
+    width: calc(100vw - 36px);
+  }
+
+  .issue-library-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.42fr);
+    padding: 12px 18px;
+  }
+
+  .issue-library-batch-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .issue-library-workspace {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .issue-library-list article {
+    grid-template-columns: 32px minmax(0, 1fr) 96px;
+  }
+
+  .issue-library-photo {
+    width: 96px;
+    height: 70px;
+  }
+}
+
+@media (max-width: 520px) {
+  .non-oil-issue-library-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .issue-library-toolbar {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .issue-library-batch-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .issue-library-batch-actions button:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .issue-library-workspace {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .issue-library-categories {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 9px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #dbeafe;
+  }
+
+  .issue-library-categories button {
+    width: auto;
+    min-width: max-content;
+    padding: 8px 10px;
+  }
+
+  .issue-library-categories button + button {
+    margin-top: 0;
+  }
+
+  .issue-library-list {
+    padding: 10px 10px 14px;
+  }
+
+  .issue-library-list article {
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: start;
+    gap: 9px;
+    padding: 11px;
+  }
+
+  .issue-library-photo {
+    grid-column: 2;
+    width: 100%;
+    height: 132px;
+  }
+
+  .issue-library-checkbox span {
+    width: 21px;
+    height: 21px;
   }
 }
 </style>

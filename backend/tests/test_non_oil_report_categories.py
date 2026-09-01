@@ -7,7 +7,9 @@ from app import (
     build_non_oil_key_issue_summary,
     build_non_oil_category_distribution,
     build_non_oil_project_matrix,
+    filter_non_oil_report_issue_rows,
     normalize_non_oil_effective_category,
+    normalize_non_oil_report_excluded_issue_ids,
     local_non_oil_key_issue_fallback,
 )
 
@@ -83,6 +85,25 @@ class NonOilReportCategoryTests(unittest.TestCase):
         self.assertEqual(summary["selected_count"], 1)
         self.assertEqual(summary["excluded_count"], 1)
         self.assertEqual(summary["distribution"][0]["count"], 1)
+
+    def test_issue_selection_normalizes_and_validates_exclusions(self):
+        self.assertEqual(
+            normalize_non_oil_report_excluded_issue_ids(
+                ["3", 2, 3, 0, "invalid"],
+                [1, 2, 3],
+            ),
+            [2, 3],
+        )
+        with self.assertRaisesRegex(ValueError, "不属于当前报告问题库"):
+            normalize_non_oil_report_excluded_issue_ids([9], [1, 2, 3])
+
+    def test_issue_selection_filters_before_report_analysis(self):
+        rows = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+        self.assertEqual(
+            filter_non_oil_report_issue_rows(rows, [2]),
+            [{"id": 1}, {"id": 3}],
+        )
 
 
 if __name__ == "__main__":

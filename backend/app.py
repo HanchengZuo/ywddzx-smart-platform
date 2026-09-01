@@ -12136,6 +12136,128 @@ NON_OIL_KEY_ISSUE_EXCLUDED = "不纳入重点问题"
 NON_OIL_KEY_ISSUE_OPTIONS = NON_OIL_KEY_ISSUE_CATEGORIES + [NON_OIL_KEY_ISSUE_EXCLUDED]
 
 
+def non_oil_report_issue_selection_table_available(cur):
+    cur.execute(
+        "SELECT to_regclass('public.inspection_report_non_oil_issue_selections') AS table_name;"
+    )
+    result = cur.fetchone()
+    return bool(result and result.get("table_name"))
+
+
+def normalize_non_oil_report_excluded_issue_ids(values, eligible_issue_ids=None):
+    eligible = None
+    if eligible_issue_ids is not None:
+        eligible = set()
+        for value in eligible_issue_ids:
+            try:
+                issue_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if issue_id > 0:
+                eligible.add(issue_id)
+    normalized = []
+    seen = set()
+    for value in values or []:
+        try:
+            issue_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if issue_id <= 0 or issue_id in seen:
+            continue
+        if eligible is not None and issue_id not in eligible:
+            raise ValueError(f"问题ID {issue_id} 不属于当前报告问题库。")
+        seen.add(issue_id)
+        normalized.append(issue_id)
+        if len(normalized) >= 5000:
+            break
+    normalized.sort()
+    return normalized
+
+
+def get_non_oil_report_excluded_issue_ids(
+    cur,
+    period_start,
+    period_end,
+    issue_ids=None,
+):
+    if not non_oil_report_issue_selection_table_available(cur):
+        return set()
+    normalized_ids = normalize_non_oil_report_excluded_issue_ids(issue_ids)
+    if issue_ids is not None and not normalized_ids:
+        return set()
+    params = [period_start, period_end]
+    issue_clause = ""
+    if normalized_ids:
+        issue_clause = " AND issue_id = ANY(%s)"
+        params.append(normalized_ids)
+    cur.execute(
+        f"""
+        SELECT issue_id
+        FROM inspection_report_non_oil_issue_selections
+        WHERE period_start = %s
+          AND period_end_exclusive = %s
+          AND is_included = FALSE
+          {issue_clause};
+        """,
+        params,
+    )
+    return {int(row["issue_id"]) for row in cur.fetchall()}
+
+
+def filter_non_oil_report_issue_rows(rows, excluded_issue_ids):
+    excluded = set(normalize_non_oil_report_excluded_issue_ids(excluded_issue_ids))
+    return [
+        row
+        for row in rows or []
+        if int(row.get("id") or 0) not in excluded
+    ]
+
+
+def replace_non_oil_report_issue_exclusions(
+    cur,
+    period_start,
+    period_end,
+    eligible_issue_ids,
+    excluded_issue_ids,
+    user_id=None,
+):
+    if not non_oil_report_issue_selection_table_available(cur):
+        raise InspectionReportJobSchemaUnavailable(
+            "非油报告问题库选择表尚未完成数据库迁移，请重新部署后端。"
+        )
+    eligible = normalize_non_oil_report_excluded_issue_ids(eligible_issue_ids)
+    excluded = normalize_non_oil_report_excluded_issue_ids(
+        excluded_issue_ids,
+        eligible,
+    )
+    if eligible:
+        cur.execute(
+            """
+            DELETE FROM inspection_report_non_oil_issue_selections
+            WHERE period_start = %s
+              AND period_end_exclusive = %s
+              AND issue_id = ANY(%s);
+            """,
+            (period_start, period_end, eligible),
+        )
+    for issue_id in excluded:
+        cur.execute(
+            """
+            INSERT INTO inspection_report_non_oil_issue_selections (
+                period_start, period_end_exclusive, issue_id,
+                is_included, updated_by, updated_at
+            )
+            VALUES (%s, %s, %s, FALSE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (period_start, period_end_exclusive, issue_id) DO UPDATE SET
+                is_included = FALSE,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = CURRENT_TIMESTAMP;
+            """,
+            (period_start, period_end, issue_id, user_id),
+        )
+    return set(excluded)
+
+
 def non_oil_key_issue_classification_table_available(cur):
     cur.execute(
         "SELECT to_regclass('public.inspection_report_non_oil_key_issue_classifications') AS table_name;"
@@ -12599,6 +12721,90 @@ def serialize_non_oil_inspection_station(row):
         if isinstance(report_date, (datetime, date))
         else str(report_date or "")[:10],
     }
+
+
+def fetch_non_oil_report_issue_rows(
+    cur,
+    user,
+    date_from,
+    date_to,
+    generation_options=None,
+    apply_station_filter=True,
+):
+    where_clauses = [
+        "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
+        "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+        "REPLACE(t.table_name, %s, '') IN (%s, %s)",
+        "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
+        "COALESCE(i.audit_status, 'pending') = 'approved'",
+    ]
+    params = [
+        date_from,
+        date_to,
+        DISPLAY_REMOVED_STATION_PHRASE,
+        NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
+        NON_OIL_REPORT_ONSITE_TABLE,
+    ]
+    table_scope_allowed = append_inspection_table_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "i.inspection_table_id",
+        "limit_plan_inspection_table_scope",
+    )
+    region_scope_allowed = append_station_region_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "s.region",
+        "limit_plan_station_region_scope",
+    )
+    if apply_station_filter:
+        append_inspection_report_station_filter(
+            where_clauses,
+            params,
+            "i.station_id",
+            generation_options or {},
+        )
+    if not table_scope_allowed or not region_scope_allowed:
+        return []
+    where_clause = f"WHERE {' AND '.join(where_clauses)}"
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT
+                i.id,
+                i.station_id,
+                s.station_name,
+                s.region,
+                s.address,
+                t.table_name,
+                i.standard_id,
+                i.standard_detail_text,
+                i.description,
+                i.photo_path AS issue_photo,
+                i.status,
+                i.rectification_result,
+                i.review_result,
+                ins.sign_status,
+                COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON i.station_id = s.id
+            JOIN inspection_tables t ON i.inspection_table_id = t.id
+            {where_clause}
+            ORDER BY
+                COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
+                s.region ASC NULLS LAST,
+                s.station_name ASC,
+                i.id ASC;
+            """
+        ).format(where_clause=sql.SQL(where_clause)),
+        params,
+    )
+    return [dict(row) for row in cur.fetchall()]
 
 
 def non_oil_unit_sort_key(item):
@@ -32027,83 +32233,23 @@ def generate_non_oil_report_job(
             generation_options,
         )
 
-        def fetch_issue_rows(date_from, date_to, apply_station_filter=True):
-            where_clauses = [
-                "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
-                "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
-                "REPLACE(t.table_name, %s, '') IN (%s, %s)",
-                "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
-                "COALESCE(i.audit_status, 'pending') = 'approved'",
-            ]
-            params = [
-                date_from,
-                date_to,
-                DISPLAY_REMOVED_STATION_PHRASE,
-                NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
-                NON_OIL_REPORT_ONSITE_TABLE,
-            ]
-            table_scope_allowed = append_inspection_table_scope_filter(
-                cur,
-                user,
-                where_clauses,
-                params,
-                "i.inspection_table_id",
-                "limit_plan_inspection_table_scope",
-            )
-            region_scope_allowed = append_station_region_scope_filter(
-                cur,
-                user,
-                where_clauses,
-                params,
-                "s.region",
-                "limit_plan_station_region_scope",
-            )
-            if apply_station_filter:
-                append_inspection_report_station_filter(
-                    where_clauses,
-                    params,
-                    "i.station_id",
-                    generation_options,
-                )
-            if not table_scope_allowed or not region_scope_allowed:
-                return []
-            where_clause = f"WHERE {' AND '.join(where_clauses)}"
-            cur.execute(
-                sql.SQL(
-                    """
-                    SELECT
-                        i.id,
-                        i.station_id,
-                        s.station_name,
-                        s.region,
-                        s.address,
-                        t.table_name,
-                        i.standard_id,
-                        i.standard_detail_text,
-                        i.description,
-                        i.photo_path AS issue_photo,
-                        i.status,
-                        i.rectification_result,
-                        i.review_result,
-                        ins.sign_status,
-                        COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
-                    FROM issues i
-                    JOIN inspections ins ON i.inspection_id = ins.id
-                    JOIN stations s ON i.station_id = s.id
-                    JOIN inspection_tables t ON i.inspection_table_id = t.id
-                    {where_clause}
-                    ORDER BY
-                        COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
-                        s.region ASC NULLS LAST,
-                        s.station_name ASC,
-                        i.id ASC;
-                    """
-                ).format(where_clause=sql.SQL(where_clause)),
-                params,
-            )
-            return [dict(row) for row in cur.fetchall()]
-
-        issue_rows = fetch_issue_rows(period_start, period_end)
+        all_issue_rows = fetch_non_oil_report_issue_rows(
+            cur,
+            user,
+            period_start,
+            period_end,
+            generation_options,
+        )
+        excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
+            cur,
+            period_start,
+            period_end,
+            [row.get("id") for row in all_issue_rows],
+        )
+        issue_rows = filter_non_oil_report_issue_rows(
+            all_issue_rows,
+            excluded_issue_ids,
+        )
         classification_map = get_non_oil_report_classification_map(
             cur,
             [row.get("id") for row in issue_rows],
@@ -32112,9 +32258,13 @@ def generate_non_oil_report_job(
             cur,
             [row.get("id") for row in issue_rows],
         )
-        previous_issue_rows = fetch_issue_rows(
+        previous_issue_rows = fetch_non_oil_report_issue_rows(
+            cur,
+            user,
             previous_period_start,
             previous_period_end,
+            {},
+            apply_station_filter=False,
         )
 
         inspection_where_clauses = [
@@ -32286,6 +32436,14 @@ def generate_non_oil_report_job(
         normalized_generation_options.get("date_from")
         and normalized_generation_options.get("date_to")
     )
+    report["issue_selection"] = {
+        "period_start": period_start.strftime("%Y-%m-%d"),
+        "period_end": (period_end - timedelta(days=1)).strftime("%Y-%m-%d"),
+        "available_count": len(all_issue_rows),
+        "included_count": len(issue_rows),
+        "excluded_count": len(excluded_issue_ids),
+        "excluded_issue_ids": sorted(excluded_issue_ids),
+    }
     report["source_selection"] = source_selection
     insight_result = None
     if non_oil_issues:
@@ -33059,6 +33217,164 @@ def manage_quality_report_flow_classifications():
         return jsonify(
             {"success": False, "error": "质量计量问题环节分类处理失败，请稍后重试。"}
         ), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route(
+    "/api/inspection-reports/non-oil-issue-selection",
+    methods=["GET", "PUT"],
+)
+def manage_non_oil_report_issue_selection():
+    data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
+    source = data if request.method == "PUT" else request.args
+    month_value = source.get("month", "")
+    report_month_start, _ = parse_report_month(month_value)
+    generation_options = {}
+    if source.get("date_from") or source.get("date_to"):
+        generation_options = {
+            "date_from": source.get("date_from"),
+            "date_to": source.get("date_to"),
+        }
+    period_start, period_end = resolve_non_oil_report_period(
+        report_month_start.strftime("%Y-%m"),
+        generation_options,
+    )
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        can_edit = has_permission(cur, user, "generate_inspection_reports")
+        if not non_oil_report_issue_selection_table_available(cur):
+            raise InspectionReportJobSchemaUnavailable(
+                "非油报告问题库选择表尚未完成数据库迁移，请重新部署后端。"
+            )
+
+        issue_rows = fetch_non_oil_report_issue_rows(
+            cur,
+            user,
+            period_start,
+            period_end,
+            {},
+            apply_station_filter=False,
+        )
+        eligible_issue_ids = [int(row.get("id") or 0) for row in issue_rows]
+        if request.method == "PUT":
+            if not can_edit:
+                raise PermissionError("当前账号无权调整非油报告参与问题。")
+            excluded_values = data.get("excluded_issue_ids")
+            if not isinstance(excluded_values, list):
+                raise ValueError("请提交有效的不参与报告问题清单。")
+            excluded_issue_ids = replace_non_oil_report_issue_exclusions(
+                cur,
+                period_start,
+                period_end,
+                eligible_issue_ids,
+                excluded_values,
+                user.get("id"),
+            )
+            conn.commit()
+        else:
+            excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
+                cur,
+                period_start,
+                period_end,
+                eligible_issue_ids,
+            )
+
+        classification_map = get_non_oil_report_classification_map(
+            cur,
+            eligible_issue_ids,
+        )
+        serialized_rows = [
+            serialize_non_oil_report_issue(row, classification_map)
+            for row in issue_rows
+        ]
+        rows = []
+        for item in serialized_rows:
+            category_name = normalize_non_oil_effective_category(
+                item.get("category_name"),
+                item,
+            )
+            rows.append(
+                {
+                    "issue_id": item.get("issue_id"),
+                    "station_id": item.get("station_id"),
+                    "station_name": item.get("station_name"),
+                    "unit_name": item.get("unit_name"),
+                    "table_name": item.get("table_name"),
+                    "external_standard_id": item.get("external_standard_id"),
+                    "category_name": category_name,
+                    "category_display_name": NON_OIL_REPORT_CATEGORY_DISPLAY_NAMES.get(
+                        category_name,
+                        category_name,
+                    ),
+                    "description": item.get("description"),
+                    "issue_photo": item.get("issue_photo"),
+                    "report_date": item.get("report_date"),
+                    "included": int(item.get("issue_id") or 0)
+                    not in excluded_issue_ids,
+                }
+            )
+        category_stats = []
+        for category_name in NON_OIL_REPORT_CATEGORIES:
+            category_rows = [
+                item for item in rows if item.get("category_name") == category_name
+            ]
+            if not category_rows:
+                continue
+            category_stats.append(
+                {
+                    "name": category_name,
+                    "display_name": NON_OIL_REPORT_CATEGORY_DISPLAY_NAMES.get(
+                        category_name,
+                        category_name,
+                    ),
+                    "total_count": len(category_rows),
+                    "included_count": sum(
+                        1 for item in category_rows if item.get("included")
+                    ),
+                }
+            )
+        return jsonify(
+            {
+                "success": True,
+                "month": report_month_start.strftime("%Y-%m"),
+                "date_from": period_start.strftime("%Y-%m-%d"),
+                "date_to": (period_end - timedelta(days=1)).strftime("%Y-%m-%d"),
+                "issues": rows,
+                "categories": category_stats,
+                "summary": {
+                    "total_count": len(rows),
+                    "included_count": sum(1 for item in rows if item.get("included")),
+                    "excluded_count": len(excluded_issue_ids),
+                    "category_count": len(category_stats),
+                },
+                "can_edit": can_edit,
+                "regeneration_required": request.method == "PUT",
+            }
+        )
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except InspectionReportJobSchemaUnavailable as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to manage non-oil report issue selection.")
+        return jsonify({"success": False, "error": "非油报告问题库读取失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
