@@ -7179,6 +7179,11 @@ ISSUE_EXPORT_PHOTO_KEYS = {
     "review_photo",
 }
 
+ISSUE_EXPORT_PHOTO_MODES = {
+    "compatible",
+    "embedded",
+}
+
 ISSUE_EXPORT_FIELD_KEYS = {
     "id",
     "month",
@@ -7229,9 +7234,13 @@ def normalize_issue_export_options(raw_options):
         key: bool(raw_include_photos.get(key)) and bool(include_fields.get(key))
         for key in ISSUE_EXPORT_PHOTO_KEYS
     }
+    photo_mode = str(raw_options.get("photo_mode") or "compatible").strip().lower()
+    if photo_mode not in ISSUE_EXPORT_PHOTO_MODES:
+        photo_mode = "compatible"
     return {
         "include_fields": include_fields,
         "include_photos": include_photos,
+        "photo_mode": photo_mode,
     }
 
 
@@ -7529,6 +7538,57 @@ def get_issue_export_embedded_image_path(image_path):
         return abs_path
     except Exception:
         return None
+
+
+def insert_issue_export_photo(
+    worksheet,
+    row_index,
+    column_index,
+    image_path,
+    cell_format,
+    description,
+    photo_mode="compatible",
+):
+    if photo_mode == "embedded":
+        return worksheet.embed_image(
+            row_index,
+            column_index,
+            image_path,
+            {
+                "cell_format": cell_format,
+                "description": description,
+            },
+        )
+
+    # Traditional drawing images are understood by older Excel and WPS releases.
+    # Keep a small inset so the image remains visually contained by the cell border.
+    try:
+        with Image.open(image_path) as source_image:
+            width, height = source_image.size
+    except Exception:
+        return -1
+    if width <= 0 or height <= 0:
+        return -1
+
+    target_width = 150
+    target_height = 110
+    scale = min(target_width / float(width), target_height / float(height), 1.0)
+    rendered_width = max(1, int(width * scale))
+    rendered_height = max(1, int(height * scale))
+    worksheet.write_blank(row_index, column_index, None, cell_format)
+    return worksheet.insert_image(
+        row_index,
+        column_index,
+        image_path,
+        {
+            "x_scale": scale,
+            "y_scale": scale,
+            "x_offset": max(2, int((158 - rendered_width) / 2)),
+            "y_offset": max(2, int((122 - rendered_height) / 2)),
+            "object_position": 1,
+            "description": description,
+        },
+    )
 
 
 def parse_standard_detail_entries(detail_text):
@@ -13636,6 +13696,9 @@ def write_issue_export_xlsx(
     if not selected_field_keys:
         raise ValueError("请至少选择一个导出字段。")
     selected_photo_keys = selected_issue_export_photo_keys(export_options)
+    photo_mode = str((export_options or {}).get("photo_mode") or "compatible").strip().lower()
+    if photo_mode not in ISSUE_EXPORT_PHOTO_MODES:
+        photo_mode = "compatible"
     if isinstance(file_path, (str, bytes, os.PathLike)):
         export_directory = os.path.dirname(os.fspath(file_path))
         if export_directory:
@@ -13757,17 +13820,17 @@ def write_issue_export_xlsx(
                             else None
                         )
                         if image_path:
-                            result = worksheet.embed_image(
+                            result = insert_issue_export_photo(
+                                worksheet,
                                 row_index,
                                 column_index,
                                 image_path,
-                                {
-                                    "cell_format": cell_format,
-                                    "description": f"{header}（问题ID {row.get('id') or '-'}）",
-                                },
+                                cell_format,
+                                f"{header}（问题ID {row.get('id') or '-'}）",
+                                photo_mode,
                             )
                             if result != 0:
-                                raise RuntimeError("照片嵌入 Excel 单元格失败。")
+                                raise RuntimeError("照片写入 Excel 失败。")
                             row_has_image = True
                         else:
                             worksheet.write_blank(row_index, column_index, None, cell_format)
