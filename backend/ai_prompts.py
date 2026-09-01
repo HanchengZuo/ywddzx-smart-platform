@@ -70,6 +70,14 @@ NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT = (
     "不允许保留‘其他’，不允许创造新分类或问题。必须只输出JSON，不要解释。"
 )
 
+NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT = (
+    "你是“业务督导中心数智化管理平台”的非油重点问题选题助手。"
+    "请根据原始问题描述判断问题是否适合纳入重点商品、月度盘点、商品过期或团购问题。"
+    "不是所有问题都必须归类，不符合四类定义时必须返回‘不纳入重点问题’。"
+    "只能引用输入中真实存在的问题ID，不允许编造问题或分类。"
+    "必须只输出JSON，不要解释。"
+)
+
 
 def build_inspection_standard_recommendation_prompt(issue_description, standards):
     standards_payload = json.dumps(
@@ -377,11 +385,17 @@ def build_non_oil_report_insight_prompt(report_context):
         "\"issue_ids\":[1,2,3],"
         "\"summary\":\"共性表现和风险概括，控制在90字内\"}"
         "],"
+        "\"core_findings\":["
+        "{\"title\":\"核心特征标题，控制在12字内\",\"content\":\"数据特征概括，控制在70字内\"}"
+        "],"
         "\"attribution_analysis\":["
         "{\"title\":\"归因标题，控制在24字内\",\"content\":\"结合真实数据的归因分析，控制在140字内\"}"
         "],"
         "\"improvement_suggestions\":["
         "{\"title\":\"改善建议标题，控制在24字内\",\"content\":\"具体可执行的改善建议，控制在140字内\"}"
+        "],"
+        "\"action_priorities\":["
+        "{\"title\":\"行动优先项标题，控制在12字内\",\"content\":\"面向实际落地的优先行动，控制圧100字内\"}"
         "]"
         "}\n"
         "要求：\n"
@@ -389,9 +403,11 @@ def build_non_oil_report_insight_prompt(report_context):
         "2. typical_issues 输出3-6类，优先选择跨站重复、普遍性高或风险明确的问题，"
         "每类最多引用8个真实问题ID。\n"
         "3. attribution_analysis 输出3条，分析流程惯性、执行动力、风险认知或监督机制中真实存在的问题。\n"
-        "4. improvement_suggestions 输出3-5条，明确执行动作、责任层级和闭环验证方式。\n"
-        "5. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
-        "6. 只能输出 JSON 本身。"
+        "4. core_findings输出3条，分别概括问题集中度、区域差异或风险同质化等真实特征。\n"
+        "5. improvement_suggestions 输出3-5条，明确执行动作、责任层级和闭环验证方式。\n"
+        "6. action_priorities输出3条，用于报告末页的优先行动建议。\n"
+        "7. 所有文字使用正式企业检查报告语气，不要像聊天回复。\n"
+        "8. 只能输出 JSON 本身。"
     )
 
 
@@ -408,4 +424,26 @@ def build_non_oil_category_classification_prompt(classification_context):
         "{\"classifications\":[{\"issue_id\":1,\"category\":\"允许分类中的完整名称\","
         "\"reason\":\"不超过50字的分类依据\"}]}。\n"
         "要求每个输入问题都返回一次，category必须来自allowed_categories，不能输出‘其他’。"
+    )
+
+
+def build_non_oil_key_issue_classification_prompt(classification_context):
+    payload = json.dumps(
+        classification_context or {},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        "下面是待挑选的非油已审核通过问题数据。\n"
+        f"{payload}\n\n"
+        "请返回JSON对象："
+        "{\"classifications\":[{\"issue_id\":1,\"category\":\"四类之一或不纳入重点问题\","
+        "\"reason\":\"不超过60字的判定依据\"}]}。\n"
+        "分类标准：\n"
+        "1. 重点商品：烟酒等高价值货品，包括茅台、贵州茅台、五粮液、软中华、硬中华、软中、硬中等账实、陈列、销售或仓储问题。\n"
+        "2. 月度盘点：库存交接与盘点、交接班盘点记录、盘点覆盖率及签字完整性。\n"
+        "3. 商品过期：过期或临期商品的检查、登记、下架或销毁处理。\n"
+        "4. 团购问题：团购审批手续、货款、过机、资金滞留或其他资金与流程合规问题。\n"
+        "5. 无法准确匹配上述任一定义时，返回‘不纳入重点问题’，不得强制归类。\n"
+        "每个输入问题都要返回一次，category必须来自allowed_categories。"
     )

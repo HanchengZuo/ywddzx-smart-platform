@@ -8,6 +8,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from ai_prompts import (
     build_non_oil_category_classification_prompt,
+    build_non_oil_key_issue_classification_prompt,
     build_non_oil_report_insight_prompt,
 )
 from non_oil_report_presentation import (
@@ -36,6 +37,89 @@ class NonOilReportPresentationTest(unittest.TestCase):
             "category_distribution": categories,
             "key_issue_count": 2,
             "key_issue_percentage": 40,
+            "key_issue_summary": {
+                "selected_count": 2,
+                "percentage_of_all": 40,
+                "distribution": [
+                    {"name": "重点商品", "count": 1, "percentage": 50},
+                    {"name": "月度盘点", "count": 1, "percentage": 50},
+                    {"name": "商品过期", "count": 0, "percentage": 0},
+                    {"name": "团购问题", "count": 0, "percentage": 0},
+                ],
+                "details": [
+                    {
+                        "name": "重点商品",
+                        "count": 1,
+                        "percentage_of_all": 20,
+                        "relationship": [
+                            {
+                                "name": "商品盘点",
+                                "source_name": "商品订单、入库、盘点等情况",
+                                "count": 1,
+                                "percentage": 100,
+                            }
+                        ],
+                        "issues": [
+                            {
+                                "issue_id": 1,
+                                "source_project": "现场抽盘",
+                                "station_name": "测试一站",
+                                "description": "软中华盘亏10包。",
+                                "issue_photo": "",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "月度盘点",
+                        "count": 1,
+                        "percentage_of_all": 20,
+                        "relationship": [
+                            {
+                                "name": "商品盘点",
+                                "source_name": "商品订单、入库、盘点等情况",
+                                "count": 1,
+                                "percentage": 100,
+                            }
+                        ],
+                        "issues": [],
+                    },
+                ],
+            },
+            "category_details": [
+                {
+                    "source_name": "店销商品摆放情况",
+                    "name": "商品摆放",
+                    "count": 3,
+                    "percentage": 60,
+                    "features": [{"name": "价签标识", "count": 2, "example": "商品无价签"}],
+                    "issues": [{"station_name": "测试一站", "description": "商品无价签", "issue_photo": ""}],
+                },
+                {
+                    "source_name": "便利店卫生情况",
+                    "name": "便利店卫生",
+                    "count": 2,
+                    "percentage": 40,
+                    "features": [{"name": "货架积灰", "count": 2, "example": "货架有灰尘"}],
+                    "issues": [{"station_name": "测试二站", "description": "货架有灰尘", "issue_photo": ""}],
+                },
+            ],
+            "deep_analysis": {
+                "core_findings": [
+                    {"title": "问题集中化", "content": "问题主要集中在商品摆放。"},
+                    {"title": "区域差异化", "content": "不同站点存在差异。"},
+                    {"title": "风险同质化", "content": "价签问题重复出现。"},
+                ],
+                "attribution_analysis": [
+                    {"title": "流程执行", "content": "基础流程落地不足。"},
+                    {"title": "风险认知", "content": "风险认知需提升。"},
+                    {"title": "监督机制", "content": "监督复核仍需强化。"},
+                ],
+                "action_priorities": [
+                    {"title": "固化流程", "content": "固化基础检查流程。"},
+                    {"title": "优化培训", "content": "开展案例化培训。"},
+                    {"title": "闭环复核", "content": "建立整改复核机制。"},
+                ],
+            },
             "units": [
                 {
                     "unit_type": "region",
@@ -71,6 +155,11 @@ class NonOilReportPresentationTest(unittest.TestCase):
         self.assertIn("attribution_analysis", insight_prompt)
         self.assertIn("classifications", classification_prompt)
         self.assertIn("不能输出‘其他’", classification_prompt)
+        key_prompt = build_non_oil_key_issue_classification_prompt(
+            {"allowed_categories": ["重点商品", "不纳入重点问题"], "issues": [{"issue_id": 7}]}
+        )
+        self.assertIn("不纳入重点问题", key_prompt)
+        self.assertIn("不得强制归类", key_prompt)
 
     def test_preview_images_and_export_share_the_same_slide_set(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -82,8 +171,8 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 slides_dir,
                 ppt_path,
             )
-            self.assertEqual(result["slide_count"], 35)
-            self.assertEqual(len(list(slides_dir.glob("slide-*.jpg"))), 35)
+            self.assertEqual(result["slide_count"], 27)
+            self.assertEqual(len(list(slides_dir.glob("slide-*.jpg"))), 27)
             with Image.open(slides_dir / "slide-01.jpg") as image:
                 self.assertEqual(image.size, CANVAS_SIZE)
             presentation = Presentation(ppt_path)
@@ -101,6 +190,22 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 ),
                 2,
             )
+            key_overview_slide = next(
+                slide for slide in presentation.slides
+                if any(
+                    getattr(shape, "has_text_frame", False) and "3. 重点问题概述" in shape.text
+                    for shape in slide.shapes
+                )
+            )
+            self.assertTrue(any(shape.has_chart for shape in key_overview_slide.shapes))
+            key_relationship_slide = next(
+                slide for slide in presentation.slides
+                if any(
+                    getattr(shape, "has_text_frame", False) and "4. 重点问题发生环节" in shape.text
+                    for shape in slide.shapes
+                )
+            )
+            self.assertTrue(any(shape.has_table for shape in key_relationship_slide.shapes))
             self.assertGreaterEqual(
                 sum(
                     shape.shape_type == MSO_SHAPE_TYPE.CHART

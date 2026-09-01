@@ -15,6 +15,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
+from PIL import Image, ImageOps
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.dml.color import RGBColor
@@ -50,6 +51,17 @@ BLUE = RGBColor(47, 117, 181)
 GRID = RGBColor(217, 225, 233)
 FONT_SANS = "Noto Sans CJK SC"
 FONT_SERIF = "Noto Serif CJK SC"
+KEY_ISSUE_CATEGORIES = ["重点商品", "月度盘点", "商品过期", "团购问题"]
+CATEGORY_DISPLAY_NAMES = {
+    "员工形象及开口服务情况": "员工服务",
+    "便利店卫生情况": "便利店卫生",
+    "店销商品摆放情况": "商品摆放",
+    "仓库管理情况": "仓库管理",
+    "销售行为": "销售行为",
+    "商品订单、入库、盘点等情况": "商品盘点",
+    "台账、报表情况": "台账报表",
+    "特殊扣分项": "特殊扣分项",
+}
 
 
 def _unit_name(value):
@@ -81,6 +93,13 @@ def _shape_text(shape):
 
 def _find_text_shape(slide, keyword):
     return next((shape for shape in slide.shapes if keyword in _shape_text(shape)), None)
+
+
+def _iter_shapes_recursive(shapes):
+    for shape in shapes:
+        yield shape
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_shapes_recursive(shape.shapes)
 
 
 def _capture_run_style(text_frame):
@@ -421,6 +440,159 @@ def _add_pie_chart(slide, box, rows, title):
     return chart
 
 
+def _set_cell_fill(cell, color):
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = color
+
+
+def _add_styled_table(slide, box, headers, rows, font_size=10, first_column_width=None):
+    row_count = max(2, len(rows) + 1)
+    table_shape = slide.shapes.add_table(
+        row_count,
+        len(headers),
+        *box,
+    )
+    table = table_shape.table
+    if first_column_width and len(headers) > 1:
+        table.columns[0].width = Inches(first_column_width)
+        remaining = table_shape.width - table.columns[0].width
+        column_width = int(remaining / (len(headers) - 1))
+        for column in list(table.columns)[1:]:
+            column.width = column_width
+    for column_index, header in enumerate(headers):
+        cell = table.cell(0, column_index)
+        _set_cell_text(cell, header, font_size=font_size, bold=True)
+        _set_cell_fill(cell, RGBColor(124, 211, 235))
+    normalized_rows = rows or [["暂无数据"] + [""] * (len(headers) - 1)]
+    for row_index, values in enumerate(normalized_rows, 1):
+        for column_index in range(len(headers)):
+            value = values[column_index] if column_index < len(values) else ""
+            cell = table.cell(row_index, column_index)
+            _set_cell_text(cell, value, font_size=font_size, bold=False)
+            _set_cell_fill(
+                cell,
+                RGBColor(239, 246, 255) if row_index % 2 else RGBColor(255, 255, 255),
+            )
+    header_height = Inches(0.4)
+    table.rows[0].height = header_height
+    body_height = max(Inches(0.24), int((table_shape.height - header_height) / max(1, len(normalized_rows))))
+    for row in list(table.rows)[1:]:
+        row.height = body_height
+    return table_shape
+
+
+def _resolve_image_source(raw_path, storage_root):
+    value = str(raw_path or "").strip()
+    if not value or not storage_root:
+        return None
+    clean = value.split("?", 1)[0].replace("\\", "/")
+    if "/storage/" in clean:
+        clean = clean.split("/storage/", 1)[1]
+    clean = clean.lstrip("/")
+    root = os.path.abspath(storage_root)
+    candidate = os.path.abspath(os.path.join(root, clean))
+    try:
+        if os.path.commonpath([root, candidate]) != root:
+            return None
+    except ValueError:
+        return None
+    return candidate if os.path.isfile(candidate) else None
+
+
+def _add_picture_contain(slide, raw_path, box, storage_root):
+    left, top, width, height = box
+    frame = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height)
+    frame.fill.solid()
+    frame.fill.fore_color.rgb = RGBColor(241, 245, 249)
+    frame.line.color.rgb = RGBColor(203, 213, 225)
+    source = _resolve_image_source(raw_path, storage_root)
+    if not source:
+        _set_text_frame(frame.text_frame, "暂无问题照片", font_size=Pt(11))
+        for paragraph in frame.text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.CENTER
+        frame.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        return None
+    try:
+        with Image.open(source) as image:
+            normalized = ImageOps.exif_transpose(image)
+            image_width, image_height = normalized.size
+        padding = Inches(0.07)
+        inner_width = max(Inches(0.1), width - padding * 2)
+        inner_height = max(Inches(0.1), height - padding * 2)
+        scale = min(inner_width / max(1, image_width), inner_height / max(1, image_height))
+        target_width = int(image_width * scale)
+        target_height = int(image_height * scale)
+        picture_left = left + int((width - target_width) / 2)
+        picture_top = top + int((height - target_height) / 2)
+        return slide.shapes.add_picture(
+            source,
+            picture_left,
+            picture_top,
+            width=target_width,
+            height=target_height,
+        )
+    except Exception:
+        _set_text_frame(frame.text_frame, "照片读取失败", font_size=Pt(11))
+        for paragraph in frame.text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.CENTER
+        frame.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        return None
+
+
+def _add_issue_photo_card(slide, issue, box, storage_root, caption_height=0.42):
+    left, top, width, height = box
+    caption_height_value = Inches(caption_height)
+    photo_height = max(Inches(0.3), height - caption_height_value)
+    _add_picture_contain(
+        slide,
+        (issue or {}).get("issue_photo"),
+        (left, top, width, photo_height),
+        storage_root,
+    )
+    caption = slide.shapes.add_textbox(
+        left,
+        top + photo_height,
+        width,
+        caption_height_value,
+    )
+    has_issue = bool(issue and (issue.get("issue_id") or issue.get("description")))
+    station_name = str((issue or {}).get("station_name") or "")
+    description = str((issue or {}).get("description") or "").strip()
+    if len(description) > 34:
+        description = f"{description[:34]}…"
+    _set_text_frame(
+        caption.text_frame,
+        f"{station_name}：{description}" if has_issue else "暂无更多典型问题",
+        font_size=Pt(9),
+        bold=False,
+    )
+    for paragraph in caption.text_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.CENTER
+    return caption
+
+
+def _feature_distribution(issues, feature_groups):
+    rows = []
+    for name, keywords in feature_groups:
+        count = sum(
+            1 for issue in issues or []
+            if any(keyword in str(issue.get("description") or "") for keyword in keywords)
+        )
+        if count:
+            rows.append({"name": name, "count": count})
+    return rows
+
+
+def _find_key_detail(report, category_name):
+    return next(
+        (
+            item for item in (report.get("key_issue_summary") or {}).get("details") or []
+            if item.get("name") == category_name
+        ),
+        {"name": category_name, "count": 0, "percentage_of_all": 0, "relationship": [], "issues": []},
+    )
+
+
 def _remove_large_visuals(slide):
     for shape in list(slide.shapes):
         if shape.shape_type == MSO_SHAPE_TYPE.CHART:
@@ -724,6 +896,532 @@ def _edit_analysis_overview(slide, report):
     _set_text_frame(overview_shape.text_frame, updated)
 
 
+def _edit_key_issue_overview_slide(slide, report):
+    for shape in list(slide.shapes):
+        if shape.shape_type in {MSO_SHAPE_TYPE.PICTURE, MSO_SHAPE_TYPE.CHART}:
+            _remove_shape(shape)
+    for category_name in KEY_ISSUE_CATEGORIES:
+        label_shape = next(
+            (
+                shape for shape in _iter_shapes_recursive(slide.shapes)
+                if _shape_text(shape) == category_name
+            ),
+            None,
+        )
+        if not label_shape:
+            continue
+        label_shape.text_frame.margin_left = 0
+        label_shape.text_frame.margin_right = 0
+        label_shape.text_frame.margin_top = 0
+        label_shape.text_frame.margin_bottom = 0
+        _set_text_frame(
+            label_shape.text_frame,
+            category_name,
+            font_size=Pt(9),
+            bold=True,
+        )
+        label_shape.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        for paragraph in label_shape.text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.CENTER
+    _add_pie_chart(
+        slide,
+        (Inches(8.82), Inches(2.82), Inches(4.2), Inches(3.55)),
+        (report.get("key_issue_summary") or {}).get("distribution") or [],
+        "重点问题内部占比",
+    )
+
+
+def _edit_key_issue_relationship_slide(slide, report):
+    summary = report.get("key_issue_summary") or {}
+    details = [item for item in summary.get("details") or [] if item.get("count")]
+    narrative_shape = _find_text_shape(slide, "根据问题定义")
+    narrative_lines = ["根据问题定义，将重点问题与检查环节做关联性分析，可以得出："]
+    for detail in details:
+        relationships = detail.get("relationship") or []
+        top_rows = relationships[:2]
+        if not top_rows:
+            relationship_text = "当前未形成明确的业务环节分布"
+        else:
+            relationship_text = "、".join(
+                f"{item.get('name')}（{_format_number(item.get('percentage'), 1)}%）"
+                for item in top_rows
+            )
+        narrative_lines.append(f"·{detail.get('name')}发生在{relationship_text}。")
+    if len(narrative_lines) == 1:
+        narrative_lines.append("·当前范围暂无符合四类定义的重点问题。")
+    if narrative_shape:
+        narrative_shape.height = Inches(2.1)
+        _set_text_frame(narrative_shape.text_frame, "\n".join(narrative_lines), font_size=Pt(16))
+
+    for shape in list(slide.shapes):
+        if getattr(shape, "has_table", False):
+            _remove_shape(shape)
+    active_names = []
+    for source_name, display_name in CATEGORY_DISPLAY_NAMES.items():
+        if any(
+            item.get("source_name") == source_name
+            for detail in details
+            for item in detail.get("relationship") or []
+        ):
+            active_names.append(display_name)
+    if not active_names:
+        active_names = ["暂无环节数据"]
+    rows = []
+    for category_name in KEY_ISSUE_CATEGORIES:
+        detail = next((item for item in details if item.get("name") == category_name), None)
+        relationship_map = {
+            item.get("name"): item for item in (detail or {}).get("relationship") or []
+        }
+        rows.append(
+            [category_name]
+            + [
+                (
+                    f"{_format_number(relationship_map[name].get('percentage'), 1)}%"
+                    if name in relationship_map else ""
+                )
+                for name in active_names
+            ]
+        )
+    _add_styled_table(
+        slide,
+        (Inches(0.88), Inches(4.45), Inches(11.55), Inches(2.25)),
+        ["重点问题"] + active_names,
+        rows,
+        font_size=10 if len(active_names) > 6 else 12,
+        first_column_width=1.7,
+    )
+
+
+def _edit_key_product_overview_slide(slide, report):
+    detail = _find_key_detail(report, "重点商品")
+    issues = detail.get("issues") or []
+    relationship = detail.get("relationship") or []
+    brand_distribution = _feature_distribution(
+        issues,
+        [
+            ("中华烟", ("中华", "软中", "硬中")),
+            ("五粮液", ("五粮液",)),
+            ("茅台", ("茅台", "贵州茅台")),
+        ],
+    )
+    manifestation_distribution = _feature_distribution(
+        issues,
+        [
+            ("盘亏", ("盘亏",)),
+            ("盘盈", ("盘盈",)),
+            ("未过机", ("未过机", "不过机")),
+            ("未出样", ("未出样", "未展示")),
+            ("价签", ("价签", "标价")),
+        ],
+    )
+    narrative_shape = _find_text_shape(slide, "61%") or _find_text_shape(slide, "重点问题涉及")
+    relationship_text = "、".join(
+        f"{item.get('name')}（{_format_number(item.get('percentage'), 1)}%）"
+        for item in relationship[:3]
+    ) or "暂无明确环节分布"
+    brand_text = "、".join(
+        f"{item.get('name')}（{item.get('count')}项）" for item in brand_distribution
+    ) or "暂无可统计品牌"
+    manifestation_text = "、".join(
+        f"{item.get('name')}（{item.get('count')}项）" for item in manifestation_distribution
+    ) or "暂无可统计表现"
+    if narrative_shape:
+        _set_text_frame(
+            narrative_shape.text_frame,
+            (
+                f"重点商品问题共{detail.get('count') or 0}项，占全部问题"
+                f"{_format_number(detail.get('percentage_of_all'), 1)}%\n"
+                f"主要发生于{relationship_text}\n"
+                f"涉及商品：{brand_text}\n"
+                f"具体表现：{manifestation_text}"
+            ),
+            font_size=Pt(15),
+        )
+    for shape in list(slide.shapes):
+        if shape.shape_type in {MSO_SHAPE_TYPE.PICTURE, MSO_SHAPE_TYPE.CHART}:
+            _remove_shape(shape)
+    _add_pie_chart(
+        slide,
+        (Inches(0.55), Inches(3.82), Inches(4.0), Inches(3.05)),
+        relationship,
+        "发生环节",
+    )
+    _add_pie_chart(
+        slide,
+        (Inches(4.65), Inches(3.82), Inches(4.0), Inches(3.05)),
+        brand_distribution,
+        "涉及商品",
+    )
+    _add_pie_chart(
+        slide,
+        (Inches(8.75), Inches(3.82), Inches(4.0), Inches(3.05)),
+        manifestation_distribution,
+        "典型问题分布",
+    )
+
+
+def _fill_key_issue_table_slide(slide, issues, title_text, summary_text=None):
+    bar_shape = next(
+        (shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and shape.top > Inches(0.8) and shape.top < Inches(1.6)),
+        None,
+    )
+    if bar_shape:
+        _set_text_frame(bar_shape.text_frame, title_text)
+    if summary_text:
+        summary_shape = next(
+            (
+                shape for shape in slide.shapes
+                if getattr(shape, "has_text_frame", False)
+                and shape._element is not bar_shape._element
+                and shape.top > Inches(1.25)
+                and shape.top < Inches(2.2)
+                and not getattr(shape, "has_table", False)
+            ),
+            None,
+        )
+        if summary_shape:
+            _set_text_frame(summary_shape.text_frame, summary_text, font_size=Pt(15))
+    table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
+    rows = [
+        [
+            issue.get("source_project") or "-",
+            issue.get("station_name") or "-",
+            issue.get("description") or "-",
+        ]
+        for issue in issues
+    ]
+    _fill_table(
+        table_shape,
+        ["检查项目", "站点", "问题描述"],
+        rows or [["-", "-", "当前范围暂无该类重点问题"]],
+        font_size=8 if len(rows) > 8 else 10,
+    )
+
+
+def _edit_key_product_detail_slides(slide_one, slide_two, report):
+    detail = _find_key_detail(report, "重点商品")
+    issues = detail.get("issues") or []
+    _fill_key_issue_table_slide(
+        slide_one,
+        issues[:10],
+        "5.1 重点商品典型问题",
+        "重点商品问题主要涉及账实、陈列、销售过机和价签管理。",
+    )
+    _fill_key_issue_table_slide(
+        slide_two,
+        issues[10:20],
+        "5.2 重点商品典型问题（续）",
+    )
+
+
+def _edit_monthly_inventory_slide(slide, report):
+    detail = _find_key_detail(report, "月度盘点")
+    _fill_key_issue_table_slide(
+        slide,
+        (detail.get("issues") or [])[:8],
+        "6. 月度盘点问题",
+        (
+            f"共{detail.get('count') or 0}项，占全部问题"
+            f"{_format_number(detail.get('percentage_of_all'), 1)}%\n"
+            "重点核实交接班盘点记录、盘点覆盖率及签字完整性。"
+        ),
+    )
+
+
+def _edit_group_purchase_slide(slide, report, storage_root):
+    detail = _find_key_detail(report, "团购问题")
+    issues = detail.get("issues") or []
+    summary_shape = _find_text_shape(slide, "共2起") or _find_text_shape(slide, "占全部问题")
+    if summary_shape:
+        _set_text_frame(
+            summary_shape.text_frame,
+            f"共{detail.get('count') or 0}项，占全部问题{_format_number(detail.get('percentage_of_all'), 1)}%",
+            font_size=Pt(16),
+        )
+    table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
+    rows = [
+        [
+            issue.get("source_project") or "团购合规",
+            f"{issue.get('station_name') or '-'}：{issue.get('description') or '-'}",
+        ]
+        for issue in issues[:4]
+    ]
+    _fill_table(
+        table_shape,
+        ["典型问题", "问题详情"],
+        rows or [["暂无", "当前范围暂无团购重点问题"]],
+        font_size=9,
+    )
+    for shape in list(slide.shapes):
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE or (
+            getattr(shape, "has_text_frame", False)
+            and shape.top > Inches(2.2)
+            and shape._element is not table_shape._element
+        ):
+            _remove_shape(shape)
+    for index in range(2):
+        issue = issues[index] if index < len(issues) else {}
+        _add_issue_photo_card(
+            slide,
+            issue,
+            (Inches(8.0), Inches(2.15 + index * 2.45), Inches(4.45), Inches(2.25)),
+            storage_root,
+        )
+
+
+def _edit_expired_product_slide(slide, report, storage_root):
+    detail = _find_key_detail(report, "商品过期")
+    issues = detail.get("issues") or []
+    summary_shape = _find_text_shape(slide, "共7起") or _find_text_shape(slide, "过期商品")
+    if summary_shape:
+        _set_text_frame(
+            summary_shape.text_frame,
+            (
+                f"共{detail.get('count') or 0}项，占全部问题"
+                f"{_format_number(detail.get('percentage_of_all'), 1)}%\n"
+                "重点关注过期商品的检查、登记、下架和销毁处理。"
+            ),
+            font_size=Pt(16),
+        )
+    preserved_elements = {
+        shape._element for shape in list(slide.shapes)[:3]
+    }
+    for shape in list(slide.shapes):
+        if shape._element not in preserved_elements:
+            _remove_shape(shape)
+    boxes = [
+        (Inches(0.75), Inches(2.82), Inches(5.8), Inches(1.82)),
+        (Inches(6.78), Inches(2.82), Inches(5.8), Inches(1.82)),
+        (Inches(0.75), Inches(4.92), Inches(5.8), Inches(1.82)),
+        (Inches(6.78), Inches(4.92), Inches(5.8), Inches(1.82)),
+    ]
+    for index, box in enumerate(boxes):
+        issue = issues[index] if index < len(issues) else {}
+        _add_issue_photo_card(slide, issue, box, storage_root)
+
+
+def _edit_analysis_distribution_slide(slide, report):
+    for shape in list(slide.shapes):
+        if shape.shape_type in {MSO_SHAPE_TYPE.PICTURE, MSO_SHAPE_TYPE.CHART}:
+            _remove_shape(shape)
+    rows = [
+        item for item in report.get("category_distribution") or []
+        if item.get("count") and item.get("name") in CATEGORY_DISPLAY_NAMES
+    ]
+    _add_column_chart(
+        slide,
+        (Inches(0.85), Inches(2.25), Inches(11.7), Inches(4.35)),
+        [CATEGORY_DISPLAY_NAMES.get(item.get("name"), item.get("name")) for item in rows],
+        [("问题数量", [item.get("count") for item in rows], "4472C4")],
+        "非油检查问题分布",
+    )
+
+
+def _edit_analysis_method_slide(slide, report):
+    for shape in list(slide.shapes):
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            _remove_shape(shape)
+    features = []
+    for detail in report.get("category_details") or []:
+        for item in detail.get("features") or []:
+            features.append((item.get("name") or detail.get("name"), int(item.get("count") or 0)))
+    features.sort(key=lambda item: (-item[1], item[0]))
+    if not features:
+        features = [("暂无高频特征", 1)]
+    for index, (name, count) in enumerate(features[:12]):
+        column = index % 4
+        row = index // 4
+        width = 2.65
+        left = 1.1 + column * 3.0
+        top = 3.18 + row * 0.92
+        tag = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(left),
+            Inches(top),
+            Inches(width),
+            Inches(0.65),
+        )
+        color = RGBColor.from_string(CHART_COLORS[index % len(CHART_COLORS)])
+        tag.fill.solid()
+        tag.fill.fore_color.rgb = color
+        tag.line.fill.background()
+        _set_text_frame(tag.text_frame, f"{name}  {count}", font_size=Pt(13), bold=True)
+        tag.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        for paragraph in tag.text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.CENTER
+            for run in paragraph.runs:
+                run.font.color.rgb = RGBColor(255, 255, 255)
+
+
+def _edit_category_detail_slide(slide, detail, display_index, total_issue_count, storage_root):
+    shapes = list(slide.shapes)
+    title_shape = shapes[0] if shapes else None
+    bar_shape = shapes[1] if len(shapes) > 1 else None
+    summary_shape = shapes[2] if len(shapes) > 2 else None
+    if title_shape and getattr(title_shape, "has_text_frame", False):
+        _set_text_frame(title_shape.text_frame, "四、具体问题分析")
+    if bar_shape and getattr(bar_shape, "has_text_frame", False):
+        _set_text_frame(bar_shape.text_frame, f"{display_index}. {detail.get('name')}")
+    if summary_shape and getattr(summary_shape, "has_text_frame", False):
+        _set_text_frame(
+            summary_shape.text_frame,
+            (
+                f"共{detail.get('count') or 0}项，占全部问题"
+                f"{_format_number(detail.get('percentage'), 1)}%，典型问题如下："
+            ),
+            font_size=Pt(15),
+        )
+    for shape in shapes[3:]:
+        _remove_shape(shape)
+
+    feature_rows = [
+        [item.get("name") or "-", str(item.get("count") or 0), item.get("example") or "-"]
+        for item in detail.get("features") or []
+    ]
+    _add_styled_table(
+        slide,
+        (Inches(0.7), Inches(2.82), Inches(5.85), Inches(2.12)),
+        ["高频特征", "数量", "典型表现"],
+        feature_rows,
+        font_size=9,
+        first_column_width=1.35,
+    )
+    text_box = slide.shapes.add_textbox(
+        Inches(0.78),
+        Inches(5.1),
+        Inches(5.72),
+        Inches(1.32),
+    )
+    descriptions = [
+        f"·{issue.get('station_name') or '-'}：{issue.get('description') or '-'}"
+        for issue in (detail.get("issues") or [])[:3]
+    ]
+    _set_text_frame(
+        text_box.text_frame,
+        "\n".join(descriptions) if descriptions else "当前类别暂无可展示的典型问题。",
+        font_size=Pt(11),
+    )
+    photo_boxes = [
+        (Inches(6.85), Inches(2.82), Inches(2.8), Inches(1.82)),
+        (Inches(9.82), Inches(2.82), Inches(2.8), Inches(1.82)),
+        (Inches(6.85), Inches(4.92), Inches(2.8), Inches(1.82)),
+        (Inches(9.82), Inches(4.92), Inches(2.8), Inches(1.82)),
+    ]
+    issues = detail.get("issues") or []
+    for index, box in enumerate(photo_boxes):
+        issue = issues[index] if index < len(issues) else {}
+        _add_issue_photo_card(slide, issue, box, storage_root, caption_height=0.46)
+
+
+def _add_ai_badge(slide):
+    badge = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(11.45),
+        Inches(1.12),
+        Inches(1.12),
+        Inches(0.34),
+    )
+    badge.fill.solid()
+    badge.fill.fore_color.rgb = RGBColor(219, 234, 254)
+    badge.line.color.rgb = RGBColor(147, 197, 253)
+    _set_text_frame(badge.text_frame, "AI 生成", font_size=Pt(9), bold=True)
+    for paragraph in badge.text_frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.CENTER
+        for run in paragraph.runs:
+            run.font.color.rgb = RGBColor(29, 78, 216)
+
+
+def _edit_ai_analysis_slide(slide, report):
+    deep_analysis = report.get("deep_analysis") or {}
+    core_findings = (deep_analysis.get("core_findings") or [])[:3]
+    attribution = (deep_analysis.get("attribution_analysis") or [])[:3]
+    core_titles = sorted(
+        [shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and Inches(2.35) <= shape.top <= Inches(2.8) and shape.height < Inches(0.65)],
+        key=lambda shape: shape.left,
+    )
+    core_contents = sorted(
+        [shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and Inches(2.75) < shape.top < Inches(4.3) and shape.height > Inches(0.7)],
+        key=lambda shape: shape.left,
+    )
+    attribution_titles = sorted(
+        [shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and Inches(5.0) <= shape.top <= Inches(5.75) and shape.height < Inches(0.65)],
+        key=lambda shape: shape.left,
+    )
+    attribution_contents = sorted(
+        [shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and shape.top > Inches(5.7) and shape.height > Inches(0.7)],
+        key=lambda shape: shape.left,
+    )
+    for shapes, items, content_key in (
+        (core_titles, core_findings, "title"),
+        (core_contents, core_findings, "content"),
+        (attribution_titles, attribution, "title"),
+        (attribution_contents, attribution, "content"),
+    ):
+        for index, shape in enumerate(shapes[:3]):
+            item = items[index] if index < len(items) else {}
+            _set_text_frame(
+                shape.text_frame,
+                item.get(content_key) or "暂无可用分析",
+                font_size=Pt(13 if content_key == "content" else 15),
+                bold=content_key == "title",
+            )
+    _add_ai_badge(slide)
+
+
+def _edit_ai_actions_slide(slide, report):
+    for shape in list(slide.shapes):
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            _remove_shape(shape)
+    deep_analysis = report.get("deep_analysis") or {}
+    items = (deep_analysis.get("action_priorities") or deep_analysis.get("improvement_suggestions") or [])[:3]
+    while len(items) < 3:
+        items.append({"title": "待补充", "content": "当前数据不足，请结合后续检查情况完善行动建议。"})
+    for index, item in enumerate(items):
+        left = 0.72 + index * 4.15
+        panel = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(left),
+            Inches(1.75),
+            Inches(3.78),
+            Inches(4.85),
+        )
+        panel.fill.solid()
+        panel.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        panel.line.color.rgb = RGBColor(226, 232, 240)
+        accent = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(left),
+            Inches(1.75),
+            Inches(3.78),
+            Inches(0.08),
+        )
+        accent.fill.solid()
+        accent.fill.fore_color.rgb = RGBColor(220, 38, 38)
+        accent.line.fill.background()
+        number_box = slide.shapes.add_textbox(
+            Inches(left + 0.18),
+            Inches(2.0),
+            Inches(0.55),
+            Inches(0.45),
+        )
+        _set_text_frame(number_box.text_frame, f"0{index + 1}", font_size=Pt(18), bold=True)
+        title_box = slide.shapes.add_textbox(
+            Inches(left + 0.72),
+            Inches(1.98),
+            Inches(2.82),
+            Inches(0.62),
+        )
+        _set_text_frame(title_box.text_frame, item.get("title") or "改善建议", font_size=Pt(15), bold=True)
+        content_box = slide.shapes.add_textbox(
+            Inches(left + 0.25),
+            Inches(2.82),
+            Inches(3.28),
+            Inches(3.2),
+        )
+        _set_text_frame(content_box.text_frame, item.get("content") or "-", font_size=Pt(13))
+    _add_ai_badge(slide)
+
+
 def _render_presentation_preview(pptx_path, output_dir):
     soffice = shutil.which("libreoffice") or shutil.which("soffice")
     pdftoppm = shutil.which("pdftoppm")
@@ -790,7 +1488,12 @@ def _render_presentation_preview(pptx_path, output_dir):
         return slide_files
 
 
-def build_non_oil_template_presentation(report, output_dir, output_path):
+def build_non_oil_template_presentation(
+    report,
+    output_dir,
+    output_path,
+    storage_root=None,
+):
     if not TEMPLATE_FILE.is_file():
         raise FileNotFoundError("非油检查报告PPT模板不存在。")
     output_dir = Path(output_dir)
@@ -808,6 +1511,46 @@ def build_non_oil_template_presentation(report, output_dir, output_path):
     _edit_unit_table_slide(prs.slides[5], report)
     _edit_overview_slide(prs.slides[8], report)
     _edit_analysis_overview(prs.slides[21], report)
+    _edit_key_issue_overview_slide(prs.slides[22], report)
+    _edit_key_issue_relationship_slide(prs.slides[23], report)
+    _edit_key_product_overview_slide(prs.slides[24], report)
+    _edit_key_product_detail_slides(prs.slides[25], prs.slides[26], report)
+    _edit_monthly_inventory_slide(prs.slides[27], report)
+    _edit_group_purchase_slide(prs.slides[28], report, storage_root)
+    _edit_expired_product_slide(prs.slides[29], report, storage_root)
+    _edit_analysis_distribution_slide(prs.slides[31], report)
+    _edit_analysis_method_slide(prs.slides[32], report)
+    _edit_ai_analysis_slide(prs.slides[42], report)
+    _edit_ai_actions_slide(prs.slides[43], report)
+
+    category_slides = [prs.slides[index] for index in range(33, 41)]
+    category_details = (report.get("category_details") or [])[: len(category_slides)]
+    for index, detail in enumerate(category_details):
+        _edit_category_detail_slide(
+            category_slides[index],
+            detail,
+            index + 3,
+            (report.get("summary") or {}).get("total_issue_count") or 0,
+            storage_root,
+        )
+    for slide in reversed(category_slides[len(category_details):]):
+        _delete_slide(prs, slide)
+
+    key_detail_counts = {
+        item.get("name"): int(item.get("count") or 0)
+        for item in (report.get("key_issue_summary") or {}).get("details") or []
+    }
+    empty_key_slides = []
+    if not key_detail_counts.get("重点商品"):
+        empty_key_slides.extend([prs.slides[24], prs.slides[25], prs.slides[26]])
+    if not key_detail_counts.get("月度盘点"):
+        empty_key_slides.append(prs.slides[27])
+    if not key_detail_counts.get("团购问题"):
+        empty_key_slides.append(prs.slides[28])
+    if not key_detail_counts.get("商品过期"):
+        empty_key_slides.append(prs.slides[29])
+    for slide in reversed(empty_key_slides):
+        _delete_slide(prs, slide)
 
     source_unit_slide = prs.slides[9]
     old_unit_slides = [prs.slides[index] for index in range(9, 20)]

@@ -240,6 +240,37 @@
       </button>
     </section>
 
+    <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-key-panel card-surface">
+      <div class="classification-panel-intro">
+        <div class="classification-ai-mark key-mark" aria-hidden="true">重</div>
+        <div>
+          <span>KEY ISSUE REVIEW</span>
+          <h3>AI重点问题分类</h3>
+          <p>AI只挑选符合定义的重点商品、月度盘点、商品过期和团购问题，其他问题保持不纳入。</p>
+        </div>
+      </div>
+      <div class="classification-panel-stats">
+        <div><span>问题总数</span><strong>{{ nonOilKeyClassificationStats.total }}</strong></div>
+        <div><span>已纳入重点</span><strong>{{ nonOilKeyClassificationStats.selected }}</strong></div>
+        <div><span>AI判定</span><strong>{{ nonOilKeyClassificationStats.ai }}</strong></div>
+        <div><span>人工调整</span><strong>{{ nonOilKeyClassificationStats.manual }}</strong></div>
+      </div>
+      <div class="classification-panel-preview">
+        <span v-if="nonOilKeyClassificationsLoading">正在读取重点问题分类结果...</span>
+        <span v-else-if="nonOilKeyClassificationsError" class="classification-panel-error">{{ nonOilKeyClassificationsError }}</span>
+        <template v-else-if="selectedNonOilKeyClassifications.length">
+          <span v-for="item in selectedNonOilKeyClassifications.slice(0, 4)" :key="`non-oil-key-preview-${item.issue_id}`">
+            ID {{ item.issue_id }} · {{ item.effective_category }}
+          </span>
+          <em v-if="selectedNonOilKeyClassifications.length > 4">另有 {{ selectedNonOilKeyClassifications.length - 4 }} 条</em>
+        </template>
+        <span v-else>当前报告暂无纳入四类重点问题的数据。</span>
+      </div>
+      <button type="button" class="classification-manage-btn" :disabled="nonOilKeyClassificationsLoading" @click="openNonOilKeyClassificationDialog">
+        {{ canGenerateReports ? '查看与调整分类' : '查看分类结果' }}
+      </button>
+    </section>
+
     <div v-if="error" class="state-card error">{{ error }}</div>
 
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
@@ -1717,6 +1748,43 @@
           </footer>
         </section>
       </div>
+      <div v-if="nonOilKeyClassificationDialogVisible && isNonOilReport" class="flow-classification-dialog-layer">
+        <section class="flow-classification-dialog non-oil-key-dialog" role="dialog" aria-modal="true" aria-label="非油AI重点问题分类结果">
+          <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeNonOilKeyClassificationDialog">×</button>
+          <header class="classification-dialog-head">
+            <div>
+              <span>KEY ISSUE REVIEW</span>
+              <h3>{{ canGenerateReports ? '查看与调整重点问题分类' : '查看重点问题分类' }}</h3>
+              <p>不符合四类定义的问题会标记为“不纳入重点问题”；人工调整在后续重新生成时不会被 AI 覆盖。</p>
+            </div>
+            <div><strong>{{ nonOilKeyClassifications.length }}</strong><span>条问题</span></div>
+          </header>
+          <div class="classification-dialog-toolbar">
+            <label><span>搜索</span><input v-model.trim="nonOilKeyClassificationKeyword" type="search" placeholder="问题ID、站点、描述或外部规范ID" /></label>
+            <label><span>当前分类</span><select v-model="nonOilKeyClassificationFilter"><option value="">全部分类</option><option v-for="category in nonOilKeyClassificationCategories" :key="`non-oil-key-filter-${category}`" :value="category">{{ category }}</option></select></label>
+          </div>
+          <div v-if="nonOilKeyClassificationsError" class="classification-dialog-message error">{{ nonOilKeyClassificationsError }}</div>
+          <div class="classification-dialog-list">
+            <div v-if="!filteredNonOilKeyClassifications.length" class="classification-list-empty">当前筛选条件下没有重点问题分类记录。</div>
+            <article v-for="item in filteredNonOilKeyClassifications" :key="`non-oil-key-row-${item.issue_id}`">
+              <div class="classification-issue-main">
+                <div class="classification-issue-meta"><b>ID {{ item.issue_id }}</b><span>{{ item.station_name }}</span><span>{{ item.unit_name }}</span><span>{{ item.business_category }}</span><span>外部规范ID {{ item.external_standard_id || '-' }}</span></div>
+                <p>{{ item.description || '暂无问题描述' }}</p>
+                <small v-if="item.reason">判定依据：{{ item.reason }}</small>
+              </div>
+              <div class="classification-result-compare">
+                <div><span>当前判定</span><strong>{{ item.effective_category }}</strong></div>
+                <label><span>报告采用</span><select v-model="nonOilKeyClassificationDrafts[item.issue_id]" :disabled="!canGenerateReports"><option v-for="category in nonOilKeyClassificationCategories" :key="`${item.issue_id}-key-${category}`" :value="category">{{ category }}</option></select></label>
+                <em :class="item.classification_source">{{ formatFlowClassificationSource(item.classification_source) }}</em>
+              </div>
+            </article>
+          </div>
+          <footer class="classification-dialog-footer">
+            <p>{{ canGenerateReports ? '保存后将按当前日期范围重新生成网页预览和PPT。' : '当前账号仅可查看分类结果。' }}</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilKeyClassificationDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilKeyClassificationsSaving || !hasNonOilKeyClassificationChanges" @click="saveNonOilKeyClassificationAdjustments">{{ nonOilKeyClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+          </footer>
+        </section>
+      </div>
       <div v-if="selectionSettingsDialogVisible && isQualityMeasurementReport" class="report-selection-dialog-layer">
         <section class="report-selection-dialog" role="dialog" aria-modal="true" aria-label="质量计量报告选题规则">
           <button type="button" class="selection-dialog-close" aria-label="关闭" @click="closeSelectionSettingsDialog">×</button>
@@ -2131,6 +2199,15 @@ const nonOilClassificationDialogVisible = ref(false)
 const nonOilClassificationDrafts = ref({})
 const nonOilClassificationKeyword = ref('')
 const nonOilClassificationFilter = ref('')
+const nonOilKeyClassifications = ref([])
+const nonOilKeyClassificationCategories = ref([])
+const nonOilKeyClassificationsLoading = ref(false)
+const nonOilKeyClassificationsSaving = ref(false)
+const nonOilKeyClassificationsError = ref('')
+const nonOilKeyClassificationDialogVisible = ref(false)
+const nonOilKeyClassificationDrafts = ref({})
+const nonOilKeyClassificationKeyword = ref('')
+const nonOilKeyClassificationFilter = ref('')
 const activeQualitySlideIndex = ref(0)
 const qualityImageAspects = ref({})
 const exportDialogVisible = ref(false)
@@ -2285,6 +2362,29 @@ const hasNonOilClassificationChanges = computed(() => (
     String(nonOilClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || '')
   ))
 ))
+const selectedNonOilKeyClassifications = computed(() => (
+  nonOilKeyClassifications.value.filter((item) => item.effective_category !== '不纳入重点问题')
+))
+const nonOilKeyClassificationStats = computed(() => ({
+  total: nonOilKeyClassifications.value.length,
+  selected: selectedNonOilKeyClassifications.value.length,
+  ai: nonOilKeyClassifications.value.filter((item) => item.classification_source === 'ai').length,
+  manual: nonOilKeyClassifications.value.filter((item) => item.classification_source === 'manual').length
+}))
+const filteredNonOilKeyClassifications = computed(() => {
+  const keyword = nonOilKeyClassificationKeyword.value.toLowerCase()
+  return nonOilKeyClassifications.value.filter((item) => {
+    if (nonOilKeyClassificationFilter.value && item.effective_category !== nonOilKeyClassificationFilter.value) return false
+    if (!keyword) return true
+    return [item.issue_id, item.station_name, item.unit_name, item.business_category, item.external_standard_id, item.description]
+      .some((value) => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+const hasNonOilKeyClassificationChanges = computed(() => (
+  nonOilKeyClassifications.value.some((item) => (
+    String(nonOilKeyClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || '')
+  ))
+))
 const filteredFlowClassifications = computed(() => {
   const keyword = flowClassificationKeyword.value.toLowerCase()
   const category = flowClassificationCategoryFilter.value
@@ -2369,25 +2469,6 @@ const reportGeneratedAt = computed(() => (
   reportSnapshot.value.generated_at
   || report.value.summary?.generated_at
   || '-'
-))
-const reportRows = computed(() => Array.isArray(report.value.rows) ? report.value.rows : [])
-const totalRow = computed(() => report.value.total_row || {})
-const findingSummary = computed(() => report.value.finding_summary || {})
-const businessFlowRows = computed(() => (
-  Array.isArray(findingSummary.value.business_flow_distribution)
-    ? findingSummary.value.business_flow_distribution
-    : []
-))
-const prohibitedExamples = computed(() => (
-  Array.isArray(report.value.prohibited_examples) ? report.value.prohibited_examples : []
-))
-const deepAnalysis = computed(() => report.value.deep_analysis || {})
-const flowHighlights = computed(() => (
-  Array.isArray(deepAnalysis.value.flow_highlights) ? deepAnalysis.value.flow_highlights : []
-))
-const managementTrace = computed(() => deepAnalysis.value.management_trace || {})
-const workPlan = computed(() => (
-  Array.isArray(deepAnalysis.value.work_plan) ? deepAnalysis.value.work_plan : []
 ))
 const safetySections = computed(() => (
   Array.isArray(report.value.sections) ? report.value.sections : []
@@ -2690,11 +2771,6 @@ const summaryCards = computed(() => {
   ]
 })
 
-const emptyOverviewText = computed(() => {
-  const month = report.value.month_label || '当前月份'
-  return `${month}暂无计量稽查现场与视频检查问题数据，暂不能形成总体情况统计。`
-})
-
 const joinChineseList = (items) => {
   const values = items.map((item) => String(item || '').trim()).filter(Boolean)
   if (!values.length) return ''
@@ -2705,60 +2781,9 @@ const joinChineseList = (items) => {
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`
 
-const buildFlowText = (prefix, includePercent = false) => {
-  const total = Number(findingSummary.value.total_issue_count ?? report.value.summary?.total_issue_count ?? 0)
-  if (!total || !businessFlowRows.value.length) return `${prefix}0项。`
-  const names = businessFlowRows.value.map((item) => item.name)
-  const counts = businessFlowRows.value.map((item) => `${item.count}项`)
-  const percentText = includePercent
-    ? `，占比${joinChineseList(businessFlowRows.value.map((item) => formatPercent(item.percentage)))}`
-    : ''
-  return `${prefix}${total}项，涉及${joinChineseList(names)}问题，问题数量分别为${joinChineseList(counts)}${percentText}。`
-}
-
-const chapterTwoText = computed(() => buildFlowText('本次检查发现问题'))
-const stationLinkText = computed(() => buildFlowText('检查发现加油站环节问题', true))
-
-const chartMax = computed(() => {
-  const max = Math.max(...businessFlowRows.value.map((item) => Number(item.count || 0)), 0)
-  if (max <= 0) return 5
-  return Math.ceil(max / chartTickStep.value) * chartTickStep.value
-})
-
-const chartTickStep = computed(() => {
-  const max = Math.max(...businessFlowRows.value.map((item) => Number(item.count || 0)), 0)
-  if (max <= 0) return 1
-  const rawStep = max / 7
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep))
-  const niceMultipliers = [1, 2, 5, 10]
-  const multiplier = niceMultipliers.find((item) => item * magnitude >= rawStep) || 10
-  return multiplier * magnitude
-})
-
-const chartTicks = computed(() => {
-  const max = chartMax.value || 5
-  const step = chartTickStep.value || 1
-  const ticks = []
-  for (let value = max; value >= 0; value -= step) {
-    ticks.push(Math.round(value * 10) / 10)
-  }
-  if (ticks[ticks.length - 1] !== 0) ticks.push(0)
-  return ticks
-})
-
-const getBarHeight = (count) => {
-  const max = chartMax.value || 1
-  return Math.max(2, Math.min(100, (Number(count || 0) / max) * 100))
-}
-
 const findingFlowColors = ['#167fb3', '#20a0a0', '#e8993f', '#5479c9', '#7b61b3', '#d76565', '#4b9b68', '#8b6f47']
 
 const getFindingFlowColor = (index) => findingFlowColors[index % findingFlowColors.length]
-
-const getFindingFlowWidth = (count) => {
-  const max = Math.max(...businessFlowRows.value.map((item) => Number(item.count) || 0), 1)
-  return Math.max(3, Math.min(100, ((Number(count) || 0) / max) * 100))
-}
 
 const getSafetyUnitChartStep = (section) => {
   const values = (section?.units || []).flatMap((item) => [
@@ -2995,6 +3020,7 @@ const handleQualitySlideKeydown = (event) => {
     || selectionSettingsDialogVisible.value
     || flowClassificationDialogVisible.value
     || nonOilClassificationDialogVisible.value
+    || nonOilKeyClassificationDialogVisible.value
     || exportDialogVisible.value
     || imagePreview.value.visible
   ) return
@@ -3318,6 +3344,81 @@ const saveNonOilClassificationAdjustments = async () => {
   }
 }
 
+const resetNonOilKeyClassificationState = () => {
+  nonOilKeyClassifications.value = []
+  nonOilKeyClassificationCategories.value = []
+  nonOilKeyClassificationsError.value = ''
+  nonOilKeyClassificationDialogVisible.value = false
+  nonOilKeyClassificationDrafts.value = {}
+  nonOilKeyClassificationKeyword.value = ''
+  nonOilKeyClassificationFilter.value = ''
+}
+
+const loadNonOilKeyClassifications = async (requestId = contextRequestId) => {
+  if (!isNonOilReport.value) {
+    resetNonOilKeyClassificationState()
+    return
+  }
+  nonOilKeyClassificationsLoading.value = true
+  nonOilKeyClassificationsError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/non-oil-key-issue-classifications', {
+      params: { month: selectedMonth.value }
+    })
+    if (requestId !== contextRequestId) return
+    if (!response.data?.success) throw new Error(response.data?.error || '读取重点问题分类失败。')
+    nonOilKeyClassifications.value = Array.isArray(response.data.classifications) ? response.data.classifications : []
+    nonOilKeyClassificationCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
+    nonOilKeyClassificationDrafts.value = Object.fromEntries(
+      nonOilKeyClassifications.value.map((item) => [item.issue_id, item.effective_category || '不纳入重点问题'])
+    )
+  } catch (err) {
+    if (requestId !== contextRequestId) return
+    nonOilKeyClassifications.value = []
+    nonOilKeyClassificationCategories.value = []
+    nonOilKeyClassificationsError.value = err?.response?.data?.error || err?.message || '读取重点问题分类失败。'
+  } finally {
+    if (requestId === contextRequestId) nonOilKeyClassificationsLoading.value = false
+  }
+}
+
+const openNonOilKeyClassificationDialog = () => {
+  nonOilKeyClassificationDrafts.value = Object.fromEntries(
+    nonOilKeyClassifications.value.map((item) => [item.issue_id, item.effective_category || '不纳入重点问题'])
+  )
+  nonOilKeyClassificationKeyword.value = ''
+  nonOilKeyClassificationFilter.value = ''
+  nonOilKeyClassificationDialogVisible.value = true
+}
+
+const closeNonOilKeyClassificationDialog = () => {
+  nonOilKeyClassificationDialogVisible.value = false
+}
+
+const saveNonOilKeyClassificationAdjustments = async () => {
+  if (!canGenerateReports.value || nonOilKeyClassificationsSaving.value) return
+  const classifications = nonOilKeyClassifications.value
+    .filter((item) => String(nonOilKeyClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || ''))
+    .map((item) => ({ issue_id: item.issue_id, category: nonOilKeyClassificationDrafts.value[item.issue_id] }))
+    .filter((item) => item.category)
+  if (!classifications.length) return
+  nonOilKeyClassificationsSaving.value = true
+  nonOilKeyClassificationsError.value = ''
+  try {
+    const response = await axios.put('/api/inspection-reports/non-oil-key-issue-classifications', {
+      month: selectedMonth.value,
+      classifications
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存重点问题分类失败。')
+    closeNonOilKeyClassificationDialog()
+    await startGeneration({ force: true })
+  } catch (err) {
+    nonOilKeyClassificationsError.value = err?.response?.data?.error || err?.message || '保存重点问题分类失败。'
+  } finally {
+    nonOilKeyClassificationsSaving.value = false
+  }
+}
+
 const normalizeSourceIds = (values) => (
   [...new Set((values || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
     .sort((a, b) => a - b)
@@ -3592,6 +3693,7 @@ const pollActiveJob = async () => {
         const summary = response.data.report?.summary || {}
         syncNonOilDateRangeFromReport(summary)
         await loadNonOilClassifications(contextRequestId)
+        await loadNonOilKeyClassifications(contextRequestId)
       }
       loading.value = false
       error.value = ''
@@ -3678,6 +3780,8 @@ const loadReportState = async () => {
     sourceSelectionMode.value = 'all'
     selectedSourceStationIds.value = []
     resetFlowClassificationState()
+    resetNonOilClassificationState()
+    resetNonOilKeyClassificationState()
     loading.value = false
     return
   }
@@ -3699,9 +3803,11 @@ const loadReportState = async () => {
       await loadSourceOptions({}, {}, requestId)
       await loadFlowClassifications(requestId)
       resetNonOilClassificationState()
+      resetNonOilKeyClassificationState()
     } else if (isNonOilReport.value) {
       syncNonOilDateRangeFromReport(report.value?.summary || {})
       await loadNonOilClassifications(requestId)
+      await loadNonOilKeyClassifications(requestId)
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
@@ -3712,6 +3818,7 @@ const loadReportState = async () => {
       selectedSourceStationIds.value = []
       resetFlowClassificationState()
       resetNonOilClassificationState()
+      resetNonOilKeyClassificationState()
     }
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
@@ -3739,6 +3846,7 @@ const selectReportType = async (reportType) => {
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
   resetNonOilClassificationState()
+  resetNonOilKeyClassificationState()
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -3769,6 +3877,7 @@ const handleReportContextChange = async () => {
   selectedSourceStationIds.value = []
   resetFlowClassificationState()
   resetNonOilClassificationState()
+  resetNonOilKeyClassificationState()
   resetNonOilDateRange()
   activeQualitySlideIndex.value = 0
   await loadReportState()
@@ -4312,6 +4421,32 @@ onBeforeUnmount(() => {
 .classification-ai-mark.date-mark {
   background: linear-gradient(145deg, #0f766e, #14b8a6);
   box-shadow: 0 12px 24px rgba(13, 148, 136, 0.2);
+}
+
+.non-oil-key-panel {
+  border-color: rgba(217, 119, 6, 0.22);
+  background:
+    radial-gradient(circle at 92% 0%, rgba(251, 191, 36, 0.16), transparent 34%),
+    linear-gradient(135deg, #fffdf7, #ffffff 58%, #fff7ed);
+}
+
+.classification-ai-mark.key-mark {
+  background: linear-gradient(145deg, #b45309, #f59e0b);
+  box-shadow: 0 12px 24px rgba(217, 119, 6, 0.2);
+}
+
+.non-oil-key-panel .classification-panel-intro > div:last-child > span {
+  color: #b45309;
+}
+
+.non-oil-key-panel .classification-panel-stats > div {
+  border-color: #fde68a;
+}
+
+.non-oil-key-panel .classification-panel-preview span,
+.non-oil-key-panel .classification-panel-preview em {
+  color: #92400e;
+  background: #fef3c7;
 }
 
 .non-oil-date-fields {

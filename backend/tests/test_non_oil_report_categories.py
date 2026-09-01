@@ -1,11 +1,14 @@
 import unittest
 
 from app import (
+    NON_OIL_KEY_ISSUE_EXCLUDED,
     NON_OIL_REPORT_CATEGORIES,
     NON_OIL_REPORT_GROUP_PURCHASE_TABLE,
+    build_non_oil_key_issue_summary,
     build_non_oil_category_distribution,
     build_non_oil_project_matrix,
     normalize_non_oil_effective_category,
+    local_non_oil_key_issue_fallback,
 )
 
 
@@ -48,6 +51,38 @@ class NonOilReportCategoryTests(unittest.TestCase):
             matrix[0]["category_counts"]["商品订单、入库、盘点等情况"],
             1,
         )
+
+    def test_key_issue_fallback_is_selective(self):
+        self.assertEqual(
+            local_non_oil_key_issue_fallback({"description": "现场抽盘软中华盘亏10包"}),
+            "重点商品",
+        )
+        self.assertEqual(
+            local_non_oil_key_issue_fallback({"description": "便利店地面存在污渍"}),
+            NON_OIL_KEY_ISSUE_EXCLUDED,
+        )
+
+    def test_key_issue_summary_only_counts_selected_categories(self):
+        summary = build_non_oil_key_issue_summary(
+            [
+                {
+                    "issue_id": 1,
+                    "key_issue_category": "重点商品",
+                    "category_name": "商品订单、入库、盘点等情况",
+                    "issue_photo": "",
+                },
+                {
+                    "issue_id": 2,
+                    "key_issue_category": NON_OIL_KEY_ISSUE_EXCLUDED,
+                    "category_name": "便利店卫生情况",
+                    "issue_photo": "",
+                },
+            ]
+        )
+
+        self.assertEqual(summary["selected_count"], 1)
+        self.assertEqual(summary["excluded_count"], 1)
+        self.assertEqual(summary["distribution"][0]["count"], 1)
 
 
 if __name__ == "__main__":
