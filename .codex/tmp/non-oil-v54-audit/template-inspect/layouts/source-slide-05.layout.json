@@ -1,0 +1,2401 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/i107q5of",
+    "id": "i107q5of",
+    "slide": 5,
+    "layoutId": "/ppt/slideLayouts/slideLayout12.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster2.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "宋体",
+      "微软雅黑",
+      "方正仿宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout12.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster2.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout12.xml/71",
+          "id": "71",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout12.xml/72",
+          "id": "72",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout12.xml/73",
+          "id": "73",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout12.xml/74",
+          "id": "74",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout12.xml/75",
+          "id": "75",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster2.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster2.xml/8",
+          "id": "8",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster2.xml/9",
+          "id": "9",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster2.xml/10",
+          "id": "10",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster2.xml/11",
+          "id": "11",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster2.xml/12",
+          "id": "12",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/k7mxovud",
+      "id": "14",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "一、总体情况概述",
+      "textPreview": "一、总体情况概述",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "一、总体情况概述"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "一、总体情况概述",
+          "runs": [
+            {
+              "index": 1,
+              "text": "一、总体情况概述"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/58vehgvy",
+      "id": "15",
+      "name": "文本框 766",
+      "bbox": [
+        82,
+        104.33,
+        1144.67,
+        134.67
+      ],
+      "geometry": "rect",
+      "text": "巡检期间：7月巡检，2026年6月26日-2026年7月29日\n巡检范围：7月非油现场抽检55座加油站，涉及8个管理片区（浦东、闵普徐、松金、嘉青、南汇、宝静、奉贤、崇明）和4个合资公司（中油奉贤、中油农工商、中油浦东、中油上海）。",
+      "textPreview": "巡检期间：7月巡检，2026年6月26日-2026年7月29日 | 巡检范围：7月非油现场抽检55座加油站，涉及8个管理片区（浦东、闵普徐、松金、嘉青、南汇、宝静、奉贤、崇明）和4个合资公司（中油奉贤、中油农工商、中油浦东、中油上海）。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 4,
+        "lines": [
+          {
+            "index": 1,
+            "text": "巡检期间：7月巡检，2026年6月26日-2026年7月29日"
+          },
+          {
+            "index": 2,
+            "text": "巡检范围：7月非油现场抽检55座加油站，涉及8个管理片区（浦东、闵普"
+          },
+          {
+            "index": 3,
+            "text": "徐、松金、嘉青、南汇、宝静、奉贤、崇明）和4个合资公司（中油奉贤、中油"
+          },
+          {
+            "index": 4,
+            "text": "农工商、中油浦东、中油上海）。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "巡检期间：7月巡检，2026年6月26日-2026年7月29日",
+          "lineSpacingPercent": 130000,
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "typeface": "Arial",
+            "color": {
+              "type": "theme",
+              "value": "tx1",
+              "transform": {
+                "opacity": 1
+              }
+            },
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "巡检期间：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "7",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 3,
+              "text": "月巡检，2026年",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 4,
+              "text": "6",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 5,
+              "text": "月",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 6,
+              "text": "26",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 7,
+              "text": "日-2026年",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 8,
+              "text": "7",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 9,
+              "text": "月",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 10,
+              "text": "29",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 11,
+              "text": "日",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            }
+          ],
+          "marginLeft": 0
+        },
+        {
+          "index": 2,
+          "text": "巡检范围：7月非油现场抽检55座加油站，涉及8个管理片区（浦东、闵普徐、松金、嘉青、南汇、宝静、奉贤、崇明）和4个合资公司（中油奉贤、中油农工商、中油浦东、中油上海）。",
+          "lineSpacingPercent": 130000,
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "typeface": "Arial",
+            "color": {
+              "type": "theme",
+              "value": "tx1",
+              "transform": {
+                "opacity": 1
+              }
+            },
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "巡检范围：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "7月",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 3,
+              "text": "非油现场抽检",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 4,
+              "text": "55",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 5,
+              "text": "座加油站，涉及",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 6,
+              "text": "8",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 7,
+              "text": "个管理片区（浦东、闵",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 8,
+              "text": "普",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 9,
+              "text": "徐、松金、嘉青、南汇、宝静、奉贤",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 10,
+              "text": "、崇明",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 11,
+              "text": "）和",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 12,
+              "text": "4",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 13,
+              "text": "个合资公司（中油奉贤、中油",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 14,
+              "text": "农工商、中油浦东、中油上海",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            },
+            {
+              "index": 15,
+              "text": "）。",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1.33
+    },
+    {
+      "order": 3,
+      "kind": "table",
+      "scope": "slide",
+      "aid": "tb/dofqx8ny",
+      "id": "16",
+      "name": "表格 15",
+      "bbox": [
+        131.13,
+        239,
+        1000.34,
+        463.13
+      ],
+      "text": "序号 | 所属片区 | 加油站数量 | 加油站\n1 | 浦东 | 6 | 环南、浦星、赵高路、英伦、杨思、龚路\n2 | 闵普徐 | 7 | 华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路\n3 | 松金 | 11 | 金山第六、廊华、乐都、泖新、松江第一、松江第二、茸平、茸惠、泗砖、三新、叶新\n4 | 嘉青 | 2 | 四岔口、青浦第一\n5 | 南汇 | 6 | 泥城、滨湾、国彝、东新、新场、新桥\n6 | 宝静 | 7 | 宝杨第一、宝杨第二、常德路、晟隆、锦秋、泰和、维辉\n7 | 奉贤 | 1 | 邬桥\n8 | 崇明 | 8 | 圆沙、前卫、崇明第三、崇明第七、崇明第九、崇明第十三、崇明第十四、崇明第十五\n9 | 中油奉贤 | 1 | 奉贤第三\n10 | 中油农工商 | 1 | 共富\n11 | 中油上海 | 1 | 漕宝路\n12 | 中油浦东 | 2 | 绿中、绿地",
+      "textPreview": "序号 | 所属片区 | 加油站数量 | 加油站 | 1 | 浦东 | 6 | 环南、浦星、赵高路、英伦、杨思、龚路 | 2 | 闵普徐 | 7 | 华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路 | 3 | 松金 | 11 | 金山第六、廊华、乐都、泖新、松江第一、松...",
+      "rows": 13,
+      "cols": 4,
+      "cells": [
+        {
+          "index": 1,
+          "row": 1,
+          "column": 1,
+          "bbox": [
+            131.13,
+            239,
+            98.47,
+            33.2
+          ],
+          "text": "序号",
+          "textPreview": "序号",
+          "fillColor": "#C0504D",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "序号",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "序号",
+                  "fontSize": 18.67,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 0, 0, 1)",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "row": 1,
+          "column": 2,
+          "bbox": [
+            229.6,
+            239,
+            116,
+            33.2
+          ],
+          "text": "所属片区",
+          "textPreview": "所属片区",
+          "fillColor": "#C0504D",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "所属片区",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "所属片区",
+                  "fontSize": 18.67,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 0, 0, 1)",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "row": 1,
+          "column": 3,
+          "bbox": [
+            345.6,
+            239,
+            134.8,
+            33.2
+          ],
+          "text": "加油站数量",
+          "textPreview": "加油站数量",
+          "fillColor": "#C0504D",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "加油站数量",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "加油站数量",
+                  "fontSize": 18.67,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 0, 0, 1)",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "row": 1,
+          "column": 4,
+          "bbox": [
+            480.4,
+            239,
+            651.07,
+            33.2
+          ],
+          "text": "加油站",
+          "textPreview": "加油站",
+          "fillColor": "#C0504D",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "加油站",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "加油站",
+                  "fontSize": 18.67,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 0, 0, 1)",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "row": 2,
+          "column": 1,
+          "bbox": [
+            131.13,
+            272.2,
+            98.47,
+            33.8
+          ],
+          "text": "1",
+          "textPreview": "1",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "1",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "1",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "row": 2,
+          "column": 2,
+          "bbox": [
+            229.6,
+            272.2,
+            116,
+            33.8
+          ],
+          "text": "浦东",
+          "textPreview": "浦东",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "浦东",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "浦东",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "row": 2,
+          "column": 3,
+          "bbox": [
+            345.6,
+            272.2,
+            134.8,
+            33.8
+          ],
+          "text": "6",
+          "textPreview": "6",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "6",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "6",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "row": 2,
+          "column": 4,
+          "bbox": [
+            480.4,
+            272.2,
+            651.07,
+            33.8
+          ],
+          "text": "环南、浦星、赵高路、英伦、杨思、龚路",
+          "textPreview": "环南、浦星、赵高路、英伦、杨思、龚路",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "环南、浦星、赵高路、英伦、杨思、龚路",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "环南、浦星、赵高路、英伦、杨思、龚路",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "row": 3,
+          "column": 1,
+          "bbox": [
+            131.13,
+            306,
+            98.47,
+            33.8
+          ],
+          "text": "2",
+          "textPreview": "2",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "2",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "2",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "row": 3,
+          "column": 2,
+          "bbox": [
+            229.6,
+            306,
+            116,
+            33.8
+          ],
+          "text": "闵普徐",
+          "textPreview": "闵普徐",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "闵普徐",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "闵普徐",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "row": 3,
+          "column": 3,
+          "bbox": [
+            345.6,
+            306,
+            134.8,
+            33.8
+          ],
+          "text": "7",
+          "textPreview": "7",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "7",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "7",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "row": 3,
+          "column": 4,
+          "bbox": [
+            480.4,
+            306,
+            651.07,
+            33.8
+          ],
+          "text": "华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路",
+          "textPreview": "华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "华辉、华浦、凯燕、闵行第一、上中、莘庄工业区、中春路",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "row": 4,
+          "column": 1,
+          "bbox": [
+            131.13,
+            339.8,
+            98.47,
+            45.93
+          ],
+          "text": "3",
+          "textPreview": "3",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "3",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "3",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "row": 4,
+          "column": 2,
+          "bbox": [
+            229.6,
+            339.8,
+            116,
+            45.93
+          ],
+          "text": "松金",
+          "textPreview": "松金",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "松金",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "松金",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "row": 4,
+          "column": 3,
+          "bbox": [
+            345.6,
+            339.8,
+            134.8,
+            45.93
+          ],
+          "text": "11",
+          "textPreview": "11",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "11",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "11",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "row": 4,
+          "column": 4,
+          "bbox": [
+            480.4,
+            339.8,
+            651.07,
+            45.93
+          ],
+          "text": "金山第六、廊华、乐都、泖新、松江第一、松江第二、茸平、茸惠、泗砖、三新、叶新",
+          "textPreview": "金山第六、廊华、乐都、泖新、松江第一、松江第二、茸平、茸惠、泗砖、三新、叶新",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "金山第六、廊华、乐都、泖新、松江第一、松江第二、茸平、茸惠、泗砖、三新、叶新",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "金山第六、廊华、乐都、泖新、松江第一、松江第二、茸平、茸惠、泗砖、三新、叶新",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "row": 5,
+          "column": 1,
+          "bbox": [
+            131.13,
+            385.73,
+            98.47,
+            33.8
+          ],
+          "text": "4",
+          "textPreview": "4",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "4",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "4",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "row": 5,
+          "column": 2,
+          "bbox": [
+            229.6,
+            385.73,
+            116,
+            33.8
+          ],
+          "text": "嘉青",
+          "textPreview": "嘉青",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "嘉青",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "嘉青",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "row": 5,
+          "column": 3,
+          "bbox": [
+            345.6,
+            385.73,
+            134.8,
+            33.8
+          ],
+          "text": "2",
+          "textPreview": "2",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "2",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "2",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "row": 5,
+          "column": 4,
+          "bbox": [
+            480.4,
+            385.73,
+            651.07,
+            33.8
+          ],
+          "text": "四岔口、青浦第一",
+          "textPreview": "四岔口、青浦第一",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "四岔口、青浦第一",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "四岔口",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                },
+                {
+                  "index": 2,
+                  "text": "、青浦第一",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "row": 6,
+          "column": 1,
+          "bbox": [
+            131.13,
+            419.53,
+            98.47,
+            33.8
+          ],
+          "text": "5",
+          "textPreview": "5",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "5",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "5",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "row": 6,
+          "column": 2,
+          "bbox": [
+            229.6,
+            419.53,
+            116,
+            33.8
+          ],
+          "text": "南汇",
+          "textPreview": "南汇",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "南汇",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "南汇",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "row": 6,
+          "column": 3,
+          "bbox": [
+            345.6,
+            419.53,
+            134.8,
+            33.8
+          ],
+          "text": "6",
+          "textPreview": "6",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "6",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "6",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "row": 6,
+          "column": 4,
+          "bbox": [
+            480.4,
+            419.53,
+            651.07,
+            33.8
+          ],
+          "text": "泥城、滨湾、国彝、东新、新场、新桥",
+          "textPreview": "泥城、滨湾、国彝、东新、新场、新桥",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "泥城、滨湾、国彝、东新、新场、新桥",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "泥城、滨湾、国彝、东新、新场、新桥",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "row": 7,
+          "column": 1,
+          "bbox": [
+            131.13,
+            453.33,
+            98.47,
+            33.8
+          ],
+          "text": "6",
+          "textPreview": "6",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "6",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "6",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "row": 7,
+          "column": 2,
+          "bbox": [
+            229.6,
+            453.33,
+            116,
+            33.8
+          ],
+          "text": "宝静",
+          "textPreview": "宝静",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "宝静",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "宝静",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "row": 7,
+          "column": 3,
+          "bbox": [
+            345.6,
+            453.33,
+            134.8,
+            33.8
+          ],
+          "text": "7",
+          "textPreview": "7",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "7",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "7",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "row": 7,
+          "column": 4,
+          "bbox": [
+            480.4,
+            453.33,
+            651.07,
+            33.8
+          ],
+          "text": "宝杨第一、宝杨第二、常德路、晟隆、锦秋、泰和、维辉",
+          "textPreview": "宝杨第一、宝杨第二、常德路、晟隆、锦秋、泰和、维辉",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "宝杨第一、宝杨第二、常德路、晟隆、锦秋、泰和、维辉",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "宝杨第一、宝杨第二、常德路、晟隆、锦秋、泰和、维辉",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "row": 8,
+          "column": 1,
+          "bbox": [
+            131.13,
+            487.13,
+            98.47,
+            33.8
+          ],
+          "text": "7",
+          "textPreview": "7",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "7",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "7",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 30,
+          "row": 8,
+          "column": 2,
+          "bbox": [
+            229.6,
+            487.13,
+            116,
+            33.8
+          ],
+          "text": "奉贤",
+          "textPreview": "奉贤",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "奉贤",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "奉贤",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 31,
+          "row": 8,
+          "column": 3,
+          "bbox": [
+            345.6,
+            487.13,
+            134.8,
+            33.8
+          ],
+          "text": "1",
+          "textPreview": "1",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "1",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "1",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 32,
+          "row": 8,
+          "column": 4,
+          "bbox": [
+            480.4,
+            487.13,
+            651.07,
+            33.8
+          ],
+          "text": "邬桥",
+          "textPreview": "邬桥",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "邬桥",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "邬桥",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 33,
+          "row": 9,
+          "column": 1,
+          "bbox": [
+            131.13,
+            520.93,
+            98.47,
+            45.93
+          ],
+          "text": "8",
+          "textPreview": "8",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "8",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "8",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 34,
+          "row": 9,
+          "column": 2,
+          "bbox": [
+            229.6,
+            520.93,
+            116,
+            45.93
+          ],
+          "text": "崇明",
+          "textPreview": "崇明",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "崇明",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "崇明",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 35,
+          "row": 9,
+          "column": 3,
+          "bbox": [
+            345.6,
+            520.93,
+            134.8,
+            45.93
+          ],
+          "text": "8",
+          "textPreview": "8",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "8",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "8",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 36,
+          "row": 9,
+          "column": 4,
+          "bbox": [
+            480.4,
+            520.93,
+            651.07,
+            45.93
+          ],
+          "text": "圆沙、前卫、崇明第三、崇明第七、崇明第九、崇明第十三、崇明第十四、崇明第十五",
+          "textPreview": "圆沙、前卫、崇明第三、崇明第七、崇明第九、崇明第十三、崇明第十四、崇明第十五",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "圆沙、前卫、崇明第三、崇明第七、崇明第九、崇明第十三、崇明第十四、崇明第十五",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "圆沙、前卫、崇明第三、崇明第七、崇明第九、崇明第十三、崇明第十四、崇明第十五",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 37,
+          "row": 10,
+          "column": 1,
+          "bbox": [
+            131.13,
+            566.87,
+            98.47,
+            33.87
+          ],
+          "text": "9",
+          "textPreview": "9",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "9",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "9",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 38,
+          "row": 10,
+          "column": 2,
+          "bbox": [
+            229.6,
+            566.87,
+            116,
+            33.87
+          ],
+          "text": "中油奉贤",
+          "textPreview": "中油奉贤",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "中油奉贤",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "中油奉贤",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 39,
+          "row": 10,
+          "column": 3,
+          "bbox": [
+            345.6,
+            566.87,
+            134.8,
+            33.87
+          ],
+          "text": "1",
+          "textPreview": "1",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "1",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "1",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 40,
+          "row": 10,
+          "column": 4,
+          "bbox": [
+            480.4,
+            566.87,
+            651.07,
+            33.87
+          ],
+          "text": "奉贤第三",
+          "textPreview": "奉贤第三",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "奉贤第三",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "奉贤第三",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 41,
+          "row": 11,
+          "column": 1,
+          "bbox": [
+            131.13,
+            600.73,
+            98.47,
+            33.8
+          ],
+          "text": "10",
+          "textPreview": "10",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "10",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "10",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 42,
+          "row": 11,
+          "column": 2,
+          "bbox": [
+            229.6,
+            600.73,
+            116,
+            33.8
+          ],
+          "text": "中油农工商",
+          "textPreview": "中油农工商",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "中油农工商",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "中油农工商",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 43,
+          "row": 11,
+          "column": 3,
+          "bbox": [
+            345.6,
+            600.73,
+            134.8,
+            33.8
+          ],
+          "text": "1",
+          "textPreview": "1",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "1",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "1",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 44,
+          "row": 11,
+          "column": 4,
+          "bbox": [
+            480.4,
+            600.73,
+            651.07,
+            33.8
+          ],
+          "text": "共富",
+          "textPreview": "共富",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "共富",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "共富",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 45,
+          "row": 12,
+          "column": 1,
+          "bbox": [
+            131.13,
+            634.53,
+            98.47,
+            33.8
+          ],
+          "text": "11",
+          "textPreview": "11",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "11",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "11",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 46,
+          "row": 12,
+          "column": 2,
+          "bbox": [
+            229.6,
+            634.53,
+            116,
+            33.8
+          ],
+          "text": "中油上海",
+          "textPreview": "中油上海",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "中油上海",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "中油上海",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 47,
+          "row": 12,
+          "column": 3,
+          "bbox": [
+            345.6,
+            634.53,
+            134.8,
+            33.8
+          ],
+          "text": "1",
+          "textPreview": "1",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "1",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "1",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 48,
+          "row": 12,
+          "column": 4,
+          "bbox": [
+            480.4,
+            634.53,
+            651.07,
+            33.8
+          ],
+          "text": "漕宝路",
+          "textPreview": "漕宝路",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "漕宝路",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "漕宝路",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 49,
+          "row": 13,
+          "column": 1,
+          "bbox": [
+            131.13,
+            668.33,
+            98.47,
+            33.8
+          ],
+          "text": "12",
+          "textPreview": "12",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "12",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "12",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 50,
+          "row": 13,
+          "column": 2,
+          "bbox": [
+            229.6,
+            668.33,
+            116,
+            33.8
+          ],
+          "text": "中油浦东",
+          "textPreview": "中油浦东",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "中油浦东",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "中油浦东",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 51,
+          "row": 13,
+          "column": 3,
+          "bbox": [
+            345.6,
+            668.33,
+            134.8,
+            33.8
+          ],
+          "text": "2",
+          "textPreview": "2",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "2",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "2",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 52,
+          "row": 13,
+          "column": 4,
+          "bbox": [
+            480.4,
+            668.33,
+            651.07,
+            33.8
+          ],
+          "text": "绿中、绿地",
+          "textPreview": "绿中、绿地",
+          "fillColor": "#E6B8B7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "绿中、绿地",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "绿中、绿地",
+                  "fontSize": 16,
+                  "typeface": "宋体",
+                  "color": "rgba(0, 0, 0, 1)"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}

@@ -1,0 +1,629 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/jyx0ra1s",
+    "id": "jyx0ra1s",
+    "slide": 4,
+    "layoutId": "/ppt/slideLayouts/slideLayout22.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster8.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "方正仿宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout22.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster8.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout22.xml/91",
+          "id": "91",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout22.xml/92",
+          "id": "92",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout22.xml/93",
+          "id": "93",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout22.xml/94",
+          "id": "94",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout22.xml/95",
+          "id": "95",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster8.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster8.xml/20",
+          "id": "20",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster8.xml/21",
+          "id": "21",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster8.xml/22",
+          "id": "22",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster8.xml/23",
+          "id": "23",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster8.xml/24",
+          "id": "24",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/kbm987y5",
+      "id": "10",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "一、总体情况概述",
+      "textPreview": "一、总体情况概述",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "一、总体情况概述"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "一、总体情况概述",
+          "runs": [
+            {
+              "index": 1,
+              "text": "一、总体情况概述"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/5cva1cfq",
+      "id": "11",
+      "name": "文本框 2",
+      "bbox": [
+        122.21,
+        120.09,
+        1037.27,
+        90.55
+      ],
+      "geometry": "rect",
+      "text": "    6月各片区整改情况：各片区非油现场检查与非油团购累计发现问题150项，待验收问题（加油站未签名）61项，待整改问题13项。",
+      "textPreview": "6月各片区整改情况：各片区非油现场检查与非油团购累计发现问题150项，待验收问题（加油站未签名）61项，待整改问题13项。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "top",
+        "wrap": "square",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "    6月各片区整改情况：各片区非油现场检查与非油团购累计发现问题150项，"
+          },
+          {
+            "index": 2,
+            "text": "待验收问题（加油站未签名）61项，待整改问题13项。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "    6月各片区整改情况：各片区非油现场检查与非油团购累计发现问题150项，待验收问题（加油站未签名）61项，待整改问题13项。",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "alignment": "justify"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "    6",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(192, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "月",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(192, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "各片区整改情况",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "：",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "各片区非油现场检查与非油团购累计发现问题",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "150",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "项",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 8,
+              "text": "，",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 9,
+              "text": "待验收问题（加油站未",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 10,
+              "text": "签名）",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 11,
+              "text": "61",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 12,
+              "text": "项",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 13,
+              "text": "，",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 14,
+              "text": "待整改问题",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 15,
+              "text": "13",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 16,
+              "text": "项",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 17,
+              "text": "。",
+              "typeface": "方正仿宋简体",
+              "color": "rgba(0, 0, 0, 1)",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/1gfm90ze",
+      "id": "12",
+      "name": "图片 11",
+      "bbox": [
+        202.27,
+        210.67,
+        822.07,
+        504.93
+      ],
+      "contentType": "image/png",
+      "asset": {
+        "assetId": "/ppt/media/image4.png",
+        "contentType": "image/png",
+        "byteLength": 19133
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image4.png",
+        "contentType": "image/png",
+        "byteLength": 19133
+      }
+    }
+  ],
+  "composeRuns": []
+}

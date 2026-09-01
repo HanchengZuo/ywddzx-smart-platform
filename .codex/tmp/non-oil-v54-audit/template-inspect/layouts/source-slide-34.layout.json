@@ -1,0 +1,2190 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/ofu103u5",
+    "id": "ofu103u5",
+    "slide": 34,
+    "layoutId": "/ppt/slideLayouts/slideLayout19.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster6.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "方正仿宋简体",
+      "方正小标宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout19.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster6.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/117",
+          "id": "117",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/118",
+          "id": "118",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/119",
+          "id": "119",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/120",
+          "id": "120",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/121",
+          "id": "121",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster6.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/32",
+          "id": "32",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/33",
+          "id": "33",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/34",
+          "id": "34",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/35",
+          "id": "35",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/36",
+          "id": "36",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/wri1gf2d",
+      "id": "281",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "四、具体问题分析",
+      "textPreview": "四、具体问题分析",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "四、具体问题分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "四、具体问题分析",
+          "runs": [
+            {
+              "index": 1,
+              "text": "四、"
+            },
+            {
+              "index": 2,
+              "text": "具体问题分析"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/vq90nals",
+      "id": "282",
+      "name": "矩形 1",
+      "bbox": [
+        90.67,
+        126.3,
+        555.67,
+        44.03
+      ],
+      "geometry": "rect",
+      "text": "3. 店销商品摆放问题",
+      "textPreview": "3. 店销商品摆放问题",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "3. 店销商品摆放问题"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "3. 店销商品摆放问题",
+          "runs": [
+            {
+              "index": 1,
+              "text": "3.",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": " 店销商品摆放问题",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ap0je5k7",
+      "id": "283",
+      "name": "文本框 3",
+      "bbox": [
+        71.8,
+        173.33,
+        1104,
+        52.67
+      ],
+      "geometry": "rect",
+      "text": "共88起，占全部问题的44.4%，典型问题包括：",
+      "textPreview": "共88起，占全部问题的44.4%，典型问题包括：",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "•共88起，占全部问题的44.4%，典型问题包括："
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "共88起，占全部问题的44.4%，典型问题包括：",
+          "runs": [
+            {
+              "index": 1,
+              "text": "共",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "88",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "#FF0000"
+            },
+            {
+              "index": 3,
+              "text": "起",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "#FF0000"
+            },
+            {
+              "index": 4,
+              "text": "，占全部问题的",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 5,
+              "text": "44.4",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "accent5"
+            },
+            {
+              "index": 6,
+              "text": "%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "accent5",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "，典型问题包括：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "kind": "table",
+      "scope": "slide",
+      "aid": "tb/cr2h4vut",
+      "id": "297",
+      "name": "表格 5",
+      "bbox": [
+        98.13,
+        227.93,
+        1128.07,
+        411.94
+      ],
+      "text": "高频关键词 | 问题数量 | 典型问题 | 说明\n临期 | 28 | 便利店未设置临期商品专区\n补货/空板 | 26 | 货架未及时补货\n价钱/标识 | 17 | 商品价格签缺失、错误等\n仓库未出样 | 10 | 仓库货物未完全出样\n混放/杂乱 | 7 | 不同口味食物混放等",
+      "textPreview": "高频关键词 | 问题数量 | 典型问题 | 说明 | 临期 | 28 | 便利店未设置临期商品专区 | 补货/空板 | 26 | 货架未及时补货 | 价钱/标识 | 17 | 商品价格签缺失、错误等 | 仓库未出样 | 10 | 仓库货物未完全出样 | 混放/杂乱 | 7 ...",
+      "rows": 6,
+      "cols": 4,
+      "cells": [
+        {
+          "index": 1,
+          "row": 1,
+          "column": 1,
+          "bbox": [
+            98.13,
+            227.93,
+            165.6,
+            46.2
+          ],
+          "text": "高频关键词",
+          "textPreview": "高频关键词",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "高频关键词",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "高频关键词",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "row": 1,
+          "column": 2,
+          "bbox": [
+            263.73,
+            227.93,
+            127.67,
+            46.2
+          ],
+          "text": "问题数量",
+          "textPreview": "问题数量",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "问题数量",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "问题数量",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "row": 1,
+          "column": 3,
+          "bbox": [
+            391.4,
+            227.93,
+            492.67,
+            46.2
+          ],
+          "text": "典型问题",
+          "textPreview": "典型问题",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "典型问题",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "典型问题",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "row": 1,
+          "column": 4,
+          "bbox": [
+            884.07,
+            227.93,
+            342.13,
+            46.2
+          ],
+          "text": "说明",
+          "textPreview": "说明",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "说明",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "说明",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "row": 2,
+          "column": 1,
+          "bbox": [
+            98.13,
+            274.13,
+            165.6,
+            59.4
+          ],
+          "text": "临期",
+          "textPreview": "临期",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "临期",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "临期",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "row": 2,
+          "column": 2,
+          "bbox": [
+            263.73,
+            274.13,
+            127.67,
+            59.4
+          ],
+          "text": "28",
+          "textPreview": "28",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "28",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "28",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "row": 2,
+          "column": 3,
+          "bbox": [
+            391.4,
+            274.13,
+            492.67,
+            59.4
+          ],
+          "ownedElementAids": [
+            "sh/q5wfi103",
+            "sh/b65gr61o"
+          ]
+        },
+        {
+          "index": 8,
+          "row": 2,
+          "column": 4,
+          "bbox": [
+            884.07,
+            274.13,
+            342.13,
+            59.4
+          ],
+          "text": "便利店未设置临期商品专区",
+          "textPreview": "便利店未设置临期商品专区",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "便利店未设置临期商品专区",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "便利店未设置临期商品专区",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "row": 3,
+          "column": 1,
+          "bbox": [
+            98.13,
+            333.53,
+            165.6,
+            65.53
+          ],
+          "text": "补货/空板",
+          "textPreview": "补货/空板",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "补货/空板",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "补货",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 2,
+                  "text": "/",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 3,
+                  "text": "空板",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "row": 3,
+          "column": 2,
+          "bbox": [
+            263.73,
+            333.53,
+            127.67,
+            65.53
+          ],
+          "text": "26",
+          "textPreview": "26",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "26",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "26",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "row": 3,
+          "column": 3,
+          "bbox": [
+            391.4,
+            333.53,
+            492.67,
+            65.53
+          ],
+          "ownedElementAids": [
+            "sh/y9wzm10z",
+            "sh/za5gv61k"
+          ]
+        },
+        {
+          "index": 12,
+          "row": 3,
+          "column": 4,
+          "bbox": [
+            884.07,
+            333.53,
+            342.13,
+            65.53
+          ],
+          "text": "货架未及时补货",
+          "textPreview": "货架未及时补货",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "货架未及时补货",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "货架未及时补货",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "row": 4,
+          "column": 1,
+          "bbox": [
+            98.13,
+            399.07,
+            165.6,
+            131.33
+          ],
+          "text": "价钱/标识",
+          "textPreview": "价钱/标识",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "价钱/标识",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "价钱",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 2,
+                  "text": "/",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 3,
+                  "text": "标识",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "row": 4,
+          "column": 2,
+          "bbox": [
+            263.73,
+            399.07,
+            127.67,
+            131.33
+          ],
+          "text": "17",
+          "textPreview": "17",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "17",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "17",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "row": 4,
+          "column": 3,
+          "bbox": [
+            391.4,
+            399.07,
+            492.67,
+            131.33
+          ],
+          "ownedElementAids": [
+            "sh/kv21kf2p",
+            "sh/jut0rul4",
+            "sh/it0jipkj",
+            "sh/l07ih03q",
+            "sh/0zy18v25"
+          ]
+        },
+        {
+          "index": 16,
+          "row": 4,
+          "column": 4,
+          "bbox": [
+            884.07,
+            399.07,
+            342.13,
+            131.33
+          ],
+          "text": "商品价格签缺失、错误等",
+          "textPreview": "商品价格签缺失、错误等",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "商品价格签缺失、错误等",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "商品价格签缺失、错误等",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "row": 5,
+          "column": 1,
+          "bbox": [
+            98.13,
+            530.4,
+            165.6,
+            56.8
+          ],
+          "text": "仓库未出样",
+          "textPreview": "仓库未出样",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "仓库未出样",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "仓库未出样",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "row": 5,
+          "column": 2,
+          "bbox": [
+            263.73,
+            530.4,
+            127.67,
+            56.8
+          ],
+          "text": "10",
+          "textPreview": "10",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "10",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "10",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "row": 5,
+          "column": 3,
+          "bbox": [
+            391.4,
+            530.4,
+            492.67,
+            56.8
+          ],
+          "ownedElementAids": [
+            "sh/c7exkri9",
+            "sh/d8nytwju"
+          ]
+        },
+        {
+          "index": 20,
+          "row": 5,
+          "column": 4,
+          "bbox": [
+            884.07,
+            530.4,
+            342.13,
+            56.8
+          ],
+          "text": "仓库货物未完全出样",
+          "textPreview": "仓库货物未完全出样",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "仓库货物未完全出样",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "仓库货物未完全出样",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "row": 6,
+          "column": 1,
+          "bbox": [
+            98.13,
+            587.2,
+            165.6,
+            52.67
+          ],
+          "text": "混放/杂乱",
+          "textPreview": "混放/杂乱",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "混放/杂乱",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "混放",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 2,
+                  "text": "/",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                },
+                {
+                  "index": 3,
+                  "text": "杂乱",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "row": 6,
+          "column": 2,
+          "bbox": [
+            263.73,
+            587.2,
+            127.67,
+            52.67
+          ],
+          "text": "7",
+          "textPreview": "7",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "7",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "7",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "row": 6,
+          "column": 3,
+          "bbox": [
+            391.4,
+            587.2,
+            492.67,
+            52.67
+          ],
+          "ownedElementAids": [
+            "sh/0vyhobi5"
+          ]
+        },
+        {
+          "index": 24,
+          "row": 6,
+          "column": 4,
+          "bbox": [
+            884.07,
+            587.2,
+            342.13,
+            52.67
+          ],
+          "text": "不同口味食物混放等",
+          "textPreview": "不同口味食物混放等",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "不同口味食物混放等",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "不同口味食物混放等",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/kv21kf2p",
+      "id": "285",
+      "name": "矩形: 圆角 6",
+      "bbox": [
+        410.54,
+        411.72,
+        155.43,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "商品无价签",
+      "textPreview": "商品无价签",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "商品无价签"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "商品无价签",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "商品无价签",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 15,
+        "row": 4,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/jut0rul4",
+      "id": "286",
+      "name": "矩形: 圆角 7",
+      "bbox": [
+        572.86,
+        411.59,
+        134.75,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "一物多签",
+      "textPreview": "一物多签",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "一物多签"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "一物多签",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "一物多签",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 15,
+        "row": 4,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/it0jipkj",
+      "id": "287",
+      "name": "矩形: 圆角 8",
+      "bbox": [
+        715.63,
+        412.52,
+        134.75,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "一签多物",
+      "textPreview": "一签多物",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "一签多物"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "一签多物",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "一签多物",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 15,
+        "row": 4,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/l07ih03q",
+      "id": "288",
+      "name": "矩形: 圆角 9",
+      "bbox": [
+        410.54,
+        471.94,
+        155.43,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "手写价签",
+      "textPreview": "手写价签",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "手写价签"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "手写价签",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "手写价签",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 15,
+        "row": 4,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0zy18v25",
+      "id": "289",
+      "name": "矩形: 圆角 10",
+      "bbox": [
+        579.54,
+        473.47,
+        240.42,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "价签摆放/规格错误",
+      "textPreview": "价签摆放/规格错误",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "价签摆放/规格错误"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "价签摆放/规格错误",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "价签摆放",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "/",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "规格错误",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 15,
+        "row": 4,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/q5wfi103",
+      "id": "290",
+      "name": "矩形: 圆角 11",
+      "bbox": [
+        410.54,
+        284.38,
+        155.43,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "无临期专区",
+      "textPreview": "无临期专区",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "无临期专区"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "无临期专区",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "无临期专区",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#7030A0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 7,
+        "row": 2,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/b65gr61o",
+      "id": "291",
+      "name": "矩形: 圆角 12",
+      "bbox": [
+        591.72,
+        284.38,
+        202.27,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "临期台账不及时",
+      "textPreview": "临期台账不及时",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "临期台账不及时"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "临期台账不及时",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "临期台账不及时",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#7030A0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 7,
+        "row": 2,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/c7exkri9",
+      "id": "292",
+      "name": "矩形: 圆角 13",
+      "bbox": [
+        410.56,
+        537.65,
+        202.27,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "活动商品未出样",
+      "textPreview": "活动商品未出样",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "活动商品未出样"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "活动商品未出样",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "活动商品未出样",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#00B050",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 19,
+        "row": 5,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/d8nytwju",
+      "id": "293",
+      "name": "矩形: 圆角 15",
+      "bbox": [
+        624.84,
+        537.71,
+        162.36,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "库存未出样",
+      "textPreview": "库存未出样",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "库存未出样"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "库存未出样",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "库存未出样",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#00B050",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 19,
+        "row": 5,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/y9wzm10z",
+      "id": "294",
+      "name": "矩形: 圆角 16",
+      "bbox": [
+        410.53,
+        343.9,
+        162.36,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "货架不饱满",
+      "textPreview": "货架不饱满",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "货架不饱满"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "货架不饱满",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "货架不饱满",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#C00000",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 11,
+        "row": 3,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/za5gv61k",
+      "id": "295",
+      "name": "矩形: 圆角 17",
+      "bbox": [
+        591.73,
+        344.93,
+        230.53,
+        44
+      ],
+      "geometry": "roundRect",
+      "text": "售空后未及时补货",
+      "textPreview": "售空后未及时补货",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "售空后未及时补货"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "售空后未及时补货",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "售空后未及时补货",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#C00000",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 11,
+        "row": 3,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0vyhobi5",
+      "id": "296",
+      "name": "矩形: 圆角 18",
+      "bbox": [
+        413.19,
+        594.35,
+        202.27,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "货架货物混放",
+      "textPreview": "货架货物混放",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "货架货物混放"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "货架货物混放",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "货架货物混放",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "bg2",
+        "transform": {
+          "darken": 0.5
+        }
+      },
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/cr2h4vut",
+        "cellIndex": 23,
+        "row": 6,
+        "column": 3,
+        "overlap": 1
+      }
+    }
+  ],
+  "composeRuns": []
+}

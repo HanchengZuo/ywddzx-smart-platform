@@ -1,0 +1,1249 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/4vyxknqp",
+    "id": "4vyxknqp",
+    "slide": 27,
+    "layoutId": "/ppt/slideLayouts/slideLayout15.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "微软雅黑",
+      "方正小标宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout15.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/107",
+          "id": "107",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/108",
+          "id": "108",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/109",
+          "id": "109",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/110",
+          "id": "110",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/111",
+          "id": "111",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster3.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/26",
+          "id": "26",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/27",
+          "id": "27",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/28",
+          "id": "28",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/29",
+          "id": "29",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/30",
+          "id": "30",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0vux0361",
+      "id": "231",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "三、重点问题分析",
+      "textPreview": "三、重点问题分析",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "三、重点问题分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "三、重点问题分析",
+          "runs": [
+            {
+              "index": 1,
+              "text": "三、重点问题分析"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/fulg7ypg",
+      "id": "232",
+      "name": "矩形 1",
+      "bbox": [
+        130.6,
+        94.1,
+        555.67,
+        44.6
+      ],
+      "geometry": "rect",
+      "text": "5.1 重点商品盘亏/盘盈问题",
+      "textPreview": "5.1 重点商品盘亏/盘盈问题",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "5.1 重点商品盘亏/盘盈问题"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "5.1 重点商品盘亏/盘盈问题",
+          "runs": [
+            {
+              "index": 1,
+              "text": "5.1 ",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "重点商品盘亏",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "/",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "盘盈问题",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 3,
+      "kind": "table",
+      "scope": "slide",
+      "aid": "tb/3yhkrexo",
+      "id": "233",
+      "name": "表格 10",
+      "bbox": [
+        56.93,
+        143.47,
+        1183.27,
+        237.26
+      ],
+      "text": "检查项目 | 加油站 | 问题描述\n现场抽盘 | 莘庄 | 硬中华盘盈1条、软中华盘亏1条。\n销售行为 | 绿中 | 硬中华4条未过机，先销售，货款已存入银行。\n销售行为 | 崇明第七 | 软中华10包存在未过机销售行为。\n商品摆放 | 锦秋 | 五粮液第八代标价被遮挡。便利店内只有这一处出样，未能见标价牌。\n商品摆放 | 华辉 | 五粮液第八代未设置价签。",
+      "textPreview": "检查项目 | 加油站 | 问题描述 | 现场抽盘 | 莘庄 | 硬中华盘盈1条、软中华盘亏1条。 | 销售行为 | 绿中 | 硬中华4条未过机，先销售，货款已存入银行。 | 销售行为 | 崇明第七 | 软中华10包存在未过机销售行为。 | 商品摆放 | 锦秋 | 五粮液第八...",
+      "rows": 6,
+      "cols": 3,
+      "cells": [
+        {
+          "index": 1,
+          "row": 1,
+          "column": 1,
+          "bbox": [
+            56.93,
+            143.47,
+            122,
+            36
+          ],
+          "text": "检查项目",
+          "textPreview": "检查项目",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "检查项目",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "检查项目",
+                  "fontSize": 21.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "row": 1,
+          "column": 2,
+          "bbox": [
+            178.93,
+            143.47,
+            101.6,
+            36
+          ],
+          "text": "加油站",
+          "textPreview": "加油站",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "加油站",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "加油站",
+                  "fontSize": 21.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "row": 1,
+          "column": 3,
+          "bbox": [
+            280.53,
+            143.47,
+            959.67,
+            36
+          ],
+          "text": "问题描述",
+          "textPreview": "问题描述",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "问题描述",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "问题描述",
+                  "fontSize": 21.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "row": 2,
+          "column": 1,
+          "bbox": [
+            56.93,
+            179.47,
+            122,
+            44.4
+          ],
+          "text": "现场抽盘",
+          "textPreview": "现场抽盘",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "现场抽盘",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "现场抽盘",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "row": 2,
+          "column": 2,
+          "bbox": [
+            178.93,
+            179.47,
+            101.6,
+            44.4
+          ],
+          "text": "莘庄",
+          "textPreview": "莘庄",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "莘庄",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "莘庄",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "row": 2,
+          "column": 3,
+          "bbox": [
+            280.53,
+            179.47,
+            959.67,
+            44.4
+          ],
+          "text": "硬中华盘盈1条、软中华盘亏1条。",
+          "textPreview": "硬中华盘盈1条、软中华盘亏1条。",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "硬中华盘盈1条、软中华盘亏1条。",
+              "resolvedTextStyle": {
+                "alignment": "left"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "硬中华",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 112, 192, 1)"
+                },
+                {
+                  "index": 2,
+                  "text": "盘盈",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                },
+                {
+                  "index": 3,
+                  "text": "1",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                },
+                {
+                  "index": 4,
+                  "text": "条、",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                },
+                {
+                  "index": 5,
+                  "text": "软中华",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 112, 192, 1)"
+                },
+                {
+                  "index": 6,
+                  "text": "盘亏",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                },
+                {
+                  "index": 7,
+                  "text": "1",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                },
+                {
+                  "index": 8,
+                  "text": "条。",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "row": 3,
+          "column": 1,
+          "bbox": [
+            56.93,
+            223.87,
+            122,
+            44.4
+          ],
+          "text": "销售行为",
+          "textPreview": "销售行为",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "销售行为",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "销售行为",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "row": 3,
+          "column": 2,
+          "bbox": [
+            178.93,
+            223.87,
+            101.6,
+            44.4
+          ],
+          "text": "绿中",
+          "textPreview": "绿中",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "绿中",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "绿中",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "row": 3,
+          "column": 3,
+          "bbox": [
+            280.53,
+            223.87,
+            959.67,
+            44.4
+          ],
+          "text": "硬中华4条未过机，先销售，货款已存入银行。",
+          "textPreview": "硬中华4条未过机，先销售，货款已存入银行。",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "硬中华4条未过机，先销售，货款已存入银行。",
+              "resolvedTextStyle": {
+                "alignment": "left"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "硬中华",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 112, 192, 1)"
+                },
+                {
+                  "index": 2,
+                  "text": "4条",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "index": 3,
+                  "text": "未过机，先销售，货款已存入银行。",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "row": 4,
+          "column": 1,
+          "bbox": [
+            56.93,
+            268.27,
+            122,
+            37.47
+          ],
+          "text": "销售行为",
+          "textPreview": "销售行为",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "销售行为",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "销售行为",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "row": 4,
+          "column": 2,
+          "bbox": [
+            178.93,
+            268.27,
+            101.6,
+            37.47
+          ],
+          "text": "崇明第七",
+          "textPreview": "崇明第七",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "崇明第七",
+              "lineSpacingPercent": 100000,
+              "resolvedTextStyle": {
+                "fontSize": 24,
+                "typeface": "Arial",
+                "color": {
+                  "type": "theme",
+                  "value": "tx1",
+                  "transform": {
+                    "opacity": 1
+                  }
+                },
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "崇明第七",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "row": 4,
+          "column": 3,
+          "bbox": [
+            280.53,
+            268.27,
+            959.67,
+            37.47
+          ],
+          "text": "软中华10包存在未过机销售行为。",
+          "textPreview": "软中华10包存在未过机销售行为。",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "软中华10包存在未过机销售行为。",
+              "lineSpacingPercent": 100000,
+              "resolvedTextStyle": {
+                "fontSize": 24,
+                "typeface": "Arial",
+                "color": {
+                  "type": "theme",
+                  "value": "tx1",
+                  "transform": {
+                    "opacity": 1
+                  }
+                },
+                "alignment": "left"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "软中华",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": "rgba(0, 112, 192, 1)"
+                },
+                {
+                  "index": 2,
+                  "text": "10",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "index": 3,
+                  "text": "包存在未过机销售行为。",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "row": 5,
+          "column": 1,
+          "bbox": [
+            56.93,
+            305.73,
+            122,
+            37.4
+          ],
+          "text": "商品摆放",
+          "textPreview": "商品摆放",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "商品摆放",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "商品摆放",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "row": 5,
+          "column": 2,
+          "bbox": [
+            178.93,
+            305.73,
+            101.6,
+            37.4
+          ],
+          "text": "锦秋",
+          "textPreview": "锦秋",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "锦秋",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "锦秋",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "row": 5,
+          "column": 3,
+          "bbox": [
+            280.53,
+            305.73,
+            959.67,
+            37.4
+          ],
+          "text": "五粮液第八代标价被遮挡。便利店内只有这一处出样，未能见标价牌。",
+          "textPreview": "五粮液第八代标价被遮挡。便利店内只有这一处出样，未能见标价牌。",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "五粮液第八代标价被遮挡。便利店内只有这一处出样，未能见标价牌。",
+              "lineSpacingPercent": 100000,
+              "resolvedTextStyle": {
+                "alignment": "left"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "五粮液第八代",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx2",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "index": 2,
+                  "text": "标价被遮挡。便利店内只有这一处出样，未能见标价牌。",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "row": 6,
+          "column": 1,
+          "bbox": [
+            56.93,
+            343.13,
+            122,
+            37.6
+          ],
+          "text": "商品摆放",
+          "textPreview": "商品摆放",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "商品摆放",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "商品摆放",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "row": 6,
+          "column": 2,
+          "bbox": [
+            178.93,
+            343.13,
+            101.6,
+            37.6
+          ],
+          "text": "华辉",
+          "textPreview": "华辉",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "华辉",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "华辉",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "row": 6,
+          "column": 3,
+          "bbox": [
+            280.53,
+            343.13,
+            959.67,
+            37.6
+          ],
+          "text": "五粮液第八代未设置价签。",
+          "textPreview": "五粮液第八代未设置价签。",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "五粮液第八代未设置价签。",
+              "lineSpacingPercent": 100000,
+              "resolvedTextStyle": {
+                "alignment": "left"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "五粮液第八代",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx2",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                },
+                {
+                  "index": 2,
+                  "text": "未设置价签。",
+                  "fontSize": 21.33,
+                  "typeface": "微软雅黑",
+                  "color": {
+                    "type": "theme",
+                    "value": "tx1",
+                    "transform": {
+                      "opacity": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}

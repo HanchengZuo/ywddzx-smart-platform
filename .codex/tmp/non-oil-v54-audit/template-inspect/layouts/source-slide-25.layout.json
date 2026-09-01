@@ -1,0 +1,927 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/69wfm9o7",
+    "id": "69wfm9o7",
+    "slide": 25,
+    "layoutId": "/ppt/slideLayouts/slideLayout15.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "方正仿宋简体",
+      "方正小标宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout15.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/107",
+          "id": "107",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/108",
+          "id": "108",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/109",
+          "id": "109",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/110",
+          "id": "110",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/111",
+          "id": "111",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster3.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/26",
+          "id": "26",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/27",
+          "id": "27",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/28",
+          "id": "28",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/29",
+          "id": "29",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/30",
+          "id": "30",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/zy18ne5c",
+      "id": "219",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "三、重点问题分析",
+      "textPreview": "三、重点问题分析",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "三、重点问题分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "三、重点问题分析",
+          "runs": [
+            {
+              "index": 1,
+              "text": "三、重点问题分析"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3ixoval4",
+      "id": "220",
+      "name": "矩形 1",
+      "bbox": [
+        90.67,
+        95.37,
+        555.67,
+        44.03
+      ],
+      "geometry": "rect",
+      "text": "5. 重点商品问题",
+      "textPreview": "5. 重点商品问题",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "5. 重点商品问题"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "5. 重点商品问题",
+          "runs": [
+            {
+              "index": 1,
+              "text": "5. ",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "重点商品问题",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/2ho7m54j",
+      "id": "221",
+      "name": "文本框 2",
+      "bbox": [
+        71.8,
+        142.4,
+        1104,
+        267.07
+      ],
+      "geometry": "rect",
+      "text": "61%的重点问题涉及重点商品，共15起\n主要发生于订单入库盘点（50%）和商品摆放（21%），其余为销售行为和特殊扣分环节\n重点商品涉及：中华烟（60%），五粮液（33%）、茅台（7%）\n具体表现为：盘亏（29%），未过机销售（21%），商品未出样（14%），中华软硬库存串项（14%），价签问题（21%）",
+      "textPreview": "61%的重点问题涉及重点商品，共15起 | 主要发生于订单入库盘点（50%）和商品摆放（21%），其余为销售行为和特殊扣分环节 | 重点商品涉及：中华烟（60%），五粮液（33%）、茅台（7%） | 具体表现为：盘亏（29%），未过机销售（21%），商品未出样（14%），中...",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 6,
+        "lines": [
+          {
+            "index": 1,
+            "text": "•61%的重点问题涉及重点商品，共15起"
+          },
+          {
+            "index": 2,
+            "text": "•主要发生于订单入库盘点（50%）和商品摆放（21%），"
+          },
+          {
+            "index": 3,
+            "text": "其余为销售行为和特殊扣分环节"
+          },
+          {
+            "index": 4,
+            "text": "•重点商品涉及：中华烟（60%），五粮液（33%）、茅台（7%）"
+          },
+          {
+            "index": 5,
+            "text": "•具体表现为：盘亏（29%），未过机销售（21%），商品未出样（14%"
+          },
+          {
+            "index": 6,
+            "text": "），中华软硬库存串项（14%），价签问题（21%）"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "61%的重点问题涉及重点商品，共15起",
+          "runs": [
+            {
+              "index": 1,
+              "text": "61%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "的重点问题涉及重点商品，共",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 3,
+              "text": "15",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              }
+            },
+            {
+              "index": 4,
+              "text": "起",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              }
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 2,
+          "text": "主要发生于订单入库盘点（50%）和商品摆放（21%），其余为销售行为和特殊扣分环节",
+          "runs": [
+            {
+              "index": 1,
+              "text": "主要发生于",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "订单入库盘点（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "50%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "）和商品摆放（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "21%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "）",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": {
+                "type": "theme",
+                "value": "tx1",
+                "transform": {
+                  "opacity": 1
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "，",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 8,
+              "text": "其余为销售行为和特殊扣分环节",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 3,
+          "text": "重点商品涉及：中华烟（60%），五粮液（33%）、茅台（7%）",
+          "runs": [
+            {
+              "index": 1,
+              "text": "重点商品涉及：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "中华烟（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "60%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "），五粮液（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "33%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "）、茅台（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "7%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 8,
+              "text": "）",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 4,
+          "text": "具体表现为：盘亏（29%），未过机销售（21%），商品未出样（14%），中华软硬库存串项（14%），价签问题（21%）",
+          "runs": [
+            {
+              "index": 1,
+              "text": "具体表现为：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "盘亏（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "29%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "），未过机销售（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "21%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "），商品未出样（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "14%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 8,
+              "text": "），中华软硬库存串项（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 9,
+              "text": "14%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 10,
+              "text": "），价签问题（",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 11,
+              "text": "21%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 12,
+              "text": "）",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 457200
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/g3m9wzyd",
+      "id": "222",
+      "name": "图片 221",
+      "bbox": [
+        132.6,
+        409.2,
+        262.6,
+        305.8
+      ],
+      "contentType": "image/png",
+      "imageCrop": {
+        "left": 0.28746,
+        "top": 0.00733,
+        "right": 0.28377,
+        "bottom": 0
+      },
+      "asset": {
+        "assetId": "/ppt/media/image30.png",
+        "contentType": "image/png",
+        "byteLength": 26664
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image30.png",
+        "contentType": "image/png",
+        "byteLength": 26664
+      }
+    },
+    {
+      "order": 5,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/h4vap4zy",
+      "id": "223",
+      "name": "图片 222",
+      "bbox": [
+        474.93,
+        408.27,
+        323.53,
+        306.73
+      ],
+      "contentType": "image/png",
+      "asset": {
+        "assetId": "/ppt/media/image31.png",
+        "contentType": "image/png",
+        "byteLength": 22472
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image31.png",
+        "contentType": "image/png",
+        "byteLength": 22472
+      }
+    },
+    {
+      "order": 6,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/6xkrq5gb",
+      "id": "224",
+      "name": "图片 223",
+      "bbox": [
+        836.6,
+        409.47,
+        368.73,
+        309
+      ],
+      "contentType": "image/png",
+      "asset": {
+        "assetId": "/ppt/media/image32.png",
+        "contentType": "image/png",
+        "byteLength": 36701
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image32.png",
+        "contentType": "image/png",
+        "byteLength": 36701
+      }
+    }
+  ],
+  "composeRuns": []
+}

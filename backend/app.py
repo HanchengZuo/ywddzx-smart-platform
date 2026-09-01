@@ -7516,6 +7516,21 @@ def build_issue_export_excel_image(image_path, max_width=150, max_height=110):
         return None
 
 
+def get_issue_export_embedded_image_path(image_path):
+    abs_path = resolve_storage_abs_path(image_path)
+    if not abs_path or not os.path.isfile(abs_path):
+        return None
+    try:
+        with Image.open(abs_path) as source_image:
+            width, height = source_image.size
+            source_image.verify()
+        if width <= 0 or height <= 0:
+            return None
+        return abs_path
+    except Exception:
+        return None
+
+
 def parse_standard_detail_entries(detail_text):
     entries = []
     normalized_text = str(detail_text or "").replace("\\n", "\n")
@@ -13344,7 +13359,7 @@ def build_issue_export_table_field_map(cur, rows):
     return field_map
 
 
-def safe_excel_sheet_title(raw_title, used_titles):
+def safe_issue_export_sheet_title(raw_title, used_titles):
     base = re.sub(r"[\[\]\:\*\?\/\\]", "_", str(raw_title or "检查表").strip())
     base = re.sub(r"\s+", " ", base).strip() or "检查表"
     base = base[:31]
@@ -13406,10 +13421,9 @@ def write_issue_export_xlsx(
     workbook_title="巡检问题列表导出",
 ):
     try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        import xlsxwriter
     except ImportError as exc:
-        raise RuntimeError("服务器缺少 openpyxl 组件，暂时无法导出 Excel。") from exc
+        raise RuntimeError("服务器缺少 XlsxWriter 组件，暂时无法导出单元格照片。") from exc
 
     table_field_map = table_field_map or {}
     selected_field_keys = selected_issue_export_field_keys(export_options)
@@ -13421,112 +13435,153 @@ def write_issue_export_xlsx(
         if export_directory:
             os.makedirs(export_directory, exist_ok=True)
 
-    workbook = Workbook()
-    default_sheet = workbook.active
-    workbook.remove(default_sheet)
-
-    header_fill = PatternFill("solid", fgColor="DCEBFF")
-    header_font = Font(bold=True, color="0F172A")
-    thin_border = Border(
-        left=Side(style="thin", color="CBD5E1"),
-        right=Side(style="thin", color="CBD5E1"),
-        top=Side(style="thin", color="CBD5E1"),
-        bottom=Side(style="thin", color="CBD5E1"),
-    )
-    wrap_alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
-    long_text_alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
-
-    used_sheet_titles = set()
-    groups = group_issue_export_rows_by_table(rows)
-    for group in groups:
-        standard_field_columns = (
-            build_issue_export_standard_field_columns(group, table_field_map)
-            if "external_standard" in selected_field_keys
-            else []
+    workbook_options = {
+        "strings_to_formulas": False,
+        "strings_to_urls": False,
+    }
+    with xlsxwriter.Workbook(file_path, workbook_options) as workbook:
+        workbook.set_properties(
+            {
+                "title": workbook_title,
+                "author": "业务督导中心数智管理平台",
+            }
         )
-        columns = list(extra_columns or [])
-        columns.extend(
-            (header, key)
-            for header, key in ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD
-            if key in selected_field_keys
+        header_format = workbook.add_format(
+            {
+                "bold": True,
+                "font_color": "#0F172A",
+                "bg_color": "#DCEBFF",
+                "border": 1,
+                "border_color": "#CBD5E1",
+                "align": "center",
+                "valign": "vcenter",
+                "text_wrap": True,
+            }
         )
-        if "internal_standard" in selected_field_keys:
-            columns.extend(ISSUE_EXPORT_INTERNAL_STANDARD_COLUMNS)
-        if "external_standard" in selected_field_keys:
-            columns.extend(ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS)
-            columns.extend(
-                (field["label"], f"external_field::{field['label']}")
-                for field in standard_field_columns
+        center_format = workbook.add_format(
+            {
+                "border": 1,
+                "border_color": "#CBD5E1",
+                "align": "center",
+                "valign": "vcenter",
+                "text_wrap": True,
+            }
+        )
+        long_text_format = workbook.add_format(
+            {
+                "border": 1,
+                "border_color": "#CBD5E1",
+                "align": "left",
+                "valign": "vcenter",
+                "text_wrap": True,
+            }
+        )
+
+        used_sheet_titles = set()
+        groups = group_issue_export_rows_by_table(rows)
+        if not groups:
+            worksheet = workbook.add_worksheet("巡检问题")
+            worksheet.write_string(0, 0, "暂无可导出的巡检问题数据", center_format)
+
+        for group in groups:
+            standard_field_columns = (
+                build_issue_export_standard_field_columns(group, table_field_map)
+                if "external_standard" in selected_field_keys
+                else []
             )
-        columns.extend(
-            (header, key)
-            for header, key in ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD
-            if key in selected_field_keys
-        )
-        if not columns:
-            raise ValueError("请至少选择一个导出字段。")
-        worksheet = workbook.create_sheet(
-            title=safe_excel_sheet_title(group.get("table_name"), used_sheet_titles)
-        )
-        worksheet.freeze_panes = "A2"
+            columns = list(extra_columns or [])
+            columns.extend(
+                (header, key)
+                for header, key in ISSUE_EXPORT_BASE_COLUMNS_BEFORE_STANDARD
+                if key in selected_field_keys
+            )
+            if "internal_standard" in selected_field_keys:
+                columns.extend(ISSUE_EXPORT_INTERNAL_STANDARD_COLUMNS)
+            if "external_standard" in selected_field_keys:
+                columns.extend(ISSUE_EXPORT_EXTERNAL_STANDARD_ID_COLUMNS)
+                columns.extend(
+                    (field["label"], f"external_field::{field['label']}")
+                    for field in standard_field_columns
+                )
+            columns.extend(
+                (header, key)
+                for header, key in ISSUE_EXPORT_BASE_COLUMNS_AFTER_STANDARD
+                if key in selected_field_keys
+            )
+            if not columns:
+                raise ValueError("请至少选择一个导出字段。")
 
-        for column_index, (header, key) in enumerate(columns, start=1):
-            cell = worksheet.cell(row=1, column=column_index, value=header)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.border = thin_border
-            cell.alignment = wrap_alignment
+            worksheet = workbook.add_worksheet(
+                safe_issue_export_sheet_title(group.get("table_name"), used_sheet_titles)
+            )
+            worksheet.freeze_panes(1, 0)
+            worksheet.set_row(0, 30)
 
-            width = 18
-            if key.startswith("external_field::"):
-                width = 22
-            if key in ISSUE_EXPORT_LONG_TEXT_KEYS or key in {
-                "description",
-                "rectification_note",
-                "review_note",
-            }:
-                width = 34
-            if key in ISSUE_EXPORT_PHOTO_KEYS:
-                width = 22 if key in selected_photo_keys else 16
-            worksheet.column_dimensions[excel_column_name(column_index)].width = width
+            for column_index, (header, key) in enumerate(columns):
+                worksheet.write_string(0, column_index, header, header_format)
 
-        for row_index, row in enumerate(group.get("rows", []), start=2):
-            row_has_image = False
-            external_values = parse_standard_detail_value_map(row.get("standard_detail_text"))
-            for column_index, (_header, key) in enumerate(columns, start=1):
-                cell = worksheet.cell(row=row_index, column=column_index)
-                cell.border = thin_border
-                cell.alignment = long_text_alignment if (
-                    key in ISSUE_EXPORT_LONG_TEXT_KEYS
-                    or key.startswith("external_field::")
-                ) else wrap_alignment
-
-                if key in ISSUE_EXPORT_PHOTO_KEYS:
-                    cell.value = ""
-                    if key in selected_photo_keys:
-                        excel_image = build_issue_export_excel_image(row.get(key))
-                        if excel_image:
-                            worksheet.add_image(excel_image, cell.coordinate)
-                            row_has_image = True
-                    continue
-
+                width = 18
                 if key.startswith("external_field::"):
-                    label = key.split("::", 1)[1]
-                    cell.value = external_values.get(label, "-")
-                    continue
+                    width = 22
+                if key in ISSUE_EXPORT_LONG_TEXT_KEYS or key in {
+                    "description",
+                    "rectification_note",
+                    "review_note",
+                }:
+                    width = 34
+                if key in ISSUE_EXPORT_PHOTO_KEYS:
+                    width = 22 if key in selected_photo_keys else 16
+                worksheet.set_column(column_index, column_index, width)
 
-                cell.value = "" if row.get(key) is None else str(row.get(key))
+            for row_index, row in enumerate(group.get("rows", []), start=1):
+                row_has_image = False
+                external_values = parse_standard_detail_value_map(row.get("standard_detail_text"))
+                for column_index, (header, key) in enumerate(columns):
+                    cell_format = (
+                        long_text_format
+                        if key in ISSUE_EXPORT_LONG_TEXT_KEYS
+                        or key.startswith("external_field::")
+                        else center_format
+                    )
 
-            if row_has_image:
-                worksheet.row_dimensions[row_index].height = 92
+                    if key in ISSUE_EXPORT_PHOTO_KEYS:
+                        image_path = (
+                            get_issue_export_embedded_image_path(row.get(key))
+                            if key in selected_photo_keys
+                            else None
+                        )
+                        if image_path:
+                            result = worksheet.embed_image(
+                                row_index,
+                                column_index,
+                                image_path,
+                                {
+                                    "cell_format": cell_format,
+                                    "description": f"{header}（问题ID {row.get('id') or '-'}）",
+                                },
+                            )
+                            if result != 0:
+                                raise RuntimeError("照片嵌入 Excel 单元格失败。")
+                            row_has_image = True
+                        else:
+                            worksheet.write_blank(row_index, column_index, None, cell_format)
+                        continue
 
-        last_column = excel_column_name(len(columns))
-        worksheet.auto_filter.ref = f"A1:{last_column}1"
+                    if key.startswith("external_field::"):
+                        label = key.split("::", 1)[1]
+                        value = external_values.get(label, "-")
+                    else:
+                        value = "" if row.get(key) is None else str(row.get(key))
 
-    workbook.properties.title = workbook_title
-    workbook.properties.creator = "业务督导中心数智管理平台"
-    workbook.save(file_path)
-    workbook.close()
+                    if value == "":
+                        worksheet.write_blank(row_index, column_index, None, cell_format)
+                    else:
+                        worksheet.write_string(row_index, column_index, str(value), cell_format)
+
+                if row_has_image:
+                    worksheet.set_row(row_index, 92)
+
+            worksheet.autofilter(0, 0, 0, len(columns) - 1)
 
 
 def mark_issue_export_task_failed(task_id, message):

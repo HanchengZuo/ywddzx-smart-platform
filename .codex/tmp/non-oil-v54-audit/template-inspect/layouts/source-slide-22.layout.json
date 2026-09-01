@@ -1,0 +1,1414 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/5onypobq",
+    "id": "5onypobq",
+    "slide": 22,
+    "layoutId": "/ppt/slideLayouts/slideLayout15.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "方正仿宋简体",
+      "方正小标宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout15.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster3.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/107",
+          "id": "107",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/108",
+          "id": "108",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/109",
+          "id": "109",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/110",
+          "id": "110",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout15.xml/111",
+          "id": "111",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster3.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/26",
+          "id": "26",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/27",
+          "id": "27",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/28",
+          "id": "28",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/29",
+          "id": "29",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster3.xml/30",
+          "id": "30",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3a1wv2ls",
+      "id": "151",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "三、重点问题分析",
+      "textPreview": "三、重点问题分析",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "三、重点问题分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "三、重点问题分析",
+          "runs": [
+            {
+              "index": 1,
+              "text": "三、重点问题分析"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/4vax472d",
+      "id": "152",
+      "name": "矩形 1",
+      "bbox": [
+        90.67,
+        126.3,
+        555.67,
+        44.03
+      ],
+      "geometry": "rect",
+      "text": "1. 检查总体情况",
+      "textPreview": "1. 检查总体情况",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "1. 检查总体情况"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "1. 检查总体情况",
+          "runs": [
+            {
+              "index": 1,
+              "text": "1. ",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "检查总体情况",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/pwjexc3y",
+      "id": "153",
+      "name": "文本框 2",
+      "bbox": [
+        71.8,
+        388.42,
+        1104,
+        264.68
+      ],
+      "geometry": "rect",
+      "text": "随着非油业务在加油站利润结构中的占比提升，便利店的运营效率与合规成为管理的重点。本次分析旨在识别便利店运营流程中的潜在风险，使用的方法包括：\n定量评估：统计各类问题发生频次，识别高风险问题领域\n关联分析：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段\n风险识别：结合外部信息识别典型问题的风险及影响，依据风险与频次展示典型问题\n归因优化：探究数据之后的共性缺失，提出流程化改善建议",
+      "textPreview": "随着非油业务在加油站利润结构中的占比提升，便利店的运营效率与合规成为管理的重点。本次分析旨在识别便利店运营流程中的潜在风险，使用的方法包括： | 定量评估：统计各类问题发生频次，识别高风险问题领域 | 关联分析：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段 | ...",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 7,
+        "lines": [
+          {
+            "index": 1,
+            "text": "随着非油业务在加油站利润结构中的占比提升，便利店的"
+          },
+          {
+            "index": 2,
+            "text": "运营效率与合规成为管理的重点。本次分析旨在识别便利店运营流程中的"
+          },
+          {
+            "index": 3,
+            "text": "潜在风险，使用的方法包括："
+          },
+          {
+            "index": 4,
+            "text": "•定量评估：统计各类问题发生频次，识别高风险问题领域"
+          },
+          {
+            "index": 5,
+            "text": "•关联分析：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段"
+          },
+          {
+            "index": 6,
+            "text": "•风险识别：结合外部信息识别典型问题的风险及影响，依据风险与频次展示典型问题"
+          },
+          {
+            "index": 7,
+            "text": "•归因优化：探究数据之后的共性缺失，提出流程化改善建议"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "随着非油业务在加油站利润结构中的占比提升，便利店的运营效率与合规成为管理的重点。本次分析旨在识别便利店运营流程中的潜在风险，使用的方法包括：",
+          "runs": [
+            {
+              "index": 1,
+              "text": "随着非油业务在加油站利润结构中的占比提升，",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "便利店的",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 3,
+              "text": "运营效率与合规成为管理的重点",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 4,
+              "text": "。本次分析旨在",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 5,
+              "text": "识别便利店运营",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 6,
+              "text": "流程中的",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 7,
+              "text": "潜在风险，使用的方法包括：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 0
+        },
+        {
+          "index": 2,
+          "text": "定量评估：统计各类问题发生频次，识别高风险问题领域",
+          "runs": [
+            {
+              "index": 1,
+              "text": "定量评估",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "：统计各类问题发生频次，识别高风险问题领域",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 3,
+          "text": "关联分析：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段",
+          "runs": [
+            {
+              "index": 1,
+              "text": "关联分析",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 4,
+          "text": "风险识别：结合外部信息识别典型问题的风险及影响，依据风险与频次展示典型问题",
+          "runs": [
+            {
+              "index": 1,
+              "text": "风险识别",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "：结合外部信息识别典型问题的风险及影响，依据风险与频次展示典型问题",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        },
+        {
+          "index": 5,
+          "text": "归因优化：探究数据之后的共性缺失，提出流程化改善建议",
+          "runs": [
+            {
+              "index": 1,
+              "text": "归因优化",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "：探究数据之后的共性缺失，提出流程化改善建议",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/qxsf6hkj",
+      "id": "154",
+      "name": "矩形 8",
+      "bbox": [
+        90.67,
+        336.91,
+        555.67,
+        44.03
+      ],
+      "geometry": "rect",
+      "text": "2. 分析方法",
+      "textPreview": "2. 分析方法",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "2. 分析方法"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "2. 分析方法",
+          "runs": [
+            {
+              "index": 1,
+              "text": "2. ",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "分析方法",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rylwzml4",
+      "id": "155",
+      "name": "文本框 14",
+      "bbox": [
+        135.97,
+        198.98,
+        213.33,
+        67.83
+      ],
+      "geometry": "rect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      }
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/618vux4z",
+      "id": "158",
+      "name": "矩形: 圆角 10",
+      "bbox": [
+        108.84,
+        184.35,
+        252.07,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "bg1",
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/72hwnilk",
+      "id": "159",
+      "name": "矩形: 圆角 11",
+      "bbox": [
+        108.84,
+        184.35,
+        5.67,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "#FFC000",
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/budkfuxg",
+      "id": "160",
+      "name": "文本框 13",
+      "bbox": [
+        125.35,
+        193.95,
+        219.33,
+        89.33
+      ],
+      "rotation": 0,
+      "geometry": "rect",
+      "text": "198\n问题总数",
+      "textPreview": "198 | 问题总数",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "198"
+          },
+          {
+            "index": 2,
+            "text": "问题总数"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "198\n问题总数",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "198\n",
+              "fontSize": 42.67,
+              "color": "rgba(255, 192, 0, 1)"
+            },
+            {
+              "index": 2,
+              "text": "问题总数",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/cvml8zel",
+      "id": "163",
+      "name": "矩形: 圆角 19",
+      "bbox": [
+        660,
+        184.2,
+        252.07,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "bg1",
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/n6tkbax4",
+      "id": "164",
+      "name": "矩形: 圆角 20",
+      "bbox": [
+        660,
+        184.2,
+        5.67,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "#C00000",
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/25k32pgj",
+      "id": "165",
+      "name": "文本框 18",
+      "bbox": [
+        676.5,
+        193.8,
+        219.33,
+        90.33
+      ],
+      "rotation": 0,
+      "geometry": "rect",
+      "text": "21\n重点问题数",
+      "textPreview": "21 | 重点问题数",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "21"
+          },
+          {
+            "index": 2,
+            "text": "重点问题数"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "21\n重点问题数",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "21\n",
+              "fontSize": 42.67,
+              "color": "rgba(255, 0, 0, 1)"
+            },
+            {
+              "index": 2,
+              "text": "重点问题数",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/72x4nex8",
+      "id": "168",
+      "name": "矩形: 圆角 24",
+      "bbox": [
+        935.58,
+        184.2,
+        252.07,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "bg1",
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/m143e9w3",
+      "id": "169",
+      "name": "矩形: 圆角 25",
+      "bbox": [
+        935.58,
+        184.2,
+        5.67,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "#002060",
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/47yh8bel",
+      "id": "170",
+      "name": "文本框 23",
+      "bbox": [
+        952.08,
+        193.8,
+        219.33,
+        89.33
+      ],
+      "rotation": 0,
+      "geometry": "rect",
+      "text": "13%\n重点问题占比",
+      "textPreview": "13% | 重点问题占比",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "13%"
+          },
+          {
+            "index": 2,
+            "text": "重点问题占比"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "13%\n重点问题占比",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "13%\n",
+              "fontSize": 42.67,
+              "color": "rgba(0, 32, 96, 1)"
+            },
+            {
+              "index": 2,
+              "text": "重点问题占比",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/36p0f6d0",
+      "id": "173",
+      "name": "矩形: 圆角 29",
+      "bbox": [
+        384.42,
+        184.2,
+        252.07,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "bg1",
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/sbihcbeh",
+      "id": "174",
+      "name": "矩形: 圆角 30",
+      "bbox": [
+        384.42,
+        184.2,
+        5.67,
+        109.97
+      ],
+      "rotation": 0,
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "lt1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": "#00B050",
+      "lineWidth": 0
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/dcrilgv2",
+      "id": "175",
+      "name": "文本框 28",
+      "bbox": [
+        400.93,
+        193.8,
+        219.06,
+        90.47
+      ],
+      "rotation": 0,
+      "geometry": "rect",
+      "text": "20+\n问题覆盖领域",
+      "textPreview": "20+ | 问题覆盖领域",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "20+"
+          },
+          {
+            "index": 2,
+            "text": "问题覆盖领域"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "20+\n问题覆盖领域",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "20+",
+              "fontSize": 42.67,
+              "color": "#00B050"
+            },
+            {
+              "index": 2,
+              "text": "\n",
+              "alignment": "center"
+            },
+            {
+              "index": 3,
+              "text": "问题覆盖领域",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}

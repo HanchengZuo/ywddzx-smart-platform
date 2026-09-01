@@ -1,0 +1,1366 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/5ojatgfe",
+    "id": "5ojatgfe",
+    "slide": 40,
+    "layoutId": "/ppt/slideLayouts/slideLayout19.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster6.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "方正仿宋简体",
+      "方正小标宋简体"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout19.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster6.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/117",
+          "id": "117",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/118",
+          "id": "118",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/119",
+          "id": "119",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/120",
+          "id": "120",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout19.xml/121",
+          "id": "121",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster6.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/32",
+          "id": "32",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/33",
+          "id": "33",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/34",
+          "id": "34",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/35",
+          "id": "35",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster6.xml/36",
+          "id": "36",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/4bi5szmp",
+      "id": "361",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "text": "四、具体问题分析",
+      "textPreview": "四、具体问题分析",
+      "resolvedFontSize": 37.33,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 37.33,
+        "typeface": "Arial",
+        "color": "tx2",
+        "bold": true,
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "四、具体问题分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "四、具体问题分析",
+          "runs": [
+            {
+              "index": 1,
+              "text": "四、"
+            },
+            {
+              "index": 2,
+              "text": "具体问题分析"
+            }
+          ],
+          "bulletCharacter": "",
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3a94ju54",
+      "id": "362",
+      "name": "矩形 5",
+      "bbox": [
+        90.67,
+        126.3,
+        555.67,
+        44.6
+      ],
+      "geometry": "rect",
+      "text": "7. 销售行为",
+      "textPreview": "7. 销售行为",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "7. 销售行为"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "7. 销售行为",
+          "runs": [
+            {
+              "index": 1,
+              "text": "7. ",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "销售行为",
+              "fontSize": 26.67,
+              "typeface": "方正小标宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/290nq94j",
+      "id": "363",
+      "name": "文本框 6",
+      "bbox": [
+        71.8,
+        173.33,
+        1104,
+        49.26
+      ],
+      "geometry": "rect",
+      "text": "共7起，占全部问题的5%，典型问题包括：",
+      "textPreview": "共7起，占全部问题的5%，典型问题包括：",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "•共7起，占全部问题的5%，典型问题包括："
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "共7起，占全部问题的5%，典型问题包括：",
+          "runs": [
+            {
+              "index": 1,
+              "text": "共",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 2,
+              "text": "7",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "#FF0000"
+            },
+            {
+              "index": 3,
+              "text": "起",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "#FF0000"
+            },
+            {
+              "index": 4,
+              "text": "，占全部问题的",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            },
+            {
+              "index": 5,
+              "text": "5%",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "color": "#FFC000",
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "，",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": "典型问题包括：",
+              "fontSize": 26.67,
+              "typeface": "方正仿宋简体"
+            }
+          ],
+          "marginLeft": 457200
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "kind": "table",
+      "scope": "slide",
+      "aid": "tb/7mlk3mt0",
+      "id": "370",
+      "name": "表格 7",
+      "bbox": [
+        98.13,
+        229.12,
+        1128.08,
+        176.08
+      ],
+      "text": "高频关键词 | 问题数量 | 典型问题 | 说明\n未过机 | 3 | 情况集中发生在香烟销售\n先进先出 | 3 | /",
+      "textPreview": "高频关键词 | 问题数量 | 典型问题 | 说明 | 未过机 | 3 | 情况集中发生在香烟销售 | 先进先出 | 3 | /",
+      "rows": 3,
+      "cols": 4,
+      "cells": [
+        {
+          "index": 1,
+          "row": 1,
+          "column": 1,
+          "bbox": [
+            98.13,
+            229.12,
+            165.6,
+            44.91
+          ],
+          "text": "高频关键词",
+          "textPreview": "高频关键词",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "高频关键词",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "高频关键词",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "row": 1,
+          "column": 2,
+          "bbox": [
+            263.74,
+            229.12,
+            127.65,
+            44.91
+          ],
+          "text": "问题数量",
+          "textPreview": "问题数量",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "问题数量",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "问题数量",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "row": 1,
+          "column": 3,
+          "bbox": [
+            391.38,
+            229.12,
+            492.66,
+            44.91
+          ],
+          "text": "典型问题",
+          "textPreview": "典型问题",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "典型问题",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "典型问题",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "row": 1,
+          "column": 4,
+          "bbox": [
+            884.04,
+            229.12,
+            342.17,
+            44.91
+          ],
+          "text": "说明",
+          "textPreview": "说明",
+          "fillColor": "#002060",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "说明",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "说明",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "row": 2,
+          "column": 1,
+          "bbox": [
+            98.13,
+            274.04,
+            165.6,
+            67.43
+          ],
+          "text": "未过机",
+          "textPreview": "未过机",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "未过机",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "未过机",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "row": 2,
+          "column": 2,
+          "bbox": [
+            263.74,
+            274.04,
+            127.65,
+            67.43
+          ],
+          "text": "3",
+          "textPreview": "3",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "3",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "3",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "row": 2,
+          "column": 3,
+          "bbox": [
+            391.38,
+            274.04,
+            492.66,
+            67.43
+          ],
+          "ownedElementAids": [
+            "sh/g7i5ozmd"
+          ]
+        },
+        {
+          "index": 8,
+          "row": 2,
+          "column": 4,
+          "bbox": [
+            884.04,
+            274.04,
+            342.17,
+            67.43
+          ],
+          "text": "情况集中发生在香烟销售",
+          "textPreview": "情况集中发生在香烟销售",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "情况集中发生在香烟销售",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "情况集中发生在香烟销售",
+                  "fontSize": 26.67,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "row": 3,
+          "column": 1,
+          "bbox": [
+            98.13,
+            341.47,
+            165.6,
+            63.73
+          ],
+          "text": "先进先出",
+          "textPreview": "先进先出",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "先进先出",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "先进先出",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1",
+                  "bold": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "row": 3,
+          "column": 2,
+          "bbox": [
+            263.74,
+            341.47,
+            127.65,
+            63.73
+          ],
+          "text": "3",
+          "textPreview": "3",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "3",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "3",
+                  "fontSize": 24,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "row": 3,
+          "column": 3,
+          "bbox": [
+            391.38,
+            341.47,
+            492.66,
+            63.73
+          ],
+          "ownedElementAids": [
+            "sh/f694fu5s",
+            "sh/s3y5kfmh"
+          ]
+        },
+        {
+          "index": 12,
+          "row": 3,
+          "column": 4,
+          "bbox": [
+            884.04,
+            341.47,
+            342.17,
+            63.73
+          ],
+          "text": "/",
+          "textPreview": "/",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "/",
+              "resolvedTextStyle": {
+                "alignment": "center"
+              },
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "/",
+                  "fontSize": 26.67,
+                  "typeface": "方正仿宋简体",
+                  "color": "tx1"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/g7i5ozmd",
+      "id": "365",
+      "name": "矩形: 圆角 8",
+      "bbox": [
+        401.41,
+        280.87,
+        199.13,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "销售未过机",
+      "textPreview": "销售未过机",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "销售未过机"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "销售未过机",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "销售未过机",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#0070C0",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/7mlk3mt0",
+        "cellIndex": 7,
+        "row": 2,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/f694fu5s",
+      "id": "366",
+      "name": "矩形: 圆角 10",
+      "bbox": [
+        404.61,
+        354.63,
+        155.43,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "未前进陈列",
+      "textPreview": "未前进陈列",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "未前进陈列"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "未前进陈列",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "未前进陈列",
+              "fontSize": 24,
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true,
+              "textTransform": "none"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#00B050",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/7mlk3mt0",
+        "cellIndex": 11,
+        "row": 3,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/u50nmp47",
+      "id": "367",
+      "name": "文本框 15",
+      "bbox": [
+        94.16,
+        649.03,
+        428.78,
+        47.33
+      ],
+      "geometry": "rect",
+      "text": "香烟销售未过机",
+      "textPreview": "香烟销售未过机",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "香烟销售未过机"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "香烟销售未过机",
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "香烟销售未过机",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/t47mdkn2",
+      "id": "368",
+      "name": "文本框 17",
+      "bbox": [
+        753.4,
+        649.43,
+        286.61,
+        47.33
+      ],
+      "geometry": "rect",
+      "text": "未前进陈列",
+      "textPreview": "未前进陈列",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "未前进陈列"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "未前进陈列",
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "未前进陈列",
+              "typeface": "方正仿宋简体",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/s3y5kfmh",
+      "id": "369",
+      "name": "矩形: 圆角 21",
+      "bbox": [
+        584.46,
+        354.03,
+        226.21,
+        44.03
+      ],
+      "geometry": "roundRect",
+      "text": "未先进先出摆放列",
+      "textPreview": "未先进先出摆放列",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "未先进先出摆放列"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "未先进先出摆放列",
+          "lineSpacingPercent": 100000,
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "未先进先出摆放",
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "列",
+              "fontSize": 24,
+              "typeface": "方正仿宋简体",
+              "color": "bg1",
+              "bold": true,
+              "textTransform": "none"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": "#00B050",
+      "lineWidth": 1.33,
+      "tableCell": {
+        "tableAid": "tb/7mlk3mt0",
+        "cellIndex": 11,
+        "row": 3,
+        "column": 3,
+        "overlap": 1
+      }
+    },
+    {
+      "order": 10,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/i58fqh8b",
+      "id": "371",
+      "name": "Image 212",
+      "bbox": [
+        133.47,
+        431.4,
+        385.67,
+        217.67
+      ],
+      "contentType": "image/jpeg",
+      "asset": {
+        "assetId": "/ppt/media/image60.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 155484
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image60.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 155484
+      }
+    },
+    {
+      "order": 11,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/58zylw7m",
+      "id": "372",
+      "name": "Image 62",
+      "bbox": [
+        632.4,
+        413,
+        308.33,
+        237.07
+      ],
+      "contentType": "image/jpeg",
+      "asset": {
+        "assetId": "/ppt/media/image69.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 114039
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image69.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 114039
+      }
+    },
+    {
+      "order": 12,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/k7qxsrq1",
+      "id": "373",
+      "name": "Image 76",
+      "bbox": [
+        942.33,
+        428,
+        206.6,
+        212
+      ],
+      "contentType": "image/jpeg",
+      "asset": {
+        "assetId": "/ppt/media/image70.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 395410
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image70.jpeg",
+        "contentType": "image/jpeg",
+        "byteLength": 395410
+      }
+    }
+  ],
+  "composeRuns": []
+}

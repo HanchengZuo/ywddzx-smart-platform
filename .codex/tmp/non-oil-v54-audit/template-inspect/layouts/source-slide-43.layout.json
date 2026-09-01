@@ -1,0 +1,2002 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/qhkbqxoz",
+    "id": "qhkbqxoz",
+    "slide": 43,
+    "layoutId": "/ppt/slideLayouts/slideLayout20.xml",
+    "layoutName": "仅标题",
+    "layoutType": "titleOnly",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster7.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "Office",
+    "colors": {
+      "accent1": "#4472C4",
+      "accent2": "#ED7D31",
+      "accent3": "#A5A5A5",
+      "accent4": "#FFC000",
+      "accent5": "#5B9BD5",
+      "accent6": "#70AD47",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#44546A",
+      "lt2": "#E7E6E6",
+      "hlink": "#0563C1",
+      "folHlink": "#954F72"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      },
+      "minorFont": {
+        "latinTypeface": "Arial",
+        "eastAsianTypeface": "Microsoft YaHei"
+      }
+    },
+    "typefaces": [
+      "Arial",
+      "Arial Black",
+      "Noto Sans SC"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout20.xml",
+      "name": "仅标题",
+      "type": "titleOnly",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster7.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout20.xml/129",
+          "id": "129",
+          "name": "标题 1",
+          "bbox": [
+            122.21,
+            32.33,
+            1104,
+            72
+          ],
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "autoFit": "shrinkText"
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout20.xml/130",
+          "id": "130",
+          "name": "日期占位符 2",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout20.xml/131",
+          "id": "131",
+          "name": "页脚占位符 3",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout20.xml/132",
+          "id": "132",
+          "name": "灯片编号占位符 4",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout20.xml/133",
+          "id": "133",
+          "name": "图片 6",
+          "bbox": [
+            11.26,
+            10.85,
+            110.95,
+            110.95
+          ],
+          "contentType": "image/png",
+          "asset": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.png",
+            "contentType": "image/png",
+            "byteLength": 35831
+          }
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster7.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster7.xml/44",
+          "id": "44",
+          "name": "标题占位符 1",
+          "bbox": [
+            88,
+            38.33,
+            1104,
+            139.17
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版标题样式",
+          "textPreview": "单击此处编辑母版标题样式",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版标题样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版标题样式"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster7.xml/45",
+          "id": "45",
+          "name": "文本占位符 2",
+          "bbox": [
+            88,
+            191.67,
+            1104,
+            456.83
+          ],
+          "geometry": "rect",
+          "text": "单击此处编辑母版文本样式\n第二级\n第三级\n第四级\n第五级",
+          "textPreview": "单击此处编辑母版文本样式 | 第二级 | 第三级 | 第四级 | 第五级",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "shrinkText",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "单击此处编辑母版文本样式",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "单击此处编辑母版文本样式"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "第二级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第二级"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "第三级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第三级"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "第四级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第四级"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "第五级",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "第五级"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster7.xml/46",
+          "id": "46",
+          "name": "日期占位符 3",
+          "bbox": [
+            88,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster7.xml/47",
+          "id": "47",
+          "name": "页脚占位符 4",
+          "bbox": [
+            424,
+            667.33,
+            432,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster7.xml/48",
+          "id": "48",
+          "name": "灯片编号占位符 5",
+          "bbox": [
+            904,
+            667.33,
+            288,
+            38.33
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "insets": {
+              "top": 4.8,
+              "right": 9.6,
+              "bottom": 4.8,
+              "left": 9.6
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/relgbahk",
+      "id": "390",
+      "name": "标题 2",
+      "bbox": [
+        122.21,
+        32.33,
+        1104,
+        72
+      ],
+      "geometry": "rect",
+      "text": "五、检查结果分析",
+      "textPreview": "五、检查结果分析",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "autoFit": "shrinkText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "五、检查结果分析"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "五、检查结果分析",
+          "lineSpacingPercent": 90000,
+          "resolvedTextStyle": {
+            "fontSize": 37.33,
+            "typeface": "Arial Black",
+            "color": "rgba(190, 0, 0, 1)",
+            "bold": true,
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "五、检查结果",
+              "fontSize": 37.33,
+              "typeface": "Arial Black",
+              "color": "rgba(190, 0, 0, 1)",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "分析",
+              "fontSize": 37.33,
+              "typeface": "Arial Black",
+              "color": "rgba(190, 0, 0, 1)",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/qdszi50z",
+      "id": "391",
+      "name": "AutoShape 5",
+      "bbox": [
+        74.67,
+        146.67,
+        1130.67,
+        40
+      ],
+      "geometry": "rect",
+      "text": "01 核心特征：问题聚焦与区域分化",
+      "textPreview": "01 核心特征：问题聚焦与区域分化",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "01 核心特征：问题聚焦与区域分化"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "01 核心特征：问题聚焦与区域分化",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "01 ",
+              "fontSize": 26.67,
+              "typeface": "Noto Sans SC",
+              "color": "#C00000",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "核心特征：问题聚焦与区域分化",
+              "fontSize": 26.67,
+              "typeface": "Noto Sans SC",
+              "color": "#C00000",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1.33
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/dg3ydkzq",
+      "id": "392",
+      "name": "Connector 6",
+      "bbox": [
+        74.67,
+        199.33,
+        1130.67,
+        1.33
+      ],
+      "rotation": 359.93,
+      "geometry": "straightConnector1",
+      "fillColor": "rgba(222, 224, 227, 1)",
+      "lineColor": "rgba(229, 231, 235, 1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/sfuhkfi5",
+      "id": "393",
+      "name": "AutoShape 7",
+      "bbox": [
+        74.67,
+        220,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 5,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/wfe98nu5",
+      "id": "419",
+      "name": "Picture 8",
+      "bbox": [
+        96,
+        241.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image74.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 953
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image74.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 953
+      }
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ehczm50b",
+      "id": "395",
+      "name": "AutoShape 9",
+      "bbox": [
+        138.67,
+        240,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "问题高度集中化",
+      "textPreview": "问题高度集中化",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "问题高度集中化"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "问题高度集中化",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "问题高度集中化",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/1k3yhkzm",
+      "id": "396",
+      "name": "AutoShape 10",
+      "bbox": [
+        96,
+        286.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "超六成问题集中于商品陈列（44.4%）与库存盘点（17.7%）两大基础环节，暴露日常运营的基础管理薄弱。",
+      "textPreview": "超六成问题集中于商品陈列（44.4%）与库存盘点（17.7%）两大基础环节，暴露日常运营的基础管理薄弱。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "超六成问题集中于商品陈列（44.4%）与"
+          },
+          {
+            "index": 2,
+            "text": "库存盘点（17.7%）两大基础环节，暴露"
+          },
+          {
+            "index": 3,
+            "text": "日常运营的基础管理薄弱。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "超六成问题集中于商品陈列（44.4%）与库存盘点（17.7%）两大基础环节，暴露日常运营的基础管理薄弱。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "超六成问题集中于商品陈列（44.4%）与库存盘点（17.7%）两大基础环节，暴露日常运营的基础管理薄弱。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "#6B7280"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0juhofih",
+      "id": "397",
+      "name": "AutoShape 11",
+      "bbox": [
+        458.67,
+        220,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 9,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/gv610b6d",
+      "id": "420",
+      "name": "Picture 12",
+      "bbox": [
+        480,
+        241.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image76.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 1093
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image76.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 1093
+      }
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ul8fal07",
+      "id": "399",
+      "name": "AutoShape 13",
+      "bbox": [
+        522.67,
+        240,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "片区发展分层化",
+      "textPreview": "片区发展分层化",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "片区发展分层化"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "片区发展分层化",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "片区发展分层化",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/72d0fyp0",
+      "id": "400",
+      "name": "AutoShape 14",
+      "bbox": [
+        480,
+        286.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "片区管理水平差异悬殊，各区域单站问题数量差距明显，区域运营质量呈现明显断层。",
+      "textPreview": "片区管理水平差异悬殊，各区域单站问题数量差距明显，区域运营质量呈现明显断层。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "片区管理水平差异悬殊，"
+          },
+          {
+            "index": 2,
+            "text": "各区域单站问题数量差距明显，"
+          },
+          {
+            "index": 3,
+            "text": "区域运营质量呈现明显断层。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "片区管理水平差异悬殊，各区域单站问题数量差距明显，区域运营质量呈现明显断层。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "typeface": "Arial",
+            "color": {
+              "type": "theme",
+              "value": "tx1",
+              "transform": {
+                "opacity": 1
+              }
+            },
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "片区管理水平差异悬殊，",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "rgba(107, 114, 128, 1)"
+            },
+            {
+              "index": 2,
+              "text": "各区域单站问题数量差距明显，",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "rgba(107, 114, 128, 1)"
+            },
+            {
+              "index": 3,
+              "text": "区域运营质量呈现明显断层。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "rgba(107, 114, 128, 1)"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/614j6t8f",
+      "id": "401",
+      "name": "AutoShape 15",
+      "bbox": [
+        842.67,
+        220,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 13,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/1wf2tgny",
+      "id": "421",
+      "name": "Picture 16",
+      "bbox": [
+        864,
+        241.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image78.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 2556
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image78.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 2556
+      }
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/83m183ql",
+      "id": "403",
+      "name": "AutoShape 17",
+      "bbox": [
+        906.67,
+        240,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "风险隐患同质化",
+      "textPreview": "风险隐患同质化",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "风险隐患同质化"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "风险隐患同质化",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "风险隐患同质化",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/v6xkjipc",
+      "id": "404",
+      "name": "AutoShape 18",
+      "bbox": [
+        864,
+        286.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "高风险问题隐蔽且反复，集中表现为高价商品账实不符、临期商品未及时清理、无审批团购等共性风险点。",
+      "textPreview": "高风险问题隐蔽且反复，集中表现为高价商品账实不符、临期商品未及时清理、无审批团购等共性风险点。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "高风险问题隐蔽且反复，集中表现为高价"
+          },
+          {
+            "index": 2,
+            "text": "商品账实不符、临期商品未及时清理、无"
+          },
+          {
+            "index": 3,
+            "text": "审批团购等共性风险点。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "高风险问题隐蔽且反复，集中表现为高价商品账实不符、临期商品未及时清理、无审批团购等共性风险点。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "高风险问题隐蔽且反复，集中表现为高价商品账实不符、临期商品未及时清理、无审批团购等共性风险点。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "#6B7280"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/u5ojad8r",
+      "id": "405",
+      "name": "AutoShape 19",
+      "bbox": [
+        74.67,
+        426.67,
+        1130.67,
+        40
+      ],
+      "geometry": "rect",
+      "text": "02 核心根源：执行、意识与机制的三重缺失",
+      "textPreview": "02 核心根源：执行、意识与机制的三重缺失",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "02 核心根源：执行、意识与机制的三重缺失"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "02 核心根源：执行、意识与机制的三重缺失",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "02 ",
+              "fontSize": 26.67,
+              "typeface": "Noto Sans SC",
+              "color": "#C00000",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "核心根源：执行、意识与机制的三重缺失",
+              "fontSize": 26.67,
+              "typeface": "Noto Sans SC",
+              "color": "#C00000",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 1.33
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/h8f2ls72",
+      "id": "406",
+      "name": "Connector 20",
+      "bbox": [
+        74.67,
+        479.33,
+        1130.67,
+        1.33
+      ],
+      "rotation": 359.93,
+      "geometry": "straightConnector1",
+      "fillColor": "rgba(222, 224, 227, 1)",
+      "lineColor": "rgba(229, 231, 235, 1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 18,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/g761cnqx",
+      "id": "407",
+      "name": "AutoShape 21",
+      "bbox": [
+        74.67,
+        500,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 19,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/etojylon",
+      "id": "422",
+      "name": "Picture 22",
+      "bbox": [
+        96,
+        521.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image80.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 1389
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image80.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 1389
+      }
+    },
+    {
+      "order": 20,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/itojed8n",
+      "id": "409",
+      "name": "AutoShape 23",
+      "bbox": [
+        138.67,
+        520,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "流程执行惯性缺位",
+      "textPreview": "流程执行惯性缺位",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "流程执行惯性缺位"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "流程执行惯性缺位",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "流程执行惯性缺位",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 21,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0zq14n61",
+      "id": "410",
+      "name": "AutoShape 24",
+      "bbox": [
+        96,
+        566.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "库存全流程留痕机制未有效建立，标准化运营动作流于形式，仓库分区、效期管理等基础规范在一线未真正落地。",
+      "textPreview": "库存全流程留痕机制未有效建立，标准化运营动作流于形式，仓库分区、效期管理等基础规范在一线未真正落地。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "库存全流程留痕机制未有效建立，标准化"
+          },
+          {
+            "index": 2,
+            "text": "运营动作流于形式，仓库分区、效期管理"
+          },
+          {
+            "index": 3,
+            "text": "等基础规范在一线未真正落地。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "库存全流程留痕机制未有效建立，标准化运营动作流于形式，仓库分区、效期管理等基础规范在一线未真正落地。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "库存全流程留痕机制未有效建立，标准化运营动作流于形式，仓库分区、效期管理等基础规范在一线未真正落地。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "#6B7280"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 22,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/10zixsnm",
+      "id": "411",
+      "name": "AutoShape 25",
+      "bbox": [
+        458.67,
+        500,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 23,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/fuxkrq58",
+      "id": "423",
+      "name": "Picture 26",
+      "bbox": [
+        480,
+        521.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image82.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 2284
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image82.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 2284
+      }
+    },
+    {
+      "order": 24,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/fyh0v25g",
+      "id": "413",
+      "name": "AutoShape 27",
+      "bbox": [
+        522.67,
+        520,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "合规风控意识淡薄",
+      "textPreview": "合规风控意识淡薄",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "合规风控意识淡薄"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "合规风控意识淡薄",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "合规风控意识淡薄",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 25,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/svqh0n6p",
+      "id": "414",
+      "name": "AutoShape 28",
+      "bbox": [
+        480,
+        566.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "一线员工存在“重业绩、轻管理”的侥幸心理，对高风险环节的隐患认知不足，且针对性合规培训严重缺失。",
+      "textPreview": "一线员工存在“重业绩、轻管理”的侥幸心理，对高风险环节的隐患认知不足，且针对性合规培训严重缺失。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "一线员工存在“重业绩、轻管理”的侥幸心"
+          },
+          {
+            "index": 2,
+            "text": "理，对高风险环节的隐患认知不足，且针"
+          },
+          {
+            "index": 3,
+            "text": "对性合规培训严重缺失。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "一线员工存在“重业绩、轻管理”的侥幸心理，对高风险环节的隐患认知不足，且针对性合规培训严重缺失。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "一线员工存在“重业绩、轻管理”的侥幸心理，对高风险环节的隐患认知不足，且针对性合规培训严重缺失。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "#6B7280"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 26,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/dwzitsna",
+      "id": "415",
+      "name": "AutoShape 29",
+      "bbox": [
+        842.67,
+        500,
+        362.67,
+        180
+      ],
+      "geometry": "roundRect",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 6.67,
+          "right": 6.67,
+          "bottom": 6.67,
+          "left": 6.67
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ""
+          }
+        ]
+      },
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineColor": "rgba(0, 82, 155, 0.1)",
+      "lineWidth": 1.33
+    },
+    {
+      "order": 27,
+      "kind": "image",
+      "scope": "slide",
+      "aid": "im/oj6l4v6p",
+      "id": "424",
+      "name": "Picture 30",
+      "bbox": [
+        864,
+        521.33,
+        32,
+        32
+      ],
+      "contentType": "image/svg+xml",
+      "asset": {
+        "assetId": "/ppt/media/image84.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 871
+      },
+      "fillImage": {
+        "assetId": "/ppt/media/image84.svg",
+        "contentType": "image/svg+xml",
+        "byteLength": 871
+      }
+    },
+    {
+      "order": 28,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rax0ri5k",
+      "id": "417",
+      "name": "AutoShape 31",
+      "bbox": [
+        906.67,
+        520,
+        293.33,
+        37.33
+      ],
+      "geometry": "rect",
+      "text": "片区管控效能失衡",
+      "textPreview": "片区管控效能失衡",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "片区管控效能失衡"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "片区管控效能失衡",
+          "lineSpacingPercent": 125000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "片区管控效能失衡",
+              "fontSize": 21.33,
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    },
+    {
+      "order": 29,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/476hw36t",
+      "id": "418",
+      "name": "AutoShape 32",
+      "bbox": [
+        864,
+        566.67,
+        320,
+        106.67
+      ],
+      "geometry": "rect",
+      "text": "片区分级管控力度不均衡，优秀片区的标杆经验未能实现全域复制推广，问题整改缺乏闭环管理，督导检查穿透力不足。",
+      "textPreview": "片区分级管控力度不均衡，优秀片区的标杆经验未能实现全域复制推广，问题整改缺乏闭环管理，督导检查穿透力不足。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 2,
+        "vertical": 1,
+        "fontSize": 24,
+        "typeface": "Arial",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "middle",
+        "wrap": "square",
+        "insets": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "片区分级管控力度不均衡，优秀片区的标"
+          },
+          {
+            "index": 2,
+            "text": "杆经验未能实现全域复制推广，问题整改"
+          },
+          {
+            "index": 3,
+            "text": "缺乏闭环管理，督导检查穿透力不足。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "片区分级管控力度不均衡，优秀片区的标杆经验未能实现全域复制推广，问题整改缺乏闭环管理，督导检查穿透力不足。",
+          "lineSpacingPercent": 108000,
+          "resolvedTextStyle": {
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "片区分级管控力度不均衡，优秀片区的标杆经验未能实现全域复制推广，问题整改缺乏闭环管理，督导检查穿透力不足。",
+              "fontSize": 17.33,
+              "typeface": "Noto Sans SC",
+              "color": "#6B7280"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "fillColor": {
+        "type": "theme",
+        "value": "accent5",
+        "transform": {
+          "lighten": 0.8
+        }
+      },
+      "lineWidth": 1.33
+    }
+  ],
+  "composeRuns": []
+}
