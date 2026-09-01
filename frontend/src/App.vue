@@ -56,9 +56,13 @@
           <div class="root-passkey-notice">
             私钥和生物特征只保留在您的设备中，系统仅保存用于验证的公钥。
           </div>
-          <div v-if="loginError" class="login-error">{{ loginError }}</div>
+          <div v-if="loginRateLimitRemaining" class="login-rate-limit" role="status">
+            <strong>{{ loginRateLimitScope === 'public_auth' ? '登录已暂时保护' : '密码登录已暂时保护' }}</strong>
+            <span>请在 {{ loginRateLimitLabel }} 后重新尝试。</span>
+          </div>
+          <div v-else-if="loginError" class="login-error">{{ loginError }}</div>
           <button class="btn btn-primary login-btn passkey-action-button" type="button"
-            :disabled="passkeyLoginLoading" @click="handleRootPasskeySetup">
+            :disabled="passkeyLoginLoading || loginRateLimitBlocksPasskey" @click="handleRootPasskeySetup">
             {{ passkeyLoginLoading ? '正在等待设备验证...' : '创建Passkey并登录' }}
           </button>
           <button class="root-passkey-cancel" type="button" :disabled="passkeyLoginLoading"
@@ -84,11 +88,20 @@
               placeholder="请输入密码" />
           </div>
 
-          <div v-if="loginError" class="login-error">{{ loginError }}</div>
+          <div v-if="loginRateLimitRemaining" class="login-rate-limit" role="status">
+            <strong>{{ loginRateLimitScope === 'public_auth' ? '登录已暂时保护' : '密码登录已暂时保护' }}</strong>
+            <span v-if="loginRateLimitScope === 'public_auth'">请在 {{ loginRateLimitLabel }} 后重新尝试。倒计时结束前不会继续提交登录请求。</span>
+            <span v-else>请在 {{ loginRateLimitLabel }} 后重新尝试密码登录；如已绑定 Passkey，仍可使用免密方式登录。</span>
+          </div>
+          <div v-else-if="loginError" class="login-error">{{ loginError }}</div>
 
-          <button class="btn btn-primary login-btn" type="submit">密码登录</button>
+          <button class="btn btn-primary login-btn" type="submit"
+            :disabled="passwordLoginLoading || loginRateLimitRemaining > 0">
+            {{ loginRateLimitRemaining > 0 ? `${loginRateLimitLabel} 后重试` : (passwordLoginLoading ? '正在验证...' : '密码登录') }}
+          </button>
           <div class="login-method-divider"><span>或使用免密方式</span></div>
-          <button class="passkey-login-button" type="button" :disabled="passkeyLoginLoading"
+          <button class="passkey-login-button" type="button"
+            :disabled="passkeyLoginLoading || loginRateLimitBlocksPasskey"
             @click="handlePasskeyLogin">
             <span class="passkey-login-icon"><i></i></span>
             <span><strong>{{ passkeyLoginLoading ? '正在等待设备验证...' : '使用Passkey登录' }}</strong><small>指纹、面容、设备解锁或安全密钥</small></span>
@@ -672,6 +685,9 @@ const passwordChangeForm = reactive({
 })
 
 const loginError = ref('')
+const passwordLoginLoading = ref(false)
+const loginRateLimitRemaining = ref(0)
+const loginRateLimitScope = ref('')
 const passkeyLoginLoading = ref(false)
 const passkeyManagerOpen = ref(false)
 const rootPasskeySetup = reactive({
@@ -681,6 +697,59 @@ const rootPasskeySetup = reactive({
   realName: '',
   credentialName: 'root主Passkey'
 })
+let loginRateLimitTimer = null
+let loginRateLimitDeadline = 0
+const loginRateLimitLabel = computed(() => {
+  const totalSeconds = Math.max(0, Number(loginRateLimitRemaining.value) || 0)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes && seconds) return `${minutes}分${seconds}秒`
+  if (minutes) return `${minutes}分钟`
+  return `${seconds}秒`
+})
+const loginRateLimitBlocksPasskey = computed(() => (
+  loginRateLimitRemaining.value > 0 && loginRateLimitScope.value === 'public_auth'
+))
+
+const stopLoginRateLimitCountdown = () => {
+  if (loginRateLimitTimer) {
+    window.clearInterval(loginRateLimitTimer)
+    loginRateLimitTimer = null
+  }
+  loginRateLimitDeadline = 0
+  if (!loginRateLimitRemaining.value) {
+    loginRateLimitScope.value = ''
+  }
+}
+
+const startLoginRateLimitCountdown = (seconds, scope = '') => {
+  stopLoginRateLimitCountdown()
+  const normalizedSeconds = Math.max(1, Math.ceil(Number(seconds) || 1))
+  loginRateLimitScope.value = String(scope || '')
+  loginRateLimitDeadline = Date.now() + normalizedSeconds * 1000
+  const refreshRemaining = () => {
+    loginRateLimitRemaining.value = Math.max(0, Math.ceil((loginRateLimitDeadline - Date.now()) / 1000))
+    if (!loginRateLimitRemaining.value) {
+      stopLoginRateLimitCountdown()
+    }
+  }
+  refreshRemaining()
+  loginRateLimitTimer = window.setInterval(refreshRemaining, 1000)
+}
+
+const handleLoginRateLimitError = (error) => {
+  if (error?.response?.status !== 429 && error?.response?.data?.code !== 'AUTH_RATE_LIMITED') {
+    return false
+  }
+  const responseSeconds = Number(error?.response?.data?.retry_after)
+  const headerSeconds = Number(error?.response?.headers?.['retry-after'])
+  startLoginRateLimitCountdown(
+    Number.isFinite(responseSeconds) && responseSeconds > 0 ? responseSeconds : headerSeconds,
+    error?.response?.data?.limit_scope
+  )
+  loginError.value = ''
+  return true
+}
 const passwordChangeError = ref('')
 const passwordChangeSuccess = ref('')
 const passwordChangeSaving = ref(false)
@@ -1650,6 +1719,7 @@ onBeforeUnmount(() => {
     floatingModalCloseRaf = null
   }
   stopIdleLogoutTimer()
+  stopLoginRateLimitCountdown()
   if (sessionMonitorTimer) {
     window.clearInterval(sessionMonitorTimer)
     sessionMonitorTimer = null
@@ -1833,6 +1903,7 @@ const cancelRootPasskeySetup = () => {
 }
 
 const handlePasskeyLogin = async () => {
+  if (loginRateLimitBlocksPasskey.value) return
   loginError.value = ''
   if (!passkeyClientAvailable()) {
     loginError.value = getPasskeyUnavailableMessage()
@@ -1849,13 +1920,16 @@ const handlePasskeyLogin = async () => {
     })
     await finishAuthenticatedLogin(verifyResponse.data)
   } catch (error) {
-    loginError.value = friendlyPasskeyError(error, '暂时无法使用Passkey登录，请重试。')
+    if (!handleLoginRateLimitError(error)) {
+      loginError.value = friendlyPasskeyError(error, '暂时无法使用Passkey登录，请重试。')
+    }
   } finally {
     passkeyLoginLoading.value = false
   }
 }
 
 const handleRootPasskeySetup = async () => {
+  if (loginRateLimitBlocksPasskey.value) return
   loginError.value = ''
   if (!rootPasskeySetup.credentialName) {
     loginError.value = '请填写Passkey名称。'
@@ -1880,7 +1954,9 @@ const handleRootPasskeySetup = async () => {
     resetRootPasskeySetup()
     await finishAuthenticatedLogin(verifyResponse.data)
   } catch (error) {
-    loginError.value = friendlyPasskeyError(error, 'root Passkey绑定失败，请重新操作。')
+    if (!handleLoginRateLimitError(error)) {
+      loginError.value = friendlyPasskeyError(error, 'root Passkey绑定失败，请重新操作。')
+    }
   } finally {
     passkeyLoginLoading.value = false
   }
@@ -1900,6 +1976,7 @@ const handlePasskeySessionInvalidated = (message) => {
 }
 
 const handleLogin = async () => {
+  if (passwordLoginLoading.value || loginRateLimitRemaining.value > 0) return
   if (!loginForm.username) {
     loginError.value = '请输入用户名。'
     return
@@ -1911,6 +1988,7 @@ const handleLogin = async () => {
   }
 
   try {
+    passwordLoginLoading.value = true
     loginError.value = ''
     consumeAuthSessionMessage()
     const submittedPassword = loginForm.password
@@ -1922,6 +2000,7 @@ const handleLogin = async () => {
 
     await finishAuthenticatedLogin(response.data, submittedPassword)
   } catch (error) {
+    if (handleLoginRateLimitError(error)) return
     if (error?.response?.data?.code === 'PASSKEY_SETUP_REQUIRED') {
       Object.assign(rootPasskeySetup, {
         active: true,
@@ -1936,6 +2015,8 @@ const handleLogin = async () => {
     }
     const message = error?.response?.data?.error || '登录失败，请稍后重试。'
     loginError.value = message
+  } finally {
+    passwordLoginLoading.value = false
   }
 }
 
@@ -2673,6 +2754,30 @@ textarea:focus {
   background: #fef2f2;
   border: 1px solid #fecaca;
   color: #dc2626;
+}
+
+.login-rate-limit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.login-rate-limit strong {
+  color: #c2410c;
+  font-size: 14px;
+}
+
+.login-rate-limit span {
+  color: #9a3412;
+  font-weight: 700;
 }
 
 .force-password-overlay {

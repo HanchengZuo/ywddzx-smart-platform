@@ -2566,15 +2566,25 @@ def clear_file_access_cookie(response):
 
 
 def authentication_rate_limit_response(exc):
+    retry_after = max(1, int(getattr(exc, "retry_after", 1) or 1))
+    minutes, seconds = divmod(retry_after, 60)
+    if minutes and seconds:
+        retry_label = f"{minutes}分{seconds}秒"
+    elif minutes:
+        retry_label = f"{minutes}分钟"
+    else:
+        retry_label = f"{seconds}秒"
     response = jsonify(
         {
             "success": False,
             "code": "AUTH_RATE_LIMITED",
-            "error": "登录尝试过于频繁，请稍后再试。",
+            "error": f"登录尝试过于频繁，请在{retry_label}后重试。",
+            "retry_after": retry_after,
+            "limit_scope": str(getattr(exc, "scope_type", "") or ""),
         }
     )
     response.status_code = 429
-    response.headers["Retry-After"] = str(exc.retry_after)
+    response.headers["Retry-After"] = str(retry_after)
     response.headers["Cache-Control"] = "no-store"
     return response
 
