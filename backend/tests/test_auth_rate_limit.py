@@ -20,8 +20,9 @@ class AuthenticationRateLimitUnitTests(unittest.TestCase):
         self.assertNotEqual(pair_key, ip_key)
 
     def test_rate_limit_error_exposes_only_retry_delay(self):
-        error = AuthenticationRateLimitExceeded(12.2)
+        error = AuthenticationRateLimitExceeded(12.2, "login_pair")
         self.assertEqual(error.retry_after, 12)
+        self.assertEqual(error.scope_type, "login_pair")
         self.assertEqual(str(error), "请求过于频繁，请稍后再试。")
 
     def test_datetime_fixture_is_timezone_aware(self):

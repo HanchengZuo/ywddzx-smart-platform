@@ -23,8 +23,9 @@ PUBLIC_AUTH_BLOCK_SECONDS = _bounded_env_int("PUBLIC_AUTH_BLOCK_SECONDS", 300, 6
 
 
 class AuthenticationRateLimitExceeded(Exception):
-    def __init__(self, retry_after):
+    def __init__(self, retry_after, scope_type=""):
         self.retry_after = max(1, int(retry_after or 1))
+        self.scope_type = str(scope_type or "")
         super().__init__("请求过于频繁，请稍后再试。")
 
 
@@ -81,7 +82,7 @@ def _check_scope(cur, scope_key, scope_type, now):
     row = _load_locked_row(cur, scope_key, scope_type, now)
     retry_after = _retry_after_seconds(row.get("blocked_until"), now)
     if retry_after:
-        raise AuthenticationRateLimitExceeded(retry_after)
+        raise AuthenticationRateLimitExceeded(retry_after, scope_type)
     return row
 
 
@@ -107,7 +108,7 @@ def _increment_scope(cur, scope_key, scope_type, *, limit, window_seconds, block
         (attempt_count, window_started_at, blocked_until, now, scope_key),
     )
     if blocked_until:
-        raise AuthenticationRateLimitExceeded(block_seconds)
+        raise AuthenticationRateLimitExceeded(block_seconds, scope_type)
 
 
 def _scope_keys(secret_key, client_ip, username):
