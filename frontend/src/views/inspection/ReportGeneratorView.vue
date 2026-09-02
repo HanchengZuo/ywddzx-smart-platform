@@ -5468,6 +5468,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   padding: 34px;
+  overflow: hidden;
   background: rgba(15, 23, 42, 0.58);
   backdrop-filter: blur(8px);
 }
@@ -5568,7 +5569,7 @@ onBeforeUnmount(() => {
 }
 
 .issue-library-workspace {
-  min-height: 260px;
+  min-height: 0;
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
