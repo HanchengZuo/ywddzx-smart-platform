@@ -1000,9 +1000,9 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "reset_station_account_password",
-        "name": "强制站点账号改密",
+        "name": "重置站点账号密码",
         "category": "站点数据管理",
-        "description": "要求绑定站点账号下次登录立即修改密码，并使现有登录会话失效。",
+        "description": "重置绑定站点账号的密码为随机强密码，用户下次登录须立即修改密码。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -27082,24 +27082,33 @@ def reset_management_station_account_password(station_id):
 
         cur.execute(
             """
-            UPDATE users
-            SET must_change_password = TRUE,
-                force_change_immediately = TRUE,
-                password_risk_flags = CASE
-                    WHEN password_risk_flags ? 'policy_outdated' THEN password_risk_flags
-                    ELSE password_risk_flags || '["policy_outdated"]'::jsonb
-                END,
-                auth_version = auth_version + 1,
-                updated_at = CURRENT_TIMESTAMP
+            SELECT id, username, real_name, role
+            FROM users
             WHERE role = 'station_manager'
-              AND station_id = %s
-            RETURNING id, username, real_name;
+              AND station_id = %s;
             """,
             (station_id,),
         )
         accounts = cur.fetchall()
         if not accounts:
             return jsonify({"success": False, "error": "该站点暂无绑定站点账号。"}), 400
+
+        policy = fetch_password_policy(cur)
+        credentials = []
+        for account in accounts:
+            new_password = generate_strong_initial_password(account, policy)
+            update_user_password(
+                cur,
+                account,
+                new_password,
+                policy=policy,
+                must_change_password=True,
+                force_change_immediately=True,
+            )
+            credentials.append({
+                "username": account["username"],
+                "password": new_password,
+            })
 
         record_security_event(
             cur,
@@ -27109,7 +27118,7 @@ def reset_management_station_account_password(station_id):
             request_ip=get_request_client_ip(),
             user_agent=request.headers.get("User-Agent"),
             affected_count=len(accounts),
-            details={"station_id": station_id, "immediate": True},
+            details={"station_id": station_id, "action": "reset_password"},
         )
         conn.commit()
         for account in accounts:
@@ -27118,9 +27127,10 @@ def reset_management_station_account_password(station_id):
         return jsonify(
             {
                 "success": True,
-                "message": f"已要求【{station['station_name']}】绑定站点账号下次登录立即修改密码，并注销其现有会话。",
+                "message": f"已重置【{station['station_name']}】绑定站点账号密码，用户登录后须立即修改密码。",
                 "reset_count": len(accounts),
                 "usernames": usernames,
+                "credentials": credentials,
             }
         )
     except PermissionError as exc:
