@@ -2,7 +2,7 @@ import base64
 import unittest
 from datetime import date
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from PIL import Image
 from ai_prompts import (
@@ -74,52 +74,61 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         self.assertIn("allowed_categories", classification_prompt)
         self.assertIn("external_standard_id", classification_prompt)
 
-    @patch("app.get_latest_inspection_report_snapshot")
-    @patch("app.has_permission", return_value=False)
-    def test_source_readonly_generator_reuses_saved_month_scope(
+    @patch("app.get_saved_quality_report_generation_options")
+    def test_generator_reuses_saved_period_scope_when_request_omits_selection(
         self,
-        _has_permission,
-        get_latest_snapshot,
+        get_saved_options,
     ):
-        get_latest_snapshot.return_value = {
-            "source_selection": {
-                "mode": "custom",
-                "station_ids": [9, 3],
-            }
+        get_saved_options.return_value = {
+            "station_filter_enabled": True,
+            "station_ids": [9, 3],
+            "updated_at": "2026-09-02 10:30",
+            "updated_by_name": "测试用户",
         }
 
         result = get_authorized_quality_report_generation_options(
             object(),
             {"id": 8, "role": "supervisor"},
             "2026-07",
-            {"station_filter_enabled": True, "station_ids": [99]},
+            {"date_from": "2026-07-01", "date_to": "2026-07-31"},
+            date(2026, 7, 1),
+            date(2026, 8, 1),
         )
 
         self.assertEqual(
             result,
-            {"station_filter_enabled": True, "station_ids": [3, 9]},
+            {
+                "station_filter_enabled": True,
+                "station_ids": [3, 9],
+                "date_from": "2026-07-01",
+                "date_to": "2026-07-31",
+            },
         )
-        get_latest_snapshot.assert_called_once()
+        get_saved_options.assert_called_once_with(
+            ANY,
+            date(2026, 7, 1),
+            date(2026, 8, 1),
+        )
 
-    @patch("app.get_latest_inspection_report_snapshot")
-    @patch("app.has_permission", return_value=True)
-    def test_source_manager_can_submit_new_month_scope(
+    @patch("app.get_saved_quality_report_generation_options")
+    def test_explicit_period_scope_takes_priority_over_saved_scope(
         self,
-        _has_permission,
-        get_latest_snapshot,
+        get_saved_options,
     ):
         result = get_authorized_quality_report_generation_options(
             object(),
             {"id": 1, "role": "root"},
             "2026-07",
             {"station_filter_enabled": True, "station_ids": [7, 2]},
+            date(2026, 7, 1),
+            date(2026, 8, 1),
         )
 
         self.assertEqual(
             result,
             {"station_filter_enabled": True, "station_ids": [2, 7]},
         )
-        get_latest_snapshot.assert_not_called()
+        get_saved_options.assert_not_called()
 
     def test_highlight_sample_thresholds(self):
         cases = ((21, 8), (11, 6), (5, 4), (4, 2), (1, 1))

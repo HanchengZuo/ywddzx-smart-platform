@@ -4,44 +4,75 @@
       <div>
         <div class="page-kicker">AI REPORT STUDIO</div>
         <h2>AI报告生成</h2>
-        <p>选择报告类型和月份，由后台汇总巡检数据并调用 AI 完成报告分析。</p>
+        <p>选择报告类型和历史时间段查看报告；具备生成权限时可按新的日期范围覆盖生成。</p>
       </div>
       <div class="report-month-control">
-        <label>
-          <span>报告月份</span>
-          <input
-            v-model="selectedMonth"
-            type="month"
-            :disabled="isNonOilReport && nonOilUsesCustomDateRange"
-            :title="isNonOilReport && nonOilUsesCustomDateRange ? '已使用自定义日期范围，请先恢复为当月范围' : ''"
-            @change="handleReportContextChange"
-          />
-        </label>
-        <small v-if="isNonOilReport && nonOilUsesCustomDateRange" class="report-month-custom-note">
-          已使用自定义日期范围，报告月份暂时锁定。
-        </small>
-        <button
-          type="button"
-          class="regenerate-report-btn"
-          :disabled="loading || templateUnavailable || !canGenerateReports"
-          :title="!canGenerateReports ? '当前账号只有查看权限' : ''"
-          @click="startGeneration({ force: true })"
-        >
-          {{ templateUnavailable ? '模板待配置' : (canGenerateReports ? (hasReport ? '重新生成' : '生成报告') : '只读查看') }}
-        </button>
         <button
           type="button"
           class="export-ppt-btn"
           :disabled="!hasReport || loading || templateUnavailable"
-          :title="!hasReport ? '请先生成当前月份的报告' : '导出当前保存的报告快照'"
+          :title="!hasReport ? '请先选择一份历史报告' : '导出当前查看的历史报告快照'"
           @click="openExportDialog"
         >
           <span class="ppt-file-mark">P</span>
           {{ exportBusy ? `PPT生成中 ${exportTask?.progress || 0}%` : '导出PPT' }}
         </button>
         <small v-if="!canGenerateReports" class="report-readonly-note">
-          当前账号可查看已有报告，生成权限需由管理员分配。
+          当前账号可查看、分类和选择问题；新建或覆盖时间段报告需由管理员分配生成权限。
         </small>
+      </div>
+    </section>
+
+    <section class="report-period-workspace card-surface">
+      <div class="report-period-editor">
+        <div class="period-editor-title">
+          <span>REPORT DATE RANGE</span>
+          <h3>本次报告数据日期范围</h3>
+          <p>相同日期范围再次生成会直接覆盖原历史报告；历史报告查看不会重新调用 AI。</p>
+        </div>
+        <div class="period-editor-fields">
+          <label>
+            <span>开始日期</span>
+            <input v-model="reportDateFrom" type="date" :disabled="!canGenerateReports" @change="handleReportDateRangeChange" />
+          </label>
+          <i aria-hidden="true">至</i>
+          <label>
+            <span>结束日期</span>
+            <input v-model="reportDateTo" type="date" :disabled="!canGenerateReports" @change="handleReportDateRangeChange" />
+          </label>
+          <button
+            v-if="canGenerateReports"
+            type="button"
+            class="period-generate-btn"
+            :disabled="loading || templateUnavailable || !validReportDateRange"
+            @click="startGeneration({ force: true })"
+          >
+            {{ matchingHistory ? '覆盖此时间段报告' : '生成此时间段报告' }}
+          </button>
+        </div>
+        <small v-if="!canGenerateReports" class="period-readonly-note">当前日期范围为只读，选择下方历史记录可切换查看。</small>
+      </div>
+      <div class="report-history-panel">
+        <div class="report-history-title">
+          <div>
+            <span>REPORT HISTORY</span>
+            <h3>已生成历史报告</h3>
+          </div>
+          <strong>{{ reportHistory.length }}</strong>
+        </div>
+        <div v-if="reportHistory.length" class="report-history-list">
+          <button
+            v-for="item in reportHistory"
+            :key="item.id"
+            type="button"
+            :class="['report-history-item', { active: selectedSnapshotId === item.id }]"
+            @click="selectHistorySnapshot(item)"
+          >
+            <span>{{ item.date_from }} 至 {{ item.date_to }}</span>
+            <small>生成于 {{ item.generated_at }}<template v-if="item.generated_by_name"> · {{ item.generated_by_name }}</template></small>
+          </button>
+        </div>
+        <div v-else class="report-history-empty">当前报告类型还没有历史报告。</div>
       </div>
     </section>
 
@@ -82,12 +113,12 @@
         <div class="report-source-copy">
           <span class="source-panel-kicker">DATA SOURCE</span>
           <div class="source-panel-title-row">
-            <h3>本次报告数据来源</h3>
+            <h3>{{ selectedSnapshotId ? '后续生成数据来源' : '本次报告数据来源' }}</h3>
             <span :class="['source-mode-badge', sourceSelectionMode]">
               {{ sourceSelectionMode === 'custom' ? '自定义范围' : '全部可用站点' }}
             </span>
           </div>
-          <p v-if="sourceLoading">正在核对当前月份可用于报告的站点数据...</p>
+          <p v-if="sourceLoading">正在核对当前日期范围可用于报告的站点数据...</p>
           <p v-else-if="sourceError" class="source-inline-error">{{ sourceError }}</p>
           <p v-else>
             {{ sourceSelectionDescription }}
@@ -104,7 +135,18 @@
             </em>
           </div>
           <div v-if="sourceSelectionDirty" class="source-dirty-note">
-            数据范围已调整，重新生成报告后生效。
+            最近保存的数据范围与当前历史报告不同；覆盖生成时会采用最近保存配置。
+          </div>
+          <small v-if="sourceSelectionMeta.updated_at" class="source-last-saved">
+            最近保存配置：{{ sourceSelectionMeta.updated_by_name || '未知用户' }} · {{ sourceSelectionMeta.updated_at }}
+          </small>
+          <div v-if="selectedSnapshotId" class="historical-config-note">
+            <div>
+              <span>当前历史报告采用</span>
+              <strong>{{ historicalSourceSelectionDescription }}</strong>
+              <small>{{ historicalSourceSelection.updated_by_name || '生成报告时的用户' }}<template v-if="historicalSourceSelection.updated_at"> · {{ historicalSourceSelection.updated_at }}</template></small>
+            </div>
+            <button type="button" @click="openSourceDialog('historical')">查看当时配置</button>
           </div>
         </div>
       </div>
@@ -127,26 +169,23 @@
           type="button"
           class="source-configure-btn"
           :disabled="sourceLoading"
-          @click="openSourceDialog"
+          @click="openSourceDialog('saved')"
         >
-          {{ canManageQualityReportSource ? '设置数据来源' : '查看数据来源' }}
+          设置数据来源
         </button>
         <button
           type="button"
           class="selection-configure-btn"
           :disabled="selectionSettingsLoading"
-          @click="openSelectionSettingsDialog"
+          @click="openSelectionSettingsDialog('saved')"
         >
-          {{ canManageQualityReportSelectionRules ? '设置选题规则' : '查看选题规则' }}
+          设置选题规则
         </button>
-        <button
-          v-if="canGenerateReports && canManageQualityReportSource && sourceSelectionDirty"
-          type="button"
-          class="source-apply-generate-btn"
-          :disabled="loading || sourceLoading"
-          @click="startGeneration({ force: true })"
-        >
-          按此范围生成
+        <small class="source-last-saved compact">
+          最近保存规则：{{ selectionSettingsMeta.updated_by_name || '系统默认' }}<template v-if="selectionSettingsMeta.updated_at"> · {{ selectionSettingsMeta.updated_at }}</template>
+        </small>
+        <button v-if="selectedSnapshotId" type="button" class="historical-rule-btn" @click="openSelectionSettingsDialog('historical')">
+          查看历史报告当时规则
         </button>
       </div>
     </section>
@@ -167,7 +206,7 @@
         <div :class="{ pending: flowClassificationStats.pending }"><span>待分类</span><strong>{{ flowClassificationStats.pending }}</strong></div>
       </div>
       <div class="classification-panel-preview">
-        <span v-if="flowClassificationsLoading">正在读取当前月份分类结果...</span>
+        <span v-if="flowClassificationsLoading">正在读取当前日期范围分类结果...</span>
         <span v-else-if="flowClassificationsError" class="classification-panel-error">{{ flowClassificationsError }}</span>
         <template v-else-if="visibleFlowClassifications.length">
           <span v-for="item in visibleFlowClassifications.slice(0, 4)" :key="`classification-preview-${item.issue_id}`">
@@ -175,38 +214,11 @@
           </span>
           <em v-if="visibleFlowClassifications.length > 4">另有 {{ visibleFlowClassifications.length - 4 }} 条</em>
         </template>
-        <span v-else>当前月份的数据中没有需要AI重新分类的问题。</span>
+        <span v-else>当前日期范围没有需要AI重新分类的问题。</span>
       </div>
       <button type="button" class="classification-manage-btn" :disabled="flowClassificationsLoading" @click="openFlowClassificationDialog">
-        {{ canManageQualityReportSelectionRules ? '查看与调整分类' : '查看分类结果' }}
+        查看与调整分类
       </button>
-    </section>
-
-    <section v-if="isNonOilReport && !templateUnavailable" class="non-oil-source-panel card-surface">
-      <div class="classification-panel-intro">
-        <div class="classification-ai-mark date-mark" aria-hidden="true">期</div>
-        <div>
-          <span>REPORT DATE RANGE</span>
-          <h3>本次报告数据日期范围</h3>
-          <p>只影响非油检查报告；巡检期间、站点范围、问题统计和图表均按此日期范围重新计算。</p>
-        </div>
-      </div>
-      <div class="non-oil-date-fields">
-        <label><span>开始日期</span><input v-model="nonOilDateFrom" type="date" @change="handleNonOilDateRangeChange" /></label>
-        <i aria-hidden="true">至</i>
-        <label><span>结束日期</span><input v-model="nonOilDateTo" type="date" @change="handleNonOilDateRangeChange" /></label>
-        <div v-if="nonOilUsesCustomDateRange" class="non-oil-custom-range-note">
-          <span>当前日期已偏离 {{ nonOilDefaultMonthLabel }} 的自然月范围，报告月份已锁定。</span>
-          <button type="button" @click="resetNonOilDateRange">恢复为当月范围</button>
-        </div>
-      </div>
-      <button
-        v-if="canGenerateReports"
-        type="button"
-        class="source-apply-generate-btn"
-        :disabled="loading || !nonOilDateFrom || !nonOilDateTo"
-        @click="startGeneration({ force: true })"
-      >按此范围生成</button>
     </section>
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-issue-library-panel card-surface">
@@ -236,7 +248,7 @@
         <span v-else>当前日期范围暂无可用的审核通过问题。</span>
       </div>
       <button type="button" class="classification-manage-btn issue-library-manage-btn" :disabled="nonOilIssueLibraryLoading" @click="openNonOilIssueLibraryDialog">
-        {{ canGenerateReports ? '查看与选择问题' : '查看问题库' }}
+        查看与选择问题
       </button>
     </section>
 
@@ -267,7 +279,7 @@
         <span v-else>当前报告没有需要重新分类的“其他”问题。</span>
       </div>
       <button type="button" class="classification-manage-btn" :disabled="nonOilClassificationsLoading" @click="openNonOilClassificationDialog">
-        {{ canGenerateReports ? '查看与调整分类' : '查看分类结果' }}
+        查看与调整分类
       </button>
     </section>
 
@@ -298,7 +310,7 @@
         <span v-else>当前报告暂无纳入四类重点问题的数据。</span>
       </div>
       <button type="button" class="classification-manage-btn" :disabled="nonOilKeyClassificationsLoading" @click="openNonOilKeyClassificationDialog">
-        {{ canGenerateReports ? '查看与调整分类' : '查看分类结果' }}
+        查看与调整分类
       </button>
     </section>
 
@@ -1565,8 +1577,8 @@
     <section v-else class="state-card card-surface">
       <div class="state-orb"></div>
       <h3>暂未生成报告</h3>
-      <p v-if="canGenerateReports">点击重新生成，后台会开始整理当前月份的巡检数据。</p>
-      <p v-else>当前月份暂无已生成报告，请等待有生成权限的账号完成生成。</p>
+      <p v-if="canGenerateReports">请在上方选择日期范围并生成报告。</p>
+      <p v-else>当前报告类型暂无可查看的历史报告。</p>
     </section>
 
     <teleport to="body">
@@ -1576,8 +1588,8 @@
           <header class="source-dialog-head">
             <div>
               <span>REPORT DATA SCOPE</span>
-              <h3>{{ canManageQualityReportSource ? '设置报告数据来源' : '查看报告数据来源' }}</h3>
-              <p>候选站点已按报告模板、月份和当前账号权限自动筛选。</p>
+              <h3>{{ sourceDialogMode === 'historical' ? '历史报告当时数据来源' : '设置报告数据来源' }}</h3>
+              <p>候选站点已按报告模板、日期范围和当前账号权限自动筛选。</p>
             </div>
             <div class="source-dialog-total">
               <strong>{{ sourceStations.length }}</strong>
@@ -1593,7 +1605,7 @@
               @click="setSourceDraftMode('all')"
             >
               <strong>全部可用站点</strong>
-              <span>自动包含当前月份全部可统计站点</span>
+              <span>自动包含当前日期范围全部可统计站点</span>
             </button>
             <button
               type="button"
@@ -1711,7 +1723,7 @@
             <div>
               <span>AI FLOW REVIEW</span>
               <h3>{{ canManageQualityReportSelectionRules ? '查看与调整AI环节分类' : '查看AI环节分类结果' }}</h3>
-              <p>只展示当前月份原业务流程为“其他”或未设置的问题。人工调整会优先于AI结果。</p>
+              <p>只展示当前日期范围内原业务流程为“其他”或未设置的问题。人工调整会优先于AI结果。</p>
             </div>
             <div><strong>{{ visibleFlowClassifications.length }}</strong><span>条问题</span></div>
           </header>
@@ -1737,8 +1749,8 @@
             </article>
           </div>
           <footer class="classification-dialog-footer">
-            <p>{{ canManageQualityReportSelectionRules ? '保存后将自动重新生成当前月份报告，使统计、图表和PPT同步更新。' : '当前账号仅可查看分类结果。' }}</p>
-            <div><button type="button" class="classification-cancel-btn" @click="closeFlowClassificationDialog">关闭</button><button v-if="canManageQualityReportSelectionRules" type="button" class="classification-save-btn" :disabled="flowClassificationsSaving || !hasFlowClassificationChanges" @click="saveFlowClassificationAdjustments">{{ flowClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+            <p>保存只更新后续报告采用的分类，不会改写当前历史报告。</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeFlowClassificationDialog">关闭</button><button type="button" class="classification-save-btn" :disabled="flowClassificationsSaving || !hasFlowClassificationChanges" @click="saveFlowClassificationAdjustments">{{ flowClassificationsSaving ? '保存中...' : '保存分类' }}</button></div>
           </footer>
         </section>
       </div>
@@ -1748,7 +1760,7 @@
           <header class="classification-dialog-head issue-library-dialog-head">
             <div>
               <span>REPORT ISSUE LIBRARY</span>
-              <h3>{{ canGenerateReports ? '选择参与非油报告的问题' : '查看非油报告问题库' }}</h3>
+              <h3>选择参与非油报告的问题</h3>
               <p>数据只包含当前日期范围内、检查人已确认且审核通过的问题。选择不会改动原始问题数据。</p>
             </div>
             <div><strong>{{ nonOilIssueSelectionDraftIds.length }}/{{ nonOilIssueLibrary.length }}</strong><span>已选问题</span></div>
@@ -1756,7 +1768,7 @@
           <div class="issue-library-toolbar">
             <label class="issue-library-search"><span>搜索问题</span><input v-model.trim="nonOilIssueLibraryKeyword" type="search" placeholder="问题ID、站点、描述或外部规范ID" /></label>
             <label><span>参与状态</span><select v-model="nonOilIssueLibrarySelectionFilter"><option value="">全部问题</option><option value="included">仅看已选</option><option value="excluded">仅看未选</option></select></label>
-            <div class="issue-library-batch-actions" v-if="canGenerateReports">
+            <div class="issue-library-batch-actions">
               <button type="button" @click="selectVisibleNonOilIssues(true)">全选当前类别</button>
               <button type="button" @click="selectVisibleNonOilIssues(false)">清空当前类别</button>
               <button type="button" @click="selectAllNonOilIssues">恢复全部参与</button>
@@ -1790,14 +1802,13 @@
                   <input
                     type="checkbox"
                     :checked="isNonOilIssueSelected(item.issue_id)"
-                    :disabled="!canGenerateReports"
                     @change="toggleNonOilIssueSelection(item.issue_id, $event.target.checked)"
                   />
                   <span aria-hidden="true"></span>
                 </label>
                 <div class="classification-issue-main">
                   <div class="classification-issue-meta">
-                    <b>ID {{ item.issue_id }}</b><span>{{ item.category_display_name }}</span><span>{{ item.station_name }}</span><span>{{ item.unit_name }}</span><span>{{ item.report_date }}</span><span>外部规范ID {{ item.external_standard_id || '-' }}</span>
+                    <b>ID {{ item.issue_id }}</b><span>{{ item.category_display_name }}</span><span>{{ item.station_name }}</span><span>{{ item.unit_name }}</span><span>{{ item.report_date }}</span><button type="button" class="standard-detail-link" :disabled="!item.standard_detail_text" @click="openStandardDetail(item)">外部规范ID {{ item.external_standard_id || '-' }}</button>
                   </div>
                   <p>{{ item.description || '暂无问题描述' }}</p>
                   <small>{{ item.table_name }}</small>
@@ -1811,8 +1822,8 @@
             </div>
           </div>
           <footer class="classification-dialog-footer issue-library-dialog-footer">
-            <p>{{ canGenerateReports ? `已选 ${nonOilIssueSelectionDraftIds.length} 条，未选 ${nonOilIssueLibrary.length - nonOilIssueSelectionDraftIds.length} 条。保存后将重新生成当前日期范围的网页预览和PPT。` : '当前账号仅可查看问题库和参与状态。' }}</p>
-            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilIssueLibraryDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilIssueLibrarySaving || !hasNonOilIssueSelectionChanges" @click="saveNonOilIssueSelection">{{ nonOilIssueLibrarySaving ? '保存中...' : '保存并重新生成' }}</button></div>
+            <p>已选 {{ nonOilIssueSelectionDraftIds.length }} 条，未选 {{ nonOilIssueLibrary.length - nonOilIssueSelectionDraftIds.length }} 条；保存后供下一次生成使用。</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilIssueLibraryDialog">关闭</button><button type="button" class="classification-save-btn" :disabled="nonOilIssueLibrarySaving || !hasNonOilIssueSelectionChanges" @click="saveNonOilIssueSelection">{{ nonOilIssueLibrarySaving ? '保存中...' : '保存问题选择' }}</button></div>
           </footer>
         </section>
       </div>
@@ -1822,8 +1833,8 @@
           <header class="classification-dialog-head">
             <div>
               <span>NON-OIL CATEGORY REVIEW</span>
-              <h3>{{ canGenerateReports ? '查看与调整“其他”问题分类' : '查看“其他”问题分类' }}</h3>
-              <p>每条问题必须归入明确类别，报告图表不会再出现“其他”。人工调整保存后会重新生成报告。</p>
+              <h3>查看与调整“其他”问题分类</h3>
+              <p>每条问题必须归入明确类别；人工调整供后续生成使用，不改写历史快照。</p>
             </div>
             <div><strong>{{ nonOilClassifications.length }}</strong><span>条问题</span></div>
           </header>
@@ -1842,14 +1853,14 @@
               </div>
               <div class="classification-result-compare">
                 <div><span>系统分类</span><strong>{{ item.effective_category }}</strong></div>
-                <label><span>报告采用</span><select v-model="nonOilClassificationDrafts[item.issue_id]" :disabled="!canGenerateReports"><option v-for="category in nonOilClassificationCategories" :key="`${item.issue_id}-${category}`" :value="category">{{ category }}</option></select></label>
+                <label><span>报告采用</span><select v-model="nonOilClassificationDrafts[item.issue_id]"><option v-for="category in nonOilClassificationCategories" :key="`${item.issue_id}-${category}`" :value="category">{{ category }}</option></select></label>
                 <em :class="item.classification_source">{{ formatFlowClassificationSource(item.classification_source) }}</em>
               </div>
             </article>
           </div>
           <footer class="classification-dialog-footer">
-            <p>{{ canGenerateReports ? '保存后将按当前日期范围重新生成网页预览和PPT。' : '当前账号仅可查看分类结果。' }}</p>
-            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilClassificationDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilClassificationsSaving || !hasNonOilClassificationChanges" @click="saveNonOilClassificationAdjustments">{{ nonOilClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+            <p>保存只更新分类结果，不会重新调用 AI 或自动生成报告。</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilClassificationDialog">关闭</button><button type="button" class="classification-save-btn" :disabled="nonOilClassificationsSaving || !hasNonOilClassificationChanges" @click="saveNonOilClassificationAdjustments">{{ nonOilClassificationsSaving ? '保存中...' : '保存分类' }}</button></div>
           </footer>
         </section>
       </div>
@@ -1859,7 +1870,7 @@
           <header class="classification-dialog-head">
             <div>
               <span>KEY ISSUE REVIEW</span>
-              <h3>{{ canGenerateReports ? '查看与调整重点问题分类' : '查看重点问题分类' }}</h3>
+              <h3>查看与调整重点问题分类</h3>
               <p>不符合四类定义的问题会标记为“不纳入重点问题”；人工调整在后续重新生成时不会被 AI 覆盖。</p>
             </div>
             <div><strong>{{ nonOilKeyClassifications.length }}</strong><span>条问题</span></div>
@@ -1879,14 +1890,14 @@
               </div>
               <div class="classification-result-compare">
                 <div><span>当前判定</span><strong>{{ item.effective_category }}</strong></div>
-                <label><span>报告采用</span><select v-model="nonOilKeyClassificationDrafts[item.issue_id]" :disabled="!canGenerateReports"><option v-for="category in nonOilKeyClassificationCategories" :key="`${item.issue_id}-key-${category}`" :value="category">{{ category }}</option></select></label>
+                <label><span>报告采用</span><select v-model="nonOilKeyClassificationDrafts[item.issue_id]"><option v-for="category in nonOilKeyClassificationCategories" :key="`${item.issue_id}-key-${category}`" :value="category">{{ category }}</option></select></label>
                 <em :class="item.classification_source">{{ formatFlowClassificationSource(item.classification_source) }}</em>
               </div>
             </article>
           </div>
           <footer class="classification-dialog-footer">
-            <p>{{ canGenerateReports ? '保存后将按当前日期范围重新生成网页预览和PPT。' : '当前账号仅可查看分类结果。' }}</p>
-            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilKeyClassificationDialog">关闭</button><button v-if="canGenerateReports" type="button" class="classification-save-btn" :disabled="nonOilKeyClassificationsSaving || !hasNonOilKeyClassificationChanges" @click="saveNonOilKeyClassificationAdjustments">{{ nonOilKeyClassificationsSaving ? '保存中...' : '保存并重新生成' }}</button></div>
+            <p>保存只更新重点问题判定，不会重新调用 AI 或自动生成报告。</p>
+            <div><button type="button" class="classification-cancel-btn" @click="closeNonOilKeyClassificationDialog">关闭</button><button type="button" class="classification-save-btn" :disabled="nonOilKeyClassificationsSaving || !hasNonOilKeyClassificationChanges" @click="saveNonOilKeyClassificationAdjustments">{{ nonOilKeyClassificationsSaving ? '保存中...' : '保存分类' }}</button></div>
           </footer>
         </section>
       </div>
@@ -1896,13 +1907,13 @@
           <header class="selection-dialog-head">
             <div>
               <span>REPORT ISSUE RULES</span>
-              <h3>{{ canManageQualityReportSelectionRules ? '设置质量计量报告选题规则' : '查看质量计量报告选题规则' }}</h3>
-              <p>规则全局共享，保存后在下一次重新生成报告时生效。</p>
+              <h3>{{ selectionSettingsDialogMode === 'historical' ? '历史报告当时选题规则' : '设置质量计量报告选题规则' }}</h3>
+              <p>{{ selectionSettingsDialogMode === 'historical' ? '当前显示该历史报告生成时使用的规则；保存后会设为后续报告的默认规则。' : '规则全局共享并自动记忆，保存后在下一次生成报告时生效。' }}</p>
             </div>
             <div class="selection-updated-meta">
               <span>最后更新</span>
-              <strong>{{ selectionSettingsMeta.updated_at || '尚未保存' }}</strong>
-              <small>{{ selectionSettingsMeta.updated_by_name || '系统默认规则' }}</small>
+              <strong>{{ selectionDialogMeta.updated_at || '尚未保存' }}</strong>
+              <small>{{ selectionDialogMeta.updated_by_name || '系统默认规则' }}</small>
             </div>
           </header>
 
@@ -2080,6 +2091,20 @@
       <div v-if="imagePreview.visible" class="report-image-preview" @click.self="closeImagePreview">
         <img :src="imagePreview.src" :alt="imagePreview.title || '问题照片预览'" />
       </div>
+      <div v-if="standardDetailPreview.visible" class="standard-detail-preview" @click.self="closeStandardDetail">
+        <section role="dialog" aria-modal="true" aria-label="外部规范详情">
+          <button type="button" aria-label="关闭" @click="closeStandardDetail">×</button>
+          <header>
+            <span>EXTERNAL STANDARD</span>
+            <h3>外部规范ID {{ standardDetailPreview.standardId || '-' }}</h3>
+            <small>{{ standardDetailPreview.tableName || '未记录检查表' }}</small>
+          </header>
+          <div>
+            <span>规范内容</span>
+            <p>{{ standardDetailPreview.detail || '暂无可查看的规范详情。' }}</p>
+          </div>
+        </section>
+      </div>
     </teleport>
   </div>
 </template>
@@ -2226,6 +2251,11 @@ const getDefaultNonOilDateRange = (monthValue) => {
 }
 
 const selectedMonth = ref(getDefaultReportMonth())
+const initialReportDateRange = getDefaultNonOilDateRange(selectedMonth.value)
+const reportDateFrom = ref(initialReportDateRange.date_from)
+const reportDateTo = ref(initialReportDateRange.date_to)
+const reportHistory = ref([])
+const selectedSnapshotId = ref(0)
 const selectedReportType = ref('quality_measurement')
 const reportTypes = ref(DEFAULT_REPORT_TYPES)
 const loading = ref(false)
@@ -2234,12 +2264,8 @@ const activeJob = ref(null)
 const canGenerateReports = ref(
   currentRole === 'root' || Boolean(storedPermissions.generate_inspection_reports)
 )
-const canManageQualityReportSource = ref(
-  currentRole === 'root' || Boolean(storedPermissions.manage_quality_report_source)
-)
-const canManageQualityReportSelectionRules = ref(
-  currentRole === 'root' || Boolean(storedPermissions.manage_quality_report_selection_rules)
-)
+const canManageQualityReportSource = ref(true)
+const canManageQualityReportSelectionRules = ref(true)
 
 const applyReportCapabilities = (payload = {}) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'can_generate')) {
@@ -2257,19 +2283,28 @@ const imagePreview = ref({
   src: '',
   title: ''
 })
+const standardDetailPreview = ref({
+  visible: false,
+  standardId: '',
+  tableName: '',
+  detail: ''
+})
 const report = ref(createEmptyReport())
 const sourceStations = ref([])
 const sourceLoading = ref(false)
 const sourceError = ref('')
 const sourceSelectionMode = ref('all')
 const selectedSourceStationIds = ref([])
+const sourceSelectionMeta = ref({ updated_at: '', updated_by_name: '' })
 const sourceDialogVisible = ref(false)
 const sourceDraftMode = ref('all')
 const sourceDraftIds = ref([])
 const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
+const sourceDialogMode = ref('saved')
 const selectionSettingsDialogVisible = ref(false)
+const selectionSettingsDialogMode = ref('saved')
 const selectionSettingsLoading = ref(false)
 const selectionSettingsSaving = ref(false)
 const selectionSettingsError = ref('')
@@ -2293,8 +2328,8 @@ const flowClassificationDialogVisible = ref(false)
 const flowClassificationDrafts = ref({})
 const flowClassificationKeyword = ref('')
 const flowClassificationCategoryFilter = ref('')
-const nonOilDateFrom = ref(getDefaultNonOilDateRange(selectedMonth.value).date_from)
-const nonOilDateTo = ref(getDefaultNonOilDateRange(selectedMonth.value).date_to)
+const nonOilDateFrom = reportDateFrom
+const nonOilDateTo = reportDateTo
 const nonOilIssueLibrary = ref([])
 const nonOilIssueCategories = ref([])
 const nonOilIssueLibraryLoading = ref(false)
@@ -2340,25 +2375,20 @@ const currentReportType = computed(() => (
   || DEFAULT_REPORT_TYPES[0]
 ))
 const templateUnavailable = computed(() => currentReportType.value.template_ready === false)
+const validReportDateRange = computed(() => Boolean(
+  reportDateFrom.value
+  && reportDateTo.value
+  && reportDateFrom.value <= reportDateTo.value
+))
+const matchingHistory = computed(() => reportHistory.value.find((item) => (
+  item.date_from === reportDateFrom.value && item.date_to === reportDateTo.value
+)) || null)
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
 const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const isNonOilReport = computed(() => selectedReportType.value === 'non_oil')
-const nonOilDefaultDateRange = computed(() => getDefaultNonOilDateRange(selectedMonth.value))
-const nonOilUsesCustomDateRange = computed(() => (
-  isNonOilReport.value
-  && Boolean(nonOilDateFrom.value || nonOilDateTo.value)
-  && (
-    nonOilDateFrom.value !== nonOilDefaultDateRange.value.date_from
-    || nonOilDateTo.value !== nonOilDefaultDateRange.value.date_to
-  )
-))
-const nonOilDefaultMonthLabel = computed(() => {
-  const month = Number.parseInt(String(selectedMonth.value || '').split('-')[1] || '', 10)
-  return Number.isFinite(month) ? `${month}月` : '当前月份'
-})
 const qualitySlides = computed(() => (
   Array.isArray(report.value?.slides) ? report.value.slides : []
 ))
@@ -2409,6 +2439,22 @@ const generationStageMessage = computed(() => (
 
 const reportSnapshot = computed(() => report.value.snapshot || {})
 const reportSourceSelection = computed(() => report.value.source_selection || {})
+const historicalSourceSelection = computed(() => (
+  report.value?.generation_context?.source_selection
+  || reportSourceSelection.value
+  || {}
+))
+const historicalSelectionSettingsRecord = computed(() => (
+  report.value?.generation_context?.selection_settings || {}
+))
+const selectionDialogMeta = computed(() => (
+  selectionSettingsDialogMode.value === 'historical'
+    ? {
+        updated_at: historicalSelectionSettingsRecord.value.updated_at || '',
+        updated_by_name: historicalSelectionSettingsRecord.value.updated_by_name || ''
+      }
+    : selectionSettingsMeta.value
+))
 const sourceRegions = computed(() => (
   [...new Set(sourceStations.value.map((item) => item.region).filter(Boolean))]
 ))
@@ -2428,11 +2474,18 @@ const effectiveSourceSummary = computed(() => {
 })
 const sourceSelectionDescription = computed(() => {
   const summary = effectiveSourceSummary.value
-  if (!sourceStations.value.length) return '当前月份暂无符合报告口径的可用站点数据。'
+  if (!sourceStations.value.length) return '当前日期范围暂无符合报告口径的可用站点数据。'
   if (sourceSelectionMode.value === 'custom') {
     return `已选择 ${summary.station_count} 个站点，覆盖 ${summary.region_count} 个片区；下一次生成只统计这些站点。`
   }
-  return `使用当前月份全部 ${summary.station_count} 个可用站点，覆盖 ${summary.region_count} 个片区。`
+  return `使用当前日期范围全部 ${summary.station_count} 个可用站点，覆盖 ${summary.region_count} 个片区。`
+})
+const historicalSourceSelectionDescription = computed(() => {
+  const selection = historicalSourceSelection.value
+  const stationCount = Number(selection.station_count ?? (selection.station_ids || []).length) || 0
+  return selection.mode === 'custom'
+    ? `自定义 ${stationCount} 个站点`
+    : `当时全部 ${stationCount} 个可用站点`
 })
 const sourceSelectionDirty = computed(() => {
   if (!canManageQualityReportSource.value) return false
@@ -3140,6 +3193,25 @@ const closeImagePreview = () => {
   }
 }
 
+const openStandardDetail = (item = {}) => {
+  if (!item.standard_detail_text) return
+  standardDetailPreview.value = {
+    visible: true,
+    standardId: item.external_standard_id || '',
+    tableName: item.table_name || '',
+    detail: item.standard_detail_text || ''
+  }
+}
+
+const closeStandardDetail = () => {
+  standardDetailPreview.value = {
+    visible: false,
+    standardId: '',
+    tableName: '',
+    detail: ''
+  }
+}
+
 const goToQualitySlide = (index) => {
   const lastIndex = Math.max(0, activePresentationSlideCount.value - 1)
   activeQualitySlideIndex.value = Math.max(0, Math.min(lastIndex, Number(index) || 0))
@@ -3171,6 +3243,7 @@ const handleQualitySlideKeydown = (event) => {
     || nonOilKeyClassificationDialogVisible.value
     || exportDialogVisible.value
     || imagePreview.value.visible
+    || standardDetailPreview.value.visible
   ) return
 
   const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
@@ -3253,13 +3326,19 @@ const loadSelectionSettings = async () => {
   }
 }
 
-const openSelectionSettingsDialog = async () => {
+const openSelectionSettingsDialog = async (mode = 'saved') => {
   if (!isQualityMeasurementReport.value) return
+  selectionSettingsDialogMode.value = mode === 'historical' ? 'historical' : 'saved'
   selectionSettingsDialogVisible.value = true
   selectionRuleTab.value = 'prohibited'
   selectionStandardKeyword.value = ''
   selectionTableFilter.value = ''
   await loadSelectionSettings()
+  if (selectionSettingsDialogMode.value === 'historical') {
+    selectionSettingsDraft.value = cloneSelectionSettings(
+      historicalSelectionSettingsRecord.value.settings || selectionSettings.value
+    )
+  }
 }
 
 const closeSelectionSettingsDialog = () => {
@@ -3296,6 +3375,7 @@ const saveSelectionSettings = async () => {
       updated_at: response.data.updated_at || '',
       updated_by_name: response.data.updated_by_name || ''
     }
+    selectionSettingsDialogMode.value = 'saved'
     selectionSettingsMessage.value = '选题规则已保存，重新生成报告后生效。'
   } catch (err) {
     selectionSettingsError.value = err?.response?.data?.error || err?.message || '保存选题规则失败。'
@@ -3325,7 +3405,11 @@ const loadFlowClassifications = async (requestId = contextRequestId) => {
   flowClassificationsError.value = ''
   try {
     const response = await axios.get('/api/inspection-reports/quality-flow-classifications', {
-      params: { month: selectedMonth.value }
+      params: {
+        month: selectedMonth.value,
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value
+      }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) throw new Error(response.data?.error || '读取AI环节分类失败。')
@@ -3391,6 +3475,8 @@ const saveFlowClassificationAdjustments = async () => {
   try {
     const response = await axios.put('/api/inspection-reports/quality-flow-classifications', {
       month: selectedMonth.value,
+      date_from: reportDateFrom.value,
+      date_to: reportDateTo.value,
       classifications
     })
     if (!response.data?.success) throw new Error(response.data?.error || '保存环节分类失败。')
@@ -3404,12 +3490,7 @@ const saveFlowClassificationAdjustments = async () => {
       flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
     )
     closeFlowClassificationDialog()
-    if (canGenerateReports.value) {
-      flowClassificationMessage.value = '分类已保存，正在重新生成当前月份报告。'
-      await startGeneration({ force: true })
-    } else {
-      flowClassificationMessage.value = '分类已保存，请由具备生成权限的账号重新生成当前月份报告。'
-    }
+    flowClassificationMessage.value = '分类已保存。历史报告保持原快照，新报告将使用本次调整。'
   } catch (err) {
     flowClassificationsError.value = err?.response?.data?.error || err?.message || '保存环节分类失败。'
   } finally {
@@ -3442,7 +3523,8 @@ const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
       params: {
         month: selectedMonth.value,
         date_from: nonOilDateFrom.value,
-        date_to: nonOilDateTo.value
+        date_to: nonOilDateTo.value,
+        snapshot_id: selectedSnapshotId.value || undefined
       }
     })
     if (requestId !== contextRequestId || libraryRequestId !== nonOilIssueLibraryRequestId) return
@@ -3470,7 +3552,7 @@ const openNonOilIssueLibraryDialog = async () => {
   nonOilIssueLibraryKeyword.value = ''
   nonOilIssueLibrarySelectionFilter.value = ''
   nonOilIssueLibraryDialogVisible.value = true
-  await loadNonOilIssueLibrary(contextRequestId)
+  if (!selectedSnapshotId.value) await loadNonOilIssueLibrary(contextRequestId)
 }
 
 const closeNonOilIssueLibraryDialog = () => {
@@ -3482,7 +3564,6 @@ const isNonOilIssueSelected = (issueId) => (
 )
 
 const toggleNonOilIssueSelection = (issueId, selected) => {
-  if (!canGenerateReports.value) return
   const next = new Set(nonOilIssueSelectionDraftIds.value.map(Number))
   if (selected) next.add(Number(issueId))
   else next.delete(Number(issueId))
@@ -3497,7 +3578,6 @@ const selectedNonOilIssueCountForCategory = (categoryName) => (
 )
 
 const selectVisibleNonOilIssues = (selected) => {
-  if (!canGenerateReports.value) return
   const targetIds = nonOilIssueLibrary.value
     .filter((item) => !nonOilIssueLibraryCategory.value || item.category_name === nonOilIssueLibraryCategory.value)
     .map((item) => Number(item.issue_id))
@@ -3510,14 +3590,13 @@ const selectVisibleNonOilIssues = (selected) => {
 }
 
 const selectAllNonOilIssues = () => {
-  if (!canGenerateReports.value) return
   nonOilIssueSelectionDraftIds.value = nonOilIssueLibrary.value
     .map((item) => Number(item.issue_id))
     .sort((a, b) => a - b)
 }
 
 const saveNonOilIssueSelection = async () => {
-  if (!canGenerateReports.value || nonOilIssueLibrarySaving.value) return
+  if (nonOilIssueLibrarySaving.value) return
   nonOilIssueLibrarySaving.value = true
   nonOilIssueLibraryError.value = ''
   try {
@@ -3538,18 +3617,11 @@ const saveNonOilIssueSelection = async () => {
       .filter((item) => item.included)
       .map((item) => Number(item.issue_id))
     closeNonOilIssueLibraryDialog()
-    await startGeneration({ force: true })
   } catch (err) {
     nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '保存报告问题选择失败。'
   } finally {
     nonOilIssueLibrarySaving.value = false
   }
-}
-
-const handleNonOilDateRangeChange = async () => {
-  if (!nonOilDateFrom.value || !nonOilDateTo.value) return
-  if (nonOilDateFrom.value > nonOilDateTo.value) return
-  await loadNonOilIssueLibrary(contextRequestId)
 }
 
 const resetNonOilClassificationState = () => {
@@ -3571,7 +3643,12 @@ const loadNonOilClassifications = async (requestId = contextRequestId) => {
   nonOilClassificationsError.value = ''
   try {
     const response = await axios.get('/api/inspection-reports/non-oil-category-classifications', {
-      params: { month: selectedMonth.value }
+      params: {
+        month: selectedMonth.value,
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value,
+        snapshot_id: selectedSnapshotId.value || undefined
+      }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) throw new Error(response.data?.error || '读取非油问题分类失败。')
@@ -3604,7 +3681,7 @@ const closeNonOilClassificationDialog = () => {
 }
 
 const saveNonOilClassificationAdjustments = async () => {
-  if (!canGenerateReports.value || nonOilClassificationsSaving.value) return
+  if (nonOilClassificationsSaving.value) return
   const classifications = nonOilClassifications.value
     .filter((item) => String(nonOilClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || ''))
     .map((item) => ({ issue_id: item.issue_id, category: nonOilClassificationDrafts.value[item.issue_id] }))
@@ -3615,11 +3692,12 @@ const saveNonOilClassificationAdjustments = async () => {
   try {
     const response = await axios.put('/api/inspection-reports/non-oil-category-classifications', {
       month: selectedMonth.value,
+      snapshot_id: selectedSnapshotId.value || undefined,
       classifications
     })
     if (!response.data?.success) throw new Error(response.data?.error || '保存非油问题分类失败。')
     closeNonOilClassificationDialog()
-    await startGeneration({ force: true })
+    await loadNonOilClassifications(contextRequestId)
   } catch (err) {
     nonOilClassificationsError.value = err?.response?.data?.error || err?.message || '保存非油问题分类失败。'
   } finally {
@@ -3646,7 +3724,12 @@ const loadNonOilKeyClassifications = async (requestId = contextRequestId) => {
   nonOilKeyClassificationsError.value = ''
   try {
     const response = await axios.get('/api/inspection-reports/non-oil-key-issue-classifications', {
-      params: { month: selectedMonth.value }
+      params: {
+        month: selectedMonth.value,
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value,
+        snapshot_id: selectedSnapshotId.value || undefined
+      }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) throw new Error(response.data?.error || '读取重点问题分类失败。')
@@ -3679,7 +3762,7 @@ const closeNonOilKeyClassificationDialog = () => {
 }
 
 const saveNonOilKeyClassificationAdjustments = async () => {
-  if (!canGenerateReports.value || nonOilKeyClassificationsSaving.value) return
+  if (nonOilKeyClassificationsSaving.value) return
   const classifications = nonOilKeyClassifications.value
     .filter((item) => String(nonOilKeyClassificationDrafts.value[item.issue_id] || '') !== String(item.effective_category || ''))
     .map((item) => ({ issue_id: item.issue_id, category: nonOilKeyClassificationDrafts.value[item.issue_id] }))
@@ -3690,11 +3773,12 @@ const saveNonOilKeyClassificationAdjustments = async () => {
   try {
     const response = await axios.put('/api/inspection-reports/non-oil-key-issue-classifications', {
       month: selectedMonth.value,
+      snapshot_id: selectedSnapshotId.value || undefined,
       classifications
     })
     if (!response.data?.success) throw new Error(response.data?.error || '保存重点问题分类失败。')
     closeNonOilKeyClassificationDialog()
-    await startGeneration({ force: true })
+    await loadNonOilKeyClassifications(contextRequestId)
   } catch (err) {
     nonOilKeyClassificationsError.value = err?.response?.data?.error || err?.message || '保存重点问题分类失败。'
   } finally {
@@ -3738,7 +3822,9 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
     const response = await axios.get('/api/inspection-reports/source-options', {
       params: {
         report_type: selectedReportType.value,
-        month: selectedMonth.value
+        month: selectedMonth.value,
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value
       }
     })
     if (requestId !== contextRequestId) return
@@ -3747,7 +3833,15 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
     }
     sourceStations.value = Array.isArray(response.data?.stations) ? response.data.stations : []
     canManageQualityReportSource.value = Boolean(response.data?.can_edit)
-    syncSourceSelection(savedSelection, jobOptions)
+    const persistedSelection = response.data?.saved_selection || {}
+    sourceSelectionMeta.value = {
+      updated_at: savedSelection?.updated_at || persistedSelection.updated_at || '',
+      updated_by_name: savedSelection?.updated_by_name || persistedSelection.updated_by_name || ''
+    }
+    const effectiveSelection = Object.keys(savedSelection || {}).length
+      ? savedSelection
+      : persistedSelection
+    syncSourceSelection(effectiveSelection, jobOptions)
   } catch (err) {
     if (requestId !== contextRequestId) return
     sourceStations.value = []
@@ -3759,11 +3853,19 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
   }
 }
 
-const openSourceDialog = () => {
+const openSourceDialog = (mode = 'saved') => {
   if (!isQualityMeasurementReport.value) return
-  sourceDraftMode.value = sourceSelectionMode.value
-  sourceDraftIds.value = sourceSelectionMode.value === 'custom'
-    ? [...selectedSourceStationIds.value]
+  sourceDialogMode.value = mode === 'historical' ? 'historical' : 'saved'
+  const historicalMode = historicalSourceSelection.value.mode === 'custom' ? 'custom' : 'all'
+  const initialMode = sourceDialogMode.value === 'historical'
+    ? historicalMode
+    : sourceSelectionMode.value
+  const initialIds = sourceDialogMode.value === 'historical'
+    ? historicalSourceSelection.value.station_ids
+    : selectedSourceStationIds.value
+  sourceDraftMode.value = initialMode
+  sourceDraftIds.value = initialMode === 'custom'
+    ? normalizeSourceIds(initialIds)
     : sourceStations.value.map((item) => Number(item.station_id))
   sourceKeyword.value = ''
   sourceRegionFilter.value = ''
@@ -3815,7 +3917,7 @@ const invertVisibleSourceStations = () => {
   sourceDraftIds.value = [...selectedIds].sort((a, b) => a - b)
 }
 
-const applySourceSelection = () => {
+const applySourceSelection = async () => {
   if (!canManageQualityReportSource.value) {
     closeSourceDialog()
     return
@@ -3825,13 +3927,103 @@ const applySourceSelection = () => {
   selectedSourceStationIds.value = sourceDraftMode.value === 'custom'
     ? normalizeSourceIds(sourceDraftIds.value)
     : []
-  closeSourceDialog()
+  sourceError.value = ''
+  try {
+    const response = await axios.put('/api/inspection-reports/source-options', {
+      report_type: selectedReportType.value,
+      month: selectedMonth.value,
+      date_from: reportDateFrom.value,
+      date_to: reportDateTo.value,
+      selection_mode: sourceSelectionMode.value,
+      station_ids: selectedSourceStationIds.value
+    })
+    if (!response.data?.success) throw new Error(response.data?.error || '保存数据来源失败。')
+    const savedSelection = response.data.saved_selection || {}
+    sourceSelectionMeta.value = {
+      updated_at: savedSelection.updated_at || '',
+      updated_by_name: savedSelection.updated_by_name || ''
+    }
+    sourceDialogMode.value = 'saved'
+    closeSourceDialog()
+  } catch (err) {
+    sourceError.value = err?.response?.data?.error || err?.message || '保存数据来源失败。'
+  }
 }
 
 const clearExportPolling = () => {
   if (exportPollTimer) {
     window.clearTimeout(exportPollTimer)
     exportPollTimer = null
+  }
+}
+
+const syncSelectedMonthFromDateRange = () => {
+  const monthValue = String(reportDateTo.value || reportDateFrom.value || '').slice(0, 7)
+  if (/^\d{4}-\d{2}$/.test(monthValue)) selectedMonth.value = monthValue
+}
+
+const buildIssueLibraryCategoryStats = (issues = []) => {
+  const groups = new Map()
+  issues.forEach((item) => {
+    const name = item.category_name || '未分类'
+    const current = groups.get(name) || {
+      name,
+      display_name: item.category_display_name || name,
+      total_count: 0,
+      included_count: 0
+    }
+    current.total_count += 1
+    if (item.included) current.included_count += 1
+    groups.set(name, current)
+  })
+  return [...groups.values()]
+}
+
+const applyHistoricalGenerationContext = (reportPayload = {}) => {
+  const context = reportPayload.generation_context || {}
+  if (isQualityMeasurementReport.value && Array.isArray(context.flow_classifications)) {
+    flowClassifications.value = context.flow_classifications
+    flowClassificationCategories.value = Array.isArray(context.flow_categories) && context.flow_categories.length
+      ? context.flow_categories
+      : [...new Set(context.flow_classifications.map((item) => item.effective_category).filter(Boolean))]
+    flowClassificationDrafts.value = Object.fromEntries(
+      flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+    )
+  }
+  if (!isNonOilReport.value) return
+  if (Array.isArray(context.issue_library) && context.issue_library.length) {
+    nonOilIssueLibrary.value = context.issue_library
+    nonOilIssueCategories.value = buildIssueLibraryCategoryStats(context.issue_library)
+    nonOilIssueSelectionDraftIds.value = context.issue_library
+      .filter((item) => item.included)
+      .map((item) => Number(item.issue_id))
+  }
+  nonOilClassifications.value = Array.isArray(context.category_classifications)
+    ? context.category_classifications
+    : []
+  nonOilClassificationCategories.value = Array.isArray(context.non_oil_categories)
+    ? context.non_oil_categories
+    : [...new Set(nonOilClassifications.value.map((item) => item.effective_category).filter(Boolean))]
+  nonOilClassificationDrafts.value = Object.fromEntries(
+    nonOilClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
+  )
+  nonOilKeyClassifications.value = Array.isArray(context.key_issue_classifications)
+    ? context.key_issue_classifications
+    : []
+  nonOilKeyClassificationCategories.value = Array.isArray(context.non_oil_key_issue_options)
+    ? context.non_oil_key_issue_options
+    : [...new Set(nonOilKeyClassifications.value.map((item) => item.effective_category).filter(Boolean))]
+  nonOilKeyClassificationDrafts.value = Object.fromEntries(
+    nonOilKeyClassifications.value.map((item) => [item.issue_id, item.effective_category || '不纳入重点问题'])
+  )
+}
+
+const refreshReportHistory = async () => {
+  const response = await axios.get('/api/inspection-reports/history', {
+    params: { report_type: selectedReportType.value }
+  })
+  if (response.data?.success) {
+    reportHistory.value = Array.isArray(response.data.history) ? response.data.history : []
   }
 }
 
@@ -3868,7 +4060,8 @@ const loadLatestPptExport = async () => {
     const response = await axios.get('/api/inspection-reports/exports/latest', {
       params: {
         report_type: selectedReportType.value,
-        month: selectedMonth.value
+        month: selectedMonth.value,
+        snapshot_id: selectedSnapshotId.value
       }
     })
     if (!response.data?.success) {
@@ -3900,7 +4093,8 @@ const startPptExport = async () => {
   try {
     const response = await axios.post('/api/inspection-reports/exports', {
       report_type: selectedReportType.value,
-      month: selectedMonth.value
+      month: selectedMonth.value,
+      snapshot_id: selectedSnapshotId.value
     })
     if (!response.data?.success || !response.data?.task) {
       throw new Error(response.data?.error || 'PPT导出任务提交失败。')
@@ -3968,17 +4162,13 @@ const pollActiveJob = async () => {
       clearPolling()
       if (response.data?.report) {
         report.value = response.data.report
+        selectedSnapshotId.value = Number(response.data.report?.snapshot?.id || 0)
+        reportDateFrom.value = response.data.report?.snapshot?.date_from || reportDateFrom.value
+        reportDateTo.value = response.data.report?.snapshot?.date_to || reportDateTo.value
+        applyHistoricalGenerationContext(response.data.report)
         activeQualitySlideIndex.value = 0
       }
-      if (isQualityMeasurementReport.value) {
-        await loadFlowClassifications(contextRequestId)
-      } else if (isNonOilReport.value) {
-        const summary = response.data.report?.summary || {}
-        syncNonOilDateRangeFromReport(summary)
-        await loadNonOilIssueLibrary(contextRequestId)
-        await loadNonOilClassifications(contextRequestId)
-        await loadNonOilKeyClassifications(contextRequestId)
-      }
+      await refreshReportHistory()
       loading.value = false
       error.value = ''
       return
@@ -3998,7 +4188,9 @@ const pollActiveJob = async () => {
 }
 
 const startGeneration = async (options = {}) => {
-  if (!selectedMonth.value || templateUnavailable.value || !canGenerateReports.value) return
+  if (!validReportDateRange.value || templateUnavailable.value || !canGenerateReports.value) return
+  syncSelectedMonthFromDateRange()
+  selectedSnapshotId.value = 0
   const requestId = ++contextRequestId
   clearPolling()
   loading.value = true
@@ -4011,22 +4203,20 @@ const startGeneration = async (options = {}) => {
     const payload = {
       report_type: selectedReportType.value,
       month: selectedMonth.value,
-      force: options?.force === true
+      force: options?.force === true,
+      generation_options: {
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value
+      }
     }
-    if (isQualityMeasurementReport.value && canManageQualityReportSource.value) {
+    if (isQualityMeasurementReport.value) {
       payload.generation_options = {
+        ...payload.generation_options,
         station_filter_enabled: sourceSelectionMode.value === 'custom',
         station_ids: sourceSelectionMode.value === 'custom'
           ? selectedSourceStationIds.value
           : []
       }
-    } else if (isNonOilReport.value) {
-      payload.generation_options = nonOilUsesCustomDateRange.value
-        ? {
-            date_from: nonOilDateFrom.value,
-            date_to: nonOilDateTo.value
-          }
-        : {}
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
     if (requestId !== contextRequestId) return
@@ -4035,9 +4225,12 @@ const startGeneration = async (options = {}) => {
     }
     if (response.data?.report && !response.data?.job) {
       report.value = response.data.report
+      selectedSnapshotId.value = Number(response.data.report?.snapshot?.id || 0)
+      applyHistoricalGenerationContext(response.data.report)
       activeQualitySlideIndex.value = 0
       activeJob.value = null
       loading.value = false
+      await refreshReportHistory()
       return
     }
     if (!response.data?.job?.task_id) {
@@ -4053,7 +4246,7 @@ const startGeneration = async (options = {}) => {
   }
 }
 
-const loadReportState = async () => {
+const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
   const requestId = ++contextRequestId
   clearPolling()
   activeJob.value = null
@@ -4075,7 +4268,10 @@ const loadReportState = async () => {
     const response = await axios.get('/api/inspection-reports/status', {
       params: {
         report_type: selectedReportType.value,
-        month: selectedMonth.value
+        month: selectedMonth.value,
+        date_from: reportDateFrom.value,
+        date_to: reportDateTo.value,
+        snapshot_id: snapshotId || undefined
       }
     })
     if (requestId !== contextRequestId) return
@@ -4083,18 +4279,31 @@ const loadReportState = async () => {
       throw new Error(response.data?.error || '读取报告状态失败。')
     }
     applyReportCapabilities(response.data)
+    reportHistory.value = Array.isArray(response.data?.history) ? response.data.history : []
+    if (!response.data?.report && !snapshotId && reportHistory.value.length) {
+      loading.value = false
+      await selectHistorySnapshot(reportHistory.value[0])
+      return
+    }
     report.value = response.data?.report || createEmptyReport()
+    selectedSnapshotId.value = Number(report.value?.snapshot?.id || snapshotId || 0)
+    if (report.value?.snapshot?.date_from) reportDateFrom.value = report.value.snapshot.date_from
+    if (report.value?.snapshot?.date_to) reportDateTo.value = report.value.snapshot.date_to
+    syncSelectedMonthFromDateRange()
+    applyHistoricalGenerationContext(report.value)
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
-      await loadFlowClassifications(requestId)
+      await loadSelectionSettings()
+      if (!selectedSnapshotId.value) await loadFlowClassifications(requestId)
       resetNonOilIssueLibraryState()
       resetNonOilClassificationState()
       resetNonOilKeyClassificationState()
     } else if (isNonOilReport.value) {
-      syncNonOilDateRangeFromReport(report.value?.summary || {})
-      await loadNonOilIssueLibrary(requestId)
-      await loadNonOilClassifications(requestId)
-      await loadNonOilKeyClassifications(requestId)
+      if (!selectedSnapshotId.value) {
+        await loadNonOilIssueLibrary(requestId)
+        await loadNonOilClassifications(requestId)
+        await loadNonOilKeyClassifications(requestId)
+      }
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
@@ -4122,12 +4331,46 @@ const loadReportState = async () => {
   }
 }
 
+const selectHistorySnapshot = async (item) => {
+  if (!item?.id || selectedSnapshotId.value === Number(item.id)) return
+  closeExportDialog()
+  exportTask.value = null
+  exportError.value = ''
+  selectedSnapshotId.value = Number(item.id)
+  reportDateFrom.value = item.date_from
+  reportDateTo.value = item.date_to
+  syncSelectedMonthFromDateRange()
+  activeQualitySlideIndex.value = 0
+  await loadReportState(selectedSnapshotId.value)
+}
+
+const handleReportDateRangeChange = async () => {
+  if (!canGenerateReports.value || !validReportDateRange.value) return
+  syncSelectedMonthFromDateRange()
+  closeExportDialog()
+  selectedSnapshotId.value = 0
+  report.value = createEmptyReport()
+  exportTask.value = null
+  exportError.value = ''
+  activeQualitySlideIndex.value = 0
+  if (isQualityMeasurementReport.value) {
+    await loadSourceOptions({}, {}, contextRequestId)
+    await loadFlowClassifications(contextRequestId)
+  } else if (isNonOilReport.value) {
+    await loadNonOilIssueLibrary(contextRequestId)
+    await loadNonOilClassifications(contextRequestId)
+    await loadNonOilKeyClassifications(contextRequestId)
+  }
+}
+
 const selectReportType = async (reportType) => {
   if (selectedReportType.value === reportType) return
   closeExportDialog()
   exportTask.value = null
   exportError.value = ''
   selectedReportType.value = reportType
+  selectedSnapshotId.value = 0
+  reportHistory.value = []
   report.value = createEmptyReport()
   sourceStations.value = []
   sourceSelectionMode.value = 'all'
@@ -4136,41 +4379,6 @@ const selectReportType = async (reportType) => {
   resetNonOilIssueLibraryState()
   resetNonOilClassificationState()
   resetNonOilKeyClassificationState()
-  activeQualitySlideIndex.value = 0
-  await loadReportState()
-}
-
-const resetNonOilDateRange = async () => {
-  nonOilDateFrom.value = nonOilDefaultDateRange.value.date_from
-  nonOilDateTo.value = nonOilDefaultDateRange.value.date_to
-  await loadNonOilIssueLibrary(contextRequestId)
-}
-
-const syncNonOilDateRangeFromReport = (summary = {}) => {
-  const defaults = getDefaultNonOilDateRange(selectedMonth.value)
-  if (summary.date_range_customized === true && summary.date_from && summary.date_to) {
-    nonOilDateFrom.value = summary.date_from
-    nonOilDateTo.value = summary.date_to
-    return
-  }
-  nonOilDateFrom.value = defaults.date_from
-  nonOilDateTo.value = defaults.date_to
-}
-
-const handleReportContextChange = async () => {
-  closeExportDialog()
-  exportTask.value = null
-  exportError.value = ''
-  report.value = createEmptyReport()
-  sourceStations.value = []
-  sourceSelectionMode.value = 'all'
-  selectedSourceStationIds.value = []
-  resetFlowClassificationState()
-  resetNonOilIssueLibraryState()
-  resetNonOilClassificationState()
-  resetNonOilKeyClassificationState()
-  nonOilDateFrom.value = nonOilDefaultDateRange.value.date_from
-  nonOilDateTo.value = nonOilDefaultDateRange.value.date_to
   activeQualitySlideIndex.value = 0
   await loadReportState()
 }
@@ -4358,6 +4566,278 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.55;
   text-align: center;
+}
+
+.report-period-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 18px;
+  padding: 20px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 8% 8%, rgba(14, 165, 233, 0.12), transparent 34%),
+    linear-gradient(145deg, #f8fbfd, #ffffff 58%, #f3f8fb);
+}
+
+.report-period-editor,
+.report-history-panel {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 19px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.report-period-editor {
+  padding: 18px;
+}
+
+.period-editor-title > span,
+.report-history-title > div > span {
+  color: #0284c7;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+}
+
+.period-editor-title h3,
+.report-history-title h3 {
+  margin: 4px 0 0;
+  color: #0f172a;
+  font-size: 17px;
+}
+
+.period-editor-title p {
+  margin: 7px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.period-editor-fields {
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) auto minmax(145px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.period-editor-fields label {
+  display: grid;
+  gap: 7px;
+}
+
+.period-editor-fields label > span {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.period-editor-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 0 11px;
+  color: #0f172a;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 750;
+}
+
+.period-editor-fields input:disabled {
+  color: #475569;
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+
+.period-editor-fields > i {
+  align-self: center;
+  margin-top: 18px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.period-generate-btn {
+  height: 42px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 16px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #0369a1, #0891b2);
+  box-shadow: 0 10px 20px rgba(3, 105, 161, 0.18);
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.period-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.period-readonly-note {
+  display: block;
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.report-history-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.report-history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.report-history-title > strong {
+  min-width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font-size: 14px;
+}
+
+.report-history-list {
+  display: grid;
+  gap: 7px;
+  max-height: 156px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.report-history-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: #334155;
+  background: #f8fafc;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-history-item:hover,
+.report-history-item.active {
+  border-color: #7dd3fc;
+  background: #f0f9ff;
+}
+
+.report-history-item.active {
+  box-shadow: inset 3px 0 0 #0284c7;
+}
+
+.report-history-item > span {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-history-item > small {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.report-history-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 98px;
+  padding: 18px;
+  color: #94a3b8;
+  font-size: 12px;
+  text-align: center;
+}
+
+.source-last-saved {
+  display: block;
+  margin-top: 8px;
+  color: #0f766e;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.source-last-saved.compact {
+  max-width: 260px;
+  margin: 0;
+  color: #64748b;
+  text-align: right;
+}
+
+.historical-config-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(100%, 620px);
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.historical-config-note div,
+.historical-config-note span,
+.historical-config-note strong,
+.historical-config-note small {
+  display: block;
+}
+
+.historical-config-note span,
+.historical-config-note small {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.historical-config-note strong {
+  margin: 2px 0;
+  color: #334155;
+  font-size: 12px;
+}
+
+.historical-config-note button,
+.historical-rule-btn {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  color: #334155;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.historical-config-note button:hover,
+.historical-rule-btn:hover {
+  border-color: #38bdf8;
+  color: #0369a1;
+  background: #f0f9ff;
+}
+
+.historical-rule-btn {
+  grid-column: 1 / -1;
+  justify-self: end;
 }
 
 .report-type-panel {
@@ -5213,6 +5693,28 @@ onBeforeUnmount(() => {
 .issue-library-checkbox input:disabled + span {
   cursor: not-allowed;
   opacity: 0.72;
+}
+
+.standard-detail-link {
+  max-width: 210px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px dashed #0284c7;
+  padding: 0 0 1px;
+  color: #0369a1;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.standard-detail-link:disabled {
+  border-bottom-color: transparent;
+  color: #94a3b8;
+  cursor: default;
 }
 
 .issue-library-photo {
@@ -9889,6 +10391,90 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+.standard-detail-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 90000;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(2, 6, 23, 0.68);
+  backdrop-filter: blur(7px);
+}
+
+.standard-detail-preview > section {
+  position: relative;
+  width: min(620px, calc(100vw - 36px));
+  overflow: hidden;
+  border: 1px solid rgba(186, 230, 253, 0.72);
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 32px 90px rgba(2, 6, 23, 0.34);
+}
+
+.standard-detail-preview > section > button {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(248, 113, 113, 0.38);
+  border-radius: 50%;
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.84);
+  font-size: 27px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.standard-detail-preview header {
+  padding: 22px 70px 18px 22px;
+  color: #e0f2fe;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.3), transparent 40%),
+    #0f3b5d;
+}
+
+.standard-detail-preview header > span {
+  color: #67e8f9;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.standard-detail-preview h3 {
+  margin: 5px 0 4px;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.standard-detail-preview header small {
+  color: #bae6fd;
+}
+
+.standard-detail-preview section > div {
+  padding: 22px;
+}
+
+.standard-detail-preview section > div > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.standard-detail-preview section > div > p {
+  max-height: min(48vh, 360px);
+  overflow-y: auto;
+  margin: 10px 0 0;
+  color: #1e293b;
+  font-size: 15px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
 .empty-highlight {
   margin-top: 14px;
   padding: 18px;
@@ -10742,6 +11328,23 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .report-period-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .period-editor-fields {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .period-generate-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .report-history-list {
+    max-height: 180px;
+  }
+
   .non-oil-source-panel {
     grid-template-columns: 1fr;
     align-items: stretch;
@@ -10997,6 +11600,68 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 520px) {
+  .report-period-workspace {
+    gap: 11px;
+    padding: 12px;
+    border-radius: 19px;
+  }
+
+  .report-period-editor,
+  .report-history-panel {
+    border-radius: 15px;
+  }
+
+  .report-period-editor {
+    padding: 14px;
+  }
+
+  .period-editor-fields {
+    grid-template-columns: 1fr;
+    gap: 9px;
+    margin-top: 13px;
+  }
+
+  .period-editor-fields > i {
+    display: none;
+  }
+
+  .period-generate-btn {
+    grid-column: auto;
+  }
+
+  .report-history-title {
+    padding: 13px;
+  }
+
+  .report-history-list {
+    max-height: 194px;
+    padding: 8px;
+  }
+
+  .source-last-saved.compact {
+    max-width: none;
+    text-align: left;
+  }
+
+  .standard-detail-preview {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .standard-detail-preview > section {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 22px;
+  }
+
+  .standard-detail-preview header {
+    padding: 19px 62px 16px 17px;
+  }
+
+  .standard-detail-preview section > div {
+    padding: 17px;
+  }
+
   .non-oil-source-panel {
     gap: 16px;
     padding: 16px;
@@ -11232,6 +11897,20 @@ onBeforeUnmount(() => {
 
   .report-source-actions {
     grid-template-columns: 1fr;
+  }
+
+  .historical-config-note {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .historical-config-note button,
+  .historical-rule-btn {
+    width: 100%;
+  }
+
+  .historical-rule-btn {
+    justify-self: stretch;
   }
 
   .source-summary-grid {
