@@ -11599,7 +11599,7 @@ def serialize_finance_report_issue(row):
         "unit_name": unit_name,
         "report_date": report_date_text,
         "external_standard_id": row.get("standard_id"),
-        "standard_detail_text": detail_text or "",
+        "standard_detail_text": row.get("standard_detail_text") or "",
         "project": normalize_report_category(
             get_report_standard_field_value(row.get("standard_detail_text"), "项目"),
             "未设置项目",
