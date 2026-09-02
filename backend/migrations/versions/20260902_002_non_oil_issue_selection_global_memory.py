@@ -3,8 +3,8 @@
 Remove period_start / period_end_exclusive from the primary key so that
 exclusion decisions persist across date-range changes.
 
-Revision ID: 20260902_001
-Revises: 20260901_002
+Revision ID: 20260902_002
+Revises: 20260902_001
 Create Date: 2026-09-02 17:00:00
 """
 
@@ -12,8 +12,8 @@ from alembic import context, op
 import sqlalchemy as sa
 
 
-revision = "20260902_001"
-down_revision = "20260901_002"
+revision = "20260902_002"
+down_revision = "20260902_001"
 branch_labels = None
 depends_on = None
 
