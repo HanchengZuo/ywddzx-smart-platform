@@ -5499,7 +5499,6 @@ onBeforeUnmount(() => {
 
 .non-oil-issue-library-dialog {
   width: min(1320px, calc(100vw - 68px));
-  height: calc(100dvh - 42px);
   max-height: min(930px, calc(100dvh - 42px));
   border-color: rgba(34, 211, 238, 0.42);
 }
@@ -5656,6 +5655,7 @@ onBeforeUnmount(() => {
 }
 
 .issue-library-checkbox {
+  position: relative;
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -12608,8 +12608,6 @@ onBeforeUnmount(() => {
 @media (max-width: 520px) {
   .non-oil-issue-library-dialog {
     width: calc(100vw - 16px);
-    height: auto;
-    min-height: calc(100dvh - 16px);
     max-height: calc(100dvh - 16px);
   }
 
