@@ -5468,7 +5468,6 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   padding: 34px;
-  overflow: hidden;
   background: rgba(15, 23, 42, 0.58);
   backdrop-filter: blur(8px);
 }
@@ -5500,6 +5499,7 @@ onBeforeUnmount(() => {
 
 .non-oil-issue-library-dialog {
   width: min(1320px, calc(100vw - 68px));
+  height: calc(100dvh - 42px);
   max-height: min(930px, calc(100dvh - 42px));
   border-color: rgba(34, 211, 238, 0.42);
 }
@@ -5569,7 +5569,7 @@ onBeforeUnmount(() => {
 }
 
 .issue-library-workspace {
-  min-height: 0;
+  min-height: 260px;
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -12608,6 +12608,8 @@ onBeforeUnmount(() => {
 @media (max-width: 520px) {
   .non-oil-issue-library-dialog {
     width: calc(100vw - 16px);
+    height: auto;
+    min-height: calc(100dvh - 16px);
     max-height: calc(100dvh - 16px);
   }
 
