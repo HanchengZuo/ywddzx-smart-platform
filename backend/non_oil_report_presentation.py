@@ -28,6 +28,7 @@ from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
+from pptx.opc.packuri import PackURI
 from pptx.util import Inches, Pt
 
 
@@ -233,6 +234,22 @@ def _delete_slide(prs, slide):
             prs.part.drop_rel(slide_id.rId)
             prs.slides._sldIdLst.remove(slide_id)
             return
+
+
+def _renumber_slides(prs):
+    """Renumber remaining slides sequentially to fill gaps left by deletions.
+
+    python-pptx assigns new slide partnames via ``len(sldIdLst) + 1`` without
+    checking existing partnames in the package.  After deleting slides, this
+    causes the next added slide to reuse a partname that still belongs to an
+    orphaned (but not-yet-garbage-collected) slide part, producing duplicate
+    entries in the ZIP and a corrupted PPTX that LibreOffice cannot convert.
+    """
+    for new_num, slide_id in enumerate(prs.slides._sldIdLst, start=1):
+        slide_part = prs.part.related_part(slide_id.rId)
+        target = PackURI("/ppt/slides/slide%d.xml" % new_num)
+        if slide_part.partname != target:
+            slide_part.partname = target
 
 
 def _move_slide(prs, slide, target_index):
@@ -1551,6 +1568,8 @@ def build_non_oil_template_presentation(
         empty_key_slides.append(prs.slides[29])
     for slide in reversed(empty_key_slides):
         _delete_slide(prs, slide)
+
+    _renumber_slides(prs)
 
     source_unit_slide = prs.slides[9]
     old_unit_slides = [prs.slides[index] for index in range(9, 20)]
