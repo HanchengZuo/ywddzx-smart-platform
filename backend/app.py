@@ -232,7 +232,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.3.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.4.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -869,28 +869,14 @@ PERMISSION_CATALOG = [
         "key": "view_inspection_reports",
         "name": "查看页面",
         "category": "AI报告生成",
-        "description": "访问AI报告生成页面，查看已生成的月度监督检查报告。",
+        "description": "访问AI报告生成页面，查看已生成的监督检查报告。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "generate_inspection_reports",
         "name": "生成AI报告",
         "category": "AI报告生成",
-        "description": "生成或重新生成月度监督检查报告；未授权账号只能查看已有报告。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
-    },
-    {
-        "key": "manage_quality_report_source",
-        "name": "设置质量计量报告数据来源",
-        "category": "AI报告生成",
-        "description": "调整质量计量监督检查报告在指定月份纳入统计的站点范围；未授权账号仍可查看当前范围。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
-    },
-    {
-        "key": "manage_quality_report_selection_rules",
-        "name": "设置质量计量报告选题规则",
-        "category": "AI报告生成",
-        "description": "维护质量计量监督检查报告的禁止项和分环节选题规则；未授权账号仍可查看当前规则。",
+        "description": "按日期范围生成或覆盖监督检查报告；未授权账号只能查看已有报告。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -1092,8 +1078,6 @@ PERMISSION_DEPENDENCIES = {
     "reset_station_account_password": "manage_stations",
     "manage_peer_review_tasks": "view_peer_reviews",
     "generate_inspection_reports": "view_inspection_reports",
-    "manage_quality_report_source": "view_inspection_reports",
-    "manage_quality_report_selection_rules": "view_inspection_reports",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -7736,9 +7720,23 @@ def parse_non_oil_report_period(value):
 
 
 def get_inspection_report_date_range(report_type, value):
-    if report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
-        return parse_non_oil_report_period(value)
     return parse_report_month(value)
+
+
+def resolve_inspection_report_period(report_type, report_month, generation_options=None):
+    options = normalize_inspection_report_generation_options(generation_options or {})
+    if options.get("date_from") and options.get("date_to"):
+        period_start = datetime.strptime(options["date_from"], "%Y-%m-%d").date()
+        period_end = datetime.strptime(options["date_to"], "%Y-%m-%d").date() + timedelta(days=1)
+        return period_start, period_end
+    return get_inspection_report_date_range(report_type, report_month)
+
+
+def serialize_report_period(period_start, period_end_exclusive):
+    return {
+        "date_from": period_start.strftime("%Y-%m-%d"),
+        "date_to": (period_end_exclusive - timedelta(days=1)).strftime("%Y-%m-%d"),
+    }
 
 
 def format_report_month_label(month_start):
@@ -7882,12 +7880,12 @@ REPORT_SNAPSHOT_TYPE_FINANCE = "finance"
 REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
-QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "ppt-template-v52-approved-v8"
-SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "approved-video-onsite-six-chapters-v1"
-FINANCE_REPORT_DATA_POLICY_VERSION = "approved-project-key-link-three-chapters-v1"
-EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-issues-five-chapters-v1"
-ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION = "completed-inspections-approved-eight-chapters-v1"
-NON_OIL_REPORT_DATA_POLICY_VERSION = "ppt-template-v53-date-range-ai-category-v1"
+QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "period-history-v54-quality-v1"
+SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "period-history-v54-safety-v1"
+FINANCE_REPORT_DATA_POLICY_VERSION = "period-history-v54-finance-v1"
+EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "period-history-v54-equipment-v1"
+ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION = "period-history-v54-service-v1"
+NON_OIL_REPORT_DATA_POLICY_VERSION = "period-history-v54-non-oil-v1"
 INSPECTION_REPORT_TYPE_CONFIGS = OrderedDict(
     [
         (
@@ -8424,12 +8422,11 @@ def normalize_inspection_report_generation_options(value):
 
 
 def resolve_non_oil_report_period(report_month, generation_options=None):
-    options = normalize_inspection_report_generation_options(generation_options)
-    if options.get("date_from") and options.get("date_to"):
-        period_start = datetime.strptime(options["date_from"], "%Y-%m-%d").date()
-        period_end = datetime.strptime(options["date_to"], "%Y-%m-%d").date() + timedelta(days=1)
-        return period_start, period_end
-    return parse_non_oil_report_period(report_month)
+    return resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_NON_OIL,
+        report_month,
+        generation_options,
+    )
 
 
 def append_inspection_report_station_filter(
@@ -8657,7 +8654,7 @@ def resolve_inspection_report_source_selection(
         ]
         if unavailable_station_ids:
             raise ValueError(
-                "部分所选站点在当前月份没有可统计数据，或已超出当前账号的数据权限，请重新选择。"
+                "部分所选站点在当前日期范围没有可统计数据，或已超出当前账号的数据权限，请重新选择。"
             )
         selected_station_ids = set(options["station_ids"])
         selected_stations = [
@@ -8695,9 +8692,7 @@ def report_snapshot_table_available(cur):
 
 
 def build_report_snapshot_scope_key(user):
-    if not user:
-        return "user:anonymous"
-    return f"user:{user.get('id') or 'unknown'}"
+    return "global"
 
 
 def format_report_snapshot_time(value):
@@ -8736,9 +8731,20 @@ def attach_report_snapshot_meta(report, snapshot_row=None, cached=False, generat
     summary["generated_at"] = generated_at
     normalized_report["summary"] = summary
     normalized_report["snapshot"] = {
+        "id": int(snapshot_row.get("id") or 0) if snapshot_row else 0,
         "cached": bool(cached),
         "generated_at": generated_at,
         "generated_by_name": generated_by,
+        "date_from": (
+            snapshot_row.get("period_start").strftime("%Y-%m-%d")
+            if snapshot_row and snapshot_row.get("period_start")
+            else summary.get("date_from", "")
+        ),
+        "date_to": (
+            (snapshot_row.get("period_end_exclusive") - timedelta(days=1)).strftime("%Y-%m-%d")
+            if snapshot_row and snapshot_row.get("period_end_exclusive")
+            else summary.get("date_to", "")
+        ),
     }
     return normalized_report
 
@@ -8756,22 +8762,43 @@ def is_inspection_report_snapshot_current(report_type, payload):
     return not expected_version or payload.get("data_policy_version") == expected_version
 
 
-def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
+def get_inspection_report_snapshot(
+    cur,
+    report_type,
+    report_month,
+    scope_key,
+    period_start=None,
+    period_end_exclusive=None,
+):
     if not report_snapshot_table_available(cur):
         return None
     cur.execute(
         """
         SELECT
+            id,
             report_payload,
             generated_by_name,
-            generated_at
+            generated_at,
+            period_start,
+            period_end_exclusive,
+            generation_context
         FROM inspection_report_snapshots
         WHERE report_type = %s
-          AND report_month = %s
-          AND scope_key = %s
+          AND (
+                (%s::date IS NOT NULL AND period_start = %s AND period_end_exclusive = %s)
+                OR (%s::date IS NULL AND report_month = %s)
+              )
+        ORDER BY generated_at DESC, updated_at DESC
         LIMIT 1;
         """,
-        (report_type, report_month, scope_key),
+        (
+            report_type,
+            period_start,
+            period_start,
+            period_end_exclusive,
+            period_start,
+            report_month,
+        ),
     )
     row = cur.fetchone()
     if not row:
@@ -8781,6 +8808,9 @@ def get_inspection_report_snapshot(cur, report_type, report_month, scope_key):
         return None
     if not is_inspection_report_snapshot_current(report_type, payload):
         return None
+    payload["generation_context"] = normalize_report_snapshot_payload(
+        row.get("generation_context")
+    )
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
@@ -8790,9 +8820,13 @@ def get_latest_inspection_report_snapshot(cur, report_type, report_month):
     cur.execute(
         """
         SELECT
+            id,
             report_payload,
             generated_by_name,
-            generated_at
+            generated_at,
+            period_start,
+            period_end_exclusive,
+            generation_context
         FROM inspection_report_snapshots
         WHERE report_type = %s
           AND report_month = %s
@@ -8809,10 +8843,97 @@ def get_latest_inspection_report_snapshot(cur, report_type, report_month):
         return None
     if not is_inspection_report_snapshot_current(report_type, payload):
         return None
+    payload["generation_context"] = normalize_report_snapshot_payload(
+        row.get("generation_context")
+    )
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
-def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, report, user):
+def get_inspection_report_snapshot_by_id(cur, snapshot_id, report_type=None):
+    if not report_snapshot_table_available(cur):
+        return None
+    cur.execute(
+        """
+        SELECT id, report_type, report_month, report_payload, generated_by_name,
+               generated_at, period_start, period_end_exclusive, generation_context
+        FROM inspection_report_snapshots
+        WHERE id = %s
+          AND (%s = '' OR report_type = %s)
+        LIMIT 1;
+        """,
+        (snapshot_id, report_type or "", report_type or ""),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    payload = normalize_report_snapshot_payload(row.get("report_payload"))
+    if not payload or not is_inspection_report_snapshot_current(row.get("report_type"), payload):
+        return None
+    payload["generation_context"] = normalize_report_snapshot_payload(
+        row.get("generation_context")
+    )
+    return attach_report_snapshot_meta(payload, row, cached=True)
+
+
+def list_inspection_report_snapshots(cur, report_type, limit=100):
+    if not report_snapshot_table_available(cur):
+        return []
+    cur.execute(
+        """
+        SELECT id, report_type, report_month, period_start, period_end_exclusive,
+               generated_by_name, generated_at, updated_at, report_payload
+        FROM inspection_report_snapshots
+        WHERE report_type = %s
+        ORDER BY period_start DESC, period_end_exclusive DESC, generated_at DESC
+        LIMIT %s;
+        """,
+        (report_type, max(1, min(500, int(limit or 100)))),
+    )
+    results = []
+    for row in cur.fetchall():
+        payload = normalize_report_snapshot_payload(row.get("report_payload"))
+        if not payload or not is_inspection_report_snapshot_current(report_type, payload):
+            continue
+        results.append(
+            {
+                "id": int(row.get("id") or 0),
+                "report_type": row.get("report_type"),
+                "date_from": row["period_start"].strftime("%Y-%m-%d"),
+                "date_to": (row["period_end_exclusive"] - timedelta(days=1)).strftime("%Y-%m-%d"),
+                "generated_at": format_report_snapshot_time(row.get("generated_at")),
+                "generated_by_name": row.get("generated_by_name") or "",
+                "title": payload.get("title") or "",
+                "issue_count": int((payload.get("summary") or {}).get("total_issues") or 0),
+            }
+        )
+    return results
+
+
+def build_inspection_report_generation_context(report):
+    source = report or {}
+    return {
+        "source_selection": source.get("source_selection") or {},
+        "issue_selection": source.get("issue_selection") or {},
+        "issue_library": source.get("issue_library_snapshot") or [],
+        "category_classifications": source.get("category_classifications") or [],
+        "key_issue_classifications": source.get("key_issue_classifications") or [],
+        "flow_classifications": source.get("flow_classifications") or [],
+        "selection_settings": source.get("selection_settings") or {},
+        "flow_categories": QUALITY_REPORT_FALLBACK_FLOW_ORDER,
+        "non_oil_categories": NON_OIL_REPORT_CATEGORIES,
+        "non_oil_key_issue_options": NON_OIL_KEY_ISSUE_OPTIONS,
+    }
+
+
+def save_inspection_report_snapshot(
+    cur,
+    report_type,
+    report_month,
+    scope_key,
+    report,
+    user,
+    generation_options=None,
+):
     if not report_snapshot_table_available(cur):
         return report
     generated_by = user.get("id") if user else None
@@ -8840,33 +8961,52 @@ def save_inspection_report_snapshot(cur, report_type, report_month, scope_key, r
         cached=False,
         generated_by_name=generated_by_name,
     )
+    period_start, period_end_exclusive = resolve_inspection_report_period(
+        report_type,
+        report_month,
+        generation_options,
+    )
+    period_meta = serialize_report_period(period_start, period_end_exclusive)
+    summary = dict(snapshot_report.get("summary") or {})
+    summary.update(period_meta)
+    snapshot_report["summary"] = summary
+    generation_context = build_inspection_report_generation_context(snapshot_report)
     cur.execute(
         """
         INSERT INTO inspection_report_snapshots (
             report_type,
             report_month,
             scope_key,
+            period_start,
+            period_end_exclusive,
             report_payload,
+            generation_context,
             generated_by,
             generated_by_name,
             generated_at,
             updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT (report_type, report_month, scope_key)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (report_type, period_start, period_end_exclusive)
         DO UPDATE SET
+            report_month = EXCLUDED.report_month,
+            scope_key = EXCLUDED.scope_key,
             report_payload = EXCLUDED.report_payload,
+            generation_context = EXCLUDED.generation_context,
             generated_by = EXCLUDED.generated_by,
             generated_by_name = EXCLUDED.generated_by_name,
             generated_at = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP
-        RETURNING generated_by_name, generated_at;
+        RETURNING id, generated_by_name, generated_at, period_start, period_end_exclusive;
         """,
         (
             report_type,
             report_month,
-            scope_key,
+            "global",
+            period_start,
+            period_end_exclusive,
             Json(snapshot_report, dumps=lambda value: json.dumps(value, ensure_ascii=False, default=str)),
+            Json(generation_context, dumps=lambda value: json.dumps(value, ensure_ascii=False, default=str)),
             generated_by,
             generated_by_name,
         ),
@@ -8882,6 +9022,16 @@ def serialize_inspection_report_job(row):
         "task_id": row.get("task_id"),
         "report_type": row.get("report_type"),
         "report_month": row.get("report_month"),
+        "date_from": (
+            row.get("period_start").strftime("%Y-%m-%d")
+            if row.get("period_start")
+            else ""
+        ),
+        "date_to": (
+            (row.get("period_end_exclusive") - timedelta(days=1)).strftime("%Y-%m-%d")
+            if row.get("period_end_exclusive")
+            else ""
+        ),
         "status": row.get("status") or "queued",
         "progress": max(0, min(100, int(row.get("progress") or 0))),
         "stage_message": row.get("stage_message") or "等待后台处理",
@@ -8913,6 +9063,8 @@ def get_inspection_report_job(cur, task_id):
             task_id,
             report_type,
             report_month,
+            period_start,
+            period_end_exclusive,
             scope_key,
             requested_by,
             status,
@@ -8933,7 +9085,12 @@ def get_inspection_report_job(cur, task_id):
     return cur.fetchone()
 
 
-def get_active_inspection_report_job(cur, report_type, report_month, scope_key):
+def get_active_inspection_report_job(
+    cur,
+    report_type,
+    period_start,
+    period_end_exclusive,
+):
     require_inspection_report_job_schema(cur)
     cur.execute(
         """
@@ -8941,6 +9098,8 @@ def get_active_inspection_report_job(cur, report_type, report_month, scope_key):
             task_id,
             report_type,
             report_month,
+            period_start,
+            period_end_exclusive,
             scope_key,
             requested_by,
             status,
@@ -8954,13 +9113,13 @@ def get_active_inspection_report_job(cur, report_type, report_month, scope_key):
             generation_options
         FROM inspection_report_jobs
         WHERE report_type = %s
-          AND report_month = %s
-          AND scope_key = %s
+          AND period_start = %s
+          AND period_end_exclusive = %s
           AND status IN ('queued', 'running')
         ORDER BY created_at DESC
         LIMIT 1;
         """,
-        (report_type, report_month, scope_key),
+        (report_type, period_start, period_end_exclusive),
     )
     return cur.fetchone()
 
@@ -9010,6 +9169,7 @@ def serialize_inspection_report_export(row):
         "task_id": row.get("task_id"),
         "report_type": row.get("report_type"),
         "report_month": row.get("report_month"),
+        "snapshot_id": int(row.get("snapshot_id") or 0),
         "status": row.get("status") or "queued",
         "progress": max(0, min(100, int(row.get("progress") or 0))),
         "stage_message": row.get("stage_message") or "等待后台处理",
@@ -9052,6 +9212,9 @@ def get_inspection_report_export(cur, task_id, requested_by=None):
             task_id,
             report_type,
             report_month,
+            snapshot_id,
+            period_start,
+            period_end_exclusive,
             scope_key,
             requested_by,
             status,
@@ -9079,7 +9242,13 @@ def get_inspection_report_export(cur, task_id, requested_by=None):
     return cur.fetchone()
 
 
-def get_latest_inspection_report_export(cur, requested_by, report_type, report_month):
+def get_latest_inspection_report_export(
+    cur,
+    requested_by,
+    report_type,
+    report_month,
+    snapshot_id=None,
+):
     require_inspection_report_export_schema(cur)
     cur.execute(
         """
@@ -9087,6 +9256,9 @@ def get_latest_inspection_report_export(cur, requested_by, report_type, report_m
             task_id,
             report_type,
             report_month,
+            snapshot_id,
+            period_start,
+            period_end_exclusive,
             scope_key,
             requested_by,
             status,
@@ -9107,12 +9279,19 @@ def get_latest_inspection_report_export(cur, requested_by, report_type, report_m
         FROM inspection_report_exports
         WHERE requested_by = %s
           AND report_type = %s
-          AND report_month = %s
+          AND ((%s > 0 AND snapshot_id = %s) OR (%s <= 0 AND report_month = %s))
           AND expires_at > CURRENT_TIMESTAMP
         ORDER BY created_at DESC
         LIMIT 1;
         """,
-        (requested_by, report_type, report_month),
+        (
+            requested_by,
+            report_type,
+            int(snapshot_id or 0),
+            int(snapshot_id or 0),
+            int(snapshot_id or 0),
+            report_month,
+        ),
     )
     return cur.fetchone()
 
@@ -11420,6 +11599,7 @@ def serialize_finance_report_issue(row):
         "unit_name": unit_name,
         "report_date": report_date_text,
         "external_standard_id": row.get("standard_id"),
+        "standard_detail_text": detail_text or "",
         "project": normalize_report_category(
             get_report_standard_field_value(row.get("standard_detail_text"), "项目"),
             "未设置项目",
@@ -31093,7 +31273,11 @@ def generate_quality_measurement_report_job(
     snapshot_scope_key,
     generation_options=None,
 ):
-    month_start, month_end = parse_report_month(report_month)
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+        report_month,
+        generation_options,
+    )
     conn = None
     cur = None
     rows = []
@@ -31125,6 +31309,13 @@ def generate_quality_measurement_report_job(
             month_end,
             generation_options,
         )
+        source_memory = get_saved_quality_report_generation_options(
+            cur,
+            month_start,
+            month_end,
+        )
+        source_selection["updated_at"] = source_memory.get("updated_at") or ""
+        source_selection["updated_by_name"] = source_memory.get("updated_by_name") or ""
         selection_settings_record = get_quality_report_selection_settings(cur)
         standard_options = get_quality_measurement_standard_options(cur)
 
@@ -31267,6 +31458,30 @@ def generate_quality_measurement_report_job(
     update_inspection_report_job(task_id, "running", 38, f"已汇总 {len(rows)} 条审核通过问题，正在整理报告结构")
     report = build_quality_measurement_report_payload(month_start, rows)
     report["source_selection"] = source_selection
+    report["flow_classifications"] = [
+        {
+            "issue_id": int(row.get("id") or 0),
+            "station_id": row.get("station_id"),
+            "station_name": row.get("station_name") or "",
+            "region": row.get("region") or "",
+            "table_name": str(row.get("table_name") or "").replace(
+                DISPLAY_REMOVED_STATION_PHRASE,
+                "",
+            ),
+            "external_standard_id": int(row.get("standard_id") or 0),
+            "description": row.get("description") or "",
+            "original_category": get_quality_report_original_business_flow(row),
+            "effective_category": get_quality_report_effective_business_flow(row),
+            "classification_source": (
+                "original"
+                if not is_quality_report_unclassified_flow(
+                    get_quality_report_original_business_flow(row)
+                )
+                else "ai"
+            ),
+        }
+        for row in rows
+    ]
     distribution = report.get("finding_summary", {}).get("business_flow_distribution") or []
     insight_result = None
     ai_context = None
@@ -31324,6 +31539,7 @@ def generate_quality_measurement_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -31337,7 +31553,11 @@ def generate_safety_quality_report_job(
     snapshot_scope_key,
     generation_options=None,
 ):
-    month_start, month_end = parse_report_month(report_month)
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,
+        report_month,
+        generation_options,
+    )
     conn = None
     cur = None
     rows = []
@@ -31508,6 +31728,7 @@ def generate_safety_quality_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -31521,7 +31742,11 @@ def generate_on_site_service_report_job(
     snapshot_scope_key,
     generation_options=None,
 ):
-    month_start, month_end = parse_report_month(report_month)
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE,
+        report_month,
+        generation_options,
+    )
     previous_month_start = (
         month_start.replace(year=month_start.year - 1, month=12)
         if month_start.month == 1
@@ -31821,6 +32046,7 @@ def generate_on_site_service_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -31834,7 +32060,11 @@ def generate_finance_report_job(
     snapshot_scope_key,
     generation_options=None,
 ):
-    month_start, month_end = parse_report_month(report_month)
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_FINANCE,
+        report_month,
+        generation_options,
+    )
     conn = None
     cur = None
     rows = []
@@ -32000,6 +32230,7 @@ def generate_finance_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -32013,7 +32244,11 @@ def generate_equipment_facilities_report_job(
     snapshot_scope_key,
     generation_options=None,
 ):
-    month_start, month_end = parse_report_month(report_month)
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
+        report_month,
+        generation_options,
+    )
     conn = None
     cur = None
     issue_rows = []
@@ -32249,6 +32484,7 @@ def generate_equipment_facilities_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -32460,31 +32696,81 @@ def generate_non_oil_report_job(
     )
     key_issue_ai_result = None
     if key_issue_classification_context.get("issues"):
-        update_inspection_report_job(
-            task_id,
-            "running",
-            48,
-            f"正在调用 DeepSeek 挑选 {len(key_issue_classification_context['issues'])} 条重点问题",
-        )
-        key_issue_ai_result = classify_non_oil_key_issues(
-            key_issue_classification_context
-        )
-        key_issue_decisions = build_non_oil_key_issue_classification_decisions(
-            issue_rows,
-            key_issue_classification_context,
-            key_issue_ai_result,
-        )
+        pending_issues = list(key_issue_classification_context["issues"])
+        batch_size = 25
+        total_batches = max(1, (len(pending_issues) + batch_size - 1) // batch_size)
+        for batch_index in range(total_batches):
+            issue_batch = pending_issues[
+                batch_index * batch_size : (batch_index + 1) * batch_size
+            ]
+            batch_context = {
+                "allowed_categories": key_issue_classification_context.get(
+                    "allowed_categories"
+                ),
+                "issues": issue_batch,
+            }
+            progress = 46 + int(((batch_index + 1) / total_batches) * 6)
+            update_inspection_report_job(
+                task_id,
+                "running",
+                progress,
+                (
+                    f"正在调用 DeepSeek 分批挑选重点问题 "
+                    f"({batch_index + 1}/{total_batches}，本批 {len(issue_batch)} 条)"
+                ),
+            )
+            try:
+                key_issue_ai_result = classify_non_oil_key_issues(batch_context)
+            except Exception:
+                logging.exception(
+                    "Non-oil key issue classification batch failed; using local fallback. "
+                    "task_id=%s batch=%s/%s",
+                    task_id,
+                    batch_index + 1,
+                    total_batches,
+                )
+                key_issue_ai_result = None
+            batch_issue_ids = {int(item["issue_id"]) for item in issue_batch}
+            batch_rows = [
+                row
+                for row in issue_rows
+                if int(row.get("id") or 0) in batch_issue_ids
+            ]
+            key_issue_decisions = build_non_oil_key_issue_classification_decisions(
+                batch_rows,
+                batch_context,
+                key_issue_ai_result,
+            )
+            conn = None
+            cur = None
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                persist_non_oil_key_issue_classifications(
+                    cur,
+                    key_issue_decisions,
+                    user_id,
+                )
+                if key_issue_ai_result:
+                    record_ai_usage_log(
+                        cur,
+                        user,
+                        key_issue_ai_result,
+                        "AI报告生成",
+                        "非油重点问题分类",
+                        (
+                            f"{format_report_month_label(report_month_start)} · "
+                            f"第{batch_index + 1}/{total_batches}批 · {len(issue_batch)}项"
+                        ),
+                    )
+                conn.commit()
+            finally:
+                close_db_resources(cur, conn)
         conn = None
         cur = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
-            persist_non_oil_key_issue_classifications(
-                cur,
-                key_issue_decisions,
-                user_id,
-            )
-            conn.commit()
             key_issue_classification_map = get_non_oil_key_issue_classification_map(
                 cur,
                 [row.get("id") for row in issue_rows],
@@ -32517,6 +32803,17 @@ def generate_non_oil_report_job(
         "excluded_count": len(excluded_issue_ids),
         "excluded_issue_ids": sorted(excluded_issue_ids),
     }
+    report["issue_library_snapshot"] = [
+        {
+            **serialize_non_oil_report_issue(
+                row,
+                classification_map,
+                key_issue_classification_map,
+            ),
+            "included": int(row.get("id") or 0) not in excluded_issue_ids,
+        }
+        for row in all_issue_rows
+    ]
     report["source_selection"] = source_selection
     insight_result = None
     if non_oil_issues:
@@ -32614,15 +32911,6 @@ def generate_non_oil_report_job(
                 "非油其他问题分类",
                 f"{report.get('month_label')} · 分类{len(classification_context['issues'])}项",
             )
-        if key_issue_classification_context.get("issues") and key_issue_ai_result:
-            record_ai_usage_log(
-                cur,
-                user,
-                key_issue_ai_result,
-                "AI报告生成",
-                "非油重点问题分类",
-                f"{report.get('month_label')} · 判定{len(key_issue_classification_context['issues'])}项",
-            )
         save_inspection_report_snapshot(
             cur,
             REPORT_SNAPSHOT_TYPE_NON_OIL,
@@ -32630,6 +32918,7 @@ def generate_non_oil_report_job(
             snapshot_scope_key,
             report,
             user,
+            generation_options,
         )
         conn.commit()
     finally:
@@ -32730,12 +33019,12 @@ def queue_or_get_inspection_report_job(
     generation_options=None,
 ):
     normalized_generation_options = normalize_inspection_report_generation_options(
-        generation_options
-        if report_type in {
-            REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
-            REPORT_SNAPSHOT_TYPE_NON_OIL,
-        }
-        else {}
+        generation_options or {}
+    )
+    period_start, period_end_exclusive = resolve_inspection_report_period(
+        report_type,
+        report_month,
+        normalized_generation_options,
     )
     snapshot_scope_key = build_report_snapshot_scope_key(user)
     if not force_regenerate:
@@ -32744,17 +33033,22 @@ def queue_or_get_inspection_report_job(
             report_type,
             report_month,
             snapshot_scope_key,
+            period_start,
+            period_end_exclusive,
         )
         if cached_report:
             return cached_report, None, False
 
-    lock_key = f"inspection-report:{report_type}:{report_month}:{snapshot_scope_key}"
+    lock_key = (
+        f"inspection-report:{report_type}:{period_start.isoformat()}:"
+        f"{period_end_exclusive.isoformat()}"
+    )
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s));", (lock_key,))
     active_job = get_active_inspection_report_job(
         cur,
         report_type,
-        report_month,
-        snapshot_scope_key,
+        period_start,
+        period_end_exclusive,
     )
     if active_job:
         return None, active_job, False
@@ -32766,6 +33060,8 @@ def queue_or_get_inspection_report_job(
             task_id,
             report_type,
             report_month,
+            period_start,
+            period_end_exclusive,
             scope_key,
             requested_by,
             generation_options,
@@ -32775,12 +33071,14 @@ def queue_or_get_inspection_report_job(
             created_at,
             updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         """,
         (
             task_id,
             report_type,
             report_month,
+            period_start,
+            period_end_exclusive,
             snapshot_scope_key,
             user.get("id"),
             Json(normalized_generation_options),
@@ -32803,28 +33101,63 @@ def get_inspection_report_capabilities(cur, user):
     permissions = get_effective_permissions(cur, user)
     return {
         "can_generate": bool(permissions.get("generate_inspection_reports")),
-        "can_manage_quality_report_source": bool(
-            permissions.get("manage_quality_report_source")
-        ),
-        "can_manage_quality_report_selection_rules": bool(
-            permissions.get("manage_quality_report_selection_rules")
-        ),
+        "can_manage_quality_report_source": True,
+        "can_manage_quality_report_selection_rules": True,
     }
 
 
-def get_saved_quality_report_generation_options(cur, report_month):
-    report = get_latest_inspection_report_snapshot(
+def get_saved_quality_report_generation_options(
+    cur,
+    period_start,
+    period_end_exclusive,
+):
+    cur.execute(
+        "SELECT to_regclass('public.inspection_report_quality_source_settings') AS table_name;"
+    )
+    table_row = cur.fetchone()
+    if table_row and table_row.get("table_name"):
+        cur.execute(
+            """
+            SELECT s.selection_mode, s.station_ids, s.updated_at,
+                   COALESCE(u.real_name, u.username, '') AS updated_by_name
+            FROM inspection_report_quality_source_settings s
+            LEFT JOIN users u ON u.id = s.updated_by
+            WHERE s.period_start = %s
+              AND s.period_end_exclusive = %s
+            LIMIT 1;
+            """,
+            (period_start, period_end_exclusive),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                **normalize_inspection_report_generation_options(
+                    {
+                        "station_filter_enabled": row.get("selection_mode") == "custom",
+                        "station_ids": row.get("station_ids") or [],
+                    }
+                ),
+                "updated_at": format_report_snapshot_time(row.get("updated_at")),
+                "updated_by_name": row.get("updated_by_name") or "",
+            }
+    report = get_inspection_report_snapshot(
         cur,
         REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
-        report_month,
+        (period_end_exclusive - timedelta(days=1)).strftime("%Y-%m"),
+        "global",
+        period_start,
+        period_end_exclusive,
     )
     source_selection = (report or {}).get("source_selection") or {}
-    return normalize_inspection_report_generation_options(
+    fallback = normalize_inspection_report_generation_options(
         {
             "station_filter_enabled": source_selection.get("mode") == "custom",
             "station_ids": source_selection.get("station_ids") or [],
         }
     )
+    fallback["updated_at"] = source_selection.get("updated_at") or ""
+    fallback["updated_by_name"] = source_selection.get("updated_by_name") or ""
+    return fallback
 
 
 def get_authorized_quality_report_generation_options(
@@ -32832,10 +33165,26 @@ def get_authorized_quality_report_generation_options(
     user,
     report_month,
     requested_options,
+    period_start,
+    period_end_exclusive,
 ):
-    if has_permission(cur, user, "manage_quality_report_source"):
-        return normalize_inspection_report_generation_options(requested_options)
-    return get_saved_quality_report_generation_options(cur, report_month)
+    raw_options = requested_options if isinstance(requested_options, dict) else {}
+    requested = normalize_inspection_report_generation_options(raw_options)
+    if "station_filter_enabled" in raw_options:
+        return requested
+    saved = get_saved_quality_report_generation_options(
+        cur,
+        period_start,
+        period_end_exclusive,
+    )
+    saved.update(
+        {
+            key: requested[key]
+            for key in ("date_from", "date_to")
+            if requested.get(key)
+        }
+    )
+    return normalize_inspection_report_generation_options(saved)
 
 
 @app.route("/api/inspection-reports/types")
@@ -32867,8 +33216,19 @@ def get_inspection_report_status():
     config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
     if not config:
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
-    month_start, _ = parse_report_month(request.args.get("month", ""))
-    report_month = month_start.strftime("%Y-%m")
+    snapshot_id = request.args.get("snapshot_id", type=int)
+    generation_options = normalize_inspection_report_generation_options(
+        {
+            "date_from": request.args.get("date_from", ""),
+            "date_to": request.args.get("date_to", ""),
+        }
+    )
+    period_start, period_end = resolve_inspection_report_period(
+        report_type,
+        request.args.get("month", ""),
+        generation_options,
+    )
+    report_month = (period_end - timedelta(days=1)).strftime("%Y-%m")
     conn = None
     cur = None
     try:
@@ -32879,13 +33239,33 @@ def get_inspection_report_status():
         report = None
         job = None
         if config.get("template_ready"):
-            report = get_latest_inspection_report_snapshot(cur, report_type, report_month)
-            job = get_active_inspection_report_job(cur, report_type, report_month, snapshot_scope_key)
+            if snapshot_id:
+                report = get_inspection_report_snapshot_by_id(
+                    cur,
+                    snapshot_id,
+                    report_type,
+                )
+            else:
+                report = get_inspection_report_snapshot(
+                    cur,
+                    report_type,
+                    report_month,
+                    snapshot_scope_key,
+                    period_start,
+                    period_end,
+                )
+            job = get_active_inspection_report_job(
+                cur,
+                report_type,
+                period_start,
+                period_end,
+            )
         return jsonify({
             "success": True,
             "report_type": config,
             "report": report,
             "job": serialize_inspection_report_job(job),
+            "history": list_inspection_report_snapshots(cur, report_type),
             **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
@@ -32898,10 +33278,39 @@ def get_inspection_report_status():
         close_db_resources(cur, conn)
 
 
-@app.route("/api/inspection-reports/source-options")
-def get_inspection_report_source_options():
+@app.route("/api/inspection-reports/history")
+def get_inspection_report_history():
     report_type = str(
         request.args.get("report_type") or REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
+    ).strip()
+    if report_type not in INSPECTION_REPORT_TYPE_CONFIGS:
+        return jsonify({"success": False, "error": "报告类型不存在。"}), 400
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        get_authorized_inspection_report_user(cur)
+        return jsonify(
+            {
+                "success": True,
+                "history": list_inspection_report_snapshots(cur, report_type),
+            }
+        )
+    except LookupError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/inspection-reports/source-options", methods=["GET", "PUT"])
+def get_inspection_report_source_options():
+    data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
+    source = data if request.method == "PUT" else request.args
+    report_type = str(
+        source.get("report_type") or REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT
     ).strip()
     config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
     if not config:
@@ -32911,10 +33320,16 @@ def get_inspection_report_source_options():
             "success": False,
             "error": "只有质量计量监督检查报告支持自定义站点数据来源。",
         }), 400
-    report_month_start, _ = parse_report_month(request.args.get("month", ""))
-    month_start, month_end = get_inspection_report_date_range(
+    generation_options = normalize_inspection_report_generation_options(
+        {
+            "date_from": source.get("date_from", ""),
+            "date_to": source.get("date_to", ""),
+        }
+    )
+    month_start, month_end = resolve_inspection_report_period(
         report_type,
-        request.args.get("month", ""),
+        source.get("month", ""),
+        generation_options,
     )
     conn = None
     cur = None
@@ -32933,10 +33348,53 @@ def get_inspection_report_source_options():
         for station in stations:
             if station["region"] not in regions:
                 regions.append(station["region"])
+        saved_options = get_saved_quality_report_generation_options(
+            cur,
+            month_start,
+            month_end,
+        )
+        if request.method == "PUT":
+            selection_mode = "custom" if data.get("selection_mode") == "custom" else "all"
+            station_ids = normalize_inspection_report_generation_options(
+                {
+                    "station_filter_enabled": selection_mode == "custom",
+                    "station_ids": data.get("station_ids") or [],
+                }
+            ).get("station_ids", [])
+            available_ids = {int(item["station_id"]) for item in stations}
+            if selection_mode == "custom" and not set(station_ids).issubset(available_ids):
+                raise ValueError("部分所选站点不在当前日期范围的可用数据中，请刷新后重试。")
+            cur.execute(
+                """
+                INSERT INTO inspection_report_quality_source_settings (
+                    period_start, period_end_exclusive, selection_mode,
+                    station_ids, updated_by, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (period_start, period_end_exclusive) DO UPDATE SET
+                    selection_mode = EXCLUDED.selection_mode,
+                    station_ids = EXCLUDED.station_ids,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = CURRENT_TIMESTAMP;
+                """,
+                (
+                    month_start,
+                    month_end,
+                    selection_mode,
+                    Json(station_ids),
+                    user.get("id"),
+                ),
+            )
+            conn.commit()
+            saved_options = get_saved_quality_report_generation_options(
+                cur,
+                month_start,
+                month_end,
+            )
         return jsonify(
             {
                 "success": True,
-                "month": report_month_start.strftime("%Y-%m"),
+                "month": (month_end - timedelta(days=1)).strftime("%Y-%m"),
                 "stations": stations,
                 "summary": {
                     "station_count": len(stations),
@@ -32946,15 +33404,25 @@ def get_inspection_report_source_options():
                         item["inspection_count"] for item in stations
                     ),
                 },
-                "can_edit": has_permission(
-                    cur, user, "manage_quality_report_source"
-                ),
+                "can_edit": True,
+                "saved_selection": {
+                    "mode": "custom"
+                    if saved_options.get("station_filter_enabled")
+                    else "all",
+                    "station_ids": saved_options.get("station_ids") or [],
+                    "updated_at": saved_options.get("updated_at") or "",
+                    "updated_by_name": saved_options.get("updated_by_name") or "",
+                },
             }
         )
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:
         logging.exception("Failed to load inspection report source options.")
         return jsonify({"success": False, "error": str(exc)}), 500
@@ -32973,9 +33441,7 @@ def manage_quality_report_selection_settings():
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(
-            cur, user, "manage_quality_report_selection_rules"
-        )
+        can_edit = True
 
         if request.method == "PUT":
             if not can_edit:
@@ -33173,18 +33639,25 @@ def get_quality_report_flow_classification_rows(cur, user, month_start, month_en
 def manage_quality_report_flow_classifications():
     data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
     month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
-    month_start, month_end = parse_report_month(month_value)
+    source = data if request.method == "PUT" else request.args
+    generation_options = normalize_inspection_report_generation_options(
+        {
+            "date_from": source.get("date_from", ""),
+            "date_to": source.get("date_to", ""),
+        }
+    )
+    month_start, month_end = resolve_inspection_report_period(
+        REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT,
+        month_value,
+        generation_options,
+    )
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(
-            cur,
-            user,
-            "manage_quality_report_selection_rules",
-        )
+        can_edit = True
         rows, categories = get_quality_report_flow_classification_rows(
             cur,
             user,
@@ -33319,7 +33792,7 @@ def manage_non_oil_report_issue_selection():
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(cur, user, "generate_inspection_reports")
+        can_edit = True
         if not non_oil_report_issue_selection_table_available(cur):
             raise InspectionReportJobSchemaUnavailable(
                 "非油报告问题库选择表尚未完成数据库迁移，请重新部署后端。"
@@ -33379,6 +33852,7 @@ def manage_non_oil_report_issue_selection():
                     "unit_name": item.get("unit_name"),
                     "table_name": item.get("table_name"),
                     "external_standard_id": item.get("external_standard_id"),
+                    "standard_detail_text": item.get("standard_detail_text") or "",
                     "category_name": category_name,
                     "category_display_name": NON_OIL_REPORT_CATEGORY_DISPLAY_NAMES.get(
                         category_name,
@@ -33461,17 +33935,29 @@ def manage_non_oil_report_category_classifications():
     month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
     month_start, _ = parse_report_month(month_value)
     report_month = month_start.strftime("%Y-%m")
+    snapshot_id = int(
+        (data.get("snapshot_id") if request.method == "PUT" else request.args.get("snapshot_id"))
+        or 0
+    )
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(cur, user, "generate_inspection_reports")
-        report = get_latest_inspection_report_snapshot(
-            cur,
-            REPORT_SNAPSHOT_TYPE_NON_OIL,
-            report_month,
+        can_edit = True
+        report = (
+            get_inspection_report_snapshot_by_id(
+                cur,
+                snapshot_id,
+                REPORT_SNAPSHOT_TYPE_NON_OIL,
+            )
+            if snapshot_id
+            else get_latest_inspection_report_snapshot(
+                cur,
+                REPORT_SNAPSHOT_TYPE_NON_OIL,
+                report_month,
+            )
         )
         rows = list((report or {}).get("category_classifications") or [])
         if request.method == "PUT":
@@ -33576,17 +34062,29 @@ def manage_non_oil_key_issue_classifications():
     month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
     month_start, _ = parse_report_month(month_value)
     report_month = month_start.strftime("%Y-%m")
+    snapshot_id = int(
+        (data.get("snapshot_id") if request.method == "PUT" else request.args.get("snapshot_id"))
+        or 0
+    )
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        can_edit = has_permission(cur, user, "generate_inspection_reports")
-        report = get_latest_inspection_report_snapshot(
-            cur,
-            REPORT_SNAPSHOT_TYPE_NON_OIL,
-            report_month,
+        can_edit = True
+        report = (
+            get_inspection_report_snapshot_by_id(
+                cur,
+                snapshot_id,
+                REPORT_SNAPSHOT_TYPE_NON_OIL,
+            )
+            if snapshot_id
+            else get_latest_inspection_report_snapshot(
+                cur,
+                REPORT_SNAPSHOT_TYPE_NON_OIL,
+                report_month,
+            )
         )
         rows = list((report or {}).get("key_issue_classifications") or [])
         if request.method == "PUT":
@@ -33693,14 +34191,17 @@ def create_inspection_report_generation_job():
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能生成。"}), 409
-    report_month_start, _ = parse_report_month(data.get("month", ""))
-    month_start, month_end = get_inspection_report_date_range(
+    raw_generation_options = data.get("generation_options") or {}
+    generation_options = normalize_inspection_report_generation_options(
+        raw_generation_options
+    )
+    month_start, month_end = resolve_inspection_report_period(
         report_type,
         data.get("month", ""),
+        generation_options,
     )
-    report_month = report_month_start.strftime("%Y-%m")
-    force_regenerate = bool(data.get("force"))
-    raw_generation_options = data.get("generation_options")
+    report_month = (month_end - timedelta(days=1)).strftime("%Y-%m")
+    force_regenerate = True
     conn = None
     cur = None
     try:
@@ -33715,6 +34216,8 @@ def create_inspection_report_generation_job():
                 user,
                 report_month,
                 raw_generation_options,
+                month_start,
+                month_end,
             )
             resolve_inspection_report_source_selection(
                 cur,
@@ -33725,12 +34228,7 @@ def create_inspection_report_generation_job():
                 generation_options,
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
-            generation_options = normalize_inspection_report_generation_options(
-                raw_generation_options or {}
-            )
             resolve_non_oil_report_period(report_month, generation_options)
-        else:
-            generation_options = normalize_inspection_report_generation_options({})
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
@@ -33793,6 +34291,8 @@ def get_inspection_report_generation_job(task_id):
                 job.get("report_type"),
                 job.get("report_month"),
                 job.get("scope_key"),
+                job.get("period_start"),
+                job.get("period_end_exclusive"),
             )
         return jsonify({
             "success": True,
@@ -33820,8 +34320,7 @@ def create_inspection_report_powerpoint_export():
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能导出PPT。"}), 409
-    month_start, _ = parse_report_month(data.get("month", ""))
-    report_month = month_start.strftime("%Y-%m")
+    snapshot_id = int(data.get("snapshot_id") or 0)
     conn = None
     cur = None
     try:
@@ -33832,17 +34331,19 @@ def create_inspection_report_powerpoint_export():
         cleanup_expired_inspection_report_exports(cur)
         cur.execute(
             """
-            SELECT scope_key, report_payload, generated_at
+            SELECT id, scope_key, report_month, period_start, period_end_exclusive,
+                   report_payload, generated_at
             FROM inspection_report_snapshots
-            WHERE report_type = %s AND report_month = %s
-            ORDER BY generated_at DESC, updated_at DESC
+            WHERE report_type = %s
+              AND (%s > 0 AND id = %s)
             LIMIT 1;
             """,
-            (report_type, report_month),
+            (report_type, snapshot_id, snapshot_id),
         )
         snapshot = cur.fetchone()
         if not snapshot:
-            raise ValueError("当前月份还没有已生成的报告，请先生成报告。")
+            raise ValueError("请选择一份已生成的历史报告后再导出PPT。")
+        report_month = snapshot.get("report_month") or snapshot["period_start"].strftime("%Y-%m")
         report_payload = normalize_report_snapshot_payload(snapshot.get("report_payload"))
         if not report_payload or not is_inspection_report_snapshot_current(
             report_type, report_payload
@@ -33852,7 +34353,8 @@ def create_inspection_report_powerpoint_export():
         cur.execute(
             """
             SELECT
-                task_id, report_type, report_month, scope_key, requested_by,
+                task_id, report_type, report_month, snapshot_id, period_start,
+                period_end_exclusive, scope_key, requested_by,
                 status, progress, stage_message, error_message, include_photos,
                 file_path, file_name, file_size, slide_count,
                 snapshot_generated_at, created_at, started_at, finished_at,
@@ -33860,13 +34362,12 @@ def create_inspection_report_powerpoint_export():
             FROM inspection_report_exports
             WHERE requested_by = %s
               AND report_type = %s
-              AND report_month = %s
-              AND scope_key = %s
+              AND snapshot_id = %s
               AND status IN ('queued', 'running')
             ORDER BY created_at DESC
             LIMIT 1;
             """,
-            (user["id"], report_type, report_month, snapshot.get("scope_key")),
+            (user["id"], report_type, snapshot.get("id")),
         )
         active_task = cur.fetchone()
         if active_task:
@@ -33881,25 +34382,29 @@ def create_inspection_report_powerpoint_export():
 
         task_id = uuid.uuid4().hex
         file_name = (
-            f"{report_month}_{config.get('name') or 'AI检查报告'}_"
+            f"{snapshot['period_start']:%Y%m%d}-{(snapshot['period_end_exclusive'] - timedelta(days=1)):%Y%m%d}_"
+            f"{config.get('name') or 'AI检查报告'}_"
             f"{beijing_now().strftime('%Y%m%d_%H%M')}.pptx"
         )
         cur.execute(
             """
             INSERT INTO inspection_report_exports (
-                task_id, report_type, report_month, scope_key, requested_by,
+                task_id, report_type, report_month, snapshot_id, period_start,
+                period_end_exclusive, scope_key, requested_by,
                 status, progress, stage_message, include_photos, file_name,
                 snapshot_generated_at, report_payload, expires_at,
                 created_at, updated_at
             )
             VALUES (
                 %s, %s, %s, %s, %s,
+                %s, %s, %s,
                 'queued', 3, %s, %s, %s, %s, %s,
                 CURRENT_TIMESTAMP + INTERVAL '7 days',
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             RETURNING
-                task_id, report_type, report_month, scope_key, requested_by,
+                task_id, report_type, report_month, snapshot_id, period_start,
+                period_end_exclusive, scope_key, requested_by,
                 status, progress, stage_message, error_message, include_photos,
                 file_path, file_name, file_size, slide_count,
                 snapshot_generated_at, created_at, started_at, finished_at,
@@ -33909,6 +34414,9 @@ def create_inspection_report_powerpoint_export():
                 task_id,
                 report_type,
                 report_month,
+                snapshot.get("id"),
+                snapshot.get("period_start"),
+                snapshot.get("period_end_exclusive"),
                 snapshot.get("scope_key"),
                 user["id"],
                 "任务已提交，等待后台生成PPT",
@@ -33961,6 +34469,7 @@ def get_latest_inspection_report_powerpoint_export():
     ).strip()
     if report_type not in INSPECTION_REPORT_TYPE_CONFIGS:
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
+    snapshot_id = request.args.get("snapshot_id", type=int) or 0
     month_start, _ = parse_report_month(request.args.get("month", ""))
     report_month = month_start.strftime("%Y-%m")
     conn = None
@@ -33970,7 +34479,11 @@ def get_latest_inspection_report_powerpoint_export():
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
         task = get_latest_inspection_report_export(
-            cur, user["id"], report_type, report_month
+            cur,
+            user["id"],
+            report_type,
+            report_month,
+            snapshot_id,
         )
         return jsonify(
             {"success": True, "task": serialize_inspection_report_export(task)}

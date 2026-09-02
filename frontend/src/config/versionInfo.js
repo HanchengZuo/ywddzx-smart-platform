@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.4',
+    date: '2026-09-02',
+    title: 'AI报告历史与日期范围',
+    summary: '报告按日期范围保存历史快照，配置选择会自动记忆。',
+    items: [
+      '所有报告统一按起止日期生成，同一时间段再次生成会覆盖原历史报告。',
+      '历史报告保留生成时间、操作人及当时的问题选择和分类配置。',
+      '质量计量报告的数据来源和选题规则会记住最后保存人及选择。',
+      '非油重点问题改为分批AI处理，避免大批量问题长时间卡住。'
+    ]
+  },
+  {
     version: 'v5.3',
     date: '2026-08-24',
     title: '非油检查报告PPT化',
