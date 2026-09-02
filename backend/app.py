@@ -12982,8 +12982,8 @@ def fetch_non_oil_report_issue_rows(
     apply_station_filter=True,
 ):
     where_clauses = [
-        "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
-        "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
+        "i.created_at::date >= %s",
+        "i.created_at::date < %s",
         "REPLACE(t.table_name, %s, '') IN (%s, %s)",
         "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
         "COALESCE(i.audit_status, 'pending') = 'approved'",
@@ -13039,14 +13039,14 @@ def fetch_non_oil_report_issue_rows(
                 i.rectification_result,
                 i.review_result,
                 ins.sign_status,
-                COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
+                i.created_at::date AS report_date
             FROM issues i
             JOIN inspections ins ON i.inspection_id = ins.id
             JOIN stations s ON i.station_id = s.id
             JOIN inspection_tables t ON i.inspection_table_id = t.id
             {where_clause}
             ORDER BY
-                COALESCE(ins.inspection_date::date, i.created_at::date) ASC,
+                i.created_at::date ASC,
                 s.region ASC NULLS LAST,
                 s.station_name ASC,
                 i.id ASC;
@@ -32577,8 +32577,8 @@ def generate_non_oil_report_job(
         )
 
         inspection_where_clauses = [
-            "COALESCE(ins.inspection_date::date, ins.created_at::date) >= %s",
-            "COALESCE(ins.inspection_date::date, ins.created_at::date) < %s",
+            "ins.created_at::date >= %s",
+            "ins.created_at::date < %s",
             "REPLACE(t.table_name, %s, '') IN (%s, %s)",
             "COALESCE(ins.inspector_completion_status, '待检查人确认') = '已确认完成'",
         ]
@@ -32623,13 +32623,13 @@ def generate_non_oil_report_job(
                         s.region,
                         s.address,
                         t.table_name,
-                        COALESCE(ins.inspection_date::date, ins.created_at::date) AS report_date
+                        ins.created_at::date AS report_date
                     FROM inspections ins
                     JOIN stations s ON ins.station_id = s.id
                     JOIN inspection_tables t ON ins.inspection_table_id = t.id
                     {where_clause}
                     ORDER BY
-                        COALESCE(ins.inspection_date::date, ins.created_at::date) ASC,
+                        ins.created_at::date ASC,
                         s.region ASC NULLS LAST,
                         s.station_name ASC,
                         ins.id ASC;
