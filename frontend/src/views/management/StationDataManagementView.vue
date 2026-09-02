@@ -412,7 +412,7 @@
                       <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                         :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                         @click="resetStationPassword(station)">
-                        {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '强制改密' : '无账号' }}
+                        {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '重置密码' : '无账号' }}
                       </button>
                       <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === station.id"
                         @click="deleteStation(station)">
@@ -498,7 +498,7 @@
                   <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                     :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                     @click="resetStationPassword(station)">
-                    {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '强制改密' : '无账号' }}
+                    {{ resettingStationId === station.id ? '处理中' : getStationUsernames(station).length ? '重置密码' : '无账号' }}
                   </button>
                   <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === station.id"
                     @click="deleteStation(station)">
@@ -991,7 +991,7 @@ const resetStationPassword = async (station) => {
     setMessage('该站点暂无绑定站点账号。', 'error')
     return
   }
-  const confirmed = window.confirm(`确定要求【${station.station_name}】绑定站点账号下次登录立即修改密码吗？其现有登录会话会同时失效。`)
+  const confirmed = window.confirm(`确定重置【${station.station_name}】绑定站点账号的密码吗？将生成随机强密码，用户登录后须立即修改密码，现有会话同时失效。`)
   if (!confirmed) return
 
   try {
@@ -999,6 +999,11 @@ const resetStationPassword = async (station) => {
     const response = await axios.post(`/api/management/stations/${station.id}/reset-password`, {
       user_id: currentUserId
     })
+    const credentials = response.data?.credentials
+    if (credentials && credentials.length) {
+      const lines = credentials.map((c) => `账号: ${c.username}\n密码: ${c.password}`).join('\n\n')
+      window.prompt('密码已重置，请复制以下凭据并告知站点人员（关闭后无法再次查看）：', lines)
+    }
     setMessage(response.data?.message || '站点账号密码已重置。', 'success')
   } catch (error) {
     setMessage(error?.response?.data?.error || '站点账号密码重置失败。', 'error')
