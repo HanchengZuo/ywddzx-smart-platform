@@ -60,16 +60,23 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '查看巡检计划、派工和完成情况。'
       },
       {
-        key: '/inspection/reports',
-        path: '/inspection/reports',
-        title: 'AI报告生成',
-        description: '按月份汇总巡检数据并调用AI生成监督检查报告。'
-      },
-      {
         key: '/inspection/certificates',
         path: '/inspection/certificates',
         title: '证照管理',
         description: '维护和查看站点证照有效期与到期提醒。'
+      }
+    ]
+  },
+  {
+    key: 'ai',
+    title: 'AI系统',
+    description: 'AI报告生成相关页面',
+    pages: [
+      {
+        key: '/inspection/reports',
+        path: '/inspection/reports',
+        title: '报告生成',
+        description: '按月份汇总巡检数据并调用AI生成监督检查报告。'
       }
     ]
   },
