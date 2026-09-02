@@ -256,18 +256,21 @@
           <span v-if="!sidebarCollapsed">巡检计划</span>
         </button>
 
-        <button v-if="canViewInspectionReports" class="nav-item"
-          :class="{ active: isActive('/inspection/reports'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/inspection/reports')" :title="sidebarCollapsed ? 'AI报告生成' : ''">
-          <span class="nav-item-icon">报</span>
-          <span v-if="!sidebarCollapsed">AI报告生成</span>
-        </button>
-
         <button v-if="canViewCertificates" class="nav-item"
           :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
           <span class="nav-item-icon">证</span>
           <span v-if="!sidebarCollapsed">证照管理</span>
+        </button>
+      </div>
+
+      <div v-if="canViewInspectionReports" class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">AI系统</div>
+        <button class="nav-item"
+          :class="{ active: isActive('/inspection/reports'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/reports')" :title="sidebarCollapsed ? '报告生成' : ''">
+          <span class="nav-item-icon">报</span>
+          <span v-if="!sidebarCollapsed">报告生成</span>
         </button>
       </div>
 

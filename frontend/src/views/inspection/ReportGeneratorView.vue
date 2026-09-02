@@ -3,7 +3,7 @@
     <section class="report-hero card-surface">
       <div>
         <div class="page-kicker">AI REPORT STUDIO</div>
-        <h2>AI报告生成</h2>
+        <h2>报告生成</h2>
         <p>选择报告类型和历史时间段查看报告；具备生成权限时可按新的日期范围覆盖生成。</p>
       </div>
       <div class="report-month-control">
