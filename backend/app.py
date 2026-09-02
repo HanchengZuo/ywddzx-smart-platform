@@ -12426,8 +12426,6 @@ def normalize_non_oil_report_excluded_issue_ids(values, eligible_issue_ids=None)
 
 def get_non_oil_report_excluded_issue_ids(
     cur,
-    period_start,
-    period_end,
     issue_ids=None,
 ):
     if not non_oil_report_issue_selection_table_available(cur):
@@ -12435,7 +12433,7 @@ def get_non_oil_report_excluded_issue_ids(
     normalized_ids = normalize_non_oil_report_excluded_issue_ids(issue_ids)
     if issue_ids is not None and not normalized_ids:
         return set()
-    params = [period_start, period_end]
+    params = []
     issue_clause = ""
     if normalized_ids:
         issue_clause = " AND issue_id = ANY(%s)"
@@ -12444,9 +12442,7 @@ def get_non_oil_report_excluded_issue_ids(
         f"""
         SELECT issue_id
         FROM inspection_report_non_oil_issue_selections
-        WHERE period_start = %s
-          AND period_end_exclusive = %s
-          AND is_included = FALSE
+        WHERE is_included = FALSE
           {issue_clause};
         """,
         params,
@@ -12465,8 +12461,6 @@ def filter_non_oil_report_issue_rows(rows, excluded_issue_ids):
 
 def replace_non_oil_report_issue_exclusions(
     cur,
-    period_start,
-    period_end,
     eligible_issue_ids,
     excluded_issue_ids,
     user_id=None,
@@ -12480,32 +12474,48 @@ def replace_non_oil_report_issue_exclusions(
         excluded_issue_ids,
         eligible,
     )
-    if eligible:
-        cur.execute(
-            """
-            DELETE FROM inspection_report_non_oil_issue_selections
-            WHERE period_start = %s
-              AND period_end_exclusive = %s
-              AND issue_id = ANY(%s);
-            """,
-            (period_start, period_end, eligible),
-        )
-    for issue_id in excluded:
+    if not eligible:
+        return set(excluded)
+    # Read current exclusions within the eligible set.
+    cur.execute(
+        """
+        SELECT issue_id
+        FROM inspection_report_non_oil_issue_selections
+        WHERE is_included = FALSE
+          AND issue_id = ANY(%s);
+        """,
+        (eligible,),
+    )
+    currently_excluded = {int(row["issue_id"]) for row in cur.fetchall()}
+    target_excluded = set(excluded)
+    # Insert newly excluded issues.
+    to_exclude = sorted(target_excluded - currently_excluded)
+    for issue_id in to_exclude:
         cur.execute(
             """
             INSERT INTO inspection_report_non_oil_issue_selections (
-                period_start, period_end_exclusive, issue_id,
-                is_included, updated_by, updated_at
+                issue_id, is_included, updated_by, updated_at
             )
-            VALUES (%s, %s, %s, FALSE, %s, CURRENT_TIMESTAMP)
-            ON CONFLICT (period_start, period_end_exclusive, issue_id) DO UPDATE SET
+            VALUES (%s, FALSE, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (issue_id) DO UPDATE SET
                 is_included = FALSE,
                 updated_by = EXCLUDED.updated_by,
                 updated_at = CURRENT_TIMESTAMP;
             """,
-            (period_start, period_end, issue_id, user_id),
+            (issue_id, user_id),
         )
-    return set(excluded)
+    # Restore issues that were previously excluded but are now included.
+    to_restore = sorted(currently_excluded - target_excluded)
+    if to_restore:
+        cur.execute(
+            """
+            DELETE FROM inspection_report_non_oil_issue_selections
+            WHERE issue_id = ANY(%s)
+              AND is_included = FALSE;
+            """,
+            (to_restore,),
+        )
+    return target_excluded
 
 
 def non_oil_key_issue_classification_table_available(cur):
@@ -32551,8 +32561,6 @@ def generate_non_oil_report_job(
         )
         excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
             cur,
-            period_start,
-            period_end,
             [row.get("id") for row in all_issue_rows],
         )
         issue_rows = filter_non_oil_report_issue_rows(
@@ -33815,8 +33823,6 @@ def manage_non_oil_report_issue_selection():
                 raise ValueError("请提交有效的不参与报告问题清单。")
             excluded_issue_ids = replace_non_oil_report_issue_exclusions(
                 cur,
-                period_start,
-                period_end,
                 eligible_issue_ids,
                 excluded_values,
                 user.get("id"),
@@ -33825,8 +33831,6 @@ def manage_non_oil_report_issue_selection():
         else:
             excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
                 cur,
-                period_start,
-                period_end,
                 eligible_issue_ids,
             )
 
