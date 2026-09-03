@@ -8404,27 +8404,28 @@ def normalize_inspection_report_generation_options(value):
     station_ids.sort()
     if station_filter_enabled and not station_ids:
         raise ValueError("自定义数据来源时，请至少选择一个站点。")
-    date_from = str(raw_options.get("date_from") or "").strip()
-    date_to = str(raw_options.get("date_to") or "").strip()
-    if bool(date_from) != bool(date_to):
-        raise ValueError("自定义日期范围必须同时填写开始日期和结束日期。")
-    if date_from and date_to:
-        try:
-            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").date()
-            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").date()
-        except ValueError as exc:
-            raise ValueError("自定义日期范围格式不正确。") from exc
-        if parsed_date_to < parsed_date_from:
-            raise ValueError("结束日期不能早于开始日期。")
-        if (parsed_date_to - parsed_date_from).days > 366:
-            raise ValueError("单次报告日期范围不能超过一年。")
     normalized = {
         "station_filter_enabled": station_filter_enabled,
         "station_ids": station_ids if station_filter_enabled else [],
     }
-    if date_from and date_to:
-        normalized["date_from"] = date_from
-        normalized["date_to"] = date_to
+    for prefix, label in (("", "报告"), ("non_oil_rectification_", "第四页整改统计")):
+        date_from = str(raw_options.get(f"{prefix}date_from") or "").strip()
+        date_to = str(raw_options.get(f"{prefix}date_to") or "").strip()
+        if bool(date_from) != bool(date_to):
+            raise ValueError(f"{label}日期范围必须同时填写开始日期和结束日期。")
+        if not date_from:
+            continue
+        try:
+            parsed_from = datetime.strptime(date_from, "%Y-%m-%d").date()
+            parsed_to = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ValueError(f"{label}日期范围格式不正确。") from exc
+        if parsed_to < parsed_from:
+            raise ValueError(f"{label}结束日期不能早于开始日期。")
+        if (parsed_to - parsed_from).days > 366:
+            raise ValueError(f"{label}日期范围不能超过一年。")
+        normalized[f"{prefix}date_from"] = parsed_from.isoformat()
+        normalized[f"{prefix}date_to"] = parsed_to.isoformat()
     return normalized
 
 
@@ -8433,6 +8434,21 @@ def resolve_non_oil_report_period(report_month, generation_options=None):
         REPORT_SNAPSHOT_TYPE_NON_OIL,
         report_month,
         generation_options,
+    )
+
+
+def resolve_non_oil_rectification_period(period_start, generation_options=None):
+    options = normalize_inspection_report_generation_options(generation_options)
+    if options.get("non_oil_rectification_date_from"):
+        return (
+            date.fromisoformat(options["non_oil_rectification_date_from"]),
+            date.fromisoformat(options["non_oil_rectification_date_to"]) + timedelta(days=1),
+        )
+    # Subtract a calendar month, clamping month-end dates rather than using 30 days.
+    previous_month_end = period_start.replace(day=1) - timedelta(days=1)
+    return (
+        previous_month_end.replace(day=min(period_start.day, previous_month_end.day)),
+        period_start,
     )
 
 
@@ -8926,6 +8942,10 @@ def build_inspection_report_generation_context(report):
         "key_issue_classifications": source.get("key_issue_classifications") or [],
         "flow_classifications": source.get("flow_classifications") or [],
         "selection_settings": source.get("selection_settings") or {},
+        "non_oil_rectification_period": {
+            key: (source.get("previous_month_rectification") or {}).get(key)
+            for key in ("date_from", "date_to")
+        },
         "flow_categories": QUALITY_REPORT_FALLBACK_FLOW_ORDER,
         "non_oil_categories": NON_OIL_REPORT_CATEGORIES,
         "non_oil_key_issue_options": NON_OIL_KEY_ISSUE_OPTIONS,
@@ -13182,7 +13202,7 @@ def classify_non_oil_rectification(row):
     return "other"
 
 
-def build_non_oil_previous_rectification(report_month_start, previous_rows):
+def build_non_oil_previous_rectification(report_month_start, previous_rows, period=None):
     issues = [serialize_non_oil_report_issue(row) for row in previous_rows or []]
     grouped = OrderedDict()
     for issue in issues:
@@ -13208,21 +13228,23 @@ def build_non_oil_previous_rectification(report_month_start, previous_rows):
         "pending_acceptance_count": sum(item["pending_acceptance_count"] for item in units),
         "pending_rectification_count": sum(item["pending_rectification_count"] for item in units),
     }
-    previous_month = (
-        report_month_start.replace(year=report_month_start.year - 1, month=12)
-        if report_month_start.month == 1
-        else report_month_start.replace(month=report_month_start.month - 1)
+    period_start, period_end = period or resolve_non_oil_rectification_period(report_month_start)
+    last_day = period_end - timedelta(days=1)
+    period_label = (
+        f"{period_start.year}年{period_start.month}月{period_start.day}日"
+        f"至{last_day.year}年{last_day.month}月{last_day.day}日"
     )
     narrative = (
-        f"{previous_month.month}月各片区整改情况：非油现场检查与非油团购累计发现问题"
+        f"{period_label}各片区整改情况：非油现场检查与非油团购累计发现问题"
         f"{totals['total_count']}项，待验收问题{totals['pending_acceptance_count']}项，"
         f"待整改问题{totals['pending_rectification_count']}项。请各片区尽快完成问题整改。"
         if totals["total_count"]
-        else f"{previous_month.month}月暂无可统计的非油审核通过问题整改记录。"
+        else f"{period_label}暂无可统计的非油审核通过问题整改记录。"
     )
     return {
-        "month": previous_month.strftime("%Y-%m"),
-        "month_label": format_report_month_label(previous_month),
+        "month": period_start.strftime("%Y-%m"),
+        "month_label": period_label,
+        **serialize_report_period(period_start, period_end),
         "narrative": narrative,
         "units": units,
         "totals": totals,
@@ -13679,6 +13701,7 @@ def build_non_oil_report_payload(
     previous_issue_rows,
     classification_map=None,
     key_issue_classification_map=None,
+    rectification_period=None,
 ):
     issues = [
         serialize_non_oil_report_issue(
@@ -13802,6 +13825,7 @@ def build_non_oil_report_payload(
             "previous_month_rectification": build_non_oil_previous_rectification(
                 report_month_start,
                 previous_issue_rows,
+                rectification_period or resolve_non_oil_rectification_period(period_start),
             ),
             "category_distribution": category_distribution,
             "category_distribution_text": build_finance_distribution_text(
@@ -32547,13 +32571,8 @@ def generate_non_oil_report_job(
         report_month,
         generation_options,
     )
-    previous_month_start = (
-        report_month_start.replace(year=report_month_start.year - 1, month=12)
-        if report_month_start.month == 1
-        else report_month_start.replace(month=report_month_start.month - 1)
-    )
-    previous_period_start, previous_period_end = parse_non_oil_report_period(
-        previous_month_start.strftime("%Y-%m")
+    previous_period_start, previous_period_end = resolve_non_oil_rectification_period(
+        period_start, generation_options
     )
     conn = None
     cur = None
@@ -32831,6 +32850,7 @@ def generate_non_oil_report_job(
         previous_issue_rows,
         classification_map,
         key_issue_classification_map,
+        rectification_period=(previous_period_start, previous_period_end),
     )
     normalized_generation_options = normalize_inspection_report_generation_options(
         generation_options or {}
@@ -34237,19 +34257,15 @@ def create_inspection_report_generation_job():
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能生成。"}), 409
     raw_generation_options = data.get("generation_options") or {}
-    generation_options = normalize_inspection_report_generation_options(
-        raw_generation_options
-    )
-    month_start, month_end = resolve_inspection_report_period(
-        report_type,
-        data.get("month", ""),
-        generation_options,
-    )
-    report_month = (month_end - timedelta(days=1)).strftime("%Y-%m")
     force_regenerate = True
     conn = None
     cur = None
     try:
+        generation_options = normalize_inspection_report_generation_options(raw_generation_options)
+        month_start, month_end = resolve_inspection_report_period(
+            report_type, data.get("month", ""), generation_options,
+        )
+        report_month = (month_end - timedelta(days=1)).strftime("%Y-%m")
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
