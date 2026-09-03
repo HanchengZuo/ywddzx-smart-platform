@@ -26,6 +26,7 @@ from ai_prompts import (
     build_safety_quality_report_insight_prompt,
 )
 from ai_usage import build_ai_usage_meta
+from report_ai_memory import remember_report_ai
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -453,6 +454,8 @@ def generate_standard_recommendations(issue_description, standards):
         )
 
 
+@remember_report_ai("quality_insights", QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_quality_measurement_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_quality_measurement_report_insights(report_context):
     prompt = build_quality_measurement_report_insight_prompt(report_context or {})
     prompt_text = f"{QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -545,6 +548,8 @@ def generate_quality_measurement_report_insights(report_context):
         )
 
 
+@remember_report_ai("quality_flow", QUALITY_MEASUREMENT_FLOW_CLASSIFICATION_SYSTEM_PROMPT,
+                    build_quality_measurement_flow_classification_prompt, DEEPSEEK_MODEL)
 def classify_quality_measurement_report_flows(classification_context):
     prompt = build_quality_measurement_flow_classification_prompt(
         classification_context or {}
@@ -637,6 +642,8 @@ def classify_quality_measurement_report_flows(classification_context):
         )
 
 
+@remember_report_ai("non_oil_category", NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT,
+                    build_non_oil_category_classification_prompt, DEEPSEEK_MODEL)
 def classify_non_oil_report_categories(classification_context):
     prompt = build_non_oil_category_classification_prompt(classification_context or {})
     prompt_text = f"{NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT}\n{prompt}"
@@ -693,6 +700,8 @@ def classify_non_oil_report_categories(classification_context):
         )
 
 
+@remember_report_ai("non_oil_key", NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT,
+                    build_non_oil_key_issue_classification_prompt, DEEPSEEK_MODEL)
 def classify_non_oil_key_issues(classification_context):
     prompt = build_non_oil_key_issue_classification_prompt(classification_context or {})
     prompt_text = f"{NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT}\n{prompt}"
@@ -756,6 +765,8 @@ def classify_non_oil_key_issues(classification_context):
         )
 
 
+@remember_report_ai("safety_insights", SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_safety_quality_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_safety_quality_report_insights(report_context):
     prompt = build_safety_quality_report_insight_prompt(report_context or {})
     prompt_text = f"{SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -848,6 +859,8 @@ def generate_safety_quality_report_insights(report_context):
         )
 
 
+@remember_report_ai("finance_insights", FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_finance_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_finance_report_insights(report_context):
     prompt = build_finance_report_insight_prompt(report_context or {})
     prompt_text = f"{FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -940,6 +953,8 @@ def generate_finance_report_insights(report_context):
         )
 
 
+@remember_report_ai("equipment_insights", EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_equipment_facilities_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_equipment_facilities_report_insights(report_context):
     prompt = build_equipment_facilities_report_insight_prompt(report_context or {})
     prompt_text = f"{EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -1035,6 +1050,8 @@ def generate_equipment_facilities_report_insights(report_context):
         )
 
 
+@remember_report_ai("service_insights", ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_on_site_service_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_on_site_service_report_insights(report_context):
     prompt = build_on_site_service_report_insight_prompt(report_context or {})
     prompt_text = f"{ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -1130,6 +1147,8 @@ def generate_on_site_service_report_insights(report_context):
         )
 
 
+@remember_report_ai("non_oil_insights", NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT,
+                    build_non_oil_report_insight_prompt, DEEPSEEK_MODEL)
 def generate_non_oil_report_insights(report_context):
     prompt = build_non_oil_report_insight_prompt(report_context or {})
     prompt_text = f"{NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"

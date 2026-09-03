@@ -41,6 +41,13 @@ from ai_utils import (
     generate_standard_recommendations,
 )
 from ai_usage import get_ai_pricing_table
+from report_ai_memory import (
+    begin_report_ai_memory,
+    end_report_ai_memory,
+    record_classification_reuse,
+    report_ai_generation_log,
+    set_report_ai_evidence,
+)
 from account_security import (
     DEFAULT_WEAK_PASSWORDS,
     PasswordPolicyError,
@@ -232,7 +239,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.4.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.5.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -8943,6 +8950,9 @@ def save_inspection_report_snapshot(
         else ""
     )
     normalized_report = dict(report or {})
+    generation_log = report_ai_generation_log()
+    if generation_log is not None:
+        normalized_report["ai_generation_log"] = generation_log
     if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
         normalized_report["data_policy_version"] = QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION
     elif report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
@@ -9035,6 +9045,7 @@ def serialize_inspection_report_job(row):
         "status": row.get("status") or "queued",
         "progress": max(0, min(100, int(row.get("progress") or 0))),
         "stage_message": row.get("stage_message") or "等待后台处理",
+        "ai_generation_log": row.get("ai_generation_log") or {},
         "error_message": row.get("error_message") or "",
         "generation_options": normalize_inspection_report_generation_options(
             row.get("generation_options")
@@ -9075,7 +9086,8 @@ def get_inspection_report_job(cur, task_id):
             started_at,
             finished_at,
             updated_at,
-            generation_options
+            generation_options,
+            ai_generation_log
         FROM inspection_report_jobs
         WHERE task_id = %s
         LIMIT 1;
@@ -9110,7 +9122,8 @@ def get_active_inspection_report_job(
             started_at,
             finished_at,
             updated_at,
-            generation_options
+            generation_options,
+            ai_generation_log
         FROM inspection_report_jobs
         WHERE report_type = %s
           AND period_start = %s
@@ -9664,8 +9677,12 @@ def serialize_report_issue(row):
 def build_quality_report_ai_context(month_start, rows, distribution, selection_settings):
     serialized_rows = [serialize_report_issue(row) for row in rows]
     trace_candidates = [item for item in serialized_rows if item.get("description")]
+    # A stable, dataset-seeded draw allows identical input to reuse AI analysis.
+    trace_candidates.sort(key=lambda item: item["issue_id"])
+    trace_seed = ",".join(str(item["issue_id"]) for item in trace_candidates)
     designated_typical_issue_id = (
-        random.choice(trace_candidates).get("issue_id") if trace_candidates else 0
+        random.Random(trace_seed).choice(trace_candidates).get("issue_id")
+        if trace_candidates else 0
     )
     flow_items = []
     for flow in distribution:
@@ -31303,6 +31320,7 @@ def generate_quality_measurement_report_job(
     rows = []
     user = None
     standard_options = []
+    classification_map = {}
     classification_candidates = []
     classification_ai_result = None
     selection_settings_record = {
@@ -31428,6 +31446,7 @@ def generate_quality_measurement_report_job(
     finally:
         close_db_resources(cur, conn)
 
+    record_classification_reuse("quality_flow", classification_map, rows)
     if classification_candidates:
         update_inspection_report_job(
             task_id,
@@ -31513,6 +31532,7 @@ def generate_quality_measurement_report_job(
             distribution,
             selection_settings_record["settings"],
         )
+        set_report_ai_evidence(rows, selection_settings_record["settings"])
         insight_result = generate_quality_measurement_report_insights(ai_context)
     else:
         update_inspection_report_job(task_id, "running", 72, "当前月份暂无问题，正在生成空白统计报告")
@@ -31703,6 +31723,7 @@ def generate_safety_quality_report_job(
             "正在调用 DeepSeek 筛选典型问题、重点问题并生成分析建议",
         )
         ai_context = build_safety_quality_ai_context(month_start, private_sections)
+        set_report_ai_evidence(rows)
         insight_result = generate_safety_quality_report_insights(ai_context)
     else:
         update_inspection_report_job(
@@ -32021,6 +32042,7 @@ def generate_on_site_service_report_job(
             "正在调用 DeepSeek 按单位和服务板块筛选突出问题并生成建议",
         )
         ai_context = build_on_site_service_ai_context(month_start, unit_blocks)
+        set_report_ai_evidence(issue_rows)
         insight_result = generate_on_site_service_report_insights(ai_context)
     else:
         update_inspection_report_job(
@@ -32204,6 +32226,7 @@ def generate_finance_report_job(
             report.get("project_distribution") or [],
             report.get("key_link_distribution") or [],
         )
+        set_report_ai_evidence(rows)
         insight_result = generate_finance_report_insights(ai_context)
     else:
         update_inspection_report_job(
@@ -32458,6 +32481,7 @@ def generate_equipment_facilities_report_job(
             report.get("area_distribution") or [],
             report.get("item_distribution") or [],
         )
+        set_report_ai_evidence(issue_rows)
         insight_result = generate_equipment_facilities_report_insights(ai_context)
     else:
         update_inspection_report_job(
@@ -32669,6 +32693,8 @@ def generate_non_oil_report_job(
             f"{len(issue_rows)} 条审核通过问题，正在统计单位、整改和六类非油问题"
         ),
     )
+    record_classification_reuse("non_oil_category", classification_map, issue_rows)
+    record_classification_reuse("non_oil_key", key_issue_classification_map, issue_rows)
     classification_context = build_non_oil_category_classification_context(
         issue_rows,
         classification_map,
@@ -32849,6 +32875,7 @@ def generate_non_oil_report_job(
             unit_rows,
             category_distribution,
         )
+        set_report_ai_evidence(non_oil_issues)
         insight_result = generate_non_oil_report_insights(ai_context)
     else:
         update_inspection_report_job(
@@ -32954,8 +32981,10 @@ def run_inspection_report_generation_job(task_id):
 
     if not job or job.get("status") != "queued":
         return
+    memory_token = None
     try:
         report_type = job.get("report_type")
+        memory_token = begin_report_ai_memory(get_db_connection, task_id, report_type)
         if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
             generate_quality_measurement_report_job(
                 task_id,
@@ -33016,6 +33045,8 @@ def run_inspection_report_generation_job(task_id):
             "AI报告生成失败",
             str(exc) or "报告生成失败，请稍后重试。",
         )
+    finally:
+        end_report_ai_memory(memory_token)
 
 
 def start_inspection_report_generation_job(task_id):
