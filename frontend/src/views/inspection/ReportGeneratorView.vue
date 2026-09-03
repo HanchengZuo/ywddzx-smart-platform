@@ -4,14 +4,14 @@
       <div>
         <div class="page-kicker">AI REPORT STUDIO</div>
         <h2>报告生成</h2>
-        <p>选择报告类型和历史时间段查看报告；具备生成权限时可按新的日期范围覆盖生成。</p>
+        <p>每种报告展示最后生成成功的成稿；面板保留最新保存设置，重新生成后更新报告。</p>
       </div>
       <div class="report-month-control">
         <button
           type="button"
           class="export-ppt-btn"
           :disabled="!hasReport || loading || templateUnavailable"
-          :title="!hasReport ? '请先选择一份历史报告' : '导出当前查看的历史报告快照'"
+          :title="!hasReport ? '请先生成报告' : '导出最后生成成功的报告'"
           @click="openExportDialog"
         >
           <span class="ppt-file-mark">P</span>
@@ -28,51 +28,54 @@
         <div class="period-editor-title">
           <span>REPORT DATE RANGE</span>
           <h3>本次报告数据日期范围</h3>
-          <p>相同日期范围再次生成会直接覆盖原历史报告；历史报告查看不会重新调用 AI。</p>
+          <p>日期调整自动保存，不会调用 AI；点击重新生成后，按最新保存设置更新下方成稿。</p>
         </div>
         <div class="period-editor-fields">
           <label>
             <span>开始日期</span>
-            <input v-model="reportDateFrom" type="date" :disabled="!canGenerateReports" @change="handleReportDateRangeChange" />
+            <input v-model="reportDateFrom" type="date" :disabled="!canGenerateReports || loading" @change="handleReportDateRangeChange" />
           </label>
           <i aria-hidden="true">至</i>
           <label>
             <span>结束日期</span>
-            <input v-model="reportDateTo" type="date" :disabled="!canGenerateReports" @change="handleReportDateRangeChange" />
+            <input v-model="reportDateTo" type="date" :disabled="!canGenerateReports || loading" @change="handleReportDateRangeChange" />
           </label>
           <button
             v-if="canGenerateReports"
             type="button"
             class="period-generate-btn"
-            :disabled="loading || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)"
+            :disabled="loading || workspaceSaving || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)"
             @click="startGeneration({ force: true })"
           >
-            {{ matchingHistory ? '覆盖此时间段报告' : '生成此时间段报告' }}
+            {{ hasReport ? '重新生成报告' : '生成此时间段报告' }}
           </button>
         </div>
-        <small v-if="!canGenerateReports" class="period-readonly-note">当前日期范围为只读，选择下方历史记录可切换查看。</small>
+        <small v-if="!canGenerateReports" class="period-readonly-note">当前日期范围为只读，始终展示最后生成成功的报告。</small>
+        <p v-if="workspaceSaving" class="workspace-save-note" role="status">正在保存日期设置...</p>
+        <p v-else-if="workspaceSaveError" class="workspace-error" role="alert">{{ workspaceSaveError }}</p>
+        <p v-else-if="workspace.updated_at" class="workspace-save-note">最近保存：{{ workspace.updated_by_name || '系统' }} · {{ workspace.updated_at }}</p>
+        <p v-if="hasSavedReportChanges" class="workspace-pending-note" role="status">当前设置与成稿不同，保存后需重新生成才能应用。下方及导出的 PPT 仍为最后生成成功的成稿，不会自动调用 AI。</p>
       </div>
       <div class="report-history-panel">
         <div class="report-history-title">
           <div>
-            <span>REPORT HISTORY</span>
+            <span>GENERATION LOG</span>
             <h3>已生成历史报告</h3>
           </div>
           <strong>{{ reportHistory.length }}</strong>
         </div>
         <div v-if="reportHistory.length" class="report-history-list">
-          <button
+          <article
             v-for="item in reportHistory"
-            :key="item.id"
-            type="button"
-            :class="['report-history-item', { active: selectedSnapshotId === item.id }]"
-            @click="selectHistorySnapshot(item)"
+            :key="item.task_id"
+            class="report-history-item"
           >
-            <span>{{ item.date_from }} 至 {{ item.date_to }}</span>
-            <small>生成于 {{ item.generated_at }}<template v-if="item.generated_by_name"> · {{ item.generated_by_name }}</template></small>
-          </button>
+            <span>{{ item.requested_by_name }} · {{ item.requested_at }}</span>
+            <small>{{ formatGenerationStatus(item.status) }} · {{ item.date_from }} 至 {{ item.date_to }}</small>
+          </article>
         </div>
-        <div v-else class="report-history-empty">当前报告类型还没有历史报告。</div>
+        <div v-else class="report-history-empty">当前报告类型还没有生成操作记录。</div>
+        <small class="workspace-save-note">仅记录生成操作，不支持点击或切换历史报告。</small>
       </div>
     </section>
 
@@ -113,7 +116,7 @@
         <div class="report-source-copy">
           <span class="source-panel-kicker">DATA SOURCE</span>
           <div class="source-panel-title-row">
-            <h3>{{ selectedSnapshotId ? '后续生成数据来源' : '本次报告数据来源' }}</h3>
+            <h3>本次报告数据来源</h3>
             <span :class="['source-mode-badge', sourceSelectionMode]">
               {{ sourceSelectionMode === 'custom' ? '自定义范围' : '全部可用站点' }}
             </span>
@@ -135,14 +138,14 @@
             </em>
           </div>
           <div v-if="sourceSelectionDirty" class="source-dirty-note">
-            最近保存的数据范围与当前历史报告不同；覆盖生成时会采用最近保存配置。
+            最近保存的数据范围与当前成稿不同；重新生成时会采用最近保存配置。
           </div>
           <small v-if="sourceSelectionMeta.updated_at" class="source-last-saved">
             最近保存配置：{{ sourceSelectionMeta.updated_by_name || '未知用户' }} · {{ sourceSelectionMeta.updated_at }}
           </small>
           <div v-if="selectedSnapshotId" class="historical-config-note">
             <div>
-              <span>当前历史报告采用</span>
+              <span>当前成稿采用</span>
               <strong>{{ historicalSourceSelectionDescription }}</strong>
               <small>{{ historicalSourceSelection.updated_by_name || '生成报告时的用户' }}<template v-if="historicalSourceSelection.updated_at"> · {{ historicalSourceSelection.updated_at }}</template></small>
             </div>
@@ -185,7 +188,7 @@
           最近保存规则：{{ selectionSettingsMeta.updated_by_name || '系统默认' }}<template v-if="selectionSettingsMeta.updated_at"> · {{ selectionSettingsMeta.updated_at }}</template>
         </small>
         <button v-if="selectedSnapshotId" type="button" class="historical-rule-btn" @click="openSelectionSettingsDialog('historical')">
-          查看历史报告当时规则
+          查看当前成稿采用的规则
         </button>
       </div>
     </section>
@@ -259,7 +262,8 @@
       :readonly="!canGenerateReports"
       :busy="loading"
       :error="nonOilRectificationError"
-      @reset="nonOilRectificationOverride = null"
+      @update:model-value="saveReportDateSettings"
+      @reset="resetRectificationPeriod"
     />
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel card-surface">
@@ -1594,7 +1598,7 @@
       <div class="state-orb"></div>
       <h3>暂未生成报告</h3>
       <p v-if="canGenerateReports">请在上方选择日期范围并生成报告。</p>
-      <p v-else>当前报告类型暂无可查看的历史报告。</p>
+      <p v-else>当前报告类型暂无已生成的报告。</p>
     </section>
 
     <teleport to="body">
@@ -1604,7 +1608,7 @@
           <header class="source-dialog-head">
             <div>
               <span>REPORT DATA SCOPE</span>
-              <h3>{{ sourceDialogMode === 'historical' ? '历史报告当时数据来源' : '设置报告数据来源' }}</h3>
+              <h3>{{ sourceDialogMode === 'historical' ? '当前成稿使用的数据来源' : '设置报告数据来源' }}</h3>
               <p>候选站点已按报告模板、日期范围和当前账号权限自动筛选。</p>
             </div>
             <div class="source-dialog-total">
@@ -1765,7 +1769,7 @@
             </article>
           </div>
           <footer class="classification-dialog-footer">
-            <p>保存只更新后续报告采用的分类，不会改写当前历史报告。</p>
+            <p>保存后会记住本次调整，点击重新生成后应用；当前成稿保持不变。</p>
             <div><button type="button" class="classification-cancel-btn" @click="closeFlowClassificationDialog">关闭</button><button type="button" class="classification-save-btn" :disabled="flowClassificationsSaving || !hasFlowClassificationChanges" @click="saveFlowClassificationAdjustments">{{ flowClassificationsSaving ? '保存中...' : '保存分类' }}</button></div>
           </footer>
         </section>
@@ -1850,7 +1854,7 @@
             <div>
               <span>NON-OIL CATEGORY REVIEW</span>
               <h3>查看与调整“其他”问题分类</h3>
-              <p>每条问题必须归入明确类别；人工调整供后续生成使用，不改写历史快照。</p>
+              <p>每条问题必须归入明确类别。人工调整自动记忆，重新生成后应用到成稿。</p>
             </div>
             <div><strong>{{ nonOilClassifications.length }}</strong><span>条问题</span></div>
           </header>
@@ -1923,8 +1927,8 @@
           <header class="selection-dialog-head">
             <div>
               <span>REPORT ISSUE RULES</span>
-              <h3>{{ selectionSettingsDialogMode === 'historical' ? '历史报告当时选题规则' : '设置质量计量报告选题规则' }}</h3>
-              <p>{{ selectionSettingsDialogMode === 'historical' ? '当前显示该历史报告生成时使用的规则；保存后会设为后续报告的默认规则。' : '规则全局共享并自动记忆，保存后在下一次生成报告时生效。' }}</p>
+              <h3>{{ selectionSettingsDialogMode === 'historical' ? '当前成稿使用的选题规则' : '设置质量计量报告选题规则' }}</h3>
+              <p>{{ selectionSettingsDialogMode === 'historical' ? '当前显示成稿生成时使用的规则；保存后会设为后续报告的默认规则。' : '规则全局共享并自动记忆，保存后在下一次生成报告时生效。' }}</p>
             </div>
             <div class="selection-updated-meta">
               <span>最后更新</span>
@@ -2274,6 +2278,11 @@ const initialReportDateRange = getDefaultNonOilDateRange(selectedMonth.value)
 const reportDateFrom = ref(initialReportDateRange.date_from)
 const reportDateTo = ref(initialReportDateRange.date_to)
 const reportHistory = ref([])
+const workspace = ref({ generation_options: {}, revision: 0, updated_at: '', updated_by_name: '', regeneration_required: false })
+const workspaceSaving = ref(false)
+const workspaceSaveError = ref('')
+let workspaceSaveQueue = Promise.resolve()
+let workspaceSaveSequence = 0
 const selectedSnapshotId = ref(0)
 const selectedReportType = ref('quality_measurement')
 const reportTypes = ref(DEFAULT_REPORT_TYPES)
@@ -2405,9 +2414,24 @@ const validReportDateRange = computed(() => Boolean(
   && reportDateTo.value
   && reportDateFrom.value <= reportDateTo.value
 ))
-const matchingHistory = computed(() => reportHistory.value.find((item) => (
-  item.date_from === reportDateFrom.value && item.date_to === reportDateTo.value
-)) || null)
+const hasSavedReportChanges = computed(() => {
+  if (!hasReport.value) return false
+  const snapshot = report.value.snapshot || {}
+  const context = report.value.generation_context || {}
+  const categoriesChanged = (current, saved) => {
+    if (!current.length) return false
+    const previous = new Map((saved || []).map(item => [Number(item.issue_id), item.effective_category]))
+    return current.some(item => previous.get(Number(item.issue_id)) !== item.effective_category)
+  }
+  return workspace.value.regeneration_required
+    || snapshot.date_from !== reportDateFrom.value || snapshot.date_to !== reportDateTo.value
+    || (isQualityMeasurementReport.value && sourceSelectionDirty.value)
+    || (isQualityMeasurementReport.value && categoriesChanged(flowClassifications.value, context.flow_classifications || report.value.flow_classifications))
+    || (isNonOilReport.value && (
+      categoriesChanged(nonOilClassifications.value, context.category_classifications || report.value.category_classifications)
+      || categoriesChanged(nonOilKeyClassifications.value, context.key_issue_classifications || report.value.key_issue_classifications)
+    ))
+})
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
 const isFinanceReport = computed(() => selectedReportType.value === 'finance')
@@ -3402,6 +3426,7 @@ const saveSelectionSettings = async () => {
     }
     selectionSettingsDialogMode.value = 'saved'
     selectionSettingsMessage.value = '选题规则已保存，重新生成报告后生效。'
+    await refreshWorkspaceMeta()
   } catch (err) {
     selectionSettingsError.value = err?.response?.data?.error || err?.message || '保存选题规则失败。'
   } finally {
@@ -3515,7 +3540,8 @@ const saveFlowClassificationAdjustments = async () => {
       flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
     )
     closeFlowClassificationDialog()
-    flowClassificationMessage.value = '分类已保存。历史报告保持原快照，新报告将使用本次调整。'
+    flowClassificationMessage.value = '分类已保存，重新生成报告时将采用本次调整。'
+    await refreshWorkspaceMeta()
   } catch (err) {
     flowClassificationsError.value = err?.response?.data?.error || err?.message || '保存环节分类失败。'
   } finally {
@@ -3548,8 +3574,7 @@ const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
       params: {
         month: selectedMonth.value,
         date_from: nonOilDateFrom.value,
-        date_to: nonOilDateTo.value,
-        snapshot_id: selectedSnapshotId.value || undefined
+        date_to: nonOilDateTo.value
       }
     })
     if (requestId !== contextRequestId || libraryRequestId !== nonOilIssueLibraryRequestId) return
@@ -3577,7 +3602,7 @@ const openNonOilIssueLibraryDialog = async () => {
   nonOilIssueLibraryKeyword.value = ''
   nonOilIssueLibrarySelectionFilter.value = ''
   nonOilIssueLibraryDialogVisible.value = true
-  if (!selectedSnapshotId.value) await loadNonOilIssueLibrary(contextRequestId)
+  await loadNonOilIssueLibrary(contextRequestId)
 }
 
 const closeNonOilIssueLibraryDialog = () => {
@@ -3642,6 +3667,9 @@ const saveNonOilIssueSelection = async () => {
       .filter((item) => item.included)
       .map((item) => Number(item.issue_id))
     closeNonOilIssueLibraryDialog()
+    await loadNonOilClassifications(contextRequestId)
+    await loadNonOilKeyClassifications(contextRequestId)
+    await refreshWorkspaceMeta()
   } catch (err) {
     nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '保存报告问题选择失败。'
   } finally {
@@ -3671,8 +3699,7 @@ const loadNonOilClassifications = async (requestId = contextRequestId) => {
       params: {
         month: selectedMonth.value,
         date_from: reportDateFrom.value,
-        date_to: reportDateTo.value,
-        snapshot_id: selectedSnapshotId.value || undefined
+        date_to: reportDateTo.value
       }
     })
     if (requestId !== contextRequestId) return
@@ -3692,7 +3719,8 @@ const loadNonOilClassifications = async (requestId = contextRequestId) => {
   }
 }
 
-const openNonOilClassificationDialog = () => {
+const openNonOilClassificationDialog = async () => {
+  await loadNonOilClassifications(contextRequestId)
   nonOilClassificationDrafts.value = Object.fromEntries(
     nonOilClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
   )
@@ -3717,12 +3745,15 @@ const saveNonOilClassificationAdjustments = async () => {
   try {
     const response = await axios.put('/api/inspection-reports/non-oil-category-classifications', {
       month: selectedMonth.value,
-      snapshot_id: selectedSnapshotId.value || undefined,
+      date_from: reportDateFrom.value,
+      date_to: reportDateTo.value,
       classifications
     })
     if (!response.data?.success) throw new Error(response.data?.error || '保存非油问题分类失败。')
     closeNonOilClassificationDialog()
     await loadNonOilClassifications(contextRequestId)
+    await loadNonOilIssueLibrary(contextRequestId)
+    await refreshWorkspaceMeta()
   } catch (err) {
     nonOilClassificationsError.value = err?.response?.data?.error || err?.message || '保存非油问题分类失败。'
   } finally {
@@ -3752,8 +3783,7 @@ const loadNonOilKeyClassifications = async (requestId = contextRequestId) => {
       params: {
         month: selectedMonth.value,
         date_from: reportDateFrom.value,
-        date_to: reportDateTo.value,
-        snapshot_id: selectedSnapshotId.value || undefined
+        date_to: reportDateTo.value
       }
     })
     if (requestId !== contextRequestId) return
@@ -3773,7 +3803,8 @@ const loadNonOilKeyClassifications = async (requestId = contextRequestId) => {
   }
 }
 
-const openNonOilKeyClassificationDialog = () => {
+const openNonOilKeyClassificationDialog = async () => {
+  await loadNonOilKeyClassifications(contextRequestId)
   nonOilKeyClassificationDrafts.value = Object.fromEntries(
     nonOilKeyClassifications.value.map((item) => [item.issue_id, item.effective_category || '不纳入重点问题'])
   )
@@ -3798,12 +3829,14 @@ const saveNonOilKeyClassificationAdjustments = async () => {
   try {
     const response = await axios.put('/api/inspection-reports/non-oil-key-issue-classifications', {
       month: selectedMonth.value,
-      snapshot_id: selectedSnapshotId.value || undefined,
+      date_from: reportDateFrom.value,
+      date_to: reportDateTo.value,
       classifications
     })
     if (!response.data?.success) throw new Error(response.data?.error || '保存重点问题分类失败。')
     closeNonOilKeyClassificationDialog()
     await loadNonOilKeyClassifications(contextRequestId)
+    await refreshWorkspaceMeta()
   } catch (err) {
     nonOilKeyClassificationsError.value = err?.response?.data?.error || err?.message || '保存重点问题分类失败。'
   } finally {
@@ -3970,6 +4003,7 @@ const applySourceSelection = async () => {
     }
     sourceDialogMode.value = 'saved'
     closeSourceDialog()
+    await refreshWorkspaceMeta()
   } catch (err) {
     sourceError.value = err?.response?.data?.error || err?.message || '保存数据来源失败。'
   }
@@ -3987,72 +4021,77 @@ const syncSelectedMonthFromDateRange = () => {
   if (/^\d{4}-\d{2}$/.test(monthValue)) selectedMonth.value = monthValue
 }
 
-const buildIssueLibraryCategoryStats = (issues = []) => {
-  const groups = new Map()
-  issues.forEach((item) => {
-    const name = item.category_name || '未分类'
-    const current = groups.get(name) || {
-      name,
-      display_name: item.category_display_name || name,
-      total_count: 0,
-      included_count: 0
-    }
-    current.total_count += 1
-    if (item.included) current.included_count += 1
-    groups.set(name, current)
-  })
-  return [...groups.values()]
+const formatGenerationStatus = (status) => ({ queued: '已提交生成', running: '生成中', completed: '已生成', failed: '生成失败' })[status] || status
+
+const applyWorkspaceSettings = (value = {}, reportPayload = {}) => {
+  workspace.value = value
+  const options = value.generation_options || {}
+  reportDateFrom.value = options.date_from || reportPayload.snapshot?.date_from || initialReportDateRange.date_from
+  reportDateTo.value = options.date_to || reportPayload.snapshot?.date_to || initialReportDateRange.date_to
+  syncSelectedMonthFromDateRange()
+  const period = options.non_oil_rectification_date_from ? {
+    date_from: options.non_oil_rectification_date_from,
+    date_to: options.non_oil_rectification_date_to
+  } : (!options.date_from ? historicalRectificationPeriod(reportPayload) : null)
+  const automatic = defaultRectificationPeriod(reportDateFrom.value)
+  nonOilRectificationOverride.value = period && (period.date_from !== automatic.date_from || period.date_to !== automatic.date_to) ? period : null
 }
 
-const applyHistoricalGenerationContext = (reportPayload = {}) => {
-  const context = reportPayload.generation_context || {}
-  if (isQualityMeasurementReport.value && Array.isArray(context.flow_classifications)) {
-    flowClassifications.value = context.flow_classifications
-    flowClassificationCategories.value = Array.isArray(context.flow_categories) && context.flow_categories.length
-      ? context.flow_categories
-      : [...new Set(context.flow_classifications.map((item) => item.effective_category).filter(Boolean))]
-    flowClassificationDrafts.value = Object.fromEntries(
-      flowClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
-    )
+const refreshWorkspaceMeta = async () => {
+  const reportType = selectedReportType.value
+  workspace.value.regeneration_required = true
+  try {
+    const response = await axios.get('/api/inspection-reports/workspace', { params: { report_type: reportType } })
+    if (reportType === selectedReportType.value && response.data?.success) workspace.value = response.data.workspace
+  } catch {
+    // The mutation is already saved; keep the pending-generation hint if metadata cannot refresh.
   }
-  if (!isNonOilReport.value) return
-  const savedPeriod = historicalRectificationPeriod(reportPayload)
-  const defaultPeriod = defaultRectificationPeriod(reportDateFrom.value)
-  nonOilRectificationOverride.value = savedPeriod
-    && (savedPeriod.date_from !== defaultPeriod.date_from || savedPeriod.date_to !== defaultPeriod.date_to)
-    ? savedPeriod : null
-  if (Array.isArray(context.issue_library) && context.issue_library.length) {
-    nonOilIssueLibrary.value = context.issue_library
-    nonOilIssueCategories.value = buildIssueLibraryCategoryStats(context.issue_library)
-    nonOilIssueSelectionDraftIds.value = context.issue_library
-      .filter((item) => item.included)
-      .map((item) => Number(item.issue_id))
+}
+
+const currentDateOptions = () => ({
+  date_from: reportDateFrom.value,
+  date_to: reportDateTo.value,
+  ...(isNonOilReport.value ? {
+    non_oil_rectification_date_from: nonOilRectificationPeriod.value.date_from,
+    non_oil_rectification_date_to: nonOilRectificationPeriod.value.date_to
+  } : {})
+})
+
+const saveReportDateSettings = async () => {
+  if (!canGenerateReports.value || !validReportDateRange.value || (isNonOilReport.value && nonOilRectificationError.value)) return false
+  const reportType = selectedReportType.value
+  const sequence = ++workspaceSaveSequence
+  const options = currentDateOptions()
+  workspaceSaving.value = true
+  workspaceSaveError.value = ''
+  const save = workspaceSaveQueue.catch(() => {}).then(() => axios.put('/api/inspection-reports/workspace', {
+    report_type: reportType, generation_options: options
+  }))
+  workspaceSaveQueue = save
+  try {
+    const response = await save
+    if (!response.data?.success) throw new Error(response.data?.error || '保存日期范围失败。')
+    if (sequence === workspaceSaveSequence && reportType === selectedReportType.value) workspace.value = response.data.workspace
+    return true
+  } catch (err) {
+    if (sequence === workspaceSaveSequence && reportType === selectedReportType.value) workspaceSaveError.value = err?.response?.data?.error || err?.message || '保存日期范围失败。'
+    return false
+  } finally {
+    if (sequence === workspaceSaveSequence) workspaceSaving.value = false
   }
-  nonOilClassifications.value = Array.isArray(context.category_classifications)
-    ? context.category_classifications
-    : []
-  nonOilClassificationCategories.value = Array.isArray(context.non_oil_categories)
-    ? context.non_oil_categories
-    : [...new Set(nonOilClassifications.value.map((item) => item.effective_category).filter(Boolean))]
-  nonOilClassificationDrafts.value = Object.fromEntries(
-    nonOilClassifications.value.map((item) => [item.issue_id, item.effective_category || ''])
-  )
-  nonOilKeyClassifications.value = Array.isArray(context.key_issue_classifications)
-    ? context.key_issue_classifications
-    : []
-  nonOilKeyClassificationCategories.value = Array.isArray(context.non_oil_key_issue_options)
-    ? context.non_oil_key_issue_options
-    : [...new Set(nonOilKeyClassifications.value.map((item) => item.effective_category).filter(Boolean))]
-  nonOilKeyClassificationDrafts.value = Object.fromEntries(
-    nonOilKeyClassifications.value.map((item) => [item.issue_id, item.effective_category || '不纳入重点问题'])
-  )
+}
+
+const resetRectificationPeriod = async () => {
+  nonOilRectificationOverride.value = null
+  await saveReportDateSettings()
 }
 
 const refreshReportHistory = async () => {
+  const reportType = selectedReportType.value
   const response = await axios.get('/api/inspection-reports/history', {
-    params: { report_type: selectedReportType.value }
+    params: { report_type: reportType }
   })
-  if (response.data?.success) {
+  if (reportType === selectedReportType.value && response.data?.success) {
     reportHistory.value = Array.isArray(response.data.history) ? response.data.history : []
   }
 }
@@ -4190,24 +4229,15 @@ const pollActiveJob = async () => {
     activeJob.value = job
     if (job.status === 'completed') {
       clearPolling()
-      if (response.data?.report) {
-        report.value = response.data.report
-        selectedSnapshotId.value = Number(response.data.report?.snapshot?.id || 0)
-        reportDateFrom.value = response.data.report?.snapshot?.date_from || reportDateFrom.value
-        reportDateTo.value = response.data.report?.snapshot?.date_to || reportDateTo.value
-        applyHistoricalGenerationContext(response.data.report)
-        activeQualitySlideIndex.value = 0
-      }
-      await refreshReportHistory()
-      loading.value = false
-      error.value = ''
+      activeQualitySlideIndex.value = 0
+      await loadReportState()
       return
     }
     if (job.status === 'failed') {
       clearPolling()
-      if (response.data?.report) report.value = response.data.report
       loading.value = false
       error.value = job.error_message || 'AI报告生成失败，请稍后重试。'
+      await refreshReportHistory().catch(() => {})
       return
     }
     scheduleJobPoll()
@@ -4218,10 +4248,11 @@ const pollActiveJob = async () => {
 }
 
 const startGeneration = async (options = {}) => {
-  if (!validReportDateRange.value || templateUnavailable.value || !canGenerateReports.value) return
+  if (loading.value || workspaceSaving.value || !validReportDateRange.value || templateUnavailable.value || !canGenerateReports.value) return
   if (isNonOilReport.value && nonOilRectificationError.value) return
+  const reportType = selectedReportType.value
+  if (!await saveReportDateSettings() || reportType !== selectedReportType.value) return
   syncSelectedMonthFromDateRange()
-  selectedSnapshotId.value = 0
   const requestId = ++contextRequestId
   clearPolling()
   loading.value = true
@@ -4235,23 +4266,7 @@ const startGeneration = async (options = {}) => {
       report_type: selectedReportType.value,
       month: selectedMonth.value,
       force: options?.force === true,
-      generation_options: {
-        date_from: reportDateFrom.value,
-        date_to: reportDateTo.value
-      }
-    }
-    if (isQualityMeasurementReport.value) {
-      payload.generation_options = {
-        ...payload.generation_options,
-        station_filter_enabled: sourceSelectionMode.value === 'custom',
-        station_ids: sourceSelectionMode.value === 'custom'
-          ? selectedSourceStationIds.value
-          : []
-      }
-    }
-    if (isNonOilReport.value) {
-      payload.generation_options.non_oil_rectification_date_from = nonOilRectificationPeriod.value.date_from
-      payload.generation_options.non_oil_rectification_date_to = nonOilRectificationPeriod.value.date_to
+      generation_options: currentDateOptions()
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
     if (requestId !== contextRequestId) return
@@ -4259,13 +4274,8 @@ const startGeneration = async (options = {}) => {
       throw new Error(response.data?.error || 'AI报告生成任务提交失败。')
     }
     if (response.data?.report && !response.data?.job) {
-      report.value = response.data.report
-      selectedSnapshotId.value = Number(response.data.report?.snapshot?.id || 0)
-      applyHistoricalGenerationContext(response.data.report)
       activeQualitySlideIndex.value = 0
-      activeJob.value = null
-      loading.value = false
-      await refreshReportHistory()
+      await loadReportState()
       return
     }
     if (!response.data?.job?.task_id) {
@@ -4273,6 +4283,7 @@ const startGeneration = async (options = {}) => {
     }
     activeJob.value = response.data.job
     scheduleJobPoll()
+    await refreshReportHistory().catch(() => {})
   } catch (err) {
     if (requestId !== contextRequestId) return
     activeJob.value = null
@@ -4281,7 +4292,7 @@ const startGeneration = async (options = {}) => {
   }
 }
 
-const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
+const loadReportState = async () => {
   const requestId = ++contextRequestId
   clearPolling()
   activeJob.value = null
@@ -4300,14 +4311,10 @@ const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
   }
   loading.value = true
   try {
+    await workspaceSaveQueue.catch(() => {})
+    if (requestId !== contextRequestId) return
     const response = await axios.get('/api/inspection-reports/status', {
-      params: {
-        report_type: selectedReportType.value,
-        month: selectedMonth.value,
-        date_from: reportDateFrom.value,
-        date_to: reportDateTo.value,
-        snapshot_id: snapshotId || undefined
-      }
+      params: { report_type: selectedReportType.value }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) {
@@ -4315,30 +4322,26 @@ const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
     }
     applyReportCapabilities(response.data)
     reportHistory.value = Array.isArray(response.data?.history) ? response.data.history : []
-    if (!response.data?.report && !snapshotId && reportHistory.value.length) {
-      loading.value = false
-      await selectHistorySnapshot(reportHistory.value[0])
-      return
-    }
     report.value = response.data?.report || createEmptyReport()
-    selectedSnapshotId.value = Number(report.value?.snapshot?.id || snapshotId || 0)
-    if (report.value?.snapshot?.date_from) reportDateFrom.value = report.value.snapshot.date_from
-    if (report.value?.snapshot?.date_to) reportDateTo.value = report.value.snapshot.date_to
-    syncSelectedMonthFromDateRange()
-    applyHistoricalGenerationContext(report.value)
+    selectedSnapshotId.value = Number(report.value?.snapshot?.id || 0)
+    applyWorkspaceSettings(response.data?.workspace || {}, report.value)
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
+      if (requestId !== contextRequestId) return
       await loadSelectionSettings()
-      if (!selectedSnapshotId.value) await loadFlowClassifications(requestId)
+      if (requestId !== contextRequestId) return
+      await loadFlowClassifications(requestId)
+      if (requestId !== contextRequestId) return
       resetNonOilIssueLibraryState()
       resetNonOilClassificationState()
       resetNonOilKeyClassificationState()
     } else if (isNonOilReport.value) {
-      if (!selectedSnapshotId.value) {
-        await loadNonOilIssueLibrary(requestId)
-        await loadNonOilClassifications(requestId)
-        await loadNonOilKeyClassifications(requestId)
-      }
+      await loadNonOilIssueLibrary(requestId)
+      if (requestId !== contextRequestId) return
+      await loadNonOilClassifications(requestId)
+      if (requestId !== contextRequestId) return
+      await loadNonOilKeyClassifications(requestId)
+      if (requestId !== contextRequestId) return
       sourceStations.value = []
       sourceSelectionMode.value = 'all'
       selectedSourceStationIds.value = []
@@ -4355,13 +4358,6 @@ const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
-      const jobOptions = activeJob.value.generation_options || {}
-      if (isNonOilReport.value && jobOptions.non_oil_rectification_date_from && jobOptions.non_oil_rectification_date_to) {
-        nonOilRectificationOverride.value = {
-          date_from: jobOptions.non_oil_rectification_date_from,
-          date_to: jobOptions.non_oil_rectification_date_to
-        }
-      }
       scheduleJobPoll()
       return
     }
@@ -4373,35 +4369,21 @@ const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
   }
 }
 
-const selectHistorySnapshot = async (item) => {
-  if (!item?.id || selectedSnapshotId.value === Number(item.id)) return
-  closeExportDialog()
-  exportTask.value = null
-  exportError.value = ''
-  selectedSnapshotId.value = Number(item.id)
-  reportDateFrom.value = item.date_from
-  reportDateTo.value = item.date_to
-  syncSelectedMonthFromDateRange()
-  activeQualitySlideIndex.value = 0
-  await loadReportState(selectedSnapshotId.value)
-}
-
 const handleReportDateRangeChange = async () => {
   if (!canGenerateReports.value || !validReportDateRange.value) return
+  const requestId = ++contextRequestId
+  if (!await saveReportDateSettings() || requestId !== contextRequestId) return
   syncSelectedMonthFromDateRange()
-  closeExportDialog()
-  selectedSnapshotId.value = 0
-  report.value = createEmptyReport()
-  exportTask.value = null
-  exportError.value = ''
-  activeQualitySlideIndex.value = 0
   if (isQualityMeasurementReport.value) {
-    await loadSourceOptions({}, {}, contextRequestId)
-    await loadFlowClassifications(contextRequestId)
+    await loadSourceOptions({}, {}, requestId)
+    if (requestId !== contextRequestId) return
+    await loadFlowClassifications(requestId)
   } else if (isNonOilReport.value) {
-    await loadNonOilIssueLibrary(contextRequestId)
-    await loadNonOilClassifications(contextRequestId)
-    await loadNonOilKeyClassifications(contextRequestId)
+    await loadNonOilIssueLibrary(requestId)
+    if (requestId !== contextRequestId) return
+    await loadNonOilClassifications(requestId)
+    if (requestId !== contextRequestId) return
+    await loadNonOilKeyClassifications(requestId)
   }
 }
 
@@ -4411,6 +4393,10 @@ const selectReportType = async (reportType) => {
   exportTask.value = null
   exportError.value = ''
   selectedReportType.value = reportType
+  workspaceSaveSequence += 1
+  workspaceSaving.value = false
+  workspaceSaveError.value = ''
+  workspace.value = { generation_options: {}, revision: 0, regeneration_required: false }
   nonOilRectificationOverride.value = null
   selectedSnapshotId.value = 0
   reportHistory.value = []
@@ -4773,17 +4759,24 @@ onBeforeUnmount(() => {
   color: #334155;
   background: #f8fafc;
   text-align: left;
-  cursor: pointer;
 }
 
-.report-history-item:hover,
-.report-history-item.active {
-  border-color: #7dd3fc;
-  background: #f0f9ff;
+.workspace-save-note,
+.workspace-error,
+.workspace-pending-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-.report-history-item.active {
-  box-shadow: inset 3px 0 0 #0284c7;
+.workspace-save-note { color: #0f766e; }
+.workspace-error { color: #b42318; }
+.workspace-pending-note {
+  padding: 10px 12px;
+  border: 1px solid #efd4a3;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
 }
 
 .report-history-item > span {
