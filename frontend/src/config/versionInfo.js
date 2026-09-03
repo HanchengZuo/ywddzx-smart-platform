@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.5',
+    date: '2026-09-03',
+    title: 'AI报告结果记忆',
+    summary: '复用历史AI分析与问题分类，减少重复调用，并记录报告生成明细。',
+    items: [
+      '相同问题数据及分析输入自动复用历史AI选题、分析和建议。',
+      '问题分类按问题ID长期记忆，保留人工调整结果。',
+      '每份报告展示AI调用、历史复用及异常兜底的生成日志。'
+    ]
+  },
+  {
     version: 'v5.4',
     date: '2026-09-02',
     title: 'AI报告历史与日期范围',

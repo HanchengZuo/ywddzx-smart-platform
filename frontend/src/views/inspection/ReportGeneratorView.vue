@@ -316,6 +316,12 @@
 
     <div v-if="error" class="state-card error">{{ error }}</div>
 
+    <ReportGenerationLog
+      v-if="!templateUnavailable && (hasReport || activeJob)"
+      :log="activeJob && (loading || activeJob.status === 'failed') ? (activeJob.ai_generation_log || {}) : (report.ai_generation_log || {})"
+      :running="loading"
+    />
+
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
       <div class="template-placeholder-mark">AI</div>
       <div>
@@ -339,7 +345,7 @@
           后台 AI 生成任务
         </div>
         <h3>{{ generationStageMessage }}</h3>
-        <p>系统正在汇总真实巡检数据并调用 DeepSeek 生成分析内容。可以放心切换页面，后台任务不会中断。</p>
+        <p>系统正在汇总巡检数据并处理分析内容，已有 AI 结果会自动复用。可以放心切换页面，后台任务不会中断。</p>
         <div class="ai-progress-head">
           <span>{{ currentReportType.name }}</span>
           <strong>{{ generationProgress }}%</strong>
@@ -2113,6 +2119,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
+import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 
 const currentRole = localStorage.getItem('user_role') || ''
 let storedPermissions = {}
