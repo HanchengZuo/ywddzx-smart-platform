@@ -57,13 +57,30 @@ class ReportWorkspaceTest(unittest.TestCase):
                 self.assertEqual(response[1], 403)
                 save.assert_not_called()
 
-    def test_revision_keeps_edits_pending_when_job_finished_with_older_settings(self):
+    def test_revision_alone_does_not_flag_configuration_difference(self):
         with patch('app.get_report_workspace', return_value={
             'revision': 8, 'generation_options': {'date_from': '2026-08-01', 'date_to': '2026-08-31'},
         }):
             value = reports.get_current_report_workspace(None, 'non_oil', {'workspace_revision': 7})
-        self.assertTrue(value['regeneration_required'])
+        self.assertNotIn('regeneration_required', value)
         self.assertEqual(value['generation_options']['date_from'], '2026-08-01')
+
+    def test_generation_uses_last_shared_dates_not_stale_browser_dates(self):
+        dates = {'date_from': '2026-08-01', 'date_to': '2026-08-31'}
+        with reports.app.test_request_context(json={
+            'report_type': 'non_oil', 'use_saved_configuration': True,
+            'generation_options': {'date_from': '2026-07-01', 'date_to': '2026-07-31'},
+        }), patch('app.get_db_connection', return_value=MagicMock()), patch(
+            'app.get_authorized_inspection_report_user', return_value={'id': 2}
+        ), patch('app.has_permission', return_value=True), patch(
+            'app.get_report_workspace', return_value={'generation_options': dates}
+        ), patch('app.save_report_workspace'), patch(
+            'app.queue_or_get_inspection_report_job', return_value=(None, None, False)
+        ) as queue:
+            response, status = reports.create_inspection_report_generation_job()
+        self.assertEqual(status, 200)
+        self.assertEqual(queue.call_args.args[3], '2026-08')
+        self.assertEqual(queue.call_args.args[5]['date_from'], dates['date_from'])
 
     def test_classification_query_enforces_approved_completed_and_scoped_issues(self):
         cur = MagicMock()
@@ -76,6 +93,22 @@ class ReportWorkspaceTest(unittest.TestCase):
         self.assertIn("audit_status", query)
         self.assertIn("approved", query)
         self.assertIn("已确认完成", query)
+
+    def test_report_panels_are_global_without_changing_business_page_scopes(self):
+        user = {'id': 2, 'role': 'area'}
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        restricted = {'limit_plan_inspection_table_scope': True, 'limit_plan_station_region_scope': True}
+        with patch('app.get_effective_permissions', return_value=restricted), patch(
+            'app.get_user_inspection_table_scope_overrides', return_value=[7]
+        ), patch('app.get_user_station_region_scope_overrides', return_value=['浦东']):
+            normal_where, normal_params = [], []
+            reports.append_station_region_scope_filter(cur, user, normal_where, normal_params, 's.region', 'limit_plan_station_region_scope')
+            self.assertEqual(normal_params, [['浦东']])
+            reports.fetch_non_oil_report_issue_rows(cur, user, date(2026, 7, 1), date(2026, 8, 1))
+            query, params = cur.execute.call_args.args
+            self.assertNotIn(['浦东'], params)
+            self.assertNotIn([7], params)
 
 
 @unittest.skipUnless(os.environ.get('REPORT_AI_MEMORY_TEST_DSN'), 'requires isolated PostgreSQL test DSN')
@@ -96,6 +129,10 @@ class ReportWorkspacePostgresTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('workspace_migration', path)
         cls.migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.migration)
+        meta_path = path.with_name('20260903_003_report_section_meta.py')
+        meta_spec = importlib.util.spec_from_file_location('section_meta_migration', meta_path)
+        cls.meta_migration = importlib.util.module_from_spec(meta_spec)
+        meta_spec.loader.exec_module(cls.meta_migration)
         with cls.engine.begin() as connection:
             connection.execute(sa.text('CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, real_name TEXT)'))
             connection.execute(sa.text("INSERT INTO users VALUES (1, 'user1', '用户甲'), (2, 'user2', '用户乙')"))
@@ -117,6 +154,7 @@ class ReportWorkspacePostgresTest(unittest.TestCase):
                 )'''))
             with Operations.context(MigrationContext.configure(connection)):
                 cls.migration.upgrade()
+                cls.meta_migration.upgrade()
 
     @classmethod
     def tearDownClass(cls):
@@ -136,15 +174,19 @@ class ReportWorkspacePostgresTest(unittest.TestCase):
             first = save_report_workspace(cur, 'non_oil', {'id': 1, 'real_name': '用户甲'}, dates)
             same = save_report_workspace(cur, 'non_oil', {'id': 1}, dates)
             self.assertEqual(first['revision'], same['revision'])
-            save_report_workspace(cur, 'non_oil', {'id': 2, 'real_name': '用户乙'})
+            save_report_workspace(cur, 'non_oil', {'id': 2, 'real_name': '用户乙'}, section='key_classification')
         with self.engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             self.migration.upgrade()
             self.migration.upgrade()
+            self.meta_migration.upgrade()
+            self.meta_migration.upgrade()
         with self.connect(True) as conn, conn.cursor() as cur:
             saved = get_report_workspace(cur, 'non_oil')
             self.assertEqual(saved['generation_options'], dates)
             self.assertEqual(saved['updated_by_name'], '用户乙')
             self.assertEqual(saved['revision'], first['revision'] + 1)
+            self.assertEqual(saved['section_meta']['date_range']['updated_by_name'], '用户甲')
+            self.assertEqual(saved['section_meta']['key_classification']['updated_by_name'], '用户乙')
             self.assertEqual(get_report_workspace(cur, 'finance')['generation_options'], {})
 
     def test_request_history_keeps_same_range_and_operator_at_click_time(self):
@@ -206,6 +248,7 @@ class ReportWorkspacePostgresTest(unittest.TestCase):
             reloaded = self.classification_request(handler).get_json()['classifications'][0]
             self.assertEqual(reloaded['effective_category'], category)
             self.assertEqual(reloaded['classification_source'], 'manual')
+            self.assertEqual(reloaded['updated_by_name'], '用户乙')
         with self.connect(True) as conn, conn.cursor() as cur, patch(
             'app.non_oil_key_issue_classification_table_available', return_value=True
         ):

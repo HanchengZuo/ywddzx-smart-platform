@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.5.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.6.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -8466,6 +8466,14 @@ def append_inspection_report_station_filter(
     params.append(options["station_ids"])
 
 
+# Reports and their configuration are shared; business pages retain their own scopes.
+# Report endpoints must still authorize view/generation permissions separately.
+REPORT_SHARED_SCOPE_PERMISSIONS = {
+    "limit_plan_inspection_table_scope": False,
+    "limit_plan_station_region_scope": False,
+}
+
+
 def get_inspection_report_source_station_options(
     cur,
     user,
@@ -8505,6 +8513,7 @@ def get_inspection_report_source_station_options(
             params,
             "ins.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -8513,6 +8522,7 @@ def get_inspection_report_source_station_options(
             params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         if not table_scope_allowed or not region_scope_allowed:
             return []
@@ -8561,6 +8571,7 @@ def get_inspection_report_source_station_options(
             params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -8569,6 +8580,7 @@ def get_inspection_report_source_station_options(
             params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         if not table_scope_allowed or not region_scope_allowed:
             return []
@@ -12570,10 +12582,12 @@ def get_non_oil_key_issue_classification_map(cur, issue_ids):
         return {}
     cur.execute(
         """
-        SELECT issue_id, ai_category, effective_category, classification_source,
-               reason, model_name, updated_at
-        FROM inspection_report_non_oil_key_issue_classifications
-        WHERE issue_id = ANY(%s);
+        SELECT c.issue_id, c.ai_category, c.effective_category, c.classification_source,
+               c.reason, c.model_name, c.updated_at,
+               COALESCE(NULLIF(u.real_name, ''), u.username, '') AS updated_by_name
+        FROM inspection_report_non_oil_key_issue_classifications c
+        LEFT JOIN users u ON u.id = c.updated_by
+        WHERE c.issue_id = ANY(%s);
         """,
         (normalized_ids,),
     )
@@ -12784,10 +12798,12 @@ def get_non_oil_report_classification_map(cur, issue_ids):
         return {}
     cur.execute(
         """
-        SELECT issue_id, original_category, ai_category, effective_category,
-               classification_source, reason, model_name, updated_at
-        FROM inspection_report_non_oil_issue_classifications
-        WHERE issue_id = ANY(%s);
+        SELECT c.issue_id, c.original_category, c.ai_category, c.effective_category,
+               c.classification_source, c.reason, c.model_name, c.updated_at,
+               COALESCE(NULLIF(u.real_name, ''), u.username, '') AS updated_by_name
+        FROM inspection_report_non_oil_issue_classifications c
+        LEFT JOIN users u ON u.id = c.updated_by
+        WHERE c.issue_id = ANY(%s);
         """,
         (normalized_ids,),
     )
@@ -13050,6 +13066,7 @@ def fetch_non_oil_report_issue_rows(
         params,
         "i.inspection_table_id",
         "limit_plan_inspection_table_scope",
+        permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
     )
     region_scope_allowed = append_station_region_scope_filter(
         cur,
@@ -13058,6 +13075,7 @@ def fetch_non_oil_report_issue_rows(
         params,
         "s.region",
         "limit_plan_station_region_scope",
+        permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
     )
     if apply_station_filter:
         append_inspection_report_station_filter(
@@ -31403,6 +31421,7 @@ def generate_quality_measurement_report_job(
             params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -31411,6 +31430,7 @@ def generate_quality_measurement_report_job(
             params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             where_clauses,
@@ -31670,6 +31690,7 @@ def generate_safety_quality_report_job(
             params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -31678,6 +31699,7 @@ def generate_safety_quality_report_job(
             params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             where_clauses,
@@ -31866,6 +31888,7 @@ def generate_on_site_service_report_job(
             issue_params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         issue_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -31874,6 +31897,7 @@ def generate_on_site_service_report_job(
             issue_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             issue_where_clauses,
@@ -31935,6 +31959,7 @@ def generate_on_site_service_report_job(
             inspection_params,
             "ins.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         inspection_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -31943,6 +31968,7 @@ def generate_on_site_service_report_job(
             inspection_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             inspection_where_clauses,
@@ -31998,6 +32024,7 @@ def generate_on_site_service_report_job(
             previous_params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         previous_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -32006,6 +32033,7 @@ def generate_on_site_service_report_job(
             previous_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             previous_where_clauses,
@@ -32178,6 +32206,7 @@ def generate_finance_report_job(
             params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -32186,6 +32215,7 @@ def generate_finance_report_job(
             params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             where_clauses,
@@ -32365,6 +32395,7 @@ def generate_equipment_facilities_report_job(
             issue_params,
             "i.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         issue_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -32373,6 +32404,7 @@ def generate_equipment_facilities_report_job(
             issue_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             issue_where_clauses,
@@ -32432,6 +32464,7 @@ def generate_equipment_facilities_report_job(
             inspection_params,
             "ins.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         inspection_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -32440,6 +32473,7 @@ def generate_equipment_facilities_report_job(
             inspection_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             inspection_where_clauses,
@@ -32658,6 +32692,7 @@ def generate_non_oil_report_job(
             inspection_params,
             "ins.inspection_table_id",
             "limit_plan_inspection_table_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         inspection_region_scope_allowed = append_station_region_scope_filter(
             cur,
@@ -32666,6 +32701,7 @@ def generate_non_oil_report_job(
             inspection_params,
             "s.region",
             "limit_plan_station_region_scope",
+            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         )
         append_inspection_report_station_filter(
             inspection_where_clauses,
@@ -33362,7 +33398,8 @@ def get_current_report_workspace(cur, report_type, report=None):
                 if previous.get(key):
                     options[f"non_oil_rectification_{key}"] = previous[key]
         workspace["generation_options"] = options
-    workspace["regeneration_required"] = bool(report) and workspace["revision"] > int(report.get("workspace_revision") or 0)
+    # Revisions record saves, not effective differences (saving the same input is harmless).
+    # The UI compares the actual saved configuration against the report's generation_context.
     return workspace
 
 
@@ -33486,7 +33523,7 @@ def get_inspection_report_source_options():
                     user.get("id"),
                 ),
             )
-            save_report_workspace(cur, report_type, user)
+            save_report_workspace(cur, report_type, user, section="source")
             conn.commit()
             saved_options = get_saved_quality_report_generation_options(
                 cur,
@@ -33590,7 +33627,7 @@ def manage_quality_report_selection_settings():
                 """,
                 (Json(settings), user["id"]),
             )
-            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user)
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user, section="selection_rules")
             conn.commit()
 
         settings_record = get_quality_report_selection_settings(cur)
@@ -33656,6 +33693,7 @@ def get_quality_report_flow_classification_rows(cur, user, month_start, month_en
         params,
         "i.inspection_table_id",
         "limit_plan_inspection_table_scope",
+        permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
     )
     region_scope_allowed = append_station_region_scope_filter(
         cur,
@@ -33664,6 +33702,7 @@ def get_quality_report_flow_classification_rows(cur, user, month_start, month_en
         params,
         "s.region",
         "limit_plan_station_region_scope",
+        permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
     )
     if not table_scope_allowed or not region_scope_allowed:
         return [], get_quality_report_allowed_flow_categories(
@@ -33828,7 +33867,7 @@ def manage_quality_report_flow_classifications():
                         user.get("id"),
                     ),
                 )
-            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user)
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user, section="flow_classification")
             conn.commit()
             rows, categories = get_quality_report_flow_classification_rows(
                 cur,
@@ -33923,7 +33962,7 @@ def manage_non_oil_report_issue_selection():
                 excluded_values,
                 user.get("id"),
             )
-            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user, section="issue_library")
             conn.commit()
         else:
             excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
@@ -34054,6 +34093,7 @@ def get_current_non_oil_classifications(cur, user, period_start, period_end, key
             "classification_source": issue["key_issue_classification_source"] if key_issues else issue["classification_source"],
             "reason": record.get("reason") or "",
             "updated_at": format_report_snapshot_time(record.get("updated_at")),
+            "updated_by_name": record.get("updated_by_name") or "",
         })
     return rows
 
@@ -34131,7 +34171,7 @@ def manage_non_oil_report_category_classifications():
                         user.get("id"),
                     ),
                 )
-            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user, section="category_classification")
             conn.commit()
             rows = get_current_non_oil_classifications(cur, user, period_start, period_end)
         return jsonify(
@@ -34239,7 +34279,7 @@ def manage_non_oil_key_issue_classifications():
                         user.get("id"),
                     ),
                 )
-            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user, section="key_classification")
             conn.commit()
             rows = get_current_non_oil_classifications(cur, user, period_start, period_end, key_issues=True)
         return jsonify(
@@ -34300,6 +34340,13 @@ def create_inspection_report_generation_job():
         user = get_authorized_inspection_report_user(cur)
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
+        if data.get("use_saved_configuration") is True:
+            saved_dates = get_report_workspace(cur, report_type)["generation_options"]
+            if saved_dates.get("date_from") and saved_dates.get("date_to"):
+                raw_generation_options = saved_dates
+                generation_options = normalize_inspection_report_generation_options(saved_dates)
+                month_start, month_end = resolve_inspection_report_period(report_type, "", generation_options)
+                report_month = (month_end - timedelta(days=1)).strftime("%Y-%m")
         if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
             generation_options = get_authorized_quality_report_generation_options(
                 cur,
@@ -34353,11 +34400,11 @@ def create_inspection_report_generation_job():
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 503
-    except Exception as exc:
+    except Exception:
         if conn:
             conn.rollback()
         logging.exception("Failed to queue inspection report generation job.")
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return jsonify({"success": False, "error": "报告生成任务提交失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
