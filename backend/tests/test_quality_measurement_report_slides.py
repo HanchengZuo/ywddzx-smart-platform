@@ -111,10 +111,11 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
         )
 
     @patch("app.get_saved_quality_report_generation_options")
-    def test_explicit_period_scope_takes_priority_over_saved_scope(
+    def test_generation_uses_shared_saved_scope_not_stale_client_scope(
         self,
         get_saved_options,
     ):
+        get_saved_options.return_value = {"station_filter_enabled": True, "station_ids": [3, 9]}
         result = get_authorized_quality_report_generation_options(
             object(),
             {"id": 1, "role": "root"},
@@ -126,9 +127,9 @@ class QualityMeasurementReportSlidesTest(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"station_filter_enabled": True, "station_ids": [2, 7]},
+            {"station_filter_enabled": True, "station_ids": [3, 9]},
         )
-        get_saved_options.assert_not_called()
+        get_saved_options.assert_called_once()
 
     def test_highlight_sample_thresholds(self):
         cases = ((21, 8), (11, 6), (5, 4), (4, 2), (1, 1))

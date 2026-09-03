@@ -34,6 +34,7 @@
     </div>
     <p v-if="error" class="period-error" role="alert">{{ error }}</p>
     <div class="period-note">
+      <p v-if="lastSaved" class="period-saved">{{ lastSaved }}</p>
       <p>默认从主报告开始日期向前推一个月，统计至主报告开始日期的前一天（含当天）。</p>
       <p v-if="readonly">当前为只读。修改范围需具备“生成AI报告”权限。</p>
       <p v-else-if="busy">后台正在生成报告，当前范围暂不可修改。</p>
@@ -51,6 +52,7 @@ const props = defineProps({
   readonly: Boolean,
   busy: Boolean,
   error: { type: String, default: '' },
+  lastSaved: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue', 'reset'])
 const changeDate = (key, value) => {
@@ -160,6 +162,7 @@ button {
   color: #b42318;
   margin-bottom: 12px;
 }
+.period-saved { color: #0f766e; font-size: 12px; margin-bottom: 6px; }
 @media (max-width: 700px) {
   .rectification-period {
     padding: 18px 16px;

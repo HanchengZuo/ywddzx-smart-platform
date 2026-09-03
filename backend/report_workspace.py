@@ -16,7 +16,7 @@ def _time(value):
 
 def get_report_workspace(cur, report_type):
     cur.execute("""
-        SELECT report_type, generation_options, revision, updated_by_name, updated_at
+        SELECT report_type, generation_options, revision, updated_by_name, updated_at, section_meta
         FROM inspection_report_workspaces WHERE report_type = %s
     """, (report_type,))
     row = cur.fetchone() or {}
@@ -25,12 +25,14 @@ def get_report_workspace(cur, report_type):
         "revision": int(row.get("revision") or 0),
         "updated_by_name": row.get("updated_by_name") or "",
         "updated_at": _time(row.get("updated_at")),
+        "section_meta": row.get("section_meta") or {},
     }
 
 
-def save_report_workspace(cur, report_type, user, options=None):
+def save_report_workspace(cur, report_type, user, options=None, section=None):
     """An omitted options argument marks a saved classification/selection change."""
     dates = {key: options[key] for key in DATE_OPTION_KEYS if options.get(key)} if options is not None else {}
+    before = get_report_workspace(cur, report_type)
     cur.execute("""
         INSERT INTO inspection_report_workspaces
             (report_type, generation_options, revision, updated_by, updated_by_name)
@@ -47,6 +49,19 @@ def save_report_workspace(cur, report_type, user, options=None):
         report_type, Json(dates), user.get("id"), user.get("real_name") or user.get("username") or "",
         options is not None, options is not None,
     ))
+    sections = [section] if section else []
+    if options is not None:
+        previous = before["generation_options"]
+        for name, keys in (("date_range", DATE_OPTION_KEYS[:2]), ("rectification", DATE_OPTION_KEYS[2:])):
+            if any(previous.get(key) != dates.get(key) for key in keys):
+                sections.append(name)
+    for name in sections:
+        cur.execute("""
+            UPDATE inspection_report_workspaces SET section_meta = section_meta || jsonb_build_object(
+                %s::text, jsonb_build_object('updated_by_name', %s::text,
+                    'updated_at', TO_CHAR(CURRENT_TIMESTAMP, 'YYYY-MM-DD HH24:MI:SS'))
+            ) WHERE report_type = %s
+        """, (name, user.get("real_name") or user.get("username") or "", report_type))
     return get_report_workspace(cur, report_type)
 
 

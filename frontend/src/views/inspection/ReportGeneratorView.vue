@@ -23,6 +23,33 @@
       </div>
     </section>
 
+    <section class="report-type-panel card-surface">
+      <div class="report-type-panel-head">
+        <div>
+          <span>报告类型</span>
+          <h3>选择本次需要生成的报告</h3>
+        </div>
+        <small>不同报告独立关联检查表和报告模板</small>
+      </div>
+      <div class="report-type-grid">
+        <button
+          v-for="item in reportTypes"
+          :key="item.key"
+          type="button"
+          :class="['report-type-card', { active: selectedReportType === item.key, pending: !item.template_ready }]"
+          @click="selectReportType(item.key)"
+        >
+          <span class="report-type-status">{{ item.template_ready ? '模板已配置' : '模板待配置' }}</span>
+          <strong>{{ item.name }}</strong>
+          <p>{{ item.description }}</p>
+          <div class="report-type-sources">
+            <span>关联检查表</span>
+            <em v-for="tableName in item.target_tables" :key="`${item.key}-${tableName}`">{{ tableName }}</em>
+          </div>
+        </button>
+      </div>
+    </section>
+
     <section class="report-period-workspace card-surface">
       <div class="report-period-editor">
         <div class="period-editor-title">
@@ -53,8 +80,8 @@
         <small v-if="!canGenerateReports" class="period-readonly-note">当前日期范围为只读，始终展示最后生成成功的报告。</small>
         <p v-if="workspaceSaving" class="workspace-save-note" role="status">正在保存日期设置...</p>
         <p v-else-if="workspaceSaveError" class="workspace-error" role="alert">{{ workspaceSaveError }}</p>
-        <p v-else-if="workspace.updated_at" class="workspace-save-note">最近保存：{{ workspace.updated_by_name || '系统' }} · {{ workspace.updated_at }}</p>
-        <p v-if="hasSavedReportChanges" class="workspace-pending-note" role="status">当前设置与成稿不同，保存后需重新生成才能应用。下方及导出的 PPT 仍为最后生成成功的成稿，不会自动调用 AI。</p>
+        <p v-else class="workspace-save-note">{{ configSavedLabel('date_range') }}</p>
+        <p v-if="hasSavedReportChanges" class="workspace-pending-note" role="status">当前设置与成稿不同，保存后需重新生成才能应用。</p>
       </div>
       <div class="report-history-panel">
         <div class="report-history-title">
@@ -77,35 +104,19 @@
         <div v-else class="report-history-empty">当前报告类型还没有生成操作记录。</div>
         <small class="workspace-save-note">仅记录生成操作，不支持点击或切换历史报告。</small>
       </div>
+      <ReportGenerationLog
+        v-if="!templateUnavailable && (hasReport || activeJob)"
+        :log="activeJob && (loading || activeJob.status === 'failed') ? (activeJob.ai_generation_log || {}) : (report.ai_generation_log || {})"
+        :running="loading"
+      />
     </section>
 
-    <section class="report-type-panel card-surface">
-      <div class="report-type-panel-head">
-        <div>
-          <span>报告类型</span>
-          <h3>选择本次需要生成的报告</h3>
-        </div>
-        <small>不同报告独立关联检查表和报告模板</small>
-      </div>
-      <div class="report-type-grid">
-        <button
-          v-for="item in reportTypes"
-          :key="item.key"
-          type="button"
-          :class="['report-type-card', { active: selectedReportType === item.key, pending: !item.template_ready }]"
-          @click="selectReportType(item.key)"
-        >
-          <span class="report-type-status">{{ item.template_ready ? '模板已配置' : '模板待配置' }}</span>
-          <strong>{{ item.name }}</strong>
-          <p>{{ item.description }}</p>
-          <div class="report-type-sources">
-            <span>关联检查表</span>
-            <em v-for="tableName in item.target_tables" :key="`${item.key}-${tableName}`">{{ tableName }}</em>
-          </div>
-        </button>
-      </div>
-    </section>
-
+    <section v-if="(isQualityMeasurementReport || isNonOilReport) && !templateUnavailable" class="report-config-workspace card-surface">
+      <header class="report-config-heading">
+        <div><span>REPORT CONFIGURATION</span><h3>{{ currentReportType.name }} · 专属配置</h3><p>所有用户共享最新保存设置；保存不调用 AI，重新生成后应用到报告。</p></div>
+        <span class="shared-config-badge">全局共享</span>
+      </header>
+      <div class="report-config-sections">
     <section v-if="isQualityMeasurementReport && !templateUnavailable" class="report-source-panel card-surface">
       <div class="report-source-main">
         <div class="report-source-icon" aria-hidden="true">
@@ -137,20 +148,7 @@
               另有 {{ selectedSourceStations.length - 6 }} 个
             </em>
           </div>
-          <div v-if="sourceSelectionDirty" class="source-dirty-note">
-            最近保存的数据范围与当前成稿不同；重新生成时会采用最近保存配置。
-          </div>
-          <small v-if="sourceSelectionMeta.updated_at" class="source-last-saved">
-            最近保存配置：{{ sourceSelectionMeta.updated_by_name || '未知用户' }} · {{ sourceSelectionMeta.updated_at }}
-          </small>
-          <div v-if="selectedSnapshotId" class="historical-config-note">
-            <div>
-              <span>当前成稿采用</span>
-              <strong>{{ historicalSourceSelectionDescription }}</strong>
-              <small>{{ historicalSourceSelection.updated_by_name || '生成报告时的用户' }}<template v-if="historicalSourceSelection.updated_at"> · {{ historicalSourceSelection.updated_at }}</template></small>
-            </div>
-            <button type="button" @click="openSourceDialog('historical')">查看当时配置</button>
-          </div>
+          <small class="source-last-saved">{{ configSavedLabel('source', sourceSelectionMeta) }}</small>
         </div>
       </div>
       <div class="report-source-actions">
@@ -172,7 +170,7 @@
           type="button"
           class="source-configure-btn"
           :disabled="sourceLoading"
-          @click="openSourceDialog('saved')"
+          @click="openSourceDialog"
         >
           设置数据来源
         </button>
@@ -180,16 +178,13 @@
           type="button"
           class="selection-configure-btn"
           :disabled="selectionSettingsLoading"
-          @click="openSelectionSettingsDialog('saved')"
+          @click="openSelectionSettingsDialog"
         >
           设置选题规则
         </button>
         <small class="source-last-saved compact">
-          最近保存规则：{{ selectionSettingsMeta.updated_by_name || '系统默认' }}<template v-if="selectionSettingsMeta.updated_at"> · {{ selectionSettingsMeta.updated_at }}</template>
+          {{ configSavedLabel('selection_rules', selectionSettingsMeta) }}
         </small>
-        <button v-if="selectedSnapshotId" type="button" class="historical-rule-btn" @click="openSelectionSettingsDialog('historical')">
-          查看当前成稿采用的规则
-        </button>
       </div>
     </section>
 
@@ -222,6 +217,7 @@
       <button type="button" class="classification-manage-btn" :disabled="flowClassificationsLoading" @click="openFlowClassificationDialog">
         查看与调整分类
       </button>
+      <small class="config-last-saved">{{ configSavedLabel('flow_classification', latestClassificationSave(flowClassifications)) }}</small>
     </section>
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-issue-library-panel card-surface">
@@ -253,6 +249,7 @@
       <button type="button" class="classification-manage-btn issue-library-manage-btn" :disabled="nonOilIssueLibraryLoading" @click="openNonOilIssueLibraryDialog">
         查看与选择问题
       </button>
+      <small class="config-last-saved">{{ configSavedLabel('issue_library') }}</small>
     </section>
 
     <NonOilRectificationPeriod
@@ -262,6 +259,7 @@
       :readonly="!canGenerateReports"
       :busy="loading"
       :error="nonOilRectificationError"
+      :last-saved="configSavedLabel('rectification')"
       @update:model-value="saveReportDateSettings"
       @reset="resetRectificationPeriod"
     />
@@ -295,6 +293,7 @@
       <button type="button" class="classification-manage-btn" :disabled="nonOilClassificationsLoading" @click="openNonOilClassificationDialog">
         查看与调整分类
       </button>
+      <small class="config-last-saved">{{ configSavedLabel('category_classification', latestClassificationSave(nonOilClassifications)) }}</small>
     </section>
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-key-panel card-surface">
@@ -326,15 +325,13 @@
       <button type="button" class="classification-manage-btn" :disabled="nonOilKeyClassificationsLoading" @click="openNonOilKeyClassificationDialog">
         查看与调整分类
       </button>
+      <small class="config-last-saved">{{ configSavedLabel('key_classification', latestClassificationSave(nonOilKeyClassifications)) }}</small>
+    </section>
+
+      </div>
     </section>
 
     <div v-if="error" class="state-card error">{{ error }}</div>
-
-    <ReportGenerationLog
-      v-if="!templateUnavailable && (hasReport || activeJob)"
-      :log="activeJob && (loading || activeJob.status === 'failed') ? (activeJob.ai_generation_log || {}) : (report.ai_generation_log || {})"
-      :running="loading"
-    />
 
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
       <div class="template-placeholder-mark">AI</div>
@@ -1608,8 +1605,8 @@
           <header class="source-dialog-head">
             <div>
               <span>REPORT DATA SCOPE</span>
-              <h3>{{ sourceDialogMode === 'historical' ? '当前成稿使用的数据来源' : '设置报告数据来源' }}</h3>
-              <p>候选站点已按报告模板、日期范围和当前账号权限自动筛选。</p>
+              <h3>设置报告数据来源</h3>
+              <p>候选站点按报告模板和日期范围统一筛选，所有用户共享同一份配置。</p>
             </div>
             <div class="source-dialog-total">
               <strong>{{ sourceStations.length }}</strong>
@@ -1927,13 +1924,13 @@
           <header class="selection-dialog-head">
             <div>
               <span>REPORT ISSUE RULES</span>
-              <h3>{{ selectionSettingsDialogMode === 'historical' ? '当前成稿使用的选题规则' : '设置质量计量报告选题规则' }}</h3>
-              <p>{{ selectionSettingsDialogMode === 'historical' ? '当前显示成稿生成时使用的规则；保存后会设为后续报告的默认规则。' : '规则全局共享并自动记忆，保存后在下一次生成报告时生效。' }}</p>
+              <h3>设置质量计量报告选题规则</h3>
+              <p>规则全局共享并自动记忆，保存后在下一次生成报告时生效。</p>
             </div>
             <div class="selection-updated-meta">
               <span>最后更新</span>
-              <strong>{{ selectionDialogMeta.updated_at || '尚未保存' }}</strong>
-              <small>{{ selectionDialogMeta.updated_by_name || '系统默认规则' }}</small>
+              <strong>{{ selectionSettingsMeta.updated_at || '尚未保存' }}</strong>
+              <small>{{ selectionSettingsMeta.updated_by_name || '系统默认规则' }}</small>
             </div>
           </header>
 
@@ -2136,6 +2133,7 @@ import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
+import { reportConfigurationDiffers } from '@/utils/reportConfiguration'
 
 const currentRole = localStorage.getItem('user_role') || ''
 let storedPermissions = {}
@@ -2278,9 +2276,10 @@ const initialReportDateRange = getDefaultNonOilDateRange(selectedMonth.value)
 const reportDateFrom = ref(initialReportDateRange.date_from)
 const reportDateTo = ref(initialReportDateRange.date_to)
 const reportHistory = ref([])
-const workspace = ref({ generation_options: {}, revision: 0, updated_at: '', updated_by_name: '', regeneration_required: false })
+const workspace = ref({ generation_options: {}, revision: 0, updated_at: '', updated_by_name: '', section_meta: {} })
 const workspaceSaving = ref(false)
 const workspaceSaveError = ref('')
+const configurationReady = ref(false)
 let workspaceSaveQueue = Promise.resolve()
 let workspaceSaveSequence = 0
 const selectedSnapshotId = ref(0)
@@ -2330,9 +2329,7 @@ const sourceDraftIds = ref([])
 const sourceKeyword = ref('')
 const sourceRegionFilter = ref('')
 const sourceOnlySelected = ref(false)
-const sourceDialogMode = ref('saved')
 const selectionSettingsDialogVisible = ref(false)
-const selectionSettingsDialogMode = ref('saved')
 const selectionSettingsLoading = ref(false)
 const selectionSettingsSaving = ref(false)
 const selectionSettingsError = ref('')
@@ -2415,22 +2412,16 @@ const validReportDateRange = computed(() => Boolean(
   && reportDateFrom.value <= reportDateTo.value
 ))
 const hasSavedReportChanges = computed(() => {
-  if (!hasReport.value) return false
-  const snapshot = report.value.snapshot || {}
-  const context = report.value.generation_context || {}
-  const categoriesChanged = (current, saved) => {
-    if (!current.length) return false
-    const previous = new Map((saved || []).map(item => [Number(item.issue_id), item.effective_category]))
-    return current.some(item => previous.get(Number(item.issue_id)) !== item.effective_category)
-  }
-  return workspace.value.regeneration_required
-    || snapshot.date_from !== reportDateFrom.value || snapshot.date_to !== reportDateTo.value
-    || (isQualityMeasurementReport.value && sourceSelectionDirty.value)
-    || (isQualityMeasurementReport.value && categoriesChanged(flowClassifications.value, context.flow_classifications || report.value.flow_classifications))
-    || (isNonOilReport.value && (
-      categoriesChanged(nonOilClassifications.value, context.category_classifications || report.value.category_classifications)
-      || categoriesChanged(nonOilKeyClassifications.value, context.key_issue_classifications || report.value.key_issue_classifications)
-    ))
+  if (!configurationReady.value || loading.value || workspaceSaving.value) return false
+  if (isQualityMeasurementReport.value && (sourceError.value || selectionSettingsError.value || flowClassificationsError.value)) return false
+  if (isNonOilReport.value && (nonOilIssueLibraryError.value || nonOilClassificationsError.value || nonOilKeyClassificationsError.value)) return false
+  return reportConfigurationDiffers(report.value, {
+    type: selectedReportType.value, date_from: reportDateFrom.value, date_to: reportDateTo.value,
+    source: { mode: sourceSelectionMode.value, station_ids: selectedSourceStationIds.value },
+    selection_rules: selectionSettings.value, flow_classifications: flowClassifications.value,
+    rectification_period: nonOilRectificationPeriod.value, issue_library: nonOilIssueLibrary.value,
+    category_classifications: nonOilClassifications.value, key_classifications: nonOilKeyClassifications.value
+  })
 })
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
@@ -2487,23 +2478,6 @@ const generationStageMessage = computed(() => (
 ))
 
 const reportSnapshot = computed(() => report.value.snapshot || {})
-const reportSourceSelection = computed(() => report.value.source_selection || {})
-const historicalSourceSelection = computed(() => (
-  report.value?.generation_context?.source_selection
-  || reportSourceSelection.value
-  || {}
-))
-const historicalSelectionSettingsRecord = computed(() => (
-  report.value?.generation_context?.selection_settings || {}
-))
-const selectionDialogMeta = computed(() => (
-  selectionSettingsDialogMode.value === 'historical'
-    ? {
-        updated_at: historicalSelectionSettingsRecord.value.updated_at || '',
-        updated_by_name: historicalSelectionSettingsRecord.value.updated_by_name || ''
-      }
-    : selectionSettingsMeta.value
-))
 const sourceRegions = computed(() => (
   [...new Set(sourceStations.value.map((item) => item.region).filter(Boolean))]
 ))
@@ -2528,23 +2502,6 @@ const sourceSelectionDescription = computed(() => {
     return `已选择 ${summary.station_count} 个站点，覆盖 ${summary.region_count} 个片区；下一次生成只统计这些站点。`
   }
   return `使用当前日期范围全部 ${summary.station_count} 个可用站点，覆盖 ${summary.region_count} 个片区。`
-})
-const historicalSourceSelectionDescription = computed(() => {
-  const selection = historicalSourceSelection.value
-  const stationCount = Number(selection.station_count ?? (selection.station_ids || []).length) || 0
-  return selection.mode === 'custom'
-    ? `自定义 ${stationCount} 个站点`
-    : `当时全部 ${stationCount} 个可用站点`
-})
-const sourceSelectionDirty = computed(() => {
-  if (!canManageQualityReportSource.value) return false
-  if (!hasReport.value) return false
-  const savedMode = reportSourceSelection.value.mode === 'custom' ? 'custom' : 'all'
-  if (savedMode !== sourceSelectionMode.value) return true
-  if (savedMode !== 'custom') return false
-  const savedIds = [...(reportSourceSelection.value.station_ids || [])].map(Number).sort((a, b) => a - b)
-  const currentIds = [...selectedSourceStationIds.value].map(Number).sort((a, b) => a - b)
-  return JSON.stringify(savedIds) !== JSON.stringify(currentIds)
 })
 const nonOilIssueLibraryStats = computed(() => ({
   total: nonOilIssueLibrary.value.length,
@@ -3375,19 +3332,13 @@ const loadSelectionSettings = async () => {
   }
 }
 
-const openSelectionSettingsDialog = async (mode = 'saved') => {
+const openSelectionSettingsDialog = async () => {
   if (!isQualityMeasurementReport.value) return
-  selectionSettingsDialogMode.value = mode === 'historical' ? 'historical' : 'saved'
   selectionSettingsDialogVisible.value = true
   selectionRuleTab.value = 'prohibited'
   selectionStandardKeyword.value = ''
   selectionTableFilter.value = ''
   await loadSelectionSettings()
-  if (selectionSettingsDialogMode.value === 'historical') {
-    selectionSettingsDraft.value = cloneSelectionSettings(
-      historicalSelectionSettingsRecord.value.settings || selectionSettings.value
-    )
-  }
 }
 
 const closeSelectionSettingsDialog = () => {
@@ -3424,7 +3375,6 @@ const saveSelectionSettings = async () => {
       updated_at: response.data.updated_at || '',
       updated_by_name: response.data.updated_by_name || ''
     }
-    selectionSettingsDialogMode.value = 'saved'
     selectionSettingsMessage.value = '选题规则已保存，重新生成报告后生效。'
     await refreshWorkspaceMeta()
   } catch (err) {
@@ -3859,9 +3809,8 @@ const syncSourceSelection = (savedSelection = {}, jobOptions = {}) => {
   const candidateIds = hasActiveCustomSelection
     ? options.station_ids
     : selection.station_ids
-  const availableIds = new Set(sourceStations.value.map((item) => Number(item.station_id)))
-  const ids = normalizeSourceIds(candidateIds).filter((stationId) => availableIds.has(stationId))
-  sourceSelectionMode.value = mode === 'custom' && ids.length ? 'custom' : 'all'
+  const ids = normalizeSourceIds(candidateIds)
+  sourceSelectionMode.value = mode
   selectedSourceStationIds.value = sourceSelectionMode.value === 'custom' ? ids : []
 }
 
@@ -3911,16 +3860,10 @@ const loadSourceOptions = async (savedSelection = {}, jobOptions = {}, requestId
   }
 }
 
-const openSourceDialog = (mode = 'saved') => {
+const openSourceDialog = () => {
   if (!isQualityMeasurementReport.value) return
-  sourceDialogMode.value = mode === 'historical' ? 'historical' : 'saved'
-  const historicalMode = historicalSourceSelection.value.mode === 'custom' ? 'custom' : 'all'
-  const initialMode = sourceDialogMode.value === 'historical'
-    ? historicalMode
-    : sourceSelectionMode.value
-  const initialIds = sourceDialogMode.value === 'historical'
-    ? historicalSourceSelection.value.station_ids
-    : selectedSourceStationIds.value
+  const initialMode = sourceSelectionMode.value
+  const initialIds = selectedSourceStationIds.value
   sourceDraftMode.value = initialMode
   sourceDraftIds.value = initialMode === 'custom'
     ? normalizeSourceIds(initialIds)
@@ -4001,7 +3944,6 @@ const applySourceSelection = async () => {
       updated_at: savedSelection.updated_at || '',
       updated_by_name: savedSelection.updated_by_name || ''
     }
-    sourceDialogMode.value = 'saved'
     closeSourceDialog()
     await refreshWorkspaceMeta()
   } catch (err) {
@@ -4023,6 +3965,16 @@ const syncSelectedMonthFromDateRange = () => {
 
 const formatGenerationStatus = (status) => ({ queued: '已提交生成', running: '生成中', completed: '已生成', failed: '生成失败' })[status] || status
 
+const latestClassificationSave = (rows = []) => rows.filter(row => row.updated_by_name && row.updated_at)
+  .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] || {}
+
+const configSavedLabel = (section, fallback = {}) => {
+  const meta = workspace.value.section_meta?.[section] || fallback
+  return meta.updated_at
+    ? `最近保存：${meta.updated_by_name || '系统'} · ${meta.updated_at}`
+    : '暂无保存人和保存时间记录'
+}
+
 const applyWorkspaceSettings = (value = {}, reportPayload = {}) => {
   workspace.value = value
   const options = value.generation_options || {}
@@ -4039,12 +3991,11 @@ const applyWorkspaceSettings = (value = {}, reportPayload = {}) => {
 
 const refreshWorkspaceMeta = async () => {
   const reportType = selectedReportType.value
-  workspace.value.regeneration_required = true
   try {
     const response = await axios.get('/api/inspection-reports/workspace', { params: { report_type: reportType } })
     if (reportType === selectedReportType.value && response.data?.success) workspace.value = response.data.workspace
   } catch {
-    // The mutation is already saved; keep the pending-generation hint if metadata cannot refresh.
+    // The mutation is already saved. Configuration comparison does not depend on audit metadata.
   }
 }
 
@@ -4250,8 +4201,7 @@ const pollActiveJob = async () => {
 const startGeneration = async (options = {}) => {
   if (loading.value || workspaceSaving.value || !validReportDateRange.value || templateUnavailable.value || !canGenerateReports.value) return
   if (isNonOilReport.value && nonOilRectificationError.value) return
-  const reportType = selectedReportType.value
-  if (!await saveReportDateSettings() || reportType !== selectedReportType.value) return
+  if (workspaceSaveError.value) return
   syncSelectedMonthFromDateRange()
   const requestId = ++contextRequestId
   clearPolling()
@@ -4266,6 +4216,7 @@ const startGeneration = async (options = {}) => {
       report_type: selectedReportType.value,
       month: selectedMonth.value,
       force: options?.force === true,
+      use_saved_configuration: true,
       generation_options: currentDateOptions()
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
@@ -4293,6 +4244,7 @@ const startGeneration = async (options = {}) => {
 }
 
 const loadReportState = async () => {
+  configurationReady.value = false
   const requestId = ++contextRequestId
   clearPolling()
   activeJob.value = null
@@ -4356,6 +4308,7 @@ const loadReportState = async () => {
       resetNonOilKeyClassificationState()
     }
     if (requestId !== contextRequestId) return
+    configurationReady.value = true
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
       scheduleJobPoll()
@@ -4372,6 +4325,7 @@ const loadReportState = async () => {
 const handleReportDateRangeChange = async () => {
   if (!canGenerateReports.value || !validReportDateRange.value) return
   const requestId = ++contextRequestId
+  configurationReady.value = false
   if (!await saveReportDateSettings() || requestId !== contextRequestId) return
   syncSelectedMonthFromDateRange()
   if (isQualityMeasurementReport.value) {
@@ -4385,6 +4339,7 @@ const handleReportDateRangeChange = async () => {
     if (requestId !== contextRequestId) return
     await loadNonOilKeyClassifications(requestId)
   }
+  if (requestId === contextRequestId) configurationReady.value = true
 }
 
 const selectReportType = async (reportType) => {
@@ -4396,7 +4351,7 @@ const selectReportType = async (reportType) => {
   workspaceSaveSequence += 1
   workspaceSaving.value = false
   workspaceSaveError.value = ''
-  workspace.value = { generation_options: {}, revision: 0, regeneration_required: false }
+  workspace.value = { generation_options: {}, revision: 0, section_meta: {} }
   nonOilRectificationOverride.value = null
   selectedSnapshotId.value = 0
   reportHistory.value = []
@@ -4443,6 +4398,30 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+.report-config-workspace { overflow: hidden; border: 1px solid #dce7ee; border-radius: 22px; }
+.report-config-heading {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 22px 24px; border-bottom: 1px solid #d9e6ec;
+  background: linear-gradient(105deg, #eff7fa, #f9fbfc);
+}
+.report-config-heading > div > span { color: #44738d; font-size: 10px; letter-spacing: 1.5px; font-weight: 800; }
+.report-config-heading h3 { margin: 6px 0; color: #203d54; font-size: 19px; }
+.report-config-heading p { margin: 0; color: #64788a; font-size: 12px; line-height: 1.7; }
+.shared-config-badge { padding: 5px 10px; border-radius: 16px; background: #dff0ed; color: #287569; font-size: 11px; white-space: nowrap; }
+.report-config-sections > .card-surface {
+  margin: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: 22px 24px;
+}
+.report-config-sections > .card-surface + .card-surface { border-top: 1px solid #e3ebef; }
+.report-config-sections > .rectification-period { background: #f8fbfc; }
+.config-last-saved { grid-column: 1 / -1; display: block; color: #638177; font-size: 11px; line-height: 1.6; }
+.report-period-workspace > .report-generation-log { grid-column: 1 / -1; margin: 0; border-radius: 12px; box-shadow: none; }
+.report-history-panel > .workspace-save-note { padding: 0 12px 12px; color: #7a8b9a; }
+@media (max-width: 700px) {
+  .report-config-heading { padding: 18px 16px; flex-wrap: wrap; gap: 10px; }
+  .report-config-heading h3 { font-size: 17px; }
+  .report-config-sections > .card-surface { padding: 18px 16px; }
 }
 
 .card-surface {
@@ -4818,64 +4797,6 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
-.historical-config-note {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: min(100%, 620px);
-  margin-top: 10px;
-  padding: 9px 11px;
-  border: 1px solid #cbd5e1;
-  border-radius: 12px;
-  background: rgba(248, 250, 252, 0.9);
-}
-
-.historical-config-note div,
-.historical-config-note span,
-.historical-config-note strong,
-.historical-config-note small {
-  display: block;
-}
-
-.historical-config-note span,
-.historical-config-note small {
-  color: #64748b;
-  font-size: 10px;
-}
-
-.historical-config-note strong {
-  margin: 2px 0;
-  color: #334155;
-  font-size: 12px;
-}
-
-.historical-config-note button,
-.historical-rule-btn {
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 9px;
-  color: #334155;
-  background: #fff;
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.historical-config-note button:hover,
-.historical-rule-btn:hover {
-  border-color: #38bdf8;
-  color: #0369a1;
-  background: #f0f9ff;
-}
-
-.historical-rule-btn {
-  grid-column: 1 / -1;
-  justify-self: end;
-}
-
 .report-type-panel {
   position: relative;
   padding: 22px;
@@ -5130,17 +5051,6 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   font-style: normal;
-}
-
-.source-dirty-note {
-  width: fit-content;
-  margin-top: 10px;
-  padding: 6px 10px;
-  border-radius: 9px;
-  color: #9a3412;
-  background: #ffedd5;
-  font-size: 12px;
-  font-weight: 800;
 }
 
 .report-source-actions {
@@ -11934,20 +11844,6 @@ onBeforeUnmount(() => {
 
   .report-source-actions {
     grid-template-columns: 1fr;
-  }
-
-  .historical-config-note {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .historical-config-note button,
-  .historical-rule-btn {
-    width: 100%;
-  }
-
-  .historical-rule-btn {
-    justify-self: stretch;
   }
 
   .source-summary-grid {
