@@ -41,6 +41,7 @@ from ai_utils import (
     generate_standard_recommendations,
 )
 from ai_usage import get_ai_pricing_table
+from report_workspace import get_report_workspace, save_report_workspace, list_report_generation_requests
 from report_ai_memory import (
     begin_report_ai_memory,
     end_report_ai_memory,
@@ -8837,7 +8838,7 @@ def get_inspection_report_snapshot(
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
-def get_latest_inspection_report_snapshot(cur, report_type, report_month):
+def get_latest_inspection_report_snapshot(cur, report_type, report_month=None):
     if not report_snapshot_table_available(cur):
         return None
     cur.execute(
@@ -8852,11 +8853,11 @@ def get_latest_inspection_report_snapshot(cur, report_type, report_month):
             generation_context
         FROM inspection_report_snapshots
         WHERE report_type = %s
-          AND report_month = %s
-        ORDER BY generated_at DESC, updated_at DESC
+          AND (%s::text IS NULL OR report_month = %s)
+        ORDER BY generated_at DESC, id DESC
         LIMIT 1;
         """,
-        (report_type, report_month),
+        (report_type, report_month, report_month),
     )
     row = cur.fetchone()
     if not row:
@@ -8970,6 +8971,7 @@ def save_inspection_report_snapshot(
         else ""
     )
     normalized_report = dict(report or {})
+    normalized_report["workspace_revision"] = int((generation_options or {}).get("workspace_revision") or 0)
     generation_log = report_ai_generation_log()
     if generation_log is not None:
         normalized_report["ai_generation_log"] = generation_log
@@ -9120,8 +9122,8 @@ def get_inspection_report_job(cur, task_id):
 def get_active_inspection_report_job(
     cur,
     report_type,
-    period_start,
-    period_end_exclusive,
+    period_start=None,
+    period_end_exclusive=None,
 ):
     require_inspection_report_job_schema(cur)
     cur.execute(
@@ -9146,13 +9148,12 @@ def get_active_inspection_report_job(
             ai_generation_log
         FROM inspection_report_jobs
         WHERE report_type = %s
-          AND period_start = %s
-          AND period_end_exclusive = %s
+          AND (%s::date IS NULL OR (period_start = %s AND period_end_exclusive = %s))
           AND status IN ('queued', 'running')
         ORDER BY created_at DESC
         LIMIT 1;
         """,
-        (report_type, period_start, period_end_exclusive),
+        (report_type, period_start, period_start, period_end_exclusive),
     )
     return cur.fetchone()
 
@@ -33123,6 +33124,7 @@ def queue_or_get_inspection_report_job(
         return None, active_job, False
 
     task_id = uuid.uuid4().hex
+    normalized_generation_options["workspace_revision"] = get_report_workspace(cur, report_type)["revision"]
     cur.execute(
         """
         INSERT INTO inspection_report_jobs (
@@ -33133,6 +33135,7 @@ def queue_or_get_inspection_report_job(
             period_end_exclusive,
             scope_key,
             requested_by,
+            requested_by_name,
             generation_options,
             status,
             progress,
@@ -33140,7 +33143,7 @@ def queue_or_get_inspection_report_job(
             created_at,
             updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'queued', 3, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
         """,
         (
             task_id,
@@ -33150,6 +33153,7 @@ def queue_or_get_inspection_report_job(
             period_end_exclusive,
             snapshot_scope_key,
             user.get("id"),
+            user.get("real_name") or user.get("username") or "",
             Json(normalized_generation_options),
             "任务已提交，等待后台启动",
         ),
@@ -33239,8 +33243,6 @@ def get_authorized_quality_report_generation_options(
 ):
     raw_options = requested_options if isinstance(requested_options, dict) else {}
     requested = normalize_inspection_report_generation_options(raw_options)
-    if "station_filter_enabled" in raw_options:
-        return requested
     saved = get_saved_quality_report_generation_options(
         cur,
         period_start,
@@ -33285,56 +33287,24 @@ def get_inspection_report_status():
     config = INSPECTION_REPORT_TYPE_CONFIGS.get(report_type)
     if not config:
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
-    snapshot_id = request.args.get("snapshot_id", type=int)
-    generation_options = normalize_inspection_report_generation_options(
-        {
-            "date_from": request.args.get("date_from", ""),
-            "date_to": request.args.get("date_to", ""),
-        }
-    )
-    period_start, period_end = resolve_inspection_report_period(
-        report_type,
-        request.args.get("month", ""),
-        generation_options,
-    )
-    report_month = (period_end - timedelta(days=1)).strftime("%Y-%m")
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
-        snapshot_scope_key = build_report_snapshot_scope_key(user)
         report = None
         job = None
         if config.get("template_ready"):
-            if snapshot_id:
-                report = get_inspection_report_snapshot_by_id(
-                    cur,
-                    snapshot_id,
-                    report_type,
-                )
-            else:
-                report = get_inspection_report_snapshot(
-                    cur,
-                    report_type,
-                    report_month,
-                    snapshot_scope_key,
-                    period_start,
-                    period_end,
-                )
-            job = get_active_inspection_report_job(
-                cur,
-                report_type,
-                period_start,
-                period_end,
-            )
+            report = get_latest_inspection_report_snapshot(cur, report_type)
+            job = get_active_inspection_report_job(cur, report_type)
         return jsonify({
             "success": True,
             "report_type": config,
             "report": report,
             "job": serialize_inspection_report_job(job),
-            "history": list_inspection_report_snapshots(cur, report_type),
+            "history": list_report_generation_requests(cur, report_type),
+            "workspace": get_current_report_workspace(cur, report_type, report),
             **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
@@ -33343,6 +33313,9 @@ def get_inspection_report_status():
         return jsonify({"success": False, "error": str(exc)}), 403
     except InspectionReportJobSchemaUnavailable as exc:
         return jsonify({"success": False, "error": str(exc)}), 503
+    except Exception:
+        logging.exception("Failed to read latest report workspace.")
+        return jsonify({"success": False, "error": "读取报告设置失败，请确认数据库已升级后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -33363,13 +33336,72 @@ def get_inspection_report_history():
         return jsonify(
             {
                 "success": True,
-                "history": list_inspection_report_snapshots(cur, report_type),
+                "history": list_report_generation_requests(cur, report_type),
             }
         )
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        logging.exception("Failed to read report generation request history.")
+        return jsonify({"success": False, "error": "读取生成操作记录失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+def get_current_report_workspace(cur, report_type, report=None):
+    workspace = get_report_workspace(cur, report_type)
+    report = report or {}
+    if not workspace["generation_options"].get("date_from"):
+        summary = report.get("summary") or {}
+        previous = report.get("previous_month_rectification") or {}
+        options = {key: summary[key] for key in ("date_from", "date_to") if summary.get(key)}
+        if report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
+            for key in ("date_from", "date_to"):
+                if previous.get(key):
+                    options[f"non_oil_rectification_{key}"] = previous[key]
+        workspace["generation_options"] = options
+    workspace["regeneration_required"] = bool(report) and workspace["revision"] > int(report.get("workspace_revision") or 0)
+    return workspace
+
+
+@app.route("/api/inspection-reports/workspace", methods=["GET", "PUT"])
+def manage_inspection_report_workspace():
+    data = (request.get_json(silent=True) or {}) if request.method == "PUT" else request.args
+    report_type = str(data.get("report_type") or "").strip()
+    if report_type not in INSPECTION_REPORT_TYPE_CONFIGS:
+        return jsonify({"success": False, "error": "报告类型不存在。"}), 400
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        report = get_latest_inspection_report_snapshot(cur, report_type)
+        if request.method == "PUT":
+            if not has_permission(cur, user, "generate_inspection_reports"):
+                raise PermissionError("当前账号无权修改报告数据日期范围。")
+            options = normalize_inspection_report_generation_options(data.get("generation_options"))
+            if not options.get("date_from"):
+                raise ValueError("请完整填写报告数据日期范围。")
+            if report_type != REPORT_SNAPSHOT_TYPE_NON_OIL:
+                options = {key: options[key] for key in ("date_from", "date_to")}
+            save_report_workspace(cur, report_type, user, options)
+            conn.commit()
+        return jsonify({"success": True, "workspace": get_current_report_workspace(cur, report_type, report)})
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except (ValueError, LookupError) as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Failed to persist report workspace.")
+        return jsonify({"success": False, "error": "保存报告设置失败，请确认数据库已升级后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -33454,6 +33486,7 @@ def get_inspection_report_source_options():
                     user.get("id"),
                 ),
             )
+            save_report_workspace(cur, report_type, user)
             conn.commit()
             saved_options = get_saved_quality_report_generation_options(
                 cur,
@@ -33557,6 +33590,7 @@ def manage_quality_report_selection_settings():
                 """,
                 (Json(settings), user["id"]),
             )
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user)
             conn.commit()
 
         settings_record = get_quality_report_selection_settings(cur)
@@ -33794,6 +33828,7 @@ def manage_quality_report_flow_classifications():
                         user.get("id"),
                     ),
                 )
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT, user)
             conn.commit()
             rows, categories = get_quality_report_flow_classification_rows(
                 cur,
@@ -33888,6 +33923,7 @@ def manage_non_oil_report_issue_selection():
                 excluded_values,
                 user.get("id"),
             )
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
             conn.commit()
         else:
             excluded_issue_ids = get_non_oil_report_excluded_issue_ids(
@@ -33991,46 +34027,62 @@ def manage_non_oil_report_issue_selection():
         close_db_resources(cur, conn)
 
 
+def get_current_non_oil_classifications(cur, user, period_start, period_end, key_issues=False):
+    raw_rows = fetch_non_oil_report_issue_rows(
+        cur, user, period_start, period_end, {}, apply_station_filter=False,
+    )
+    excluded = get_non_oil_report_excluded_issue_ids(cur, [row["id"] for row in raw_rows])
+    raw_rows = filter_non_oil_report_issue_rows(raw_rows, excluded)
+    ids = [row["id"] for row in raw_rows]
+    category_map = get_non_oil_report_classification_map(cur, ids)
+    key_map = get_non_oil_key_issue_classification_map(cur, ids) if key_issues else {}
+    rows = []
+    for raw in raw_rows:
+        issue = serialize_non_oil_report_issue(raw, category_map, key_map)
+        if not key_issues and not (
+            issue["table_name"] == NON_OIL_REPORT_ONSITE_TABLE and issue["source_project"] == "其他"
+        ):
+            continue
+        record = (key_map if key_issues else category_map).get(issue["issue_id"]) or {}
+        rows.append({
+            **{key: issue.get(key) for key in (
+                "issue_id", "station_name", "unit_name", "table_name", "external_standard_id", "description", "source_project",
+            )},
+            "original_category": issue["source_project"],
+            "business_category": issue["category_name"],
+            "effective_category": issue["key_issue_category"] if key_issues else issue["category_name"],
+            "classification_source": issue["key_issue_classification_source"] if key_issues else issue["classification_source"],
+            "reason": record.get("reason") or "",
+            "updated_at": format_report_snapshot_time(record.get("updated_at")),
+        })
+    return rows
+
+
 @app.route(
     "/api/inspection-reports/non-oil-category-classifications",
     methods=["GET", "PUT"],
 )
 def manage_non_oil_report_category_classifications():
     data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
-    month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
-    month_start, _ = parse_report_month(month_value)
-    report_month = month_start.strftime("%Y-%m")
-    snapshot_id = int(
-        (data.get("snapshot_id") if request.method == "PUT" else request.args.get("snapshot_id"))
-        or 0
-    )
+    source = data if request.method == "PUT" else request.args
     conn = None
     cur = None
     try:
+        period_start, period_end = resolve_non_oil_report_period(source.get("month", ""), source)
+        report_month = (period_end - timedelta(days=1)).strftime("%Y-%m")
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
         can_edit = True
-        report = (
-            get_inspection_report_snapshot_by_id(
-                cur,
-                snapshot_id,
-                REPORT_SNAPSHOT_TYPE_NON_OIL,
-            )
-            if snapshot_id
-            else get_latest_inspection_report_snapshot(
-                cur,
-                REPORT_SNAPSHOT_TYPE_NON_OIL,
-                report_month,
-            )
-        )
-        rows = list((report or {}).get("category_classifications") or [])
+        rows = get_current_non_oil_classifications(cur, user, period_start, period_end)
         if request.method == "PUT":
             if not can_edit:
                 raise PermissionError("当前账号无权调整非油报告问题分类。")
             adjustments = data.get("classifications")
             if not isinstance(adjustments, list) or not adjustments:
                 raise ValueError("请选择需要调整的问题分类。")
+            if len(adjustments) > 500:
+                raise ValueError("单次最多调整500条问题分类。")
             eligible = {int(row.get("issue_id") or 0): row for row in rows}
             normalized = []
             seen = set()
@@ -34079,12 +34131,9 @@ def manage_non_oil_report_category_classifications():
                         user.get("id"),
                     ),
                 )
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
             conn.commit()
-            for row in rows:
-                if int(row.get("issue_id") or 0) in seen:
-                    row["effective_category"] = dict(normalized)[int(row["issue_id"])]
-                    row["classification_source"] = "manual"
-                    row["reason"] = "人工调整非油报告检查项目分类。"
+            rows = get_current_non_oil_classifications(cur, user, period_start, period_end)
         return jsonify(
             {
                 "success": True,
@@ -34124,40 +34173,25 @@ def manage_non_oil_report_category_classifications():
 )
 def manage_non_oil_key_issue_classifications():
     data = (request.get_json(silent=True) or {}) if request.method == "PUT" else {}
-    month_value = data.get("month") if request.method == "PUT" else request.args.get("month", "")
-    month_start, _ = parse_report_month(month_value)
-    report_month = month_start.strftime("%Y-%m")
-    snapshot_id = int(
-        (data.get("snapshot_id") if request.method == "PUT" else request.args.get("snapshot_id"))
-        or 0
-    )
+    source = data if request.method == "PUT" else request.args
     conn = None
     cur = None
     try:
+        period_start, period_end = resolve_non_oil_report_period(source.get("month", ""), source)
+        report_month = (period_end - timedelta(days=1)).strftime("%Y-%m")
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
         can_edit = True
-        report = (
-            get_inspection_report_snapshot_by_id(
-                cur,
-                snapshot_id,
-                REPORT_SNAPSHOT_TYPE_NON_OIL,
-            )
-            if snapshot_id
-            else get_latest_inspection_report_snapshot(
-                cur,
-                REPORT_SNAPSHOT_TYPE_NON_OIL,
-                report_month,
-            )
-        )
-        rows = list((report or {}).get("key_issue_classifications") or [])
+        rows = get_current_non_oil_classifications(cur, user, period_start, period_end, key_issues=True)
         if request.method == "PUT":
             if not can_edit:
                 raise PermissionError("当前账号无权调整非油重点问题分类。")
             adjustments = data.get("classifications")
             if not isinstance(adjustments, list) or not adjustments:
                 raise ValueError("请选择需要调整的重点问题分类。")
+            if len(adjustments) > 500:
+                raise ValueError("单次最多调整500条问题分类。")
             eligible = {int(row.get("issue_id") or 0): row for row in rows}
             normalized = []
             seen = set()
@@ -34205,14 +34239,9 @@ def manage_non_oil_key_issue_classifications():
                         user.get("id"),
                     ),
                 )
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_NON_OIL, user)
             conn.commit()
-            adjustment_map = dict(normalized)
-            for row in rows:
-                issue_id = int(row.get("issue_id") or 0)
-                if issue_id in adjustment_map:
-                    row["effective_category"] = adjustment_map[issue_id]
-                    row["classification_source"] = "manual"
-                    row["reason"] = "人工调整非油报告重点问题分类。"
+            rows = get_current_non_oil_classifications(cur, user, period_start, period_end, key_issues=True)
         return jsonify(
             {
                 "success": True,
@@ -34290,6 +34319,7 @@ def create_inspection_report_generation_job():
             )
         elif report_type == REPORT_SNAPSHOT_TYPE_NON_OIL:
             resolve_non_oil_report_period(report_month, generation_options)
+        save_report_workspace(cur, report_type, user, generation_options)
         report, job, created = queue_or_get_inspection_report_job(
             cur,
             user,
