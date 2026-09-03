@@ -579,6 +579,11 @@ def _add_pie_chart(slide, box, rows, title):
     chart.legend.font.name = FONT_SANS
     plot = chart.plots[0]
     plot.has_data_labels = True
+    # New chart labels default to showing values as well as percentages.
+    plot.data_labels.show_value = False
+    plot.data_labels.show_category_name = False
+    plot.data_labels.show_series_name = False
+    plot.data_labels.show_legend_key = False
     plot.data_labels.show_percentage = True
     plot.data_labels.position = XL_DATA_LABEL_POSITION.BEST_FIT
     plot.data_labels.font.size = Pt(8)

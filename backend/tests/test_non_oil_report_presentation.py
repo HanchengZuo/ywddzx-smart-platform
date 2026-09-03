@@ -18,6 +18,7 @@ from non_oil_report_presentation import (
     CATEGORY_DISPLAY_NAMES,
     TEMPLATE_FILE,
     UNIT_ORDER,
+    _add_pie_chart,
     _edit_scope_slide,
     _edit_overview_slide,
     _edit_rectification_slide,
@@ -248,6 +249,45 @@ class NonOilReportPresentationTest(unittest.TestCase):
         rectification = next(shape.chart for shape in presentation.slides[3].shapes if shape.has_chart)
         self.assertEqual(list(rectification.series[2].values), [0.0] * len(UNIT_ORDER))
 
+    def assert_percentage_only_pie(self, chart):
+        self.assertEqual(chart.chart_type, XL_CHART_TYPE.PIE)
+        plot = chart.plots[0]
+        self.assertTrue(plot.has_data_labels)
+        labels = plot.data_labels
+        self.assertTrue(labels.show_percentage)
+        self.assertFalse(labels.show_value)
+        self.assertFalse(labels.show_category_name)
+        self.assertFalse(labels.show_series_name)
+        self.assertFalse(labels.show_legend_key)
+        self.assertEqual(chart._chartSpace.xpath(".//c:dLbls/c:showVal")[0].get("val"), "0")
+        self.assertEqual(chart._chartSpace.xpath(".//c:dLbls/c:showPercent")[0].get("val"), "1")
+        self.assertTrue(chart.has_legend)
+        self.assertTrue(chart.part.chart_workbook.xlsx_part.blob)
+
+    def test_pie_labels_show_only_percentages_without_changing_source_counts(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        chart = _add_pie_chart(
+            presentation.slides[8],
+            (0, 0, presentation.slide_width // 2, presentation.slide_height // 2),
+            [
+                {"name": "商品摆放", "count": 3},
+                {"name": "便利店卫生", "count": 2},
+                {"name": "仓库管理", "count": 0},
+            ],
+            "非油检查问题分布",
+        )
+        self.assert_percentage_only_pie(chart)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "percent-only.pptx"
+            presentation.save(output)
+            saved_chart = Presentation(output).slides[8].shapes[-1].chart
+            self.assert_percentage_only_pie(saved_chart)
+            self.assertEqual(list(saved_chart.series[0].values), [3.0, 2.0])
+            self.assertEqual(
+                [category.label for category in saved_chart.plots[0].categories],
+                ["商品摆放", "便利店卫生"],
+            )
+
     def test_summary_has_distinct_bullets_and_bold_labels(self):
         presentation = Presentation(TEMPLATE_FILE)
         report = self.make_dense_report()
@@ -318,6 +358,16 @@ class NonOilReportPresentationTest(unittest.TestCase):
             with Image.open(slides_dir / "slide-01.jpg") as image:
                 self.assertEqual(image.size, CANVAS_SIZE)
             presentation = Presentation(ppt_path)
+            pie_charts = [
+                shape.chart
+                for slide in presentation.slides
+                for shape in slide.shapes
+                if shape.has_chart and shape.chart.chart_type == XL_CHART_TYPE.PIE
+            ]
+            # Overview, unit pages, key-issue summary and three product pies.
+            self.assertEqual(len(pie_charts), 6)
+            for chart in pie_charts:
+                self.assert_percentage_only_pie(chart)
             with ZipFile(ppt_path) as package:
                 self.assertFalse(any("comment" in name.lower() for name in package.namelist()))
             self.assertEqual(len(presentation.slides), result["slide_count"])
