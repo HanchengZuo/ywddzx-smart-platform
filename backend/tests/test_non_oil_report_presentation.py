@@ -1,10 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.chart import XL_CHART_TYPE
 
 from ai_prompts import (
     build_non_oil_category_classification_prompt,
@@ -13,9 +15,14 @@ from ai_prompts import (
 )
 from non_oil_report_presentation import (
     CANVAS_SIZE,
+    CATEGORY_DISPLAY_NAMES,
     TEMPLATE_FILE,
     UNIT_ORDER,
     _edit_scope_slide,
+    _edit_overview_slide,
+    _edit_rectification_slide,
+    _add_unit_slide,
+    _remove_presentation_comments,
     build_non_oil_template_presentation,
     copy_existing_non_oil_presentation,
 )
@@ -161,6 +168,137 @@ class NonOilReportPresentationTest(unittest.TestCase):
         self.assertIn("不纳入重点问题", key_prompt)
         self.assertIn("不得强制归类", key_prompt)
 
+    def make_dense_report(self):
+        report = self.make_report()
+        names = list(CATEGORY_DISPLAY_NAMES)
+        units = []
+        for index, name in enumerate(UNIT_ORDER):
+            stations = [
+                {
+                    "station_name": f"{name}第{number + 1}站",
+                    "category_counts": {
+                        category: (index + number + offset) % 4
+                        for offset, category in enumerate(names)
+                    },
+                }
+                for number in range(6)
+            ]
+            for station in stations:
+                station["issue_count"] = sum(station["category_counts"].values())
+            count = sum(station["issue_count"] for station in stations)
+            units.append({
+                "unit_name": name,
+                "unit_type": "region" if index < 8 else "holding",
+                "station_count": len(stations),
+                "station_names": [station["station_name"] for station in stations],
+                "station_issue_rows": stations,
+                "issue_count": count,
+                "average_issue_count": count / len(stations),
+                "category_distribution": [
+                    {"name": category, "count": sum(s["category_counts"][category] for s in stations)}
+                    for category in names
+                ],
+            })
+        total = sum(unit["issue_count"] for unit in units)
+        for unit in units:
+            unit["percentage"] = unit["issue_count"] / total * 100
+        report["units"] = units
+        report["summary"].update(total_issue_count=total, station_count=108)
+        report["category_distribution"] = [
+            {"name": name, "count": sum(unit["category_distribution"][index]["count"] for unit in units)}
+            for index, name in enumerate(names)
+        ]
+        report["previous_month_rectification"] = {
+            "narrative": "8月各片区整改情况：累计发现问题54项，待验收18项，待整改0项。",
+            "units": [
+                {"unit_name": name, "total_count": 3, "pending_acceptance_count": 1, "pending_rectification_count": 0}
+                for name in UNIT_ORDER
+            ],
+        }
+        return report
+
+    def test_column_charts_use_editable_data_tables_without_bar_labels(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        report = self.make_dense_report()
+        _edit_rectification_slide(presentation.slides[3], report)
+        _edit_overview_slide(presentation.slides[8], report)
+        unit_slide = _add_unit_slide(presentation, presentation.slides[9], report["units"][0])
+        for slide in (presentation.slides[3], presentation.slides[8], unit_slide):
+            chart_shape = next(
+                shape for shape in slide.shapes
+                if shape.has_chart and shape.chart.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+            )
+            chart = chart_shape.chart
+            self.assertFalse(chart.plots[0].has_data_labels)
+            self.assertFalse(chart.has_legend)
+            self.assertEqual(len(chart._chartSpace.xpath(".//c:dTable")), 1)
+            self.assertEqual(chart._chartSpace.xpath(".//c:dTable/c:showKeys")[0].get("val"), "1")
+            self.assertTrue(chart.part.chart_workbook.xlsx_part.blob)
+            self.assertLessEqual(chart_shape.top + chart_shape.height, presentation.slide_height)
+        overview = next(
+            shape.chart for shape in presentation.slides[8].shapes
+            if shape.has_chart and shape.chart.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+        )
+        self.assertEqual([category.label for category in overview.plots[0].categories], UNIT_ORDER)
+        self.assertEqual(list(overview.series[0].values), [unit["average_issue_count"] for unit in report["units"]])
+        rectification = next(shape.chart for shape in presentation.slides[3].shapes if shape.has_chart)
+        self.assertEqual(list(rectification.series[2].values), [0.0] * len(UNIT_ORDER))
+
+    def test_summary_has_distinct_bullets_and_bold_labels(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        report = self.make_dense_report()
+        _edit_overview_slide(presentation.slides[8], report)
+        unit_slide = _add_unit_slide(presentation, presentation.slides[9], report["units"][0])
+        for slide, keyword, count in (
+            (presentation.slides[8], "片区（分公司）总数", 5),
+            (unit_slide, "涉及站点数", 3),
+        ):
+            shape = next(s for s in slide.shapes if s.has_text_frame and keyword in s.text)
+            self.assertEqual(len(shape.text_frame.paragraphs), count)
+            self.assertLessEqual(shape.top + shape.height, presentation.slide_height)
+            for paragraph in shape.text_frame.paragraphs:
+                self.assertEqual(len(paragraph._p.xpath("./a:pPr/a:buChar")), 1)
+            self.assertTrue(shape.text_frame.paragraphs[0].runs[0].font.bold)
+            self.assertFalse(shape.text_frame.paragraphs[0].runs[1].font.bold)
+            for chart in (s for s in slide.shapes if s.has_chart):
+                self.assertLess(chart.top + chart.height, shape.top)
+        summary = next(s for s in presentation.slides[8].shapes if s.has_text_frame and "片区（分公司）总数" in s.text)
+        self.assertIn("8个管理片区和10个合资公司", summary.text)
+        self.assertEqual(str(summary.text_frame.paragraphs[3].runs[0].font.color.rgb), "C00000")
+        self.assertIn("《7月非油检查问题清单》", summary.text)
+
+    def test_removing_comments_is_idempotent_and_does_not_modify_template(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        with ZipFile(TEMPLATE_FILE) as original:
+            self.assertTrue(any("comments/" in name for name in original.namelist()))
+
+        _remove_presentation_comments(presentation)
+        _remove_presentation_comments(presentation)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "clean.pptx"
+            presentation.save(output)
+            with ZipFile(output) as deck:
+                self.assertFalse(any("comment" in name.lower() for name in deck.namelist()))
+                for name in deck.namelist():
+                    if name.endswith(".rels"):
+                        self.assertNotIn(b"/comments", deck.read(name))
+                        self.assertNotIn(b"/commentAuthors", deck.read(name))
+            self.assertEqual(len(Presentation(output).slides), len(presentation.slides))
+        with ZipFile(TEMPLATE_FILE) as original:
+            self.assertTrue(any("comments/" in name for name in original.namelist()))
+
+    def test_export_of_older_report_also_removes_comments(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "export.pptx"
+            result = copy_existing_non_oil_presentation({
+                "presentation": {"ppt_path": str(TEMPLATE_FILE), "slide_count": 45},
+            }, output)
+            self.assertEqual(result["slide_count"], 45)
+            with ZipFile(output) as package:
+                self.assertFalse(any("comment" in name.lower() for name in package.namelist()))
+            with ZipFile(TEMPLATE_FILE) as original:
+                self.assertTrue(any("comments/" in name for name in original.namelist()))
+
     def test_preview_images_and_export_share_the_same_slide_set(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -176,6 +314,8 @@ class NonOilReportPresentationTest(unittest.TestCase):
             with Image.open(slides_dir / "slide-01.jpg") as image:
                 self.assertEqual(image.size, CANVAS_SIZE)
             presentation = Presentation(ppt_path)
+            with ZipFile(ppt_path) as package:
+                self.assertFalse(any("comment" in name.lower() for name in package.namelist()))
             self.assertEqual(len(presentation.slides), result["slide_count"])
             self.assertTrue(
                 any(shape.has_text_frame for shape in presentation.slides[0].shapes)

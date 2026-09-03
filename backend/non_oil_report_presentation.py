@@ -6,6 +6,7 @@ that PPTX so the preview and downloaded deck share one layout and pagination.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -14,6 +15,7 @@ import tempfile
 import uuid
 from copy import deepcopy
 from pathlib import Path
+from zipfile import ZipFile
 
 from PIL import Image, ImageOps
 from pptx import Presentation
@@ -23,6 +25,7 @@ from pptx.enum.chart import (
     XL_CHART_TYPE,
     XL_DATA_LABEL_POSITION,
     XL_LEGEND_POSITION,
+    XL_TICK_LABEL_POSITION,
 )
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
@@ -129,7 +132,7 @@ def _capture_run_style(text_frame):
 
 def _portable_font_name(source_name):
     value = str(source_name or "").lower()
-    if any(keyword in value for keyword in ("仿宋", "小标宋", "宋体", "fangsong", "simsun")):
+    if any(keyword in value for keyword in ("仿宋", "小标宋", "宋体", "fangsong", "simsun", "noto serif")):
         return FONT_SERIF
     return FONT_SANS
 
@@ -182,6 +185,77 @@ def _normalize_presentation_fonts(prs):
     for slide in prs.slides:
         for shape in slide.shapes:
             _normalize_shape_fonts(shape)
+
+
+def _remove_presentation_comments(prs):
+    # Drop both legacy and modern comment relationships. Unreferenced parts
+    # (including authors) are then omitted by the PPTX package writer.
+    for part in list(prs.part.package.iter_parts()):
+        for rel in list(part.rels.values()):
+            kind = rel.reltype.rsplit("/", 1)[-1].lower()
+            if "comment" not in kind and kind not in {"person", "persons"}:
+                continue
+            element = getattr(part, "_element", None)
+            if element is not None:
+                for node in list(element.iter()):
+                    if node.get(qn("r:id")) == rel.rId:
+                        node.getparent().remove(node)
+            part.drop_rel(rel.rId)
+
+
+def _set_summary_bullets(shape, rows, max_font_size=18):
+    """Use hanging bullets and separate label/value runs, not template indents."""
+    text_frame = shape.text_frame
+    text_frame.clear()
+    text_frame.word_wrap = True
+    text_frame.vertical_anchor = MSO_ANCHOR.TOP
+    text_frame.margin_left = text_frame.margin_right = 0
+    text_frame.margin_top = text_frame.margin_bottom = 0
+    width = shape.width / 914400
+    height = shape.height / 914400
+    font_size = max_font_size
+    for candidate in range(max_font_size, 9, -1):
+        available_units = max(1, (width * 72 - candidate * 1.6) / candidate)
+        lines = sum(
+            max(1, math.ceil(_visual_text_units(label + value) / available_units))
+            for label, value, _color in rows
+        )
+        if (lines * candidate * 1.35 + (len(rows) - 1) * candidate * 0.38) / 72 <= height:
+            font_size = candidate
+            break
+    else:
+        font_size = 10
+    for index, (label, value, color) in enumerate(rows):
+        paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        paragraph.clear()
+        paragraph.level = 0
+        paragraph.alignment = PP_ALIGN.LEFT
+        paragraph.line_spacing = 1.25
+        paragraph.space_before = Pt(0)
+        paragraph.space_after = Pt(font_size * 0.38)
+        ppr = paragraph._p.get_or_add_pPr()
+        # Remove the source template's tab stops, font bullets and spacing.
+        for child in list(ppr):
+            if child.tag in {qn("a:tabLst"), qn("a:defRPr")} or "bu" in child.tag.rsplit("}", 1)[-1]:
+                ppr.remove(child)
+        ppr.set("marL", str(Pt(font_size * 1.55)))
+        ppr.set("indent", str(-Pt(font_size * 1.55)))
+        bullet_font = OxmlElement("a:buFont")
+        bullet_font.set("typeface", FONT_SANS)
+        ppr.append(bullet_font)
+        bullet = OxmlElement("a:buChar")
+        bullet.set("char", "➢")
+        ppr.append(bullet)
+        for text, bold in ((label, True), (value, False)):
+            if not text:
+                continue
+            run = paragraph.add_run()
+            run.text = text
+            _set_run_typeface(run, FONT_SERIF)
+            run.font.size = Pt(font_size)
+            run.font.bold = bold
+            run.font.italic = False
+            run.font.color.rgb = RGBColor.from_string(color or "111111")
 
 
 def _set_text_frame(text_frame, value, style=None, font_size=None, bold=None):
@@ -385,7 +459,44 @@ def _add_empty_chart_message(slide, box, title):
         paragraph.alignment = PP_ALIGN.CENTER
 
 
-def _add_column_chart(slide, box, categories, series, title):
+def _add_chart_data_table(chart, font_size):
+    """Native chart data table: values stay editable with the chart workbook."""
+    table = OxmlElement("c:dTable")
+    for name in ("showHorzBorder", "showVertBorder", "showOutline", "showKeys"):
+        node = OxmlElement(f"c:{name}")
+        node.set("val", "1")
+        table.append(node)
+    properties = OxmlElement("c:spPr")
+    line = OxmlElement("a:ln")
+    line.set("w", str(Pt(0.5)))
+    fill = OxmlElement("a:solidFill")
+    color = OxmlElement("a:srgbClr")
+    color.set("val", "D9D9D9")
+    fill.append(color)
+    line.append(fill)
+    properties.append(line)
+    table.append(properties)
+    text = OxmlElement("c:txPr")
+    text.append(OxmlElement("a:bodyPr"))
+    text.append(OxmlElement("a:lstStyle"))
+    paragraph = OxmlElement("a:p")
+    ppr = OxmlElement("a:pPr")
+    defaults = OxmlElement("a:defRPr")
+    defaults.set("sz", str(int(font_size * 100)))
+    for tag in ("a:latin", "a:ea", "a:cs"):
+        font = OxmlElement(tag)
+        font.set("typeface", FONT_SANS)
+        defaults.append(font)
+    ppr.append(defaults)
+    paragraph.append(ppr)
+    text.append(paragraph)
+    table.append(text)
+    chart._chartSpace.chart.plotArea.insert_element_before(table, "c:spPr", "c:extLst")
+    chart.has_legend = False
+    chart.category_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
+
+
+def _add_column_chart(slide, box, categories, series, title, *, data_table=False):
     categories = [str(item or "-") for item in categories]
     if not categories:
         _add_empty_chart_message(slide, box, title)
@@ -412,16 +523,19 @@ def _add_column_chart(slide, box, categories, series, title):
         chart.legend.include_in_layout = False
     plot = chart.plots[0]
     plot.gap_width = 65 if len(categories) <= 8 else 35
-    plot.has_data_labels = True
-    plot.data_labels.show_value = True
-    plot.data_labels.position = XL_DATA_LABEL_POSITION.OUTSIDE_END
-    plot.data_labels.font.size = Pt(8)
+    plot.has_data_labels = not data_table
+    if not data_table:
+        plot.data_labels.show_value = True
+        plot.data_labels.position = XL_DATA_LABEL_POSITION.OUTSIDE_END
+        plot.data_labels.font.size = Pt(8)
     for index, chart_series in enumerate(chart.series):
         color = series[index][2] if index < len(series) else CHART_COLORS[index % len(CHART_COLORS)]
         chart_series.format.fill.solid()
         chart_series.format.fill.fore_color.rgb = RGBColor.from_string(color)
         chart_series.format.line.color.rgb = RGBColor.from_string(color)
     _set_chart_fonts(chart, category_size=8 if len(categories) > 10 else 9)
+    if data_table:
+        _add_chart_data_table(chart, 8 if len(categories) > 10 or len(series) > 5 else 9)
     return chart
 
 
@@ -652,10 +766,11 @@ def _edit_rectification_slide(slide, report):
         [_unit_name(item.get("unit_name")) for item in units],
         [
             ("全部问题", [item.get("total_count") for item in units], "4472C4"),
-            ("待验收", [item.get("pending_acceptance_count") for item in units], "ED7D31"),
+            ("待验收", [item.get("pending_acceptance_count") for item in units], "C0504D"),
             ("待整改", [item.get("pending_rectification_count") for item in units], "70AD47"),
         ],
         "各片区待验收与待整改问题数量分布",
+        data_table=True,
     )
 
 
@@ -775,22 +890,49 @@ def _edit_overview_slide(slide, report):
         ),
         None,
     )
-    if summary_shape:
-        _set_text_frame(
-            summary_shape.text_frame,
-            report.get("unit_overview_text") or report.get("issue_overview_text") or "-",
-        )
     units = sorted(report.get("units") or [], key=_unit_sort_key)
+    summary = report.get("summary") or {}
+    categories = sorted(
+        [item for item in report.get("category_distribution") or [] if item.get("count")],
+        key=lambda item: -item["count"],
+    )
+    category_total = sum(item["count"] for item in categories)
+    concentration = "当前范围暂无非油现场检查问题。"
+    if categories:
+        concentration = (
+            f"非油现场检查问题主要集中在{categories[0]['name']}，"
+            f"占比{categories[0]['count'] / category_total * 100:.1f}%"
+        )
+        if len(categories) > 1:
+            concentration += (
+                f"，其次为{categories[1]['name']}（"
+                f"{categories[1]['count'] / category_total * 100:.1f}%）"
+            )
+        concentration += "。"
+    station_count = summary.get("station_count", sum(item.get("station_count") or 0 for item in units))
+    total = summary.get("total_issue_count") or 0
+    month = int(str(report.get("month") or "2000-01").split("-")[1])
+    if summary_shape:
+        summary_shape.left, summary_shape.top = Inches(0.55), Inches(5.40)
+        summary_shape.width, summary_shape.height = Inches(12.25), Inches(1.88)
+        _set_summary_bullets(summary_shape, [
+            ("片区（分公司）总数：", f"{sum(item.get('unit_type') == 'region' for item in units)}个管理片区和{sum(item.get('unit_type') == 'holding' for item in units)}个合资公司", None),
+            ("问题总计：", f"{total}项", None),
+            ("站平均问题数：", f"{total / station_count if station_count else 0:.1f}项/站", None),
+            ("", concentration, "C00000"),
+            ("具体问题详见附件：", f"《{month}月非油检查问题清单》", None),
+        ], max_font_size=16)
     _add_column_chart(
         slide,
-        (Inches(0.25), Inches(1.05), Inches(7.55), Inches(4.15)),
+        (Inches(0.25), Inches(1.05), Inches(7.55), Inches(4.05)),
         [_unit_name(item.get("unit_name")) for item in units],
         [
-            ("站平均问题数", [item.get("average_issue_count") for item in units], "5B9BD5"),
+            ("单站平均问题数", [item.get("average_issue_count") for item in units], "0070C0"),
             ("检查站点数", [item.get("station_count") for item in units], "C0504D"),
             ("问题总数", [item.get("issue_count") for item in units], "92D050"),
         ],
         "各片区非油问题数量汇总",
+        data_table=True,
     )
     _add_pie_chart(
         slide,
@@ -824,22 +966,16 @@ def _add_unit_slide(prs, source_slide, unit):
         raise ValueError("非油报告片区模板缺少汇总文本框。")
     summary_shape = _copy_text_shape(source_summary, slide)
     station_rows = unit.get("station_issue_rows") or []
-    station_names = "、".join(item.get("station_name") or "" for item in station_rows)
-    top_category = next(
-        (item.get("name") for item in unit.get("category_distribution") or [] if item.get("count")),
-        "非油业务管理",
-    )
-    summary = (
-        f"涉及站点数：{unit.get('station_count') or 0}座（{station_names}）\n"
-        f"问题总计：{unit.get('issue_count') or 0}项（占本次全盘通报问题总量的"
-        f"{float(unit.get('percentage') or 0):.1f}%，主要集中于{top_category}）\n"
-        f"站平均问题数：{float(unit.get('average_issue_count') or 0):.1f}项/站"
-    )
-    _set_text_frame(summary_shape.text_frame, summary)
+    station_names = "、".join(unit.get("station_names") or [item.get("station_name") or "" for item in station_rows])
     summary_shape.left = Inches(0.75)
     summary_shape.top = Inches(5.35)
     summary_shape.width = Inches(11.9)
     summary_shape.height = Inches(1.75)
+    _set_summary_bullets(summary_shape, [
+        ("涉及站点数：", f"{unit.get('station_count') or 0}座（{station_names}）", None),
+        ("问题总计：", f"{unit.get('issue_count') or 0}项（占本次全盘通报问题总量的{float(unit.get('percentage') or 0):.1f}%）", None),
+        ("站平均问题数：", f"{float(unit.get('average_issue_count') or 0):.1f}项/站", None),
+    ], max_font_size=20)
 
     line = slide.shapes.add_shape(
         MSO_SHAPE.RECTANGLE,
@@ -860,7 +996,7 @@ def _add_unit_slide(prs, source_slide, unit):
     ]
     series = [
         (
-            category_name,
+            CATEGORY_DISPLAY_NAMES.get(category_name, category_name),
             [
                 (station.get("category_counts") or {}).get(category_name, 0)
                 for station in station_rows
@@ -883,6 +1019,7 @@ def _add_unit_slide(prs, source_slide, unit):
         categories,
         series,
         f"{_unit_name(unit.get('unit_name'))}各站问题数量",
+        data_table=True,
     )
     _add_pie_chart(
         slide,
@@ -1584,6 +1721,7 @@ def build_non_oil_template_presentation(
         _move_slide(prs, slide, 9 + index)
 
     _normalize_presentation_fonts(prs)
+    _remove_presentation_comments(prs)
     prs.save(output_path)
     slide_files = _render_presentation_preview(output_path, output_dir)
     return {
@@ -1601,5 +1739,14 @@ def copy_existing_non_oil_presentation(report, destination, storage_root=None):
     if not source or not os.path.isfile(source):
         return None
     os.makedirs(os.path.dirname(os.path.abspath(destination)), exist_ok=True)
-    shutil.copy2(source, destination)
+    # Previously saved reports may still contain template review comments.
+    # Strip those on export too, without changing the stored historical deck.
+    with ZipFile(source) as package:
+        has_comments = any("comment" in name.lower() for name in package.namelist())
+    if has_comments:
+        deck = Presentation(source)
+        _remove_presentation_comments(deck)
+        deck.save(destination)
+    else:
+        shutil.copy2(source, destination)
     return {"slide_count": int(presentation.get("slide_count") or 0)}
