@@ -19,10 +19,13 @@ from non_oil_report_presentation import (
     TEMPLATE_FILE,
     UNIT_ORDER,
     _add_pie_chart,
+    _edit_analysis_overview,
     _edit_scope_slide,
     _edit_overview_slide,
     _edit_rectification_slide,
     _add_unit_slide,
+    _iter_shapes_recursive,
+    _normalize_presentation_fonts,
     _remove_presentation_comments,
     build_non_oil_template_presentation,
     copy_existing_non_oil_presentation,
@@ -311,6 +314,96 @@ class NonOilReportPresentationTest(unittest.TestCase):
         self.assertEqual(str(summary.text_frame.paragraphs[3].runs[0].font.color.rgb), "C00000")
         self.assertIn("《7月非油检查问题清单》", summary.text)
 
+    def assert_analysis_metrics(self, slide, total, selected, percentage):
+        for label, expected in (
+            ("问题总数", total),
+            ("重点问题数", selected),
+            ("重点问题占比", percentage),
+            ("问题覆盖领域", "20+"),
+        ):
+            shape = next(
+                shape for shape in _iter_shapes_recursive(slide.shapes)
+                if shape.has_text_frame and label in shape.text
+            )
+            self.assertEqual(shape.text.splitlines()[0], str(expected))
+
+    def test_analysis_overview_uses_actual_counts_and_recalculates_percentage(self):
+        for total, selected, percentage in (
+            (23, 7, "30.4%"),
+            (5, 2, "40%"),
+            (5, 0, "0%"),
+            (0, 0, "0%"),
+            (17, 17, "100%"),
+            (10000, 1234, "12.3%"),
+        ):
+            with self.subTest(total=total, selected=selected):
+                presentation = Presentation(TEMPLATE_FILE)
+                slide = presentation.slides[21]
+                report = self.make_report()
+                report["summary"]["total_issue_count"] = total
+                report["key_issue_summary"].update(
+                    selected_count=selected, percentage_of_all=99,
+                )
+                report["key_issue_count"] = 999
+                report["key_issue_percentage"] = 99
+                _edit_analysis_overview(slide, report)
+                self.assert_analysis_metrics(slide, total, selected, percentage)
+                first_result = slide._element.xml
+                _edit_analysis_overview(slide, report)
+                self.assertEqual(slide._element.xml, first_result)
+
+    def test_analysis_overview_supports_legacy_count_fields(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        report = self.make_report()
+        report.pop("key_issue_summary")
+        _edit_analysis_overview(presentation.slides[21], report)
+        self.assert_analysis_metrics(presentation.slides[21], 5, 2, "40%")
+
+    def test_analysis_method_and_card_styles_are_preserved(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        slide = presentation.slides[21]
+        source_shapes = {
+            shape.shape_id: shape._element.xml
+            for shape in _iter_shapes_recursive(slide.shapes)
+            if shape.has_text_frame
+        }
+        metric_labels = ("问题总数", "重点问题数", "重点问题占比")
+        metric_styles = {
+            shape.shape_id: [
+                run._r.rPr.xml
+                for paragraph in shape.text_frame.paragraphs
+                for run in paragraph.runs
+            ]
+            for shape in _iter_shapes_recursive(slide.shapes)
+            if shape.has_text_frame and any(label in shape.text for label in metric_labels)
+        }
+        _edit_analysis_overview(slide, self.make_report())
+        for shape in _iter_shapes_recursive(slide.shapes):
+            if not shape.has_text_frame:
+                continue
+            if shape.shape_id in metric_styles:
+                self.assertEqual([
+                    run._r.rPr.xml
+                    for paragraph in shape.text_frame.paragraphs
+                    for run in paragraph.runs
+                ], metric_styles[shape.shape_id])
+            else:
+                self.assertEqual(shape._element.xml, source_shapes[shape.shape_id])
+
+        method = next(s for s in slide.shapes if s.has_text_frame and "随着非油业务" in s.text)
+        self.assertEqual([p.text for p in method.text_frame.paragraphs], [
+            "随着非油业务在加油站利润结构中的占比提升，便利店的运营效率与合规成为管理的重点。"
+            "本次分析旨在识别便利店运营流程中的潜在风险，使用的方法包括：",
+            "定量评估：统计各类问题发生频次，识别高风险问题领域",
+            "关联分析：建立重点问题与检查项目的映射关系，掌握重点问题的发生阶段",
+            "风险识别：结合外部信息识别典型问题的风险及影响，依据风险与频次展示典型问题",
+            "归因优化：探究数据之后的共性缺失，提出流程化改善建议",
+        ])
+        for paragraph in method.text_frame.paragraphs[1:]:
+            self.assertEqual(len(paragraph._p.xpath("./a:pPr/a:buChar")), 1)
+            self.assertTrue(paragraph.runs[0].font.bold)
+            self.assertFalse(bool(paragraph.runs[1].font.bold))
+
     def test_removing_comments_is_idempotent_and_does_not_modify_template(self):
         presentation = Presentation(TEMPLATE_FILE)
         with ZipFile(TEMPLATE_FILE) as original:
@@ -371,6 +464,20 @@ class NonOilReportPresentationTest(unittest.TestCase):
             with ZipFile(ppt_path) as package:
                 self.assertFalse(any("comment" in name.lower() for name in package.namelist()))
             self.assertEqual(len(presentation.slides), result["slide_count"])
+            analysis_slide = next(
+                slide for slide in presentation.slides
+                if any(s.has_text_frame and "1. 检查总体情况" in s.text for s in slide.shapes)
+            )
+            self.assert_analysis_metrics(analysis_slide, 5, 2, "40%")
+            normalized_template = Presentation(TEMPLATE_FILE)
+            _normalize_presentation_fonts(normalized_template)
+            for keyword in ("随着非油业务", "2. 分析方法"):
+                expected = next(
+                    s for s in normalized_template.slides[21].shapes
+                    if s.has_text_frame and keyword in s.text
+                )
+                actual = next(s for s in analysis_slide.shapes if s.has_text_frame and keyword in s.text)
+                self.assertEqual(actual._element.xml, expected._element.xml)
             self.assertTrue(
                 any(shape.has_text_frame for shape in presentation.slides[0].shapes)
             )

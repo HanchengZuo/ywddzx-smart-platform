@@ -1063,22 +1063,36 @@ def _add_unit_slide(prs, source_slide, unit):
 
 def _edit_analysis_overview(slide, report):
     summary = report.get("summary") or {}
-    overview_shape = _find_text_shape(slide, "随着非油业务")
-    if not overview_shape:
-        return
-    original = _shape_text(overview_shape)
-    updated = re.sub(
-        r"随着非油业务.*?使用的方法包括：",
-        (
-            f"本期共统计{summary.get('total_issue_count') or 0}项审核通过问题，"
-            f"覆盖{summary.get('category_count') or 0}个非油检查领域。"
-            "本次分析旨在识别便利店运营流程中的潜在风险，使用的方法包括："
-        ),
-        original,
-        count=1,
-        flags=re.S,
-    )
-    _set_text_frame(overview_shape.text_frame, updated)
+    total = int(summary.get("total_issue_count") or 0)
+    selected = (report.get("key_issue_summary") or {}).get("selected_count")
+    if selected is None:
+        selected = report.get("key_issue_count") or 0
+    selected = int(selected)
+    percentage = f"{selected / total * 100 if total else 0:.1f}".rstrip("0").rstrip(".")
+
+    # Cards are nested groups. Replace only their numeric runs so their colors,
+    # labels and line breaks survive; retain the fixed methodology verbatim.
+    for label, value in (
+        ("问题总数", str(total)),
+        ("重点问题数", str(selected)),
+        ("重点问题占比", f"{percentage}%"),
+    ):
+        shape = next(
+            (item for item in _iter_shapes_recursive(slide.shapes) if label in _shape_text(item)),
+            None,
+        )
+        if shape is None:
+            raise ValueError(f"非油报告检查总体情况模板缺少统计项：{label}")
+        value_run = next(
+            (
+                run for paragraph in shape.text_frame.paragraphs for run in paragraph.runs
+                if re.fullmatch(r"\s*\d+(?:\.\d+)?%?\s*", run.text)
+            ),
+            None,
+        )
+        if value_run is None:
+            raise ValueError(f"非油报告检查总体情况模板缺少数值：{label}")
+        value_run.text = re.sub(r"\d+(?:\.\d+)?%?", value, value_run.text, count=1)
 
 
 def _edit_key_issue_overview_slide(slide, report):
