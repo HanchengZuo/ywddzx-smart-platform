@@ -391,20 +391,33 @@ def _visual_text_units(value):
     return units
 
 
-def _estimate_scope_text_height(lines, width_inches, font_size):
-    usable_width_points = max(120, (width_inches - 0.2) * 72)
-    characters_per_line = max(12, usable_width_points / max(font_size, 1))
-    wrapped_lines = sum(
-        max(
-            1,
-            int(
-                (_visual_text_units(line) + characters_per_line - 1)
-                // characters_per_line
-            ),
-        )
-        for line in lines
-    )
-    return wrapped_lines * font_size * 1.22 / 72 + 0.12
+def _wrap_scope_cell(value, width_inches, font_size):
+    # Reserve a little width for font differences between Office and the renderer.
+    limit = max(1, (width_inches * 72 - 6) * 0.90 / font_size)
+    lines = []
+    for paragraph in str(value or "").split("\n"):
+        line, units = "", 0.0
+        for character in paragraph:
+            character_units = _visual_text_units(character)
+            if line and (ord(line[-1]) < 128) != (ord(character) < 128):
+                # Office inserts spacing at Latin/CJK boundaries, e.g. 站名（12）.
+                character_units += 0.3
+            if line and units + character_units > limit:
+                split_index = line.rfind("、") + 1
+                if split_index:
+                    lines.append(line[:split_index])
+                    line = line[split_index:]
+                    units = _visual_text_units(line) + 0.3 * sum(
+                        (ord(left) < 128) != (ord(right) < 128)
+                        for left, right in zip(line, line[1:])
+                    )
+                else:
+                    lines.append(line)
+                    line, units = "", 0.0
+            line += character
+            units += character_units
+        lines.append(line)
+    return lines
 
 
 def _set_scope_text(text_frame, period_text, scope_text, font_size):
@@ -412,12 +425,17 @@ def _set_scope_text(text_frame, period_text, scope_text, font_size):
     text_frame.word_wrap = True
     text_frame.margin_top = Inches(0.04)
     text_frame.margin_bottom = Inches(0.04)
+    text_frame.margin_left = text_frame.margin_right = 0
+    text_frame.vertical_anchor = MSO_ANCHOR.TOP
     for index, (label, value) in enumerate(
         (("巡检期间：", period_text), ("巡检范围：", scope_text))
     ):
         paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
+        paragraph._p.get_or_add_pPr().clear()
         paragraph.alignment = PP_ALIGN.LEFT
-        paragraph.line_spacing = 1.15
+        paragraph.line_spacing = Pt(font_size * 1.3)
+        paragraph.space_before = Pt(0)
+        paragraph.space_after = Pt(font_size * 0.2 if index == 0 else 0)
         label_run = paragraph.add_run()
         label_run.text = label
         label_run.font.size = Pt(font_size)
@@ -774,85 +792,7 @@ def _edit_rectification_slide(slide, report):
     )
 
 
-def _edit_scope_slide(slide, report):
-    title_id = slide.shapes.title.shape_id if slide.shapes.title else None
-    text_shape = next(
-        (
-            shape for shape in slide.shapes
-            if getattr(shape, "has_text_frame", False) and shape.shape_id != title_id
-        ),
-        None,
-    )
-    table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
-    units = sorted(report.get("units") or [], key=_unit_sort_key)
-    rows = [
-        [
-            str(index),
-            _unit_name(item.get("unit_name")),
-            str(item.get("station_count") or 0),
-            "、".join(item.get("station_names") or []),
-        ]
-        for index, item in enumerate(units, 1)
-    ]
-    if text_shape:
-        period_text = report.get("period_text") or "-"
-        scope_text = report.get("scope_text") or "-"
-        content_bottom = Inches(7.28)
-        gap = Inches(0.1)
-        minimum_table_height = Inches(
-            min(4.85, max(3.35, 0.48 + max(1, len(rows)) * 0.2))
-        )
-        maximum_text_height = max(
-            Inches(0.72),
-            content_bottom - text_shape.top - gap - minimum_table_height,
-        )
-        selected_font_size = 15
-        estimated_text_height = maximum_text_height / 914400
-        for candidate_size in (20, 19, 18, 17, 16, 15):
-            candidate_height = _estimate_scope_text_height(
-                (period_text, scope_text),
-                text_shape.width / 914400,
-                candidate_size,
-            )
-            if Inches(candidate_height) <= maximum_text_height:
-                selected_font_size = candidate_size
-                estimated_text_height = candidate_height
-                break
-        text_shape.height = min(
-            maximum_text_height,
-            Inches(max(0.72, estimated_text_height)),
-        )
-        _set_scope_text(
-            text_shape.text_frame,
-            period_text,
-            scope_text,
-            selected_font_size,
-        )
-        table_shape.top = text_shape.top + text_shape.height + gap
-        table_shape.height = max(Inches(3.2), content_bottom - table_shape.top)
-    table_font_size = (
-        7 if len(rows) > 16
-        else 8 if len(rows) > 13
-        else 9 if len(rows) > 10
-        else 10
-    )
-    _fill_table(
-        table_shape,
-        ["序号", "所属片区", "站点数量", "站点"],
-        rows,
-        font_size=table_font_size,
-    )
-
-
-def _edit_unit_table_slide(slide, report):
-    summary = report.get("summary") or {}
-    narrative_shape = _find_text_shape(slide, "检查共发现")
-    if narrative_shape:
-        _set_text_frame(
-            narrative_shape.text_frame,
-            f"检查共发现{summary.get('total_issue_count') or 0}项问题，其中，各区问题数量如下：",
-        )
-    table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
+def _scope_detail_rows(report):
     units = sorted(report.get("units") or [], key=_unit_sort_key)
     rows = []
     for index, item in enumerate(units, 1):
@@ -870,12 +810,98 @@ def _edit_unit_table_slide(slide, report):
                 station_text,
             ]
         )
-    _fill_table(
-        table_shape,
-        ["序号", "所属片区", "站点数量", "片区问题总项", "站平均问题数", "站点问题数"],
+    return rows or [["-", "暂无数据", "0", "0", "0.0", "-"]]
+
+
+def _scope_detail_layout(lines, width, column_widths, rows, available_height):
+    candidates = []
+    for table_font in range(12, 5, -1):
+        wrapped_rows = [
+            [_wrap_scope_cell(value, column_widths[index], table_font) for index, value in enumerate(row)]
+            for row in rows
+        ]
+        row_heights = [
+            (max(len(cell) for cell in row) * table_font * 1.25 + 2) / 72
+            for row in wrapped_rows
+        ]
+        for text_font in range(20, 11, -1):
+            line_count = sum(len(_wrap_scope_cell(line, width, text_font)) for line in lines)
+            text_height = (line_count * text_font * 1.3 + text_font * 0.2) / 72 + 0.08
+            if text_height + 0.12 + sum(row_heights) > available_height:
+                continue
+            candidates.append({
+                "text_font": text_font,
+                "text_height": text_height,
+                "table_font": table_font,
+                "wrapped_rows": wrapped_rows,
+                "row_heights": row_heights,
+                "score": table_font * 5 + text_font * 0.3,
+            })
+    if not candidates:
+        # Never produce a clipped slide or silently discard station details.
+        raise ValueError("巡检范围明细超出单页可读容量，请缩小报告日期范围后重新生成。")
+    return max(candidates, key=lambda candidate: candidate["score"])
+
+
+def _edit_scope_slide(slide, report, detail_slide):
+    text_shape = _find_text_shape(slide, "巡检期间")
+    source_table = next(shape for shape in detail_slide.shapes if shape.has_table)
+    if text_shape is None:
+        raise ValueError("非油报告巡检范围模板缺少说明文本框。")
+    for old_table in list(slide.shapes):
+        if old_table.has_table:
+            _remove_shape(old_table)
+    table_element = deepcopy(source_table._element)
+    identity = table_element.find(".//" + qn("p:cNvPr"))
+    identity.set("id", str(slide.shapes._next_shape_id))
+    identity.set("name", "巡检范围及各站问题明细表")
+    slide.shapes._spTree.insert_element_before(table_element, "p:extLst")
+    table_shape = slide.shapes[-1]
+    table = table_shape.table
+
+    text_shape.top = Inches(1.20)
+    table_shape.left = text_shape.left
+    table_shape.width = text_shape.width
+    original_width = sum(column.width for column in table.columns)
+    for column in table.columns:
+        column.width = int(column.width / original_width * text_shape.width)
+    headers = ["序号", "所属片区", "站点数量", "片区问题总项", "站平均问题数", "站点问题数"]
+    rows = [headers, *_scope_detail_rows(report)]
+    period_text = report.get("period_text") or "-"
+    scope_text = report.get("scope_text") or "-"
+    content_bottom = 7.27
+    available_height = content_bottom - text_shape.top / 914400
+    layout = _scope_detail_layout(
+        ("巡检期间：" + period_text, "巡检范围：" + scope_text),
+        text_shape.width / 914400,
+        [column.width / 914400 for column in table.columns],
         rows,
-        font_size=8 if len(rows) > 14 else (9 if len(rows) > 12 else 10),
+        available_height,
     )
+    text_shape.height = Inches(layout["text_height"])
+    _set_scope_text(text_shape.text_frame, period_text, scope_text, layout["text_font"])
+    table_shape.top = text_shape.top + text_shape.height + Inches(0.12)
+    _resize_table_rows(table, len(rows))
+    # Give wrapped station lists more height rather than squeezing every row equally.
+    available_table_height = content_bottom - table_shape.top / 914400
+    expansion = min(1.5, available_table_height / sum(layout["row_heights"]))
+    for row_index, wrapped_row in enumerate(layout["wrapped_rows"]):
+        table.rows[row_index].height = Inches(layout["row_heights"][row_index] * expansion)
+        for column_index, wrapped in enumerate(wrapped_row):
+            cell = table.cell(row_index, column_index)
+            cell.margin_left = cell.margin_right = Pt(3)
+            cell.margin_top = cell.margin_bottom = Pt(1)
+            _set_cell_text(cell, "\n".join(wrapped), font_size=layout["table_font"], bold=row_index == 0)
+            for paragraph in cell.text_frame.paragraphs:
+                paragraph._p.get_or_add_pPr().clear()
+                for end_style in paragraph._p.findall(qn("a:endParaRPr")):
+                    paragraph._p.remove(end_style)
+                paragraph.alignment = PP_ALIGN.LEFT if column_index == 5 and row_index else PP_ALIGN.CENTER
+                paragraph.line_spacing = Pt(layout["table_font"] * 1.25)
+                paragraph.space_before = paragraph.space_after = Pt(0)
+                for run in paragraph.runs:
+                    _set_run_typeface(run, FONT_SANS)
+    table_shape.height = sum(row.height for row in table.rows)
 
 
 def _edit_overview_slide(slide, report):
@@ -1661,8 +1687,8 @@ def build_non_oil_template_presentation(
 
     _edit_cover(prs.slides[0], report)
     _edit_rectification_slide(prs.slides[3], report)
-    _edit_scope_slide(prs.slides[4], report)
-    _edit_unit_table_slide(prs.slides[5], report)
+    detail_slide = prs.slides[5]
+    _edit_scope_slide(prs.slides[4], report, detail_slide)
     _edit_overview_slide(prs.slides[8], report)
     _edit_analysis_overview(prs.slides[21], report)
     _edit_key_issue_overview_slide(prs.slides[22], report)
@@ -1720,6 +1746,9 @@ def build_non_oil_template_presentation(
     for index, slide in enumerate(new_unit_slides):
         _move_slide(prs, slide, 9 + index)
 
+    # Defer deletion until template-indexed edits and insertions are complete.
+    _delete_slide(prs, detail_slide)
+    _renumber_slides(prs)
     _normalize_presentation_fonts(prs)
     _remove_presentation_comments(prs)
     prs.save(output_path)

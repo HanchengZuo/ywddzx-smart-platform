@@ -204,6 +204,10 @@ class NonOilReportPresentationTest(unittest.TestCase):
             unit["percentage"] = unit["issue_count"] / total * 100
         report["units"] = units
         report["summary"].update(total_issue_count=total, station_count=108)
+        report["scope_text"] = (
+            f"7月非油现场与团购检查覆盖108座站点，涉及8个管理片区（{'、'.join(UNIT_ORDER[:8])}）"
+            f"和10个合资公司（{'、'.join(UNIT_ORDER[8:])}）。"
+        )
         report["category_distribution"] = [
             {"name": name, "count": sum(unit["category_distribution"][index]["count"] for unit in units)}
             for index, name in enumerate(names)
@@ -309,8 +313,8 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 slides_dir,
                 ppt_path,
             )
-            self.assertEqual(result["slide_count"], 27)
-            self.assertEqual(len(list(slides_dir.glob("slide-*.jpg"))), 27)
+            self.assertEqual(result["slide_count"], 26)
+            self.assertEqual(len(list(slides_dir.glob("slide-*.jpg"))), 26)
             with Image.open(slides_dir / "slide-01.jpg") as image:
                 self.assertEqual(image.size, CANVAS_SIZE)
             presentation = Presentation(ppt_path)
@@ -326,7 +330,7 @@ class NonOilReportPresentationTest(unittest.TestCase):
             self.assertGreaterEqual(
                 sum(
                     shape.shape_type == MSO_SHAPE_TYPE.CHART
-                    for shape in presentation.slides[8].shapes
+                    for shape in presentation.slides[7].shapes
                 ),
                 2,
             )
@@ -349,7 +353,7 @@ class NonOilReportPresentationTest(unittest.TestCase):
             self.assertGreaterEqual(
                 sum(
                     shape.shape_type == MSO_SHAPE_TYPE.CHART
-                    for shape in presentation.slides[9].shapes
+                    for shape in presentation.slides[8].shapes
                 ),
                 2,
             )
@@ -364,6 +368,16 @@ class NonOilReportPresentationTest(unittest.TestCase):
                 if getattr(shape, "has_text_frame", False) and "巡检期间" in shape.text
             )
             scope_table = next(shape for shape in scope_slide.shapes if shape.has_table)
+            self.assertEqual(len(scope_table.table.columns), 6)
+            self.assertIn("测试一站（3）", scope_table.table.cell(1, 5).text.replace("\n", ""))
+            self.assertFalse(any(
+                shape.has_text_frame and "检查共发现" in shape.text
+                for slide in presentation.slides for shape in slide.shapes
+            ))
+            self.assertEqual(
+                presentation.slides[5].shapes.title.text,
+                Presentation(TEMPLATE_FILE).slides[6].shapes.title.text,
+            )
             self.assertLessEqual(scope_text.top + scope_text.height, scope_table.top)
             self.assertLessEqual(
                 scope_table.top + scope_table.height,
@@ -386,28 +400,15 @@ class NonOilReportPresentationTest(unittest.TestCase):
 
     def test_scope_slide_adapts_to_all_supported_units_without_overlap(self):
         presentation = Presentation(TEMPLATE_FILE)
-        report = self.make_report()
+        report = self.make_dense_report()
         report["scope_text"] = (
             "7月非油现场与团购检查覆盖96座站点，涉及8个管理片区"
             "（浦东、闵普徐、松金、嘉青、南汇、宝静、奉贤、崇明）和10个控（参）股单位"
             "（中油奉贤、中油同盛、中油康桥、中油农工商、中油上海、中油港汇、"
             "中石油上港、中油浦东、中油华鑫、中油中燃）。"
         )
-        report["units"] = [
-            {
-                "unit_name": unit_name,
-                "station_count": 4,
-                "station_names": [
-                    f"{unit_name}一站",
-                    f"{unit_name}二站",
-                    f"{unit_name}三站",
-                    f"{unit_name}四站",
-                ],
-            }
-            for unit_name in UNIT_ORDER
-        ]
         slide = presentation.slides[4]
-        _edit_scope_slide(slide, report)
+        _edit_scope_slide(slide, report, presentation.slides[5])
         text_shape = next(
             shape for shape in slide.shapes
             if getattr(shape, "has_text_frame", False) and "巡检期间" in shape.text
@@ -419,6 +420,47 @@ class NonOilReportPresentationTest(unittest.TestCase):
             table_shape.top + table_shape.height,
             presentation.slide_height,
         )
+        self.assertEqual(sum(row.height for row in table_shape.table.rows), table_shape.height)
+        self.assertLessEqual(table_shape.left + table_shape.width, presentation.slide_width)
+        for index, unit in enumerate(report["units"], 1):
+            row = table_shape.table.rows[index]
+            self.assertEqual(row.cells[1].text.replace("\n", ""), unit["unit_name"])
+            self.assertEqual(row.cells[3].text, str(unit["issue_count"]))
+            self.assertEqual(row.cells[4].text, f"{unit['average_issue_count']:.1f}")
+            for station in unit["station_issue_rows"]:
+                self.assertIn(
+                    f"{station['station_name']}（{station['issue_count']}）",
+                    row.cells[5].text.replace("\n", ""),
+                )
+            for cell in row.cells:
+                required_height = sum(
+                    paragraph.line_spacing
+                    for paragraph in cell.text_frame.paragraphs if paragraph.runs
+                ) + cell.margin_top + cell.margin_bottom
+                self.assertGreaterEqual(row.height + 2, required_height)
+        self.assertGreater(len({row.height for row in list(table_shape.table.rows)[1:]}), 1)
+
+    def test_scope_table_replaces_old_columns_and_keeps_source_style(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        source_table = next(shape for shape in presentation.slides[5].shapes if shape.has_table)
+        source_fill = source_table.table.cell(0, 0).fill.fore_color.rgb
+        _edit_scope_slide(presentation.slides[4], self.make_report(), presentation.slides[5])
+        tables = [shape for shape in presentation.slides[4].shapes if shape.has_table]
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(len(tables[0].table.columns), 6)
+        self.assertEqual(tables[0].table.cell(0, 0).fill.fore_color.rgb, source_fill)
+        shape_ids = [shape.shape_id for shape in presentation.slides[4].shapes]
+        self.assertEqual(len(shape_ids), len(set(shape_ids)))
+
+    def test_scope_table_handles_empty_data_without_stale_template_values(self):
+        presentation = Presentation(TEMPLATE_FILE)
+        report = self.make_report()
+        report["units"] = []
+        _edit_scope_slide(presentation.slides[4], report, presentation.slides[5])
+        table = next(shape.table for shape in presentation.slides[4].shapes if shape.has_table)
+        self.assertEqual(len(table.rows), 2)
+        self.assertEqual(table.cell(1, 1).text, "暂无数据")
+        self.assertEqual(table.cell(1, 5).text, "-")
 
 
 if __name__ == "__main__":
