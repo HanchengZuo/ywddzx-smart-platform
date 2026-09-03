@@ -44,7 +44,7 @@
             v-if="canGenerateReports"
             type="button"
             class="period-generate-btn"
-            :disabled="loading || templateUnavailable || !validReportDateRange"
+            :disabled="loading || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)"
             @click="startGeneration({ force: true })"
           >
             {{ matchingHistory ? '覆盖此时间段报告' : '生成此时间段报告' }}
@@ -251,6 +251,16 @@
         查看与选择问题
       </button>
     </section>
+
+    <NonOilRectificationPeriod
+      v-if="isNonOilReport && !templateUnavailable"
+      v-model="nonOilRectificationPeriod"
+      :customized="!!nonOilRectificationOverride"
+      :readonly="!canGenerateReports"
+      :busy="loading"
+      :error="nonOilRectificationError"
+      @reset="nonOilRectificationOverride = null"
+    />
 
     <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel card-surface">
       <div class="classification-panel-intro">
@@ -2120,6 +2130,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
+import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
+import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
 
 const currentRole = localStorage.getItem('user_role') || ''
 let storedPermissions = {}
@@ -2337,6 +2349,12 @@ const flowClassificationKeyword = ref('')
 const flowClassificationCategoryFilter = ref('')
 const nonOilDateFrom = reportDateFrom
 const nonOilDateTo = reportDateTo
+const nonOilRectificationOverride = ref(null)
+const nonOilRectificationPeriod = computed({
+  get: () => nonOilRectificationOverride.value || defaultRectificationPeriod(reportDateFrom.value),
+  set: (value) => { nonOilRectificationOverride.value = value }
+})
+const nonOilRectificationError = computed(() => rectificationPeriodError(nonOilRectificationPeriod.value))
 const nonOilIssueLibrary = ref([])
 const nonOilIssueCategories = ref([])
 const nonOilIssueLibraryLoading = ref(false)
@@ -3998,6 +4016,11 @@ const applyHistoricalGenerationContext = (reportPayload = {}) => {
     )
   }
   if (!isNonOilReport.value) return
+  const savedPeriod = historicalRectificationPeriod(reportPayload)
+  const defaultPeriod = defaultRectificationPeriod(reportDateFrom.value)
+  nonOilRectificationOverride.value = savedPeriod
+    && (savedPeriod.date_from !== defaultPeriod.date_from || savedPeriod.date_to !== defaultPeriod.date_to)
+    ? savedPeriod : null
   if (Array.isArray(context.issue_library) && context.issue_library.length) {
     nonOilIssueLibrary.value = context.issue_library
     nonOilIssueCategories.value = buildIssueLibraryCategoryStats(context.issue_library)
@@ -4196,6 +4219,7 @@ const pollActiveJob = async () => {
 
 const startGeneration = async (options = {}) => {
   if (!validReportDateRange.value || templateUnavailable.value || !canGenerateReports.value) return
+  if (isNonOilReport.value && nonOilRectificationError.value) return
   syncSelectedMonthFromDateRange()
   selectedSnapshotId.value = 0
   const requestId = ++contextRequestId
@@ -4224,6 +4248,10 @@ const startGeneration = async (options = {}) => {
           ? selectedSourceStationIds.value
           : []
       }
+    }
+    if (isNonOilReport.value) {
+      payload.generation_options.non_oil_rectification_date_from = nonOilRectificationPeriod.value.date_from
+      payload.generation_options.non_oil_rectification_date_to = nonOilRectificationPeriod.value.date_to
     }
     const response = await axios.post('/api/inspection-reports/generate', payload)
     if (requestId !== contextRequestId) return
@@ -4327,6 +4355,13 @@ const loadReportState = async (snapshotId = selectedSnapshotId.value) => {
     if (requestId !== contextRequestId) return
     if (response.data?.job?.task_id) {
       activeJob.value = response.data.job
+      const jobOptions = activeJob.value.generation_options || {}
+      if (isNonOilReport.value && jobOptions.non_oil_rectification_date_from && jobOptions.non_oil_rectification_date_to) {
+        nonOilRectificationOverride.value = {
+          date_from: jobOptions.non_oil_rectification_date_from,
+          date_to: jobOptions.non_oil_rectification_date_to
+        }
+      }
       scheduleJobPoll()
       return
     }
@@ -4376,6 +4411,7 @@ const selectReportType = async (reportType) => {
   exportTask.value = null
   exportError.value = ''
   selectedReportType.value = reportType
+  nonOilRectificationOverride.value = null
   selectedSnapshotId.value = 0
   reportHistory.value = []
   report.value = createEmptyReport()

@@ -776,16 +776,28 @@ def _edit_cover(slide, report):
 def _edit_rectification_slide(slide, report):
     previous = report.get("previous_month_rectification") or {}
     narrative_shape = _find_text_shape(slide, "各片区整改情况")
+    chart_top = Inches(2.08)
     if narrative_shape:
+        narrative = previous.get("narrative") or "当前范围暂无上期整改数据。"
+        for font_size in range(18, 14, -1):
+            lines = _wrap_scope_cell(narrative, narrative_shape.width / 914400, font_size)
+            if len(lines) <= 2:
+                break
+        narrative_shape.height = Pt(len(lines) * font_size * 1.3 + 10)
         _set_text_frame(
             narrative_shape.text_frame,
-            previous.get("narrative") or "当前范围暂无上期整改数据。",
+            "\n".join(lines),
+            font_size=Pt(font_size),
         )
+        for paragraph in narrative_shape.text_frame.paragraphs:
+            paragraph.space_before = paragraph.space_after = Pt(0)
+            paragraph.line_spacing = Pt(font_size * 1.3)
+        chart_top = max(chart_top, narrative_shape.top + narrative_shape.height + Inches(0.12))
     _remove_large_visuals(slide)
     units = sorted(previous.get("units") or [], key=_unit_sort_key)
     _add_column_chart(
         slide,
-        (Inches(1.25), Inches(2.08), Inches(10.85), Inches(4.55)),
+        (Inches(1.25), chart_top, Inches(10.85), Inches(6.9) - chart_top),
         [_unit_name(item.get("unit_name")) for item in units],
         [
             ("全部问题", [item.get("total_count") for item in units], "4472C4"),
@@ -1137,7 +1149,10 @@ def _edit_key_issue_relationship_slide(slide, report):
     narrative_lines = ["根据问题定义，将重点问题与检查环节做关联性分析，可以得出："]
     for detail in details:
         relationships = detail.get("relationship") or []
-        top_rows = relationships[:2]
+        top_rows = sorted(
+            [item for item in relationships if float(item.get("percentage") or 0) > 0],
+            key=lambda item: -float(item.get("percentage") or 0),
+        )[:2]
         if not top_rows:
             relationship_text = "当前未形成明确的业务环节分布"
         else:
@@ -1176,19 +1191,64 @@ def _edit_key_issue_relationship_slide(slide, report):
             + [
                 (
                     f"{_format_number(relationship_map[name].get('percentage'), 1)}%"
-                    if name in relationship_map else ""
+                    if name in relationship_map and relationship_map[name].get("percentage") else ""
                 )
                 for name in active_names
             ]
         )
-    _add_styled_table(
+    shape = _add_styled_table(
         slide,
         (Inches(0.88), Inches(4.45), Inches(11.55), Inches(2.25)),
-        ["重点问题"] + active_names,
+        [""] + active_names,
         rows,
-        font_size=10 if len(active_names) > 6 else 12,
+        font_size=14 if len(active_names) > 6 else 16,
         first_column_width=1.7,
     )
+    _style_relationship_heatmap(shape)
+
+
+def _relationship_heatmap_colors(percentage):
+    if percentage >= 75:
+        return "0054B6", "FFFFFF"
+    if percentage >= 40:
+        return "00AFE8", "FFFFFF"
+    if percentage >= 25:
+        return "B4DBED", "000000"
+    return "FFFFFF", "000000"
+
+
+def _style_relationship_heatmap(shape):
+    table = shape.table
+    for row_index, row in enumerate(table.rows):
+        row.height = Inches(0.45)
+        for column_index, cell in enumerate(row.cells):
+            is_label = row_index == 0 or column_index == 0
+            percentage = float(cell.text.rstrip("%") or 0) if not is_label else 0
+            fill, color = ("FFFFFF", "808080") if is_label else _relationship_heatmap_colors(percentage)
+            _set_cell_fill(cell, RGBColor.from_string(fill))
+            cell.margin_left = cell.margin_right = Pt(3)
+            cell.margin_top = cell.margin_bottom = Pt(1)
+            properties = cell._tc.get_or_add_tcPr()
+            for side in ("L", "R", "T", "B"):
+                tag = f"a:ln{side}"
+                for old in list(properties.findall(qn(tag))):
+                    properties.remove(old)
+                border = OxmlElement(tag)
+                border.set("w", "9525")
+                solid = OxmlElement("a:solidFill")
+                rgb = OxmlElement("a:srgbClr")
+                rgb.set("val", "808080")
+                solid.append(rgb)
+                border.append(solid)
+                properties.append(border)
+            for paragraph in cell.text_frame.paragraphs:
+                paragraph.space_before = paragraph.space_after = Pt(0)
+                for run in paragraph.runs:
+                    run.font.color.rgb = RGBColor.from_string(color)
+                    run.font.bold = is_label
+                    if row_index:
+                        run.font.size = Pt(18)
+    shape.height = sum(row.height for row in table.rows)
 
 
 def _edit_key_product_overview_slide(slide, report):
@@ -1259,6 +1319,69 @@ def _edit_key_product_overview_slide(slide, report):
     )
 
 
+def _key_issue_table_pages(rows, column_widths, available_height):
+    headers = ["检查项目", "站点", "问题描述"]
+    def wrap_rows(font_size):
+        return [
+            [_wrap_scope_cell(value, column_widths[index], font_size) for index, value in enumerate(row)]
+            for row in rows
+        ]
+
+    def row_height(row, font_size):
+        return max(0.42, (max(len(cell) for cell in row) * font_size * 1.3 + 8) / 72)
+
+    for font_size in range(14, 9, -1):
+        wrapped = wrap_rows(font_size)
+        if 0.45 + sum(row_height(row, font_size) for row in wrapped) <= available_height:
+            break
+    else:
+        # Prefer readable continuation pages to shrinking long descriptions indefinitely.
+        font_size = 11
+        wrapped = wrap_rows(font_size)
+    body_height = available_height - 0.45
+    max_lines = max(1, math.floor((body_height * 72 - 8) / (font_size * 1.3)))
+    pages, current, height = [], [], 0
+    for row in wrapped:
+        # Even a single unusually long issue must fit; continue all cell text losslessly.
+        for offset in range(0, max(len(cell) for cell in row), max_lines):
+            fragment = [cell[offset:offset + max_lines] or [""] for cell in row]
+            if offset:
+                for index in (0, 1):
+                    if len(row[index]) <= max_lines:
+                        fragment[index] = row[index]
+            item_height = row_height(fragment, font_size)
+            if current and height + item_height > body_height:
+                pages.append(current)
+                current, height = [], 0
+            current.append((fragment, item_height))
+            height += item_height
+    if current:
+        pages.append(current)
+    return [dict(headers=headers, rows=page, font_size=font_size) for page in pages]
+
+
+def _apply_key_issue_table_page(shape, page):
+    table = shape.table
+    _resize_table_rows(table, len(page["rows"]) + 1)
+    values = [([[header] for header in page["headers"]], 0.45), *page["rows"]]
+    font_size = page["font_size"]
+    for row_index, (wrapped_row, height) in enumerate(values):
+        table.rows[row_index].height = Inches(height)
+        for column_index, lines in enumerate(wrapped_row):
+            cell = table.cell(row_index, column_index)
+            cell.margin_left = cell.margin_right = Pt(3)
+            cell.margin_top = cell.margin_bottom = Pt(3)
+            _set_cell_text(cell, "\n".join(lines), font_size=font_size, bold=row_index == 0)
+            for paragraph in cell.text_frame.paragraphs:
+                paragraph._p.get_or_add_pPr().clear()
+                for end_style in paragraph._p.findall(qn("a:endParaRPr")):
+                    paragraph._p.remove(end_style)
+                paragraph.alignment = PP_ALIGN.LEFT if row_index and column_index == 2 else PP_ALIGN.CENTER
+                paragraph.line_spacing = Pt(font_size * 1.3)
+                paragraph.space_before = paragraph.space_after = Pt(0)
+    shape.height = sum(row.height for row in table.rows)
+
+
 def _fill_key_issue_table_slide(slide, issues, title_text, summary_text=None):
     bar_shape = next(
         (shape for shape in slide.shapes if getattr(shape, "has_text_frame", False) and shape.top > Inches(0.8) and shape.top < Inches(1.6)),
@@ -1266,21 +1389,28 @@ def _fill_key_issue_table_slide(slide, issues, title_text, summary_text=None):
     )
     if bar_shape:
         _set_text_frame(bar_shape.text_frame, title_text)
-    if summary_text:
-        summary_shape = next(
-            (
-                shape for shape in slide.shapes
-                if getattr(shape, "has_text_frame", False)
-                and shape._element is not bar_shape._element
-                and shape.top > Inches(1.25)
-                and shape.top < Inches(2.2)
-                and not getattr(shape, "has_table", False)
-            ),
-            None,
-        )
-        if summary_shape:
-            _set_text_frame(summary_shape.text_frame, summary_text, font_size=Pt(15))
+    summary_shape = next(
+        (
+            shape for shape in slide.shapes
+            if getattr(shape, "has_text_frame", False)
+            and (bar_shape is None or shape._element is not bar_shape._element)
+            and shape.top > Inches(1.25)
+            and shape.top < Inches(2.2)
+            and not getattr(shape, "has_table", False)
+        ),
+        None,
+    )
+    if summary_shape:
+        text = summary_text or _shape_text(summary_shape)
+        lines = [line for paragraph in text.splitlines() for line in _wrap_scope_cell(paragraph, summary_shape.width / 914400, 15)]
+        summary_shape.height = Pt(len(lines) * 19.5 + 10)
+        _set_text_frame(summary_shape.text_frame, "\n".join(lines), font_size=Pt(15))
+        for paragraph in summary_shape.text_frame.paragraphs:
+            paragraph.space_before = paragraph.space_after = Pt(0)
+            paragraph.line_spacing = Pt(19.5)
     table_shape = next(shape for shape in slide.shapes if getattr(shape, "has_table", False))
+    text_bottom = (summary_shape.top + summary_shape.height) if summary_shape else Inches(1.8)
+    table_shape.top = max(Inches(2.45), text_bottom + Inches(0.12))
     rows = [
         [
             issue.get("source_project") or "-",
@@ -1289,35 +1419,37 @@ def _fill_key_issue_table_slide(slide, issues, title_text, summary_text=None):
         ]
         for issue in issues
     ]
-    _fill_table(
-        table_shape,
-        ["检查项目", "站点", "问题描述"],
+    pages = _key_issue_table_pages(
         rows or [["-", "-", "当前范围暂无该类重点问题"]],
-        font_size=8 if len(rows) > 8 else 10,
+        [column.width / 914400 for column in table_shape.table.columns],
+        7.22 - table_shape.top / 914400,
     )
+    _apply_key_issue_table_page(table_shape, pages[0])
+    return [(slide, title_text, page) for page in pages[1:]]
 
 
 def _edit_key_product_detail_slides(slide_one, slide_two, report):
     detail = _find_key_detail(report, "重点商品")
     issues = detail.get("issues") or []
-    _fill_key_issue_table_slide(
+    continuations = _fill_key_issue_table_slide(
         slide_one,
         issues[:10],
         "5.1 重点商品典型问题",
         "重点商品问题主要涉及账实、陈列、销售过机和价签管理。",
     )
-    _fill_key_issue_table_slide(
+    continuations += _fill_key_issue_table_slide(
         slide_two,
         issues[10:20],
         "5.2 重点商品典型问题（续）",
     )
+    return continuations
 
 
 def _edit_monthly_inventory_slide(slide, report):
     detail = _find_key_detail(report, "月度盘点")
-    _fill_key_issue_table_slide(
+    return _fill_key_issue_table_slide(
         slide,
-        (detail.get("issues") or [])[:8],
+        detail.get("issues") or [],
         "6. 月度盘点问题",
         (
             f"共{detail.get('count') or 0}项，占全部问题"
@@ -1325,6 +1457,26 @@ def _edit_monthly_inventory_slide(slide, report):
             "重点核实交接班盘点记录、盘点覆盖率及签字完整性。"
         ),
     )
+
+
+def _insert_key_issue_continuations(prs, continuations):
+    previous = {}
+    for source, title, page in continuations:
+        slide = prs.slides.add_slide(source.slide_layout)
+        for shape in list(slide.shapes):
+            _remove_shape(shape)
+        # These template pages contain only native text and tables, no media relationships.
+        for shape in source.shapes:
+            slide.shapes._spTree.insert_element_before(deepcopy(shape._element), "p:extLst")
+        table_shape = next(shape for shape in slide.shapes if shape.has_table)
+        _apply_key_issue_table_page(table_shape, page)
+        title_shape = _find_text_shape(slide, title)
+        if title_shape:
+            _set_text_frame(title_shape.text_frame, title + "（续）")
+        preceding = previous.get(id(source), source)
+        target = next(index for index, item in enumerate(prs.slides) if item is preceding) + 1
+        _move_slide(prs, slide, target)
+        previous[id(source)] = slide
 
 
 def _edit_group_purchase_slide(slide, report, storage_root):
@@ -1713,8 +1865,8 @@ def build_non_oil_template_presentation(
     _edit_key_issue_overview_slide(prs.slides[22], report)
     _edit_key_issue_relationship_slide(prs.slides[23], report)
     _edit_key_product_overview_slide(prs.slides[24], report)
-    _edit_key_product_detail_slides(prs.slides[25], prs.slides[26], report)
-    _edit_monthly_inventory_slide(prs.slides[27], report)
+    continuations = _edit_key_product_detail_slides(prs.slides[25], prs.slides[26], report)
+    continuations += _edit_monthly_inventory_slide(prs.slides[27], report)
     _edit_group_purchase_slide(prs.slides[28], report, storage_root)
     _edit_expired_product_slide(prs.slides[29], report, storage_root)
     _edit_analysis_distribution_slide(prs.slides[31], report)
@@ -1767,6 +1919,8 @@ def build_non_oil_template_presentation(
 
     # Defer deletion until template-indexed edits and insertions are complete.
     _delete_slide(prs, detail_slide)
+    _renumber_slides(prs)
+    _insert_key_issue_continuations(prs, continuations)
     _renumber_slides(prs)
     _normalize_presentation_fonts(prs)
     _remove_presentation_comments(prs)
