@@ -358,6 +358,7 @@ watch(() => props.visible, (visible) => {
   padding: 0 28px 15px;
   overflow-x: auto;
   scrollbar-width: thin;
+  flex-shrink: 0;
 }
 
 .account-switcher-roles button {
@@ -389,8 +390,7 @@ watch(() => props.visible, (visible) => {
 }
 
 .account-switcher-groups {
-  min-height: 0;
-  flex: 1;
+  min-height: 220px;
   padding: 2px 28px 28px;
   overflow-y: auto;
 }
