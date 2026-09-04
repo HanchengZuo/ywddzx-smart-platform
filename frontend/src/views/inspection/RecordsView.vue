@@ -166,9 +166,10 @@
           </button>
         </div>
         <div class="filter-main-actions">
+          <span v-if="recordFilterDraftDirty" class="filter-pending-hint">筛选条件已调整，点击开始筛选后生效</span>
           <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-          <button class="btn btn-secondary" type="button" @click="refreshInspectionData" :disabled="loading || filterOptionsLoading">
-            {{ loading ? '刷新中...' : '刷新数据' }}
+          <button class="btn btn-primary filter-submit-btn" type="button" @click="startInspectionFilter" :disabled="loading">
+            {{ loading ? '筛选中...' : '开始筛选' }}
           </button>
         </div>
       </div>
@@ -177,16 +178,17 @@
     <div class="mobile-record-list">
       <div v-if="loading" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb loading"></div>
-        <div class="empty-state-kicker">同步中</div>
-        <h3>正在加载巡检记录</h3>
-        <p>系统正在同步最新巡检记录，请稍候。</p>
+        <div class="empty-state-kicker">筛选中</div>
+        <h3>正在查询巡检记录</h3>
+        <p>系统正在按已应用条件查询当前页，无需加载全部记录。</p>
+        <div class="filter-query-progress" aria-hidden="true"><span></span></div>
       </div>
 
       <div v-else-if="paginatedInspectionGroups.length === 0" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb"></div>
         <div class="empty-state-kicker">暂无记录</div>
         <h3>当前没有符合条件的巡检记录</h3>
-        <p>可以调整筛选条件，或刷新后查看最新巡检情况。</p>
+        <p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p>
         <button class="btn btn-secondary empty-state-action" type="button" @click="resetFilters">重置筛选</button>
       </div>
 
@@ -445,7 +447,7 @@
                     <div class="empty-state-orb"></div>
                     <div class="empty-state-kicker">暂无记录</div>
                     <h3>当前没有符合条件的巡检记录</h3>
-                    <p>可以调整筛选条件，或刷新后查看最新巡检情况。</p>
+                    <p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p>
                     <button class="btn btn-secondary btn-sm empty-state-action" type="button" @click="resetFilters">重置筛选</button>
                   </div>
                 </td>
@@ -454,9 +456,10 @@
                 <td colspan="7" class="empty-row">
                   <div class="empty-state-inline">
                     <div class="empty-state-orb loading"></div>
-                    <div class="empty-state-kicker">同步中</div>
-                    <h3>正在加载巡检记录</h3>
-                    <p>系统正在同步最新巡检记录，请稍候。</p>
+                    <div class="empty-state-kicker">筛选中</div>
+                    <h3>正在查询巡检记录</h3>
+                    <p>系统正在按已应用条件查询当前页，无需加载全部记录。</p>
+                    <div class="filter-query-progress" aria-hidden="true"><span></span></div>
                   </div>
                 </td>
               </tr>
@@ -748,6 +751,12 @@ const filters = ref({
   completionStatus: ''
 })
 
+const cloneRecordFilters = (source) => Object.fromEntries(
+  Object.entries(source).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])
+)
+
+const appliedFilters = ref(cloneRecordFilters(filters.value))
+
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
 const inspectorSelectRef = ref(null)
@@ -780,14 +789,14 @@ const filterOptionsError = ref('')
 const currentRole = ref(localStorage.getItem('role') || localStorage.getItem('user_role') || '')
 const currentRealName = localStorage.getItem('real_name') || ''
 const currentUsername = localStorage.getItem('username') || ''
-let parsedPermissions = {}
-try {
-  parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
-  parsedPermissions = {}
-}
+const parsedPermissions = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('permissions') || '{}')
+  } catch {
+    return {}
+  }
+})()
 const localPermissions = ref(parsedPermissions)
-const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
 const hideInspectorContactInfo = computed(() => currentRole.value !== 'root' && Boolean(localPermissions.value.hide_inspector_contact_info))
 const deletingInspectionId = ref(null)
 const completingInspectionId = ref(null)
@@ -903,49 +912,6 @@ const filterStationOptionByKeyword = (options, keyword) => {
 
 const getMultiFilterValues = (key) => Array.isArray(filters.value[key]) ? filters.value[key] : []
 
-const matchesAnySelectedText = (value, selectedValues) => {
-  const selected = Array.isArray(selectedValues) ? selectedValues : []
-  if (!selected.length) return true
-  const normalizedValue = normalizedKeyword(value)
-  return selected.some((item) => normalizedValue === normalizedKeyword(item))
-}
-
-const matchesSelectedInspector = (record, selectedValues) => {
-  if (hideInspectorContactInfo.value) return true
-  const selected = Array.isArray(selectedValues) ? selectedValues : []
-  if (!selected.length) return true
-  const searchValues = getInspectionInspectorSearchValues(record)
-  return selected.some((item) => matchesSmartSearch(searchValues, item))
-}
-
-const getDatePart = (value) => String(value || '').slice(0, 10)
-
-const isDateInRange = (value, dateFrom, dateTo) => {
-  const current = getDatePart(value)
-  if (!current) return !dateFrom && !dateTo
-  if (dateFrom && current < dateFrom) return false
-  if (dateTo && current > dateTo) return false
-  return true
-}
-
-const getInspectionInspectorSearchValues = (record) => {
-  if (hideInspectorContactInfo.value) return []
-  const inspectors = Array.isArray(record?.inspectors) ? record.inspectors : []
-  const inspectorValues = inspectors.flatMap((item) => [
-    item.real_name,
-    item.username,
-    item.phone
-  ])
-  return [
-    record?.inspector_names,
-    record?.inspector_search_text,
-    record?.inspector_name,
-    record?.inspector_username,
-    record?.inspector_phone,
-    ...inspectorValues
-  ].filter(Boolean)
-}
-
 const filteredData = computed(() => list.value)
 
 const stationOptions = computed(() => uniqueSortedOptions(filterOptions.value.stations))
@@ -970,6 +936,10 @@ const activeFilterCount = computed(() => {
   ].filter((value) => String(value || '').trim()).length
 })
 
+const recordFilterDraftDirty = computed(() => (
+  JSON.stringify(filters.value) !== JSON.stringify(appliedFilters.value)
+))
+
 const currentInspectorFilterValue = computed(() => {
   const candidates = [currentRealName, currentUsername]
     .map((value) => String(value || '').trim())
@@ -978,15 +948,7 @@ const currentInspectorFilterValue = computed(() => {
   return candidates.find((candidate) => options.includes(candidate)) || candidates[0] || ''
 })
 
-const getRecordSignFilterStatus = (record) => {
-  return record?.sign_status === '已签名确认' ? 'signed' : 'pending'
-}
-
 const isInspectionCompleted = (record) => record?.inspector_completion_status === '已确认完成'
-
-const getRecordCompletionFilterStatus = (record) => {
-  return isInspectionCompleted(record) ? 'completed' : 'pending'
-}
 
 const getCompletionProgress = (record) => {
   const progress = record?.inspector_completion_progress || {}
@@ -1019,14 +981,6 @@ const getCompletionProgressWidth = (record) => {
 const getCompletionParticipantLabel = (participant) => {
   const name = participant?.display_name || participant?.real_name || participant?.username || '检查人'
   return `${name}${participant?.confirmed ? ' 已确认' : ' 待确认'}`
-}
-
-const getCompletionMeta = (record) => {
-  if (!isInspectionCompleted(record)) return '待检查人确认'
-  const name = record.inspector_completed_by_name || record.inspector_completed_by_username || ''
-  const time = record.inspector_completed_at || ''
-  const source = record.inspector_completion_source_label || ''
-  return [source, name, time].filter(Boolean).join('｜') || '已确认完成'
 }
 
 const groupedInspectionGroups = computed(() => {
@@ -1902,10 +1856,13 @@ const scheduleFetchInspections = () => {
   }, 120)
 }
 
-watch([filters, pageSize], () => {
-  page.value = 1
+watch(pageSize, () => {
+  if (page.value !== 1) {
+    suppressNextPageFetch = true
+    page.value = 1
+  }
   scheduleFetchInspections()
-}, { deep: true })
+})
 
 watch(page, () => {
   if (suppressNextPageFetch) {
@@ -2002,21 +1959,22 @@ const fetchInspections = async () => {
   try {
     loading.value = true
     const userId = localStorage.getItem('user_id') || ''
+    const queryFilters = appliedFilters.value
     const response = await axios.get('/api/inspections', {
       params: {
         user_id: userId,
         page: page.value,
         page_size: pageSize.value,
         include_options: 0,
-        month: filters.value.month,
-        date_from: filters.value.dateFrom,
-        date_to: filters.value.dateTo,
-        stations: serializeMultiFilter(filters.value.station),
-        inspection_tables: serializeMultiFilter(filters.value.inspectionTableName),
-        inspectors: serializeMultiFilter(filters.value.inspector),
-        result: filters.value.result,
-        sign_status: filters.value.signStatus,
-        completion_status: filters.value.completionStatus
+        month: queryFilters.month,
+        date_from: queryFilters.dateFrom,
+        date_to: queryFilters.dateTo,
+        stations: serializeMultiFilter(queryFilters.station),
+        inspection_tables: serializeMultiFilter(queryFilters.inspectionTableName),
+        inspectors: serializeMultiFilter(queryFilters.inspector),
+        result: queryFilters.result,
+        sign_status: queryFilters.signStatus,
+        completion_status: queryFilters.completionStatus
       }
     })
     if (sequence !== inspectionFetchSequence) return
@@ -2040,6 +1998,7 @@ const fetchInspections = async () => {
     if (sequence !== inspectionFetchSequence) return
     list.value = []
     totalRecords.value = 0
+    showActionMessage(error?.response?.data?.error || '巡检记录加载失败，请稍后重试。', 'error')
   } finally {
     if (sequence === inspectionFetchSequence) {
       loading.value = false
@@ -2047,11 +2006,15 @@ const fetchInspections = async () => {
   }
 }
 
-const refreshInspectionData = async () => {
-  await Promise.allSettled([
-    fetchInspectionFilterOptions({ force: true }),
-    fetchInspections()
-  ])
+const startInspectionFilter = async () => {
+  appliedFilters.value = cloneRecordFilters(filters.value)
+  if (page.value !== 1) {
+    suppressNextPageFetch = true
+    page.value = 1
+  }
+  closeAllDropdowns()
+  showMobileFilters.value = false
+  await fetchInspections()
 }
 
 const resetFilters = () => {
@@ -2073,9 +2036,11 @@ const resetFilters = () => {
     inspector: ''
   }
   closeAllDropdowns()
+  if (isMobileView.value) showMobileFilters.value = true
+  showActionMessage('筛选条件已重置为当月，点击“开始筛选”后生效。', 'success')
 }
 
-const filterMyTodayRecords = () => {
+const filterMyTodayRecords = async () => {
   const inspector = currentInspectorFilterValue.value
   if (!inspector) {
     showActionMessage('当前账号缺少姓名，暂时不能自动筛选。', 'error')
@@ -2099,6 +2064,7 @@ const filterMyTodayRecords = () => {
   }
   closeAllDropdowns()
   showMobileFilters.value = false
+  await startInspectionFilter()
   showActionMessage('已筛选我今天的巡检记录。', 'success')
 }
 
@@ -2201,7 +2167,6 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   window.addEventListener('resize', handleViewportResize)
   visualViewportRef.value?.addEventListener('resize', handleVisualViewportChange)
-  fetchInspectionFilterOptions().catch(() => {})
   fetchInspections()
 })
 
@@ -2627,6 +2592,23 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.filter-pending-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  color: #92400e;
+  background: #fffbeb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filter-submit-btn {
+  min-width: 112px;
+}
+
 .btn {
   height: 40px;
   padding: 0 16px;
@@ -2992,6 +2974,29 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 14px;
   line-height: 1.8;
+}
+
+.filter-query-progress {
+  width: min(360px, 82%);
+  height: 7px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.filter-query-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #2563eb, #14b8a6);
+  animation: filterQueryProgress 1.15s ease-in-out infinite;
+}
+
+@keyframes filterQueryProgress {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(340%); }
 }
 
 .empty-state-action {

@@ -10,16 +10,17 @@
     <div class="mobile-issue-list">
       <div v-if="loading" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb loading"></div>
-        <div class="empty-state-kicker">同步中</div>
-        <h3>正在加载问题列表</h3>
-        <p>系统正在同步最新的问题记录，请稍候。</p>
+        <div class="empty-state-kicker">筛选中</div>
+        <h3>正在查询巡检问题</h3>
+        <p>系统正在按已应用条件查询当前页，无需加载全部问题。</p>
+        <div class="filter-query-progress" aria-hidden="true"><span></span></div>
       </div>
 
       <div v-else-if="paginatedData.length === 0" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb"></div>
         <div class="empty-state-kicker">暂无记录</div>
         <h3>当前没有符合条件的问题记录</h3>
-        <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
+        <p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p>
         <button class="btn btn-secondary empty-state-action" type="button" @click="resetFilters">重置筛选</button>
       </div>
 
@@ -168,8 +169,8 @@
         </div>
       </div>
 
-      <div v-if="!loading && filteredData.length" class="pagination-bar mobile-pagination-bar card-surface">
-        <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
+      <div v-if="!loading && totalRecords" class="pagination-bar mobile-pagination-bar card-surface">
+        <div class="pagination-summary">共 {{ totalRecords }} 条</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
             <label>每页显示</label>
@@ -494,13 +495,14 @@
           </button>
         </div>
         <div class="filter-main-actions">
-          <button class="btn btn-export" type="button" :disabled="loading || filteredData.length === 0"
+          <span v-if="issueFilterDraftDirty" class="filter-pending-hint">筛选条件已调整，点击开始筛选后生效</span>
+          <button class="btn btn-export" type="button" :disabled="loading || totalRecords === 0"
             @click="openExportDialog">
             导出数据
           </button>
           <button class="btn btn-secondary" @click="resetFilters">重置筛选</button>
-          <button class="btn btn-secondary" @click="refreshIssueData" :disabled="loading || issueFilterOptionsLoading">
-            {{ loading ? '刷新中...' : '刷新数据' }}
+          <button class="btn btn-primary filter-submit-btn" @click="startIssueFilter" :disabled="loading">
+            {{ loading ? '筛选中...' : '开始筛选' }}
           </button>
         </div>
       </div>
@@ -557,9 +559,10 @@
       <div v-if="loading" class="table-loading-state">
         <div class="empty-state-inline">
           <div class="empty-state-orb loading"></div>
-          <div class="empty-state-kicker">同步中</div>
-          <h3>正在加载问题列表</h3>
-          <p>系统正在同步最新的问题记录，请稍候。</p>
+          <div class="empty-state-kicker">筛选中</div>
+          <h3>正在查询巡检问题</h3>
+          <p>系统正在按已应用条件查询当前页，无需加载全部问题。</p>
+          <div class="filter-query-progress" aria-hidden="true"><span></span></div>
         </div>
       </div>
       <div v-else-if="paginatedData.length === 0" class="table-empty-state">
@@ -567,7 +570,7 @@
           <div class="empty-state-orb"></div>
           <div class="empty-state-kicker">暂无记录</div>
           <h3>当前没有符合条件的问题记录</h3>
-          <p>可以调整筛选条件，或刷新后查看最新巡检问题。</p>
+          <p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p>
           <button class="btn btn-secondary btn-sm empty-state-action" type="button"
             @click="resetFilters">重置筛选</button>
         </div>
@@ -748,7 +751,7 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
+        <div class="pagination-summary">共 {{ totalRecords }} 条</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
             <label>每页显示</label>
@@ -1445,9 +1448,14 @@ import {
 } from '@/utils/issueAudit'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 
-const filters = ref({
+const currentMonthValue = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+const createDefaultIssueFilters = () => ({
   issueId: '',
-  month: '',
+  month: currentMonthValue(),
   dateFrom: '',
   dateTo: '',
   region: [],
@@ -1467,7 +1475,15 @@ const filters = ref({
   auditState: ''
 })
 
+const cloneIssueFilters = (source) => Object.fromEntries(
+  Object.entries(source).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value])
+)
+
+const filters = ref(createDefaultIssueFilters())
+const appliedFilters = ref(cloneIssueFilters(filters.value))
+
 const list = shallowRef([])
+const totalRecords = ref(0)
 const loading = ref(false)
 const issueFilterOptions = ref({
   regions: [],
@@ -1483,6 +1499,7 @@ const issueFilterOptionsError = ref('')
 let issueFilterOptionsRequest = null
 let issueFilterOptionsAbortController = null
 let issueFetchSequence = 0
+let suppressNextIssuePageFetch = false
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
 const stationManagerSelectRef = ref(null)
@@ -1516,10 +1533,10 @@ const filterSearch = ref({
   standardTags: ''
 })
 
-const isMobileView = ref(false)
+const isMobileView = ref(window.matchMedia?.('(max-width: 768px)').matches ?? false)
 const showMobileFilters = ref(false)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(isMobileView.value ? 5 : 20)
 const pageJumpInput = ref('')
 const listImagesReady = ref(false)
 let listImagesReadyTimer = null
@@ -1787,91 +1804,9 @@ const getMultiFilterValues = (key) => {
   return Array.isArray(value) ? value : []
 }
 
-const matchesAnySelectedText = (value, selectedValues) => {
-  const selected = Array.isArray(selectedValues) ? selectedValues : []
-  if (!selected.length) return true
-  const normalizedValue = normalizedKeyword(value).trim()
-  return selected.some((item) => normalizedValue === normalizedKeyword(item).trim())
-}
-
 const getIssueStandardTags = (item = {}) => Array.isArray(item.standard_tags) ? item.standard_tags : []
 
-const getIssueStandardTagLabels = (item = {}) => {
-  return getIssueStandardTags(item)
-    .map((tag) => {
-      const groupName = String(tag.group_name || '').trim()
-      const tagName = String(tag.tag_name || '').trim()
-      if (!tagName) return ''
-      return groupName ? `${groupName}：${tagName}` : tagName
-    })
-    .filter(Boolean)
-}
-
-const matchesAnySelectedTag = (item, selectedValues) => {
-  const selected = Array.isArray(selectedValues) ? selectedValues : []
-  if (!selected.length) return true
-  const labels = getIssueStandardTagLabels(item).map((label) => normalizedKeyword(label).trim())
-  return selected.some((value) => labels.includes(normalizedKeyword(value).trim()))
-}
-
-const getDatePart = (value) => String(value || '').slice(0, 10)
-
-const isDateInRange = (value, dateFrom, dateTo) => {
-  const current = getDatePart(value)
-  if (!current) return !dateFrom && !dateTo
-  if (dateFrom && current < dateFrom) return false
-  if (dateTo && current > dateTo) return false
-  return true
-}
-
-const filteredData = computed(() => {
-  return list.value.filter((item) => {
-    const matchedIssueId = !filters.value.issueId || String(item.id || '').includes(String(filters.value.issueId || '').trim())
-    const matchedMonth = !filters.value.month || item.month === filters.value.month
-    const matchedDate = isDateInRange(item.time, filters.value.dateFrom, filters.value.dateTo)
-    const matchedRegion = matchesAnySelectedText(item.region, filters.value.region)
-    const matchedStation = matchesAnySelectedText(item.station, filters.value.station)
-    const matchedStationManager = !filters.value.stationManager || normalizedKeyword(item.station_manager).includes(normalizedKeyword(filters.value.stationManager))
-    const matchedInspector = hideInspectorContactInfo.value || matchesAnySelectedText(item.inspector, filters.value.inspector)
-    const matchedInspectionTableName = matchesAnySelectedText(item.inspection_table_name, filters.value.inspectionTableName)
-    const standardIdKeyword = String(filters.value.standardId || '').trim()
-    const matchedStandardId = !standardIdKeyword || String(item.standard_id ?? '').trim() === standardIdKeyword
-    const matchedStandardDetail = !filters.value.standardDetail || normalizedKeyword(getCombinedStandardDetailText(item)).includes(normalizedKeyword(filters.value.standardDetail))
-    const matchedStandardTags = matchesAnySelectedTag(item, filters.value.standardTags)
-    const matchedIssueDescription = !filters.value.issueDescription || normalizedKeyword(item.description).includes(normalizedKeyword(filters.value.issueDescription))
-    const matchedRectificationResult = !filters.value.rectificationResult || item.rectification_result === filters.value.rectificationResult
-    const matchedReviewResult = !filters.value.reviewResult || item.review_result === filters.value.reviewResult
-    const matchedStatus = !filters.value.status || item.status === filters.value.status
-    const matchedExcellent = !filters.value.excellent ||
-      (filters.value.excellent === 'starred' ? Boolean(item.is_excellent) : !item.is_excellent)
-    const matchedAuditStatus = !filters.value.auditStatus || normalizeAuditStatus(item) === filters.value.auditStatus
-    const matchedAuditState = !filters.value.auditState ||
-      (filters.value.auditState === 'pending'
-        ? normalizeAuditStatus(item) === 'pending'
-        : normalizeAuditStatus(item) !== 'pending')
-
-    return (
-      matchedIssueId &&
-      matchedMonth &&
-      matchedDate &&
-      matchedRegion &&
-      matchedStation &&
-      matchedStationManager &&
-      matchedInspector &&
-      matchedInspectionTableName &&
-      matchedStandardId &&
-      matchedStandardDetail &&
-      matchedStandardTags &&
-      matchedIssueDescription &&
-      matchedRectificationResult &&
-      matchedReviewResult &&
-      matchedStatus &&
-      matchedExcellent &&
-      matchedAuditStatus &&
-      matchedAuditState
-    )
-  })
-})
+const filteredData = computed(() => list.value)
 
 const regionOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.regions))
 const stationOptions = computed(() => uniqueSortedOptions(issueFilterOptions.value.stations))
@@ -1896,6 +1831,10 @@ const activeFilterCount = computed(() => {
     return count + (String(value || '').trim() ? 1 : 0)
   }, 0)
 })
+
+const issueFilterDraftDirty = computed(() => (
+  JSON.stringify(filters.value) !== JSON.stringify(appliedFilters.value)
+))
 
 const formatExportFilterValue = (key, value) => {
   if (key === 'excellent') {
@@ -1937,12 +1876,9 @@ const exportProgressWidth = computed(() => {
 
 const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 50, 100])
 
-const totalPage = computed(() => Math.max(1, Math.ceil(filteredData.value.length / pageSize.value)))
+const totalPage = computed(() => Math.max(1, Math.ceil(totalRecords.value / pageSize.value)))
 
-const paginatedData = computed(() => {
-  const start = (page.value - 1) * pageSize.value
-  return filteredData.value.slice(start, start + pageSize.value)
-})
+const paginatedData = computed(() => filteredData.value)
 
 const currentInspectorFilterValue = computed(() => {
   const candidates = [currentRealName, currentUsername]
@@ -2265,9 +2201,21 @@ const filteredEditStandards = computed(() => {
   }).slice(0, 40)
 })
 
-watch([filters, pageSize], () => {
-  page.value = 1
-}, { deep: true })
+watch(pageSize, () => {
+  if (page.value !== 1) {
+    suppressNextIssuePageFetch = true
+    page.value = 1
+  }
+  fetchIssues()
+})
+
+watch(page, () => {
+  if (suppressNextIssuePageFetch) {
+    suppressNextIssuePageFetch = false
+    return
+  }
+  fetchIssues()
+})
 
 watch(totalPage, (value) => {
   if (page.value > value) {
@@ -2339,6 +2287,30 @@ const fetchIssueFilterOptions = ({ force = false } = {}) => {
   return issueFilterOptionsRequest
 }
 
+const serializeIssueMultiFilter = (value) => JSON.stringify(Array.isArray(value) ? value : [])
+
+const buildIssueQueryParams = (source = appliedFilters.value) => ({
+  month: source.month,
+  date_from: source.dateFrom,
+  date_to: source.dateTo,
+  issue_id: source.issueId,
+  regions: serializeIssueMultiFilter(source.region),
+  stations: serializeIssueMultiFilter(source.station),
+  station_manager: source.stationManager,
+  inspectors: serializeIssueMultiFilter(source.inspector),
+  inspection_tables: serializeIssueMultiFilter(source.inspectionTableName),
+  standard_id: source.standardId,
+  standard_detail: source.standardDetail,
+  standard_tags: serializeIssueMultiFilter(source.standardTags),
+  issue_description: source.issueDescription,
+  rectification_result: source.rectificationResult,
+  review_result: source.reviewResult,
+  status: source.status,
+  excellent: source.excellent,
+  audit_status: source.auditStatus,
+  audit_state: source.auditState
+})
+
 const fetchIssues = async () => {
   const sequence = ++issueFetchSequence
   try {
@@ -2346,14 +2318,32 @@ const fetchIssues = async () => {
     const userId = localStorage.getItem('user_id') || ''
     const response = await axios.get('/api/issues', {
       params: {
-        user_id: userId
+        user_id: userId,
+        paginated: 1,
+        page: page.value,
+        page_size: pageSize.value,
+        ...buildIssueQueryParams()
       }
     })
     if (sequence !== issueFetchSequence) return
-    list.value = response.data || []
-  } catch {
+    const payload = response.data || {}
+    if (Array.isArray(payload)) {
+      list.value = payload
+      totalRecords.value = payload.length
+      return
+    }
+    list.value = Array.isArray(payload.items) ? payload.items : []
+    totalRecords.value = Number(payload.total || 0)
+    const serverPage = Number(payload.page || page.value)
+    if (Number.isFinite(serverPage) && serverPage >= 1 && serverPage !== page.value) {
+      suppressNextIssuePageFetch = true
+      page.value = serverPage
+    }
+  } catch (error) {
     if (sequence !== issueFetchSequence) return
     list.value = []
+    totalRecords.value = 0
+    showActionMessage(error?.response?.data?.error || '巡检问题加载失败，请稍后重试。', 'error')
   } finally {
     if (sequence === issueFetchSequence) {
       loading.value = false
@@ -2364,13 +2354,18 @@ const fetchIssues = async () => {
 const removeIssueFromList = (issueId) => {
   const normalizedIssueId = Number(issueId)
   list.value = list.value.filter((row) => Number(row.id) !== normalizedIssueId)
+  totalRecords.value = Math.max(0, totalRecords.value - 1)
 }
 
-const refreshIssueData = async () => {
-  await Promise.allSettled([
-    fetchIssueFilterOptions({ force: true }),
-    fetchIssues()
-  ])
+const startIssueFilter = async () => {
+  appliedFilters.value = cloneIssueFilters(filters.value)
+  if (page.value !== 1) {
+    suppressNextIssuePageFetch = true
+    page.value = 1
+  }
+  closeAllDropdowns()
+  showMobileFilters.value = false
+  await fetchIssues()
 }
 
 const buildEditInternalStandardDetailText = (item, fields = editStandardFields.value) => {
@@ -2479,27 +2474,7 @@ const inspectorUserLabel = (item = {}) => {
 }
 
 const resetFilters = () => {
-  filters.value = {
-    issueId: '',
-    month: '',
-    dateFrom: '',
-    dateTo: '',
-    region: [],
-    station: [],
-    stationManager: '',
-    inspector: [],
-    inspectionTableName: [],
-    standardId: '',
-    standardDetail: '',
-    standardTags: [],
-    issueDescription: '',
-    rectificationResult: '',
-    reviewResult: '',
-    status: '',
-    excellent: '',
-    auditStatus: '',
-    auditState: ''
-  }
+  filters.value = createDefaultIssueFilters()
   filterSearch.value = {
     region: '',
     station: '',
@@ -2508,6 +2483,8 @@ const resetFilters = () => {
     standardTags: ''
   }
   closeAllDropdowns()
+  if (isMobileView.value) showMobileFilters.value = true
+  showActionMessage('筛选条件已重置为当月，点击“开始筛选”后生效。', 'success')
 }
 
 const formatLocalDate = (value = new Date()) => {
@@ -2517,7 +2494,7 @@ const formatLocalDate = (value = new Date()) => {
   return `${year}-${month}-${day}`
 }
 
-const filterMyTodayIssues = () => {
+const filterMyTodayIssues = async () => {
   const inspector = currentInspectorFilterValue.value
   if (!inspector) {
     showActionMessage('当前账号缺少姓名，暂时不能自动筛选。', 'error')
@@ -2553,6 +2530,7 @@ const filterMyTodayIssues = () => {
   }
   closeAllDropdowns()
   showMobileFilters.value = false
+  await startIssueFilter()
   showActionMessage('已筛选我今天检查的问题。', 'success')
 }
 
@@ -2569,7 +2547,7 @@ const handleIssueDateRangeChange = () => {
 
 const buildCurrentExportFilterSummary = () => {
   return Object.fromEntries(
-    Object.entries(filters.value)
+    Object.entries(appliedFilters.value)
       .map(([key, value]) => {
         const normalized = Array.isArray(value)
           ? value.map((item) => String(item || '').trim()).filter(Boolean).join('、')
@@ -2661,7 +2639,7 @@ const resetExportDialogForCurrentFilters = () => {
     taskId: '',
     status: 'idle',
     error: '',
-    selectedCount: filteredData.value.length,
+    selectedCount: totalRecords.value,
     exportedCount: 0,
     fileName: '',
     fileSizeLabel: '',
@@ -2673,7 +2651,7 @@ const resetExportDialogForCurrentFilters = () => {
 }
 
 const openExportDialog = () => {
-  if (!filteredData.value.length) {
+  if (!totalRecords.value) {
     showActionMessage('当前筛选结果为空，不能导出。', 'error')
     return
   }
@@ -2746,7 +2724,7 @@ const startExportPolling = () => {
 }
 
 const submitIssueExportTask = async () => {
-  if (!filteredData.value.length) {
+  if (!totalRecords.value) {
     exportDialog.value.error = '当前筛选结果为空，不能导出。'
     return
   }
@@ -2759,7 +2737,7 @@ const submitIssueExportTask = async () => {
     exportDialog.value.error = ''
     const response = await axios.post('/api/issues/export-tasks', {
       user_id: localStorage.getItem('user_id') || '',
-      issue_ids: filteredData.value.map((item) => item.id),
+      filter_query: buildIssueQueryParams(),
       filter_summary: buildCurrentExportFilterSummary(),
       export_options: {
         include_fields: { ...exportDialog.value.includeFields },
@@ -3506,7 +3484,7 @@ const deleteIssue = async (item) => {
     preserveFullscreen = beginFullscreenDomPreservation()
     removeIssueFromList(item.id)
     showActionMessage(response.data?.message || '巡检问题已删除。', 'success')
-    fetchIssueFilterOptions({ force: true }).catch(() => {})
+    issueFilterOptionsLoaded.value = false
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
     showActionMessage(error?.response?.data?.error || '删除巡检问题失败。', 'error')
@@ -3982,7 +3960,6 @@ onMounted(() => {
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
   document.addEventListener('fullscreenchange', handleTableFullscreenChange)
-  fetchIssueFilterOptions().catch(() => {})
   fetchIssues()
 })
 
@@ -4357,6 +4334,23 @@ onBeforeUnmount(() => {
 
 .filter-main-actions {
   justify-content: flex-end;
+}
+
+.filter-pending-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  color: #92400e;
+  background: #fffbeb;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filter-submit-btn {
+  min-width: 112px;
 }
 
 .excellent-filter-toggle {
@@ -4933,6 +4927,29 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 14px;
   line-height: 1.8;
+}
+
+.filter-query-progress {
+  width: min(360px, 82%);
+  height: 7px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.filter-query-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #2563eb, #14b8a6);
+  animation: filterQueryProgress 1.15s ease-in-out infinite;
+}
+
+@keyframes filterQueryProgress {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(340%); }
 }
 
 .empty-state-action {
