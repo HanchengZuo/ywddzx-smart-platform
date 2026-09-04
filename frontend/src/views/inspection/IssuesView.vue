@@ -127,19 +127,22 @@
 
           <div v-if="canManageIssues || canAuditIssues" class="mobile-card-actions">
             <template v-if="canAuditIssueRow(item)">
-              <template v-if="isIssueAuditPending(item)">
-                <button class="btn btn-success" type="button" :disabled="auditingIssueId === item.id"
+              <span v-if="isAuditSubmitting(item.id)" class="audit-submitting-chip">
+                <span class="audit-submitting-spinner"></span>后台提交中
+              </span>
+              <template v-else-if="isIssueAuditPending(item)">
+                <button class="btn btn-success" type="button"
                   @click="auditIssue(item, 'approved')">
                   通过
                 </button>
-                <button class="btn btn-danger" type="button" :disabled="auditingIssueId === item.id"
+                <button class="btn btn-danger" type="button"
                   @click="auditIssue(item, 'rejected')">
                   否决
                 </button>
               </template>
               <template v-else>
                 <span :class="auditStatusClass(item)">{{ auditStatusLabel(item) }}</span>
-                <button class="btn btn-secondary" type="button" :disabled="auditingIssueId === item.id"
+                <button class="btn btn-secondary" type="button"
                   @click="auditIssue(item, 'pending')">
                   重新判定
                 </button>
@@ -683,17 +686,20 @@
                 <td v-if="isIssueColumnVisible('audit')" class="nowrap audit-col">
                   <div class="audit-actions">
                     <template v-if="canAuditIssueRow(item)">
-                      <template v-if="isIssueAuditPending(item)">
-                        <button class="btn btn-success btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                      <span v-if="isAuditSubmitting(item.id)" class="audit-submitting-chip compact">
+                        <span class="audit-submitting-spinner"></span>后台提交中
+                      </span>
+                      <template v-else-if="isIssueAuditPending(item)">
+                        <button class="btn btn-success btn-sm" type="button"
                           @click="auditIssue(item, 'approved')">通过</button>
-                        <button class="btn btn-danger btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                        <button class="btn btn-danger btn-sm" type="button"
                           @click="auditIssue(item, 'rejected')">否决</button>
                       </template>
                       <template v-else>
                         <span :class="auditStatusClass(item)">{{ auditStatusLabel(item) }}</span>
                         <span v-if="isAutoAudited(item)" class="auto-audit-indicator"
                           :title="autoAuditTitle(item)">自动审核</span>
-                        <button class="btn btn-secondary btn-sm" type="button" :disabled="auditingIssueId === item.id"
+                        <button class="btn btn-secondary btn-sm" type="button"
                           @click="auditIssue(item, 'pending')">重新判定</button>
                       </template>
                     </template>
@@ -790,6 +796,15 @@
             <div class="audit-center-icon">{{ auditNotice.type === 'success' ? '✓' : '!' }}</div>
             <strong>{{ auditNotice.title }}</strong>
             <p>{{ auditNotice.message }}</p>
+          </div>
+        </div>
+      </transition>
+      <transition name="audit-notice-fade">
+        <div v-if="auditSubmittingCount" class="audit-background-progress" role="status">
+          <span class="audit-submitting-spinner"></span>
+          <div>
+            <strong>{{ auditSubmittingCount }} 条审核正在后台提交</strong>
+            <small>无需等待，可继续审核下一条问题</small>
           </div>
         </div>
       </transition>
@@ -1423,6 +1438,11 @@ import {
   getStandardDetailPreview,
   parseStandardDetailText
 } from '@/utils/standardDetail'
+import {
+  buildOptimisticAuditIssue,
+  mergeCompletedAuditIssue,
+  replaceIssueById
+} from '@/utils/issueAudit'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 
 const filters = ref({
@@ -1504,7 +1524,8 @@ const pageJumpInput = ref('')
 const listImagesReady = ref(false)
 let listImagesReadyTimer = null
 const deletingIssueId = ref(null)
-const auditingIssueId = ref(null)
+const auditingIssueIds = ref(new Set())
+const auditSubmittingCount = computed(() => auditingIssueIds.value.size)
 const markingExcellentIssueId = ref(null)
 const auditNotice = ref({
   visible: false,
@@ -2807,6 +2828,16 @@ const showAuditNotice = (title, message, type = 'success') => {
   }, 1900)
 }
 
+const isAuditSubmitting = (issueId) => auditingIssueIds.value.has(Number(issueId))
+
+const setAuditSubmitting = (issueId, submitting) => {
+  const nextIds = new Set(auditingIssueIds.value)
+  const normalizedIssueId = Number(issueId)
+  if (submitting) nextIds.add(normalizedIssueId)
+  else nextIds.delete(normalizedIssueId)
+  auditingIssueIds.value = nextIds
+}
+
 const createIssueEditForm = (item = {}) => ({
   standard_id: item.standard_id ? String(item.standard_id) : '',
   internal_standard_id: item.internal_standard_id ? String(item.internal_standard_id).toUpperCase() : '',
@@ -3485,52 +3516,50 @@ const deleteIssue = async (item) => {
   }
 }
 
+const replaceAuditIssueInList = (issueId, replacement) => {
+  const preserveFullscreen = beginFullscreenDomPreservation()
+  list.value = replaceIssueById(list.value, issueId, replacement)
+  if (preserveFullscreen) {
+    finishFullscreenDomPreservation(true).catch(() => {
+      // 页面内全屏仍可继续使用，不让原生全屏恢复失败影响审核请求。
+    })
+  }
+}
+
 const auditIssue = async (item, status) => {
-  if (!item?.id || auditingIssueId.value === item.id) return
+  if (!item?.id || isAuditSubmitting(item.id)) return
   const actionLabels = {
     approved: '审核通过',
     rejected: '审核否决',
     pending: '重新判定'
   }
   const actionLabel = actionLabels[status] || '审核'
+  const issueId = Number(item.id)
+  const originalIssue = list.value.find((row) => Number(row.id) === issueId) || item
 
-  let preserveFullscreen = false
+  setAuditSubmitting(issueId, true)
+  replaceAuditIssueInList(
+    issueId,
+    buildOptimisticAuditIssue(originalIssue, status)
+  )
+
   try {
-    auditingIssueId.value = item.id
-    const response = await axios.post(`/api/issues/${item.id}/audit`, {
+    const response = await axios.post(`/api/issues/${issueId}/audit`, {
       user_id: localStorage.getItem('user_id') || '',
       action: status
     })
-    preserveFullscreen = beginFullscreenDomPreservation()
-    const message = response.data?.message || `问题 #${item.id} 已${actionLabel}。`
-    const updatedIssue = response.data?.issue
-    if (updatedIssue?.id) {
-      list.value = list.value.map((row) => (
-        Number(row.id) === Number(updatedIssue.id) ? { ...row, ...updatedIssue } : row
-      ))
-    } else {
-      const nextAuditStatus = response.data?.audit_status || status
-      const nextAuditLabel = response.data?.audit_status_label || auditStatusLabel({ audit_status: nextAuditStatus })
-      list.value = list.value.map((row) => (
-        Number(row.id) === Number(item.id)
-          ? {
-              ...row,
-              audit_status: nextAuditStatus,
-              audit_status_label: nextAuditLabel,
-              is_excellent: nextAuditStatus === 'rejected' ? false : row.is_excellent,
-              status: nextAuditStatus === 'pending' ? '待审核' : (row.raw_status || row.workflow_status || row.status)
-            }
-          : row
-      ))
-    }
+    const message = response.data?.message || `问题 #${issueId} 已${actionLabel}。`
+    replaceAuditIssueInList(issueId, (currentIssue) => (
+      mergeCompletedAuditIssue(currentIssue, response.data?.issue, response.data?.audit_status || status)
+    ))
     showAuditNotice(actionLabel, message, status === 'rejected' ? 'danger' : 'success')
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     window.dispatchEvent(new Event('my-pending-rectification-refresh'))
   } catch (error) {
+    replaceAuditIssueInList(issueId, originalIssue)
     showAuditNotice('审核失败', error?.response?.data?.error || '问题审核操作失败。', 'danger')
   } finally {
-    await finishFullscreenDomPreservation(preserveFullscreen)
-    auditingIssueId.value = null
+    setAuditSubmitting(issueId, false)
   }
 }
 
@@ -4438,37 +4467,41 @@ onBeforeUnmount(() => {
 
 .audit-center-notice {
   position: fixed;
-  inset: 0;
+  top: 88px;
+  right: 24px;
   z-index: 1800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+  width: min(360px, calc(100vw - 32px));
   pointer-events: none;
-  background: rgba(15, 23, 42, 0.12);
-  backdrop-filter: blur(2px);
 }
 
 .audit-center-card {
-  width: min(420px, 100%);
-  padding: 24px 22px;
-  text-align: center;
-  border-radius: 24px;
-  box-shadow: 0 28px 58px rgba(15, 23, 42, 0.22);
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  column-gap: 12px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  border-radius: 16px;
+  border: 1px solid rgba(34, 197, 94, 0.26);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
 }
 
 .audit-center-icon {
-  width: 54px;
-  height: 54px;
-  margin: 0 auto 12px;
+  grid-row: 1 / 3;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 18px;
+  border-radius: 12px;
   background: #dcfce7;
   color: #15803d;
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 950;
+}
+
+.audit-center-notice.danger .audit-center-card {
+  border-color: rgba(239, 68, 68, 0.26);
 }
 
 .audit-center-notice.danger .audit-center-icon {
@@ -4479,15 +4512,84 @@ onBeforeUnmount(() => {
 .audit-center-card strong {
   display: block;
   color: #0f172a;
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 950;
 }
 
 .audit-center-card p {
-  margin: 8px 0 0;
+  margin: 3px 0 0;
   color: #475569;
-  font-size: 14px;
-  line-height: 1.8;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.audit-background-progress {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1790;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 12px 15px;
+  border: 1px solid rgba(14, 116, 144, 0.2);
+  border-radius: 16px;
+  pointer-events: none;
+  color: #164e63;
+  background: rgba(236, 254, 255, 0.96);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.audit-background-progress strong,
+.audit-background-progress small {
+  display: block;
+}
+
+.audit-background-progress strong {
+  font-size: 13px;
+}
+
+.audit-background-progress small {
+  margin-top: 2px;
+  color: #477787;
+  font-size: 11px;
+}
+
+.audit-submitting-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border-radius: 10px;
+  color: #0e7490;
+  background: #ecfeff;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.audit-submitting-chip.compact {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.audit-submitting-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(14, 116, 144, 0.22);
+  border-top-color: #0e7490;
+  border-radius: 50%;
+  animation: audit-spin 0.72s linear infinite;
+}
+
+@keyframes audit-spin {
+  to { transform: rotate(360deg); }
 }
 
 .audit-notice-fade-enter-active,
@@ -7164,6 +7266,18 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .audit-center-notice {
+    top: 74px;
+    right: 12px;
+    width: min(340px, calc(100vw - 24px));
+  }
+
+  .audit-background-progress {
+    right: 12px;
+    bottom: 14px;
+    width: min(340px, calc(100vw - 24px));
+  }
+
   .page-shell {
     gap: 14px;
   }
