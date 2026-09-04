@@ -5182,6 +5182,13 @@ onBeforeUnmount(() => {
   z-index: 9500;
 }
 
+.fullscreen-overlay-host .audit-center-notice {
+  top: 18px;
+  left: 16px;
+  right: 16px;
+  margin-inline: auto;
+}
+
 .fullscreen-overlay-host .image-modal,
 .fullscreen-overlay-host .issue-photo-preview-overlay,
 .fullscreen-overlay-host .photo-editor-overlay {
