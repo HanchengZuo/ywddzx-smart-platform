@@ -158,7 +158,10 @@
         <span class="server-resource-dot"></span>
         {{ mobileServerResourceLabel }}
       </div>
-      <button class="mobile-passkey-button" type="button" title="Passkey管理" @click="passkeyManagerOpen = true">钥</button>
+      <button v-if="canSwitchAccounts" class="mobile-account-switch-button" type="button" title="切换登录账号"
+        @click="accountSwitcherOpen = true">切</button>
+      <button v-if="!isImpersonating" class="mobile-passkey-button" type="button" title="Passkey管理"
+        @click="passkeyManagerOpen = true">钥</button>
       <button class="btn btn-secondary btn-sm mobile-logout-btn" type="button" @click="handleLogout">退出</button>
     </header>
 
@@ -490,7 +493,15 @@
               </div>
             </div>
           </div>
-          <button class="header-passkey-button" type="button" @click="passkeyManagerOpen = true">
+          <button v-if="canSwitchAccounts" class="header-account-switch-button" :class="{ active: isImpersonating }"
+            type="button" @click="accountSwitcherOpen = true">
+            <span>切</span>
+            <div>
+              <strong>{{ isImpersonating ? 'Root 代入中' : '切换账号' }}</strong>
+              <small>{{ isImpersonating ? '点击更换或返回 Root' : '按角色选择用户' }}</small>
+            </div>
+          </button>
+          <button v-if="!isImpersonating" class="header-passkey-button" type="button" @click="passkeyManagerOpen = true">
             <span></span>Passkey
           </button>
           <button class="btn btn-secondary btn-sm" type="button" @click="handleLogout">退出登录</button>
@@ -560,6 +571,11 @@
 
     <PasskeyManagerModal :visible="passkeyManagerOpen && !authState.mustChangePassword"
       @close="passkeyManagerOpen = false" @session-invalidated="handlePasskeySessionInvalidated" />
+
+    <AccountSwitcherModal :visible="accountSwitcherOpen && canSwitchAccounts"
+      :current-user-id="authState.userId" :current-display-name="currentUsername"
+      :impersonating="isImpersonating" @close="accountSwitcherOpen = false"
+      @session-changed="handleImpersonationSessionChanged" />
 
     <div v-if="birthdayBlessing.visible && !authState.mustChangePassword" class="birthday-blessing-overlay"
       role="dialog" aria-modal="true">
@@ -648,6 +664,7 @@ import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
+import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
 import {
   AUTH_SESSION_EXPIRED_EVENT,
   clearAuthSession,
@@ -693,6 +710,7 @@ const loginRateLimitRemaining = ref(0)
 const loginRateLimitScope = ref('')
 const passkeyLoginLoading = ref(false)
 const passkeyManagerOpen = ref(false)
+const accountSwitcherOpen = ref(false)
 const rootPasskeySetup = reactive({
   active: false,
   setupToken: '',
@@ -869,6 +887,13 @@ const parseStoredPermissions = () => {
 }
 
 const getStoredMustChangePassword = () => localStorage.getItem('must_change_password') === 'true'
+const getStoredImpersonation = () => {
+  try {
+    return JSON.parse(localStorage.getItem('impersonation') || 'null')
+  } catch {
+    return null
+  }
+}
 const getStoredPasswordPolicy = () => {
   try {
     return JSON.parse(localStorage.getItem('password_policy') || '{}')
@@ -890,7 +915,8 @@ const authState = reactive({
   address: localStorage.getItem('address') || '',
   mustChangePassword: getStoredMustChangePassword(),
   passwordPolicy: getStoredPasswordPolicy(),
-  permissions: parseStoredPermissions()
+  permissions: parseStoredPermissions(),
+  impersonation: getStoredImpersonation()
 })
 
 syncAxiosAuthHeader()
@@ -927,6 +953,8 @@ const passwordRuleStatus = computed(() => {
   }
 })
 const isRoot = computed(() => authState.role === 'root')
+const isImpersonating = computed(() => Boolean(authState.impersonation?.active))
+const canSwitchAccounts = computed(() => isRoot.value || isImpersonating.value)
 const isSupervisor = computed(() => authState.role === 'supervisor')
 const isStationManager = computed(() => authState.role === 'station_manager')
 const isQualitySafety = computed(() => authState.role === 'quality_safety')
@@ -1185,6 +1213,7 @@ const syncAuthState = () => {
   authState.mustChangePassword = getStoredMustChangePassword()
   authState.passwordPolicy = getStoredPasswordPolicy()
   authState.permissions = parseStoredPermissions()
+  authState.impersonation = getStoredImpersonation()
 }
 
 const resetPageVisibilityState = () => {
@@ -1967,6 +1996,7 @@ const handleRootPasskeySetup = async () => {
 
 const handlePasskeySessionInvalidated = (message) => {
   passkeyManagerOpen.value = false
+  accountSwitcherOpen.value = false
   clearAuthSession(message || 'Passkey安全设置已更改，请重新登录。')
   resetSessionNotice()
   resetPasswordChangeForm()
@@ -1976,6 +2006,16 @@ const handlePasskeySessionInvalidated = (message) => {
   resetBirthdayBlessing()
   syncAuthState()
   router.replace('/login')
+}
+
+const handleImpersonationSessionChanged = (responseData) => {
+  const user = responseData?.user
+  const token = responseData?.token
+  if (!user || !token) return
+  accountSwitcherOpen.value = false
+  passkeyManagerOpen.value = false
+  storeAuthSession(user, token, responseData.expires_in)
+  window.location.assign(resolveHomePath(user))
 }
 
 const handleLogin = async () => {
@@ -2025,6 +2065,7 @@ const handleLogin = async () => {
 
 const handleLogout = async () => {
   passkeyManagerOpen.value = false
+  accountSwitcherOpen.value = false
   resetRootPasskeySetup()
   stopIdleLogoutTimer()
   const token = getStoredAuthToken()
@@ -4314,7 +4355,8 @@ textarea:focus {
 }
 
 .header-passkey-button,
-.mobile-passkey-button {
+.mobile-passkey-button,
+.mobile-account-switch-button {
   flex-shrink: 0;
   border: 1px solid #bcd9d5;
   background: #eff8f6;
@@ -4331,6 +4373,65 @@ textarea:focus {
   padding: 0 12px;
   border-radius: 12px;
   font-size: 12px;
+}
+
+.header-account-switch-button {
+  min-height: 46px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px 6px 7px;
+  border: 1px solid rgba(14, 116, 144, 0.25);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #ecfeff, #f0fdfa);
+  color: #0f766e;
+  cursor: pointer;
+}
+
+.header-account-switch-button > span {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #0e7490, #0f766e);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.header-account-switch-button > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.header-account-switch-button strong {
+  color: #134e4a;
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.header-account-switch-button small {
+  color: #56807d;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.header-account-switch-button.active {
+  border-color: rgba(217, 119, 6, 0.32);
+  background: linear-gradient(135deg, #fffbeb, #fff7ed);
+}
+
+.header-account-switch-button.active > span {
+  background: linear-gradient(135deg, #b45309, #c2410c);
+}
+
+.header-account-switch-button.active strong {
+  color: #9a3412;
 }
 
 .header-passkey-button span {
@@ -4357,6 +4458,14 @@ textarea:focus {
   height: 34px;
   border-radius: 11px;
   padding: 0;
+}
+
+.mobile-account-switch-button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 11px;
 }
 
 .header-user-avatar {

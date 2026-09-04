@@ -16,7 +16,8 @@ const AUTH_STORAGE_KEYS = [
   'address',
   'permissions',
   'must_change_password',
-  'password_policy'
+  'password_policy',
+  'impersonation'
 ]
 
 const AUTH_MESSAGE_KEY = 'auth_session_message'
@@ -110,6 +111,7 @@ export const storeAuthSession = (user, token, expiresInSeconds = null) => {
   localStorage.setItem('permissions', JSON.stringify(user?.permissions || {}))
   localStorage.setItem('must_change_password', user?.must_change_password ? 'true' : 'false')
   localStorage.setItem('password_policy', JSON.stringify(user?.password_policy || {}))
+  localStorage.setItem('impersonation', JSON.stringify(user?.impersonation || null))
   localStorage.removeItem(AUTH_MESSAGE_KEY)
   authMeCacheToken = token
   authMeCacheCheckedAt = Date.now()
