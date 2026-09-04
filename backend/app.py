@@ -295,6 +295,11 @@ FORCED_PASSWORD_CHANGE_ALLOWED_PATHS = {
     "/api/auth/logout",
     "/api/users/change-password",
 }
+IMPERSONATION_BLOCKED_PATH_PREFIXES = (
+    "/api/users/change-password",
+    "/api/auth/passkeys",
+    "/api/auth/passkey/reauth",
+)
 QUIET_ACCESS_LOG_PATHS = LEGACY_FRONTEND_API_PATHS | {
     "/api/auth/me",
     "/api/notifications/summary",
@@ -2502,6 +2507,28 @@ def create_auth_token(user, authentication_method="password"):
     return get_auth_serializer().dumps(payload)
 
 
+def create_impersonation_token(target_user, root_user):
+    issued_at = current_epoch_seconds()
+    expires_at = issued_at + min(
+        get_auth_token_ttl_seconds(target_user),
+        get_auth_token_ttl_seconds(root_user),
+    )
+    return get_auth_serializer().dumps(
+        {
+            "uid": int(target_user["id"]),
+            "username": target_user["username"],
+            "role": target_user["role"],
+            "av": int(target_user.get("auth_version") or 1),
+            "amr": "impersonation",
+            "imp_uid": int(root_user["id"]),
+            "imp_username": root_user["username"],
+            "imp_av": int(root_user.get("auth_version") or 1),
+            "iat": issued_at,
+            "exp": expires_at,
+        }
+    )
+
+
 def is_request_secure():
     if request.is_secure:
         return True
@@ -2519,6 +2546,9 @@ def attach_file_access_cookie(response, token, expires_in=None):
             {
                 "uid": int(auth_payload["uid"]),
                 "av": int(auth_payload.get("av") or 0),
+                "imp_uid": int(auth_payload.get("imp_uid") or 0),
+                "imp_username": auth_payload.get("imp_username") or "",
+                "imp_av": int(auth_payload.get("imp_av") or 0),
                 "exp": int(auth_payload.get("exp") or 0),
                 "scope": "storage:read",
             }
@@ -2589,10 +2619,10 @@ def get_auth_payload_expires_in(payload):
     return max(0, expires_at - current_epoch_seconds())
 
 
-def build_auth_user_payload(cur, user, authentication_method=None):
+def build_auth_user_payload(cur, user, authentication_method=None, impersonator=None):
     permissions = get_effective_permissions(cur, user)
     policy = fetch_password_policy(cur)
-    change_required = is_password_change_enforced(user, policy)
+    change_required = False if impersonator else is_password_change_enforced(user, policy)
     return {
         "id": user["id"],
         "username": user["username"],
@@ -2610,6 +2640,16 @@ def build_auth_user_payload(cur, user, authentication_method=None):
         "account_status": user.get("account_status") or "active",
         "authentication_method": authentication_method,
         "passkey_only": user.get("role") == "root",
+        "impersonation": (
+            {
+                "active": True,
+                "root_user_id": impersonator["id"],
+                "root_username": impersonator["username"],
+                "root_real_name": impersonator.get("real_name") or impersonator["username"],
+            }
+            if impersonator
+            else None
+        ),
         "birthday_event": get_user_birthday_event(cur, user),
     }
 
@@ -2756,6 +2796,12 @@ def verify_auth_token(token):
                 user,
                 fetch_password_policy(cur),
             )
+        impersonator = None
+        impersonator_id = payload.get("imp_uid")
+        if impersonator_id:
+            impersonator = fetch_auth_user_by_id(cur, impersonator_id)
+            if impersonator:
+                impersonator = dict(impersonator)
     finally:
         close_db_resources(cur, conn)
 
@@ -2773,6 +2819,21 @@ def verify_auth_token(token):
         token_auth_version = 0
     if token_auth_version != int(user.get("auth_version") or 1):
         raise PermissionError("登录已过期，请重新登录。")
+    if payload.get("imp_uid"):
+        try:
+            impersonator_auth_version = int(payload.get("imp_av") or 0)
+        except (TypeError, ValueError):
+            impersonator_auth_version = 0
+        if (
+            not impersonator
+            or impersonator.get("role") != "root"
+            or impersonator.get("account_status") != "active"
+            or payload.get("imp_username") != impersonator.get("username")
+            or impersonator_auth_version != int(impersonator.get("auth_version") or 1)
+        ):
+            raise PermissionError("Root授权状态已变更，请重新登录。")
+        user["_impersonator"] = impersonator
+        user["_password_change_enforced"] = False
     return dict(user), dict(payload)
 
 
@@ -2781,6 +2842,8 @@ def verify_file_access_token(token):
         payload = get_file_access_serializer().loads(str(token or ""))
         user_id = int(payload.get("uid") or 0)
         auth_version = int(payload.get("av") or 0)
+        impersonator_id = int(payload.get("imp_uid") or 0)
+        impersonator_auth_version = int(payload.get("imp_av") or 0)
         expires_at = int(payload.get("exp") or 0)
     except (BadSignature, TypeError, ValueError) as exc:
         raise PermissionError("文件访问会话已失效。") from exc
@@ -2800,6 +2863,9 @@ def verify_file_access_token(token):
                 user,
                 fetch_password_policy(cur),
             )
+        impersonator = fetch_auth_user_by_id(cur, impersonator_id) if impersonator_id else None
+        if impersonator:
+            impersonator = dict(impersonator)
     finally:
         close_db_resources(cur, conn)
 
@@ -2807,6 +2873,16 @@ def verify_file_access_token(token):
         not user
         or user.get("account_status") != "active"
         or auth_version != int(user.get("auth_version") or 1)
+        or (
+            impersonator_id
+            and (
+                not impersonator
+                or impersonator.get("role") != "root"
+                or impersonator.get("account_status") != "active"
+                or payload.get("imp_username") != impersonator.get("username")
+                or impersonator_auth_version != int(impersonator.get("auth_version") or 1)
+            )
+        )
     ):
         raise PermissionError("文件访问会话已失效。")
     return user
@@ -2913,7 +2989,18 @@ def require_signed_api_token():
 
     g.current_user = user
     g.auth_payload = payload
+    g.impersonator = user.get("_impersonator")
     touch_online_user_presence(user)
+    if g.impersonator and request.path.startswith(IMPERSONATION_BLOCKED_PATH_PREFIXES):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Root代入期间不能修改目标账号的密码或Passkey。",
+                }
+            ),
+            403,
+        )
     if user.get("_password_change_enforced") and request.path not in FORCED_PASSWORD_CHANGE_ALLOWED_PATHS:
         return (
             jsonify(
@@ -22500,6 +22587,250 @@ def logout_authenticated_user():
     return clear_file_access_cookie(jsonify({"success": True}))
 
 
+def get_root_impersonation_actor():
+    current_user = get_current_request_user()
+    if is_root_user(current_user):
+        if getattr(g, "auth_payload", {}).get("amr") != "passkey":
+            raise PermissionError("账号切换需要Root通过Passkey登录。")
+        return current_user
+    impersonator = getattr(g, "impersonator", None)
+    if is_root_user(impersonator):
+        return impersonator
+    raise PermissionError("仅Root账号可以使用账号切换。")
+
+
+def serialize_impersonation_account(row):
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "real_name": row.get("real_name") or "",
+        "display_name": row.get("real_name") or row["username"],
+        "role": row["role"],
+        "role_label": ROLE_LABELS.get(row["role"], row["role"]),
+        "station_id": row.get("station_id"),
+        "station_name": row.get("station_name") or "",
+        "region": row.get("region") or "",
+        "account_status": row.get("account_status") or "active",
+        "account_status_label": "正常" if row.get("account_status") == "active" else "已暂停",
+    }
+
+
+@app.route("/api/auth/impersonation/accounts", methods=["GET"])
+def list_impersonation_accounts():
+    conn = None
+    cur = None
+    try:
+        get_root_impersonation_actor()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                u.id,
+                u.username,
+                u.real_name,
+                u.role,
+                u.station_id,
+                u.account_status,
+                s.station_name,
+                s.region
+            FROM users u
+            LEFT JOIN stations s ON s.id = u.station_id
+            WHERE u.role <> 'root'
+            ORDER BY
+                CASE u.role
+                    WHEN 'supervisor' THEN 1
+                    WHEN 'quality_safety' THEN 2
+                    WHEN 'development_plan' THEN 3
+                    WHEN 'oil_gas' THEN 4
+                    WHEN 'non_oil' THEN 5
+                    WHEN 'finance' THEN 6
+                    WHEN 'area_account' THEN 7
+                    WHEN 'station_manager' THEN 8
+                    ELSE 9
+                END,
+                COALESCE(s.region, ''),
+                COALESCE(s.station_name, ''),
+                COALESCE(u.real_name, ''),
+                u.username,
+                u.id;
+            """
+        )
+        accounts = [serialize_impersonation_account(dict(row)) for row in cur.fetchall()]
+        grouped = []
+        for role in ROLE_LABELS:
+            if role == "root":
+                continue
+            role_accounts = [item for item in accounts if item["role"] == role]
+            if role_accounts:
+                grouped.append(
+                    {
+                        "role": role,
+                        "role_label": ROLE_LABELS.get(role, role),
+                        "count": len(role_accounts),
+                        "accounts": role_accounts,
+                    }
+                )
+        return jsonify({"success": True, "total": len(accounts), "groups": grouped})
+    except PermissionError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        logging.exception("Impersonation account directory read failed.")
+        return jsonify({"success": False, "error": "账号目录读取失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/impersonation/switch", methods=["POST"])
+def switch_impersonation_account():
+    data = request.get_json(silent=True) or {}
+    try:
+        target_user_id = int(data.get("target_user_id") or 0)
+    except (TypeError, ValueError):
+        target_user_id = 0
+    if target_user_id <= 0:
+        return jsonify({"success": False, "error": "请选择要切换的账号。"}), 400
+
+    conn = None
+    cur = None
+    root_actor = None
+    target_user = None
+    try:
+        root_actor = get_root_impersonation_actor()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        target_user = fetch_auth_user_by_id(cur, target_user_id)
+        if not target_user:
+            raise LookupError("目标账号不存在。")
+        target_user = dict(target_user)
+        if is_root_user(target_user):
+            raise ValueError("请使用“返回Root”恢复系统管理员身份。")
+        if target_user.get("account_status") != "active":
+            raise ValueError("目标账号已暂停，不能代入登录。")
+
+        token = create_impersonation_token(target_user, root_actor)
+        expires_in = min(
+            get_auth_token_ttl_seconds(target_user),
+            get_auth_token_ttl_seconds(root_actor),
+        )
+        response_user = build_auth_user_payload(
+            cur,
+            target_user,
+            "impersonation",
+            impersonator=root_actor,
+        )
+        record_security_event(
+            cur,
+            root_actor,
+            "account_impersonation_start",
+            "success",
+            target=target_user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={
+                "target_role": target_user.get("role"),
+                "target_station_id": target_user.get("station_id"),
+                "source_user_id": g.current_user.get("id"),
+            },
+        )
+        conn.commit()
+        remove_online_user_presence(g.current_user.get("id"))
+        touch_online_user_presence(target_user)
+        return build_authenticated_response(
+            {
+                "success": True,
+                "message": f"已切换为{target_user.get('real_name') or target_user['username']}。",
+                "token": token,
+                "expires_in": expires_in,
+                "user": response_user,
+            },
+            token,
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        logging.exception("Account impersonation failed.")
+        if root_actor:
+            persist_security_failure_event(
+                root_actor,
+                "account_impersonation_start",
+                str(exc),
+                target=target_user,
+            )
+        return jsonify({"success": False, "error": "账号切换失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route("/api/auth/impersonation/exit", methods=["POST"])
+def exit_impersonation_account():
+    root_actor = getattr(g, "impersonator", None)
+    if not is_root_user(root_actor):
+        return jsonify({"success": False, "error": "当前不是Root代入会话。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        root_actor = fetch_auth_user_by_id(cur, root_actor["id"])
+        if not root_actor:
+            raise PermissionError("Root账号不存在。")
+        root_actor = dict(root_actor)
+        if root_actor.get("role") != "root" or root_actor.get("account_status") != "active":
+            raise PermissionError("Root账号状态已变更，请重新登录。")
+
+        token = create_auth_token(root_actor, "passkey")
+        expires_in = get_auth_token_ttl_seconds(root_actor)
+        response_user = build_auth_user_payload(cur, root_actor, "passkey")
+        record_security_event(
+            cur,
+            root_actor,
+            "account_impersonation_end",
+            "success",
+            target=g.current_user,
+            request_ip=get_request_client_ip(),
+            user_agent=request.headers.get("User-Agent"),
+            details={"returned_to_root": True},
+        )
+        conn.commit()
+        remove_online_user_presence(g.current_user.get("id"))
+        touch_online_user_presence(root_actor)
+        return build_authenticated_response(
+            {
+                "success": True,
+                "message": "已返回Root系统管理员账号。",
+                "token": token,
+                "expires_in": expires_in,
+                "user": response_user,
+            },
+            token,
+        )
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception("Returning from account impersonation failed.")
+        return jsonify({"success": False, "error": "返回Root账号失败，请重新登录。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/auth/me", methods=["GET"])
 def get_authenticated_user():
     token = extract_bearer_token()
@@ -22531,6 +22862,7 @@ def get_authenticated_user():
                 cur,
                 user,
                 getattr(g, "auth_payload", {}).get("amr") or "password",
+                impersonator=getattr(g, "impersonator", None),
             ),
         }
         set_cached_auth_me_payload(user["id"], token, response_payload)
