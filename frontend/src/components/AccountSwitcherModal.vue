@@ -389,7 +389,8 @@ watch(() => props.visible, (visible) => {
 }
 
 .account-switcher-groups {
-  min-height: 220px;
+  min-height: 0;
+  flex: 1;
   padding: 2px 28px 28px;
   overflow-y: auto;
 }
