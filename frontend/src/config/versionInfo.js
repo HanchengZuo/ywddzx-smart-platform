@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.7',
+    date: '2026-09-04',
+    title: '巡检问题连续审核',
+    summary: '问题审核改为逐条后台提交，无需等待当前请求即可继续处理下一条。',
+    items: [
+      '点击通过、否决或重新判定后立即更新当前行，不再显示遮挡页面的全屏提示。',
+      '多条问题可以独立并行提交，并显示后台处理中数量。',
+      '单条审核失败只恢复对应问题，不影响其他正在处理或已成功的问题。',
+      '桌面端与移动端统一使用不遮挡操作区的轻量结果通知。'
+    ]
+  },
+  {
     version: 'v5.6',
     date: '2026-09-03',
     title: 'AI报告共享配置与成稿同步',
