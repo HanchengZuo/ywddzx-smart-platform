@@ -171,19 +171,112 @@
         </div>
       </div>
     </div>
+
+    <div v-if="issueDialog.visible" class="station-issue-dialog-backdrop" @click.self="closeStationIssueDialog">
+      <section class="station-issue-dialog card-surface" role="dialog" aria-modal="true"
+        :aria-label="stationIssueDialogTitle">
+        <header class="station-issue-dialog-head">
+          <div>
+            <span class="station-issue-dialog-kicker">站点问题清单</span>
+            <h3>{{ stationIssueDialogTitle }}</h3>
+            <p>{{ issueDialog.station?.region || '暂无片区' }}｜共 {{ issueDialog.total }} 项｜轮巡已暂停</p>
+          </div>
+          <button class="station-issue-dialog-close" type="button" aria-label="关闭" @click="closeStationIssueDialog">×</button>
+        </header>
+
+        <div v-if="issueDialog.loading" class="station-issue-dialog-state">
+          <span class="station-issue-loading-orb"></span>
+          <strong>正在读取关联问题</strong>
+          <p>仅加载当前页数据，请稍候。</p>
+        </div>
+        <div v-else-if="issueDialog.error" class="station-issue-dialog-state error">
+          <strong>问题清单加载失败</strong>
+          <p>{{ issueDialog.error }}</p>
+          <button class="btn btn-secondary" type="button" @click="fetchStationIssues(issueDialog.page)">重新加载</button>
+        </div>
+        <div v-else-if="!issueDialog.items.length" class="station-issue-dialog-state">
+          <strong>当前状态下暂无问题</strong>
+          <p>站点统计数据刷新后可能发生变化。</p>
+        </div>
+        <div v-else class="station-issue-list">
+          <article v-for="item in issueDialog.items" :key="item.id" class="station-issue-card">
+            <div class="station-issue-card-main">
+              <div class="station-issue-card-title">
+                <span class="station-issue-id">#{{ item.id }}</span>
+                <span class="station-issue-time">{{ item.inspection_time || item.inspection_date || '暂无检查时间' }}</span>
+                <span class="station-issue-status" :class="issueDialog.statusKey">{{ item.status }}</span>
+              </div>
+              <p class="station-issue-description">{{ item.description || '暂无问题描述' }}</p>
+
+              <dl v-if="showReviewIssueFields" class="station-issue-detail-grid">
+                <div><dt>整改结果</dt><dd>{{ item.rectification_result || '待复核' }}</dd></div>
+                <div><dt>整改时间</dt><dd>{{ item.rectification_at || '暂无' }}</dd></div>
+                <div class="wide"><dt>整改说明</dt><dd>{{ item.rectification_note || '暂无整改说明' }}</dd></div>
+                <template v-if="showFullIssueFields">
+                  <div><dt>检查表</dt><dd>{{ item.inspection_table_name || '暂无' }}</dd></div>
+                  <div><dt>检查人</dt><dd>{{ item.inspector || '暂无' }}</dd></div>
+                  <div><dt>站点负责人</dt><dd>{{ item.station_manager_name || '暂无' }}</dd></div>
+                  <div><dt>问题状态</dt><dd>{{ item.status || '暂无' }}</dd></div>
+                  <div><dt>外部规范ID</dt><dd>{{ item.standard_id || '暂无' }}</dd></div>
+                  <div><dt>内部规范ID</dt><dd>{{ item.internal_standard_id || '暂无' }}</dd></div>
+                  <div class="wide"><dt>外部规范</dt><dd>{{ item.standard_detail_text || '暂无' }}</dd></div>
+                  <div class="wide"><dt>内部规范</dt><dd>{{ item.internal_standard_detail_text || '暂无' }}</dd></div>
+                  <div><dt>审核状态</dt><dd>{{ item.audit_status_label || '暂无' }}</dd></div>
+                  <div><dt>审核来源</dt><dd>{{ item.audit_source === 'automatic' ? '自动审核' : item.audit_source ? '人工审核' : '暂无' }}</dd></div>
+                  <div><dt>审核人</dt><dd>{{ item.audited_by_name || '暂无' }}</dd></div>
+                  <div><dt>审核时间</dt><dd>{{ item.audited_at || '暂无' }}</dd></div>
+                  <div><dt>复核结果</dt><dd>{{ item.review_result || '暂无' }}</dd></div>
+                  <div><dt>复核时间</dt><dd>{{ item.review_at || '暂无' }}</dd></div>
+                  <div class="wide"><dt>复核说明</dt><dd>{{ item.review_note || '暂无复核说明' }}</dd></div>
+                </template>
+              </dl>
+            </div>
+
+            <div class="station-issue-photo-column">
+              <button v-if="item.issue_photo" class="station-issue-photo-button" type="button"
+                @click="openImagePreview(item.issue_photo, `问题 #${item.id} 照片`)">
+                <img :src="resolveImage(item.issue_photo)" alt="问题照片" loading="lazy" />
+                <span>查看问题照片</span>
+              </button>
+              <div v-else class="station-issue-photo-empty">暂无问题照片</div>
+              <button v-if="showReviewIssueFields && item.rectification_photo" class="station-issue-photo-link" type="button"
+                @click="openImagePreview(item.rectification_photo, `问题 #${item.id} 整改照片`)">查看整改照片</button>
+              <button v-if="showFullIssueFields && item.review_photo" class="station-issue-photo-link" type="button"
+                @click="openImagePreview(item.review_photo, `问题 #${item.id} 复核照片`)">查看复核照片</button>
+            </div>
+          </article>
+        </div>
+
+        <footer v-if="!issueDialog.loading && issueDialog.totalPages > 1" class="station-issue-dialog-footer">
+          <span>第 {{ issueDialog.page }} / {{ issueDialog.totalPages }} 页</span>
+          <div>
+            <button class="btn btn-secondary" type="button" :disabled="issueDialog.page <= 1"
+              @click="fetchStationIssues(issueDialog.page - 1)">上一页</button>
+            <button class="btn btn-primary" type="button" :disabled="issueDialog.page >= issueDialog.totalPages"
+              @click="fetchStationIssues(issueDialog.page + 1)">下一页</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="imagePreview.visible" class="station-image-preview-backdrop" @click.self="closeImagePreview">
+      <section class="station-image-preview" role="dialog" aria-modal="true" :aria-label="imagePreview.title">
+        <header><strong>{{ imagePreview.title }}</strong><button type="button" @click="closeImagePreview">×</button></header>
+        <img :src="imagePreview.src" :alt="imagePreview.title" />
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const AMAP_KEY = '9f35886b6810874b8578ab8dd3d2525e'
 const SHANGHAI_CENTER = [121.4737, 31.2304]
 
 const mapContainer = ref(null)
 const mapFrameRef = ref(null)
-const loading = ref(false)
 const mapBooting = ref(false)
 const mapError = ref('')
 const isFullscreen = ref(false)
@@ -193,9 +286,27 @@ const autoRotateTarget = ref(null)
 const eventFeed = ref([])
 const currentRole = ref('')
 const isMobileMapMode = ref(false)
+const issueDialog = ref({
+  visible: false,
+  loading: false,
+  error: '',
+  station: null,
+  statusKey: '',
+  items: [],
+  total: 0,
+  page: 1,
+  pageSize: 12,
+  totalPages: 1
+})
+const imagePreview = ref({ visible: false, src: '', title: '' })
 const MOBILE_MAP_QUERY = '(max-width: 900px)'
 const STATION_MAP_CACHE_KEY = 'station_map_cache_v1'
-const STATION_MAP_CACHE_TTL = 45 * 1000
+const STATION_MAP_CACHE_TTL = 5 * 60 * 1000
+const STATION_ISSUE_STATUS_META = {
+  pending_rectification: { label: '未整改问题', shortLabel: '未整改' },
+  pending_review: { label: '待复核问题', shortLabel: '待复核' },
+  closed: { label: '已闭环问题', shortLabel: '已闭环' }
+}
 
 const resolveCurrentRole = () => {
   const directRole = localStorage.getItem('role') || localStorage.getItem('user_role') || ''
@@ -207,7 +318,7 @@ const resolveCurrentRole = () => {
   try {
     const parsedUser = JSON.parse(rawUser)
     return String(parsedUser?.role || '').trim()
-  } catch (error) {
+  } catch {
     return ''
   }
 }
@@ -215,7 +326,7 @@ const resolveCurrentRole = () => {
 let localPermissions = {}
 try {
   localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
+} catch {
   localPermissions = {}
 }
 const hasPermission = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_station_map))
@@ -223,11 +334,17 @@ const hasPermission = computed(() => currentRole.value === 'root' || Boolean(loc
 let mapInstance = null
 let mapScriptPromise = null
 let markers = []
+let labelsLayer = null
 let infoWindowInstance = null
 let autoRotateTimer = null
 let eventFeedRefreshTimer = null
 let stationRefreshTimer = null
 let markerRenderToken = 0
+let markerVisualSignature = ''
+let mapInteracting = false
+let markerRenderPending = false
+let pausedViewSnapshot = null
+let issueDialogRequestSequence = 0
 const prioritizedStations = computed(() => {
   return [...filteredStations.value]
     .filter((station) => !Number.isNaN(Number(station.longitude)) && !Number.isNaN(Number(station.latitude)))
@@ -239,6 +356,27 @@ const prioritizedStations = computed(() => {
 })
 
 const displayedEventFeed = computed(() => eventFeed.value.slice(0, 5))
+const stationIssueDialogTitle = computed(() => {
+  const stationName = issueDialog.value.station?.station_name || '站点'
+  const statusLabel = STATION_ISSUE_STATUS_META[issueDialog.value.statusKey]?.label || '问题'
+  return `${stationName} · ${statusLabel}`
+})
+const showReviewIssueFields = computed(() => ['pending_review', 'closed'].includes(issueDialog.value.statusKey))
+const showFullIssueFields = computed(() => issueDialog.value.statusKey === 'closed')
+
+const resolveImage = (path) => {
+  const value = String(path || '').trim()
+  if (!value) return ''
+  if (/^https?:\/\//i.test(value)) return value
+  return `/storage/${value.startsWith('/') ? value.slice(1) : value}`
+}
+
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;')
 
 const waitForBrowserIdle = (timeout = 700) => {
   if (typeof window === 'undefined') return Promise.resolve()
@@ -259,7 +397,7 @@ const readCachedStations = () => {
     if (!cached?.createdAt || !Array.isArray(cached.items)) return null
     if (Date.now() - Number(cached.createdAt) > STATION_MAP_CACHE_TTL) return null
     return cached.items
-  } catch (error) {
+  } catch {
     return null
   }
 }
@@ -270,7 +408,7 @@ const writeCachedStations = (items) => {
       createdAt: Date.now(),
       items
     }))
-  } catch (error) {
+  } catch {
     // 缓存只是首屏加速手段，失败不影响页面功能。
   }
 }
@@ -336,6 +474,25 @@ const focusStationOnMap = (station, options = {}) => {
   }
 }
 
+const captureMapView = () => {
+  if (!mapInstance) return null
+  const center = mapInstance.getCenter?.()
+  const lng = Number(center?.lng ?? center?.getLng?.())
+  const lat = Number(center?.lat ?? center?.getLat?.())
+  const zoom = Number(mapInstance.getZoom?.())
+  if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) return null
+  return { center: [lng, lat], zoom }
+}
+
+const restoreMapView = (snapshot) => {
+  if (!mapInstance || !snapshot) return
+  mapInstance.setZoomAndCenter(snapshot.zoom, snapshot.center, true)
+}
+
+const setMapAnimationEnabled = (enabled) => {
+  mapInstance?.setStatus?.({ animateEnable: Boolean(enabled) })
+}
+
 const startAutoRotate = () => {
   if (autoRotateTimer) {
     clearInterval(autoRotateTimer)
@@ -343,6 +500,9 @@ const startAutoRotate = () => {
   }
 
   if (isMobileMapMode.value || !mapInstance || !autoRotateEnabled.value || prioritizedStations.value.length === 0) return
+
+  pausedViewSnapshot = null
+  setMapAnimationEnabled(true)
 
   let currentIndex = 0
   focusStationOnMap(prioritizedStations.value[currentIndex], { zoom: 12.5 })
@@ -397,13 +557,21 @@ const stopAutoRotate = () => {
   }
 }
 
+const pauseAutoRotate = () => {
+  if (mapInstance) pausedViewSnapshot = captureMapView()
+  autoRotateEnabled.value = false
+  stopAutoRotate()
+  setMapAnimationEnabled(false)
+  restoreMapView(pausedViewSnapshot)
+}
+
 const toggleAutoRotate = () => {
-  autoRotateEnabled.value = !autoRotateEnabled.value
-  if (autoRotateEnabled.value) {
+  if (!autoRotateEnabled.value) {
+    autoRotateEnabled.value = true
     fetchEventFeed()
     startAutoRotate()
   } else {
-    stopAutoRotate()
+    pauseAutoRotate()
   }
 }
 
@@ -468,11 +636,40 @@ const syncAutoRotateTarget = () => {
   }
 }
 
+const buildMarkerVisualSignature = (rows) => {
+  return (Array.isArray(rows) ? rows : []).map((station) => [
+    station.station_id || station.id || '',
+    station.station_name || '',
+    station.longitude || '',
+    station.latitude || '',
+    station.pending_rectification_count || 0,
+    station.pending_review_count || 0
+  ].join(':')).join('|')
+}
+
+const requestMarkerRender = () => {
+  if (!mapInstance) return
+  if (mapInteracting) {
+    markerRenderPending = true
+    return
+  }
+  markerRenderPending = false
+  waitForBrowserIdle(500).then(() => renderMarkers()).catch((error) => console.error(error))
+}
+
 const applyStationRows = (rows, { cache = true } = {}) => {
   const nextRows = Array.isArray(rows) ? rows : []
+  const nextVisualSignature = buildMarkerVisualSignature(nextRows)
+  const markerAppearanceChanged = nextVisualSignature !== markerVisualSignature
   stations.value = nextRows
   if (cache) writeCachedStations(nextRows)
   syncAutoRotateTarget()
+  if (markerAppearanceChanged) {
+    markerVisualSignature = nextVisualSignature
+    requestMarkerRender()
+  } else if (autoRotateTarget.value && infoWindowInstance) {
+    infoWindowInstance.setContent(buildInfoHtml(autoRotateTarget.value))
+  }
 }
 
 const fetchStations = async (options = {}) => {
@@ -481,6 +678,8 @@ const fetchStations = async (options = {}) => {
     const cachedRows = readCachedStations()
     if (cachedRows) {
       applyStationRows(cachedRows, { cache: false })
+      window.setTimeout(() => fetchStations().catch((error) => console.error(error)), 0)
+      return
     }
   }
 
@@ -501,11 +700,15 @@ const fetchStations = async (options = {}) => {
 }
 
 const buildInfoHtml = (station) => {
-  const latestInspection = station.latest_inspection_date || '暂无'
-  const stationType = station.station_type || '暂无'
-  const address = station.address || '暂无'
-  const managerName = station.station_manager_name || '暂无'
-  const managerPhone = station.station_manager_phone || '暂无'
+  const stationId = escapeHtml(station.station_id || station.id || '')
+  const stationName = escapeHtml(station.station_name || '暂无站点')
+  const region = escapeHtml(station.region || '暂无区域')
+  const latestInspection = escapeHtml(station.latest_inspection_date || '暂无')
+  const stationType = escapeHtml(station.station_type || '暂无')
+  const assetType = escapeHtml(station.asset_type || '站点')
+  const address = escapeHtml(station.address || '暂无')
+  const managerName = escapeHtml(station.station_manager_name || '暂无')
+  const managerPhone = escapeHtml(station.station_manager_phone || '暂无')
   const pendingRectification = Number(station.pending_rectification_count || 0)
   const pendingReview = Number(station.pending_review_count || 0)
   const closedCount = Number(station.closed_count || 0)
@@ -569,8 +772,8 @@ const buildInfoHtml = (station) => {
 
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px;position:relative;z-index:1;">
           <div>
-            <div style="font-size:18px;font-weight:800;line-height:1.35;margin-bottom:4px;color:#f8fafc;">${station.station_name}</div>
-            <div style="font-size:12px;color:#94a3b8;line-height:1.6;">${station.region || '暂无区域'} · ${stationType} · ${station.asset_type || '站点'}</div>
+            <div style="font-size:18px;font-weight:800;line-height:1.35;margin-bottom:4px;color:#f8fafc;">${stationName}</div>
+            <div style="font-size:12px;color:#94a3b8;line-height:1.6;">${region} · ${stationType} · ${assetType}</div>
           </div>
           <div style="
             padding: 5px 10px;
@@ -588,21 +791,21 @@ const buildInfoHtml = (station) => {
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:14px;position:relative;z-index:1;">
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">未整改</div>
-            <div style="font-size:18px;font-weight:800;color:#fecaca;text-shadow:0 0 16px rgba(239,68,68,0.55);">${pendingRectification}</div>
+            <button type="button" data-map-issue-status="pending_rectification" data-station-id="${stationId}" style="padding:0;border:0;background:transparent;font:inherit;cursor:pointer;font-size:18px;font-weight:800;color:#fecaca;text-shadow:0 0 16px rgba(239,68,68,0.55);">${pendingRectification}</button>
           </div>
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">待复核</div>
-            <div style="font-size:18px;font-weight:800;color:#fed7aa;text-shadow:0 0 16px rgba(245,158,11,0.55);">${pendingReview}</div>
+            <button type="button" data-map-issue-status="pending_review" data-station-id="${stationId}" style="padding:0;border:0;background:transparent;font:inherit;cursor:pointer;font-size:18px;font-weight:800;color:#fed7aa;text-shadow:0 0 16px rgba(245,158,11,0.55);">${pendingReview}</button>
           </div>
           <div style="padding:10px 10px;border-radius:16px;background:rgba(15,23,42,0.34);border:1px solid rgba(148,163,184,0.16);text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
             <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">已闭环</div>
-            <div style="font-size:18px;font-weight:800;color:#bbf7d0;text-shadow:0 0 16px rgba(34,197,94,0.5);">${closedCount}</div>
+            <button type="button" data-map-issue-status="closed" data-station-id="${stationId}" style="padding:0;border:0;background:transparent;font:inherit;cursor:pointer;font-size:18px;font-weight:800;color:#bbf7d0;text-shadow:0 0 16px rgba(34,197,94,0.5);">${closedCount}</button>
           </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.75;color:#cbd5e1;position:relative;z-index:1;">
           <div><span style="color:#94a3b8;">站点类型：</span>${stationType}</div>
-          <div><span style="color:#94a3b8;">资产类型：</span>${station.asset_type || '暂无'}</div>
+          <div><span style="color:#94a3b8;">资产类型：</span>${assetType}</div>
           <div><span style="color:#94a3b8;">站点负责人：</span>${managerName}</div>
           <div><span style="color:#94a3b8;">联系电话：</span>${managerPhone}</div>
           <div><span style="color:#94a3b8;">站点地址：</span>${address}</div>
@@ -612,6 +815,88 @@ const buildInfoHtml = (station) => {
     </div>
   `
 }
+
+const fetchStationIssues = async (targetPage = 1) => {
+  const stationId = issueDialog.value.station?.station_id || issueDialog.value.station?.id
+  const statusKey = issueDialog.value.statusKey
+  if (!stationId || !statusKey) return
+
+  const sequence = ++issueDialogRequestSequence
+  issueDialog.value.loading = true
+  issueDialog.value.error = ''
+  try {
+    const response = await axios.get(`/api/station-map/${stationId}/issues`, {
+      params: {
+        user_id: localStorage.getItem('user_id') || '',
+        status: statusKey,
+        page: targetPage,
+        page_size: issueDialog.value.pageSize
+      }
+    })
+    if (sequence !== issueDialogRequestSequence) return
+    const payload = response.data || {}
+    issueDialog.value.items = Array.isArray(payload.items) ? payload.items : []
+    issueDialog.value.total = Number(payload.total || 0)
+    issueDialog.value.page = Number(payload.page || targetPage)
+    issueDialog.value.totalPages = Number(payload.total_pages || 1)
+  } catch (error) {
+    if (sequence !== issueDialogRequestSequence) return
+    issueDialog.value.items = []
+    issueDialog.value.error = error?.response?.data?.error || '关联问题读取失败，请稍后重试。'
+  } finally {
+    if (sequence === issueDialogRequestSequence) issueDialog.value.loading = false
+  }
+}
+
+const openStationIssueDialog = async (station, statusKey) => {
+  if (!station || !STATION_ISSUE_STATUS_META[statusKey]) return
+  pauseAutoRotate()
+  issueDialog.value = {
+    visible: true,
+    loading: true,
+    error: '',
+    station,
+    statusKey,
+    items: [],
+    total: Number(station[statusKey === 'pending_rectification'
+      ? 'pending_rectification_count'
+      : statusKey === 'pending_review' ? 'pending_review_count' : 'closed_count'] || 0),
+    page: 1,
+    pageSize: 12,
+    totalPages: 1
+  }
+  await fetchStationIssues(1)
+}
+
+const closeStationIssueDialog = () => {
+  issueDialogRequestSequence += 1
+  issueDialog.value.visible = false
+  issueDialog.value.loading = false
+}
+
+const openImagePreview = (path, title) => {
+  const src = resolveImage(path)
+  if (!src) return
+  imagePreview.value = { visible: true, src, title }
+}
+
+const closeImagePreview = () => {
+  imagePreview.value = { visible: false, src: '', title: '' }
+}
+
+const handleMapContainerClick = (event) => {
+  const trigger = event.target?.closest?.('[data-map-issue-status][data-station-id]')
+  if (!trigger || !mapContainer.value?.contains(trigger)) return
+  event.preventDefault()
+  event.stopPropagation()
+  const stationId = String(trigger.dataset.stationId || '')
+  const statusKey = String(trigger.dataset.mapIssueStatus || '')
+  const station = filteredStations.value.find((item) => (
+    String(item.station_id || item.id || '') === stationId
+  ))
+  if (station) openStationIssueDialog(station, statusKey)
+}
+
 const handleEventClick = (event) => {
   const matchedStation = filteredStations.value.find((station) => {
     return String(station.station_id || station.id || '').trim() === String(event.stationId || '').trim()
@@ -623,8 +908,7 @@ const handleEventClick = (event) => {
 
   if (!mapInstance) return
 
-  autoRotateEnabled.value = false
-  stopAutoRotate()
+  pauseAutoRotate()
   focusStationOnMap(matchedStation, { zoom: 12.5 })
 }
 
@@ -636,12 +920,17 @@ const getMarkerColor = (station) => {
 
 const clearMarkers = () => {
   markerRenderToken += 1
-  if (!mapInstance || !markers.length) return
-  markers.forEach((marker) => mapInstance.remove(marker))
+  if (labelsLayer) {
+    labelsLayer.clear?.()
+    mapInstance?.remove?.(labelsLayer)
+    labelsLayer = null
+  } else if (mapInstance && markers.length) {
+    markers.forEach((marker) => mapInstance.remove(marker))
+  }
   markers = []
 }
 
-const renderMarkers = async () => {
+const renderDomMarkers = async (options = {}) => {
   if (!mapInstance || !window.AMap) return
 
   const renderToken = ++markerRenderToken
@@ -659,7 +948,7 @@ const renderMarkers = async () => {
     offset: new AMap.Pixel(0, -24),
     isCustom: true,
     closeWhenClickMap: true,
-    autoMove: true
+    autoMove: false
   })
 
   const positions = []
@@ -782,6 +1071,7 @@ const renderMarkers = async () => {
     })
 
     marker.on('click', () => {
+      pauseAutoRotate()
       autoRotateTarget.value = station
       infoWindowInstance.setContent(buildInfoHtml(station))
       infoWindowInstance.open(mapInstance, [lng, lat])
@@ -793,14 +1083,113 @@ const renderMarkers = async () => {
 
   if (renderToken !== markerRenderToken) return
 
-  if (positions.length === 1) {
+  if (options.fitView && positions.length === 1) {
     mapInstance.setZoomAndCenter(13, positions[0])
     return
   }
 
-  if (positions.length > 1) {
+  if (options.fitView && positions.length > 1) {
     mapInstance.setFitView(markers, false, [80, 80, 80, 80])
   }
+}
+
+const markerIconCache = new Map()
+
+const getLabelMarkerIcon = (color) => {
+  if (markerIconCache.has(color)) return markerIconCache.get(color)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="36" viewBox="0 0 30 36"><path d="M15 1C7.82 1 2 6.82 2 14c0 9.25 13 21 13 21s13-11.75 13-21C28 6.82 22.18 1 15 1z" fill="${color}" stroke="white" stroke-width="2"/><circle cx="15" cy="14" r="5" fill="white" fill-opacity=".92"/></svg>`
+  const icon = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
+  markerIconCache.set(color, icon)
+  return icon
+}
+
+const renderLabelMarkers = async (options = {}) => {
+  if (!mapInstance || !window.AMap) return
+  const AMap = window.AMap
+  clearMarkers()
+  const renderToken = ++markerRenderToken
+
+  labelsLayer = new AMap.LabelsLayer({
+    zooms: [7, 20],
+    zIndex: 120,
+    collision: true,
+    allowCollision: false
+  })
+  if (!infoWindowInstance) {
+    infoWindowInstance = new AMap.InfoWindow({
+      offset: new AMap.Pixel(0, -24),
+      isCustom: true,
+      closeWhenClickMap: true,
+      autoMove: false
+    })
+  }
+
+  const nextMarkers = []
+  for (const [index, station] of filteredStations.value.entries()) {
+    if (index > 0 && index % 80 === 0) {
+      await yieldToBrowserFrame()
+      if (renderToken !== markerRenderToken || !mapInstance) return
+    }
+    const lng = Number(station.longitude)
+    const lat = Number(station.latitude)
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue
+    const color = getMarkerColor(station)
+    const riskScore = Number(station.pending_rectification_count || 0) * 100
+      + Number(station.pending_review_count || 0) * 10
+    const marker = new AMap.LabelMarker({
+      name: String(station.station_id || station.id || ''),
+      position: [lng, lat],
+      zooms: [7, 20],
+      opacity: 1,
+      zIndex: Math.min(999, 20 + riskScore),
+      icon: {
+        type: 'image',
+        image: getLabelMarkerIcon(color),
+        size: [30, 36],
+        anchor: 'bottom-center'
+      },
+      text: {
+        content: String(station.station_name || ''),
+        direction: 'top',
+        offset: [0, -4],
+        style: {
+          fontSize: 12,
+          fontWeight: '600',
+          fillColor: '#0f172a',
+          strokeColor: '#ffffff',
+          strokeWidth: 3,
+          padding: [2, 4]
+        }
+      }
+    })
+    marker.on('click', () => {
+      pauseAutoRotate()
+      const stationId = String(station.station_id || station.id || '')
+      const latestStation = filteredStations.value.find((item) => (
+        String(item.station_id || item.id || '') === stationId
+      )) || station
+      autoRotateTarget.value = latestStation
+      infoWindowInstance?.setContent(buildInfoHtml(latestStation))
+      infoWindowInstance?.open(mapInstance, [lng, lat])
+    })
+    nextMarkers.push(marker)
+  }
+
+  if (!mapInstance || !labelsLayer || renderToken !== markerRenderToken) return
+  markers = nextMarkers
+  labelsLayer.add(markers)
+  mapInstance.add(labelsLayer)
+  if (options.fitView && markers.length) {
+    mapInstance.setFitView(null, false, [80, 80, 80, 80])
+  }
+}
+
+const renderMarkers = async (options = {}) => {
+  if (window.AMap?.LabelsLayer && window.AMap?.LabelMarker) {
+    await renderLabelMarkers(options)
+    return
+  }
+  await renderDomMarkers(options)
 }
 
 const initMap = async () => {
@@ -824,11 +1213,34 @@ const initMap = async () => {
     mapInstance = new AMap.Map(mapContainer.value, {
       zoom: 10.8,
       center: SHANGHAI_CENTER,
-      resizeEnable: true
+      resizeEnable: true,
+      animateEnable: true
     })
 
-    await renderMarkers()
-    startAutoRotate()
+    mapInstance.on('dragstart', () => {
+      mapInteracting = true
+    })
+    mapInstance.on('dragend', () => {
+      mapInteracting = false
+      if (!autoRotateEnabled.value) pausedViewSnapshot = captureMapView()
+      if (markerRenderPending) requestMarkerRender()
+    })
+    mapInstance.on('zoomstart', () => {
+      mapInteracting = true
+    })
+    mapInstance.on('zoomend', () => {
+      mapInteracting = false
+      if (!autoRotateEnabled.value) pausedViewSnapshot = captureMapView()
+      if (markerRenderPending) requestMarkerRender()
+    })
+
+    await renderMarkers({ fitView: autoRotateEnabled.value })
+    if (autoRotateEnabled.value) {
+      startAutoRotate()
+    } else {
+      setMapAnimationEnabled(false)
+      pausedViewSnapshot = captureMapView()
+    }
     startEventFeedRefresh()
     startStationRefresh()
   } catch (error) {
@@ -858,6 +1270,9 @@ const recenterMap = () => {
   if (!mapInstance) return
   autoRotateTarget.value = null
   mapInstance.setZoomAndCenter(10.8, SHANGHAI_CENTER)
+  if (!autoRotateEnabled.value) {
+    pausedViewSnapshot = { center: [...SHANGHAI_CENTER], zoom: 10.8 }
+  }
   if (infoWindowInstance) infoWindowInstance.close()
 }
 
@@ -866,6 +1281,7 @@ const toggleFullscreen = async () => {
   if (!target) return
 
   try {
+    if (!autoRotateEnabled.value) pausedViewSnapshot = captureMapView()
     if (!document.fullscreenElement) {
       await target.requestFullscreen()
     } else {
@@ -881,24 +1297,19 @@ const handleFullscreenChange = () => {
   setTimeout(() => {
     if (mapInstance) {
       mapInstance.resize()
-      if (filteredStations.value.length > 1) {
-        mapInstance.setFitView(markers, false, [80, 80, 80, 80])
-      }
+      if (!autoRotateEnabled.value) restoreMapView(pausedViewSnapshot)
     }
   }, 120)
-  if (autoRotateEnabled.value) startAutoRotate()
 }
 
-watch(
-  filteredStations,
-  async () => {
-    await renderMarkers()
-    if (!isMobileMapMode.value && autoRotateEnabled.value) {
-      startAutoRotate()
-    }
-  },
-  { deep: true }
-)
+const handleDialogKeydown = (event) => {
+  if (event.key !== 'Escape') return
+  if (imagePreview.value.visible) {
+    closeImagePreview()
+  } else if (issueDialog.value.visible) {
+    closeStationIssueDialog()
+  }
+}
 
 onMounted(() => {
   currentRole.value = resolveCurrentRole()
@@ -922,6 +1333,8 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   window.addEventListener('focus', refreshStationMapData)
   document.addEventListener('visibilitychange', refreshStationMapData)
+  mapContainer.value?.addEventListener('click', handleMapContainerClick)
+  document.addEventListener('keydown', handleDialogKeydown)
 })
 
 onBeforeUnmount(() => {
@@ -933,6 +1346,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
   window.removeEventListener('focus', refreshStationMapData)
   document.removeEventListener('visibilitychange', refreshStationMapData)
+  mapContainer.value?.removeEventListener('click', handleMapContainerClick)
+  document.removeEventListener('keydown', handleDialogKeydown)
   stopAutoRotate()
   stopEventFeedRefresh()
   stopStationRefresh()
@@ -1717,6 +2132,298 @@ onBeforeUnmount(() => {
   opacity: 0.6;
 }
 
+.station-issue-dialog-backdrop,
+.station-image-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(8px);
+}
+
+.station-issue-dialog {
+  width: min(1080px, 96vw);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.station-issue-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid #dbe4ee;
+  background: linear-gradient(135deg, #ffffff, #eff6ff);
+}
+
+.station-issue-dialog-kicker {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.station-issue-dialog-head h3 {
+  margin: 6px 0 4px;
+  color: #0f172a;
+  font-size: 24px;
+}
+
+.station-issue-dialog-head p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.station-issue-dialog-close,
+.station-image-preview header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid #d7e0ea;
+  border-radius: 12px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.station-issue-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.station-issue-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 170px;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #dbe4ee;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.station-issue-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.station-issue-id {
+  color: #1d4ed8;
+  font-weight: 900;
+}
+
+.station-issue-time {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.station-issue-status {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #991b1b;
+  background: #fee2e2;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.station-issue-status.pending_review {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.station-issue-status.closed {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.station-issue-description {
+  margin: 12px 0 0;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.8;
+}
+
+.station-issue-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0 0;
+}
+
+.station-issue-detail-grid > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.station-issue-detail-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.station-issue-detail-grid dt {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.station-issue-detail-grid dd {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.station-issue-photo-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.station-issue-photo-button {
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.station-issue-photo-button img {
+  display: block;
+  width: 100%;
+  height: 112px;
+  object-fit: cover;
+}
+
+.station-issue-photo-button span,
+.station-issue-photo-link {
+  display: block;
+  padding: 8px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.station-issue-photo-link {
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  cursor: pointer;
+}
+
+.station-issue-photo-empty {
+  display: grid;
+  min-height: 112px;
+  place-items: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  color: #94a3b8;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.station-issue-dialog-state {
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 30px;
+  color: #475569;
+  text-align: center;
+}
+
+.station-issue-dialog-state p {
+  margin: 0;
+  color: #64748b;
+}
+
+.station-issue-dialog-state.error strong {
+  color: #b91c1c;
+}
+
+.station-issue-loading-orb {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: stationIssueSpin 0.8s linear infinite;
+}
+
+@keyframes stationIssueSpin {
+  to { transform: rotate(360deg); }
+}
+
+.station-issue-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-top: 1px solid #dbe4ee;
+  background: #fff;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.station-issue-dialog-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.station-image-preview-backdrop {
+  z-index: 2800;
+}
+
+.station-image-preview {
+  width: min(1100px, 96vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #0f172a;
+  box-shadow: 0 30px 70px rgba(2, 6, 23, 0.5);
+}
+
+.station-image-preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  color: #f8fafc;
+}
+
+.station-image-preview img {
+  display: block;
+  width: 100%;
+  max-height: calc(92vh - 64px);
+  object-fit: contain;
+  background: #020617;
+}
+
 @media (max-width: 1200px) {
   .summary-grid {
     grid-template-columns: 1fr;
@@ -1724,6 +2431,47 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .station-issue-dialog-backdrop,
+  .station-image-preview-backdrop {
+    padding: 10px;
+  }
+
+  .station-issue-dialog {
+    width: 100%;
+    max-height: 94vh;
+    border-radius: 18px;
+  }
+
+  .station-issue-dialog-head {
+    padding: 17px;
+  }
+
+  .station-issue-dialog-head h3 {
+    font-size: 19px;
+  }
+
+  .station-issue-list {
+    padding: 12px;
+  }
+
+  .station-issue-card {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .station-issue-photo-column {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .station-issue-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .station-issue-detail-grid .wide {
+    grid-column: auto;
+  }
+
   .page-header h2 {
     font-size: 30px;
   }
