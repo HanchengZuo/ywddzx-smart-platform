@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.8.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.9.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -28621,6 +28621,141 @@ def get_station_map():
         return response
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+STATION_MAP_ISSUE_STATUS_FILTERS = {
+    "pending_rectification": ("待整改", "未整改", "站经无法整改"),
+    "pending_review": ("待复核",),
+    "closed": ("已闭环", "已整改"),
+}
+
+
+@app.route("/api/station-map/<int:station_id>/issues")
+def get_station_map_issues(station_id):
+    status_key = str(request.args.get("status", "")).strip()
+    if status_key not in STATION_MAP_ISSUE_STATUS_FILTERS:
+        return jsonify({"success": False, "error": "问题状态参数不正确。"}), 400
+
+    try:
+        page = max(int(request.args.get("page") or 1), 1)
+        page_size = min(max(int(request.args.get("page_size") or 12), 5), 30)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "分页参数不正确。"}), 400
+
+    conn = None
+    cur = None
+    try:
+        current_user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, current_user["id"])
+        if not user:
+            return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if not has_permission(cur, user, "view_station_map"):
+            return jsonify({"success": False, "error": "当前账号无权查看站点地图问题。"}), 403
+
+        cur.execute(
+            """
+            SELECT id, station_name, region
+            FROM stations
+            WHERE id = %s
+            LIMIT 1;
+            """,
+            (station_id,),
+        )
+        station = cur.fetchone()
+        if not station:
+            return jsonify({"success": False, "error": "站点不存在。"}), 404
+
+        issue_statuses = list(STATION_MAP_ISSUE_STATUS_FILTERS[status_key])
+        base_params = [station_id, issue_statuses]
+        cur.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM issues i
+            WHERE i.station_id = %s
+              AND TRIM(COALESCE(i.status, '')) = ANY(%s)
+              AND COALESCE(i.audit_status, 'pending') <> 'rejected';
+            """,
+            base_params,
+        )
+        total = int((cur.fetchone() or {}).get("total") or 0)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        effective_page = min(page, total_pages)
+        offset = (effective_page - 1) * page_size
+
+        cur.execute(
+            """
+            SELECT
+                i.id,
+                TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS inspection_time,
+                TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS inspection_date,
+                s.region,
+                s.station_name AS station,
+                s.station_manager_name,
+                t.table_name AS inspection_table_name,
+                COALESCE(issue_inspector.real_name, issue_inspector.username, '') AS inspector,
+                i.standard_id,
+                i.standard_detail_text,
+                i.internal_standard_id,
+                i.internal_standard_detail_text,
+                i.description,
+                i.photo_path AS issue_photo,
+                CASE
+                    WHEN TRIM(COALESCE(i.status, '')) IN ('已闭环', '已整改') THEN '已闭环'
+                    WHEN TRIM(COALESCE(i.status, '')) = '未整改' THEN '待整改'
+                    ELSE i.status
+                END AS status,
+                COALESCE(i.audit_status, 'pending') AS audit_status,
+                CASE
+                    WHEN COALESCE(i.audit_status, 'pending') = 'approved' THEN '审核通过'
+                    WHEN COALESCE(i.audit_status, 'pending') = 'rejected' THEN '审核拒绝'
+                    ELSE '待审核'
+                END AS audit_status_label,
+                COALESCE(i.is_excellent, FALSE) AS is_excellent,
+                COALESCE(audit_user.real_name, audit_user.username, '') AS audited_by_name,
+                TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
+                i.audit_source,
+                i.rectification_result,
+                i.rectification_note,
+                TO_CHAR(i.rectification_at, 'YYYY-MM-DD HH24:MI') AS rectification_at,
+                i.rectification_photo_path AS rectification_photo,
+                i.review_result,
+                i.review_note,
+                TO_CHAR(i.review_at, 'YYYY-MM-DD HH24:MI') AS review_at,
+                i.review_photo_path AS review_photo
+            FROM issues i
+            JOIN inspections ins ON ins.id = i.inspection_id
+            JOIN stations s ON s.id = i.station_id
+            JOIN inspection_tables t ON t.id = i.inspection_table_id
+            LEFT JOIN users issue_inspector
+              ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
+            LEFT JOIN users audit_user ON audit_user.id = i.audited_by
+            WHERE i.station_id = %s
+              AND TRIM(COALESCE(i.status, '')) = ANY(%s)
+              AND COALESCE(i.audit_status, 'pending') <> 'rejected'
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT %s OFFSET %s;
+            """,
+            [*base_params, page_size, offset],
+        )
+        items = cur.fetchall()
+        return jsonify(
+            {
+                "success": True,
+                "station": station,
+                "status": status_key,
+                "items": items,
+                "total": total,
+                "page": effective_page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
     finally:
         close_db_resources(cur, conn)
 

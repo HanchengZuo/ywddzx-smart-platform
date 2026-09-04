@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v5.9',
+    date: '2026-09-04',
+    title: '站点地图流畅轮巡与问题联查',
+    summary: '优化地图覆盖物渲染与暂停逻辑，并支持从站点统计数字快速查看关联问题。',
+    items: [
+      '站点标记改用高性能标签图层与碰撞避让，移除高开销常驻动画和全量 DOM 重绘。',
+      '站点数据采用缓存优先和差异更新，拖动地图期间延后覆盖物刷新。',
+      '暂停轮巡后冻结自动缩放、自动居中和全屏适配视野变化。',
+      '点击未整改、待复核或已闭环数字可分页查看对应问题，支持查看相关照片。'
+    ]
+  },
+  {
     version: 'v5.8',
     date: '2026-09-04',
     title: '巡检清单轻量分页筛选',
