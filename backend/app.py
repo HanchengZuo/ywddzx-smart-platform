@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.7.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "5.8.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -31185,10 +31185,300 @@ def get_issue_filter_options():
         return jsonify({"success": False, "error": str(exc)}), 500
     finally:
         close_db_resources(cur, conn)
+
+
+def _issue_list_source_values(source, *names):
+    values = []
+    for name in names:
+        raw_values = source.getlist(name) if hasattr(source, "getlist") else [source.get(name)]
+        for raw_value in raw_values:
+            if raw_value in (None, ""):
+                continue
+            if isinstance(raw_value, (list, tuple, set)):
+                parsed_values = list(raw_value)
+            else:
+                text = str(raw_value or "").strip()
+                parsed_values = None
+                if text.startswith("["):
+                    try:
+                        parsed_json = json.loads(text)
+                        if isinstance(parsed_json, list):
+                            parsed_values = parsed_json
+                    except Exception:
+                        parsed_values = None
+                if parsed_values is None:
+                    if "|||" in text:
+                        parsed_values = text.split("|||")
+                    elif "," in text:
+                        parsed_values = text.split(",")
+                    else:
+                        parsed_values = [text]
+            values.extend(str(item or "").strip() for item in parsed_values)
+
+    result = []
+    seen = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def normalize_issue_list_filters(source):
+    def first_value(*names):
+        values = _issue_list_source_values(source, *names)
+        return values[0] if values else ""
+
+    def valid_date(value):
+        text = str(value or "").strip()
+        return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+
+    month = first_value("month")
+    date_from = valid_date(first_value("date_from", "dateFrom"))
+    date_to = valid_date(first_value("date_to", "dateTo"))
+    if re.fullmatch(r"\d{4}-\d{2}", month):
+        month_start = datetime.strptime(f"{month}-01", "%Y-%m-%d").date()
+        next_month = (
+            month_start.replace(year=month_start.year + 1, month=1)
+            if month_start.month == 12
+            else month_start.replace(month=month_start.month + 1)
+        )
+        date_from = month_start.isoformat()
+        date_to = (next_month - timedelta(days=1)).isoformat()
+    else:
+        month = ""
+
+    return {
+        "issue_id": first_value("issue_id", "issueId"),
+        "month": month,
+        "date_from": date_from,
+        "date_to": date_to,
+        "regions": _issue_list_source_values(source, "regions", "region"),
+        "stations": _issue_list_source_values(source, "stations", "station"),
+        "station_manager": first_value("station_manager", "stationManager"),
+        "inspectors": _issue_list_source_values(source, "inspectors", "inspector"),
+        "inspection_tables": _issue_list_source_values(
+            source,
+            "inspection_tables",
+            "inspection_table_name",
+            "inspectionTableName",
+        ),
+        "standard_id": first_value("standard_id", "standardId"),
+        "standard_detail": first_value("standard_detail", "standardDetail"),
+        "standard_tags": _issue_list_source_values(source, "standard_tags", "standardTags"),
+        "issue_description": first_value("issue_description", "issueDescription"),
+        "rectification_result": first_value("rectification_result", "rectificationResult"),
+        "review_result": first_value("review_result", "reviewResult"),
+        "status": first_value("status"),
+        "excellent": first_value("excellent"),
+        "audit_status": first_value("audit_status", "auditStatus"),
+        "audit_state": first_value("audit_state", "auditState"),
+    }
+
+
+def build_issue_list_visibility_scope(cur, user):
+    where_clauses = []
+    params = []
+    can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
+    can_view_own = can_view_own_inspection_issues(cur, user)
+    if not can_view_all:
+        if can_view_own and user.get("station_id"):
+            where_clauses.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
+            params.extend([user["station_id"], user["id"]])
+        else:
+            where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
+            params.append(user["id"])
+
+    if not append_inspection_table_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "i.inspection_table_id",
+        "limit_issue_inspection_table_scope",
+    ):
+        where_clauses.append("FALSE")
+    if not append_station_region_scope_filter(
+        cur,
+        user,
+        where_clauses,
+        params,
+        "s.region",
+        "limit_issue_station_region_scope",
+    ):
+        where_clauses.append("FALSE")
+    append_pending_audit_issue_visibility_filter(user, where_clauses)
+    return where_clauses, params
+
+
+def append_issue_list_filter_clauses(where_clauses, params, filters, hide_inspector_contact=False):
+    if filters["issue_id"]:
+        where_clauses.append("i.id::text ILIKE %s")
+        params.append(f"%{filters['issue_id']}%")
+    if filters["date_from"]:
+        where_clauses.append("i.created_at >= %s::date")
+        params.append(filters["date_from"])
+    if filters["date_to"]:
+        where_clauses.append("i.created_at < (%s::date + INTERVAL '1 day')")
+        params.append(filters["date_to"])
+    if filters["regions"]:
+        where_clauses.append("s.region = ANY(%s)")
+        params.append(filters["regions"])
+    if filters["stations"]:
+        where_clauses.append("s.station_name = ANY(%s)")
+        params.append(filters["stations"])
+    if filters["station_manager"]:
+        where_clauses.append("COALESCE(s.station_manager_name, '') ILIKE %s")
+        params.append(f"%{filters['station_manager']}%")
+    if filters["inspectors"] and not hide_inspector_contact:
+        where_clauses.append("COALESCE(issue_inspector.real_name, '') = ANY(%s)")
+        params.append(filters["inspectors"])
+    if filters["inspection_tables"]:
+        where_clauses.append("t.table_name = ANY(%s)")
+        params.append(filters["inspection_tables"])
+    if filters["standard_id"]:
+        where_clauses.append("COALESCE(i.standard_id::text, '') = %s")
+        params.append(filters["standard_id"])
+    if filters["standard_detail"]:
+        where_clauses.append(
+            "(COALESCE(i.standard_detail_text, '') ILIKE %s OR COALESCE(i.internal_standard_detail_text, '') ILIKE %s)"
+        )
+        keyword = f"%{filters['standard_detail']}%"
+        params.extend([keyword, keyword])
+    if filters["standard_tags"]:
+        where_clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM inspection_internal_standards filter_internal
+                LEFT JOIN inspection_internal_standard_links filter_external_link
+                  ON filter_external_link.internal_standard_id = filter_internal.id
+                LEFT JOIN inspection_tables filter_linked_table
+                  ON filter_linked_table.id = filter_external_link.external_inspection_table_id
+                LEFT JOIN inspection_internal_standard_tag_links filter_tag_link
+                  ON filter_tag_link.internal_standard_id = filter_internal.id
+                LEFT JOIN inspection_internal_standard_tags filter_tag
+                  ON filter_tag.id = filter_tag_link.tag_id
+                LEFT JOIN inspection_internal_standard_tag_groups filter_group
+                  ON filter_group.id = filter_tag.group_id
+                WHERE UPPER(filter_internal.internal_standard_id) = UPPER(COALESCE(i.internal_standard_id, ''))
+                  AND (
+                      CONCAT('外部规范ID：', COALESCE(filter_external_link.external_standard_id::text, '')) = ANY(%s)
+                      OR CONCAT('检查表：', COALESCE(filter_linked_table.table_name, '')) = ANY(%s)
+                      OR CONCAT(COALESCE(filter_group.group_name, ''), '：', COALESCE(filter_tag.tag_name, '')) = ANY(%s)
+                  )
+            )
+            """
+        )
+        params.extend([filters["standard_tags"]] * 3)
+    if filters["issue_description"]:
+        where_clauses.append("COALESCE(i.description, '') ILIKE %s")
+        params.append(f"%{filters['issue_description']}%")
+    if filters["rectification_result"]:
+        where_clauses.append("COALESCE(i.rectification_result, '') = %s")
+        params.append(filters["rectification_result"])
+    if filters["review_result"]:
+        where_clauses.append("COALESCE(i.review_result, '') = %s")
+        params.append(filters["review_result"])
+
+    audit_status_sql = "COALESCE(i.audit_status, 'pending')"
+    inspection_signed_sql = """
+        (
+            COALESCE(ins.sign_status, '') = '已签名确认'
+            OR ins.station_manager_signed_at IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(ins.station_manager_signature_path, '')), '') IS NOT NULL
+            OR NULLIF(TRIM(COALESCE(ins.station_manager_signed_name, '')), '') IS NOT NULL
+        )
+    """
+    status = filters["status"]
+    if status == "待审核":
+        where_clauses.append(f"{audit_status_sql} = 'pending'")
+    elif status == "待签名":
+        where_clauses.append(f"{audit_status_sql} <> 'pending'")
+        where_clauses.append("i.status = '待整改'")
+        where_clauses.append(f"NOT {inspection_signed_sql}")
+    elif status == "待整改":
+        where_clauses.append(f"{audit_status_sql} <> 'pending'")
+        where_clauses.append("i.status = '待整改'")
+        where_clauses.append(inspection_signed_sql)
+    elif status:
+        where_clauses.append(f"{audit_status_sql} <> 'pending'")
+        status_values = [status]
+        status_values.extend(
+            alias
+            for alias, canonical in ISSUE_STATUS_ALIASES.items()
+            if canonical == status and alias not in status_values
+        )
+        where_clauses.append("i.status = ANY(%s)")
+        params.append(status_values)
+
+    if filters["excellent"] == "starred":
+        where_clauses.append("COALESCE(i.is_excellent, FALSE) = TRUE")
+    elif filters["excellent"] == "unstarred":
+        where_clauses.append("COALESCE(i.is_excellent, FALSE) = FALSE")
+    if filters["audit_status"] in ISSUE_AUDIT_STATUS_LABELS:
+        where_clauses.append(f"{audit_status_sql} = %s")
+        params.append(filters["audit_status"])
+    if filters["audit_state"] == "pending":
+        where_clauses.append(f"{audit_status_sql} = 'pending'")
+    elif filters["audit_state"] == "done":
+        where_clauses.append(f"{audit_status_sql} <> 'pending'")
+
+
+def build_issue_list_query_context(cur, user, source):
+    filters = normalize_issue_list_filters(source)
+    hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+    where_clauses, params = build_issue_list_visibility_scope(cur, user)
+    append_issue_list_filter_clauses(
+        where_clauses,
+        params,
+        filters,
+        hide_inspector_contact,
+    )
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return filters, where_clause, params, hide_inspector_contact
+
+
+def fetch_issue_list_ids(cur, user, source):
+    _filters, where_clause, params, _hide_inspector_contact = build_issue_list_query_context(
+        cur,
+        user,
+        source,
+    )
+    cur.execute(
+        sql.SQL(
+            """
+            SELECT i.id
+            FROM issues i
+            JOIN inspections ins ON i.inspection_id = ins.id
+            JOIN stations s ON i.station_id = s.id
+            JOIN inspection_tables t ON i.inspection_table_id = t.id
+            JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
+            {where_clause}
+            ORDER BY i.id DESC;
+            """
+        ).format(where_clause=sql.SQL(where_clause)),
+        params,
+    )
+    return [int(row["id"]) for row in cur.fetchall()]
+
+
 @app.route("/api/issues")
 def get_issues():
+    def parse_request_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     user_id = str(request.args.get("user_id", "")).strip()
-    issue_description_keyword = str(request.args.get("issue_description", "")).strip()
+    paginated = (
+        "page" in request.args
+        or str(request.args.get("paginated", "")).strip().lower() in ("1", "true", "yes")
+    )
+    page = max(parse_request_int(request.args.get("page"), 1), 1)
+    page_size = max(1, min(parse_request_int(request.args.get("page_size"), 20), 100))
 
     conn = None
     cur = None
@@ -31202,9 +31492,6 @@ def get_issues():
         conn.commit()
 
         user = None
-        where_clauses = []
-        params = []
-
         if user_id:
             cur.execute(
                 """
@@ -31220,51 +31507,40 @@ def get_issues():
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
-        can_view_own = can_view_own_inspection_issues(cur, user)
-        if can_view_all:
-            pass
-        elif can_view_own:
-            if not user["station_id"]:
-                where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
-                params.append(user["id"])
-            else:
-                where_clauses.append("(i.station_id = %s OR COALESCE(i.inspector_id, ins.inspector_id) = %s)")
-                params.extend([user["station_id"], user["id"]])
-        else:
-            where_clauses.append("COALESCE(i.inspector_id, ins.inspector_id) = %s")
-            params.append(user["id"])
-
-        if not append_inspection_table_scope_filter(
-            cur,
-            user,
-            where_clauses,
-            params,
-            "i.inspection_table_id",
-            "limit_issue_inspection_table_scope",
-        ):
-            return jsonify([])
-        if not append_station_region_scope_filter(
-            cur,
-            user,
-            where_clauses,
-            params,
-            "s.region",
-            "limit_issue_station_region_scope",
-        ):
-            return jsonify([])
-        append_pending_audit_issue_visibility_filter(user, where_clauses)
-        if issue_description_keyword:
-            where_clauses.append("COALESCE(i.description, '') ILIKE %s")
-            params.append(f"%{issue_description_keyword}%")
-
-        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
         can_explicit_edit = can_edit_inspection_issues(cur, user)
         can_explicit_delete = can_delete_inspection_issues(cur, user)
         can_explicit_audit = can_audit_inspection_issues(cur, user)
         can_explicit_change_inspector = can_change_issue_inspector(cur, user)
-        hide_inspector_contact = should_hide_inspector_contact_info(cur, user)
+        _filters, where_clause, params, hide_inspector_contact = build_issue_list_query_context(
+            cur,
+            user,
+            request.args,
+        )
+
+        total = None
+        effective_page = page
+        query_params = list(params)
+        pagination_clause = sql.SQL("")
+        if paginated:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM issues i
+                    JOIN inspections ins ON i.inspection_id = ins.id
+                    JOIN stations s ON i.station_id = s.id
+                    JOIN inspection_tables t ON i.inspection_table_id = t.id
+                    JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
+                    {where_clause};
+                    """
+                ).format(where_clause=sql.SQL(where_clause)),
+                params,
+            )
+            total = int((cur.fetchone() or {}).get("total") or 0)
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            effective_page = min(page, total_pages)
+            query_params.extend([page_size, (effective_page - 1) * page_size])
+            pagination_clause = sql.SQL("LIMIT %s OFFSET %s")
 
         cur.execute(
             sql.SQL(
@@ -31318,27 +31594,41 @@ def get_issues():
                 JOIN users issue_inspector ON COALESCE(i.inspector_id, ins.inspector_id) = issue_inspector.id
                 LEFT JOIN users audit_user ON audit_user.id = i.audited_by
                 {where_clause}
-                ORDER BY i.id DESC;
+                ORDER BY i.id DESC
+                {pagination_clause};
                 """
-            ).format(where_clause=sql.SQL(where_clause)),
-            params,
+            ).format(
+                where_clause=sql.SQL(where_clause),
+                pagination_clause=pagination_clause,
+            ),
+            query_params,
         )
         rows = cur.fetchall()
         attach_internal_standard_tags_to_issue_rows(cur, rows)
         conn.commit()
+        items = [
+            normalize_issue_row_for_response(
+                row,
+                user,
+                can_explicit_edit,
+                can_explicit_delete,
+                can_explicit_audit,
+                can_explicit_change_inspector,
+                hide_inspector_contact,
+            )
+            for row in rows
+        ]
+        if not paginated:
+            return jsonify(items)
         return jsonify(
-            [
-                normalize_issue_row_for_response(
-                    row,
-                    user,
-                    can_explicit_edit,
-                    can_explicit_delete,
-                    can_explicit_audit,
-                    can_explicit_change_inspector,
-                    hide_inspector_contact,
-                )
-                for row in rows
-            ]
+            {
+                "success": True,
+                "items": items,
+                "total": total,
+                "page": effective_page,
+                "page_size": page_size,
+                "total_pages": max(1, (total + page_size - 1) // page_size),
+            }
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -34998,7 +35288,8 @@ def create_issue_export_task():
     cur = None
 
     try:
-        issue_ids = normalize_issue_export_ids(data.get("issue_ids"))
+        filter_query = data.get("filter_query") if isinstance(data.get("filter_query"), dict) else None
+        issue_ids = [] if filter_query is not None else normalize_issue_export_ids(data.get("issue_ids"))
         filter_summary = normalize_issue_export_filter_summary(data.get("filter_summary"))
         export_options = normalize_issue_export_options(data.get("export_options"))
         conn = get_db_connection()
@@ -35009,6 +35300,10 @@ def create_issue_export_task():
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
+        if filter_query is not None:
+            issue_ids = fetch_issue_list_ids(cur, user, filter_query)
+            if not issue_ids:
+                raise ValueError("当前筛选结果为空，不能导出。")
         if not selected_issue_export_field_keys(export_options):
             raise ValueError("请至少选择一个导出字段。")
         if issue_export_includes_photos(export_options) and not can_export_issue_photos(cur, user):
