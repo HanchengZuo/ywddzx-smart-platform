@@ -1,4 +1,4 @@
-from flask import Flask, abort, g, jsonify, request, send_file, send_from_directory
+from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import fcntl
 import hashlib
@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.0.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.1.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -1152,8 +1152,8 @@ server_resource_last_sample = {
 server_online_users_lock = threading.Lock()
 server_online_touch_lock = threading.Lock()
 server_online_touch_cache = {}
-ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站经无法整改"}
-ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
+ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环"}
+ISSUE_RESULT_OPTIONS = {"已整改"}
 ISSUE_REVIEW_RESULT_OPTIONS = {*ISSUE_RESULT_OPTIONS, "整改不通过"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
 ISSUE_AUDIT_STATUS_LABELS = {
@@ -1307,7 +1307,7 @@ migrate.init_app(app, db)
 
 def get_db_connection():
     db_config = get_db_config()
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         host=db_config["host"],
         port=db_config["port"],
         dbname=db_config["dbname"],
@@ -1316,6 +1316,10 @@ def get_db_connection():
         cursor_factory=RealDictCursor,
         options="-c timezone=Asia/Shanghai",
     )
+    if has_request_context() and getattr(g, "current_user", None):
+        with conn.cursor() as actor_cur:
+            actor_cur.execute("SELECT set_config('app.actor_id', %s, false)", (str(g.current_user["id"]),))
+    return conn
 
 
 def close_db_resources(cur=None, conn=None):
@@ -6786,7 +6790,7 @@ def canonical_issue_result(value):
 def resolve_issue_review_transition(value):
     review_result = canonical_issue_result(value)
     if review_result not in ISSUE_REVIEW_RESULT_OPTIONS:
-        raise ValueError("督导组复核结果只能选择已整改、站经无法整改或整改不通过。")
+        raise ValueError("督导组复核结果只能选择已整改或整改不通过。")
     if review_result == "已整改":
         return {
             "review_result": review_result,
@@ -6801,12 +6805,6 @@ def resolve_issue_review_transition(value):
             "photo_required": False,
             "returns_to_station": True,
         }
-    return {
-        "review_result": review_result,
-        "new_status": "站经无法整改",
-        "photo_required": False,
-        "returns_to_station": False,
-    }
 
 
 def get_issue_workflow_round(cur, issue_id, action_type):
@@ -6900,23 +6898,7 @@ def can_user_use_creator_issue_controls(user, issue):
 
 
 def can_user_update_rectification_photo(user, issue, can_explicit_edit=False):
-    if not user or not issue:
-        return False
-    if is_issue_audit_rejected(issue):
-        return False
-    if not normalize_issue_result_for_response(issue.get("rectification_result")):
-        return False
-    if is_root_user(user):
-        return True
-    if is_closed_issue_status(issue.get("status")):
-        return False
-    if can_explicit_edit:
-        return True
-    return (
-        is_station_manager(user)
-        and str(user.get("station_id") or "") == str(issue.get("station_id") or "")
-        and canonical_issue_status(issue.get("status")) == "待复核"
-    )
+    return False
 
 
 def normalize_issue_result_for_response(value):
@@ -31412,6 +31394,8 @@ def get_my_issues():
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
                     TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
                     s.region,
+                    s.station_manager_name AS station_manager,
+                    issue_inspector.real_name AS inspector,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -31440,6 +31424,7 @@ def get_my_issues():
                     ins.inspector_completion_status AS inspection_completion_status
                 FROM issues i
                 JOIN inspections ins ON i.inspection_id = ins.id
+                LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.station_id = %s
@@ -31451,6 +31436,7 @@ def get_my_issues():
                 (user["station_id"],),
             )
             rows = cur.fetchall()
+            attach_internal_standard_tags_to_issue_rows(cur, rows)
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
             can_explicit_change_inspector = can_change_issue_inspector(cur, user)
@@ -31478,6 +31464,8 @@ def get_my_issues():
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
                     TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
                     s.region,
+                    s.station_manager_name AS station_manager,
+                    issue_inspector.real_name AS inspector,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
                     i.standard_id,
@@ -31503,6 +31491,7 @@ def get_my_issues():
                     ins.inspector_completion_status AS inspection_completion_status
                 FROM issues i
                 JOIN inspections ins ON i.inspection_id = ins.id
+                LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
                 WHERE i.status = '待复核'
@@ -31511,6 +31500,7 @@ def get_my_issues():
                 """
             )
             rows = cur.fetchall()
+            attach_internal_standard_tags_to_issue_rows(cur, rows)
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
             can_explicit_change_inspector = can_change_issue_inspector(cur, user)
@@ -39532,6 +39522,12 @@ def serialize_issue_flow_history_event(row):
     result = canonical_issue_result(event.get("result"))
     if action_type == "issue_created":
         action_label = "登记巡检问题"
+    elif action_type in {"audit_changed", "issue_updated", "status_changed", "inspection_signed", "inspection_completed"}:
+        action_label = {
+            "audit_changed": "问题审核", "issue_updated": "问题信息修改",
+            "status_changed": "问题状态调整", "inspection_signed": "站经理签名状态",
+            "inspection_completed": "巡检完成确认",
+        }[action_type]
     elif action_type == "rectification_submitted":
         action_label = "站经理提交整改"
     elif result == "整改不通过":
@@ -39540,12 +39536,17 @@ def serialize_issue_flow_history_event(row):
         action_label = "督导组提交复核"
     event["action_label"] = action_label
     event["result"] = result or None
+    if action_type not in {"rectification_submitted", "review_submitted"}:
+        event["round_no"] = None
     event["actor_display_name"] = (
         str(event.get("actor_name") or "").strip()
         or str(event.get("actor_username") or "").strip()
         or "历史数据"
     )
     event["note"] = str(event.get("note") or "").strip()
+    if action_type == "audit_changed" and event["note"].startswith("自动审核"):
+        event["action_label"] = "自动审核"
+        event["actor_display_name"] = "系统自动审核"
     return event
 
 
@@ -39619,7 +39620,7 @@ def get_issue_flow_history(issue_id):
                     "round_no": 0,
                     "action_type": "issue_created",
                     "from_status": None,
-                    "to_status": "待整改",
+                    "to_status": "待检查人确认",
                     "result": None,
                     "note": "",
                     "photo_path": None,
@@ -39633,7 +39634,10 @@ def get_issue_flow_history(issue_id):
                 }
             )
         ]
-        events.extend(serialize_issue_flow_history_event(row) for row in cur.fetchall())
+        history_rows = cur.fetchall()
+        if any(row["action_type"] == "issue_created" for row in history_rows):
+            events = []
+        events.extend(serialize_issue_flow_history_event(row) for row in history_rows)
         return jsonify(
             {
                 "success": True,
@@ -39674,7 +39678,7 @@ def submit_rectification(issue_id):
             jsonify(
                 {
                     "success": False,
-                    "error": "整改结果只能选择已整改或站经无法整改。",
+                    "error": "整改结果只能选择已整改。",
                 }
             ),
             400,
@@ -39811,103 +39815,6 @@ def submit_rectification(issue_id):
 
         conn.commit()
         return jsonify({"success": True, "message": "整改提交成功，已转入待复核。"})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/issues/<int:issue_id>/rectification-photo", methods=["POST"])
-def update_rectification_photo(issue_id):
-    user_id = str(request.form.get("user_id", "")).strip()
-    rectification_photo = request.files.get("rectification_photo")
-
-    if not user_id:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-
-    if not rectification_photo or not rectification_photo.filename:
-        return jsonify({"success": False, "error": "请上传新的整改照片。"}), 400
-
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            return jsonify({"success": False, "error": "用户不存在。"}), 404
-
-        cur.execute(
-            """
-            SELECT
-                id,
-                station_id,
-                status,
-                COALESCE(audit_status, 'pending') AS audit_status,
-                rectification_result
-            FROM issues
-            WHERE id = %s
-            LIMIT 1
-            FOR UPDATE;
-            """,
-            (issue_id,),
-        )
-        issue = cur.fetchone()
-
-        if not issue:
-            return jsonify({"success": False, "error": "问题不存在。"}), 404
-
-        can_explicit_edit = can_edit_inspection_issues(cur, user)
-        if not can_user_update_rectification_photo(user, issue, can_explicit_edit):
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": "当前账号无权更新该问题的整改照片，或问题已不在可修改阶段。",
-                    }
-                ),
-                403,
-            )
-
-        rectification_photo_path = save_uploaded_file(
-            rectification_photo, "rectifications"
-        )
-        cur.execute(
-            """
-            UPDATE issues
-            SET rectification_photo_path = %s
-            WHERE id = %s;
-            """,
-            (rectification_photo_path, issue_id),
-        )
-        cur.execute(
-            """
-            UPDATE inspection_issue_flow_history
-            SET photo_path = %s
-            WHERE id = (
-                SELECT id
-                FROM inspection_issue_flow_history
-                WHERE issue_id = %s
-                  AND action_type = 'rectification_submitted'
-                ORDER BY round_no DESC, created_at DESC, id DESC
-                LIMIT 1
-            );
-            """,
-            (rectification_photo_path, issue_id),
-        )
-        conn.commit()
-
-        return jsonify(
-            {
-                "success": True,
-                "message": "整改照片已更新。",
-                "rectification_photo": rectification_photo_path,
-            }
-        )
     except Exception as e:
         if conn:
             conn.rollback()

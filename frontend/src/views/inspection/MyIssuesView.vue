@@ -57,7 +57,7 @@
 
       <FilterSummary :fields="filterSummaryFields" />
 
-      <div class="filter-grid">
+      <div v-if="currentRole === 'station_manager'" class="filter-grid">
         <div class="filter-item" :data-filter-state="filterFieldState('region')">
           <label>站点所属地</label>
           <div class="search-select" ref="regionSelectRef">
@@ -104,6 +104,16 @@
         </div>
       </div>
 
+      <div v-else class="filter-grid">
+        <div v-for="[key, label] in reviewFilterDefinitions" :key="key" class="filter-item" :data-filter-state="filterFieldState(key)">
+          <label>{{ label }}</label>
+          <div v-if="key === 'dateRange'" class="review-date-range">
+            <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
+          </div>
+          <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" />
+          <input v-else v-model="filters[key]" :type="key === 'month' ? 'month' : 'text'" :placeholder="'请输入' + label" />
+        </div>
+      </div>
       <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
         <button class="btn btn-secondary" type="button" @click="fetchMyIssues" :disabled="loading">
@@ -172,7 +182,7 @@
               <p>{{ reviewReturnReason(item) }}</p>
               <div class="mobile-review-return-foot">
                 <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
-                <button class="status-flow-link" type="button" @click="openActionDrawer(item)">查看完整流转</button>
+                <button class="status-flow-link" type="button" @click="openFlowDialog(item)">查看完整流转</button>
               </div>
             </div>
 
@@ -188,6 +198,7 @@
             <div v-if="item.review_at" class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at }}</strong></div>
           </div>
 
+          <button v-if="!isReturnedForRectification(item)" class="status-flow-link" type="button" @click="openFlowDialog(item)">查看流转</button>
           <div class="mobile-card-images">
             <button class="mobile-image-btn" type="button" @click="preview(resolveImage(item.issue_photo), '问题照片')">
               <img :src="resolveImage(item.issue_photo)" class="mobile-thumb" alt="问题照片" />
@@ -365,7 +376,7 @@
                       <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
                     </template>
                     <button v-if="currentRole === 'station_manager'" class="status-flow-link" type="button"
-                      @click="openActionDrawer(item)">
+                      @click="openFlowDialog(item)">
                       {{ isReturnedForRectification(item) ? '查看完整流转' : '查看流转' }}
                     </button>
                   </div>
@@ -428,6 +439,15 @@
       </div>
     </div>
 
+    <div v-if="flowDialog" class="drawer-mask" @click.self="closeFlowDialog">
+      <div class="drawer-panel" role="dialog" aria-modal="true" aria-label="问题流转记录">
+        <div class="drawer-header"><div><h3>问题流转记录</h3><p>{{ flowDialog.station }}｜问题 ID {{ flowDialog.id }}</p></div>
+          <button class="drawer-close" type="button" @click="closeFlowDialog">×</button>
+        </div>
+        <div class="drawer-content"><IssueFlowTimeline v-bind="flowHistory" @photo="showFlowPhoto" /></div>
+      </div>
+    </div>
+
     <div v-if="actionDrawer.visible" class="drawer-mask">
       <div class="drawer-panel">
         <div class="drawer-header">
@@ -450,42 +470,7 @@
             <span v-if="actionDrawer.item.review_at">退回时间：{{ actionDrawer.item.review_at }}</span>
           </div>
 
-          <section class="workflow-history-card">
-            <div class="workflow-history-head">
-              <div>
-                <span>处理轨迹</span>
-                <h4>整改复核流转记录</h4>
-              </div>
-              <small>每次整改与复核均独立留痕</small>
-            </div>
-            <div v-if="flowHistory.loading" class="workflow-history-state">正在读取流转记录...</div>
-            <div v-else-if="flowHistory.error" class="workflow-history-state error">{{ flowHistory.error }}</div>
-            <ol v-else class="workflow-timeline">
-              <li v-for="event in flowHistory.events" :key="event.id || `${event.action_type}-${event.created_at}`"
-                :class="workflowEventClass(event)">
-                <span class="workflow-timeline-dot"></span>
-                <div class="workflow-event-card">
-                  <div class="workflow-event-head">
-                    <strong>{{ event.action_label }}</strong>
-                    <span>{{ event.created_at || '时间未记录' }}</span>
-                  </div>
-                  <div class="workflow-event-meta">
-                    <span>{{ event.actor_display_name }}</span>
-                    <span v-if="event.round_no">第 {{ event.round_no }} 轮</span>
-                    <span v-if="event.result">{{ event.result }}</span>
-                  </div>
-                  <div v-if="event.from_status" class="workflow-status-path">
-                    <span>{{ event.from_status }}</span><b>→</b><span>{{ event.to_status }}</span>
-                  </div>
-                  <p v-if="event.note" class="workflow-event-note">{{ event.note }}</p>
-                  <button v-if="event.photo_path" class="workflow-photo-btn" type="button"
-                    @click="preview(resolveImage(event.photo_path), `${event.action_label}照片`)">
-                    查看本轮照片
-                  </button>
-                </div>
-              </li>
-            </ol>
-          </section>
+          <IssueFlowTimeline v-bind="flowHistory" @photo="showFlowPhoto" />
 
           <template v-if="currentRole === 'station_manager'">
             <div class="form-item">
@@ -493,7 +478,6 @@
               <select v-model="actionForm.rectificationResult">
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站级无法整改</option>
               </select>
             </div>
 
@@ -541,7 +525,7 @@
               </div>
             </div>
             <div v-else class="drawer-photo-skip-note">
-              已选择站级无法整改，本次无需上传整改照片。
+              请提交整改照片。
             </div>
 
           </template>
@@ -552,7 +536,6 @@
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站级无法整改</option>
                 <option value="整改不通过">整改不通过</option>
               </select>
             </div>
@@ -657,6 +640,9 @@
 </template>
 
 <script setup>
+import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
+import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
+import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
@@ -713,11 +699,7 @@ const dropdownVisible = ref({
   inspectionTableName: false
 })
 
-const filters = ref({
-  region: '',
-  station: '',
-  inspectionTableName: ''
-})
+const filters = ref(currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters())
 
 const isMobileView = ref(false)
 const showMobileFilters = ref(false)
@@ -789,14 +771,7 @@ const loadMyIssueColumnVisibility = () => {
 
 const myIssueColumnVisibility = ref(loadMyIssueColumnVisibility())
 
-const filteredData = computed(() => {
-  return issues.value.filter((item) => {
-    const matchedRegion = !filters.value.region || normalizedKeyword(item.region).includes(normalizedKeyword(filters.value.region))
-    const matchedStation = !filters.value.station || normalizedKeyword(item.station).includes(normalizedKeyword(filters.value.station))
-    const matchedInspectionTable = !filters.value.inspectionTableName || normalizedKeyword(item.inspection_table_name).includes(normalizedKeyword(filters.value.inspectionTableName))
-    return matchedRegion && matchedStation && matchedInspectionTable
-  })
-})
+const filteredData = computed(() => issues.value.filter(item => matchesMyIssue(item, filters.value)))
 
 const visibleMyIssueColumns = computed(() => (
   myIssueColumnDefinitions.filter((column) => myIssueColumnVisibility.value[column.key])
@@ -819,13 +794,18 @@ const regionOptions = computed(() => uniqueSortedOptions(issues.value.map((item)
 const stationOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.station)))
 const inspectionTableOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.inspection_table_name)))
 
+const reviewMultiOptions = computed(() => ({
+  region: regionOptions.value, station: stationOptions.value, inspectionTableName: inspectionTableOptions.value,
+  inspector: uniqueSortedOptions(issues.value.map(item => item.inspector)),
+  standardTags: uniqueSortedOptions(issues.value.flatMap(item => (item.standard_tags || []).map(issueTagLabel)))
+}))
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
 
 const filterSummaryFields = computed(() => buildFilterSummary(
-  [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]],
+  currentRole.value === 'station_manager' ? [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]] : reviewFilterDefinitions,
   filters.value
 ))
 const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
@@ -935,12 +915,17 @@ const getMobileStationStorageKey = () => {
 
 const restoreMobileStationFilter = () => {
   if (!isMobileView.value) return
-  filters.value.station = String(localStorage.getItem(getMobileStationStorageKey()) || '').trim()
+  const remembered = String(localStorage.getItem(getMobileStationStorageKey()) || '').trim()
+  if (currentRole.value === 'station_manager') filters.value.station = remembered
+  else {
+    try { filters.value.station = remembered.startsWith('[') ? JSON.parse(remembered) : remembered ? [remembered] : [] }
+    catch { filters.value.station = [] }
+  }
 }
 
 const rememberMobileStationFilter = (value) => {
   if (!isMobileView.value) return
-  const station = String(value || '').trim()
+  const station = Array.isArray(value) ? (value.length ? JSON.stringify(value) : '') : String(value || '').trim()
   if (station) {
     localStorage.setItem(getMobileStationStorageKey(), station)
   } else {
@@ -948,12 +933,10 @@ const rememberMobileStationFilter = (value) => {
   }
 }
 
+watch(() => filters.value.station, value => rememberMobileStationFilter(value), { deep: true })
+
 const resetFilters = () => {
-  filters.value = {
-    region: '',
-    station: '',
-    inspectionTableName: ''
-  }
+  filters.value = currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters()
   if (isMobileView.value) {
     localStorage.removeItem(getMobileStationStorageKey())
   }
@@ -1063,6 +1046,17 @@ const actionDrawer = ref({
   item: null
 })
 
+const flowDialog = ref(null)
+const openFlowDialog = (item) => {
+  flowDialog.value = item
+  fetchIssueFlowHistory(item.id)
+}
+const closeFlowDialog = () => {
+  flowDialog.value = null
+  flowHistoryRequestSequence += 1
+}
+const showFlowPhoto = (event) => preview(resolveImage(event.photo_path), `${event.action_label}照片`)
+
 const flowHistory = ref({
   loading: false,
   error: '',
@@ -1081,17 +1075,14 @@ const actionForm = ref({
   reviewPhotoPreview: ''
 })
 
-const noPhotoIssueResults = new Set(['站经无法整改', '站级无法整改', '站级无法完成整改', '站经理无法整改', '整改不通过'])
-const skipsIssuePhotoUpload = (value) => noPhotoIssueResults.has(String(value || '').trim())
-const shouldShowRectificationPhotoUpload = computed(() => !skipsIssuePhotoUpload(actionForm.value.rectificationResult))
+const skipsIssuePhotoUpload = value => value === '整改不通过'
+const shouldShowRectificationPhotoUpload = computed(() => true)
 const shouldShowReviewPhotoUpload = computed(() => actionForm.value.reviewResult === '已整改')
 const reviewPhotoSkipMessage = computed(() => {
   if (actionForm.value.reviewResult === '整改不通过') {
     return '整改不通过将退回站经理重新整改，本次无需上传复核照片。'
   }
-  if (skipsIssuePhotoUpload(actionForm.value.reviewResult)) {
-    return '已选择站级无法整改，本次无需上传复核照片。'
-  }
+
   return '选择复核结果后，系统会根据结果提示是否需要上传照片。'
 })
 const reviewOutcomeHint = computed(() => {
@@ -1109,13 +1100,7 @@ const reviewOutcomeHint = computed(() => {
       description: '确认整改有效后，请上传能够反映复核结果的照片。'
     }
   }
-  if (skipsIssuePhotoUpload(actionForm.value.reviewResult)) {
-    return {
-      type: 'unable',
-      title: '将认定为站级无法整改',
-      description: '提交后结束站级整改流转，本次无需上传复核照片。'
-    }
-  }
+
   return null
 })
 
@@ -1177,12 +1162,6 @@ const fetchIssueFlowHistory = async (issueId) => {
   }
 }
 
-const workflowEventClass = (event) => ({
-  returned: event?.result === '整改不通过',
-  completed: event?.to_status === '已闭环',
-  rectification: event?.action_type === 'rectification_submitted'
-})
-
 const openActionDrawer = (item) => {
   if (currentRole.value === 'station_manager' && !isInspectionSigned(item)) {
     showActionToast('当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。', 'error')
@@ -1194,11 +1173,11 @@ const openActionDrawer = (item) => {
   }
   actionMessage.value = ''
   actionForm.value = {
-    rectificationResult: item.rectification_result || '',
+    rectificationResult: item.rectification_result === '已整改' ? '已整改' : '',
     rectificationNote: item.rectification_note || '',
     rectificationPhotoFile: null,
     rectificationPhotoPreview: item.rectification_photo ? resolveImage(item.rectification_photo) : '',
-    reviewResult: item.review_result || '',
+    reviewResult: ['已整改', '整改不通过'].includes(item.review_result) ? item.review_result : '',
     reviewNote: item.review_note || '',
     reviewPhotoFile: null,
     reviewPhotoPreview: ''
@@ -1446,6 +1425,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.review-date-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.review-date-range input { flex: 1 1 120px; min-width: 0; width: 100%; }
+
 /* --- Consistent page shell and card styles --- */
 .page-shell {
   display: flex;

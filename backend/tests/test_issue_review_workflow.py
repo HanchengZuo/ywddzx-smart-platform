@@ -11,12 +11,10 @@ class IssueReviewWorkflowTests(unittest.TestCase):
         self.assertTrue(transition["photo_required"])
         self.assertFalse(transition["returns_to_station"])
 
-    def test_station_cannot_rectify_finishes_without_photo(self):
-        transition = resolve_issue_review_transition("站级无法整改")
-
-        self.assertEqual(transition["review_result"], "站经无法整改")
-        self.assertEqual(transition["new_status"], "站经无法整改")
-        self.assertFalse(transition["photo_required"])
+    def test_retired_unable_results_are_rejected(self):
+        for value in ("站级无法整改", "站经无法整改", "站经理无法整改"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                resolve_issue_review_transition(value)
 
     def test_rejected_rectification_returns_to_station_without_photo(self):
         transition = resolve_issue_review_transition("整改不通过")

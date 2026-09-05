@@ -15,6 +15,18 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.1',
+    date: '2026-09-05',
+    title: '问题全生命周期流转',
+    summary: '统一问题流转记录与整改复核操作，补齐待复核筛选。',
+    items: [
+      '停用站级无法整改状态，原状态转回待整改，历史记录保留。',
+      '人工和自动审核、审核重置、完成确认、签名及问题修改纳入流转记录。',
+      '查看流转使用独立只读弹窗，整改与复核共用处理轨迹设计。',
+      '移除更新整改照片功能，待复核支持问题、日期、人员、规范和标签筛选。'
+    ]
+  },
+  {
     version: 'v6.0',
     date: '2026-09-05',
     title: '统一筛选条件可视化',
