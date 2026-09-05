@@ -123,7 +123,7 @@
           </div>
 
           <button class="issue-flow-history-trigger mobile" type="button" @click="openIssueFlowHistory(item)">
-            查看整改复核记录
+            查看问题流转记录
           </button>
 
           <div v-if="canManageIssues || canAuditIssues" class="mobile-card-actions">
@@ -151,10 +151,6 @@
             </template>
             <button v-if="canOpenIssueEditDialog(item)" class="btn btn-secondary" type="button" @click="openEditDialog(item)">
               {{ canEditIssueRow(item) ? '编辑问题' : '调整检查人' }}
-            </button>
-            <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary" type="button"
-              @click="openRectificationPhotoDialog(item)">
-              更新整改照片
             </button>
             <button v-if="canDeleteIssueRow(item)" class="btn btn-danger" type="button"
               :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
@@ -431,7 +427,6 @@
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
             <option value="已整改">已整改</option>
-            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('reviewResult')">
@@ -439,7 +434,6 @@
           <select v-model="filters.reviewResult">
             <option value="">全部</option>
             <option value="已整改">已整改</option>
-            <option value="站经无法整改">站经无法整改</option>
             <option value="整改不通过">整改不通过</option>
           </select>
         </div>
@@ -452,7 +446,6 @@
             <option value="待整改">待整改</option>
             <option value="待复核">待复核</option>
             <option value="已闭环">已闭环</option>
-            <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('excellent')">
@@ -724,10 +717,6 @@
                     <button v-if="canOpenIssueEditDialog(item)" class="btn btn-secondary btn-sm" type="button"
                       @click="openEditDialog(item)">
                       {{ canEditIssueRow(item) ? '编辑' : '调检查人' }}
-                    </button>
-                    <button v-if="canUpdateRectificationPhotoRow(item)" class="btn btn-secondary btn-sm" type="button"
-                      @click="openRectificationPhotoDialog(item)">
-                      更新整改照片
                     </button>
                     <button v-if="canDeleteIssueRow(item)" class="btn btn-danger btn-sm" type="button"
                       :disabled="deletingIssueId === item.id" @click="deleteIssue(item)">
@@ -1136,7 +1125,6 @@
                 <option value="待整改">待整改</option>
                 <option value="待复核">待复核</option>
                 <option value="已闭环">已闭环</option>
-                <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
@@ -1144,7 +1132,6 @@
               <select v-model="editDialog.form.rectification_result">
                 <option value="">暂无/清空</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站经无法整改</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
@@ -1156,7 +1143,6 @@
               <select v-model="editDialog.form.review_result">
                 <option value="">暂无/清空</option>
                 <option value="已整改">已整改</option>
-                <option value="站经无法整改">站经无法整改</option>
                 <option value="整改不通过">整改不通过</option>
               </select>
             </label>
@@ -1180,69 +1166,6 @@
             </button>
             <button class="btn btn-primary" type="submit" :disabled="editDialog.saving">
               {{ editDialog.saving ? '保存中...' : '保存修改' }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <div v-if="rectificationPhotoDialog.visible" class="image-modal">
-      <div class="image-modal-content issue-edit-modal">
-        <div class="image-modal-header">
-          <span>更新整改照片</span>
-          <button class="close-btn" type="button" :disabled="rectificationPhotoDialog.saving"
-            @click="closeRectificationPhotoDialog">×</button>
-        </div>
-
-        <form class="issue-edit-form" @submit.prevent="saveRectificationPhoto">
-          <div class="issue-edit-summary">
-            <div>
-              <span>站点</span>
-              <strong>{{ rectificationPhotoDialog.issue?.station || '-' }}</strong>
-            </div>
-            <div>
-              <span>当前整改结果</span>
-              <strong>{{ rectificationPhotoDialog.issue?.rectification_result || '-' }}</strong>
-            </div>
-            <div>
-              <span>问题状态</span>
-              <strong>{{ rectificationPhotoDialog.issue?.status || '-' }}</strong>
-            </div>
-          </div>
-
-          <div class="rectification-photo-panel">
-            <div v-if="rectificationPhotoDialog.issue?.rectification_photo" class="rectification-photo-current">
-              <span>当前整改照片</span>
-              <button class="image-btn" type="button"
-                @click="preview(resolveImage(rectificationPhotoDialog.issue.rectification_photo), '当前整改照片')">
-                <img :src="resolveImage(rectificationPhotoDialog.issue.rectification_photo)" class="thumb"
-                  alt="当前整改照片" />
-              </button>
-            </div>
-
-            <label class="issue-edit-field issue-edit-field-wide">
-              <span>上传新的整改照片</span>
-              <input type="file" accept="image/*" @change="handleRectificationPhotoChange" />
-            </label>
-
-            <div v-if="rectificationPhotoDialog.preview" class="rectification-photo-preview">
-              <img :src="rectificationPhotoDialog.preview" alt="新的整改照片预览" />
-              <div>
-                <strong>已选择新照片</strong>
-                <span>{{ rectificationPhotoDialog.file?.name || '待上传图片' }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="rectificationPhotoDialog.error" class="form-error">{{ rectificationPhotoDialog.error }}</div>
-
-          <div class="issue-edit-actions">
-            <button class="btn btn-secondary" type="button" :disabled="rectificationPhotoDialog.saving"
-              @click="closeRectificationPhotoDialog">
-              放弃修改
-            </button>
-            <button class="btn btn-primary" type="submit" :disabled="rectificationPhotoDialog.saving">
-              {{ rectificationPhotoDialog.saving ? '上传中...' : '保存新照片' }}
             </button>
           </div>
         </form>
@@ -1339,7 +1262,7 @@
       <div class="image-modal-content issue-flow-history-modal">
         <div class="image-modal-header">
           <div class="issue-flow-history-title">
-            <span>整改复核流转记录</span>
+            <span>问题流转记录</span>
             <small>{{ issueFlowHistory.issue?.station || '-' }}｜问题 ID {{ issueFlowHistory.issue?.id || '-' }}</small>
           </div>
           <button class="close-btn" type="button" @click="closeIssueFlowHistory">×</button>
@@ -1431,7 +1354,6 @@ import {
   isDesktopImageDropEnabled,
   loadImageFromFile,
   prepareImageFile,
-  prepareImagePreview,
   revokeObjectUrl,
   scrollImageUploadIntoView
 } from '@/utils/imageUpload'
@@ -1712,14 +1634,6 @@ const editDialog = ref({
   }
 })
 
-const rectificationPhotoDialog = ref({
-  visible: false,
-  saving: false,
-  error: '',
-  issue: null,
-  file: null,
-  preview: ''
-})
 
 const issueFlowHistory = ref({
   visible: false,
@@ -2054,7 +1968,6 @@ const canEditIssueRow = (item) => Boolean(item?.can_edit_issue)
 const canChangeIssueInspectorRow = (item) => Boolean(item?.can_change_issue_inspector)
 const canOpenIssueEditDialog = (item) => canEditIssueRow(item) || canChangeIssueInspectorRow(item)
 const canDeleteIssueRow = (item) => Boolean(item?.can_delete_issue)
-const canUpdateRectificationPhotoRow = (item) => Boolean(item?.can_update_rectification_photo)
 const canAuditIssueRow = (item) => Boolean(item?.can_audit_issue)
 const issueAuditLockReason = (item = {}) => String(item?.audit_lock_reason || '').trim()
 const normalizeAuditStatus = (item = {}) => String(item?.audit_status || 'pending').trim() || 'pending'
@@ -2075,7 +1988,6 @@ const excellentStarTitle = (item) => {
 }
 const hasIssueOperation = (item) => (
   canEditIssueRow(item) ||
-  canUpdateRectificationPhotoRow(item) ||
   canDeleteIssueRow(item) ||
   Boolean(issueOperationLockReason(item)) ||
   (isClosedIssue(item) && currentRole !== 'root')
@@ -3345,90 +3257,6 @@ const selectEditStandard = (standard) => {
   editDialog.value.error = ''
 }
 
-const revokeRectificationPhotoPreview = () => {
-  revokeObjectUrl(rectificationPhotoDialog.value.preview)
-}
-
-const openRectificationPhotoDialog = (item) => {
-  revokeRectificationPhotoPreview()
-  rectificationPhotoDialog.value = {
-    visible: true,
-    saving: false,
-    error: '',
-    issue: item,
-    file: null,
-    preview: ''
-  }
-}
-
-const closeRectificationPhotoDialog = () => {
-  if (rectificationPhotoDialog.value.saving) return
-  revokeRectificationPhotoPreview()
-  rectificationPhotoDialog.value = {
-    visible: false,
-    saving: false,
-    error: '',
-    issue: null,
-    file: null,
-    preview: ''
-  }
-}
-
-const handleRectificationPhotoChange = async (event) => {
-  const file = event.target.files?.[0]
-  revokeRectificationPhotoPreview()
-  if (!file) {
-    rectificationPhotoDialog.value.file = null
-    rectificationPhotoDialog.value.preview = ''
-    return
-  }
-
-  try {
-    const prepared = await prepareImagePreview(file)
-    rectificationPhotoDialog.value.file = prepared.file
-    rectificationPhotoDialog.value.preview = prepared.previewUrl
-    rectificationPhotoDialog.value.error = ''
-  } catch (error) {
-    clearFileInput(event)
-    rectificationPhotoDialog.value.file = null
-    rectificationPhotoDialog.value.preview = ''
-    rectificationPhotoDialog.value.error = error?.message || '图片处理失败，请更换图片后重试。'
-  }
-}
-
-const saveRectificationPhoto = async () => {
-  const issueId = rectificationPhotoDialog.value.issue?.id
-  if (!issueId) {
-    rectificationPhotoDialog.value.error = '当前问题缺少编号，无法保存整改照片。'
-    return
-  }
-  if (!rectificationPhotoDialog.value.file) {
-    rectificationPhotoDialog.value.error = '请先选择新的整改照片。'
-    return
-  }
-
-  let preserveFullscreen = false
-  try {
-    rectificationPhotoDialog.value.saving = true
-    rectificationPhotoDialog.value.error = ''
-    const formData = new FormData()
-    formData.append('user_id', localStorage.getItem('user_id') || '')
-    formData.append('rectification_photo', rectificationPhotoDialog.value.file)
-    await axios.post(`/api/issues/${issueId}/rectification-photo`, formData)
-    preserveFullscreen = beginFullscreenDomPreservation()
-    closeRectificationPhotoDialog()
-    showActionMessage('整改照片已更新。', 'success')
-    await fetchIssues()
-  } catch (error) {
-    rectificationPhotoDialog.value.error = error?.response?.data?.error || '整改照片更新失败。'
-  } finally {
-    await finishFullscreenDomPreservation(preserveFullscreen)
-    if (rectificationPhotoDialog.value.visible) {
-      rectificationPhotoDialog.value.saving = false
-    }
-  }
-}
-
 const saveIssueEdit = async () => {
   const issueId = editDialog.value.issue?.id
   if (!issueId) {
@@ -3996,7 +3824,6 @@ onBeforeUnmount(() => {
   revokeIssuePhotoPreview()
   revokeEditIssueSourcePhotos()
   closeEditIssuePhotoEditor(true)
-  revokeRectificationPhotoPreview()
   if (actionMessageTimer) {
     clearTimeout(actionMessageTimer)
   }
