@@ -242,7 +242,7 @@
           />
         </div>
 
-        <div class="filter-item" :data-filter-state="filterFieldState('stationManager')">
+        <div class="filter-item" :data-filter-state="filterFieldState('region')">
           <label>站点所属地</label>
           <div class="search-select multi-search-select" ref="regionSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('region')">
@@ -273,7 +273,7 @@
           </div>
         </div>
 
-        <div class="filter-item" :data-filter-state="filterFieldState('stationManager')">
+        <div class="filter-item" :data-filter-state="filterFieldState('station')">
           <label>站点名称</label>
           <div class="search-select multi-search-select" ref="stationSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('station')">
@@ -322,7 +322,7 @@
           </div>
         </div>
 
-        <div v-if="!hideInspectorContactInfo" class="filter-item" :data-filter-state="filterFieldState('standardId')">
+        <div v-if="!hideInspectorContactInfo" class="filter-item" :data-filter-state="filterFieldState('inspector')">
           <label>检查人员</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -353,7 +353,7 @@
           </div>
         </div>
 
-        <div class="filter-item" :data-filter-state="filterFieldState('standardId')">
+        <div class="filter-item" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
           <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
@@ -392,7 +392,7 @@
           <label>规范详情</label>
           <input v-model="filters.standardDetail" placeholder="搜索规范详情关键词" />
         </div>
-        <div class="filter-item" :data-filter-state="filterFieldState('issueDescription')">
+        <div class="filter-item" :data-filter-state="filterFieldState('standardTags')">
           <label>规范标签</label>
           <div class="search-select multi-search-select" ref="standardTagsSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('standardTags')">
@@ -455,7 +455,7 @@
             <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
-        <div class="filter-item" :data-filter-state="filterFieldState('auditState')">
+        <div class="filter-item" :data-filter-state="filterFieldState('excellent')">
           <label>优秀问题</label>
           <div class="excellent-filter-toggle" role="group" aria-label="优秀问题筛选">
             <button type="button" :class="{ active: filters.excellent === '' }" title="全部问题"
@@ -1487,7 +1487,28 @@ const filters = ref(createDefaultIssueFilters())
 const appliedFilters = ref(cloneIssueFilters(filters.value))
 
 const filterSummaryFields = computed(() => buildFilterSummary(
-  [["issueId","问题ID"],["month","检查月度"],["dateRange","检查时间范围"],["stationManager","站点所属地"],["stationManager","站点名称"],["stationManager","站点负责人"],["standardId","检查人员"],["standardId","检查表"],["standardId","外部规范ID"],["standardDetail","规范详情"],["issueDescription","规范标签"],["issueDescription","问题描述"],["rectificationResult","站经理整改结果"],["reviewResult","督导组复核结果"],["status","问题状态"],["auditState","优秀问题"],["auditState","审核状态"],["auditStatus","审核结论"]].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value),
+  [
+    ['issueId', '问题ID'],
+    ['month', '检查月度'],
+    ['dateRange', '检查时间范围'],
+    ['region', '站点所属地'],
+    ['station', '站点名称'],
+    ['stationManager', '站点负责人'],
+    ['inspector', '检查人员'],
+    ['inspectionTableName', '检查表'],
+    ['standardId', '外部规范ID'],
+    ['standardDetail', '规范详情'],
+    ['standardTags', '规范标签'],
+    ['issueDescription', '问题描述'],
+    ['rectificationResult', '站经理整改结果'],
+    ['reviewResult', '督导组复核结果'],
+    ['status', '问题状态'],
+    ['excellent', '优秀问题'],
+    ['auditState', '审核状态'],
+    ['auditStatus', '审核结论']
+  ].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value
+    || filters.value.inspector.includes(currentInspectorFilterValue.value)
+    || appliedFilters.value.inspector.includes(currentInspectorFilterValue.value)),
   filters.value, appliedFilters.value
 ))
 const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
