@@ -444,7 +444,7 @@
         <div class="drawer-header"><div><h3>问题流转记录</h3><p>{{ flowDialog.station }}｜问题 ID {{ flowDialog.id }}</p></div>
           <button class="drawer-close" type="button" @click="closeFlowDialog">×</button>
         </div>
-        <div class="drawer-content"><IssueFlowTimeline v-bind="flowHistory" @photo="showFlowPhoto" /></div>
+        <div class="drawer-content"><IssueFlowTimeline v-bind="flowHistory" :resolve-photo="resolveImage" @photo="showFlowPhoto" /></div>
       </div>
     </div>
 
@@ -470,7 +470,7 @@
             <span v-if="actionDrawer.item.review_at">退回时间：{{ actionDrawer.item.review_at }}</span>
           </div>
 
-          <IssueFlowTimeline v-if="currentRole !== 'station_manager'" v-bind="flowHistory" @photo="showFlowPhoto" />
+          <IssueFlowTimeline v-if="currentRole !== 'station_manager'" v-bind="flowHistory" :resolve-photo="resolveImage" @photo="showFlowPhoto" />
 
           <template v-if="currentRole === 'station_manager'">
             <div class="form-item">
@@ -640,7 +640,7 @@
 </template>
 
 <script setup>
-import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto } from '../../utils/issueWorkflow'
+import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -1176,10 +1176,7 @@ const openActionDrawer = (item) => {
   }
   actionMessage.value = ''
   actionForm.value = {
-    rectificationResult: isUnableRectification(item.rectification_result) ? '站经无法整改' : item.rectification_result === '已整改' ? '已整改' : '',
-    rectificationNote: item.rectification_note || '',
-    rectificationPhotoFile: null,
-    rectificationPhotoPreview: item.rectification_photo ? resolveImage(item.rectification_photo) : '',
+    ...rectificationDraftFor(item, resolveImage),
     reviewResult: '',
     reviewNote: item.review_note || '',
     reviewPhotoFile: null,

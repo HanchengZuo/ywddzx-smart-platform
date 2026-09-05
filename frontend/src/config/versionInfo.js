@@ -15,6 +15,16 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.3',
+    date: '2026-09-05',
+    title: '复核照片直览与退回表单重置',
+    summary: '流转照片直接展示可放大的缩略图，退回后重新填写整改内容。',
+    items: [
+      '复核处理轨迹直接展示本轮照片缩略图，点击可放大查看。',
+      '整改不通过或驳回站级无法整改后，重新提交时清空整改结果、说明和照片，历史记录保留。'
+    ]
+  },
+  {
     version: 'v6.2',
     date: '2026-09-05',
     title: '整改复核双分支与重置留痕',
