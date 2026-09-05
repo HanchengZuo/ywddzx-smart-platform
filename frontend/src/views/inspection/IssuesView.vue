@@ -220,16 +220,18 @@
           </button>
         </div>
       </div>
+      <FilterSummary :fields="filterSummaryFields" manual />
+
       <div class="filter-grid">
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('issueId')">
           <label>问题ID</label>
           <input v-model.trim="filters.issueId" placeholder="输入问题ID" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('month')">
           <label>检查月度</label>
           <input v-model="filters.month" type="month" @change="handleIssueMonthChange" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('dateRange')">
           <label>检查时间范围</label>
           <DateRangePicker
             v-model:date-from="filters.dateFrom"
@@ -240,7 +242,7 @@
           />
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('stationManager')">
           <label>站点所属地</label>
           <div class="search-select multi-search-select" ref="regionSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('region')">
@@ -271,7 +273,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('stationManager')">
           <label>站点名称</label>
           <div class="search-select multi-search-select" ref="stationSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('station')">
@@ -302,7 +304,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('stationManager')">
           <label>站点负责人</label>
           <div class="search-select" ref="stationManagerSelectRef">
             <input v-model="filters.stationManager" placeholder="搜索或选择站点负责人"
@@ -320,7 +322,7 @@
           </div>
         </div>
 
-        <div v-if="!hideInspectorContactInfo" class="filter-item">
+        <div v-if="!hideInspectorContactInfo" class="filter-item" :data-filter-state="filterFieldState('standardId')">
           <label>检查人员</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -351,7 +353,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('standardId')">
           <label>检查表</label>
           <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
@@ -382,15 +384,15 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('standardId')">
           <label>外部规范ID</label>
           <input v-model="filters.standardId" placeholder="输入完整外部规范ID" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('standardDetail')">
           <label>规范详情</label>
           <input v-model="filters.standardDetail" placeholder="搜索规范详情关键词" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('issueDescription')">
           <label>规范标签</label>
           <div class="search-select multi-search-select" ref="standardTagsSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('standardTags')">
@@ -420,11 +422,11 @@
             </div>
           </div>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('issueDescription')">
           <label>问题描述</label>
           <input v-model.trim="filters.issueDescription" placeholder="搜索问题描述关键词" />
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('rectificationResult')">
           <label>站经理整改结果</label>
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
@@ -432,7 +434,7 @@
             <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('reviewResult')">
           <label>督导组复核结果</label>
           <select v-model="filters.reviewResult">
             <option value="">全部</option>
@@ -441,7 +443,7 @@
             <option value="整改不通过">整改不通过</option>
           </select>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('status')">
           <label>问题状态</label>
           <select v-model="filters.status">
             <option value="">全部</option>
@@ -453,7 +455,7 @@
             <option value="站经无法整改">站经无法整改</option>
           </select>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('auditState')">
           <label>优秀问题</label>
           <div class="excellent-filter-toggle" role="group" aria-label="优秀问题筛选">
             <button type="button" :class="{ active: filters.excellent === '' }" title="全部问题"
@@ -470,7 +472,7 @@
             </button>
           </div>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('auditState')">
           <label>审核状态</label>
           <select v-model="filters.auditState">
             <option value="">全部</option>
@@ -478,7 +480,7 @@
             <option value="done">已审核</option>
           </select>
         </div>
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('auditStatus')">
           <label>审核结论</label>
           <select v-model="filters.auditStatus">
             <option value="">全部</option>
@@ -1415,6 +1417,8 @@
 </template>
 
 <script setup>
+import FilterSummary from '@/components/FilterSummary.vue'
+import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
@@ -1481,6 +1485,13 @@ const cloneIssueFilters = (source) => Object.fromEntries(
 
 const filters = ref(createDefaultIssueFilters())
 const appliedFilters = ref(cloneIssueFilters(filters.value))
+
+const filterSummaryFields = computed(() => buildFilterSummary(
+  [["issueId","问题ID"],["month","检查月度"],["dateRange","检查时间范围"],["stationManager","站点所属地"],["stationManager","站点名称"],["stationManager","站点负责人"],["standardId","检查人员"],["standardId","检查表"],["standardId","外部规范ID"],["standardDetail","规范详情"],["issueDescription","规范标签"],["issueDescription","问题描述"],["rectificationResult","站经理整改结果"],["reviewResult","督导组复核结果"],["status","问题状态"],["auditState","优秀问题"],["auditState","审核状态"],["auditStatus","审核结论"]].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value),
+  filters.value, appliedFilters.value
+))
+const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
+
 
 const list = shallowRef([])
 const totalRecords = ref(0)
@@ -1822,18 +1833,10 @@ const filteredInspectorOptions = computed(() => filterOptionByKeyword(inspectorO
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
 const filteredStandardTagOptions = computed(() => filterOptionByKeyword(standardTagOptions.value, filterSearch.value.standardTags))
 
-const activeFilterCount = computed(() => {
-  return Object.entries(filters.value).reduce((count, [key, value]) => {
-    if (hideInspectorContactInfo.value && key === 'inspector') return count
-    if (Array.isArray(value)) {
-      return count + value.filter((item) => String(item || '').trim()).length
-    }
-    return count + (String(value || '').trim() ? 1 : 0)
-  }, 0)
-})
+const activeFilterCount = computed(() => filterSummaryFields.value.filter((item) => item.value).length)
 
 const issueFilterDraftDirty = computed(() => (
-  JSON.stringify(filters.value) !== JSON.stringify(appliedFilters.value)
+  filterSummaryFields.value.some((item) => item.changed)
 ))
 
 const formatExportFilterValue = (key, value) => {
