@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import MagicMock, patch
 
 from flask import g
 
@@ -8,10 +9,40 @@ from app import (
     get_auth_serializer,
     get_root_impersonation_actor,
     serialize_impersonation_account,
+    current_epoch_seconds,
+    get_file_access_serializer,
+    verify_file_access_token,
 )
 
 
 class AccountImpersonationTests(unittest.TestCase):
+    def verify_file_session(self, impersonated=True, root_override=None):
+        payload = {
+            "uid": self.target["id"], "av": self.target["auth_version"],
+            "exp": current_epoch_seconds() + 300, "scope": "storage:read",
+        }
+        users = [self.target]
+        if impersonated:
+            payload.update(imp_uid=self.root["id"], imp_av=self.root["auth_version"],
+                           imp_username=self.root["username"])
+            users.append(root_override or self.root)
+        with patch("app.get_db_connection", return_value=MagicMock()), \
+             patch("app.fetch_auth_user_by_id", side_effect=users), \
+             patch("app.fetch_password_policy", return_value={}), \
+             patch("app.is_password_change_enforced", return_value=True):
+            return verify_file_access_token(get_file_access_serializer().dumps(payload))
+
+    def test_valid_root_impersonation_can_read_files_before_target_password_change(self):
+        self.assertFalse(self.verify_file_session()["_password_change_enforced"])
+
+    def test_normal_file_session_preserves_password_change_restriction(self):
+        self.assertTrue(self.verify_file_session(False)["_password_change_enforced"])
+
+    def test_revoked_root_file_session_is_rejected(self):
+        for overrides in ({"auth_version": 8}, {"account_status": "disabled"}, {"role": "supervisor"}):
+            with self.subTest(overrides=overrides), self.assertRaises(PermissionError):
+                self.verify_file_session(root_override={**self.root, **overrides})
+
     def setUp(self):
         self.root = {
             "id": 1,

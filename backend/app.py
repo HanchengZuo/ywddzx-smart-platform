@@ -2885,6 +2885,9 @@ def verify_file_access_token(token):
         )
     ):
         raise PermissionError("文件访问会话已失效。")
+    if impersonator_id:
+        # Match API impersonation only after validating both account sessions.
+        user["_password_change_enforced"] = False
     return user
 
 
