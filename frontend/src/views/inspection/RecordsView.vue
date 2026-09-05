@@ -28,12 +28,14 @@
         </div>
       </div>
 
+      <FilterSummary :fields="filterSummaryFields" manual />
+
       <div class="filter-grid">
-        <div class="filter-item filter-item-month">
+        <div class="filter-item filter-item-month" :data-filter-state="filterFieldState('month')">
           <label>巡检月度</label>
           <input v-model="filters.month" class="month-filter-input" type="month" @change="handleRecordMonthChange" />
         </div>
-        <div class="filter-item filter-item-date">
+        <div class="filter-item filter-item-date" :data-filter-state="filterFieldState('dateRange')">
           <label>巡检日期</label>
           <DateRangePicker
             v-model:date-from="filters.dateFrom"
@@ -43,7 +45,7 @@
             @change="handleRecordDateRangeChange"
           />
         </div>
-        <div class="filter-item filter-item-station">
+        <div class="filter-item filter-item-station" :data-filter-state="filterFieldState('result')">
           <label>站点</label>
           <div class="search-select multi-search-select" ref="stationSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('station')">
@@ -73,7 +75,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item filter-item-table">
+        <div class="filter-item filter-item-table" :data-filter-state="filterFieldState('result')">
           <label>检查表</label>
           <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
@@ -103,7 +105,7 @@
             </div>
           </div>
         </div>
-        <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector">
+        <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector" :data-filter-state="filterFieldState('result')">
           <label>检查人</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -133,7 +135,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item filter-item-result">
+        <div class="filter-item filter-item-result" :data-filter-state="filterFieldState('result')">
           <label>检查结果</label>
           <select v-model="filters.result">
             <option value="">全部</option>
@@ -141,7 +143,7 @@
             <option value="异常">异常</option>
           </select>
         </div>
-        <div class="filter-item filter-item-completion">
+        <div class="filter-item filter-item-completion" :data-filter-state="filterFieldState('completionStatus')">
           <label>检查人确认状态</label>
           <select v-model="filters.completionStatus">
             <option value="">全部</option>
@@ -149,7 +151,7 @@
             <option value="pending">待检查人确认</option>
           </select>
         </div>
-        <div class="filter-item filter-item-signature">
+        <div class="filter-item filter-item-signature" :data-filter-state="filterFieldState('signStatus')">
           <label>站经理签名状态</label>
           <select v-model="filters.signStatus">
             <option value="">全部</option>
@@ -717,6 +719,8 @@
 </template>
 
 <script setup>
+import FilterSummary from '@/components/FilterSummary.vue'
+import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
 import SignaturePad from 'signature_pad'
@@ -756,6 +760,13 @@ const cloneRecordFilters = (source) => Object.fromEntries(
 )
 
 const appliedFilters = ref(cloneRecordFilters(filters.value))
+
+const filterSummaryFields = computed(() => buildFilterSummary(
+  [["month","巡检月度"],["dateRange","巡检日期"],["result","站点"],["result","检查表"],["result","检查人"],["result","检查结果"],["completionStatus","检查人确认状态"],["signStatus","站经理签名状态"]].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value),
+  filters.value, appliedFilters.value
+))
+const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
+
 
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
@@ -922,22 +933,10 @@ const filteredStationOptions = computed(() => filterStationOptionByKeyword(stati
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filterSearch.value.inspectionTableName))
 const filteredInspectorOptions = computed(() => filterStationOptionByKeyword(inspectorOptions.value, filterSearch.value.inspector))
 
-const activeFilterCount = computed(() => {
-  return [
-    filters.value.month,
-    filters.value.dateFrom,
-    filters.value.dateTo,
-    filters.value.result,
-    filters.value.signStatus,
-    filters.value.completionStatus,
-    ...filters.value.station,
-    ...filters.value.inspectionTableName,
-    ...(hideInspectorContactInfo.value ? [] : filters.value.inspector)
-  ].filter((value) => String(value || '').trim()).length
-})
+const activeFilterCount = computed(() => filterSummaryFields.value.filter((item) => item.value).length)
 
 const recordFilterDraftDirty = computed(() => (
-  JSON.stringify(filters.value) !== JSON.stringify(appliedFilters.value)
+  filterSummaryFields.value.some((item) => item.changed)
 ))
 
 const currentInspectorFilterValue = computed(() => {

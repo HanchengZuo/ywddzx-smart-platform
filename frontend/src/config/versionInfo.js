@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.0',
+    date: '2026-09-05',
+    title: '统一筛选条件可视化',
+    summary: '待整改/待复核问题、巡检问题列表与巡检记录统一展示筛选条件及使用状态。',
+    items: [
+      '已设置字段以浅蓝色突出显示，空条件标注不限，待应用的修改以琥珀色提示。',
+      '筛选面板新增条件摘要，集中展示各条件的名称与实际值，支持查看已提交的条件。',
+      '移动端收起筛选面板后仍保留摘要，区分即时筛选与点击开始筛选后生效。'
+    ]
+  },
+  {
     version: 'v5.9',
     date: '2026-09-04',
     title: '站点地图流畅轮巡与问题联查',

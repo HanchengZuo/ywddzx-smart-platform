@@ -55,8 +55,10 @@
         </div>
       </div>
 
+      <FilterSummary :fields="filterSummaryFields" />
+
       <div class="filter-grid">
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('region')">
           <label>站点所属地</label>
           <div class="search-select" ref="regionSelectRef">
             <input v-model="filters.region" placeholder="搜索或选择站点所属地" @focus="openFilterDropdown('region')"
@@ -71,7 +73,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('station')">
           <label>站点名称</label>
           <div class="search-select" ref="stationSelectRef">
             <input v-model="filters.station" placeholder="搜索或选择站点名称" @focus="openFilterDropdown('station')"
@@ -86,7 +88,7 @@
           </div>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
           <div class="search-select" ref="inspectionTableSelectRef">
             <input v-model="filters.inspectionTableName" placeholder="搜索或选择检查表"
@@ -655,6 +657,8 @@
 </template>
 
 <script setup>
+import FilterSummary from '@/components/FilterSummary.vue'
+import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
@@ -819,9 +823,14 @@ const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
 const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(inspectionTableOptions.value, filters.value.inspectionTableName))
 
-const activeFilterCount = computed(() => {
-  return Object.values(filters.value).filter((value) => String(value || '').trim()).length
-})
+
+const filterSummaryFields = computed(() => buildFilterSummary(
+  [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]],
+  filters.value
+))
+const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
+
+const activeFilterCount = computed(() => filterSummaryFields.value.filter((item) => item.value).length)
 
 const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 50, 100])
 
