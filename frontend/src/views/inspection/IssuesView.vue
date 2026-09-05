@@ -427,13 +427,16 @@
           <select v-model="filters.rectificationResult">
             <option value="">全部</option>
             <option value="已整改">已整改</option>
+            <option value="站经无法整改">站级无法整改</option>
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('reviewResult')">
           <label>督导组复核结果</label>
           <select v-model="filters.reviewResult">
             <option value="">全部</option>
-            <option value="已整改">已整改</option>
+            <option value="整改通过">整改通过</option>
+            <option value="通过站级无法整改">通过站级无法整改</option>
+            <option value="驳回站级无法整改">驳回站级无法整改</option>
             <option value="整改不通过">整改不通过</option>
           </select>
         </div>
@@ -446,6 +449,8 @@
             <option value="待整改">待整改</option>
             <option value="待复核">待复核</option>
             <option value="已闭环">已闭环</option>
+            <option value="站级无法整改">站级无法整改</option>
+            <option value="已销毁">已销毁</option>
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('excellent')">
@@ -1125,6 +1130,8 @@
                 <option value="待整改">待整改</option>
                 <option value="待复核">待复核</option>
                 <option value="已闭环">已闭环</option>
+                <option value="站级无法整改">站级无法整改</option>
+                <option v-if="editDialog.issue?.audit_status === 'rejected'" value="已销毁">已销毁</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field">
@@ -1132,6 +1139,7 @@
               <select v-model="editDialog.form.rectification_result">
                 <option value="">暂无/清空</option>
                 <option value="已整改">已整改</option>
+                <option value="站经无法整改">站级无法整改</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
@@ -1142,8 +1150,7 @@
               <span>督导组复核结果</span>
               <select v-model="editDialog.form.review_result">
                 <option value="">暂无/清空</option>
-                <option value="已整改">已整改</option>
-                <option value="整改不通过">整改不通过</option>
+                <option v-for="result in reviewOptionsFor(editDialog.form.rectification_result)" :key="result" :value="result">{{ result }}</option>
               </select>
             </label>
             <label v-if="editDialog.issue?.can_edit_issue_workflow" class="issue-edit-field issue-edit-field-wide">
@@ -1340,6 +1347,7 @@
 </template>
 
 <script setup>
+import { reviewOptionsFor } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
@@ -3630,7 +3638,7 @@ const handlePreviewWheel = (event) => {
 }
 
 const issueFlowEventClass = (event) => ({
-  returned: event?.result === '整改不通过',
+  returned: ['整改不通过', '驳回站级无法整改'].includes(event?.result),
   completed: event?.to_status === '已闭环',
   rectification: event?.action_type === 'rectification_submitted'
 })
@@ -3792,7 +3800,7 @@ const statusClass = (status) => {
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
-  if (status === '站经无法整改') return 'status-tag neutral'
+  if (status === '站级无法整改') return 'status-tag neutral'
   return 'status-tag'
 }
 

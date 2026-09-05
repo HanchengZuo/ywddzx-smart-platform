@@ -464,13 +464,13 @@
             <div><strong>当前状态：</strong>{{ actionDrawer.item.status }}</div>
           </div>
 
-          <div v-if="actionDrawer.item.review_result === '整改不通过'" class="review-return-alert">
+          <div v-if="isReviewReturned(actionDrawer.item.review_result)" class="review-return-alert">
             <div class="review-return-alert-title">上一轮整改未通过复核</div>
             <p>{{ actionDrawer.item.review_note || '督导组未填写复核说明，请结合整改要求重新核对并提交。' }}</p>
             <span v-if="actionDrawer.item.review_at">退回时间：{{ actionDrawer.item.review_at }}</span>
           </div>
 
-          <IssueFlowTimeline v-bind="flowHistory" @photo="showFlowPhoto" />
+          <IssueFlowTimeline v-if="currentRole !== 'station_manager'" v-bind="flowHistory" @photo="showFlowPhoto" />
 
           <template v-if="currentRole === 'station_manager'">
             <div class="form-item">
@@ -478,6 +478,7 @@
               <select v-model="actionForm.rectificationResult">
                 <option value="">请选择</option>
                 <option value="已整改">已整改</option>
+                <option value="站经无法整改">站级无法整改</option>
               </select>
             </div>
 
@@ -525,7 +526,7 @@
               </div>
             </div>
             <div v-else class="drawer-photo-skip-note">
-              请提交整改照片。
+              已选择站级无法整改，无需上传整改照片，提交后等待督导组复核。
             </div>
 
           </template>
@@ -535,8 +536,7 @@
               <label>督导组复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
-                <option value="已整改">已整改</option>
-                <option value="整改不通过">整改不通过</option>
+                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ result }}</option>
               </select>
             </div>
 
@@ -640,6 +640,7 @@
 </template>
 
 <script setup>
+import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -680,7 +681,7 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
-const isReturnedForRectification = (item) => String(item?.review_result || '').trim() === '整改不通过'
+const isReturnedForRectification = (item) => isReviewReturned(item?.review_result)
 const reviewReturnReason = (item) => String(item?.review_note || '').trim()
   || '督导组未填写复核说明，请重新核对问题并提交整改。'
 const issueStatusLabel = (item) => isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
@@ -1075,25 +1076,27 @@ const actionForm = ref({
   reviewPhotoPreview: ''
 })
 
-const skipsIssuePhotoUpload = value => value === '整改不通过'
-const shouldShowRectificationPhotoUpload = computed(() => true)
-const shouldShowReviewPhotoUpload = computed(() => actionForm.value.reviewResult === '已整改')
+const skipsIssuePhotoUpload = value => isUnableRectification(value) || isReviewReturned(value) || value === '通过站级无法整改'
+const shouldShowRectificationPhotoUpload = computed(() => !isUnableRectification(actionForm.value.rectificationResult))
+const shouldShowReviewPhotoUpload = computed(() => reviewRequiresPhoto(actionForm.value.reviewResult))
 const reviewPhotoSkipMessage = computed(() => {
-  if (actionForm.value.reviewResult === '整改不通过') {
+  if (isUnableRectification(actionDrawer.value.item?.rectification_result)) return '站级无法整改申请复核无需上传照片，复核说明选填。'
+  if (isReviewReturned(actionForm.value.reviewResult)) {
     return '整改不通过将退回站经理重新整改，本次无需上传复核照片。'
   }
 
   return '选择复核结果后，系统会根据结果提示是否需要上传照片。'
 })
 const reviewOutcomeHint = computed(() => {
-  if (actionForm.value.reviewResult === '整改不通过') {
+  if (actionForm.value.reviewResult === '通过站级无法整改') return { type: 'closed', title: '通过站级无法整改申请', description: '问题将结束流转，最终状态为站级无法整改。' }
+  if (isReviewReturned(actionForm.value.reviewResult)) {
     return {
       type: 'returned',
       title: '将退回站经理重新整改',
       description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。'
     }
   }
-  if (actionForm.value.reviewResult === '已整改') {
+  if (reviewRequiresPhoto(actionForm.value.reviewResult)) {
     return {
       type: 'closed',
       title: '将完成问题闭环',
@@ -1173,16 +1176,16 @@ const openActionDrawer = (item) => {
   }
   actionMessage.value = ''
   actionForm.value = {
-    rectificationResult: item.rectification_result === '已整改' ? '已整改' : '',
+    rectificationResult: isUnableRectification(item.rectification_result) ? '站经无法整改' : item.rectification_result === '已整改' ? '已整改' : '',
     rectificationNote: item.rectification_note || '',
     rectificationPhotoFile: null,
     rectificationPhotoPreview: item.rectification_photo ? resolveImage(item.rectification_photo) : '',
-    reviewResult: ['已整改', '整改不通过'].includes(item.review_result) ? item.review_result : '',
+    reviewResult: '',
     reviewNote: item.review_note || '',
     reviewPhotoFile: null,
     reviewPhotoPreview: ''
   }
-  fetchIssueFlowHistory(item.id)
+  if (currentRole.value !== 'station_manager') fetchIssueFlowHistory(item.id)
 }
 
 const closeActionDrawer = () => {
@@ -1357,7 +1360,7 @@ const submitAction = async () => {
       showActionToast('请选择督导组复核结果。', 'error')
       return
     }
-    const reviewPhotoRequired = actionForm.value.reviewResult === '已整改'
+    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult)
     if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
       showActionToast('请上传复核照片。', 'error')
       return
@@ -1391,7 +1394,7 @@ const statusClass = (status) => {
   if (status === '待整改') return 'status-tag danger'
   if (status === '待复核') return 'status-tag warning'
   if (status === '已闭环') return 'status-tag success'
-  if (status === '站经无法整改') return 'status-tag neutral'
+  if (status === '站级无法整改') return 'status-tag neutral'
   return 'status-tag'
 }
 
