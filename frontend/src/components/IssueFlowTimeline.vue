@@ -4,7 +4,7 @@
     <p v-if="loading">正在读取流转记录...</p>
     <p v-else-if="error" role="alert">{{ error }}</p>
     <ol v-else>
-      <li v-for="event in events" :key="event.id" :class="{ returned: event.result === '整改不通过' }">
+      <li v-for="event in events" :key="event.id" :class="{ returned: ['整改不通过', '驳回站级无法整改'].includes(event.result) }">
         <div class="flow-event-heading"><strong>{{ event.action_label }}</strong><time>{{ event.created_at || '时间未记录' }}</time></div>
         <div class="flow-event-meta">{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮</span><span v-if="event.result"> · {{ event.result }}</span></div>
         <p v-if="event.from_status">{{ event.from_status }} → {{ event.to_status }}</p>

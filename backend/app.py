@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.1.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.2.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -1152,16 +1152,16 @@ server_resource_last_sample = {
 server_online_users_lock = threading.Lock()
 server_online_touch_lock = threading.Lock()
 server_online_touch_cache = {}
-ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环"}
-ISSUE_RESULT_OPTIONS = {"已整改"}
-ISSUE_REVIEW_RESULT_OPTIONS = {*ISSUE_RESULT_OPTIONS, "整改不通过"}
+ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站级无法整改", "已销毁"}
+ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
+ISSUE_REVIEW_RESULT_OPTIONS = {"整改通过", "整改不通过", "通过站级无法整改", "驳回站级无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
 ISSUE_AUDIT_STATUS_LABELS = {
     "pending": "待审核",
     "approved": "审核通过",
     "rejected": "审核否决",
 }
-ISSUE_STATUS_ALIASES = {"已整改": "已闭环"}
+ISSUE_STATUS_ALIASES = {"已整改": "已闭环", "站经无法整改": "站级无法整改"}
 ISSUE_RESULT_ALIASES = {
     "站级无法整改": "站经无法整改",
     "站级无法完成整改": "站经无法整改",
@@ -6779,7 +6779,7 @@ def canonical_issue_status(value):
 
 
 def is_closed_issue_status(value):
-    return canonical_issue_status(value) == "已闭环"
+    return canonical_issue_status(value) in {"已闭环", "站级无法整改"}
 
 
 def canonical_issue_result(value):
@@ -6787,18 +6787,27 @@ def canonical_issue_result(value):
     return ISSUE_RESULT_ALIASES.get(normalized, normalized)
 
 
-def resolve_issue_review_transition(value):
+def resolve_issue_review_transition(value, rectification_result=None):
     review_result = canonical_issue_result(value)
-    if review_result not in ISSUE_REVIEW_RESULT_OPTIONS:
-        raise ValueError("督导组复核结果只能选择已整改或整改不通过。")
     if review_result == "已整改":
+        review_result = "整改通过"
+    if review_result not in ISSUE_REVIEW_RESULT_OPTIONS:
+        raise ValueError("请选择有效的督导组复核结果。")
+    if rectification_result is not None:
+        if canonical_issue_result(rectification_result) not in ISSUE_RESULT_OPTIONS:
+            raise ValueError("站点尚未提交有效整改结果，不能进行复核。")
+        unable = canonical_issue_result(rectification_result) == "站经无法整改"
+        allowed = {"通过站级无法整改", "驳回站级无法整改"} if unable else {"整改通过", "整改不通过"}
+        if review_result not in allowed:
+            raise ValueError("复核选项与站点提交的整改结果不匹配，请刷新后重新选择。")
+    if review_result in {"整改通过", "通过站级无法整改"}:
         return {
             "review_result": review_result,
-            "new_status": "已闭环",
-            "photo_required": True,
+            "new_status": "已闭环" if review_result == "整改通过" else "站级无法整改",
+            "photo_required": review_result == "整改通过",
             "returns_to_station": False,
         }
-    if review_result == "整改不通过":
+    if review_result in {"整改不通过", "驳回站级无法整改"}:
         return {
             "review_result": review_result,
             "new_status": "待整改",
@@ -6925,6 +6934,8 @@ def is_issue_inspection_completion_done(issue):
 
 def display_issue_status(issue):
     status = canonical_issue_status((issue or {}).get("status"))
+    if is_issue_audit_rejected(issue):
+        return "已销毁"
     if is_issue_audit_pending(issue):
         return "待审核"
     if status == "待整改" and not is_issue_inspection_signed(issue):
@@ -6958,6 +6969,8 @@ def normalize_issue_row_for_response(
     for key in ("rectification_result", "review_result"):
         if key in data:
             data[key] = normalize_issue_result_for_response(data.get(key))
+    if data.get("review_result") == "已整改":
+        data["review_result"] = "整改通过"
     creator_can_modify = can_user_use_creator_issue_controls(user, data)
     closed = is_closed_issue_status(data.get("status"))
     inspection_signed = is_issue_inspection_signed(data)
@@ -11297,6 +11310,8 @@ def build_on_site_service_nested_distribution(issues, mode, label):
 
 
 def classify_on_site_service_rectification(row):
+    if row.get("review_result") in {"整改不通过", "驳回站级无法整改"}:
+        return "pending"
     if str(row.get("sign_status") or "").strip() != "已签名确认":
         return "unreceived"
     rectification_result = str(row.get("rectification_result") or "").strip()
@@ -11304,8 +11319,8 @@ def classify_on_site_service_rectification(row):
     issue_status = str(row.get("issue_status") or "").strip()
     if (
         rectification_result == "已整改"
-        or review_result == "已整改"
-        or issue_status == "已闭环"
+        or review_result in {"已整改", "整改通过", "通过站级无法整改"}
+        or issue_status in {"已闭环", "站级无法整改"}
     ):
         return "rectified"
     return "pending"
@@ -13282,11 +13297,11 @@ def classify_non_oil_rectification(row):
     rectification_result = str(row.get("rectification_result") or "").strip()
     review_result = str(row.get("review_result") or "").strip()
     if (
-        status in {"已闭环", "已整改", "站经无法整改"}
-        or review_result in ISSUE_RESULT_OPTIONS
+        status in {"已闭环", "已整改", "站经无法整改", "站级无法整改"}
+        or review_result in {"已整改", "整改通过", "通过站级无法整改"}
     ):
         return "completed"
-    if status == "待整改" or review_result == "整改不通过":
+    if status == "待整改" or review_result in {"整改不通过", "驳回站级无法整改"}:
         return "pending_rectification"
     if status == "待复核" or rectification_result:
         return "pending_acceptance"
@@ -15488,6 +15503,8 @@ def fetch_station_score_standard_context(
 
 def normalize_optional_issue_result(value, field_label, allowed_results=None):
     normalized = canonical_issue_result(value)
+    if allowed_results == ISSUE_REVIEW_RESULT_OPTIONS and normalized == "已整改":
+        normalized = "整改通过"
     if not normalized:
         return None
     if normalized not in (allowed_results or ISSUE_RESULT_OPTIONS):
@@ -23572,6 +23589,7 @@ def reset_inspection_record_flow(inspection_id):
                 400,
             )
 
+        cur.execute("SELECT set_config('app.lifecycle_context', 'inspection_reset', true)")
         cur.execute(
             """
             UPDATE issues
@@ -23609,12 +23627,20 @@ def reset_inspection_record_flow(inspection_id):
             for plan_config_id in affected_plan_config_ids:
                 sync_plan_station_items_completion_by_history(cur, plan_config_id)
 
+        if not reset_to_confirmation:
+            cur.execute("""
+                INSERT INTO inspection_issue_flow_history
+                  (issue_id, action_type, to_status, note, actor_user_id, actor_username, actor_name, actor_role)
+                SELECT i.id, 'inspection_reset', '待审核', '巡检记录已重置，恢复等待问题审核',
+                       u.id, u.username, u.real_name, u.role
+                FROM issues i JOIN users u ON u.id = %s WHERE i.inspection_id = %s
+            """, (user["id"], inspection_id))
         conn.commit()
 
         if reset_to_confirmation:
-            message = "巡检记录已回退到等待检查人确认，关联问题审核记录已清空。"
+            message = "巡检记录已回退到等待检查人确认，关联问题已恢复待审核，历史流转记录保留。"
         else:
-            message = "巡检记录已回退到等待问题审核，关联问题审核记录已清空。"
+            message = "巡检记录已回退到等待问题审核，关联问题已恢复待审核，历史流转记录保留。"
 
         return jsonify(
             {
@@ -31854,6 +31880,8 @@ def append_issue_list_filter_clauses(where_clauses, params, filters, hide_inspec
     status = filters["status"]
     if status == "待审核":
         where_clauses.append(f"{audit_status_sql} = 'pending'")
+    elif status == "已销毁":
+        where_clauses.append(f"{audit_status_sql} = 'rejected'")
     elif status == "待签名":
         where_clauses.append(f"{audit_status_sql} <> 'pending'")
         where_clauses.append("i.status = '待整改'")
@@ -35954,6 +35982,8 @@ def update_issue(issue_id):
             "督导组复核结果",
             ISSUE_REVIEW_RESULT_OPTIONS,
         )
+        if review_result:
+            resolve_issue_review_transition(review_result, rectification_result or "")
     except ValueError as error:
         return jsonify({"success": False, "error": str(error)}), 400
 
@@ -36011,6 +36041,9 @@ def update_issue(issue_id):
 
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
+
+        if status == "已销毁" and not is_issue_audit_rejected(issue):
+            return jsonify({"success": False, "error": "已销毁状态只能由审核否决产生，请使用审核操作。"}), 400
 
         if is_issue_inspection_signed(issue):
             return jsonify({"success": False, "error": "该问题所属检查表已完成站经理签字确认，不能继续编辑。"}), 403
@@ -39530,7 +39563,7 @@ def serialize_issue_flow_history_event(row):
         }[action_type]
     elif action_type == "rectification_submitted":
         action_label = "站经理提交整改"
-    elif result == "整改不通过":
+    elif result in {"整改不通过", "驳回站级无法整改"}:
         action_label = "督导复核退回整改"
     else:
         action_label = "督导组提交复核"
@@ -39544,6 +39577,16 @@ def serialize_issue_flow_history_event(row):
         or "历史数据"
     )
     event["note"] = str(event.get("note") or "").strip()
+    if action_type == "inspection_reset" or (action_type == "inspection_completed" and "待检查人确认" in str(event.get("to_status") or "")):
+        event["action_label"] = "重置巡检记录"
+    elif action_type == "inspection_signed" and "撤销" in str(event.get("to_status") or ""):
+        event["action_label"] = "撤销站经理签名"
+    elif action_type == "audit_changed" and result == "待审核":
+        event["action_label"] = "巡检重置：恢复待审核" if "巡检记录重置" in event["note"] else "审核重新判定（恢复待审核）"
+    elif action_type == "review_submitted" and result == "通过站级无法整改":
+        event["action_label"] = "通过站级无法整改申请"
+    elif action_type == "review_submitted" and result == "驳回站级无法整改":
+        event["action_label"] = "驳回站级无法整改申请"
     if action_type == "audit_changed" and event["note"].startswith("自动审核"):
         event["action_label"] = "自动审核"
         event["actor_display_name"] = "系统自动审核"
@@ -39678,7 +39721,7 @@ def submit_rectification(issue_id):
             jsonify(
                 {
                     "success": False,
-                    "error": "整改结果只能选择已整改。",
+                    "error": "整改结果只能选择已整改或站级无法整改。",
                 }
             ),
             400,
@@ -39875,7 +39918,7 @@ def submit_review(issue_id):
 
         cur.execute(
             """
-            SELECT id, status
+            SELECT id, status, rectification_result
                 , COALESCE(audit_status, 'pending') AS audit_status
             FROM issues
             WHERE id = %s
@@ -39903,6 +39946,11 @@ def submit_review(issue_id):
                 400,
             )
 
+        try:
+            transition = resolve_issue_review_transition(review_result, issue.get("rectification_result") or "")
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        review_result = transition["review_result"]
         new_status = transition["new_status"]
         review_photo_path = None
         if review_photo_required and review_photo and review_photo.filename:
