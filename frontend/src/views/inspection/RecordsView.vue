@@ -45,7 +45,7 @@
             @change="handleRecordDateRangeChange"
           />
         </div>
-        <div class="filter-item filter-item-station" :data-filter-state="filterFieldState('result')">
+        <div class="filter-item filter-item-station" :data-filter-state="filterFieldState('station')">
           <label>站点</label>
           <div class="search-select multi-search-select" ref="stationSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('station')">
@@ -75,7 +75,7 @@
             </div>
           </div>
         </div>
-        <div class="filter-item filter-item-table" :data-filter-state="filterFieldState('result')">
+        <div class="filter-item filter-item-table" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
           <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
@@ -105,7 +105,7 @@
             </div>
           </div>
         </div>
-        <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector" :data-filter-state="filterFieldState('result')">
+        <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector" :data-filter-state="filterFieldState('inspector')">
           <label>检查人</label>
           <div class="search-select multi-search-select" ref="inspectorSelectRef">
             <div class="multi-select-control" @click="focusMultiFilterInput('inspector')">
@@ -762,7 +762,18 @@ const cloneRecordFilters = (source) => Object.fromEntries(
 const appliedFilters = ref(cloneRecordFilters(filters.value))
 
 const filterSummaryFields = computed(() => buildFilterSummary(
-  [["month","巡检月度"],["dateRange","巡检日期"],["result","站点"],["result","检查表"],["result","检查人"],["result","检查结果"],["completionStatus","检查人确认状态"],["signStatus","站经理签名状态"]].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value),
+  [
+    ['month', '巡检月度'],
+    ['dateRange', '巡检日期'],
+    ['station', '站点'],
+    ['inspectionTableName', '检查表'],
+    ['inspector', '检查人'],
+    ['result', '检查结果'],
+    ['completionStatus', '检查人确认状态'],
+    ['signStatus', '站经理签名状态']
+  ].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value
+    || filters.value.inspector.includes(currentInspectorFilterValue.value)
+    || appliedFilters.value.inspector.includes(currentInspectorFilterValue.value)),
   filters.value, appliedFilters.value
 ))
 const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
