@@ -9,14 +9,16 @@
         <div class="flow-event-meta">{{ event.actor_display_name }}<span v-if="event.round_no"> · 第 {{ event.round_no }} 轮</span><span v-if="event.result"> · {{ event.result }}</span></div>
         <p v-if="event.from_status">{{ event.from_status }} → {{ event.to_status }}</p>
         <p v-if="event.note">{{ event.note }}</p>
-        <button v-if="event.photo_path" class="text-link-btn" type="button" @click="$emit('photo', event)">查看本轮照片</button>
+        <button v-if="event.photo_path" class="flow-photo-thumb" type="button" :aria-label="`放大查看${event.action_label}照片`" @click="$emit('photo', event)">
+          <img :src="resolvePhoto(event.photo_path)" :alt="`${event.action_label}照片`" loading="lazy" />
+        </button>
       </li>
       <li v-if="!events.length">暂无流转记录</li>
     </ol>
   </section>
 </template>
 <script setup>
-defineProps({ loading: Boolean, error: String, events: { type: Array, default: () => [] } })
+defineProps({ loading: Boolean, error: String, events: { type: Array, default: () => [] }, resolvePhoto: { type: Function, default: path => path } })
 defineEmits(['photo'])
 </script>
 <style scoped>
@@ -30,5 +32,8 @@ li.returned::before { background: #dc6a46; }
 .flow-event-heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .flow-event-meta { margin-top: 8px; }
 p { line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; margin: 8px 0; }
+.flow-photo-thumb { display: block; width: 180px; max-width: 100%; height: 128px; padding: 4px; margin-top: 12px; background: #f6f9fd; border: 1px solid #dce6f1; border-radius: 10px; cursor: zoom-in; }
+.flow-photo-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; border-radius: 6px; }
+.flow-photo-thumb:focus-visible { outline: 2px solid #2985be; outline-offset: 3px; }
 @media(max-width:640px) { .flow-timeline-card { padding: 12px; } }
 </style>
