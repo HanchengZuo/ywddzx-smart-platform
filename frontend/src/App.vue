@@ -265,6 +265,12 @@
           <span class="nav-item-icon">证</span>
           <span v-if="!sidebarCollapsed">证照管理</span>
         </button>
+        <button v-if="isPageVisible('/inspection/appeals')" class="nav-item"
+          :class="{ active: isActive('/inspection/appeals'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/appeals')" :title="sidebarCollapsed ? '申诉空间' : ''">
+          <span class="nav-item-icon">诉</span>
+          <span v-if="!sidebarCollapsed">申诉空间</span>
+        </button>
       </div>
 
       <div v-if="canViewInspectionReports" class="menu-section">
@@ -995,6 +1001,7 @@ const canViewMyIssues = computed(() => (isSupervisor.value || isStationManager.v
 const canViewStationMyIssues = computed(() => isStationManager.value && isPageVisible('/inspection/my-issues'))
 const canViewSupervisorMyIssues = computed(() => isSupervisor.value && isPageVisible('/inspection/my-issues'))
 const canViewInspectionSection = computed(() => (
+  isPageVisible('/inspection/appeals') ||
   canSubmitInspections.value ||
   canViewInspectionStandards.value ||
   canViewChecklistOriginals.value ||

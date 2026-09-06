@@ -451,6 +451,7 @@
             <option value="已闭环">已闭环</option>
             <option value="站级无法整改">站级无法整改</option>
             <option value="已销毁">已销毁</option>
+            <option value="申诉中">申诉中</option>
           </select>
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('excellent')">

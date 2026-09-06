@@ -225,6 +225,7 @@
                 ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                 : '提交复核' }}
             </button>
+            <button v-if="currentRole === 'station_manager' && item.can_appeal" class="btn appeal-action" type="button" @click="appealItem = item">发起申诉</button>
             <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="mobile-action-tip">
               当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。
             </div>
@@ -388,6 +389,7 @@
                       ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                       : '提交复核' }}
                   </button>
+                  <button v-if="currentRole === 'station_manager' && item.can_appeal" class="btn btn-sm appeal-action" type="button" @click="appealItem = item">发起申诉</button>
                   <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
                     待检查表签名
                   </div>
@@ -637,9 +639,12 @@
       </div>
     </div>
   </div>
+  <AppealSubmitDialog v-if="appealItem" :item="appealItem" @close="appealItem = null" @submitted="appealSubmitted" />
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
@@ -667,6 +672,14 @@ const isInspectionSigned = (item) => {
     ''
   ).trim()
   return status === '已签名确认'
+}
+
+const router = useRouter()
+const appealItem = ref(null)
+const appealSubmitted = () => {
+  appealItem.value = null
+  window.dispatchEvent(new Event('my-pending-rectification-refresh'))
+  router.push({ path: '/inspection/appeals', query: { submitted: '1' } })
 }
 
 
@@ -1425,6 +1438,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.appeal-action { display: block; margin-top: 8px; color: #256e9c; background: #edf6fd; border-color: #c9dfef; }
 .review-date-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .review-date-range input { flex: 1 1 120px; min-width: 0; width: 100%; }
 

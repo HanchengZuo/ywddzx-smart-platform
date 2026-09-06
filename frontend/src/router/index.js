@@ -125,6 +125,10 @@ const routes = [
     component: () => import('../views/inspection/CertificatesView.vue')
   },
   {
+    path: '/inspection/appeals',
+    component: () => import('../views/inspection/AppealsView.vue')
+  },
+  {
     path: '/feedback',
     component: () => import('../views/Feedback.vue')
   }
@@ -138,6 +142,7 @@ const router = createRouter({
 const hasPermission = (role, permissions, key) => role === 'root' || Boolean(permissions[key])
 
 const canAccessPath = (path, role, permissions) => {
+  if (path === '/inspection/appeals') return true
   if (role === 'root') return true
   if (path === '/management/page-visibility') return false
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
