@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.4',
+    date: '2026-09-06',
+    title: '站点申诉与两级审核',
+    summary: '新增申诉空间，支持站点申诉、所属片区初审和授权质安部终审。',
+    items: [
+      '指定五张检查表支持站点申诉，签名验收后的待整改问题可发起申诉。',
+      '新增申诉空间，片区仅审核所管站点，质安部终审权限由root分配。',
+      '任一级拒绝恢复整改，终审通过后已销毁，申诉与审核原因纳入问题流转记录。'
+    ]
+  },
+  {
     version: 'v6.3',
     date: '2026-09-05',
     title: '复核照片直览与退回表单重置',

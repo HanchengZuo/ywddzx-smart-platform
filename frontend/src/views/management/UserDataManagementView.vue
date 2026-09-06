@@ -728,12 +728,6 @@ import { clearAuthSession } from '@/utils/authSession'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
-let localPermissions = {}
-try {
-  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
-  localPermissions = {}
-}
 const hasPermission = currentRole === 'root'
 
 const users = ref([])
@@ -1304,6 +1298,7 @@ const enforceExclusivePermissions = (permissionMap, role = form.role) => {
 }
 
 const isPermissionDisabled = (permissionKey) => {
+  if (permissionKey === 'review_quality_appeals') return currentRole !== 'root' || !['root', 'quality_safety'].includes(form.role)
   const parentKey = dependentPermissionMap[permissionKey]
   if (parentKey && !form.permissions[parentKey]) return true
   const parentKeys = anyDependentPermissionMap[permissionKey]
@@ -1318,6 +1313,7 @@ const isPermissionDisabledForMap = (permissionMap, permissionKey) => {
 }
 
 const isRolePermissionDisabled = (permissionKey) => {
+  if (permissionKey === 'review_quality_appeals') return currentRole !== 'root' || rolePermissionDialog.role !== 'quality_safety'
   return isPermissionDisabledForMap(rolePermissionDialog.permissions, permissionKey)
 }
 
@@ -1887,7 +1883,7 @@ const exportUsers = async () => {
     link.remove()
     window.URL.revokeObjectURL(blobUrl)
     setMessage('用户数据备份文件已生成，已包含数据库当前密码，请妥善保管。', 'success')
-  } catch (error) {
+  } catch {
     setMessage('用户数据导出失败，请稍后重试。', 'error')
   } finally {
     exporting.value = false

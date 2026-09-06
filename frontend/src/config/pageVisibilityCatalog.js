@@ -64,6 +64,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         path: '/inspection/certificates',
         title: '证照管理',
         description: '维护和查看站点证照有效期与到期提醒。'
+      },
+      {
+        key: '/inspection/appeals',
+        path: '/inspection/appeals',
+        title: '申诉空间',
+        description: '所有用户可访问，按数据范围查看站点申诉；片区初审、授权质安部终审。'
       }
     ]
   },

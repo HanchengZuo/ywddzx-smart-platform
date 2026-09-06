@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.3.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.4.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -655,6 +655,8 @@ def build_server_resource_snapshot():
     }
 
 # === Permission constants ===
+from issue_appeals import APPEAL_LABELS, register_issue_appeals
+
 ROLE_OPTIONS = {
     "root",
     "supervisor",
@@ -1047,6 +1049,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "review_quality_appeals",
+        "name": "质安部申诉终审",
+        "category": "申诉空间",
+        "description": "仅质安部角色可使用；审核片区通过的申诉。通过后问题已销毁，拒绝后恢复整改。片区账号默认仅审核所管站点的初审，无需此权限。",
+        "defaults": {"root": True, "quality_safety": False},
+    },
+    {
         "key": "manage_security",
         "name": "管理账号密码安全",
         "category": "系统安全管理",
@@ -1152,7 +1161,7 @@ server_resource_last_sample = {
 server_online_users_lock = threading.Lock()
 server_online_touch_lock = threading.Lock()
 server_online_touch_cache = {}
-ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站级无法整改", "已销毁"}
+ISSUE_STATUS_OPTIONS = {"待整改", "待复核", "已闭环", "站级无法整改", "已销毁", "申诉中"}
 ISSUE_RESULT_OPTIONS = {"已整改", "站经无法整改"}
 ISSUE_REVIEW_RESULT_OPTIONS = {"整改通过", "整改不通过", "通过站级无法整改", "驳回站级无法整改"}
 ISSUE_AUDIT_STATUS_OPTIONS = {"pending", "approved", "rejected"}
@@ -6247,6 +6256,10 @@ def apply_role_permission_updates(cur, role, permissions, actor_user_id):
         normalize_permission_updates(permissions),
         normalized_role,
     )
+    if not is_root_user(get_user_by_id(cur, actor_user_id)):
+        previous = build_role_effective_permissions(cur, normalized_role).get('review_quality_appeals', False)
+        if bool(normalized_permissions.get('review_quality_appeals')) != bool(previous):
+            raise PermissionError('只有root可以分配或撤销质安部申诉终审权限。')
     cur.execute("DELETE FROM role_permissions WHERE role = %s;", (normalized_role,))
     for permission_key, is_allowed in normalized_permissions.items():
         cur.execute(
@@ -17222,6 +17235,10 @@ def normalize_station_region_scope_updates(raw_scope_values):
 
 
 def apply_user_permission_updates(cur, target_user, permissions, actor_user_id):
+    if 'review_quality_appeals' in permissions and not is_root_user(get_user_by_id(cur, actor_user_id)):
+        previous = has_permission(cur, target_user, 'review_quality_appeals')
+        if bool(permissions['review_quality_appeals']) != previous:
+            raise PermissionError('只有root可以分配或撤销质安部申诉终审权限。')
     if is_root_user(target_user):
         cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user["id"],))
         cur.execute("DELETE FROM user_inspection_table_scopes WHERE user_id = %s;", (target_user["id"],))
@@ -31415,6 +31432,7 @@ def get_my_issues():
                 """
                 SELECT
                     i.id,
+                    t.checklist_mode AS appeal_checklist_mode,
                     i.station_id,
                     COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
@@ -31462,6 +31480,11 @@ def get_my_issues():
                 (user["station_id"],),
             )
             rows = cur.fetchall()
+            for row in rows:
+                row['can_appeal'] = (
+                    normalize_checklist_scope_name(row.get('inspection_table_name')),
+                    normalize_checklist_mode(row.pop('appeal_checklist_mode', None)),
+                ) in QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE
             attach_internal_standard_tags_to_issue_rows(cur, rows)
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
@@ -36042,6 +36065,9 @@ def update_issue(issue_id):
         if not issue:
             return jsonify({"success": False, "error": "巡检问题不存在。"}), 404
 
+        if issue.get('status') == '申诉中' or status == '申诉中':
+            return jsonify({"success": False, "error": "申诉中的问题请通过申诉流程处理，不能直接编辑状态。"}), 409
+
         if status == "已销毁" and not is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "已销毁状态只能由审核否决产生，请使用审核操作。"}), 400
 
@@ -39553,7 +39579,9 @@ def serialize_issue_flow_history_event(row):
     event = dict(row)
     action_type = str(event.get("action_type") or "").strip()
     result = canonical_issue_result(event.get("result"))
-    if action_type == "issue_created":
+    if action_type in APPEAL_LABELS:
+        action_label = APPEAL_LABELS[action_type]
+    elif action_type == "issue_created":
         action_label = "登记巡检问题"
     elif action_type in {"audit_changed", "issue_updated", "status_changed", "inspection_signed", "inspection_completed"}:
         action_label = {
@@ -39794,6 +39822,8 @@ def submit_rectification(issue_id):
 
         if is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "该问题已被审核否决，不再参与整改流转。"}), 400
+        if is_issue_audit_pending(issue):
+            return jsonify({"success": False, "error": "该问题正在重新审核，审核通过后才能提交整改。"}), 409
 
         if issue["inspection_sign_status"] != "已签名确认":
             return (
@@ -39934,6 +39964,8 @@ def submit_review(issue_id):
 
         if is_issue_audit_rejected(issue):
             return jsonify({"success": False, "error": "该问题已被审核否决，不再参与复核流转。"}), 400
+        if is_issue_audit_pending(issue):
+            return jsonify({"success": False, "error": "该问题正在重新审核，审核通过后才能提交复核。"}), 409
 
         if issue["status"] != "待复核":
             return (
@@ -40037,6 +40069,8 @@ def uploaded_file(filename):
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
+
+register_issue_appeals(app, globals())
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
