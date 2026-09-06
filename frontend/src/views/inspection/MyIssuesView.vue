@@ -25,9 +25,9 @@
       </div>
 
       <div v-if="currentRole === 'station_manager'" class="summary-card summary-card-danger card-surface">
-        <div class="summary-label">复核退回</div>
+        <div class="summary-label">退回待整改</div>
         <div class="summary-value summary-value-returned">{{ returnedRectificationCount }}</div>
-        <div class="summary-desc">上一轮整改未通过，需要重新处理的问题</div>
+        <div class="summary-desc">复核或申诉被驳回，需要继续整改的问题</div>
       </div>
     </div>
 
@@ -176,12 +176,12 @@
             <div v-if="currentRole === 'station_manager' && isReturnedForRectification(item)"
               class="mobile-review-return-notice">
               <div class="mobile-review-return-head">
-                <strong>上一轮整改未通过</strong>
+                <strong>{{ returnTitle(item) }}</strong>
                 <span>待重新整改</span>
               </div>
               <p>{{ reviewReturnReason(item) }}</p>
               <div class="mobile-review-return-foot">
-                <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
+                <small>{{ returnTime(item) }}</small>
                 <button class="status-flow-link" type="button" @click="openFlowDialog(item)">查看完整流转</button>
               </div>
             </div>
@@ -218,7 +218,7 @@
             </button>
           </div>
 
-          <div class="mobile-card-actions">
+          <div class="mobile-card-actions action-stack">
             <button class="btn btn-primary" type="button" @click="openActionDrawer(item)"
               :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
               {{ currentRole === 'station_manager'
@@ -372,9 +372,9 @@
                   <div class="issue-status-flow" :class="{ 'is-returned': isReturnedForRectification(item) }">
                     <span :class="issueStatusClass(item)">{{ issueStatusLabel(item) }}</span>
                     <template v-if="currentRole === 'station_manager' && isReturnedForRectification(item)">
-                      <strong>上一轮整改未通过</strong>
+                      <strong>{{ returnTitle(item) }}</strong>
                       <p>{{ reviewReturnReason(item) }}</p>
-                      <small>{{ item.review_at ? `退回时间：${item.review_at}` : '退回时间未记录' }}</small>
+                      <small>{{ returnTime(item) }}</small>
                     </template>
                     <button v-if="currentRole === 'station_manager'" class="status-flow-link" type="button"
                       @click="openFlowDialog(item)">
@@ -383,6 +383,7 @@
                   </div>
                 </td>
                 <td v-if="isMyIssueColumnVisible('action')" class="nowrap-col action-col">
+                  <div class="action-stack">
                   <button class="btn btn-primary btn-sm" type="button" @click="openActionDrawer(item)"
                     :disabled="currentRole === 'station_manager' && !isInspectionSigned(item)">
                     {{ currentRole === 'station_manager'
@@ -390,6 +391,7 @@
                       : '提交复核' }}
                   </button>
                   <button v-if="currentRole === 'station_manager' && item.can_appeal" class="btn btn-sm appeal-action" type="button" @click="appealItem = item">发起申诉</button>
+                  </div>
                   <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
                     待检查表签名
                   </div>
@@ -466,10 +468,10 @@
             <div><strong>当前状态：</strong>{{ actionDrawer.item.status }}</div>
           </div>
 
-          <div v-if="isReviewReturned(actionDrawer.item.review_result)" class="review-return-alert">
-            <div class="review-return-alert-title">上一轮整改未通过复核</div>
-            <p>{{ actionDrawer.item.review_note || '督导组未填写复核说明，请结合整改要求重新核对并提交。' }}</p>
-            <span v-if="actionDrawer.item.review_at">退回时间：{{ actionDrawer.item.review_at }}</span>
+          <div v-if="isReturnedForRectification(actionDrawer.item)" class="review-return-alert">
+            <div class="review-return-alert-title">{{ returnTitle(actionDrawer.item) }}</div>
+            <p>{{ reviewReturnReason(actionDrawer.item) }}</p>
+            <span>{{ returnTime(actionDrawer.item) }}</span>
           </div>
 
           <IssueFlowTimeline v-if="currentRole !== 'station_manager'" v-bind="flowHistory" :resolve-photo="resolveImage" @photo="showFlowPhoto" />
@@ -694,10 +696,12 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
-const isReturnedForRectification = (item) => isReviewReturned(item?.review_result)
-const reviewReturnReason = (item) => String(item?.review_note || '').trim()
+const isReturnedForRectification = (item) => Boolean(item?.appeal_rejected) || isReviewReturned(item?.review_result)
+const returnTitle = (item) => item?.appeal_rejected ? `${item.appeal_rejected_by_stage}未通过申诉，请继续整改（不可再次申诉）` : '上一轮整改未通过复核'
+const returnTime = (item) => `退回时间：${(item?.appeal_rejected ? item.appeal_rejected_at : item?.review_at) || '未记录'}`
+const reviewReturnReason = (item) => String((item?.appeal_rejected ? item.appeal_rejection_reason : item?.review_note) || '').trim()
   || '督导组未填写复核说明，请重新核对问题并提交整改。'
-const issueStatusLabel = (item) => isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
+const issueStatusLabel = (item) => item?.appeal_rejected ? '申诉驳回 · 待整改' : isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
 const issueStatusClass = (item) => isReturnedForRectification(item) ? 'status-tag returned' : statusClass(item?.status)
 const returnedRectificationCount = computed(() => (
   issues.value.filter((item) => isReturnedForRectification(item)).length
@@ -1438,7 +1442,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.appeal-action { display: block; margin-top: 8px; color: #256e9c; background: #edf6fd; border-color: #c9dfef; }
+.action-stack { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.action-stack .btn.appeal-action { margin: 0; color: #fff; background: #dc3545; border-color: #dc3545; }
+.action-stack .btn.appeal-action:hover { background: #bd2433; border-color: #bd2433; }
 .review-date-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .review-date-range input { flex: 1 1 120px; min-width: 0; width: 100%; }
 

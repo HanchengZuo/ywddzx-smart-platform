@@ -46,7 +46,7 @@ class AppealDatabaseTests(unittest.TestCase):
         self.conn = core.get_db_connection()
         self.cur = self.conn.cursor()
         self.addCleanup(self.cleanup_database)
-        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals'):
+        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications'):
             path = Path(__file__).parents[1] / f'migrations/versions/{name}.py'
             spec = importlib.util.spec_from_file_location(name, path)
             migration = importlib.util.module_from_spec(spec)
@@ -54,7 +54,7 @@ class AppealDatabaseTests(unittest.TestCase):
             migration.op = SimpleNamespace(execute=self.cur.execute)
             migration.upgrade()
         migration.upgrade()
-        self.cur.execute('SELECT i.id,i.station_id,i.inspection_id,s.region FROM issues i JOIN stations s ON s.id=i.station_id ORDER BY i.id DESC LIMIT 1')
+        self.cur.execute('SELECT i.id,i.station_id,i.inspection_id,s.region FROM issues i JOIN stations s ON s.id=i.station_id WHERE NOT EXISTS (SELECT 1 FROM inspection_issue_appeal_claims c WHERE c.issue_id=i.id) ORDER BY i.id DESC LIMIT 1')
         self.issue = self.cur.fetchone()
         if not self.issue:
             self.skipTest('Needs one local issue')
@@ -161,14 +161,49 @@ class AppealDatabaseTests(unittest.TestCase):
         self.cur.execute("SELECT count(*) AS n FROM inspection_issue_flow_history WHERE issue_id=%s AND action_type LIKE 'appeal_%%'", (self.issue['id'],))
         self.assertEqual(self.cur.fetchone()['n'], 3)
 
-    def test_each_rejection_restores_and_reappeal_is_allowed(self):
+    def test_area_rejection_restores_and_reappeal_is_forbidden(self):
         aid = self.start()
         self.assertEqual(self.decide(aid, 'area', 'area_pending', 'reject').status_code, 200)
         self.assertEqual(self.state(), '待整改')
+        self.assertEqual(self.post(f"/api/issues/{self.issue['id']}/appeals", reason='再次申诉').status_code, 409)
+
+    def test_quality_rejection_restores_and_reappeal_is_forbidden(self):
         aid = self.start()
         self.assertEqual(self.decide(aid, 'area', 'area_pending').status_code, 200)
         self.assertEqual(self.decide(aid, 'quality', 'quality_pending', 'reject').status_code, 200)
         self.assertEqual(self.state(), '待整改')
+        self.assertEqual(self.post(f"/api/issues/{self.issue['id']}/appeals", reason='再次申诉').status_code, 409)
+
+    def test_notifications_persist_until_end_then_read_per_user(self):
+        def listing(identity):
+            return self.client.get(f"/api/issue-appeals?archive=1&keyword={self.issue['id']}", headers={'X-Test-Identity': identity}).json
+        before = listing('station')['counts']
+        aid = self.start()
+        data = listing('station')
+        self.assertEqual(data['counts']['active'], before['active'] + 1)
+        self.assertEqual(data['counts']['total'], before['total'] + 1)
+        self.assertEqual(listing('wrong_station')['counts']['total'], 0)
+        self.decide(aid, 'area', 'area_pending', 'reject')
+        data = listing('station')
+        self.assertEqual(data['counts']['active'], before['active'])
+        self.assertEqual(listing('station')['counts']['unread_ended'], before['unread_ended'] + 1)
+        version = next(i for i in data['items'] if i['id'] == aid)['notification_version']
+        self.assertEqual(self.post(f'/api/issue-appeals/{aid}/read', 'wrong_station', version=version).status_code, 403)
+        self.assertEqual(self.post(f'/api/issue-appeals/{aid}/read', version='stale').status_code, 409)
+        self.assertEqual(self.post(f'/api/issue-appeals/{aid}/read', version=version).json['counts']['total'], before['total'])
+        self.assertEqual(listing('station')['counts']['total'], before['total'])
+        self.cur.execute('SELECT id FROM users WHERE id<>%s LIMIT 1', (self.users['quality']['id'],))
+        self.users['quality']['id'] = self.cur.fetchone()['id']
+        self.assertTrue(next(i for i in listing('quality')['items'] if i['id'] == aid)['unread'])
+
+    def test_appeal_action_has_no_generic_duplicate_event(self):
+        self.cur.execute('SELECT max(id) AS id FROM inspection_issue_flow_history')
+        since = self.cur.fetchone()['id'] or 0
+        aid = self.start()
+        self.decide(aid, 'area', 'area_pending')
+        self.decide(aid, 'quality', 'quality_pending')
+        self.cur.execute('SELECT action_type FROM inspection_issue_flow_history WHERE issue_id=%s AND id>%s ORDER BY id', (self.issue['id'], since))
+        self.assertEqual([r['action_type'] for r in self.cur.fetchall()], ['appeal_submitted', 'appeal_area_approved', 'appeal_quality_approved'])
 
     def test_reset_cancels_pending_appeal(self):
         aid = self.start()
@@ -177,6 +212,33 @@ class AppealDatabaseTests(unittest.TestCase):
         self.cur.execute('SELECT status FROM inspection_issue_appeals WHERE id=%s', (aid,))
         self.assertEqual(self.cur.fetchone()['status'], 'cancelled')
         self.assertEqual(self.decide(aid, 'area', 'area_pending').status_code, 409)
+        self.cur.execute("UPDATE issues SET audit_status='approved' WHERE id=%s", (self.issue['id'],))
+        self.assertEqual(self.post(f"/api/issues/{self.issue['id']}/appeals", reason='重置后再次申诉').status_code, 409)
+
+    def test_rejection_is_one_business_event(self):
+        aid = self.start()
+        self.assertEqual(self.decide(aid, 'area', 'area_pending', 'reject').status_code, 200)
+        self.cur.execute("SELECT action_type FROM inspection_issue_flow_history WHERE issue_id=%s AND from_status='申诉中' AND to_status='待整改' ORDER BY id", (self.issue['id'],))
+        self.assertEqual([r['action_type'] for r in self.cur.fetchall()], ['appeal_area_rejected'])
+
+    def test_deleted_appeal_does_not_restore_lifetime_eligibility(self):
+        aid = self.start()
+        self.decide(aid, 'area', 'area_pending', 'reject')
+        self.cur.execute('DELETE FROM inspection_issue_appeals WHERE id=%s', (aid,))
+        self.cur.execute('SAVEPOINT lifetime_check')
+        with self.assertRaises(Exception) as raised:
+            self.cur.execute("INSERT INTO inspection_issue_appeals(issue_id,status,reason) VALUES (%s,'area_pending','再次申请')", (self.issue['id'],))
+        self.assertEqual(raised.exception.pgcode, '23505')
+        self.cur.execute('ROLLBACK TO SAVEPOINT lifetime_check')
+        self.cur.execute('RELEASE SAVEPOINT lifetime_check')
+
+    def test_active_read_does_not_clear_badge(self):
+        aid = self.start()
+        before = self.client.get('/api/issue-appeals', headers={'X-Test-Identity': 'station'}).json
+        item = next(i for i in before['items'] if i['id'] == aid)
+        self.assertEqual(self.post(f'/api/issue-appeals/{aid}/read', version=item['notification_version']).status_code, 409)
+        after = self.client.get('/api/issue-appeals', headers={'X-Test-Identity': 'station'}).json
+        self.assertEqual(before['counts'], after['counts'])
 
     def test_database_prevents_two_active_appeals(self):
         self.start()

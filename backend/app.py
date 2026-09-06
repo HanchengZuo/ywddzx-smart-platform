@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.4.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.5.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -655,7 +655,8 @@ def build_server_resource_snapshot():
     }
 
 # === Permission constants ===
-from issue_appeals import APPEAL_LABELS, register_issue_appeals
+from issue_appeals import APPEAL_LABELS, register_issue_appeals, appeal_notification_counts
+from issue_flow_presentation import present_flow_rows, flow_event_presentation
 
 ROLE_OPTIONS = {
     "root",
@@ -20156,6 +20157,7 @@ def get_notification_summary():
         feedback_unread_count = get_feedback_unread_count(cur, current_user["id"])
         inspection_sign_pending_count = get_inspection_sign_pending_count_for_user(cur, current_user)
         my_pending_rectification_count = get_my_pending_rectification_count_for_user(cur, current_user)
+        appeal_counts = appeal_notification_counts(cur, current_user, globals())
         peer_review_pending_count = get_peer_review_pending_count_for_user(cur, current_user)
         plan_assignment_summary = get_plan_assignment_pending_summary_for_user(
             cur,
@@ -20170,6 +20172,7 @@ def get_notification_summary():
                 "feedback_unread_count": feedback_unread_count,
                 "inspection_sign_pending_count": inspection_sign_pending_count,
                 "my_pending_rectification_count": my_pending_rectification_count,
+                "appeal_notification_count": appeal_counts['total'],
                 "peer_review_pending_count": peer_review_pending_count,
                 "plan_assignment_pending_count": plan_assignment_summary["pending_count"],
                 "plan_assignment_pending_items": plan_assignment_summary["items"],
@@ -31433,6 +31436,11 @@ def get_my_issues():
                 SELECT
                     i.id,
                     t.checklist_mode AS appeal_checklist_mode,
+                    EXISTS (SELECT 1 FROM inspection_issue_appeal_claims claim WHERE claim.issue_id=i.id) AS has_appealed,
+                    appeal.status = 'rejected' AND appeal.updated_at::timestamp >= COALESCE(i.review_at, '-infinity'::timestamp) AS appeal_rejected,
+                    COALESCE(appeal.quality_reason,appeal.area_reason) AS appeal_rejection_reason,
+                    CASE WHEN appeal.quality_at IS NOT NULL THEN '质安部' ELSE '片区' END AS appeal_rejected_by_stage,
+                    TO_CHAR(appeal.updated_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD HH24:MI') AS appeal_rejected_at,
                     i.station_id,
                     COALESCE(i.inspector_id, ins.inspector_id) AS inspector_id,
                     TO_CHAR(i.created_at, 'YYYY-MM') AS month,
@@ -31471,6 +31479,8 @@ def get_my_issues():
                 LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
+                LEFT JOIN LATERAL (SELECT status,updated_at,quality_at,quality_reason,area_reason
+                  FROM inspection_issue_appeals WHERE issue_id=i.id ORDER BY id DESC LIMIT 1) appeal ON TRUE
                 WHERE i.station_id = %s
                   AND i.status = '待整改'
                   AND ins.sign_status = '已签名确认'
@@ -31481,7 +31491,7 @@ def get_my_issues():
             )
             rows = cur.fetchall()
             for row in rows:
-                row['can_appeal'] = (
+                row['can_appeal'] = not row.get('has_appealed') and (
                     normalize_checklist_scope_name(row.get('inspection_table_name')),
                     normalize_checklist_mode(row.pop('appeal_checklist_mode', None)),
                 ) in QUALITY_SAFETY_DEFAULT_CHECKLIST_SCOPE
@@ -39618,7 +39628,7 @@ def serialize_issue_flow_history_event(row):
     if action_type == "audit_changed" and event["note"].startswith("自动审核"):
         event["action_label"] = "自动审核"
         event["actor_display_name"] = "系统自动审核"
-    return event
+    return flow_event_presentation(event)
 
 
 @app.route("/api/issues/<int:issue_id>/flow-history", methods=["GET"])
@@ -39677,6 +39687,7 @@ def get_issue_flow_history(issue_id):
                 actor_username,
                 actor_name,
                 actor_role,
+                created_at AS occurred_at,
                 TO_CHAR(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD HH24:MI') AS created_at
             FROM inspection_issue_flow_history
             WHERE issue_id = %s
@@ -39705,7 +39716,7 @@ def get_issue_flow_history(issue_id):
                 }
             )
         ]
-        history_rows = cur.fetchall()
+        history_rows = present_flow_rows(cur.fetchall())
         if any(row["action_type"] == "issue_created" for row in history_rows):
             events = []
         events.extend(serialize_issue_flow_history_event(row) for row in history_rows)

@@ -6,7 +6,7 @@ export const reviewOptionsFor = result => isUnableRectification(result)
 export const reviewRequiresPhoto = result => result === '整改通过'
 
 export const rectificationDraftFor = (item, resolvePhoto = path => path) => {
-  const returned = isReviewReturned(item.review_result)
+  const returned = Boolean(item.appeal_rejected) || isReviewReturned(item.review_result)
   return {
     rectificationResult: returned ? '' : isUnableRectification(item.rectification_result) ? '站经无法整改' : item.rectification_result === '已整改' ? '已整改' : '',
     rectificationNote: returned ? '' : item.rectification_note || '',

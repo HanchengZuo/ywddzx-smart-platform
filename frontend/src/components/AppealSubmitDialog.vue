@@ -5,7 +5,7 @@
         <h3 id="appeal-title">发起问题申诉 · #{{ item.id }}</h3>
         <p class="appeal-context">{{ item.station }} · {{ item.inspection_table_name }}</p>
         <p class="appeal-description">{{ item.description }}</p>
-        <div class="appeal-notice">提交后问题将暂停整改，进入申诉空间等待所属片区审核；片区通过后由授权质安部账号终审。任一级拒绝后恢复整改。</div>
+        <div class="appeal-notice">每个问题只能申诉一次。提交后问题暂停整改，进入所属片区初审，片区通过后由授权质安部终审。任一级拒绝后恢复整改，不可再次申诉。</div>
         <label for="appeal-reason">申诉理由（必填）</label>
         <textarea id="appeal-reason" v-model="reason" maxlength="4000" rows="5" placeholder="请具体说明申诉依据及问题实际情况" :disabled="saving"></textarea>
         <p v-if="error" class="appeal-error" role="alert">{{ error }}</p>

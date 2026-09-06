@@ -1276,31 +1276,8 @@
           <button class="close-btn" type="button" @click="closeIssueFlowHistory">×</button>
         </div>
         <div class="issue-flow-history-body">
-          <div v-if="issueFlowHistory.loading" class="issue-flow-history-state">正在读取流转记录...</div>
-          <div v-else-if="issueFlowHistory.error" class="issue-flow-history-state error">{{ issueFlowHistory.error }}</div>
-          <ol v-else class="issue-flow-timeline">
-            <li v-for="event in issueFlowHistory.events" :key="event.id || `${event.action_type}-${event.created_at}`"
-              :class="issueFlowEventClass(event)">
-              <span class="issue-flow-dot"></span>
-              <article>
-                <header>
-                  <strong>{{ event.action_label }}</strong>
-                  <time>{{ event.created_at || '时间未记录' }}</time>
-                </header>
-                <div class="issue-flow-meta">
-                  <span>{{ event.actor_display_name }}</span>
-                  <span v-if="event.round_no">第 {{ event.round_no }} 轮</span>
-                  <span v-if="event.result">{{ event.result }}</span>
-                </div>
-                <div v-if="event.from_status" class="issue-flow-path">
-                  <span>{{ event.from_status }}</span><b>→</b><span>{{ event.to_status }}</span>
-                </div>
-                <p v-if="event.note">{{ event.note }}</p>
-                <button v-if="event.photo_path" type="button"
-                  @click="preview(resolveImage(event.photo_path), `${event.action_label}照片`)">查看本轮照片</button>
-              </article>
-            </li>
-          </ol>
+          <IssueFlowTimeline :loading="issueFlowHistory.loading" :error="issueFlowHistory.error" :events="issueFlowHistory.events"
+            :resolve-photo="resolveImage" @photo="event => preview(resolveImage(event.photo_path), `${event.action_label}照片`)" />
         </div>
       </div>
     </div>
@@ -1348,6 +1325,7 @@
 </template>
 
 <script setup>
+import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import { reviewOptionsFor } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
@@ -3637,12 +3615,6 @@ const handlePreviewWheel = (event) => {
   const nextScale = previewState.value.scale + delta
   previewState.value.scale = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
-
-const issueFlowEventClass = (event) => ({
-  returned: ['整改不通过', '驳回站级无法整改'].includes(event?.result),
-  completed: event?.to_status === '已闭环',
-  rectification: event?.action_type === 'rectification_submitted'
-})
 
 const openIssueFlowHistory = async (item) => {
   const requestSequence = ++issueFlowHistoryRequestSequence
