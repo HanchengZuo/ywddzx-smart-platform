@@ -23453,7 +23453,8 @@ def sign_inspection_record(inspection_id):
 
         cur.execute('SELECT refresh_quality_acceptance(%s)', (inspection_id,))
         cur.execute('''SELECT ins.sign_status,ins.inspector_completion_status,
-          ins.quality_accept_deadline_at<=CURRENT_TIMESTAMP AS overdue,
+          CASE WHEN is_quality_deadline_table(ins.inspection_table_id) THEN
+            quality_effective_deadline('acceptance',ins.quality_accept_deadline_at,ins.quality_accept_started_at)<=CURRENT_TIMESTAMP END AS overdue,
           EXISTS(SELECT 1 FROM issues i WHERE i.inspection_id=ins.id AND COALESCE(i.audit_status,'pending')='pending') AS pending
           FROM inspections ins WHERE id=%s FOR UPDATE''', (inspection_id,))
         acceptance = cur.fetchone()
@@ -31454,7 +31455,8 @@ def get_my_issues():
                     i.id,
                     t.checklist_mode AS appeal_checklist_mode,
                     EXISTS (SELECT 1 FROM inspection_issue_appeal_claims claim WHERE claim.issue_id=i.id) AS has_appealed,
-                    EXTRACT(EPOCH FROM i.quality_appeal_deadline_at)*1000 AS appeal_deadline_ms,
+                    EXTRACT(EPOCH FROM quality_effective_deadline('appeal',i.quality_appeal_deadline_at,i.quality_appeal_started_at))*1000 AS appeal_deadline_ms,
+                    (SELECT appeal_enabled FROM quality_deadline_policy WHERE id=1) AS appeal_deadline_enabled,
                     EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
                     appeal.status = 'rejected' AND appeal.updated_at::timestamp >= COALESCE(i.review_at, '-infinity'::timestamp) AS appeal_rejected,
                     appeal.timeout_at IS NOT NULL AS appeal_timed_out,
@@ -39082,7 +39084,8 @@ def get_inspections():
                 COALESCE(issue_stats.audited_issue_count, 0) AS audited_issue_count,
                 COALESCE(issue_stats.rectified_issue_count, 0) AS rectified_issue_count,
                 ins.quality_accept_source,
-                EXTRACT(EPOCH FROM ins.quality_accept_deadline_at)*1000 AS acceptance_deadline_ms,
+                CASE WHEN is_quality_deadline_table(ins.inspection_table_id) AND COALESCE(ins.sign_status,'待签名确认')<>'已签名确认'
+                  THEN EXTRACT(EPOCH FROM quality_effective_deadline('acceptance',ins.quality_accept_deadline_at,ins.quality_accept_started_at))*1000 END AS acceptance_deadline_ms,
                 EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
                 ins.sign_status,
                 ins.station_manager_signed_name,

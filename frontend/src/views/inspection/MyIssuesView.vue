@@ -230,9 +230,9 @@
             </button>
             <template v-if="currentRole === 'station_manager' && item.can_appeal">
               <button class="btn appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
-              <WorkflowDeadline :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
+              <WorkflowDeadline v-if="item.appeal_deadline_enabled" :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
                 hint="从验收后进入待整改开始计时，逾期不能发起申诉。" expired-hint="申诉入口已关闭，请继续提交整改。"
-                @expired="expiredAppeals.add(item.id)" />
+                @expired="expiredAppeals.add(appealDeadlineKey(item))" />
             </template>
             <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="mobile-action-tip">
               当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。
@@ -400,8 +400,8 @@
                   </button>
                   <template v-if="currentRole === 'station_manager' && item.can_appeal">
                     <button class="btn btn-sm appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
-                    <WorkflowDeadline :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
-                      hint="到期关闭申诉入口，整改流程继续。" expired-hint="申诉期限已结束，请继续整改。" @expired="expiredAppeals.add(item.id)" />
+                    <WorkflowDeadline v-if="item.appeal_deadline_enabled" :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
+                      hint="到期关闭申诉入口，整改流程继续。" expired-hint="申诉期限已结束，请继续整改。" @expired="expiredAppeals.add(appealDeadlineKey(item))" />
                   </template>
                   </div>
                   <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
@@ -692,7 +692,8 @@ const isInspectionSigned = (item) => {
 const router = useRouter()
 const appealItem = ref(null)
 const expiredAppeals = ref(new Set())
-const appealExpired = item => !item.appeal_deadline_ms || Number(item.appeal_deadline_ms) <= Number(item.server_now_ms) || expiredAppeals.value.has(item.id)
+const appealDeadlineKey = item => `${item.id}:${item.appeal_deadline_ms}`
+const appealExpired = item => item.appeal_deadline_enabled !== false && (!item.appeal_deadline_ms || Number(item.appeal_deadline_ms) <= Number(item.server_now_ms) || expiredAppeals.value.has(appealDeadlineKey(item)))
 const appealSubmitted = () => {
   appealItem.value = null
   window.dispatchEvent(new Event('my-pending-rectification-refresh'))
