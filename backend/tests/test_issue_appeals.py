@@ -7,6 +7,7 @@ from unittest.mock import patch
 from flask import Flask, g, request
 import app as core
 from issue_appeals import appeal_table_allowed, can_decide, register_issue_appeals, APPEAL_LABELS
+from quality_deadlines import register_quality_deadlines
 
 
 class AppealRulesTests(unittest.TestCase):
@@ -46,7 +47,7 @@ class AppealDatabaseTests(unittest.TestCase):
         self.conn = core.get_db_connection()
         self.cur = self.conn.cursor()
         self.addCleanup(self.cleanup_database)
-        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications'):
+        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications', '20260906_002_quality_deadlines'):
             path = Path(__file__).parents[1] / f'migrations/versions/{name}.py'
             spec = importlib.util.spec_from_file_location(name, path)
             migration = importlib.util.module_from_spec(spec)
@@ -109,6 +110,8 @@ class AppealDatabaseTests(unittest.TestCase):
             has_permission=lambda cur, user, key: user.get('allowed', False),
         )
         register_issue_appeals(test_app, namespace)
+        register_quality_deadlines(test_app, namespace)
+        self.namespace = namespace
         self.client = test_app.test_client()
 
     def cleanup_database(self):

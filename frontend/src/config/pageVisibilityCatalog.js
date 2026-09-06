@@ -204,6 +204,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '管理巡检记录确认、封存和周期规则。'
       },
       {
+        key: '/management/quality-deadlines',
+        path: '/management/quality-deadlines',
+        title: '质安流程时限管理',
+        description: '配置指定五张检查表的验收、申诉时限，追溯超时处理。'
+      },
+      {
         key: '/management/auto-audit',
         path: '/management/auto-audit',
         title: '白名单自动审核管理',

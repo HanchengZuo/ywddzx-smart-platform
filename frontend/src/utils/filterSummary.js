@@ -8,7 +8,7 @@ const valueLabels = {
   excellent: { starred: '已点亮优秀问题', unstarred: '未点亮优秀问题' },
   auditState: { pending: '待审核', done: '已审核' },
   auditStatus: { approved: '审核通过', rejected: '审核否决' },
-  signStatus: { signed: '已签名', pending: '待签名' },
+  signStatus: { signed: '已验收（全部方式）', pending: '待签名验收', automatic: '系统超时自动验收', manual: '人工签名验收' },
   completionStatus: { completed: '已确认完成', pending: '待检查人确认' }
 }
 

@@ -1,6 +1,7 @@
 """Station appeal transactions. All identity and scope come from the authenticated session."""
 from types import SimpleNamespace
 from flask import g, jsonify, request
+from quality_deadlines import initialize_appeal_review, capture_quality_handoff
 
 ACTIVE = ('area_pending', 'quality_pending')
 APPEAL_LABELS = {
@@ -10,6 +11,8 @@ APPEAL_LABELS = {
     'appeal_quality_approved': '质安部通过申诉，问题已销毁',
     'appeal_quality_rejected': '质安部驳回申诉，恢复整改',
     'appeal_cancelled': '申诉取消',
+    'appeal_timeout_approved': '系统超时通过申诉，问题已销毁',
+    'appeal_timeout_rejected': '系统超时拒绝申诉，恢复整改',
 }
 
 
@@ -110,6 +113,8 @@ def register_issue_appeals(app, namespace):
             cur.execute(f'SELECT count(*) AS total {joins} WHERE {predicate}', params)
             total = cur.fetchone()['total']
             cur.execute(f"""SELECT a.*, i.description, i.standard_id, i.photo_path, i.status AS issue_status,
+              EXTRACT(EPOCH FROM a.review_deadline_at)*1000 AS review_deadline_ms,
+              EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
               a.status NOT IN ('area_pending','quality_pending') AND NOT EXISTS (
                 SELECT 1 FROM inspection_issue_appeal_reads r WHERE r.appeal_id=a.id AND r.user_id=%s
                   AND r.read_version >= a.updated_at) AS unread,
@@ -182,8 +187,13 @@ def register_issue_appeals(app, namespace):
                 raise ValueError('该检查表不支持申诉。')
             if issue['status'] != '待整改' or issue['audit_status'] != 'approved' or issue['sign_status'] != '已签名确认':
                 return jsonify(error='仅已签名验收、审核通过且待整改的问题可以申诉，请刷新列表。'), 409
+            cur.execute('''UPDATE issues SET quality_appeal_deadline_at=quality_appeal_deadline_at WHERE id=%s
+              RETURNING quality_appeal_deadline_at IS NOT NULL AND quality_appeal_deadline_at>CURRENT_TIMESTAMP AS within_window''', (issue_id,))
+            if not cur.fetchone()['within_window']:
+                return jsonify(error='申诉申请期限已结束，不能再发起申诉，请继续整改。'), 409
             cur.execute("INSERT INTO inspection_issue_appeals (issue_id,status,reason,submitted_by) VALUES (%s,'area_pending',%s,%s) RETURNING id", (issue_id, reason, user['id']))
             appeal_id = cur.fetchone()['id']
+            initialize_appeal_review(cur, core, appeal_id, user)
             cur.execute("SELECT set_config('app.appeal_event','1',true)")
             cur.execute("UPDATE issues SET status='申诉中' WHERE id=%s", (issue_id,))
             record_event(cur, user, issue_id, 'appeal_submitted', '待整改', '申诉中', reason)
@@ -216,6 +226,12 @@ def register_issue_appeals(app, namespace):
                 return jsonify(error='申诉已处理或阶段已变化，请刷新后查看。'), 409
             if not can_decide(core, cur, user, appeal):
                 return jsonify(error='当前账号无权审核此阶段或此片区的申诉。'), 403
+            initialize_appeal_review(cur, core, appeal_id, user)
+            cur.execute('SELECT *,review_deadline_at<=CURRENT_TIMESTAMP AS overdue FROM inspection_issue_appeals WHERE id=%s', (appeal_id,))
+            timing = cur.fetchone()
+            appeal.update(timing)
+            if appeal['overdue'] and appeal['review_policy']['timeout_action'] != 'manual':
+                return jsonify(error='共享审核期限已结束，正在等待系统按保存规则处理，请刷新查看。'), 409
             area = appeal['status'] == 'area_pending'
             prefix = 'area' if area else 'quality'
             approved = decision == 'approve'
@@ -229,6 +245,8 @@ def register_issue_appeals(app, namespace):
                   auto_audit_rule_id=NULL,auto_audit_rule_name=NULL,auto_audit_match_summary=NULL WHERE id=%s""", (user['id'], appeal['issue_id']))
             elif next_state == 'rejected':
                 cur.execute("UPDATE issues SET status='待整改' WHERE id=%s", (appeal['issue_id'],))
+            else:
+                capture_quality_handoff(cur, core, appeal, user)
             kind = f'appeal_{prefix}_{"approved" if approved else "rejected"}'
             record_event(cur, user, appeal['issue_id'], kind, '申诉中', new_status, reason)
             cur.execute("SELECT set_config('app.appeal_event','',true)")

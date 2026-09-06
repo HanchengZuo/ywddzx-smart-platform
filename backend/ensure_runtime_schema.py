@@ -175,6 +175,17 @@ def verify_account_security_schema(cur):
         raise RuntimeError("legacy plaintext credential column public.users.password still exists")
 
 
+def verify_quality_deadline_schema(cur):
+    for table in ('quality_deadline_policy','quality_deadline_events','quality_deadline_worker_state'):
+        cur.execute('SELECT to_regclass(%s)', (table,))
+        if cur.fetchone()[0] is None:
+            raise RuntimeError(f'Quality deadline migration missing: {table}')
+    for table, column in (('inspections','quality_accept_deadline_at'),('issues','quality_appeal_deadline_at'),('inspection_issue_appeals','review_deadline_at')):
+        cur.execute('SELECT 1 FROM information_schema.columns WHERE table_schema=\'public\' AND table_name=%s AND column_name=%s', (table,column))
+        if not cur.fetchone():
+            raise RuntimeError(f'Quality deadline column missing: {table}.{column}')
+
+
 def main():
     config = get_db_config()
     target = (
@@ -196,6 +207,7 @@ def main():
                 ensure_inspection_report_jobs(cur)
                 verify_inspection_report_jobs(cur)
                 verify_account_security_schema(cur)
+                verify_quality_deadline_schema(cur)
         print(
             "Runtime schema ready: "
             f"database={database_name}, schema={schema_name}, "

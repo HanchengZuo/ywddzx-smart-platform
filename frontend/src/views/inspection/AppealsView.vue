@@ -14,9 +14,12 @@
         <article v-for="item in items" :key="item.id" class="surface appeal-card">
           <header><div><span class="eyebrow">问题 #{{ item.issue_id }} · 申诉 #{{ item.id }}</span><h3>{{ item.region }} · {{ item.station_name }}</h3><p class="muted">{{ item.table_name }} · 检查时间 {{ item.inspection_time }}</p></div><span class="status" :class="item.status">{{ labels[item.status] }}</span></header>
           <div class="issue-content"><p>{{ item.description }}</p><button v-if="item.photo_path" class="photo" @click="photo = imageUrl(item.photo_path)"><img :src="imageUrl(item.photo_path)" alt="问题照片，点击放大" loading="lazy" /></button></div>
+          <WorkflowDeadline v-if="!archive && item.review_deadline_ms" :deadline="item.review_deadline_ms" :server-now="item.server_now_ms"
+            title="片区与质安部共享审核倒计时" :hint="reviewDeadlineHint(item)" :expired-hint="reviewDeadlineHint(item, true)" @expired="expiredReviews.add(item.id)" />
+          <p v-if="item.timeout_at" class="outcome">本申诉由系统按超时规则处理，并非人员主动审核。{{ item.timeout_stage === 'area_pending' ? item.area_reason : item.quality_reason }}</p>
           <button v-if="archive" class="result-toggle" :aria-expanded="expanded.has(item.id)" :disabled="reading !== null" @click="viewResult(item)">{{ expanded.has(item.id) ? '收起处理结果' : '查看处理结果' }} <span v-if="item.unread" class="count-badge">未读</span></button>
           <AppealProgress v-if="!archive || expanded.has(item.id)" :item="item" :reviewers="qualityReviewers" />
-          <footer><span class="muted">当前问题状态：{{ item.issue_status }}</span><button v-if="item.can_decide" class="primary" @click="openDecision(item)">审核申诉</button><span v-else-if="!archive" class="muted">当前账号在此阶段仅可查看</span></footer>
+          <footer><span class="muted">当前问题状态：{{ item.issue_status }}</span><button v-if="item.can_decide" class="primary" :disabled="expiredReviews.has(item.id) && item.review_policy?.timeout_action !== 'manual'" @click="openDecision(item)">审核申诉</button><span v-else-if="!archive" class="muted">当前账号在此阶段仅可查看</span></footer>
         </article>
         <div v-if="!items.length" class="surface empty">暂无符合条件的申诉</div>
       </template>
@@ -43,6 +46,12 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import AppealProgress from '../../components/AppealProgress.vue'
+import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
+const expiredReviews = ref(new Set())
+const reviewDeadlineHint = (item, expired = false) => {
+  const action = item.review_policy?.timeout_action
+  return `${expired ? '期限已结束。' : '片区通过后不重新计时。'}${action === 'approve' ? '到期系统自动通过申诉，问题已销毁。' : action === 'reject' ? '到期系统自动拒绝申诉，恢复整改。' : '当前规则不自动决策，仍需人工审核。'} 超时阶段及待办理账号均留痕。`
+}
 const route = useRoute()
 const router = useRouter()
 const items = ref([]), total = ref(0), page = ref(1), archive = ref(false), keyword = ref('')

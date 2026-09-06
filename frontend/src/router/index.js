@@ -101,6 +101,10 @@ const routes = [
     component: () => import('../views/management/InspectionCompletionManagementView.vue')
   },
   {
+    path: '/management/quality-deadlines',
+    component: () => import('../views/management/QualityDeadlineManagementView.vue')
+  },
+  {
     path: '/management/auto-audit',
     component: () => import('../views/management/AutoAuditManagementView.vue')
   },

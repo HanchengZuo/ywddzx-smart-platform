@@ -240,7 +240,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.5.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.6.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -657,6 +657,7 @@ def build_server_resource_snapshot():
 # === Permission constants ===
 from issue_appeals import APPEAL_LABELS, register_issue_appeals, appeal_notification_counts
 from issue_flow_presentation import present_flow_rows, flow_event_presentation
+from quality_deadlines import register_quality_deadlines
 
 ROLE_OPTIONS = {
     "root",
@@ -5019,6 +5020,7 @@ def auto_complete_overdue_inspections(cur):
     completed_rows = cur.fetchall()
     for row in completed_rows:
         apply_auto_audit_rules_for_inspection(cur, row["id"])
+        cur.execute('SELECT refresh_quality_acceptance(%s)', (row['id'],))
     return len(completed_rows)
 
 
@@ -5231,6 +5233,7 @@ def complete_inspection_record(cur, inspection_id, user_id=None, source="manual"
     updated = cur.rowcount
     if updated:
         apply_auto_audit_rules_for_inspection(cur, inspection_id)
+        cur.execute('SELECT refresh_quality_acceptance(%s)', (inspection_id,))
     return updated
 
 
@@ -23448,6 +23451,16 @@ def sign_inspection_record(inspection_id):
         if pending_audit_count > 0:
             return jsonify({"success": False, "error": f"该检查表仍有 {pending_audit_count} 条问题待审核，暂不能签字确认。"}), 400
 
+        cur.execute('SELECT refresh_quality_acceptance(%s)', (inspection_id,))
+        cur.execute('''SELECT ins.sign_status,ins.inspector_completion_status,
+          ins.quality_accept_deadline_at<=CURRENT_TIMESTAMP AS overdue,
+          EXISTS(SELECT 1 FROM issues i WHERE i.inspection_id=ins.id AND COALESCE(i.audit_status,'pending')='pending') AS pending
+          FROM inspections ins WHERE id=%s FOR UPDATE''', (inspection_id,))
+        acceptance = cur.fetchone()
+        if acceptance['sign_status'] == '已签名确认' or acceptance['overdue']:
+            return jsonify(success=False,error='该记录已验收或已超过验收期限，请刷新查看系统处理结果。'), 409
+        if acceptance['pending'] or acceptance['inspector_completion_status'] != INSPECTION_COMPLETION_DONE:
+            return jsonify(success=False,error='巡检流程已变化，暂不能验收，请刷新。'), 409
         signature_path = save_signature_file(signature_file)
         signed_at = beijing_now()
 
@@ -23455,6 +23468,7 @@ def sign_inspection_record(inspection_id):
             """
             UPDATE inspections
             SET sign_status = '已签名确认',
+                quality_accept_source = 'manual',
                 station_manager_signed_name = %s,
                 station_manager_signature_path = %s,
                 station_manager_signed_at = %s,
@@ -23525,6 +23539,8 @@ def reset_inspection_record_flow(inspection_id):
             return jsonify({"success": False, "error": "用户不存在。"}), 404
         if not can_reset_inspection_signature(cur, user):
             return jsonify({"success": False, "error": "当前账号无权重置巡检记录流程。"}), 403
+
+        cur.execute('SELECT id FROM inspections WHERE id=%s FOR UPDATE', (inspection_id,))
 
         cur.execute(
             """
@@ -23655,6 +23671,7 @@ def reset_inspection_record_flow(inspection_id):
                        u.id, u.username, u.real_name, u.role
                 FROM issues i JOIN users u ON u.id = %s WHERE i.inspection_id = %s
             """, (user["id"], inspection_id))
+        cur.execute('SELECT refresh_quality_acceptance(%s)', (inspection_id,))
         conn.commit()
 
         if reset_to_confirmation:
@@ -31437,7 +31454,10 @@ def get_my_issues():
                     i.id,
                     t.checklist_mode AS appeal_checklist_mode,
                     EXISTS (SELECT 1 FROM inspection_issue_appeal_claims claim WHERE claim.issue_id=i.id) AS has_appealed,
+                    EXTRACT(EPOCH FROM i.quality_appeal_deadline_at)*1000 AS appeal_deadline_ms,
+                    EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
                     appeal.status = 'rejected' AND appeal.updated_at::timestamp >= COALESCE(i.review_at, '-infinity'::timestamp) AS appeal_rejected,
+                    appeal.timeout_at IS NOT NULL AS appeal_timed_out,
                     COALESCE(appeal.quality_reason,appeal.area_reason) AS appeal_rejection_reason,
                     CASE WHEN appeal.quality_at IS NOT NULL THEN '质安部' ELSE '片区' END AS appeal_rejected_by_stage,
                     TO_CHAR(appeal.updated_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD HH24:MI') AS appeal_rejected_at,
@@ -31479,7 +31499,7 @@ def get_my_issues():
                 LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
-                LEFT JOIN LATERAL (SELECT status,updated_at,quality_at,quality_reason,area_reason
+                LEFT JOIN LATERAL (SELECT status,updated_at,quality_at,quality_reason,area_reason,timeout_at
                   FROM inspection_issue_appeals WHERE issue_id=i.id ORDER BY id DESC LIMIT 1) appeal ON TRUE
                 WHERE i.station_id = %s
                   AND i.status = '待整改'
@@ -35586,6 +35606,8 @@ def audit_issue(issue_id):
         if not can_explicit_audit:
             return jsonify({"success": False, "error": "当前账号无权审核巡检问题。"}), 403
 
+        cur.execute('SELECT ins.id FROM inspections ins JOIN issues i ON i.inspection_id=ins.id WHERE i.id=%s FOR UPDATE OF ins', (issue_id,))
+
         cur.execute(
             """
             SELECT
@@ -35674,6 +35696,7 @@ def audit_issue(issue_id):
             )
             message = "该问题已审核通过。" if audit_status == "approved" else "该问题已审核否决，后续不参与记录统计和问题流转。"
 
+        cur.execute('SELECT refresh_quality_acceptance(%s)', (issue['inspection_id'],))
         can_explicit_edit = can_edit_inspection_issues(cur, user)
         can_explicit_delete = can_delete_inspection_issues(cur, user)
         can_explicit_change_inspector = can_change_issue_inspector(cur, user)
@@ -38939,6 +38962,10 @@ def get_inspections():
             where_clauses.append("COALESCE(ins.sign_status, '待签名确认') = '已签名确认'")
         elif sign_filter == "pending":
             where_clauses.append("COALESCE(ins.sign_status, '待签名确认') <> '已签名确认'")
+        elif sign_filter == "automatic":
+            where_clauses.append("ins.quality_accept_source = 'automatic'")
+        elif sign_filter == "manual":
+            where_clauses.append("ins.sign_status='已签名确认' AND COALESCE(ins.quality_accept_source,'manual')<>'automatic'")
         if completion_filter == "completed":
             where_clauses.append("COALESCE(ins.inspector_completion_status, '待检查人确认') = %s")
             params.append(INSPECTION_COMPLETION_DONE)
@@ -39054,6 +39081,9 @@ def get_inspections():
                 COALESCE(issue_stats.pending_audit_count, 0) AS pending_audit_count,
                 COALESCE(issue_stats.audited_issue_count, 0) AS audited_issue_count,
                 COALESCE(issue_stats.rectified_issue_count, 0) AS rectified_issue_count,
+                ins.quality_accept_source,
+                EXTRACT(EPOCH FROM ins.quality_accept_deadline_at)*1000 AS acceptance_deadline_ms,
+                EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
                 ins.sign_status,
                 ins.station_manager_signed_name,
                 ins.station_manager_signature_path,
@@ -39364,6 +39394,7 @@ def get_inspection_issues(inspection_id):
                 TO_CHAR(ins.inspection_date, 'YYYY-MM-DD') AS date,
                 ins.inspector_id,
                 ins.sign_status,
+                ins.quality_accept_source,
                 ins.station_manager_signed_name,
                 ins.station_manager_signature_path,
                 TO_CHAR(ins.station_manager_signed_at, 'YYYY-MM-DD HH24:MI') AS station_manager_signed_at,
@@ -39591,6 +39622,8 @@ def serialize_issue_flow_history_event(row):
     result = canonical_issue_result(event.get("result"))
     if action_type in APPEAL_LABELS:
         action_label = APPEAL_LABELS[action_type]
+    elif action_type == 'inspection_auto_accepted':
+        action_label = '超过验收期限，系统自动验收'
     elif action_type == "issue_created":
         action_label = "登记巡检问题"
     elif action_type in {"audit_changed", "issue_updated", "status_changed", "inspection_signed", "inspection_completed"}:
@@ -40082,6 +40115,7 @@ def uploaded_file(filename):
 
 
 register_issue_appeals(app, globals())
+register_quality_deadlines(app, globals())
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

@@ -390,6 +390,11 @@
           <span class="nav-item-icon">封</span>
           <span v-if="!sidebarCollapsed">巡检封存管理</span>
         </button>
+        <button v-if="isRoot && isPageVisible('/management/quality-deadlines')" class="nav-item"
+          :class="{ active: isActive('/management/quality-deadlines'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/quality-deadlines')" :title="sidebarCollapsed ? '质安流程时限管理' : ''">
+          <span class="nav-item-icon">时</span><span v-if="!sidebarCollapsed">质安流程时限管理</span>
+        </button>
         <button v-if="canManageAutoAudit" class="nav-item"
           :class="{ active: isActive('/management/auto-audit'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/auto-audit')" :title="sidebarCollapsed ? '白名单自动审核管理' : ''">
