@@ -17,7 +17,7 @@ export const rectificationReturnNotices = items => {
     {
       kind: 'appeal', count: counts.appeal, label: '申诉驳回提醒',
       title: `有 ${counts.appeal} 条问题申诉未通过，需要继续整改`,
-      description: '片区或质安部未通过申诉，问题已返回待整改。请查看对应的申诉驳回原因和问题流转记录，按要求提交整改；同一问题不能再次发起申诉。'
+      description: '申诉未通过，问题已返回待整改。请查看对应的驳回原因、处理方式（人员审核或系统超时处理）和问题流转记录，按要求提交整改；同一问题不能再次发起申诉。'
     },
     {
       kind: 'review', count: counts.review, label: '复核退回提醒',

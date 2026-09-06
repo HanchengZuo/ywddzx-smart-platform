@@ -19,6 +19,7 @@ python /app/ensure_runtime_schema.py
 
 echo "Starting Flask application with gunicorn ..."
 exec gunicorn \
+  --config /app/gunicorn.conf.py \
   -w "${GUNICORN_WORKERS:-4}" \
   -b 0.0.0.0:5000 \
   --error-logfile - \

@@ -152,11 +152,13 @@
           </select>
         </div>
         <div class="filter-item filter-item-signature" :data-filter-state="filterFieldState('signStatus')">
-          <label>站经理签名状态</label>
+          <label>签名 / 验收方式</label>
           <select v-model="filters.signStatus">
             <option value="">全部</option>
-            <option value="signed">已签名</option>
-            <option value="pending">待签名</option>
+            <option value="signed">已验收（全部方式）</option>
+            <option value="pending">待签名验收</option>
+            <option value="automatic">系统超时自动验收</option>
+            <option value="manual">人工签名验收</option>
           </select>
         </div>
       </div>
@@ -243,6 +245,9 @@
                   <strong>{{ getRecordFlowTitle(record) }}</strong>
                 </div>
                 <p class="record-flow-copy">{{ getRecordFlowSubtitle(record) }}</p>
+                <WorkflowDeadline v-if="record.acceptance_deadline_ms && getRecordFlowState(record) === 'waiting-signature'" :deadline="record.acceptance_deadline_ms"
+                  :server-now="record.server_now_ms" title="站点验收倒计时" hint="到期系统自动验收并留痕，可能涉及事业部考核，请及时签名。"
+                  expired-hint="期限已结束，后台将自动验收；请刷新查看最新状态。" @expired="expiredAcceptances.add(acceptanceKey(record))" />
                 <div class="record-flow-track">
                   <span :style="{ width: getRecordFlowProgressWidth(record) }"></span>
                 </div>
@@ -256,7 +261,7 @@
                   <img v-if="recordImagesReady && record.station_manager_signature_path"
                     :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
                     alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
-                  <div v-else class="signature-preview-placeholder">签名</div>
+                  <div v-else class="signature-preview-placeholder">{{ record.quality_accept_source === 'automatic' ? '自动验收' : '签名' }}</div>
                   <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
                 </div>
                 <div class="record-flow-actions">
@@ -268,7 +273,7 @@
                   </button>
                   <button v-if="canSignInspectionRecord(record)"
                     class="btn btn-primary signature-action-btn mobile-action-btn mobile-action-sign" type="button"
-                    aria-label="站经理签名验收" @click="openSignatureDialog(record)">
+                    :disabled="expiredAcceptances.has(acceptanceKey(record))" aria-label="站经理签名验收" @click="openSignatureDialog(record)">
                     站经理签名
                   </button>
                 </div>
@@ -411,6 +416,9 @@
                         <strong>{{ getRecordFlowTitle(record) }}</strong>
                       </div>
                       <p class="record-flow-copy">{{ getRecordFlowSubtitle(record) }}</p>
+                      <WorkflowDeadline v-if="record.acceptance_deadline_ms && getRecordFlowState(record) === 'waiting-signature'" :deadline="record.acceptance_deadline_ms"
+                        :server-now="record.server_now_ms" title="站点验收倒计时" hint="到期自动验收并留痕，可能涉及事业部考核。"
+                        expired-hint="期限已结束，等待后台自动验收，请刷新查看。" @expired="expiredAcceptances.add(acceptanceKey(record))" />
                       <div class="record-flow-track">
                         <span :style="{ width: getRecordFlowProgressWidth(record) }"></span>
                       </div>
@@ -424,7 +432,7 @@
                         <img v-if="recordImagesReady && record.station_manager_signature_path"
                           :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
                           alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
-                        <div v-else class="signature-preview-placeholder">签名</div>
+                        <div v-else class="signature-preview-placeholder">{{ record.quality_accept_source === 'automatic' ? '自动验收' : '签名' }}</div>
                         <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
                       </div>
                       <div class="record-flow-actions">
@@ -434,7 +442,7 @@
                           {{ completingInspectionId === record.id ? '确认中...' : '确认完成' }}
                         </button>
                         <button v-if="canSignInspectionRecord(record)" class="btn btn-primary signature-action-btn"
-                          type="button" @click="openSignatureDialog(record)">
+                          type="button" :disabled="expiredAcceptances.has(acceptanceKey(record))" @click="openSignatureDialog(record)">
                           站经理签字
                         </button>
                       </div>
@@ -631,8 +639,8 @@
               <strong>{{ batchDetail.inspection?.station_manager_name || '-' }}</strong>
             </div>
             <div>
-              <span>签名状态</span>
-              <strong>{{ batchDetail.inspection?.sign_status || '待签名确认' }}</strong>
+              <span>验收状态</span>
+              <strong>{{ batchDetail.inspection?.quality_accept_source === 'automatic' ? '系统超时自动验收' : batchDetail.inspection?.sign_status || '待签名确认' }}</strong>
             </div>
             <div>
               <span>完成确认</span>
@@ -720,6 +728,7 @@
 
 <script setup>
 import FilterSummary from '@/components/FilterSummary.vue'
+import WorkflowDeadline from '@/components/WorkflowDeadline.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
@@ -743,6 +752,8 @@ const getDefaultDateRange = () => {
 }
 
 const defaultDateRange = getDefaultDateRange()
+const expiredAcceptances = ref(new Set())
+const acceptanceKey = record => `${record.id}:${record.acceptance_deadline_ms}`
 const filters = ref({
   month: '',
   dateFrom: defaultDateRange.dateFrom,
@@ -770,7 +781,7 @@ const filterSummaryFields = computed(() => buildFilterSummary(
     ['inspector', '检查人'],
     ['result', '检查结果'],
     ['completionStatus', '检查人确认状态'],
-    ['signStatus', '站经理签名状态']
+    ['signStatus', '签名 / 验收方式']
   ].filter(([key]) => key !== 'inspector' || !hideInspectorContactInfo.value
     || filters.value.inspector.includes(currentInspectorFilterValue.value)
     || appliedFilters.value.inspector.includes(currentInspectorFilterValue.value)),
@@ -1390,7 +1401,7 @@ const buildBatchDetailExportHtml = async () => {
             ${exportInfoItem('负责人手机号', inspection.station_manager_phone)}
             ${exportInfoItem('检查表', inspection.inspection_table_name)}
             ${exportInfoItem('问题数量', issues.length)}
-            ${exportInfoItem('签名状态', inspection.sign_status || '待签名确认')}
+            ${exportInfoItem('验收状态', inspection.quality_accept_source === 'automatic' ? '系统超时自动验收' : inspection.sign_status || '待签名确认')}
             ${exportInfoItem('站经理签名人', inspection.station_manager_signed_name)}
             ${exportInfoItem('签名时间', inspection.station_manager_signed_at)}
           </div>
@@ -1507,7 +1518,7 @@ const getRecordFlowState = (record) => {
   return 'signed'
 }
 
-const getRecordFlowTitle = (record) => ({
+const getRecordFlowTitle = (record) => record.quality_accept_source === 'automatic' ? '系统超时自动验收' : ({
   'waiting-inspector': '等待检查人确认',
   'waiting-audit': '等待问题审核',
   'waiting-signature': '待站经理签名验收',
@@ -1515,6 +1526,7 @@ const getRecordFlowTitle = (record) => ({
 }[getRecordFlowState(record)] || '巡检记录状态')
 
 const getRecordFlowSubtitle = (record) => {
+  if (record.quality_accept_source === 'automatic') return '站点未按期签名，已由系统自动验收。该记录已留痕，可供后续考核追溯。'
   const state = getRecordFlowState(record)
   if (state === 'waiting-inspector') {
     const progress = getCompletionProgress(record)

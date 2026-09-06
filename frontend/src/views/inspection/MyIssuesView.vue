@@ -228,7 +228,12 @@
                 ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                 : '提交复核' }}
             </button>
-            <button v-if="currentRole === 'station_manager' && item.can_appeal" class="btn appeal-action" type="button" @click="appealItem = item">发起申诉</button>
+            <template v-if="currentRole === 'station_manager' && item.can_appeal">
+              <button class="btn appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
+              <WorkflowDeadline :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
+                hint="从验收后进入待整改开始计时，逾期不能发起申诉。" expired-hint="申诉入口已关闭，请继续提交整改。"
+                @expired="expiredAppeals.add(item.id)" />
+            </template>
             <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="mobile-action-tip">
               当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。
             </div>
@@ -393,7 +398,11 @@
                       ? (isReturnedForRectification(item) ? '重新提交整改' : '提交整改')
                       : '提交复核' }}
                   </button>
-                  <button v-if="currentRole === 'station_manager' && item.can_appeal" class="btn btn-sm appeal-action" type="button" @click="appealItem = item">发起申诉</button>
+                  <template v-if="currentRole === 'station_manager' && item.can_appeal">
+                    <button class="btn btn-sm appeal-action" type="button" :disabled="appealExpired(item)" @click="appealItem = item">{{ appealExpired(item) ? '申诉期限已结束' : '发起申诉' }}</button>
+                    <WorkflowDeadline :deadline="item.appeal_deadline_ms" :server-now="item.server_now_ms" title="申诉申请时限"
+                      hint="到期关闭申诉入口，整改流程继续。" expired-hint="申诉期限已结束，请继续整改。" @expired="expiredAppeals.add(item.id)" />
+                  </template>
                   </div>
                   <div v-if="currentRole === 'station_manager' && !isInspectionSigned(item)" class="action-lock-tip">
                     待检查表签名
@@ -650,6 +659,7 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
+import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
@@ -681,6 +691,8 @@ const isInspectionSigned = (item) => {
 
 const router = useRouter()
 const appealItem = ref(null)
+const expiredAppeals = ref(new Set())
+const appealExpired = item => !item.appeal_deadline_ms || Number(item.appeal_deadline_ms) <= Number(item.server_now_ms) || expiredAppeals.value.has(item.id)
 const appealSubmitted = () => {
   appealItem.value = null
   window.dispatchEvent(new Event('my-pending-rectification-refresh'))
@@ -700,7 +712,9 @@ const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
 const isReturnedForRectification = (item) => Boolean(rectificationReturnKind(item))
-const returnTitle = (item) => item?.appeal_rejected ? `${item.appeal_rejected_by_stage || '上级'}未通过申诉，请继续整改（不可再次申诉）` : '上一轮整改未通过复核'
+const returnTitle = (item) => item?.appeal_rejected
+  ? item.appeal_timed_out ? '申诉审核超时，系统已拒绝申诉，请继续整改（不可再次申诉）' : `${item.appeal_rejected_by_stage || '上级'}未通过申诉，请继续整改（不可再次申诉）`
+  : '上一轮整改未通过复核'
 const returnTime = (item) => `退回时间：${(item?.appeal_rejected ? item.appeal_rejected_at : item?.review_at) || '未记录'}`
 const reviewReturnReason = (item) => String((item?.appeal_rejected ? item.appeal_rejection_reason : item?.review_note) || '').trim()
   || (item?.appeal_rejected ? '申诉驳回原因暂未读取到，请查看问题流转记录并继续整改。' : '督导组未填写复核说明，请重新核对问题并提交整改。')
@@ -1447,6 +1461,7 @@ onBeforeUnmount(() => {
 .action-stack { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .action-stack .btn.appeal-action { margin: 0; color: #fff; background: #dc3545; border-color: #dc3545; }
 .action-stack .btn.appeal-action:hover { background: #bd2433; border-color: #bd2433; }
+.action-stack .btn.appeal-action:disabled { background: #e2e8f0; border-color: #cbd5e1; color: #64748b; cursor: not-allowed; }
 .review-date-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .review-date-range input { flex: 1 1 120px; min-width: 0; width: 100%; }
 
