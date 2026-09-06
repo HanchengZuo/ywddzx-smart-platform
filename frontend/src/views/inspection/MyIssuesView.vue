@@ -31,14 +31,17 @@
       </div>
     </div>
 
-    <div v-if="currentRole === 'station_manager' && returnedRectificationCount" class="return-overview-alert card-surface">
-      <div class="return-overview-icon" aria-hidden="true">!</div>
-      <div class="return-overview-copy">
-        <div class="return-overview-kicker">复核退回提醒</div>
-        <h3>有 {{ returnedRectificationCount }} 条问题需要重新整改</h3>
-        <p>督导组已将上一轮整改判定为不通过。请先查看退回原因和历史流转，再重新提交整改。</p>
+    <template v-if="currentRole === 'station_manager'">
+      <div v-for="notice in returnNotices" :key="notice.kind" class="return-overview-alert card-surface"
+        :class="{ 'is-appeal-return': notice.kind === 'appeal' }" role="status">
+        <div class="return-overview-icon" aria-hidden="true">!</div>
+        <div class="return-overview-copy">
+          <div class="return-overview-kicker">{{ notice.label }}</div>
+          <h3>{{ notice.title }}</h3>
+          <p>{{ notice.description }}</p>
+        </div>
       </div>
-    </div>
+    </template>
 
     <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters }">
       <div class="filter-head">
@@ -647,7 +650,7 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
-import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor } from '../../utils/issueWorkflow'
+import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -696,16 +699,15 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
-const isReturnedForRectification = (item) => Boolean(item?.appeal_rejected) || isReviewReturned(item?.review_result)
-const returnTitle = (item) => item?.appeal_rejected ? `${item.appeal_rejected_by_stage}未通过申诉，请继续整改（不可再次申诉）` : '上一轮整改未通过复核'
+const isReturnedForRectification = (item) => Boolean(rectificationReturnKind(item))
+const returnTitle = (item) => item?.appeal_rejected ? `${item.appeal_rejected_by_stage || '上级'}未通过申诉，请继续整改（不可再次申诉）` : '上一轮整改未通过复核'
 const returnTime = (item) => `退回时间：${(item?.appeal_rejected ? item.appeal_rejected_at : item?.review_at) || '未记录'}`
 const reviewReturnReason = (item) => String((item?.appeal_rejected ? item.appeal_rejection_reason : item?.review_note) || '').trim()
-  || '督导组未填写复核说明，请重新核对问题并提交整改。'
+  || (item?.appeal_rejected ? '申诉驳回原因暂未读取到，请查看问题流转记录并继续整改。' : '督导组未填写复核说明，请重新核对问题并提交整改。')
 const issueStatusLabel = (item) => item?.appeal_rejected ? '申诉驳回 · 待整改' : isReturnedForRectification(item) ? '整改退回' : (item?.status || '暂无')
 const issueStatusClass = (item) => isReturnedForRectification(item) ? 'status-tag returned' : statusClass(item?.status)
-const returnedRectificationCount = computed(() => (
-  issues.value.filter((item) => isReturnedForRectification(item)).length
-))
+const returnNotices = computed(() => rectificationReturnNotices(issues.value))
+const returnedRectificationCount = computed(() => returnNotices.value.reduce((total, notice) => total + notice.count, 0))
 const regionSelectRef = ref(null)
 const stationSelectRef = ref(null)
 const inspectionTableSelectRef = ref(null)
@@ -1744,6 +1746,15 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.7;
 }
+
+.return-overview-alert.is-appeal-return {
+  border-color: #fed7aa;
+  background: radial-gradient(circle at 100% 0%, #f59e0b18, transparent 34%), linear-gradient(135deg, #fff7ed, #fff 72%);
+}
+.is-appeal-return .return-overview-icon { background: #b45309; box-shadow: 0 10px 22px #b4530926; }
+.is-appeal-return .return-overview-kicker,
+.is-appeal-return .return-overview-copy p { color: #9a4a0d; }
+.is-appeal-return .return-overview-copy h3 { color: #78350f; }
 
 .mobile-issue-list {
   display: none;
