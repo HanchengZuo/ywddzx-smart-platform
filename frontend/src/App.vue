@@ -268,7 +268,9 @@
         <button v-if="isPageVisible('/inspection/appeals')" class="nav-item"
           :class="{ active: isActive('/inspection/appeals'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/appeals')" :title="sidebarCollapsed ? '申诉空间' : ''">
-          <span class="nav-item-icon">诉</span>
+          <span class="nav-item-icon feedback-nav-icon">诉
+            <span v-if="appealNotificationCount > 0" class="feedback-unread-badge">{{ appealNotificationCount }}</span>
+          </span>
           <span v-if="!sidebarCollapsed">申诉空间</span>
         </button>
       </div>
@@ -858,6 +860,7 @@ const birthdaySparkles = Array.from({ length: 26 }, (_, index) => index + 1)
 const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
+const appealNotificationCount = ref(0)
 const peerReviewPendingCount = ref(0)
 const planAssignmentPendingCount = ref(0)
 const planAssignmentPendingItems = ref([])
@@ -1505,6 +1508,7 @@ const resetNotificationCounts = () => {
   feedbackUnreadCount.value = 0
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
+  appealNotificationCount.value = 0
   peerReviewPendingCount.value = 0
   planAssignmentPendingCount.value = 0
   planAssignmentPendingItems.value = []
@@ -1515,6 +1519,7 @@ const applyNotificationSummary = (payload = {}) => {
   feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
+  appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
   peerReviewPendingCount.value = Number(payload.peer_review_pending_count || 0)
   planAssignmentPendingCount.value = Number(payload.plan_assignment_pending_count || 0)
   planAssignmentPendingItems.value = Array.isArray(payload.plan_assignment_pending_items)

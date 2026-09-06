@@ -41,6 +41,25 @@ def appeal_scope(core, cur, user):
     return core.build_issue_list_visibility_scope(cur, user)
 
 
+APPEAL_JOINS = '''FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id
+  JOIN stations s ON s.id=i.station_id JOIN inspections ins ON ins.id=i.inspection_id
+  JOIN inspection_tables t ON t.id=i.inspection_table_id'''
+
+
+def appeal_notification_counts(cur, user, namespace):
+    core = SimpleNamespace(**namespace) if isinstance(namespace, dict) else namespace
+    where, params = appeal_scope(core, cur, user)
+    predicate = ' AND '.join(where) or 'TRUE'
+    cur.execute(f'''SELECT count(*) FILTER (WHERE a.status IN ('area_pending','quality_pending')) AS active,
+      count(*) FILTER (WHERE a.status NOT IN ('area_pending','quality_pending') AND NOT EXISTS (
+        SELECT 1 FROM inspection_issue_appeal_reads r WHERE r.appeal_id=a.id AND r.user_id=%s
+        AND r.read_version >= a.updated_at)) AS unread_ended
+      {APPEAL_JOINS} WHERE {predicate}''', [user['id']] + params)
+    counts = dict(cur.fetchone())
+    counts['total'] = counts['active'] + counts['unread_ended']
+    return counts
+
+
 def record_event(cur, user, issue_id, kind, old, new, reason):
     cur.execute("""INSERT INTO inspection_issue_flow_history
       (issue_id,action_type,from_status,to_status,result,note,actor_user_id,actor_username,actor_name,actor_role)
@@ -86,21 +105,52 @@ def register_issue_appeals(app, namespace):
             if keyword:
                 where.append('(i.id::text = %s OR s.station_name ILIKE %s OR i.description ILIKE %s)')
                 params += [keyword, f'%{keyword}%', f'%{keyword}%']
-            joins = 'FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id JOIN inspections ins ON ins.id=i.inspection_id JOIN inspection_tables t ON t.id=i.inspection_table_id'
+            joins = APPEAL_JOINS
             predicate = ' AND '.join(where) or 'TRUE'
             cur.execute(f'SELECT count(*) AS total {joins} WHERE {predicate}', params)
             total = cur.fetchone()['total']
             cur.execute(f"""SELECT a.*, i.description, i.standard_id, i.photo_path, i.status AS issue_status,
+              a.status NOT IN ('area_pending','quality_pending') AND NOT EXISTS (
+                SELECT 1 FROM inspection_issue_appeal_reads r WHERE r.appeal_id=a.id AND r.user_id=%s
+                  AND r.read_version >= a.updated_at) AS unread,
+              (SELECT COALESCE(real_name,username) FROM users WHERE id=a.submitted_by) AS submitted_name,
+              (SELECT COALESCE(real_name,username) FROM users WHERE id=a.area_by) AS area_name,
+              (SELECT COALESCE(real_name,username) FROM users WHERE id=a.quality_by) AS quality_name,
               s.station_name, s.region, t.table_name,
               to_char(i.created_at,'YYYY-MM-DD HH24:MI') AS inspection_time
-              {joins} WHERE {predicate} ORDER BY a.id DESC LIMIT %s OFFSET %s""", params + [size, (page-1)*size])
+              {joins} WHERE {predicate} ORDER BY a.id DESC LIMIT %s OFFSET %s""", [user['id']] + params + [size, (page-1)*size])
             rows = cur.fetchall()
+            cur.execute("SELECT id,username,real_name,role FROM users WHERE role='quality_safety' AND account_status='active' ORDER BY id")
+            reviewers = [u.get('real_name') or u['username'] for u in cur.fetchall() if core.has_permission(cur, u, 'review_quality_appeals')]
             for row in rows:
                 row['can_decide'] = can_decide(core, cur, user, row)
+                row['notification_version'] = row['updated_at'].isoformat()
                 for field in ('created_at', 'updated_at', 'area_at', 'quality_at'):
                     if row.get(field):
                         row[field] = row[field].astimezone(core.BEIJING_TZ).strftime('%Y-%m-%d %H:%M')
-            return jsonify(items=rows, total=total, page=page, page_size=size)
+            return jsonify(items=rows, total=total, page=page, page_size=size, quality_reviewers=reviewers,
+                           counts=appeal_notification_counts(cur, user, core))
+        return run(operation)
+
+    @app.post('/api/issue-appeals/<int:appeal_id>/read')
+    def mark_appeal_read(appeal_id):
+        def operation(cur, user):
+            version = (request.get_json(silent=True) or {}).get('version')
+            if not isinstance(version, str) or len(version) > 64:
+                raise ValueError('请先打开需要查看的申诉记录。')
+            where, params = appeal_scope(core, cur, user)
+            where.append('a.id=%s')
+            cur.execute(f"SELECT a.status,a.updated_at {APPEAL_JOINS} WHERE {' AND '.join(where)}", params + [appeal_id])
+            appeal = cur.fetchone()
+            if not appeal:
+                return jsonify(error='无权查看该申诉记录。'), 403
+            if appeal['status'] in ACTIVE or appeal['updated_at'].isoformat() != version:
+                return jsonify(error='记录尚未结束或状态已变化，请刷新后查看。'), 409
+            cur.execute('''INSERT INTO inspection_issue_appeal_reads(appeal_id,user_id,read_version)
+              VALUES (%s,%s,%s) ON CONFLICT (appeal_id,user_id) DO UPDATE
+              SET read_version=GREATEST(inspection_issue_appeal_reads.read_version,EXCLUDED.read_version),read_at=CURRENT_TIMESTAMP''',
+              (appeal_id, user['id'], appeal['updated_at']))
+            return jsonify(success=True, counts=appeal_notification_counts(cur, user, core))
         return run(operation)
 
     @app.post('/api/issues/<int:issue_id>/appeals')
@@ -125,14 +175,19 @@ def register_issue_appeals(app, namespace):
                 return jsonify(error='问题不存在或已被删除。'), 404
             if issue['station_id'] != user.get('station_id'):
                 return jsonify(error='只能申诉本账号所属站点的问题。'), 403
+            cur.execute('SELECT 1 FROM inspection_issue_appeal_claims WHERE issue_id=%s', (issue_id,))
+            if cur.fetchone():
+                return jsonify(error='每个问题只能参与一次申诉流程，该问题已发起过申诉，不能再次申诉。'), 409
             if not appeal_table_allowed(core, issue['table_name'], issue['checklist_mode']):
                 raise ValueError('该检查表不支持申诉。')
             if issue['status'] != '待整改' or issue['audit_status'] != 'approved' or issue['sign_status'] != '已签名确认':
                 return jsonify(error='仅已签名验收、审核通过且待整改的问题可以申诉，请刷新列表。'), 409
             cur.execute("INSERT INTO inspection_issue_appeals (issue_id,status,reason,submitted_by) VALUES (%s,'area_pending',%s,%s) RETURNING id", (issue_id, reason, user['id']))
             appeal_id = cur.fetchone()['id']
+            cur.execute("SELECT set_config('app.appeal_event','1',true)")
             cur.execute("UPDATE issues SET status='申诉中' WHERE id=%s", (issue_id,))
             record_event(cur, user, issue_id, 'appeal_submitted', '待整改', '申诉中', reason)
+            cur.execute("SELECT set_config('app.appeal_event','',true)")
             return jsonify(success=True, id=appeal_id, message='问题已进入申诉空间，等待所属片区审核反馈。')
         return run(operation)
 
@@ -167,6 +222,7 @@ def register_issue_appeals(app, namespace):
             next_state = 'quality_pending' if area and approved else 'approved' if approved else 'rejected'
             cur.execute(f"UPDATE inspection_issue_appeals SET status=%s,{prefix}_by=%s,{prefix}_reason=%s,{prefix}_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=%s", (next_state, user['id'], reason, appeal_id))
             new_status = '申诉中' if next_state == 'quality_pending' else '已销毁' if approved else '待整改'
+            cur.execute("SELECT set_config('app.appeal_event','1',true)")
             if next_state == 'approved':
                 cur.execute("""UPDATE issues SET status='已销毁',audit_status='rejected',audited_by=%s,
                   audited_at=CURRENT_TIMESTAMP,audit_source='manual',is_excellent=FALSE,
@@ -175,5 +231,6 @@ def register_issue_appeals(app, namespace):
                 cur.execute("UPDATE issues SET status='待整改' WHERE id=%s", (appeal['issue_id'],))
             kind = f'appeal_{prefix}_{"approved" if approved else "rejected"}'
             record_event(cur, user, appeal['issue_id'], kind, '申诉中', new_status, reason)
+            cur.execute("SELECT set_config('app.appeal_event','',true)")
             return jsonify(success=True, message=APPEAL_LABELS[kind])
         return run(operation)

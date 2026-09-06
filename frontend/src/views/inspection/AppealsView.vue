@@ -3,22 +3,19 @@
     <header class="surface page-heading"><div><span class="eyebrow">巡检系统</span><h2>申诉空间</h2><p>站点发起 → 所属片区初审 → 授权质安部终审</p></div><span class="scope-note">仅展示当前账号可查看的数据</span></header>
     <div v-if="notice" class="notice" role="status">{{ notice }}<button @click="notice = ''" aria-label="关闭提示">×</button></div>
     <form class="surface filters" @submit.prevent="page = 1; load()">
-      <div class="tabs"><button type="button" :class="{ active: !archive }" @click="setArchive(false)">待处理申诉</button><button type="button" :class="{ active: archive }" @click="setArchive(true)">已结束记录</button></div>
+      <div class="tabs"><button type="button" :class="{ active: !archive }" @click="setArchive(false)">待处理申诉 <span v-if="counts.active" class="count-badge">{{ counts.active }}</span></button><button type="button" :class="{ active: archive }" @click="setArchive(true)">已结束记录 <span v-if="counts.unread_ended" class="count-badge">{{ counts.unread_ended }}</span></button></div>
       <label>搜索问题或站点<input v-model="keyword" placeholder="问题ID、站点名称、问题描述" /></label><button class="primary" :disabled="loading">开始筛选</button>
     </form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <section :aria-busy="loading" class="results">
       <div v-if="loading" class="surface empty" role="status">正在加载申诉记录…</div>
       <template v-else>
-        <p class="count">共 {{ total }} 条{{ archive ? '已结束记录' : '待处理申诉' }}。拒绝后的问题已回到站点待整改列表，历史记录仅供追溯。</p>
+        <p class="count">共 {{ total }} 条{{ archive ? '已结束记录，点击“查看处理结果”逐条消除本账号未读提醒' : '进行中申诉，查看不会消除数量提醒，结束后转为未读结果' }}。每个问题仅允许申诉一次。</p>
         <article v-for="item in items" :key="item.id" class="surface appeal-card">
           <header><div><span class="eyebrow">问题 #{{ item.issue_id }} · 申诉 #{{ item.id }}</span><h3>{{ item.region }} · {{ item.station_name }}</h3><p class="muted">{{ item.table_name }} · 检查时间 {{ item.inspection_time }}</p></div><span class="status" :class="item.status">{{ labels[item.status] }}</span></header>
           <div class="issue-content"><p>{{ item.description }}</p><button v-if="item.photo_path" class="photo" @click="photo = imageUrl(item.photo_path)"><img :src="imageUrl(item.photo_path)" alt="问题照片，点击放大" loading="lazy" /></button></div>
-          <div class="stages">
-            <section><strong>站点申诉</strong><time>{{ item.created_at }}</time><p>{{ item.reason }}</p></section>
-            <section><strong>片区初审</strong><time>{{ item.area_at || '等待片区处理' }}</time><p>{{ item.area_reason || '由站点所属片区账号审核，必须填写原因。' }}</p></section>
-            <section><strong>质安部终审</strong><time>{{ item.quality_at || (item.status === 'quality_pending' ? '等待授权质安部账号处理' : '片区通过后进入终审') }}</time><p>{{ item.quality_reason || '终审通过后问题已销毁，拒绝后恢复待整改。' }}</p></section>
-          </div>
+          <button v-if="archive" class="result-toggle" :aria-expanded="expanded.has(item.id)" :disabled="reading !== null" @click="viewResult(item)">{{ expanded.has(item.id) ? '收起处理结果' : '查看处理结果' }} <span v-if="item.unread" class="count-badge">未读</span></button>
+          <AppealProgress v-if="!archive || expanded.has(item.id)" :item="item" :reviewers="qualityReviewers" />
           <footer><span class="muted">当前问题状态：{{ item.issue_status }}</span><button v-if="item.can_decide" class="primary" @click="openDecision(item)">审核申诉</button><span v-else-if="!archive" class="muted">当前账号在此阶段仅可查看</span></footer>
         </article>
         <div v-if="!items.length" class="surface empty">暂无符合条件的申诉</div>
@@ -45,9 +42,11 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
+import AppealProgress from '../../components/AppealProgress.vue'
 const route = useRoute()
 const router = useRouter()
 const items = ref([]), total = ref(0), page = ref(1), archive = ref(false), keyword = ref('')
+const counts = ref({ active: 0, unread_ended: 0, total: 0 }), expanded = ref(new Set()), reading = ref(null), qualityReviewers = ref([])
 const loading = ref(false), error = ref(''), notice = ref(''), selected = ref(null), decision = ref(''), reason = ref(''), saving = ref(false), decisionError = ref(''), photo = ref('')
 const labels = { area_pending: '待片区初审', quality_pending: '待质安部终审', approved: '申诉通过', rejected: '申诉被拒绝', cancelled: '申诉已取消' }
 const imageUrl = path => !path ? '' : /^https?:\/\//.test(path) || path.startsWith('/storage/') ? path : `/storage/${path.replace(/^\//, '')}`
@@ -61,10 +60,28 @@ async function load() {
     if (id !== requestId) return
     items.value = data.items
     total.value = data.total
+    counts.value = data.counts
+    qualityReviewers.value = data.quality_reviewers || []
   } catch (err) { if (id === requestId) error.value = err.response?.data?.error || '申诉记录读取失败。' }
   finally { if (id === requestId) loading.value = false }
 }
 function setArchive(value) { archive.value = value; page.value = 1; load() }
+async function viewResult(item) {
+  if (reading.value !== null) return
+  if (expanded.value.has(item.id)) { expanded.value.delete(item.id); return }
+  expanded.value.add(item.id)
+  if (!item.unread) return
+  reading.value = item.id
+  try {
+    const { data } = await axios.post(`/api/issue-appeals/${item.id}/read`, { version: item.notification_version })
+    item.unread = false
+    counts.value = data.counts
+    window.dispatchEvent(new Event('my-pending-rectification-refresh'))
+  } catch (err) {
+    expanded.value.delete(item.id)
+    error.value = err.response?.data?.error || '标记已读失败，请重新查看。'
+  } finally { reading.value = null }
+}
 function openDecision(item) { selected.value = item; decision.value = ''; reason.value = ''; decisionError.value = '' }
 async function decide() {
   if (saving.value || !decision.value || !reason.value.trim()) return
@@ -96,6 +113,9 @@ h2,h3 { margin: 8px 0; } p { line-height: 1.7; overflow-wrap: anywhere; white-sp
 .scope-note,.muted,.count { color: #64748b; font-size: 13px; }
 .filters { display: flex; align-items: end; flex-wrap: wrap; gap: 16px; }
 .tabs { display: flex; gap: 6px; align-self: center; }
+.tabs button { display: inline-flex; align-items: center; gap: 8px; }
+.count-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; padding: 2px 6px; border-radius: 20px; background: #dc3545; color: white; font-size: 12px; line-height: 1.5; }
+.result-toggle { margin: 8px 0 18px; display: flex; align-items: center; gap: 12px; }
 button { border: 1px solid #cbd9e7; background: white; color: #294862; border-radius: 10px; padding: 10px 16px; cursor: pointer; font: inherit; font-size: 14px; }
 button:disabled { opacity: .5; cursor: default; } .primary,.tabs .active { background: #1976ac; border-color: #1976ac; color: white; }
 label { display: grid; gap: 8px; font-size: 14px; } input,select,textarea { font: inherit; font-size: 16px; border: 1px solid #cbd9e7; padding: 10px; border-radius: 10px; box-sizing: border-box; width: 100%; }
@@ -105,12 +125,10 @@ label { display: grid; gap: 8px; font-size: 14px; } input,select,textarea { font
 .status.rejected { color: #b15b20; background: #fff4e8; } .status.approved { color: #21715a; background: #eaf7f0; }
 .issue-content { display: flex; gap: 20px; align-items: start; } .issue-content p { flex: 1; }
 .photo { padding: 4px; width: 140px; height: 110px; cursor: zoom-in; } .photo img { width: 100%; height: 100%; object-fit: contain; }
-.stages { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 18px 0; }
-.stages section { background: #f6f9fd; padding: 16px; border-radius: 12px; border: 1px solid #e4ebf3; } time { display: block; color: #64748b; font-size: 12px; margin-top: 8px; } .stages p { margin-bottom: 0; font-size: 14px; }
 .pagination { display: flex; gap: 16px; justify-content: center; align-items: center; } .empty { padding: 48px; text-align: center; color: #64748b; }
 .notice,.outcome { background: #eaf5fd; color: #246187; padding: 14px; border-radius: 12px; } .notice { display: flex; justify-content: space-between; align-items: center; } .notice button { border: 0; background: none; }
 .error { color: #b42318; } .overlay { position: fixed; inset: 0; z-index: 4000; background: #13223a99; display: grid; place-items: center; padding: 20px; }
 .decision { width: min(580px,100%); max-height: 90dvh; overflow-y: auto; box-sizing: border-box; } .decision footer { display: flex; gap: 10px; justify-content: end; margin-top: 18px; }
 .photo-overlay img { max-width: 95vw; max-height: 86dvh; object-fit: contain; } .photo-overlay > button { position: absolute; top: 20px; right: 20px; }
-@media(max-width:700px) { .surface { padding: 16px; } .page-heading,.issue-content { flex-direction: column; align-items: start; } .stages { grid-template-columns: 1fr; } .tabs { width: 100%; } .scope-note { display: none; } }
+@media(max-width:700px) { .surface { padding: 16px; } .page-heading,.issue-content { flex-direction: column; align-items: start; } .tabs { width: 100%; } .scope-note { display: none; } }
 </style>

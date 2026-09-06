@@ -17,7 +17,8 @@ class IssueLifecycleTests(unittest.TestCase):
     def test_automatic_audit_is_identifiable(self):
         event = serialize_issue_flow_history_event({'action_type': 'audit_changed', 'note': '自动审核：规则', 'result': '审核通过'})
         self.assertEqual(event['actor_display_name'], '系统自动审核')
-        self.assertEqual(event['action_label'], '自动审核')
+        self.assertEqual(event['action_label'], '自动审核：审核通过')
+        self.assertEqual(event['stage_label'], '问题审核（非申诉审核）')
 
     @unittest.skipUnless(os.environ.get('ISSUE_LIFECYCLE_DB_TEST') == '1', 'Requires local PostgreSQL, all changes rolled back')
     def test_migration_and_lifecycle_in_rollback_transaction(self):
