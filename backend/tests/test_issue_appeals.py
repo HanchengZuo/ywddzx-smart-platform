@@ -47,7 +47,7 @@ class AppealDatabaseTests(unittest.TestCase):
         self.conn = core.get_db_connection()
         self.cur = self.conn.cursor()
         self.addCleanup(self.cleanup_database)
-        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications', '20260906_002_quality_deadlines'):
+        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications', '20260906_002_quality_deadlines', '20260906_003_deadline_switches'):
             path = Path(__file__).parents[1] / f'migrations/versions/{name}.py'
             spec = importlib.util.spec_from_file_location(name, path)
             migration = importlib.util.module_from_spec(spec)

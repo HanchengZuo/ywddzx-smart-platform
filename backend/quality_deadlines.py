@@ -1,11 +1,21 @@
 """Quality-only workflow clocks and auditable, transaction-safe timeout processing."""
 import json
 import logging
+import os
 import threading
 import time
+from datetime import datetime
 from types import SimpleNamespace
 from flask import g, jsonify, request
 from psycopg2.extras import Json
+
+
+def scan_interval_seconds():
+    try:
+        minutes = int(os.environ.get('QUALITY_DEADLINE_SCAN_MINUTES', '180'))
+    except ValueError:
+        minutes = 180
+    return max(30, min(1440, minutes)) * 60
 
 
 def policy_snapshot(cur):
@@ -44,14 +54,18 @@ def initialize_appeal_review(cur, core, appeal_id, user=None):
     cur.execute('''SELECT a.*,i.station_id,i.inspection_id,s.region FROM inspection_issue_appeals a
       JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE a.id=%s''', (appeal_id,))
     appeal = cur.fetchone()
-    if not appeal or appeal['review_deadline_at'] is not None:
-        return
     policy = policy_snapshot(cur)
+    if not appeal or not policy['review_enabled']:
+        return
+    if appeal['review_started_at'] and appeal['review_started_at'] >= datetime.fromisoformat(policy['review_enabled_at']):
+        return
+    if appeal['created_at'] < datetime.fromisoformat(policy['review_enabled_at']):
+        policy.update(policy['review_enabled_policy'])
     # Old active appeals receive a full grace period from rollout, not a retroactive timeout.
     cur.execute('''UPDATE inspection_issue_appeals SET review_deadline_at=
       GREATEST(created_at,%s::timestamptz) + make_interval(days=>%s),review_policy=%s
       ,review_started_at=GREATEST(created_at,%s::timestamptz)
-      WHERE id=%s RETURNING review_deadline_at''', (policy['activated_at'], policy['review_days'], Json(policy), policy['activated_at'], appeal_id))
+      WHERE id=%s RETURNING review_deadline_at''', (policy['review_enabled_at'], policy['review_days'], Json(policy), policy['review_enabled_at'], appeal_id))
     deadline = cur.fetchone()['review_deadline_at']
     owners = responsible_users(cur, core, appeal['status'], appeal['station_id'], appeal['region'])
     cur.execute('UPDATE inspection_issue_appeals SET phase_responsible=%s WHERE id=%s',
@@ -68,24 +82,32 @@ def capture_quality_handoff(cur, core, appeal, user):
     owners = responsible_users(cur, core, 'quality_pending', issue['station_id'], appeal['region'])
     cur.execute("UPDATE inspection_issue_appeals SET phase_responsible=phase_responsible || %s::jsonb WHERE id=%s",
                 (Json({'quality_pending': owners}), appeal['id']))
-    log_event(cur, 'review_handoff', '片区通过，转质安部终审；继续使用原截止时间。',
+    enabled = policy_snapshot(cur)['review_enabled']
+    log_event(cur, 'review_handoff', '片区通过，转质安部终审；' + ('继续使用原截止时间。' if enabled else '共享审核时限已关闭，继续人工审核。'),
               inspection_id=issue['inspection_id'], issue_id=appeal['issue_id'], appeal_id=appeal['id'],
               stage='quality_pending', deadline_at=appeal['review_deadline_at'], policy=appeal['review_policy'],
               responsible=owners, actor={key: user.get(key) for key in ('id','username','real_name','role')})
 
 
-def run_deadline_scan(cur, core):
+def run_deadline_scan(cur, core, *, scheduled=False):
     # All workers/replicas may start a timer. PostgreSQL elects one scan transaction.
     cur.execute('SELECT pg_try_advisory_xact_lock(66092026) AS acquired')
     if not cur.fetchone()['acquired']:
         return
+    if scheduled:
+        cur.execute('SELECT next_scan_at>CURRENT_TIMESTAMP AS deferred FROM quality_deadline_worker_state WHERE id=1')
+        if cur.fetchone()['deferred']:
+            return
+    # A switch update waits for an in-flight scan, so no old-policy work commits after it returns.
+    cur.execute('SELECT * FROM quality_deadline_policy WHERE id=1 FOR SHARE')
+    switches = cur.fetchone()
     cur.execute("SELECT set_config('app.actor_id','',true)")
     cur.execute('''SELECT ins.id FROM inspections ins WHERE is_quality_deadline_table(ins.inspection_table_id)
       AND COALESCE(ins.sign_status,'待签名确认') <> '已签名确认' AND ins.inspector_completion_status='已确认完成'
       AND NOT EXISTS(SELECT 1 FROM issues i WHERE i.inspection_id=ins.id AND COALESCE(i.audit_status,'pending')='pending')
-      AND (ins.quality_accept_started_at IS NULL OR ins.quality_accept_deadline_at<=CURRENT_TIMESTAMP
+      AND %s AND (ins.quality_accept_started_at IS NULL OR ins.quality_accept_started_at < %s OR ins.quality_accept_deadline_at<=CURRENT_TIMESTAMP
         OR EXISTS(SELECT 1 FROM issues i WHERE i.inspection_id=ins.id AND i.audited_at AT TIME ZONE 'Asia/Shanghai'>ins.quality_accept_started_at))
-      ORDER BY ins.id LIMIT 200''')
+      ORDER BY ins.id LIMIT 200''', (switches['acceptance_enabled'], switches['acceptance_enabled_at']))
     for candidate in cur.fetchall():
         cur.execute('SELECT refresh_quality_acceptance(%s)', (candidate['id'],))
         cur.execute('''SELECT ins.*,s.region,s.station_name,quality_accept_deadline_at<=CURRENT_TIMESTAMP AS overdue
@@ -112,13 +134,16 @@ def run_deadline_scan(cur, core):
                   policy=ins['quality_accept_policy'], responsible=owners)
 
     # Initialize still-pending legacy windows once. The issue trigger preserves them thereafter.
-    cur.execute("""UPDATE issues i SET quality_appeal_deadline_at=NULL FROM inspections ins
-      WHERE ins.id=i.inspection_id AND ins.sign_status='已签名确认' AND i.audit_status='approved'
-      AND i.status='待整改' AND i.quality_appeal_deadline_at IS NULL AND is_quality_deadline_table(i.inspection_table_id)""")
+    cur.execute("""UPDATE issues SET quality_appeal_deadline_at=NULL WHERE id IN (
+      SELECT i.id FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
+      WHERE %s AND ins.sign_status='已签名确认' AND i.audit_status='approved'
+      AND i.status='待整改' AND (i.quality_appeal_deadline_at IS NULL OR i.quality_appeal_started_at < %s)
+      AND is_quality_deadline_table(i.inspection_table_id) ORDER BY i.id LIMIT 200)""",
+      (switches['appeal_enabled'], switches['appeal_enabled_at']))
     cur.execute("""SELECT a.id,a.issue_id FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id
-      WHERE a.status IN ('area_pending','quality_pending') AND is_quality_deadline_table(i.inspection_table_id)
-      AND (a.review_deadline_at IS NULL OR a.review_deadline_at<=CURRENT_TIMESTAMP AND a.review_policy->>'timeout_action'<>'manual')
-      ORDER BY a.id LIMIT 200""")
+      WHERE %s AND a.status IN ('area_pending','quality_pending') AND is_quality_deadline_table(i.inspection_table_id)
+      AND (a.review_deadline_at IS NULL OR a.review_started_at < %s OR a.review_deadline_at<=CURRENT_TIMESTAMP AND a.review_policy->>'timeout_action'<>'manual')
+      ORDER BY a.id LIMIT 200""", (switches['review_enabled'], switches['review_enabled_at']))
     for candidate in cur.fetchall():
         cur.execute('SELECT i.*,s.region FROM issues i JOIN stations s ON s.id=i.station_id WHERE i.id=%s FOR UPDATE OF i', (candidate['issue_id'],))
         issue = cur.fetchone()
@@ -156,7 +181,8 @@ def run_deadline_scan(cur, core):
         log_event(cur, 'review_timeout', detail, inspection_id=issue['inspection_id'], issue_id=issue['id'],
                   appeal_id=appeal['id'], stage=stage, started_at=appeal['review_started_at'], deadline_at=appeal['review_deadline_at'],
                   policy=appeal['review_policy'], responsible={'phase_start': appeal['phase_responsible'].get(stage,[]), 'at_timeout': owners})
-    cur.execute('UPDATE quality_deadline_worker_state SET last_success_at=CURRENT_TIMESTAMP WHERE id=1')
+    cur.execute('''UPDATE quality_deadline_worker_state SET last_success_at=CURRENT_TIMESTAMP,
+      next_scan_at=CURRENT_TIMESTAMP+make_interval(secs=>%s) WHERE id=1''', (scan_interval_seconds(),))
 
 
 def start_deadline_worker(namespace):
@@ -169,20 +195,22 @@ def start_deadline_worker(namespace):
                 cur = conn.cursor()
                 cur.execute("SET LOCAL lock_timeout='3s'")
                 cur.execute("SET LOCAL statement_timeout='30s'")
-                run_deadline_scan(cur, core)
+                run_deadline_scan(cur, core, scheduled=True)
                 conn.commit()
             except Exception:
                 if conn:
                     conn.rollback()
                     try:
-                        cur.execute('UPDATE quality_deadline_worker_state SET last_failure_at=CURRENT_TIMESTAMP WHERE id=1')
+                        cur.execute('''UPDATE quality_deadline_worker_state SET last_failure_at=CURRENT_TIMESTAMP,
+                          next_scan_at=GREATEST(next_scan_at,CURRENT_TIMESTAMP+make_interval(secs=>%s)) WHERE id=1''',
+                          (scan_interval_seconds(),))
                         conn.commit()
                     except Exception:
                         conn.rollback()
                 logging.exception('Quality deadline scan failed; transaction rolled back, retrying')
             finally:
                 core.close_db_resources(cur, conn)
-            time.sleep(30)
+            time.sleep(scan_interval_seconds())
     threading.Thread(target=loop, name='quality-deadlines', daemon=True).start()
 
 
@@ -215,31 +243,40 @@ def register_quality_deadlines(app, namespace):
     def get_quality_deadlines():
         def operation(cur, user):
             policy = policy_snapshot(cur)
-            cur.execute('SELECT last_success_at,last_failure_at FROM quality_deadline_worker_state WHERE id=1')
+            cur.execute('SELECT last_success_at,last_failure_at,next_scan_at FROM quality_deadline_worker_state WHERE id=1')
             worker = cur.fetchone()
             cur.execute('SELECT COALESCE(real_name,username) AS name FROM users WHERE id=%s', (policy.get('updated_by'),))
             editor = cur.fetchone()
-            return jsonify(policy=policy, editor=editor['name'] if editor else '系统默认', worker=worker)
+            return jsonify(policy=policy, editor=editor['name'] if editor else '系统默认', worker=worker,
+                           scan_interval_minutes=scan_interval_seconds() // 60)
         return run(operation)
 
     @app.put('/api/management/quality-deadlines')
     def update_quality_deadlines():
         def operation(cur, user):
             data = request.get_json(silent=True) or {}
-            for field in ('acceptance_days','appeal_days','review_days'):
-                if type(data.get(field)) is not int or not 1 <= data[field] <= 365:
-                    raise ValueError()
-            if data.get('timeout_action') not in ('manual','approve','reject'):
+            stage = data.get('stage')
+            if stage not in ('acceptance', 'appeal', 'review'):
                 raise ValueError()
-            cur.execute('SELECT version FROM quality_deadline_policy WHERE id=1 FOR UPDATE')
-            if cur.fetchone()['version'] != data.get('version'):
-                return jsonify(error='规则已被其他操作更新，请刷新后重试。'), 409
-            cur.execute('''UPDATE quality_deadline_policy SET acceptance_days=%s,appeal_days=%s,review_days=%s,
+            if type(data.get('enabled')) is not bool or type(data.get('days')) is not int or not 1 <= data['days'] <= 365:
+                raise ValueError()
+            if stage == 'review' and data.get('timeout_action') not in ('manual','approve','reject'):
+                raise ValueError()
+            cur.execute('SELECT * FROM quality_deadline_policy WHERE id=1 FOR UPDATE')
+            previous = cur.fetchone()
+            if previous['version'] != data.get('version'):
+                return jsonify(error='开关或时限已被其他操作更新，请刷新后重试。'), 409
+            cur.execute(f'''UPDATE quality_deadline_policy SET {stage}_enabled=%s,{stage}_days=%s,
+              {stage}_enabled_at=CASE WHEN NOT {stage}_enabled AND %s THEN CURRENT_TIMESTAMP ELSE {stage}_enabled_at END,
+              {stage}_enabled_policy=CASE WHEN NOT {stage}_enabled AND %s THEN %s ELSE {stage}_enabled_policy END,
               timeout_action=%s,version=version+1,updated_at=CURRENT_TIMESTAMP,updated_by=%s WHERE id=1''',
-              (data['acceptance_days'],data['appeal_days'],data['review_days'],data['timeout_action'],user['id']))
+              (data['enabled'],data['days'],data['enabled'],data['enabled'],
+               Json({f'{stage}_days':data['days'],'version':previous['version']+1,**({'timeout_action':data['timeout_action']} if stage == 'review' else {})}),
+               data.get('timeout_action') if stage == 'review' else previous['timeout_action'],user['id']))
             policy = policy_snapshot(cur)
-            log_event(cur, 'policy_updated', 'root更新时限规则；只影响此后新进入环节的任务，已有期限与处理方式不变。',
-                      policy=policy, actor={key: user.get(key) for key in ('id','username','real_name','role')})
+            stage_name = {'acceptance':'站点签名验收','appeal':'站点发起申诉','review':'片区与质安部共享审核'}[stage]
+            log_event(cur, 'policy_updated', f"root单独调整{stage_name}：{'启用' if data['enabled'] else '关闭'}时限，{data['days']}天。其他开关不变。关闭立即解除该项限制；重新启用给予待办完整期限；仅修改天数或处理方式影响后续新任务。",
+                      stage=stage, policy=policy, actor={key: user.get(key) for key in ('id','username','real_name','role')})
             return jsonify(success=True, policy=policy)
         return run(operation)
 

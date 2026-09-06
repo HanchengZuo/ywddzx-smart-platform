@@ -180,7 +180,7 @@ def verify_quality_deadline_schema(cur):
         cur.execute('SELECT to_regclass(%s)', (table,))
         if cur.fetchone()[0] is None:
             raise RuntimeError(f'Quality deadline migration missing: {table}')
-    for table, column in (('inspections','quality_accept_deadline_at'),('issues','quality_appeal_deadline_at'),('inspection_issue_appeals','review_deadline_at')):
+    for table, column in (('inspections','quality_accept_deadline_at'),('issues','quality_appeal_deadline_at'),('inspection_issue_appeals','review_deadline_at'),('quality_deadline_policy','review_enabled'),('quality_deadline_worker_state','next_scan_at')):
         cur.execute('SELECT 1 FROM information_schema.columns WHERE table_schema=\'public\' AND table_name=%s AND column_name=%s', (table,column))
         if not cur.fetchone():
             raise RuntimeError(f'Quality deadline column missing: {table}.{column}')

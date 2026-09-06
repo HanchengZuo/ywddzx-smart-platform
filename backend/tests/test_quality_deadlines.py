@@ -1,8 +1,18 @@
 import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from tests import test_issue_appeals as appeal_tests
-from quality_deadlines import run_deadline_scan
+from quality_deadlines import run_deadline_scan, scan_interval_seconds
+
+
+class ScanIntervalTests(unittest.TestCase):
+    def test_default_and_safe_bounds(self):
+        for value, expected in [(None,10800),('bad',10800),('1',1800),('99999',86400),('240',14400)]:
+            with patch.dict(os.environ, {}, clear=True):
+                if value is not None:
+                    os.environ['QUALITY_DEADLINE_SCAN_MINUTES'] = value
+                self.assertEqual(scan_interval_seconds(), expected)
 
 
 @unittest.skipUnless(os.environ.get('ISSUE_LIFECYCLE_DB_TEST') == '1', 'Local PostgreSQL only; rolled back')
@@ -20,7 +30,7 @@ class QualityDeadlineTests(unittest.TestCase):
     def prepare_unsigned(self):
         # Keep this rollback-only fixture independent of unrelated local backlog/batch limits.
         self.cur.execute("UPDATE inspections SET quality_accept_started_at=CURRENT_TIMESTAMP+interval '1 year',quality_accept_deadline_at=CURRENT_TIMESTAMP+interval '1 year' WHERE id<>%s", (self.issue['inspection_id'],))
-        self.cur.execute("UPDATE quality_deadline_policy SET activated_at=CURRENT_TIMESTAMP-interval '30 days' WHERE id=1")
+        self.cur.execute("UPDATE quality_deadline_policy SET activated_at=CURRENT_TIMESTAMP-interval '30 days',acceptance_enabled_at=CURRENT_TIMESTAMP-interval '30 days' WHERE id=1")
         self.cur.execute("""UPDATE inspections SET sign_status='待签名确认',station_manager_signed_at=NULL,
           inspector_completion_status='已确认完成',inspector_completed_at=CURRENT_TIMESTAMP-interval '5 days',
           inspection_table_id=(SELECT inspection_table_id FROM issues WHERE id=%s),
@@ -154,11 +164,118 @@ class QualityDeadlineTests(unittest.TestCase):
             self.assertEqual(self.client.get(path,headers={'X-Test-Identity':identity}).status_code,403)
         self.users['root'] = dict(self.users['station'], role='root', username='root')
         headers = {'X-Test-Identity':'root'}
-        data = self.client.get(path,headers=headers).json['policy']
-        data.update(acceptance_days=4,appeal_days=5,review_days=6,timeout_action='reject')
-        self.assertEqual(self.client.put(path,json=dict(data,acceptance_days=0),headers=headers).status_code,400)
+        policy = self.client.get(path,headers=headers).json['policy']
+        data = dict(stage='acceptance',enabled=False,days=4,version=policy['version'])
+        self.assertEqual(self.client.put(path,json=dict(data,days=0),headers=headers).status_code,400)
+        self.assertEqual(self.client.put(path,json=dict(data,enabled='false'),headers=headers).status_code,400)
         self.assertEqual(self.client.put(path,json=data,headers=headers).status_code,200)
         self.assertEqual(self.client.put(path,json=data,headers=headers).status_code,409)
+        updated = self.client.get(path,headers=headers).json['policy']
+        self.assertFalse(updated['acceptance_enabled'])
+        for field in ('appeal_enabled','appeal_days','review_enabled','review_days','timeout_action'):
+            self.assertEqual(updated[field],policy[field])
         events = self.client.get(path+'/events',headers=headers).json['items']
         self.assertEqual(events[0]['kind'],'policy_updated')
         self.assertEqual(events[0]['actor']['username'],'root')
+
+    def set_switch(self, stage, enabled):
+        self.users['root'] = dict(self.users['station'], role='root', username='root')
+        headers = {'X-Test-Identity':'root'}
+        path = '/api/management/quality-deadlines'
+        policy = self.client.get(path,headers=headers).json['policy']
+        response = self.client.put(path,headers=headers,json=dict(stage=stage,enabled=enabled,
+            days=policy[f'{stage}_days'],timeout_action=policy['timeout_action'],version=policy['version']))
+        self.assertEqual(response.status_code,200,response.json)
+
+    def test_disabled_acceptance_does_not_process_existing_overdue_record(self):
+        self.prepare_unsigned()
+        self.cur.execute('SELECT refresh_quality_acceptance(%s)', (self.issue['inspection_id'],))
+        self.set_switch('acceptance',False)
+        self.scan()
+        self.assertNotEqual(self.row()['sign_status'],'已签名确认')
+        self.cur.execute("SELECT quality_effective_deadline('acceptance',quality_accept_deadline_at,quality_accept_started_at) AS deadline FROM inspections WHERE id=%s", (self.issue['inspection_id'],))
+        self.assertIsNone(self.cur.fetchone()['deadline'])
+        self.set_switch('acceptance',True)
+        self.scan()
+        self.assertNotEqual(self.row()['sign_status'],'已签名确认')
+        self.cur.execute('SELECT quality_accept_deadline_at>CURRENT_TIMESTAMP AS fresh FROM inspections WHERE id=%s', (self.issue['inspection_id'],))
+        self.assertTrue(self.cur.fetchone()['fresh'])
+
+    def test_disabled_application_window_allows_expired_issue_but_not_second_appeal(self):
+        self.cur.execute("UPDATE issues SET quality_appeal_deadline_at=CURRENT_TIMESTAMP-interval '1 day' WHERE id=%s", (self.issue['id'],))
+        self.set_switch('appeal',False)
+        aid = self.start()
+        self.assertEqual(self.decide(aid,'area','area_pending','reject').status_code,200)
+        response = self.post(f"/api/issues/{self.issue['id']}/appeals",reason='再次申诉')
+        self.assertEqual(response.status_code,409)
+
+    def test_disabled_review_preserves_manual_handoff_and_decision(self):
+        self.cur.execute("UPDATE quality_deadline_policy SET timeout_action='approve' WHERE id=1")
+        aid = self.start(); self.expire_review(aid)
+        self.set_switch('review',False)
+        self.scan()
+        self.assertEqual(self.state(),'申诉中')
+        self.assertEqual(self.decide(aid,'area','area_pending').status_code,200)
+        self.assertEqual(self.decide(aid,'quality','quality_pending','reject').status_code,200)
+        self.assertEqual(self.state(),'待整改')
+
+    def test_reenabled_review_and_application_receive_full_grace(self):
+        self.cur.execute("UPDATE quality_deadline_policy SET timeout_action='approve' WHERE id=1")
+        aid = self.start()
+        self.cur.execute("UPDATE inspection_issue_appeals SET review_started_at=CURRENT_TIMESTAMP-interval '5 days',review_deadline_at=CURRENT_TIMESTAMP-interval '1 day' WHERE id=%s", (aid,))
+        self.set_switch('review',False); self.set_switch('review',True)
+        self.scan()
+        self.assertEqual(self.state(),'申诉中')
+        self.cur.execute('SELECT review_deadline_at>CURRENT_TIMESTAMP AS fresh FROM inspection_issue_appeals WHERE id=%s',(aid,))
+        self.assertTrue(self.cur.fetchone()['fresh'])
+        self.cur.execute("UPDATE issues SET quality_appeal_started_at=CURRENT_TIMESTAMP-interval '5 days',quality_appeal_deadline_at=CURRENT_TIMESTAMP-interval '1 day' WHERE id=%s", (self.issue['id'],))
+        self.set_switch('appeal',False); self.set_switch('appeal',True)
+        self.cur.execute("SELECT quality_effective_deadline('appeal',quality_appeal_deadline_at,quality_appeal_started_at)>CURRENT_TIMESTAMP AS fresh FROM issues WHERE id=%s", (self.issue['id'],))
+        self.assertTrue(self.cur.fetchone()['fresh'])
+
+    def test_new_appeal_with_review_off_can_be_manually_completed(self):
+        self.set_switch('review',False)
+        aid = self.start()
+        self.cur.execute('SELECT review_deadline_at FROM inspection_issue_appeals WHERE id=%s',(aid,))
+        self.assertIsNone(self.cur.fetchone()['review_deadline_at'])
+        self.assertEqual(self.decide(aid,'area','area_pending').status_code,200)
+        self.assertEqual(self.decide(aid,'quality','quality_pending').status_code,200)
+
+    def test_sequential_workers_and_restart_share_the_same_scan_schedule(self):
+        self.prepare_unsigned()
+        self.cur.execute('UPDATE quality_deadline_worker_state SET next_scan_at=NULL WHERE id=1')
+        run_deadline_scan(self.cur,SimpleNamespace(**self.namespace),scheduled=True)
+        self.assertEqual(self.row()['quality_accept_source'],'automatic')
+        self.prepare_unsigned()
+        run_deadline_scan(self.cur,SimpleNamespace(**self.namespace),scheduled=True)
+        self.assertNotEqual(self.row()['sign_status'],'已签名确认')
+        self.cur.execute('SELECT next_scan_at>last_success_at AS delayed FROM quality_deadline_worker_state WHERE id=1')
+        self.assertTrue(self.cur.fetchone()['delayed'])
+
+    def test_all_switches_off_do_not_initialize_or_process_tasks(self):
+        self.prepare_unsigned()
+        for stage in ('acceptance','appeal','review'):
+            self.set_switch(stage,False)
+        self.scan()
+        self.assertIsNone(self.row()['quality_accept_deadline_at'])
+        self.assertNotEqual(self.row()['sign_status'],'已签名确认')
+
+    def test_reenable_grace_snapshot_is_not_changed_before_lazy_scan(self):
+        aid = self.start()
+        self.cur.execute("UPDATE inspection_issue_appeals SET created_at=CURRENT_TIMESTAMP-interval '5 days',review_started_at=CURRENT_TIMESTAMP-interval '5 days' WHERE id=%s",(aid,))
+        self.set_switch('review',False); self.set_switch('review',True)
+        # New-task defaults change before the low-frequency worker has materialized old tasks.
+        self.cur.execute("UPDATE quality_deadline_policy SET review_days=9,timeout_action='approve' WHERE id=1")
+        self.scan()
+        self.cur.execute('SELECT review_policy,review_deadline_at-review_started_at AS duration FROM inspection_issue_appeals WHERE id=%s',(aid,))
+        row = self.cur.fetchone()
+        self.assertEqual(row['duration'].days,3)
+        self.assertEqual(row['review_policy']['timeout_action'],'manual')
+
+    def test_all_independent_switch_combinations_mask_only_their_own_deadline(self):
+        from itertools import product
+        for flags in product((False,True),repeat=3):
+            self.cur.execute('UPDATE quality_deadline_policy SET acceptance_enabled=%s,appeal_enabled=%s,review_enabled=%s WHERE id=1',flags)
+            for stage, enabled in zip(('acceptance','appeal','review'),flags):
+                self.cur.execute("SELECT quality_effective_deadline(%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) IS NOT NULL AS enabled",(stage,))
+                self.assertEqual(self.cur.fetchone()['enabled'],enabled)
