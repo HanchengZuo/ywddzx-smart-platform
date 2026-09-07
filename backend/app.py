@@ -239,7 +239,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.8.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.9.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -31418,12 +31418,6 @@ def get_my_issues():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        ensure_issue_inspector_schema(cur)
-        ensure_inspection_completion_schema(cur)
-        sync_signed_inspections_completion(cur)
-        auto_complete_overdue_inspections(cur)
-        conn.commit()
-
         cur.execute(
             """
             SELECT id, role, station_id
@@ -31439,6 +31433,11 @@ def get_my_issues():
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
         if is_station_manager(user):
+            ensure_issue_inspector_schema(cur)
+            ensure_inspection_completion_schema(cur)
+            sync_signed_inspections_completion(cur)
+            auto_complete_overdue_inspections(cur)
+            conn.commit()
             if not user["station_id"]:
                 return jsonify([])
 
@@ -31529,8 +31528,17 @@ def get_my_issues():
             )
 
         if is_root_user(user) or user.get("role") == "supervisor":
+            page, page_size = normalize_page_args(request.args.get('page'), request.args.get('page_size') or 20)
+            where_clause, params = build_pending_review_filters(request.args)
+            cur.execute(f'SELECT COUNT(*) AS total {PENDING_REVIEW_JOINS} {where_clause}', params)
+            total = int((cur.fetchone() or {}).get('total') or 0)
+            page = min(page, max(1, (total + page_size - 1) // page_size))
             cur.execute(
-                """
+                f"""
+                WITH page_ids AS MATERIALIZED (
+                    SELECT i.id {PENDING_REVIEW_JOINS} {where_clause}
+                    ORDER BY i.id DESC LIMIT %s OFFSET %s
+                )
                 SELECT
                     i.id,
                     i.station_id,
@@ -31563,23 +31571,24 @@ def get_my_issues():
                     TO_CHAR(i.audited_at, 'YYYY-MM-DD HH24:MI') AS audited_at,
                     ins.sign_status AS inspection_sign_status,
                     ins.inspector_completion_status AS inspection_completion_status
-                FROM issues i
+                FROM page_ids selected
+                JOIN issues i ON i.id = selected.id
                 JOIN inspections ins ON i.inspection_id = ins.id
                 LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
                 JOIN stations s ON i.station_id = s.id
                 JOIN inspection_tables t ON i.inspection_table_id = t.id
-                WHERE i.status = '待复核'
-                  AND COALESCE(i.audit_status, 'pending') <> 'rejected'
                 ORDER BY i.id DESC;
-                """
+                """, [*params, page_size, (page - 1) * page_size]
             )
             rows = cur.fetchall()
             attach_internal_standard_tags_to_issue_rows(cur, rows)
             can_explicit_edit = can_edit_inspection_issues(cur, user)
             can_explicit_delete = can_delete_inspection_issues(cur, user)
             can_explicit_change_inspector = can_change_issue_inspector(cur, user)
-            return jsonify(
-                [
+            return jsonify({
+                'success': True, 'total': total, 'page': page, 'page_size': page_size,
+                'total_pages': max(1, (total + page_size - 1) // page_size),
+                'items': [
                     normalize_issue_row_for_response(
                         row,
                         user,
@@ -31590,11 +31599,80 @@ def get_my_issues():
                     )
                     for row in rows
                 ]
-            )
+            })
 
         return jsonify([])
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except ValueError:
+        return jsonify({"success": False, "error": "筛选日期格式不正确，请检查后重试。"}), 400
+    except Exception:
+        logging.exception('Failed to load pending issues')
+        return jsonify({"success": False, "error": "读取待办问题失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+PENDING_REVIEW_JOINS = """
+    FROM issues i
+    JOIN inspections ins ON ins.id = i.inspection_id
+    JOIN stations s ON s.id = i.station_id
+    JOIN inspection_tables t ON t.id = i.inspection_table_id
+    LEFT JOIN users issue_inspector ON issue_inspector.id = COALESCE(i.inspector_id, ins.inspector_id)
+"""
+PENDING_REVIEW_WHERE = "i.status = '待复核' AND COALESCE(i.audit_status, 'pending') <> 'rejected'"
+
+
+def build_pending_review_filters(source):
+    # Preserve the review queue's scope; clients cannot replace its workflow status.
+    allowed = ('issue_id', 'month', 'date_from', 'date_to', 'regions', 'stations',
+               'station_manager', 'inspectors', 'inspection_tables', 'standard_id',
+               'standard_detail', 'standard_tags', 'issue_description')
+    filters = normalize_issue_list_filters({key: source.get(key) for key in allowed})
+    where, params = [PENDING_REVIEW_WHERE], []
+    issue_id = filters['issue_id']
+    filters['issue_id'] = ''
+    if issue_id:
+        where.append('i.id::text = %s'); params.append(issue_id)
+    # Month and explicit date bounds are intersected, just like the former client filter.
+    for key, predicate in (('date_from', 'i.created_at >= %s::date'),
+                           ('date_to', "i.created_at < (%s::date + INTERVAL '1 day')")):
+        value = str(source.get(key) or '').strip()
+        if value:
+            datetime.strptime(value, '%Y-%m-%d')
+            if filters['month']:
+                where.append(predicate); params.append(value)
+    append_issue_list_filter_clauses(where, params, filters)
+    return 'WHERE ' + ' AND '.join(where), params
+
+
+@app.route('/api/my-issues/filter-options')
+def get_pending_review_filter_options():
+    conn = cur = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        user = get_current_request_user()
+        if not (is_root_user(user) or user.get('role') == 'supervisor'):
+            return jsonify(success=False, error='当前账号无权查看待复核筛选项。'), 403
+        # Only distinct lightweight facets; never ship all issue descriptions or photos.
+        cur.execute(f"""
+            SELECT ARRAY_AGG(DISTINCT s.region) AS regions,
+                   ARRAY_AGG(DISTINCT s.station_name) AS stations,
+                   ARRAY_AGG(DISTINCT issue_inspector.real_name) AS inspectors,
+                   ARRAY_AGG(DISTINCT t.table_name) AS inspection_tables,
+                   ARRAY_AGG(DISTINCT i.internal_standard_id) AS codes
+            {PENDING_REVIEW_JOINS} WHERE {PENDING_REVIEW_WHERE}
+        """)
+        row = cur.fetchone() or {}
+        tag_map = fetch_internal_standard_tags_by_codes(cur, row.get('codes') or [])
+        options = {key: sorted({str(v).strip() for v in row.get(key) or [] if v and str(v).strip()})
+                   for key in ('regions', 'stations', 'inspectors', 'inspection_tables')}
+        options['standard_tags'] = sorted({
+            f"{tag['group_name']}：{tag['tag_name']}" if tag.get('group_name') else tag['tag_name']
+            for tags in tag_map.values() for tag in tags if tag.get('tag_name')
+        })
+        return jsonify(success=True, filter_options=options)
+    except Exception:
+        logging.exception('Failed to load pending review facets')
+        return jsonify(success=False, error='读取筛选项失败，请重试。'), 500
     finally:
         close_db_resources(cur, conn)
 

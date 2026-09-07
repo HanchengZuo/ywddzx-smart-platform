@@ -10,7 +10,7 @@
     <div class="summary-grid" :class="{ 'summary-grid-station': currentRole === 'station_manager' }">
       <div class="summary-card summary-card-primary card-surface">
         <div class="summary-label">当前待办</div>
-        <div class="summary-value">{{ filteredData.length }}</div>
+        <div class="summary-value">{{ resultTotal }}</div>
         <div class="summary-desc">{{ currentRole === 'station_manager' ? '待整改问题' : '待复核问题' }}</div>
       </div>
 
@@ -119,14 +119,16 @@
       </div>
       <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" type="button" @click="fetchMyIssues" :disabled="loading">
-          {{ loading ? '刷新中...' : '刷新数据' }}
+        <button class="btn btn-secondary" type="button" @click="isReviewQueue ? applyFilters() : fetchMyIssues()" :disabled="loading">
+          {{ isReviewQueue ? loading ? '筛选加载中...' : '开始筛选' : loading ? '刷新中...' : '刷新数据' }}
         </button>
       </div>
+      <p v-if="isReviewQueue" class="queue-hint">默认不限月份，查询全部待复核问题；调整条件后点击“开始筛选”，每次只加载当前页。</p>
+      <p v-if="optionsLoading" class="queue-hint" role="status">正在准备完整筛选选项，不影响清单加载…</p>
+      <p v-if="optionsError" class="queue-error">{{ optionsError }} <button class="btn btn-secondary" @click="fetchReviewOptions">重试筛选选项</button></p>
     </div>
-
-
-
+    <div v-if="loading && isReviewQueue" class="queue-progress card-surface" role="status" aria-live="polite"><span class="empty-state-orb loading"></span><div><strong>正在查询第 {{ page }} 页</strong><p>按已应用条件检索全部待复核数据，仅返回本页 {{ pageSize }} 条以内的问题。</p></div></div>
+    <div v-if="listError" class="queue-error card-surface" role="alert">{{ listError }} <button class="btn btn-secondary" @click="fetchMyIssues">重试加载</button></div>
     <div class="mobile-issue-list">
       <div v-if="loading" class="mobile-empty empty-state-card card-surface">
         <div class="empty-state-orb loading"></div>
@@ -241,8 +243,8 @@
         </div>
       </div>
 
-      <div v-if="!loading && filteredData.length" class="pagination-bar mobile-pagination-bar card-surface">
-        <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
+      <div v-if="!loading && resultTotal" class="pagination-bar mobile-pagination-bar card-surface">
+        <div class="pagination-summary">共 {{ resultTotal }} 条</div>
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
@@ -436,7 +438,7 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ filteredData.length }} 条</div>
+        <div class="pagination-summary">共 {{ resultTotal }} 条</div>
         <div class="pagination-controls">
           <label>每页显示</label>
           <select v-model.number="pageSize">
@@ -662,7 +664,7 @@ import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
-import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue } from '../../utils/myIssueFilters'
+import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
@@ -735,6 +737,11 @@ const dropdownVisible = ref({
 })
 
 const filters = ref(currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters())
+const isReviewQueue = computed(() => currentRole.value !== 'station_manager')
+const appliedFilters = ref(JSON.parse(JSON.stringify(filters.value)))
+const serverTotal = ref(0), listError = ref(''), optionsError = ref(''), optionsLoading = ref(false)
+const serverOptions = ref({})
+let listController, optionsController, listSequence = 0, initialized = false, acceptingPage = false
 
 const isMobileView = ref(false)
 const showMobileFilters = ref(false)
@@ -806,7 +813,8 @@ const loadMyIssueColumnVisibility = () => {
 
 const myIssueColumnVisibility = ref(loadMyIssueColumnVisibility())
 
-const filteredData = computed(() => issues.value.filter(item => matchesMyIssue(item, filters.value)))
+const filteredData = computed(() => isReviewQueue.value ? issues.value : issues.value.filter(item => matchesMyIssue(item, filters.value)))
+const resultTotal = computed(() => isReviewQueue.value ? serverTotal.value : filteredData.value.length)
 
 const visibleMyIssueColumns = computed(() => (
   myIssueColumnDefinitions.filter((column) => myIssueColumnVisibility.value[column.key])
@@ -825,14 +833,14 @@ const groupedMyIssueColumns = computed(() => {
   return groups
 })
 
-const regionOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.region)))
-const stationOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.station)))
-const inspectionTableOptions = computed(() => uniqueSortedOptions(issues.value.map((item) => item.inspection_table_name)))
+const regionOptions = computed(() => uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.regions || [] : issues.value.map((item) => item.region)))
+const stationOptions = computed(() => uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.stations || [] : issues.value.map((item) => item.station)))
+const inspectionTableOptions = computed(() => uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.inspection_tables || [] : issues.value.map((item) => item.inspection_table_name)))
 
 const reviewMultiOptions = computed(() => ({
   region: regionOptions.value, station: stationOptions.value, inspectionTableName: inspectionTableOptions.value,
-  inspector: uniqueSortedOptions(issues.value.map(item => item.inspector)),
-  standardTags: uniqueSortedOptions(issues.value.flatMap(item => (item.standard_tags || []).map(issueTagLabel)))
+  inspector: uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.inspectors || [] : issues.value.map(item => item.inspector)),
+  standardTags: uniqueSortedOptions(isReviewQueue.value ? serverOptions.value.standard_tags || [] : issues.value.flatMap(item => (item.standard_tags || []).map(issueTagLabel)))
 }))
 const filteredRegionOptions = computed(() => filterOptionByKeyword(regionOptions.value, filters.value.region))
 const filteredStationOptions = computed(() => filterOptionByKeyword(stationOptions.value, filters.value.station))
@@ -841,7 +849,7 @@ const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(insp
 
 const filterSummaryFields = computed(() => buildFilterSummary(
   currentRole.value === 'station_manager' ? [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]] : reviewFilterDefinitions,
-  filters.value
+  filters.value, isReviewQueue.value ? appliedFilters.value : filters.value
 ))
 const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
 
@@ -852,9 +860,10 @@ const pageSizeOptions = computed(() => isMobileView.value ? [5, 10, 20] : [20, 5
 const page = ref(1)
 const pageSize = ref(20)
 
-const totalPage = computed(() => Math.max(1, Math.ceil(filteredData.value.length / pageSize.value)))
+const totalPage = computed(() => Math.max(1, Math.ceil(resultTotal.value / pageSize.value)))
 
 const paginatedData = computed(() => {
+  if (isReviewQueue.value) return issues.value
   const start = (page.value - 1) * pageSize.value
   return filteredData.value.slice(start, start + pageSize.value)
 })
@@ -873,15 +882,20 @@ const visiblePageNumbers = computed(() => {
 })
 
 const mobilePageNumbers = computed(() => (
-  Array.from({ length: totalPage.value }, (_item, index) => index + 1)
+  isReviewQueue.value ? visiblePageNumbers.value : Array.from({ length: totalPage.value }, (_item, index) => index + 1)
 ))
 
-watch([filters, pageSize], () => {
-  page.value = 1
+watch(filters, () => {
+  if (!isReviewQueue.value) page.value = 1
 }, { deep: true })
+watch([page, pageSize], (_next, previous) => {
+  if (acceptingPage) return
+  if (_next[1] !== previous[1]) { acceptingPage = true; page.value = 1; acceptingPage = false }
+  if (isReviewQueue.value && initialized) fetchMyIssues()
+}, { flush: 'sync' })
 
 watch(totalPage, (value) => {
-  if (page.value > value) {
+  if (!isReviewQueue.value && page.value > value) {
     page.value = value
   }
 })
@@ -1161,17 +1175,53 @@ const fetchMyIssues = async () => {
     return
   }
 
+  const sequence = ++listSequence
+  listController?.abort()
+  listController = new AbortController()
+  listError.value = ''
+  if (isReviewQueue.value) issues.value = []
   try {
     loading.value = true
     const response = await axios.get('/api/my-issues', {
-      params: { user_id: userId }
+      params: isReviewQueue.value ? reviewRequestParams(appliedFilters.value, page.value, pageSize.value) : { user_id: userId },
+      signal: listController.signal,
     })
-    issues.value = response.data || []
+    if (sequence !== listSequence) return
+    if (isReviewQueue.value) {
+      if (!response.data?.success) throw new Error(response.data?.error || '待复核数据格式不正确。')
+      issues.value = response.data.items || []
+      serverTotal.value = response.data.total || 0
+      acceptingPage = true; page.value = response.data.page || 1; acceptingPage = false
+    } else issues.value = response.data || []
   } catch (error) {
-    showActionToast(error?.response?.data?.error || '获取待办问题失败。', 'error')
+    if (sequence !== listSequence || axios.isCancel(error)) return
+    listError.value = error?.response?.data?.error || error.message || '获取待办问题失败。'
+    showActionToast(listError.value, 'error')
   } finally {
-    loading.value = false
+    if (sequence === listSequence) loading.value = false
   }
+}
+
+const applyFilters = () => {
+  if (filters.value.dateFrom && filters.value.dateTo && filters.value.dateFrom > filters.value.dateTo) {
+    showActionToast('开始日期不能晚于结束日期。', 'error'); return
+  }
+  appliedFilters.value = JSON.parse(JSON.stringify(filters.value))
+  acceptingPage = true; page.value = 1; acceptingPage = false
+  fetchMyIssues()
+}
+
+const fetchReviewOptions = async () => {
+  if (!isReviewQueue.value || optionsLoading.value) return
+  optionsLoading.value = true; optionsError.value = ''
+  optionsController = new AbortController()
+  try {
+    const { data } = await axios.get('/api/my-issues/filter-options', { signal: optionsController.signal })
+    if (!data?.success) throw new Error(data?.error)
+    serverOptions.value = data.filter_options || {}
+  } catch (error) {
+    if (!axios.isCancel(error)) optionsError.value = '筛选选项暂未加载成功，请重试。'
+  } finally { optionsLoading.value = false }
 }
 
 const fetchIssueFlowHistory = async (issueId) => {
@@ -1443,10 +1493,14 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
+  appliedFilters.value = JSON.parse(JSON.stringify(filters.value))
+  initialized = true
   fetchMyIssues()
+  fetchReviewOptions()
 })
 
 onBeforeUnmount(() => {
+  listSequence++; listController?.abort(); optionsController?.abort(); initialized = false
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateResponsiveState)
   if (actionMessageTimer) {
@@ -1459,6 +1513,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.queue-hint { margin: 12px 0 0; color: #64748b; font-size: 13px; }
+.queue-error { padding: 14px; color: #b42318; }
+.queue-progress { display: flex; align-items: center; gap: 14px; padding: 18px; margin-bottom: 16px; color: #265d91; }
+.queue-progress .empty-state-orb { flex: 0 0 30px; width: 30px; height: 30px; margin: 0; }
+.queue-progress p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
 .action-stack { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .action-stack .btn.appeal-action { margin: 0; color: #fff; background: #dc3545; border-color: #dc3545; }
 .action-stack .btn.appeal-action:hover { background: #bd2433; border-color: #bd2433; }
