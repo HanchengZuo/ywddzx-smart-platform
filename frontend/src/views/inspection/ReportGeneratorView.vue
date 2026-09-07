@@ -2035,7 +2035,7 @@
             <div>
               <span>PRESENTATION EXPORT</span>
               <h3>导出报告PPT</h3>
-              <p>系统会在后台把当前报告编排为专业的 16:9 演示文稿。</p>
+              <p>下载与网页预览相同的PPT文件，无需重复创建。</p>
             </div>
           </header>
 
@@ -2079,16 +2079,6 @@
           </div>
 
           <footer class="export-dialog-footer">
-            <button type="button" class="export-secondary-btn" @click="closeExportDialog">稍后处理</button>
-            <button
-              v-if="exportTask?.status === 'completed'"
-              type="button"
-              class="export-secondary-btn"
-              :disabled="exportSubmitting"
-              @click="startPptExport"
-            >
-              重新创建
-            </button>
             <button
               v-if="exportTask?.status === 'completed'"
               type="button"
@@ -2102,10 +2092,10 @@
               v-else
               type="button"
               class="export-primary-btn"
-              :disabled="exportBusy || exportSubmitting"
+              :disabled="exportBusy || exportSubmitting || (!exportError && exportTask?.status !== 'failed')"
               @click="startPptExport"
             >
-              {{ exportBusy || exportSubmitting ? '后台生成中...' : '创建PPT' }}
+              {{ exportBusy || exportSubmitting || (!exportError && exportTask?.status !== 'failed') ? '正在准备下载文件...' : '重试准备文件' }}
             </button>
           </footer>
         </section>
@@ -4108,6 +4098,7 @@ const openExportDialog = async () => {
   if (!hasReport.value || loading.value || templateUnavailable.value) return
   exportDialogVisible.value = true
   await loadLatestPptExport()
+  if (exportDialogVisible.value && !exportTask.value && !exportError.value) await startPptExport()
 }
 
 const closeExportDialog = () => {

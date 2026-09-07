@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
 
+# Optional administrator-provided licensed Microsoft YaHei / SimSun fonts.
+if [ -d /usr/local/share/fonts/report-fonts ]; then
+  fc-cache /usr/local/share/fonts/report-fonts
+fi
+
 : "${DB_HOST:=db}"
 : "${DB_PORT:=5432}"
 : "${DB_USER:=postgres}"

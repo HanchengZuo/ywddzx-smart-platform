@@ -428,6 +428,14 @@ docker compose exec backend python -m flask db heads
 - 降级保留申诉占用和已读数据，仅解除一次申诉触发器。恢复旧应用可能重新允许申诉，不建议回退到 v6.4；若重新升级会补齐新产生的占用记录。
 - 本地回归：`ISSUE_LIFECYCLE_DB_TEST=1 python -m unittest tests.test_issue_appeals tests.test_issue_lifecycle tests.test_issue_flow_presentation`（在后端目录执行，数据库测试全程事务回滚）；前端执行 `node --test tests/*.test.mjs`。
 
+### v6.8 报告字体与翻页优化
+
+六类PPT的正文、表格、图表、母版、主题和内嵌图表工作簿统一只声明微软雅黑（Microsoft YaHei）或宋体（SimSun）。兼容版本升级会重新准备旧成稿的文件与预览，不重新调用AI。移除导出弹窗重复创建入口，正常直接下载与预览一致的文件，仅失败时提供重试。
+
+预览按报告实例缓存最多8页、24MB图片（单张当前页可超过上限），并预加载前1页、后2页，并发上限2。切换成稿或离开页面取消请求并释放URL，不持久保存账号私有图片；页面接口仍检查权限，后端仅验证所请求图片，不再每次遍历整份报告的图片文件。
+
+**部署字体注意：** 微软字体文件不随仓库分发。管理员应将有合法使用授权的微软雅黑及宋体 `.ttf/.ttc` 放入 `storage/report_fonts`，Compose已挂载此目录，后端启动刷新字体缓存。缺少字体时Linux渲染器仍会使用系统替代字体，无法保证网页字形与WPS完全一致；应在部署时用 `fc-match 'Microsoft YaHei'` 和 `fc-match 'SimSun'` 核实匹配，避免误以为仅修改PPT字体声明就已安装字体。
+
 ### v6.7 报告PPT兼容性
 
 六类报告统一通过 `backend/pptx_compatibility.py` 处理原生图表、数值缓存、坐标轴和字体。柱形/条形图下方使用独立可编辑的PPT表格，明确写入零值；不删除零值站点，不用非零小数冒充0。图表、内嵌工作簿、文字和表格仍可编辑，导出不是整页图片。

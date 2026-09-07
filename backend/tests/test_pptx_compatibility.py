@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from zipfile import ZipFile
+from io import BytesIO
+from lxml import etree
 
 from PIL import Image
 from pptx import Presentation
@@ -16,6 +18,19 @@ from report_ppt_artifacts import build_artifact, attach_export, export_preview_m
 
 
 class PptCompatibilityTests(unittest.TestCase):
+    def assert_allowed_fonts(self, data):
+        with ZipFile(BytesIO(data)) as package:
+            for name in package.namelist():
+                content = package.read(name)
+                if name.endswith('.xlsx'):
+                    self.assert_allowed_fonts(content)
+                elif name.endswith('.xml'):
+                    for node in etree.fromstring(content).iter():
+                        if 'typeface' in node.attrib:
+                            self.assertIn(node.get('typeface'), ('Microsoft YaHei', 'SimSun'), name)
+                        if node.tag.endswith('}name') and node.getparent() is not None and node.getparent().tag.endswith('}font'):
+                            self.assertIn(node.get('val'), ('Microsoft YaHei', 'SimSun'), name)
+
     def deck(self, values=(0,3,0), second=(0,0,0)):
         prs = Presentation(); prs.slide_width=Inches(13.333); prs.slide_height=Inches(7.5)
         slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -95,11 +110,23 @@ class PptCompatibilityTests(unittest.TestCase):
                     exported=Path(root)/(kind+'.pptx'); attach_export(directory,manifest,exported)
                     self.assertEqual(hashlib.sha256(exported.read_bytes()).hexdigest(),manifest['sha256'])
                     self.assertEqual(exported.read_bytes(),(directory/'report.pptx').read_bytes())
+                    self.assert_allowed_fonts(exported.read_bytes())
                     self.assertEqual(export_preview_manifest(exported,root),manifest)
                     self.assertTrue(preview_slide_path(exported,root,1).exists())
                     self.assertIsNone(preview_slide_path(exported,root,manifest['slide_count']+1))
                     self.assertIsNone(preview_slide_path(exported,root,0))
                     self.assertTrue(any(s.has_text_frame for p in Presentation(exported).slides for s in p.shapes))
+
+    def test_fonts_cover_themes_masters_text_and_embedded_workbooks(self):
+        prs, slide, _ = self.deck()
+        box = slide.shapes.add_textbox(Inches(1), Inches(.1), Inches(6), Inches(.5))
+        p = box.text_frame.paragraphs[0]
+        run = p.add_run(); run.text = '宋体内容'; run.font.name = 'Noto Serif CJK SC'
+        run = p.add_run(); run.text = '微软雅黑内容'; run.font.name = 'Arial'
+        normalize_presentation(prs)
+        self.assertEqual([r.font.name for r in p.runs], ['SimSun', 'Microsoft YaHei'])
+        output = BytesIO(); prs.save(output)
+        self.assert_allowed_fonts(output.getvalue())
 
     def test_cache_changes_with_payload_and_rejects_unsafe_sidecar(self):
         from report_ppt_artifacts import artifact_key
@@ -109,6 +136,19 @@ class PptCompatibilityTests(unittest.TestCase):
             path=Path(root)/'export.pptx'
             path.with_suffix('.preview.json').write_text(json.dumps({'version':COMPATIBILITY_VERSION,'artifact_key':'../../etc'}))
             self.assertIsNone(export_preview_manifest(path,root))
+
+    def test_font_installation_changes_derived_cache_key(self):
+        from report_ppt_artifacts import font_environment_key, artifact_key
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            before = font_environment_key(directory)
+            (directory / 'licensed-font.ttf').write_bytes(b'font-test-fixture')
+            after = font_environment_key(directory)
+            self.assertNotEqual(before, after)
+            with patch('report_ppt_artifacts.FONT_ENVIRONMENT', before):
+                old_key = artifact_key('finance', {'n': 1}, root)
+            with patch('report_ppt_artifacts.FONT_ENVIRONMENT', after):
+                self.assertNotEqual(old_key, artifact_key('finance', {'n': 1}, root))
 
     def test_expired_derived_cache_cleanup_preserves_saved_reports(self):
         import os

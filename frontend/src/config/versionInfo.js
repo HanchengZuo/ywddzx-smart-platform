@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.8',
+    date: '2026-09-07',
+    title: '报告字体统一与翻页提速',
+    summary: '六类报告仅使用微软雅黑或宋体，简化导出并缓存预加载相邻页。',
+    items: [
+      '统一正文、图表、母版、主题及图表内嵌工作簿字体，旧成稿兼容处理无需重新调用AI。',
+      '移除导出弹窗的稍后处理、重新创建按钮，正常状态直接下载，失败时才提供重试。',
+      '预览采用有容量上限的内存缓存与相邻页预加载，返回已缓存页面不再重复请求。'
+    ]
+  },
+  {
     version: 'v6.7',
     date: '2026-09-07',
     title: '六类报告PPT兼容性优化',

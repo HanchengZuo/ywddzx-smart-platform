@@ -54,8 +54,8 @@ CHART_COLORS = [
 ]
 BLUE = RGBColor(47, 117, 181)
 GRID = RGBColor(217, 225, 233)
-FONT_SANS = "Noto Sans CJK SC"
-FONT_SERIF = "Noto Serif CJK SC"
+FONT_SANS = "Microsoft YaHei"
+FONT_SERIF = "SimSun"
 KEY_ISSUE_CATEGORIES = ["重点商品", "月度盘点", "商品过期", "团购问题"]
 CATEGORY_DISPLAY_NAMES = {
     "员工形象及开口服务情况": "员工服务",
