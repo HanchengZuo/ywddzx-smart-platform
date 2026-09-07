@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emptyReviewFilters, matchesMyIssue, reviewFilterDefinitions } from '../src/utils/myIssueFilters.js'
+import { emptyReviewFilters, matchesMyIssue, reviewFilterDefinitions, reviewRequestParams } from '../src/utils/myIssueFilters.js'
 
 const issue = { id: 18, time: '2026-09-05 12:00', month: '2026-09', region: '浦东', station: '杨思', inspector: '测试检查人', station_manager: '测试站长', inspection_table_name: '现场表', standard_id: 1000, standard_detail_text: '安全规定', description: '地面积水', standard_tags: [{ group_name: '区域', tag_name: '加油区' }] }
 test('review filters match every supported field together', () => {
@@ -13,4 +13,17 @@ test('station filters remain compatible and excluded review filters are absent',
   assert.ok(matchesMyIssue(issue, { region: '浦', station: '杨', inspectionTableName: '' }))
   assert.equal(reviewFilterDefinitions.length, 12)
   for (const key of ['status', 'excellent', 'rectificationResult', 'reviewResult', 'auditState', 'auditStatus']) assert.ok(!reviewFilterDefinitions.some(([field]) => field === key))
+})
+test('server review defaults include all dates and serialize full filter values', () => {
+  const filters = emptyReviewFilters()
+  const request = reviewRequestParams(filters)
+  assert.equal(request.month, '')
+  assert.equal(request.date_from, '')
+  assert.equal(request.date_to, '')
+  assert.equal(request.page_size, 20)
+  filters.station = ['第一页外站点']
+  filters.description = '积水'
+  assert.deepEqual(JSON.parse(reviewRequestParams(filters, 2, 5).stations), ['第一页外站点'])
+  assert.equal(reviewRequestParams(filters, 2, 5).page, 2)
+  assert.equal(reviewRequestParams(filters).issue_description, '积水')
 })
