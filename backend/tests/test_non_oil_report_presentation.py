@@ -7,6 +7,7 @@ from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.chart import XL_CHART_TYPE
+from pptx_compatibility import normalize_presentation
 
 from ai_prompts import (
     build_non_oil_category_classification_prompt,
@@ -471,6 +472,7 @@ class NonOilReportPresentationTest(unittest.TestCase):
             self.assert_analysis_metrics(analysis_slide, 5, 2, "40%")
             normalized_template = Presentation(TEMPLATE_FILE)
             _normalize_presentation_fonts(normalized_template)
+            normalize_presentation(normalized_template)
             for keyword in ("随着非油业务", "2. 分析方法"):
                 expected = next(
                     s for s in normalized_template.slides[21].shapes

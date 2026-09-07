@@ -19,6 +19,7 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
+from pptx_compatibility import normalize_presentation
 
 
 SLIDE_WIDTH = Inches(13.333)
@@ -129,6 +130,7 @@ class InspectionReportPresentation:
         if self.report_type == "quality_measurement":
             self._build_quality_measurement()
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            normalize_presentation(self.prs)
             self.prs.save(output_path)
             self._normalize_chart_axis_ids(output_path)
             return {"slide_count": len(self.prs.slides)}
@@ -149,6 +151,7 @@ class InspectionReportPresentation:
         builder()
         self._add_ending()
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        normalize_presentation(self.prs)
         self.prs.save(output_path)
         self._normalize_chart_axis_ids(output_path)
         return {"slide_count": len(self.prs.slides)}

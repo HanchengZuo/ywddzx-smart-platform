@@ -80,10 +80,9 @@ from passkey_service import (
     verify_and_store_passkey,
     verify_passkey_authentication,
 )
-from report_presentation import build_inspection_report_presentation
+from report_ppt_artifacts import build_artifact, attach_export, export_preview_manifest, preview_slide_path, cleanup_artifacts
 from non_oil_report_presentation import (
     build_non_oil_template_presentation,
-    copy_existing_non_oil_presentation,
 )
 from auth_rate_limit import (
     AuthenticationRateLimitExceeded,
@@ -240,7 +239,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.6.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.7.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -9313,6 +9312,7 @@ def serialize_inspection_report_export(row):
     if not row:
         return None
     file_size = max(0, int(row.get("file_size") or 0))
+    preview = export_preview_manifest(resolve_storage_abs_path(row.get('file_path')),STORAGE_ROOT) if row.get('status') == 'completed' else None
     return {
         "task_id": row.get("task_id"),
         "report_type": row.get("report_type"),
@@ -9327,6 +9327,8 @@ def serialize_inspection_report_export(row):
         "file_size": file_size,
         "file_size_text": format_file_size(file_size),
         "slide_count": max(0, int(row.get("slide_count") or 0)),
+        "preview_available": bool(preview),
+        "presentation_version": (preview or {}).get('version'),
         "snapshot_generated_at": format_report_snapshot_time(
             row.get("snapshot_generated_at")
         ),
@@ -9382,6 +9384,7 @@ def get_inspection_report_export(cur, task_id, requested_by=None):
             updated_at
         FROM inspection_report_exports
         WHERE task_id = %s
+          AND expires_at > CURRENT_TIMESTAMP
           {user_clause}
         LIMIT 1;
         """,
@@ -9428,6 +9431,7 @@ def get_latest_inspection_report_export(
         WHERE requested_by = %s
           AND report_type = %s
           AND ((%s > 0 AND snapshot_id = %s) OR (%s <= 0 AND report_month = %s))
+          AND snapshot_generated_at = (SELECT generated_at FROM inspection_report_snapshots WHERE id=inspection_report_exports.snapshot_id)
           AND expires_at > CURRENT_TIMESTAMP
         ORDER BY created_at DESC
         LIMIT 1;
@@ -9482,7 +9486,7 @@ def cleanup_expired_inspection_report_exports(cur):
             continue
         if (
             os.path.isfile(path)
-            and path.lower().endswith(".pptx")
+            and path.lower().endswith((".pptx", ".preview.json"))
             and os.path.getmtime(path) < cutoff
         ):
             try:
@@ -9513,6 +9517,7 @@ def maybe_cleanup_expired_inspection_report_exports():
         cur = conn.cursor()
         cleanup_expired_inspection_report_exports(cur)
         conn.commit()
+        cleanup_artifacts(STORAGE_ROOT)
         inspection_report_export_cleanup_last_run = now
     except Exception:
         if conn:
@@ -9625,20 +9630,8 @@ def run_inspection_report_export_task(task_id):
         os.makedirs(INSPECTION_REPORT_EXPORTS_STORAGE_DIR, exist_ok=True)
         disk_name = f"inspection_report_{task_id}.pptx"
         abs_path = os.path.join(INSPECTION_REPORT_EXPORTS_STORAGE_DIR, disk_name)
-        result = None
-        if task.get("report_type") == REPORT_SNAPSHOT_TYPE_NON_OIL:
-            result = copy_existing_non_oil_presentation(
-                report_payload,
-                abs_path,
-                STORAGE_ROOT,
-            )
-        if not result:
-            result = build_inspection_report_presentation(
-                report_type=task.get("report_type"),
-                report=report_payload,
-                storage_root=STORAGE_ROOT,
-                output_path=abs_path,
-            )
+        artifact_dir, result = build_artifact(task.get('report_type'),report_payload,STORAGE_ROOT)
+        attach_export(artifact_dir,result,abs_path)
         update_inspection_report_export_task(
             task_id,
             "running",
@@ -35291,15 +35284,17 @@ def create_inspection_report_powerpoint_export():
         return jsonify({"success": False, "error": "报告类型不存在。"}), 400
     if not config.get("template_ready"):
         return jsonify({"success": False, "error": "该报告模板尚未配置，暂时不能导出PPT。"}), 409
-    snapshot_id = int(data.get("snapshot_id") or 0)
     conn = None
     cur = None
     try:
+        snapshot_id = int(data.get("snapshot_id") or 0)
         conn = get_db_connection()
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur)
         require_inspection_report_export_schema(cur)
         cleanup_expired_inspection_report_exports(cur)
+        # Serialize identical preview/export requests without holding the lock during rendering.
+        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (f'ppt:{user["id"]}:{report_type}:{snapshot_id}',))
         cur.execute(
             """
             SELECT id, scope_key, report_month, period_start, period_end_exclusive,
@@ -35334,22 +35329,24 @@ def create_inspection_report_powerpoint_export():
             WHERE requested_by = %s
               AND report_type = %s
               AND snapshot_id = %s
-              AND status IN ('queued', 'running')
+              AND snapshot_generated_at = %s
+              AND expires_at > CURRENT_TIMESTAMP
+              AND status IN ('queued', 'running', 'completed')
             ORDER BY created_at DESC
             LIMIT 1;
             """,
-            (user["id"], report_type, snapshot.get("id")),
+            (user["id"], report_type, snapshot.get("id"), snapshot.get('generated_at')),
         )
         active_task = cur.fetchone()
-        if active_task:
+        if active_task and (active_task['status'] != 'completed' or export_preview_manifest(resolve_storage_abs_path(active_task.get('file_path')),STORAGE_ROOT)):
             conn.commit()
             return jsonify(
                 {
                     "success": True,
-                    "message": "同一报告的PPT正在后台生成。",
+                    "message": "复用当前成稿的PPT与同源预览。",
                     "task": serialize_inspection_report_export(active_task),
                 }
-            ), 202
+            ), 200 if active_task['status'] == 'completed' else 202
 
         task_id = uuid.uuid4().hex
         file_name = (
@@ -35456,6 +35453,8 @@ def get_latest_inspection_report_powerpoint_export():
             report_month,
             snapshot_id,
         )
+        if task and task.get('status') == 'completed' and not export_preview_manifest(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT):
+            task = None
         return jsonify(
             {"success": True, "task": serialize_inspection_report_export(task)}
         )
@@ -35493,6 +35492,31 @@ def get_inspection_report_powerpoint_export(task_id):
         return jsonify({"success": False, "error": "读取PPT导出状态失败。"}), 500
     finally:
         close_db_resources(cur, conn)
+
+
+@app.route('/api/inspection-reports/exports/<task_id>/slides/<int:page>')
+def get_report_ppt_preview_slide(task_id, page):
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        task = get_inspection_report_export(cur,task_id,user['id'])
+        if not task or task.get('status') != 'completed':
+            return jsonify(error='预览不存在、已过期或尚未完成。'),404
+        path = preview_slide_path(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT,page)
+        if not path:
+            return jsonify(error='预览页不存在，请重新准备PPT。'),404
+        response = send_file(path,mimetype='image/jpeg')
+        response.headers['Cache-Control'] = 'private, no-store'
+        return response
+    except PermissionError:
+        return jsonify(error='当前账号无权查看报告。'),403
+    except Exception:
+        logging.exception('Failed to read report PPT preview')
+        return jsonify(error='读取PPT预览失败，请稍后重试。'),500
+    finally:
+        close_db_resources(cur,conn)
 
 
 @app.route("/api/inspection-reports/exports/<task_id>/download")
