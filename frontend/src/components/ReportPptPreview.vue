@@ -20,8 +20,11 @@
     </div>
     <template v-else>
       <div class="canvas" :aria-busy="imageLoading">
-        <img v-if="imageUrl" :src="imageUrl" :alt="`${title}第${page}页`" />
-        <p v-else>正在读取第{{ page }}页…</p>
+        <img v-if="imageUrl" :src="imageUrl" :alt="`${title}第${shownPage}页`" />
+        <p v-if="imageLoading" class="page-loading">正在读取第{{ page }}页…</p>
+        <p v-if="pageError" class="page-loading error">
+          {{ pageError }} <button @click="loadPage">重试本页</button>
+        </p>
       </div>
       <nav aria-label="PPT翻页">
         <button :disabled="page <= 1" @click="page--">上一页</button>
@@ -44,6 +47,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
+import { createPptPageCache } from '@/utils/pptPageCache'
 const props = defineProps({
   reportType: String,
   snapshotId: Number,
@@ -57,22 +61,22 @@ const task = ref(null),
   imageUrl = ref(''),
   imageLoading = ref(false)
 const ready = computed(() => task.value?.status === 'completed' && task.value.preview_available)
+const shownPage = ref(1),
+  pageError = ref('')
 let generation = 0,
   imageGeneration = 0,
   timer,
   requestController,
-  imageController
-function clearImage() {
-  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
-  imageUrl.value = ''
-}
+  pageCache
 function stop() {
   generation++
   clearTimeout(timer)
   requestController?.abort()
-  imageController?.abort()
+  pageCache?.dispose()
+  pageCache = null
   imageGeneration++
-  clearImage()
+  imageUrl.value = ''
+  pageError.value = ''
 }
 async function prepare() {
   stop()
@@ -110,6 +114,17 @@ function accept(value, current) {
       return
     }
     emit('ready', value)
+    const taskId = value.task_id
+    pageCache = createPptPageCache(async (number, signal) => {
+      const response = await axios.get(
+        `/api/inspection-reports/exports/${taskId}/slides/${number}`,
+        {
+          responseType: 'blob',
+          signal,
+        },
+      )
+      return response.data
+    })
     loadPage()
     return
   }
@@ -130,21 +145,29 @@ function accept(value, current) {
   }, 2500)
 }
 async function loadPage() {
-  imageController?.abort()
   const current = ++imageGeneration
-  clearImage()
-  if (!ready.value) return
-  imageLoading.value = true
-  imageController = new AbortController()
+  if (!ready.value || !pageCache) return
+  const cache = pageCache,
+    target = page.value
+  cache.focus(target)
+  pageError.value = ''
+  const cached = cache.peek(target)
+  if (cached) {
+    imageUrl.value = cached
+    shownPage.value = target
+  }
+  imageLoading.value = !cached
   try {
-    const { data } = await axios.get(
-      `/api/inspection-reports/exports/${task.value.task_id}/slides/${page.value}`,
-      { responseType: 'blob', signal: imageController.signal },
-    )
-    if (current === imageGeneration) imageUrl.value = URL.createObjectURL(data)
+    const url = cached || (await cache.get(target))
+    if (current !== imageGeneration) return
+    imageUrl.value = url
+    shownPage.value = target
+    for (const number of [target + 1, target - 1, target + 2]) {
+      if (number >= 1 && number <= task.value.slide_count)
+        cache.get(number, { prefetch: true }).catch(() => {})
+    }
   } catch (err) {
-    if (current === imageGeneration && !axios.isCancel(err))
-      error.value = '读取预览图片失败，请重试。'
+    if (current === imageGeneration && !axios.isCancel(err)) pageError.value = '本页读取失败。'
   } finally {
     if (current === imageGeneration) imageLoading.value = false
   }
@@ -229,11 +252,20 @@ header strong {
   animation: spin 1.2s linear infinite;
 }
 .canvas {
+  position: relative;
   margin: 16px;
   background: #dce3e9;
   min-height: 180px;
   display: grid;
   place-items: center;
+}
+.page-loading {
+  position: absolute;
+  bottom: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #fffffff0;
+  box-shadow: 0 2px 12px #0002;
 }
 .canvas img {
   display: block;

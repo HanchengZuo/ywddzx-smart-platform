@@ -4,15 +4,19 @@ Charts keep their embedded workbooks. Visible values use real table cells rather
 than c:dTable, whose rendering (especially zeroes) varies between office suites.
 """
 import math
+from io import BytesIO
+from zipfile import ZipFile, ZIP_DEFLATED
+from lxml import etree
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_TICK_LABEL_POSITION
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
-COMPATIBILITY_VERSION = 'editable-ooxml-v6.7-1'
+COMPATIBILITY_VERSION = 'editable-ooxml-v6.8-1'
 DATA_TABLE_PREFIX = 'report-compatible-values-'
 FONT = 'Microsoft YaHei'
+SERIF_FONT = 'SimSun'
 BAR_TYPES = {XL_CHART_TYPE.COLUMN_CLUSTERED, XL_CHART_TYPE.BAR_CLUSTERED,
              XL_CHART_TYPE.COLUMN_STACKED, XL_CHART_TYPE.BAR_STACKED}
 
@@ -26,11 +30,53 @@ def metric_text(value):
     return format(number, '.8f').rstrip('0').rstrip('.') if number else '0'
 
 
+def allowed_font(value):
+    name = str(value or '').lower()
+    return SERIF_FONT if any(s in name for s in ('宋', 'simsun', 'fangsong', 'serif')) else FONT
+
+
+def _normalize_font_xml(root):
+    for node in root.iter():
+        if 'typeface' in node.attrib:
+            node.set('typeface', allowed_font(node.get('typeface')))
+        if node.tag == '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}name' and node.getparent() is not None and node.getparent().tag.endswith('}font'):
+            node.set('val', allowed_font(node.get('val')))
+
+
+def _normalize_package_fonts(prs):
+    # Theme/master defaults and chart workbooks must obey the same whitelist as visible runs.
+    for font_list in prs.part._element.xpath('.//p:embeddedFontLst'):
+        for node in font_list.iter():
+            rel_id = node.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+            if rel_id:
+                prs.part.drop_rel(rel_id)
+        font_list.getparent().remove(font_list)
+    for part in list(prs.part.package.iter_parts()):
+        if str(part.partname).endswith('.xml'):
+            root = getattr(part, '_element', None)
+            if root is None:
+                root = etree.fromstring(part.blob)
+                _normalize_font_xml(root)
+                part._blob = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+            else:
+                _normalize_font_xml(root)
+        elif str(part.partname).endswith('.xlsx'):
+            output = BytesIO()
+            with ZipFile(BytesIO(part.blob)) as source, ZipFile(output, 'w', ZIP_DEFLATED) as target:
+                for item in source.infolist():
+                    data = source.read(item.filename)
+                    if item.filename.endswith('.xml'):
+                        root = etree.fromstring(data)
+                        _normalize_font_xml(root)
+                        data = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+                    target.writestr(item, data)
+            part._blob = output.getvalue()
+
+
 def _font_properties(properties, font_name=FONT):
     latin = properties.find('{http://schemas.openxmlformats.org/drawingml/2006/main}latin')
     name = latin.get('typeface') if latin is not None else font_name
-    if not name or name.startswith('+'):
-        name = font_name
+    name = allowed_font(name)
     for tag in ('a:latin','a:ea','a:cs'):
         node = properties.find('{http://schemas.openxmlformats.org/drawingml/2006/main}' + tag.split(':')[1])
         if node is None:
@@ -196,3 +242,4 @@ def normalize_presentation(prs):
             for node in shape._element.xpath('.//a:rPr | .//a:defRPr | .//a:endParaRPr'):
                 _font_properties(node)
     prs.core_properties.version = COMPATIBILITY_VERSION
+    _normalize_package_fonts(prs)

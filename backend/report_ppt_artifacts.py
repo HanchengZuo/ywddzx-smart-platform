@@ -12,6 +12,16 @@ from pathlib import Path
 from pptx_compatibility import COMPATIBILITY_VERSION
 
 
+def font_environment_key(directory=Path('/usr/local/share/fonts/report-fonts')):
+    files = [(p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(directory.glob('*'))
+             if p.is_file() and p.suffix.lower() in ('.ttf', '.ttc', '.otf')]
+    return hashlib.sha256(json.dumps(files).encode()).hexdigest()
+
+
+# Deployment restarts the backend after installing fonts and rebuilding fontconfig caches.
+FONT_ENVIRONMENT = font_environment_key()
+
+
 def _digest_file(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as source:
@@ -27,19 +37,19 @@ def artifact_key(report_type, report, storage_root):
     if not source_path.is_file():
         source_path = TEMPLATE_FILE
     source_hash = _digest_file(source_path) if report_type == 'non_oil' and source_path.is_file() else ''
-    value = [COMPATIBILITY_VERSION, report_type, report, source_hash]
+    value = [COMPATIBILITY_VERSION, FONT_ENVIRONMENT, report_type, report, source_hash]
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
 
-def _read_artifact(directory):
+def _read_artifact(directory, verify_pages=True):
     try:
         manifest = json.loads((directory / 'manifest.json').read_text())
         count = int(manifest['slide_count'])
-        if manifest['version'] != COMPATIBILITY_VERSION or count < 1:
+        if manifest['version'] != COMPATIBILITY_VERSION or manifest.get('fonts') != FONT_ENVIRONMENT or count < 1:
             return None
         if not (directory / 'report.pptx').is_file():
             return None
-        if not all((directory / f'slide-{index:02d}.jpg').is_file() for index in range(1,count + 1)):
+        if verify_pages and not all((directory / f'slide-{index:02d}.jpg').is_file() for index in range(1,count + 1)):
             return None
         return manifest
     except (OSError,ValueError,KeyError,TypeError):
@@ -77,7 +87,7 @@ def build_artifact(report_type, report, storage_root):
             from pptx import Presentation
             if len(result['slide_files']) != len(Presentation(pptx).slides):
                 raise RuntimeError('PPT预览页数与导出文件不一致，请重新准备。')
-            manifest = {'version':COMPATIBILITY_VERSION,'artifact_key':key,
+            manifest = {'version':COMPATIBILITY_VERSION,'artifact_key':key, 'fonts':FONT_ENVIRONMENT,
                         'slide_count':len(result['slide_files']),'sha256':_digest_file(pptx)}
             (staging / 'manifest.json').write_text(json.dumps(manifest))
             if directory.exists():
@@ -101,7 +111,7 @@ def export_preview_manifest(path, storage_root):
         if not re.fullmatch('[a-f0-9]{64}',key) or manifest.get('version') != COMPATIBILITY_VERSION:
             return None
         directory = Path(storage_root) / 'report_presentations' / ('compatible-' + key)
-        actual = _read_artifact(directory)
+        actual = _read_artifact(directory, verify_pages=False)
         return manifest if actual == manifest else None
     except (ValueError,OSError,TypeError):
         return None
@@ -111,7 +121,8 @@ def preview_slide_path(path, storage_root, page):
     manifest = export_preview_manifest(path,storage_root)
     if not manifest or not 1 <= page <= manifest['slide_count']:
         return None
-    return Path(storage_root) / 'report_presentations' / ('compatible-' + manifest['artifact_key']) / f'slide-{page:02d}.jpg'
+    image = Path(storage_root) / 'report_presentations' / ('compatible-' + manifest['artifact_key']) / f'slide-{page:02d}.jpg'
+    return image if image.is_file() else None
 
 
 def cleanup_artifacts(storage_root, retention_days=30):
