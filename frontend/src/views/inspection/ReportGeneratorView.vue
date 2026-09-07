@@ -7,6 +7,7 @@
         <p>每种报告展示最后生成成功的成稿；面板保留最新保存设置，重新生成后更新报告。</p>
       </div>
       <div class="report-month-control">
+        <button v-if="hasReport && !isQualityMeasurementReport && !isNonOilReport" type="button" class="btn btn-outline" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看文字汇总' : '返回PPT预览' }}</button>
         <button
           type="button"
           class="export-ppt-btn"
@@ -373,6 +374,10 @@
       </div>
     </section>
 
+    <section v-else-if="hasReport && reportDisplayMode === 'ppt'" class="report-document card-surface">
+      <ReportPptPreview :report-type="selectedReportType" :snapshot-id="Number(selectedSnapshotId)" :generated-at="reportGeneratedAt"
+        :title="report.title || reportTitleFallback" @ready="exportTask = $event" />
+    </section>
     <section v-else-if="hasReport" class="report-document card-surface">
       <div v-if="!isQualityMeasurementReport && !isNonOilReport" class="report-document-head">
         <div class="report-title-block">
@@ -2127,9 +2132,10 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
+import ReportPptPreview from '@/components/ReportPptPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
@@ -2284,6 +2290,8 @@ let workspaceSaveQueue = Promise.resolve()
 let workspaceSaveSequence = 0
 const selectedSnapshotId = ref(0)
 const selectedReportType = ref('quality_measurement')
+const reportDisplayMode = ref('ppt')
+watch(selectedReportType, () => { reportDisplayMode.value = 'ppt' })
 const reportTypes = ref(DEFAULT_REPORT_TYPES)
 const loading = ref(false)
 const error = ref('')
@@ -3234,6 +3242,7 @@ const isKeyboardEditingTarget = (target) => {
 }
 
 const handleQualitySlideKeydown = (event) => {
+  if (reportDisplayMode.value === 'ppt') return
   if (
     (!isQualityMeasurementReport.value && !isNonOilReport.value)
     || activePresentationSlideCount.value < 2

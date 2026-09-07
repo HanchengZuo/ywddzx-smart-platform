@@ -33,6 +33,7 @@ from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.opc.packuri import PackURI
 from pptx.util import Inches, Pt
+from pptx_compatibility import COMPATIBILITY_VERSION, normalize_presentation
 
 
 TEMPLATE_FILE = (
@@ -1924,6 +1925,7 @@ def build_non_oil_template_presentation(
     _renumber_slides(prs)
     _normalize_presentation_fonts(prs)
     _remove_presentation_comments(prs)
+    normalize_presentation(prs)
     prs.save(output_path)
     slide_files = _render_presentation_preview(output_path, output_dir)
     return {
@@ -1945,9 +1947,10 @@ def copy_existing_non_oil_presentation(report, destination, storage_root=None):
     # Strip those on export too, without changing the stored historical deck.
     with ZipFile(source) as package:
         has_comments = any("comment" in name.lower() for name in package.namelist())
-    if has_comments:
-        deck = Presentation(source)
+    deck = Presentation(source)
+    if has_comments or deck.core_properties.version != COMPATIBILITY_VERSION:
         _remove_presentation_comments(deck)
+        normalize_presentation(deck)
         deck.save(destination)
     else:
         shutil.copy2(source, destination)

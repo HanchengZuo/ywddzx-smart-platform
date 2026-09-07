@@ -15,6 +15,17 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v6.7',
+    date: '2026-09-07',
+    title: '六类报告PPT兼容性优化',
+    summary: '统一可编辑图表及零值数据展示，网页预览直接由导出PPT渲染。',
+    items: [
+      '柱形和条形图增加独立可编辑数据表，明确显示0值，保留原生图表和内嵌工作簿。',
+      '统一图表数值格式、坐标轴和字体声明，饼图标签仅显示百分比。',
+      '六类报告共用最终PPT文件生成网页预览，同一成稿缓存复用，不额外调用AI。'
+    ]
+  },
+  {
     version: 'v6.6',
     date: '2026-09-06',
     title: '质安验收与申诉时限管理',
