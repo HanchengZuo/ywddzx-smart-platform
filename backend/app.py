@@ -172,7 +172,7 @@ BACKUP_PREFIX = "ywddzx_full_backup"
 LOCAL_BACKUP_FILENAME = f"{BACKUP_PREFIX}_latest.zip"
 AUTO_BACKUP_FILENAME = LOCAL_BACKUP_FILENAME
 COS_BACKUP_PREFIX = os.environ.get("COS_BACKUP_PREFIX", "ywddzx-full-backups/").strip().strip("/")
-COS_BACKUP_RETENTION_COUNT = 3
+COS_BACKUP_RETENTION_COUNT = 1
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_INITIAL_PASSWORD = "123456"
 WORK_ANNIVERSARY_START_DATE = datetime(2026, 4, 15).date()
@@ -1908,12 +1908,23 @@ def upload_backup_archive_to_cos(local_path, object_filename):
     try:
         client, cos_config = get_cos_client()
         object_key = f"{cos_config['prefix']}{object_filename}"
-        client.put_object_from_local_file(
+        local_size = os.path.getsize(local_path)
+        # SDK multipart upload avoids the 5GB single-PUT limit without loading the archive into RAM.
+        client.upload_file(
             Bucket=cos_config["bucket"],
             Key=object_key,
             LocalFilePath=local_path,
+            PartSize=16,
+            MAXThread=2,
+            EnableMD5=True,
         )
-        retained, removed = prune_cos_backup_objects()
+        metadata = client.head_object(Bucket=cos_config["bucket"], Key=object_key)
+        if int(metadata.get("Content-Length", -1)) != local_size:
+            raise RuntimeError("云端备份大小校验失败，旧备份未清理。")
+        objects = list_cos_backup_objects()
+        if not any(item["key"] == object_key and item["size"] == local_size for item in objects):
+            raise RuntimeError("云端列表尚未确认新备份，旧备份未清理。")
+        retained, removed = prune_cos_backup_objects(objects)
         return {
             "status": "success",
             "message": f"COS 上传成功，云端已保留最近 {len(retained)} 个备份。",

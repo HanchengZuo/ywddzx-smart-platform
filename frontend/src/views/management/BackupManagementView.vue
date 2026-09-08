@@ -4,7 +4,7 @@
       <div class="hero-content">
         <div class="page-kicker">管理系统</div>
         <h2>数据备份管理</h2>
-        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录。本地永远只保留 1 份最新备份，腾讯云 COS 自动保留最近 3 份。</p>
+        <p class="page-desc">完整备份 PostgreSQL 数据库和 storage 上传文件目录。本地与腾讯云 COS 各保留最近 1 份备份，支持超过 5GB 的分块上传。</p>
         <div v-if="hasPermission" class="hero-meta">
           <span>自动备份：{{ frequencyLabel(config.frequency) }}</span>
           <span>本地位置：{{ config.destination_path || '默认目录' }}</span>
@@ -80,7 +80,7 @@
             </div>
           </div>
           <div class="auto-note">
-            本地备份只保留一个固定文件：<strong>ywddzx_full_backup_latest.zip</strong>。COS 会上传带时间戳的备份对象，并自动只保留最近 3 个。
+            本地备份只保留一个固定文件：<strong>ywddzx_full_backup_latest.zip</strong>。COS 上传并校验成功后自动清理旧备份，只保留最近 1 个；上传失败不会删除旧云端备份。
           </div>
         </section>
 
@@ -190,8 +190,8 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">腾讯云 COS</div>
-            <h3>云端最近 {{ latestCosBackups.length }} / {{ cosStatus.retention_count || 3 }} 个备份</h3>
-            <p>云端对象来自环境变量配置的 COS 存储桶，系统会自动删除第 4 个及更早备份。</p>
+            <h3>云端最近 {{ latestCosBackups.length }} / {{ cosStatus.retention_count || 1 }} 个备份</h3>
+            <p>云端对象来自环境变量配置的 COS 存储桶，新备份上传校验成功后，仅保留最近 1 个备份。</p>
           </div>
         </div>
 
@@ -461,7 +461,7 @@ const exportBackup = async () => {
     link.click()
     link.remove()
     window.URL.revokeObjectURL(blobUrl)
-    setMessage('完整备份已生成并开始下载，本地已覆盖为最新备份；如 COS 可用，也已同步上传并保留最近 3 份。', 'success')
+    setMessage('完整备份已生成并开始下载，本地已覆盖为最新备份；云端上传结果请查看最近任务状态，成功后仅保留最近 1 份。', 'success')
     await fetchBackups()
   } catch (error) {
     setMessage(await readBlobError(error, '完整备份导出失败。'), 'error')
