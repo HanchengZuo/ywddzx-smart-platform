@@ -33,6 +33,7 @@ app/static/training_records/*
 .vscode/
 
 # Docker
+docker-compose.override.yml
 *.pid
 *.sock
 

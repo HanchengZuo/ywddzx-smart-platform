@@ -1783,6 +1783,7 @@ def get_cos_env_config():
         "configured": configured,
         "sdk_available": bool(CosConfig and CosS3Client),
         "retention_count": COS_BACKUP_RETENTION_COUNT,
+        "use_internal": os.environ.get("COS_USE_INTERNAL", "false").lower() in {"true", "1", "yes"},
     }
 
 
@@ -1829,6 +1830,8 @@ def get_cos_client():
         SecretId=cos_config["secret_id"],
         SecretKey=cos_config["secret_key"],
         Scheme="https",
+        EnableOldDomain=not cos_config.get("use_internal", False),
+        EnableInternalDomain=cos_config.get("use_internal", False),
     )
     return CosS3Client(config), cos_config
 
