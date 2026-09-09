@@ -1,5 +1,6 @@
 """Highlights deliberately have no inspection, standard or rectification foreign keys."""
 import logging
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from flask import jsonify, request
@@ -31,19 +32,43 @@ def can_audit(core, cur, user, row):
 
 def filters(core, cur, user, source):
     where, params = core.build_issue_list_visibility_scope(cur, user)
+    def selections(key):
+        value = source.get(key) or ''
+        if isinstance(value, str) and value.startswith('['):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                raise ValueError('筛选条件格式不正确。') from None
+        if not isinstance(value, list): value = [value]
+        if any(not isinstance(item, str) for item in value): raise ValueError('筛选条件格式不正确。')
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
     for key, column in [('region', 's.region'), ('station', 's.station_name'),
-                        ('table', 't.table_name'), ('status', 'i.audit_status')]:
+                        ('table', 't.table_name')]:
+        value = selections(key)
+        if value:
+            where.append(f'{column} = ANY(%s)'); params.append(value)
+    if source.get('status'):
+        where.append('i.audit_status = %s'); params.append(source['status'])
+    for key, column in [('description', 'i.description'), ('manager', 's.station_manager_name')]:
         value = str(source.get(key) or '').strip()
         if value:
-            where.append(f'{column} = %s'); params.append(value)
-    for key, column in [('description', 'i.description'), ('manager', 's.station_manager_name'), ('inspector', 'u.real_name')]:
-        value = str(source.get(key) or '').strip()
-        if value and not (key == 'inspector' and core.should_hide_inspector_contact_info(cur, user)):
             where.append(f'{column} ILIKE %s'); params.append('%' + value + '%')
+    if not core.should_hide_inspector_contact_info(cur, user):
+        inspectors = selections('inspectors')
+        if inspectors:
+            where.append("(u.real_name = ANY(%s) OR u.username = ANY(%s) OR u.phone = ANY(%s))")
+            params.extend([inspectors] * 3)
+        elif source.get('inspector'):
+            where.append('u.real_name ILIKE %s'); params.append('%' + str(source['inspector']) + '%')
     if source.get('id'):
         where.append("('HL' || i.id::text) = %s")
         params.append(str(source['id']).strip().upper())
     start, end = source.get('date_from'), source.get('date_to')
+    if source.get('month'):
+        first = datetime.strptime(source['month'], '%Y-%m')
+        start = first.strftime('%Y-%m-%d')
+        where.append("i.created_at < %s::date + INTERVAL '1 month'"); params.append(start)
+        end = None
     if start: datetime.strptime(start, '%Y-%m-%d')
     if end: datetime.strptime(end, '%Y-%m-%d')
     if start and end and start > end: raise ValueError('开始日期不能晚于结束日期。')
@@ -91,7 +116,7 @@ def register_highlights(app, namespace):
             cur.execute(f'''SELECT i.*, 'HL' || i.id::text AS display_id,
                 to_char(i.created_at, 'YYYY-MM') AS month, to_char(i.created_at, 'YYYY-MM-DD HH24:MI') AS time,
                 s.region, s.station_name AS station, s.station_manager_name AS station_manager,
-                s.station_manager_phone, u.real_name AS inspector, u.phone AS inspector_phone,
+                s.station_manager_phone, COALESCE(NULLIF(u.real_name,''),u.username) AS inspector, u.phone AS inspector_phone,
                 t.table_name AS inspection_table_name, auditor.real_name AS audited_by_name,
                 to_char(i.audited_at, 'YYYY-MM-DD HH24:MI:SS') AS audited_at
                 {JOINS} WHERE {where} ORDER BY i.id DESC LIMIT %s OFFSET %s''', [*params, size, (page-1)*size])
@@ -127,9 +152,15 @@ def register_highlights(app, namespace):
             if not can_list(core, cur, user): return jsonify(error='无权查看亮点。'), 403
             where, params = filters(core, cur, user, {})
             cur.execute(f'''SELECT array_agg(DISTINCT s.region) AS regions, array_agg(DISTINCT s.station_name) AS stations,
-                array_agg(DISTINCT t.table_name) AS tables {JOINS} WHERE {where}''', params)
+                array_agg(DISTINCT t.table_name) AS tables,
+                array_agg(DISTINCT s.station_manager_name) AS managers,
+                array_agg(DISTINCT COALESCE(NULLIF(u.real_name,''),u.username)) AS inspectors
+                {JOINS} WHERE {where}''', params)
             row = cur.fetchone()
-            return jsonify({k: sorted(v for v in row[k] or [] if v) for k in ('regions','stations','tables')})
+            result = {k: sorted(v for v in row[k] or [] if v) for k in ('regions','stations','tables','managers','inspectors')}
+            result['hide_inspector_contact'] = core.should_hide_inspector_contact_info(cur, user)
+            if result['hide_inspector_contact']: result['inspectors'] = []
+            return jsonify(result)
         except Exception:
             logging.exception('Highlight options failed'); return jsonify(error='筛选项读取失败。'), 500
         finally: core.close_db_resources(cur, conn)

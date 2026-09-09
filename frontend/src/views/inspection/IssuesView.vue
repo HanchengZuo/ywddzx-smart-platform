@@ -1180,11 +1180,7 @@
       </div>
     </div>
 
-    <div v-if="previewState.visible" class="issue-photo-preview-overlay" @click.self="closePreview">
-      <div class="issue-photo-preview-dialog" @wheel.prevent="handlePreviewWheel" @dblclick="resetPreviewScale">
-        <img :src="previewState.url" :style="previewImageStyle" :alt="previewState.title || '图片预览'" />
-      </div>
-    </div>
+    <InspectionPhotoPreview v-if="previewState.visible" :url="previewState.url" :title="previewState.title || '图片预览'" @close="closePreview" />
 
     <div v-if="editIssuePhotoEditor.visible" class="photo-editor-overlay">
       <div class="photo-editor-dialog">
@@ -1328,6 +1324,7 @@
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import { reviewOptionsFor } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
@@ -3602,20 +3599,6 @@ const closePreview = () => {
   }
 }
 
-const previewImageStyle = computed(() => ({
-  transform: `scale(${previewState.value.scale})`
-}))
-
-const resetPreviewScale = () => {
-  previewState.value.scale = 1
-}
-
-const handlePreviewWheel = (event) => {
-  const delta = event.deltaY > 0 ? -0.12 : 0.12
-  const nextScale = previewState.value.scale + delta
-  previewState.value.scale = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
-}
-
 const openIssueFlowHistory = async (item) => {
   const requestSequence = ++issueFlowHistoryRequestSequence
   issueFlowHistory.value = {
@@ -5650,40 +5633,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   z-index: 1000;
   padding: 24px;
-}
-
-.issue-photo-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 4000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.76);
-}
-
-.issue-photo-preview-dialog {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: min(980px, 96vw);
-  max-height: 92vh;
-  overflow: visible;
-  cursor: zoom-in;
-}
-
-.issue-photo-preview-dialog img {
-  display: block;
-  max-width: 100%;
-  max-height: 92vh;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
-  transform-origin: center center;
-  transition: transform 0.12s ease-out;
-  will-change: transform;
 }
 
 .image-preview-thumb-btn {

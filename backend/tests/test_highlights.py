@@ -11,6 +11,23 @@ import highlights as hl
 
 
 class HighlightTests(unittest.TestCase):
+    def test_multi_filters_are_exact_parameterized_and_hide_inspectors(self):
+        core = MagicMock()
+        core.build_issue_list_visibility_scope.side_effect = lambda *args: (['i.station_id=%s'], [1])
+        core.should_hide_inspector_contact_info.return_value = False
+        source = {'region':'["浦东","松金"]','station':'["甲站","乙站"]','table':'["现场","视频"]','inspectors':'["张三","李四"]'}
+        where, params = hl.filters(core, None, {}, source)
+        self.assertIn('s.region = ANY(%s)', where)
+        self.assertIn('t.table_name = ANY(%s)', where)
+        self.assertIn(['甲站','乙站'], params)
+        self.assertIn(['张三','李四'], params)
+        self.assertNotIn('张三', where)
+        core.should_hide_inspector_contact_info.return_value = True
+        where, params = hl.filters(core, None, {}, source)
+        self.assertNotIn('u.real_name', where)
+        self.assertNotIn(['张三','李四'], params)
+        with self.assertRaises(ValueError): hl.filters(core,None,{}, {'region':'[123]'})
+
     def test_shared_visibility_predicate_and_parameterized_filters(self):
         core = MagicMock()
         core.build_issue_list_visibility_scope.return_value = (['i.station_id=%s'], [3])
@@ -39,11 +56,11 @@ class HighlightTests(unittest.TestCase):
 class HighlightDatabaseTests(unittest.TestCase):
     def setUp(self):
         self.conn = api.get_db_connection(); self.cur = self.conn.cursor()
-        self.cur.execute('''CREATE TEMP TABLE users(id INTEGER PRIMARY KEY, real_name TEXT, phone TEXT);
+        self.cur.execute('''CREATE TEMP TABLE users(id INTEGER PRIMARY KEY, real_name TEXT, phone TEXT, username TEXT);
           CREATE TEMP TABLE stations(id INTEGER PRIMARY KEY, region TEXT, station_name TEXT, station_manager_name TEXT, station_manager_phone TEXT);
           CREATE TEMP TABLE inspection_tables(id INTEGER PRIMARY KEY, table_name TEXT);
           SET LOCAL search_path TO pg_temp;
-          INSERT INTO users VALUES(1,'管理员','100'),(2,'检查人','200'),(3,'站长','300');
+          INSERT INTO users VALUES(1,'管理员','100','root'),(2,'检查人','200','inspector'),(3,'站长','300','manager');
           INSERT INTO stations VALUES(1,'浦东','甲站','站长','300'),(2,'松金','乙站','乙站长','400');
           INSERT INTO inspection_tables VALUES(1,'现场'),(2,'视频');''')
         spec = importlib.util.spec_from_file_location('hl_migration',Path(__file__).parents[1]/'migrations/versions/20260909_001_highlights.py')
@@ -83,6 +100,19 @@ class HighlightDatabaseTests(unittest.TestCase):
         self.assertEqual([r['actor_id'] for r in self.cur.fetchall()],[1,1,1])
         self.cur.execute("SELECT count(*) AS n FROM information_schema.columns WHERE table_name='inspection_highlights' AND column_name IN ('inspection_id','standard_id','rectification_result')")
         self.assertEqual(self.cur.fetchone()['n'],0)
+
+    def test_multi_selection_queries_and_option_data(self):
+        self.create(1,1); self.create(2,2)
+        response = self.client.get('/api/highlights', query_string={'region':'["浦东","松金"]','table':'["现场","视频"]','inspectors':'["管理员","不存在"]'})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.get_json()['total'],2)
+        response = self.client.get('/api/highlights', query_string={'station':'["甲站"]','table':'["视频"]'})
+        self.assertEqual(response.get_json()['total'],0)
+        response = self.client.get('/api/highlights', query_string={'inspectors':'["管理"]'})
+        self.assertEqual(response.get_json()['total'],0)
+        options = self.client.get('/api/highlights/filter-options').get_json()
+        self.assertEqual(options['inspectors'],['管理员'])
+        self.assertEqual(options['managers'],['乙站长','站长'])
 
     def test_pagination_filters_and_station_scope(self):
         for _ in range(7): self.assertEqual(self.create().status_code,200)

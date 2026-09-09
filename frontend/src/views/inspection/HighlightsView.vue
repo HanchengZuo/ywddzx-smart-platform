@@ -14,9 +14,10 @@
       <FilterSummary :fields="filterSummaryFields" manual />
       <div class="filter-grid">
         <div class="filter-item" :data-filter-state="filterFieldState('id')"><label for="highlight-id">亮点ID</label><input id="highlight-id" v-model.trim="draft.id" placeholder="例如 HL1（精确匹配）" /></div>
-        <div class="filter-item" :data-filter-state="filterFieldState('dateRange')"><label>检查时间范围</label><DateRangePicker v-model:date-from="draft.date_from" v-model:date-to="draft.date_to" placeholder="选择检查时间范围" aria-label="选择亮点检查时间范围" /></div>
-        <div v-for="field in optionFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label :for="`highlight-${field.key}`">{{ field.label }}</label><select :id="`highlight-${field.key}`" v-model="draft[field.key]"><option value="">全部</option><option v-for="option in options[field.options] || []" :key="option">{{ option }}</option></select></div>
-        <div v-for="field in textFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label :for="`highlight-${field.key}`">{{ field.label }}</label><input :id="`highlight-${field.key}`" v-model.trim="draft[field.key]" :placeholder="`输入${field.label}`" /></div>
+        <div class="filter-item" :data-filter-state="filterFieldState('month')"><label for="highlight-month">检查月度</label><input id="highlight-month" v-model="draft.month" type="month" @change="draft.date_from = ''; draft.date_to = ''" /></div>
+        <div class="filter-item" :data-filter-state="filterFieldState('dateRange')"><label>检查时间范围</label><DateRangePicker v-model:date-from="draft.date_from" v-model:date-to="draft.date_to" placeholder="选择检查时间范围" aria-label="选择亮点检查时间范围" @change="draft.month = ''" /></div>
+        <div v-for="field in optionFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label>{{ field.label }}</label><InspectionFilterSelect v-model="draft[field.key]" :multiple="field.key !== 'manager'" :label="field.label" :options="options[field.options] || []" :loading="optionsLoading" :error="optionsError" @retry="loadOptions" /></div>
+        <div class="filter-item" :data-filter-state="filterFieldState('description')"><label for="highlight-description">亮点描述</label><input id="highlight-description" v-model.trim="draft.description" placeholder="输入亮点描述" /></div>
         <div class="filter-item" :data-filter-state="filterFieldState('status')"><label for="highlight-status">亮点状态</label><select id="highlight-status" v-model="draft.status"><option value="">全部</option><option v-for="(label,key) in labels" :key="key" :value="key">{{ label }}</option></select></div>
       </div>
       <div class="filter-actions"><div class="filter-main-actions"><span v-if="dirty" class="filter-pending-hint">筛选条件已调整，点击开始筛选后生效</span><button type="button" class="btn btn-secondary" @click="draft = emptyFilters()">重置筛选</button><button class="btn btn-primary" :disabled="loading">{{ loading ? '筛选中...' : '开始筛选' }}</button></div></div>
@@ -24,27 +25,36 @@
     </form>
     <p v-if="message" class="notice card-surface" role="status">{{ message }}</p>
     <section class="card-surface results" :aria-busy="loading">
-      <div class="result-heading"><h3>亮点清单 <small>共 {{ total }} 条</small></h3><span>HL 独立编号</span></div>
-      <p v-if="loading" class="empty" role="status">正在加载当前页亮点…</p>
-      <p v-else-if="!rows.length" class="empty">当前条件下暂无亮点记录</p>
+      <div class="table-card-head"><div><div class="filter-kicker">亮点清单</div><h3>亮点明细</h3></div></div>
+      <div v-if="loading" class="table-empty-state" role="status"><div><div class="filter-kicker">筛选中</div><h3>正在查询亮点记录</h3><p>系统正在按已应用条件查询当前页，无需加载全部亮点。</p><div class="filter-query-progress" aria-hidden="true"><span></span></div></div></div>
+      <div v-else-if="!rows.length" class="table-empty-state"><div><div class="filter-kicker">暂无记录</div><h3>当前没有符合条件的亮点记录</h3><p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p></div></div>
       <div v-else>
-        <div class="desktop-table"><table><thead><tr><th>亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th>亮点照片</th><th>亮点状态</th><th>审核</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="row in rows" :key="row.id"><td><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
+        <div class="desktop-table"><table><thead><tr><th>亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th>亮点照片</th><th>亮点状态</th><th>审核</th></tr></thead>
+          <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
             <td><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
-            <td><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td><td>{{ row.audited_by_name || '待审核' }}<br />{{ formatTime(row.audited_at) }}<p v-if="row.audit_note">{{ row.audit_note }}</p></td>
-            <td><div class="actions" v-if="row.can_audit"><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="action.key === 'approve' ? 'btn-primary' : 'btn-secondary'" :disabled="busy.has(row.id)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ busy.has(row.id) ? '处理中' : action.label }}</button></div><span v-else>只读</span></td>
+            <td><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
+            <td><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
           </tr></tbody></table></div>
         <div class="mobile-cards"><article v-for="row in rows" :key="row.id" class="highlight-card"><header><strong>{{ row.display_id }} · {{ row.station }}</strong><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></header>
           <p class="description">{{ row.description }}</p><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button>
           <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ row[column.key] || '—' }}</dd></template><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></dl>
-          <div class="actions" v-if="row.can_audit"><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="action.key === 'approve' ? 'btn-primary' : 'btn-secondary'" :disabled="busy.has(row.id)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ busy.has(row.id) ? '处理中' : action.label }}</button></div>
+          <div class="actions audit-actions" v-if="row.can_audit"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button></template></div>
         </article></div>
       </div>
-      <nav class="pagination"><button class="btn btn-secondary" :disabled="loading || page <= 1" @click="load(page-1)">上一页</button><span>{{ page }} / {{ pages }}</span><button class="btn btn-secondary" :disabled="loading || page >= pages" @click="load(page+1)">下一页</button><select v-model.number="size" aria-label="每页条数" @change="load(1)"><option :value="5">每页5条</option><option :value="20">每页20条</option><option :value="50">每页50条</option></select></nav>
+      <nav class="pagination-bar" aria-label="亮点清单分页">
+        <div class="pagination-summary">共 {{ total }} 条</div>
+        <div class="pagination-controls">
+          <div class="pagination-size-control"><label for="highlight-page-size">每页显示</label><select id="highlight-page-size" v-model.number="size" :disabled="loading" @change="load(1)"><option v-for="count in [5,10,20,50]" :key="count" :value="count">{{ count }}</option></select></div>
+          <div class="pagination-nav-row"><button class="btn btn-secondary" :disabled="loading || page <= 1" @click="load(1)">首页</button><button class="btn btn-secondary" :disabled="loading || page <= 1" @click="load(page-1)">上一页</button></div>
+          <div class="pagination-page-list"><template v-for="(value,index) in visiblePages" :key="index"><span v-if="value === '…'" class="pagination-ellipsis">…</span><button v-else class="pagination-page-btn" :class="{ active: value === page }" :aria-current="value === page ? 'page' : undefined" :disabled="loading" @click="load(value)">{{ value }}</button></template></div>
+          <div class="pagination-nav-row"><button class="btn btn-secondary" :disabled="loading || page >= pages" @click="load(page+1)">下一页</button><button class="btn btn-secondary" :disabled="loading || page >= pages" @click="load(pages)">末页</button></div>
+          <div class="pagination-jump"><span>跳至</span><input v-model="pageJump" type="number" min="1" :max="pages" :placeholder="`1-${pages}`" aria-label="跳转页码" @keyup.enter="jumpToPage" /><button class="btn btn-primary" :disabled="loading" @click="jumpToPage">跳转</button></div>
+        </div>
+      </nav>
     </section>
     <Teleport to="body">
-      <div v-if="preview" class="highlight-overlay" role="dialog" aria-modal="true" aria-label="亮点照片预览" @click.self="preview = ''"><button class="close" aria-label="关闭预览" @click="preview = ''">关闭</button><img class="full-photo" :src="preview" alt="亮点完整照片" /></div>
-      <div v-if="decision" class="highlight-overlay" @click.self="decision = null"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="审核亮点" @submit.prevent="audit"><h3>{{ decision.label }} · {{ decision.row.display_id }}</h3><p>{{ decision.row.description }}</p><label>审核说明（选填）<textarea v-model="decision.note" maxlength="2000" rows="3" /></label><div class="actions"><button class="btn btn-secondary" type="button" @click="decision = null">取消</button><button class="btn btn-primary">确认{{ decision.label }}</button></div></form></div>
+      <InspectionPhotoPreview v-if="preview" :url="preview" title="亮点照片" @close="preview = ''" />
+      <div v-if="decision" class="highlight-overlay" @click.self="decision = null"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="审核亮点" @submit.prevent="audit"><h3>{{ decision.label }} · {{ decision.row.display_id }}</h3><p>{{ decision.row.description }}</p><label>审核说明（选填）<textarea v-model="decision.note" maxlength="2000" rows="3" /></label><div class="actions"><button class="btn btn-secondary" type="button" @click="decision = null">取消</button><button class="btn" :class="auditButtonClass(decision.action)">确认{{ decision.label }}</button></div></form></div>
     </Teleport>
   </div>
 </template>
@@ -54,41 +64,67 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import FilterSummary from '@/components/FilterSummary.vue'
 import DateRangePicker from '@/components/DateRangePicker.vue'
+import InspectionFilterSelect from '@/components/InspectionFilterSelect.vue'
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 const showMobileFilters = ref(false)
 const labels = { pending: '待审核', approved: '已确认亮点', rejected: '审核未通过' }
-const emptyFilters = () => ({ id: '', description: '', manager: '', inspector: '', region: '', station: '', table: '', status: '', date_from: '', date_to: '' })
+const emptyFilters = () => ({ id: '', month: '', description: '', manager: '', inspectors: [], region: [], station: [], table: [], status: '', date_from: '', date_to: '' })
 const draft = ref(emptyFilters()), applied = ref(emptyFilters()), rows = ref([]), options = ref({}), optionsError = ref('')
+const optionsLoading = ref(false)
 const page = ref(1), size = ref(window.innerWidth <= 768 ? 5 : 20), total = ref(0), loading = ref(false), message = ref(''), preview = ref(''), decision = ref(null), busy = ref(new Set())
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(applied.value))
 const pages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
-const textFields = [{ key: 'manager', label: '站点负责人' }, { key: 'inspector', label: '检查人员' }, { key: 'description', label: '亮点描述' }]
-const optionFields = [{ key: 'region', label: '站点所属地', options: 'regions' }, { key: 'station', label: '站点名称', options: 'stations' }, { key: 'table', label: '检查表', options: 'tables' }]
+const pageJump = ref('')
+const visiblePages = computed(() => {
+  const selected = pages.value <= 7 ? Array.from({ length: pages.value }, (_, index) => index + 1)
+    : [...new Set([1, page.value - 1, page.value, page.value + 1, pages.value])].filter(value => value >= 1 && value <= pages.value).sort((a,b) => a-b)
+  return selected.flatMap((value, index) => index && value - selected[index - 1] > 1 ? ['…', value] : [value])
+})
+function jumpToPage() {
+  const value = Number(pageJump.value)
+  if (!loading.value && Number.isInteger(value) && value >= 1 && value <= pages.value) { load(value); pageJump.value = '' }
+}
+const optionFields = computed(() => [
+  { key: 'region', label: '站点所属地', options: 'regions' }, { key: 'station', label: '站点名称', options: 'stations' },
+  { key: 'manager', label: '站点负责人', options: 'managers' },
+  ...(!options.value.hide_inspector_contact ? [{ key: 'inspectors', label: '检查人员', options: 'inspectors' }] : []),
+  { key: 'table', label: '检查表', options: 'tables' }
+])
 const summaryValues = value => ({ ...value, dateFrom: value.date_from, dateTo: value.date_to, status: labels[value.status] || '' })
 const filterSummaryFields = computed(() => buildFilterSummary(
-  [['id', '亮点ID'], ['dateRange', '检查时间范围'], ...optionFields.map(field => [field.key, field.label]), ...textFields.map(field => [field.key, field.label]), ['status', '亮点状态']],
+  [['id', '亮点ID'], ['month', '检查月度'], ['dateRange', '检查时间范围'], ...optionFields.value.map(field => [field.key, field.label]), ['description', '亮点描述'], ['status', '亮点状态']],
   summaryValues(draft.value), summaryValues(applied.value)
 ))
 const activeFilterCount = computed(() => filterSummaryFields.value.filter(field => field.value).length)
 const filterFieldState = key => filterSummaryFields.value.find(field => field.key === key)?.state || 'empty'
 const columns = [{key:'month',label:'检查月度'},{key:'time',label:'检查时间'},{key:'region',label:'站点所属地'},{key:'station',label:'站点名称'},{key:'station_manager',label:'站点负责人'},{key:'station_manager_phone',label:'站点负责人手机号'},{key:'inspector',label:'检查人员'},{key:'inspector_phone',label:'检查人员手机号'},{key:'inspection_table_name',label:'检查表'},{key:'description',label:'亮点描述'}]
-const image = path => path ? `/storage/${String(path).replace(/^\//, '')}` : ''
+const image = path => {
+  if (!path) return ''
+  const value = String(path)
+  return /^(https?:\/\/|blob:|data:|\/storage\/)/.test(value) ? value : `/storage/${value.replace(/^\//, '')}`
+}
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
-const auditActions = row => row.audit_status === 'pending' ? [{key:'approve',label:'通过'},{key:'reject',label:'拒绝'}] : [{key:'reset',label:'重置审核'}]
+const auditActions = row => row.audit_status === 'pending' ? [{key:'approve',label:'通过'},{key:'reject',label:'否决'}] : [{key:'reset',label:'重新判定'}]
+const auditButtonClass = action => ({ approve: 'btn-success', reject: 'btn-danger', reset: 'btn-secondary' }[action])
 let controller, sequence = 0
 async function load(next = 1) {
   controller?.abort(); controller = new AbortController(); const current = ++sequence
   loading.value = true
   try {
-    const { data } = await axios.get('/api/highlights', { params: { ...applied.value, page: next, page_size: size.value }, signal: controller.signal })
+    const params = { ...applied.value, page: next, page_size: size.value }
+    for (const key of ['region', 'station', 'table', 'inspectors']) params[key] = JSON.stringify(applied.value[key])
+    const { data } = await axios.get('/api/highlights', { params, signal: controller.signal })
     if (current !== sequence) return
     rows.value = data.items; total.value = data.total; page.value = data.page
   } catch (e) { if (!axios.isCancel(e)) message.value = e.response?.data?.error || '亮点加载失败，请重新筛选。' }
   finally { if (current === sequence) loading.value = false }
 }
 async function loadOptions() {
+  optionsLoading.value = true
   try { options.value = (await axios.get('/api/highlights/filter-options')).data; optionsError.value = '' }
   catch { optionsError.value = '筛选选项加载失败，请重试。' }
+  finally { optionsLoading.value = false }
 }
 function apply() {
   if (draft.value.date_from && draft.value.date_to && draft.value.date_from > draft.value.date_to) { message.value = '开始日期不能晚于结束日期。'; return }
@@ -131,14 +167,42 @@ onBeforeUnmount(() => { controller?.abort(); sequence++; document.removeEventLis
 .filter-actions { margin-top:16px; display:flex; justify-content:flex-end; gap:12px; padding-top:14px; border-top:1px solid #eef2f7; }
 .filter-main-actions { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
 .filter-pending-hint { color:#a65d0b; font-size:12px; }
+.btn { height:40px; padding:0 16px; border-radius:10px; border:1px solid #d1d5db; background:#fff; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.btn-sm { height:34px; min-height:34px; padding:0 12px; border-radius:9px; font-size:13px; font-weight:700; }
+.btn-primary { border-color:#1d4ed8; background:linear-gradient(135deg,#2563eb,#1d4ed8); color:#fff; font-weight:800; box-shadow:0 10px 22px rgba(37,99,235,.2); }
+.btn-secondary { background:#f8fafc; color:#334155; border-color:#cbd5e1; font-weight:800; }
+.btn-success { border-color:#bbf7d0; background:#f0fdf4; color:#15803d; font-weight:800; }.btn-success:hover:not(:disabled) { background:#dcfce7; }
+.btn-danger { border-color:#fecaca; background:#fef2f2; color:#b91c1c; font-weight:800; }.btn-danger:hover:not(:disabled) { background:#fee2e2; }
+.btn:disabled { cursor:not-allowed; opacity:.58; }
+.audit-actions { justify-content:center; min-width:130px; }
+.audit-meta { margin-top:8px; color:#64748b; font-size:12px; line-height:1.6; }
+.audit-submitting-chip { display:inline-flex; padding:6px 10px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:12px; font-weight:800; }
 label { display:grid; gap:8px; color:#64748b; font-size:13px; }
-input,select,textarea { width:100%; min-height:42px; padding:9px 12px; border:1px solid #d7e1ec; border-radius:10px; background:white; color:#172b45; font:inherit; }
+input,select,textarea { box-sizing:border-box; width:100%; min-height:42px; padding:9px 12px; border:1px solid #d7e1ec; border-radius:10px; background:white; color:#172b45; font:inherit; }
 .actions,.pagination,.result-heading { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .filter-note { color:#61748a; font-size:13px; }.result-heading { justify-content:space-between; }.result-heading small { font-weight:400; color:#718198; }
 .notice { padding:14px 20px; color:#126885; }.empty { text-align:center; padding:45px; color:#718198; }
-.desktop-table { overflow:auto; }table { width:100%; border-collapse:collapse; font-size:14px; }th,td { padding:14px 12px; border-bottom:1px solid #e3ebf3; text-align:left; min-width:105px; }th { white-space:nowrap; background:#f2f7fb; }.description { min-width:250px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; }
-.photo { border:0; border-radius:12px; padding:0; background:#f0f5fa; cursor:zoom-in; }.photo img { width:110px; height:82px; object-fit:contain; border-radius:12px; }
-.status { display:inline-block; white-space:nowrap; border-radius:20px; padding:5px 10px; font-size:12px; background:#fff3d8; color:#916c12; }.status.approved { background:#e4f5ed; color:#176a46; }.status.rejected { background:#fceceb; color:#ad403e; }
+.desktop-table { overflow:auto; max-height:60vh; border:1px solid #e5e7eb; border-radius:14px; }table { width:100%; border-collapse:collapse; font-size:14px; }th,td { padding:10px 12px; border:1px solid #e5e7eb; text-align:center; vertical-align:middle; color:#111827; min-width:105px; }th { white-space:nowrap; background:#f8fafc; font-weight:700; }.description { min-width:250px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; }
+.audit-approved td { background:rgba(240,253,244,.86); }.audit-rejected td { background:rgba(254,242,242,.9); }.audit-approved:hover td { background:rgba(220,252,231,.9); }.audit-rejected:hover td { background:rgba(254,226,226,.92); }
+.photo { border:0; border-radius:10px; padding:0; background:#f0f5fa; cursor:zoom-in; }.photo img { display:block; width:88px; height:66px; object-fit:contain; border-radius:10px; border:1px solid #cbd5e1; }
+.status { display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; border-radius:999px; padding:4px 10px; font-size:13px; font-weight:700; background:#f5f3ff; color:#7c3aed; }.status.approved { background:#f0fdf4; color:#16a34a; }.status.rejected { background:#fef2f2; color:#dc2626; }
+.table-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; }
+.table-card-head h3 { margin:0; color:#0f172a; font-size:18px; }
+.table-empty-state { min-height:280px; border:1px solid #e5e7eb; border-radius:14px; background:linear-gradient(180deg,#fff,#f8fafc); display:flex; align-items:center; justify-content:center; padding:34px 18px; text-align:center; }
+.table-empty-state h3 { color:#0f172a; }.table-empty-state p { color:#64748b; font-size:14px; line-height:1.7; }
+.filter-query-progress { height:5px; max-width:260px; margin:20px auto 0; overflow:hidden; border-radius:99px; background:#dbeafe; }.filter-query-progress span { display:block; width:40%; height:100%; border-radius:inherit; background:#2563eb; animation:highlight-query 1.3s ease-in-out infinite; }
+@keyframes highlight-query { from { transform:translateX(-100%); } to { transform:translateX(350%); } }
+@media(prefers-reduced-motion:reduce) { .filter-query-progress span { animation:none; width:100%; } }
+.pagination-bar { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:16px; flex-wrap:wrap; }
+.pagination-summary { color:#475569; font-size:14px; }
+.pagination-controls { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.pagination-size-control,.pagination-nav-row,.pagination-page-list,.pagination-jump { display:inline-flex; align-items:center; gap:8px; }
+.pagination-size-control label,.pagination-jump span { color:#64748b; font-size:13px; font-weight:800; white-space:nowrap; }
+.pagination-controls select,.pagination-jump input { width:auto; height:40px; border:1px solid #d1d5db; border-radius:10px; padding:0 10px; background:#fff; color:#0f172a; font-size:14px; }
+.pagination-jump input { width:78px; text-align:center; }
+.pagination-page-list { padding:4px; border:1px solid #e2e8f0; border-radius:14px; background:#f8fafc; }
+.pagination-page-btn { width:34px; height:34px; border:0; border-radius:10px; background:transparent; color:#475569; font-size:13px; font-weight:900; cursor:pointer; }
+.pagination-page-btn:hover { background:#e0edff; color:#1d4ed8; }.pagination-page-btn.active { background:#2563eb; color:#fff; box-shadow:0 8px 16px rgba(37,99,235,.22); }.pagination-ellipsis { min-width:28px; text-align:center; color:#94a3b8; }
 .pagination { justify-content:center; margin-top:20px; }.pagination select { width:auto; }.mobile-cards { display:none; }
 .highlight-overlay { position:fixed; inset:0; z-index:10000; background:#102038d9; display:flex; align-items:center; justify-content:center; padding:20px; }.full-photo { max-width:95vw; max-height:88dvh; object-fit:contain; }.close { position:absolute; right:20px; top:15px; border:0; padding:10px 18px; border-radius:10px; cursor:pointer; }.decision { background:white; border-radius:20px; padding:24px; max-width:550px; width:100%; max-height:90dvh; overflow:auto; }.decision p { white-space:pre-wrap; overflow-wrap:anywhere; }.decision .actions { margin-top:20px; }
 @media(max-width:768px) { .filters,.results { padding:15px; }.filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }input,select,textarea { font-size:16px; }.desktop-table { display:none; }.mobile-cards { display:grid; gap:16px; }.highlight-card { border:1px solid #dce7f0; border-radius:16px; padding:16px; }.highlight-card header { display:flex; gap:8px; justify-content:space-between; flex-wrap:wrap; }.highlight-card .description { min-width:0; }.highlight-card .photo img { width:160px; height:120px; }dl { display:grid; grid-template-columns:110px 1fr; gap:8px; font-size:13px; }dt { color:#758397; }dd { margin:0; overflow-wrap:anywhere; }.result-heading span { display:none; } }
@@ -161,5 +225,10 @@ input,select,textarea { width:100%; min-height:42px; padding:9px 12px; border:1p
   .filter-actions,.filter-main-actions { flex-direction:column; align-items:stretch; width:100%; }
   .filter-actions { padding-top:0; border-top:0; }
   .filter-main-actions .btn { width:100%; }
+  .pagination-bar,.pagination-controls { flex-direction:column; align-items:stretch; }
+  .pagination-nav-row .btn { flex:1; }
+  .pagination-page-list { justify-content:center; flex-wrap:wrap; }
+  .pagination-controls select,.pagination-jump input { font-size:16px; }
+  .table-empty-state { min-height:220px; }
 }
 </style>
