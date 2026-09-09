@@ -15,7 +15,8 @@
           <header><div><span class="eyebrow">问题 #{{ item.issue_id }} · 申诉 #{{ item.id }}</span><h3>{{ item.region }} · {{ item.station_name }}</h3><p class="muted">{{ item.table_name }} · 检查时间 {{ item.inspection_time }}</p></div><span class="status" :class="item.status">{{ labels[item.status] }}</span></header>
           <div class="issue-content"><p>{{ item.description }}</p><button v-if="item.photo_path" class="photo" @click="photo = imageUrl(item.photo_path)"><img :src="imageUrl(item.photo_path)" alt="问题照片，点击放大" loading="lazy" /></button></div>
           <WorkflowDeadline v-if="!archive && item.review_deadline_ms" :deadline="item.review_deadline_ms" :server-now="item.server_now_ms"
-            title="片区与质安部共享审核倒计时" :hint="reviewDeadlineHint(item)" :expired-hint="reviewDeadlineHint(item, true)" @expired="expiredReviews.add(reviewDeadlineKey(item))" />
+            :title="item.status === 'area_pending' ? '片区独立审核倒计时' : '质安部独立审核倒计时'" :hint="reviewDeadlineHint(item)" :expired-hint="reviewDeadlineHint(item, true)" @expired="expiredReviews.add(reviewDeadlineKey(item))" />
+          <p v-if="!archive && item.review_deadline_enabled && !item.review_deadline_ms" class="outcome">本阶段截止时间待同步，可能缺少对应年份工作日历。暂不自动判定，仍可人工审核。</p>
           <p v-if="item.timeout_at" class="outcome">本申诉由系统按超时规则处理，并非人员主动审核。{{ item.timeout_stage === 'area_pending' ? item.area_reason : item.quality_reason }}</p>
           <button v-if="archive" class="result-toggle" :aria-expanded="expanded.has(item.id)" :disabled="reading !== null" @click="viewResult(item)">{{ expanded.has(item.id) ? '收起处理结果' : '查看处理结果' }} <span v-if="item.unread" class="count-badge">未读</span></button>
           <AppealProgress v-if="!archive || expanded.has(item.id)" :item="item" :reviewers="qualityReviewers" />
@@ -51,7 +52,7 @@ const expiredReviews = ref(new Set())
 const reviewDeadlineKey = item => `${item.id}:${item.review_deadline_ms}`
 const reviewDeadlineHint = (item, expired = false) => {
   const action = item.review_policy?.timeout_action
-  return `${expired ? '期限已结束，等待低频后台任务处理。' : '片区通过后不重新计时。'}${action === 'approve' ? '系统按期扫描时自动通过申诉，问题已销毁。' : action === 'reject' ? '系统按期扫描时自动拒绝申诉，恢复整改。' : '当前规则不自动决策，仍需人工审核。'} 自动处理可能延后数小时，超时阶段及待办理账号均留痕。`
+  return `${expired ? '期限已结束，等待低频后台任务处理。' : '各级独立计时，非工作日暂停。'}${action === 'approve' ? (item.status === 'area_pending' ? '超时自动通过片区初审，转交质安部重新计时。' : '超时自动通过终审，问题已销毁。') : action === 'reject' ? '系统按期扫描时自动拒绝申诉，恢复整改。' : '当前规则不自动决策，仍需人工审核。'} 自动处理可能延后数小时，超时阶段及待办理账号均留痕。`
 }
 const route = useRoute()
 const router = useRouter()

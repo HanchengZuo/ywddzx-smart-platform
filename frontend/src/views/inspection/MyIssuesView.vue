@@ -695,7 +695,7 @@ const router = useRouter()
 const appealItem = ref(null)
 const expiredAppeals = ref(new Set())
 const appealDeadlineKey = item => `${item.id}:${item.appeal_deadline_ms}`
-const appealExpired = item => item.appeal_deadline_enabled !== false && (!item.appeal_deadline_ms || Number(item.appeal_deadline_ms) <= Number(item.server_now_ms) || expiredAppeals.value.has(appealDeadlineKey(item)))
+const appealExpired = item => item.appeal_deadline_enabled !== false && Boolean(item.appeal_deadline_ms) && (Number(item.appeal_deadline_ms) <= Number(item.server_now_ms) || expiredAppeals.value.has(appealDeadlineKey(item)))
 const appealSubmitted = () => {
   appealItem.value = null
   window.dispatchEvent(new Event('my-pending-rectification-refresh'))

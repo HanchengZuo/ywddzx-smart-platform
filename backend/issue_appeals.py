@@ -113,10 +113,12 @@ def register_issue_appeals(app, namespace):
             cur.execute(f'SELECT count(*) AS total {joins} WHERE {predicate}', params)
             total = cur.fetchone()['total']
             cur.execute(f"""SELECT a.*, i.description, i.standard_id, i.photo_path, i.status AS issue_status,
-              EXTRACT(EPOCH FROM quality_effective_deadline('review',a.review_deadline_at,a.review_started_at))*1000 AS review_deadline_ms,
-              (SELECT review_enabled FROM quality_deadline_policy WHERE id=1) AS review_deadline_enabled,
-              CASE WHEN a.review_started_at IS NULL OR a.review_started_at < (SELECT review_enabled_at FROM quality_deadline_policy WHERE id=1)
-                THEN (SELECT to_jsonb(p)||p.review_enabled_policy FROM quality_deadline_policy p WHERE id=1) ELSE a.review_policy END AS review_policy,
+              EXTRACT(EPOCH FROM quality_effective_deadline(
+                CASE WHEN a.status='area_pending' THEN 'area_review' ELSE 'quality_review' END,
+                a.review_deadline_at,CASE WHEN a.review_phase=CASE WHEN a.status='area_pending' THEN 'area_review' ELSE 'quality_review' END THEN a.review_started_at END))*1000 AS review_deadline_ms,
+              (SELECT CASE WHEN a.status='area_pending' THEN area_review_enabled ELSE quality_review_enabled END FROM quality_deadline_policy WHERE id=1) AS review_deadline_enabled,
+              CASE WHEN a.review_phase IS NULL OR a.review_started_at < (SELECT CASE WHEN a.status='area_pending' THEN area_review_enabled_at ELSE quality_review_enabled_at END FROM quality_deadline_policy WHERE id=1)
+                THEN (SELECT to_jsonb(p)||CASE WHEN a.status='area_pending' THEN p.area_review_enabled_policy ELSE p.quality_review_enabled_policy END FROM quality_deadline_policy p WHERE id=1) ELSE a.review_policy END AS review_policy,
               EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)*1000 AS server_now_ms,
               a.status NOT IN ('area_pending','quality_pending') AND NOT EXISTS (
                 SELECT 1 FROM inspection_issue_appeal_reads r WHERE r.appeal_id=a.id AND r.user_id=%s
@@ -192,7 +194,7 @@ def register_issue_appeals(app, namespace):
                 return jsonify(error='仅已签名验收、审核通过且待整改的问题可以申诉，请刷新列表。'), 409
             cur.execute('''UPDATE issues SET quality_appeal_deadline_at=quality_appeal_deadline_at WHERE id=%s
               RETURNING NOT (SELECT appeal_enabled FROM quality_deadline_policy WHERE id=1)
-                OR quality_effective_deadline('appeal',quality_appeal_deadline_at,quality_appeal_started_at)>CURRENT_TIMESTAMP AS within_window''', (issue_id,))
+                OR COALESCE(quality_effective_deadline('appeal',quality_appeal_deadline_at,quality_appeal_started_at)>CURRENT_TIMESTAMP,true) AS within_window''', (issue_id,))
             if not cur.fetchone()['within_window']:
                 return jsonify(error='申诉申请期限已结束，不能再发起申诉，请继续整改。'), 409
             cur.execute("INSERT INTO inspection_issue_appeals (issue_id,status,reason,submitted_by) VALUES (%s,'area_pending',%s,%s) RETURNING id", (issue_id, reason, user['id']))
@@ -231,11 +233,11 @@ def register_issue_appeals(app, namespace):
             if not can_decide(core, cur, user, appeal):
                 return jsonify(error='当前账号无权审核此阶段或此片区的申诉。'), 403
             initialize_appeal_review(cur, core, appeal_id, user)
-            cur.execute("SELECT *,quality_effective_deadline('review',review_deadline_at,review_started_at)<=CURRENT_TIMESTAMP AS overdue FROM inspection_issue_appeals WHERE id=%s", (appeal_id,))
+            cur.execute("SELECT *,quality_effective_deadline(CASE WHEN status='area_pending' THEN 'area_review' ELSE 'quality_review' END,review_deadline_at,review_started_at)<=CURRENT_TIMESTAMP AS overdue FROM inspection_issue_appeals WHERE id=%s", (appeal_id,))
             timing = cur.fetchone()
             appeal.update(timing)
             if appeal['overdue'] and appeal['review_policy']['timeout_action'] != 'manual':
-                return jsonify(error='共享审核期限已结束，正在等待系统按保存规则处理，请刷新查看。'), 409
+                return jsonify(error='本阶段审核期限已结束，正在等待系统按保存规则处理，请刷新查看。'), 409
             area = appeal['status'] == 'area_pending'
             prefix = 'area' if area else 'quality'
             approved = decision == 'approve'

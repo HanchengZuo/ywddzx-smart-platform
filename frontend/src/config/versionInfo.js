@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v7.1', date: '2026-09-10', title: '质安分阶段工作小时时限',
+    summary: '片区与质安部独立计时，四项时限改为小时并排除法定非工作日。',
+    items: [
+      '验收、申诉申请、片区初审、质安终审四项独立开关和工作小时设置，两级审核分别配置超时处理。',
+      '法定节假日及普通周末暂停，调休补班日正常计时；质安部从接收起获得完整期限。',
+      '片区超时通过转交质安部，自动处理分别记录阶段及待办理人员；保留低频扫描和历史留痕。'
+    ]
+  },
+  {
     version: 'v7.0', date: '2026-09-09', title: '独立亮点登记与审核',
     summary: '巡检登记新增亮点模式，使用HL独立编号，不进入巡检记录及整改复核。',
     items: [

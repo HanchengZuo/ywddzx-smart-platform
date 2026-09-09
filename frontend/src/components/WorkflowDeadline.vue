@@ -1,22 +1,25 @@
 <template>
   <div class="workflow-deadline" :class="{ expired, urgent: remaining < 86400000 }">
-    <div><strong>{{ title }}</strong><span>{{ deadlineLabel(deadline, now) }}</span></div>
+    <div><strong>{{ title }}</strong><span>{{ workingLabel(deadline, now, calendar) }}</span></div>
     <small v-if="deadline">截止 {{ new Date(Number(deadline)).toLocaleString('zh-CN', { hour12: false }) }}</small>
     <p>{{ expired ? expiredHint : hint }}</p>
   </div>
 </template>
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { deadlineExpired, deadlineLabel, deadlineRemaining } from '@/utils/deadline'
+import { deadlineExpired, deadlineRemaining } from '@/utils/deadline'
+import { workingLabel } from '@/utils/workingDeadline'
+import { loadWorkCalendar } from '@/utils/workCalendar'
 const props = defineProps({ deadline: [String, Number], serverNow: [String, Number], title: String, hint: String, expiredHint: String })
 const emit = defineEmits(['expired'])
 const offset = ref(0), now = ref(Date.now())
+const calendar = ref(null)
 watch(() => props.serverNow, value => { offset.value = value ? Number(value) - Date.now() : 0; now.value = Date.now() + offset.value }, { immediate: true })
 const expired = computed(() => deadlineExpired(props.deadline, now.value))
 const remaining = computed(() => deadlineRemaining(props.deadline, now.value))
 watch(expired, value => { if (value) emit('expired') }, { immediate: true })
 let timer
-onMounted(() => { timer = setInterval(() => { now.value = Date.now() + offset.value }, 1000) })
+onMounted(() => { loadWorkCalendar().then(days => { calendar.value = days }).catch(() => {}); timer = setInterval(() => { now.value = Date.now() + offset.value }, 60000) })
 onBeforeUnmount(() => clearInterval(timer))
 </script>
 <style scoped>
