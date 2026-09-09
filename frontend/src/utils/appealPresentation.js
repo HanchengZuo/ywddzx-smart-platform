@@ -14,7 +14,16 @@ export function appealProgressSteps(item, reviewers = []) {
       owner: '质安部', handler: item.quality_name ? `审核人：${item.quality_name}` : `可审核用户：${reviewers.length ? reviewers.join('、') : '暂无，请联系root配置'}`,
       time: item.quality_at, reason: item.quality_reason || (ended ? '流程已结束，无需继续终审。' : '终审通过则问题已销毁；拒绝则回到站点整改。') }
   ]
-  if (item.timeout_at) {
+  if (item.area_timeout_at || item.quality_timeout_at) {
+    if (item.area_timeout_at) {
+      steps[1].label = areaRejected ? '系统超时拒绝' : '系统超时通过 · 已转交'
+      steps[1].handler = '处理方：系统时限任务（非人员审核）'
+    }
+    if (item.quality_timeout_at) {
+      steps[2].label = qualityRejected ? '系统超时拒绝 · 恢复整改' : '系统超时通过 · 已销毁'
+      steps[2].handler = '处理方：系统时限任务（非人员审核）'
+    }
+  } else if (item.timeout_at) {
     const index = item.timeout_stage === 'area_pending' ? 1 : 2
     steps[index].state = item.status === 'approved' ? 'done' : 'rejected'
     steps[index].label = item.status === 'approved' ? '系统超时通过' : '系统超时拒绝'

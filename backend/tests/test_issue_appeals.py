@@ -47,7 +47,7 @@ class AppealDatabaseTests(unittest.TestCase):
         self.conn = core.get_db_connection()
         self.cur = self.conn.cursor()
         self.addCleanup(self.cleanup_database)
-        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications', '20260906_002_quality_deadlines', '20260906_003_deadline_switches'):
+        for name in ('20260905_001_issue_lifecycle', '20260905_002_review_branches', '20260905_003_issue_appeals', '20260906_001_appeal_notifications', '20260906_002_quality_deadlines', '20260906_003_deadline_switches', '20260909_002_working_hour_deadlines'):
             path = Path(__file__).parents[1] / f'migrations/versions/{name}.py'
             spec = importlib.util.spec_from_file_location(name, path)
             migration = importlib.util.module_from_spec(spec)
@@ -55,6 +55,12 @@ class AppealDatabaseTests(unittest.TestCase):
             migration.op = SimpleNamespace(execute=self.cur.execute)
             migration.upgrade()
         migration.upgrade()
+        # Requests share a rollback-only transaction, so CURRENT_TIMESTAMP is fixed.
+        # Model settings committed before the new appeal, as in separate real requests.
+        self.cur.execute("""UPDATE quality_deadline_policy SET
+          acceptance_enabled_at=CURRENT_TIMESTAMP-interval '1 second',appeal_enabled_at=CURRENT_TIMESTAMP-interval '1 second',
+          area_review_enabled_at=CURRENT_TIMESTAMP-interval '1 second',quality_review_enabled_at=CURRENT_TIMESTAMP-interval '1 second'
+          WHERE id=1""")
         self.cur.execute('SELECT i.id,i.station_id,i.inspection_id,s.region FROM issues i JOIN stations s ON s.id=i.station_id WHERE NOT EXISTS (SELECT 1 FROM inspection_issue_appeal_claims c WHERE c.issue_id=i.id) ORDER BY i.id DESC LIMIT 1')
         self.issue = self.cur.fetchone()
         if not self.issue:
