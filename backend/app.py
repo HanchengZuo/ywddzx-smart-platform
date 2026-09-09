@@ -27,6 +27,7 @@ from flask_sqlalchemy import SQLAlchemy
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
+from inspection_record_grouping import monthly_record_cte, monthly_record_page_cte
 from ai_utils import (
     classify_non_oil_key_issues,
     classify_non_oil_report_categories,
@@ -39114,13 +39115,20 @@ def get_inspections():
             params,
         )
         total = int((cur.fetchone() or {}).get("total") or 0)
-        total_pages = max(1, (total + page_size - 1) // page_size)
+        group_by_month = request.args.get("group_by") == "station_month"
+        total_groups = total
+        if group_by_month:
+            cur.execute(
+                f"WITH {monthly_record_cte(where_clause)} SELECT COUNT(*) AS total FROM monthly_groups",
+                params,
+            )
+            total_groups = int((cur.fetchone() or {}).get("total") or 0)
+        total_pages = max(1, (total_groups + page_size - 1) // page_size)
         effective_page = min(page, total_pages)
         offset = (effective_page - 1) * page_size
 
-        cur.execute(
-            f"""
-            WITH filtered_ids AS (
+        page_cte = monthly_record_page_cte(where_clause) if group_by_month else f"""
+            filtered_ids AS (
                 SELECT ins.id
                 FROM inspections ins
                 JOIN stations s ON ins.station_id = s.id
@@ -39128,7 +39136,11 @@ def get_inspections():
                 {where_clause}
                 ORDER BY ins.inspection_date DESC, ins.id DESC
                 LIMIT %s OFFSET %s
-            ),
+            )
+        """
+        cur.execute(
+            f"""
+            WITH {page_cte},
             issue_stats AS (
                 SELECT
                     i.inspection_id,
@@ -39293,6 +39305,7 @@ def get_inspections():
                 "success": True,
                 "items": items,
                 "total": total,
+                "total_groups": total_groups,
                 "page": effective_page,
                 "page_size": page_size,
                 "total_pages": total_pages,

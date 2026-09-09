@@ -203,7 +203,7 @@
               <div class="mobile-card-station">{{ batch.station }}</div>
               <span :class="statusClass(batch.batchResult)">{{ batch.batchResult }}</span>
             </div>
-            <div class="mobile-card-date">巡检日期：{{ batch.date }}</div>
+            <div class="mobile-card-date">巡检月度：{{ batch.date }}</div>
           </div>
 
           <div class="mobile-card-body">
@@ -228,6 +228,7 @@
                 <span :class="statusClass(record.result)">{{ record.result }}</span>
               </div>
               <div class="mobile-batch-item-meta-row">
+                <span class="mobile-meta-pill">{{ record.date }}</span>
                 <span class="mobile-meta-pill">问题 {{ record.issue_count }}</span>
                 <span class="mobile-meta-pill" :class="{ signed: isInspectionCompleted(record) }">
                   {{ getRecordFlowTitle(record) }}
@@ -299,10 +300,10 @@
       </div>
 
       <div v-if="!loading && totalRecords" class="pagination-bar mobile-pagination-bar card-surface">
-        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录</div>
+        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录，{{ totalGroups }} 个站点月度组</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
-            <label>每页显示</label>
+            <label>每页组数</label>
             <select v-model.number="pageSize">
               <option :value="5">5</option>
               <option :value="10">10</option>
@@ -343,7 +344,7 @@
           <table class="records-table">
             <thead>
               <tr>
-                <th>巡检日期</th>
+                <th>巡检月度</th>
                 <th>站点</th>
                 <th>检查表</th>
                 <th>检查结果</th>
@@ -384,7 +385,10 @@
                       <strong class="batch-station-name">{{ batch.station }}</strong>
                     </div>
                   </td>
-                  <td class="long-text">{{ record.inspection_table_name || '暂无' }}</td>
+                  <td class="long-text">
+                    {{ record.inspection_table_name || '暂无' }}
+                    <div class="record-table-date">{{ record.date }}</div>
+                  </td>
                   <td>
                     <span :class="statusClass(record.result)">{{ record.result }}</span>
                   </td>
@@ -479,10 +483,10 @@
       </div>
 
       <div class="pagination-bar">
-        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录</div>
+        <div class="pagination-summary">共 {{ totalRecords }} 条巡检记录，{{ totalGroups }} 个站点月度组</div>
         <div class="pagination-controls">
           <div class="pagination-size-control">
-            <label>每页显示</label>
+            <label>每页组数</label>
             <select v-model.number="pageSize">
               <option :value="5">5</option>
               <option :value="10">10</option>
@@ -730,6 +734,7 @@
 import FilterSummary from '@/components/FilterSummary.vue'
 import WorkflowDeadline from '@/components/WorkflowDeadline.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
+import { groupInspectionRecords } from '@/utils/inspectionRecordGroups'
 import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
 import SignaturePad from 'signature_pad'
@@ -811,6 +816,7 @@ const dropdownVisible = ref({
 
 const list = shallowRef([])
 const totalRecords = ref(0)
+const totalGroups = ref(0)
 const filterOptions = ref({
   stations: [],
   inspectionTables: [],
@@ -1004,41 +1010,7 @@ const getCompletionParticipantLabel = (participant) => {
   return `${name}${participant?.confirmed ? ' 已确认' : ' 待确认'}`
 }
 
-const groupedInspectionGroups = computed(() => {
-  const batchMap = new Map()
-
-  filteredData.value.forEach((item) => {
-    const batchKey = String(item.batch_id || `${item.date || ''}__${item.station || ''}`)
-    if (!batchMap.has(batchKey)) {
-      batchMap.set(batchKey, {
-        batchKey,
-        batchId: item.batch_id,
-        date: item.date,
-        station: item.station,
-        records: [],
-        batchIssueCount: 0,
-        batchResult: '正常',
-        signedCount: 0,
-        rowspan: 0
-      })
-    }
-
-    const batch = batchMap.get(batchKey)
-    batch.records.push(item)
-    if (item.sign_status === '已签名确认') {
-      batch.signedCount += 1
-    }
-    batch.batchIssueCount += Number(item.issue_count || 0)
-    if (item.result === '异常') {
-      batch.batchResult = '异常'
-    }
-  })
-
-  return Array.from(batchMap.values()).map((batch) => {
-    batch.rowspan = batch.records.length
-    return batch
-  })
-})
+const groupedInspectionGroups = computed(() => groupInspectionRecords(filteredData.value))
 
 const resolveImage = (path) => {
   const value = String(path || '').trim()
@@ -1815,7 +1787,7 @@ const submitInspectionSignature = async () => {
   }
 }
 
-const totalPage = computed(() => Math.max(1, Math.ceil(totalRecords.value / pageSize.value)))
+const totalPage = computed(() => Math.max(1, Math.ceil(totalGroups.value / pageSize.value)))
 
 const visiblePageItems = computed(() => {
   const total = totalPage.value
@@ -1861,7 +1833,7 @@ const paginatedInspectionGroups = computed(() => groupedInspectionGroups.value)
 const shouldShowStationDivider = (batch, batchIndex) => {
   if (batchIndex === 0) return true
   const previousBatch = paginatedInspectionGroups.value[batchIndex - 1]
-  return previousBatch?.station !== batch?.station
+  return previousBatch?.batchKey !== batch?.batchKey
 }
 
 const getRecordTableRowClasses = (rowIndex) => ({
@@ -1987,6 +1959,7 @@ const fetchInspections = async () => {
         user_id: userId,
         page: page.value,
         page_size: pageSize.value,
+        group_by: 'station_month',
         include_options: 0,
         month: queryFilters.month,
         date_from: queryFilters.dateFrom,
@@ -2005,11 +1978,13 @@ const fetchInspections = async () => {
     if (Array.isArray(payload)) {
       list.value = payload
       totalRecords.value = payload.length
+      totalGroups.value = groupInspectionRecords(payload).length
       return
     }
 
     list.value = Array.isArray(payload.items) ? payload.items : []
     totalRecords.value = Number(payload.total || 0)
+    totalGroups.value = Number(payload.total_groups ?? payload.total ?? 0)
 
     const serverPage = Number(payload.page || page.value)
     if (Number.isFinite(serverPage) && serverPage >= 1 && serverPage !== page.value) {
@@ -2020,6 +1995,7 @@ const fetchInspections = async () => {
     if (sequence !== inspectionFetchSequence) return
     list.value = []
     totalRecords.value = 0
+    totalGroups.value = 0
     showActionMessage(error?.response?.data?.error || '巡检记录加载失败，请稍后重试。', 'error')
   } finally {
     if (sequence === inspectionFetchSequence) {
@@ -3156,6 +3132,12 @@ onBeforeUnmount(() => {
 .station-divider-meta span:first-child {
   padding-left: 0;
   border-left: 0;
+}
+
+.record-table-date {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .batch-group-start-row > td {
