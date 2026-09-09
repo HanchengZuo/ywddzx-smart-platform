@@ -1,18 +1,25 @@
 <template>
   <div class="page-shell highlights-page">
     <header class="page-header card-surface">
-      <div><div class="eyebrow">现场经验 · 独立审核</div><h2>亮点列表</h2><p class="page-desc">记录值得推广的现场做法。仅审核通过的记录确认为亮点，不进入巡检记录与整改复核。</p></div>
+      <div><div class="page-kicker">巡检系统</div><h2>亮点列表</h2></div>
     </header>
-    <form class="card-surface filters" @submit.prevent="apply">
-      <div class="filter-grid">
-        <label v-for="field in textFields" :key="field.key" :class="{ selected: draft[field.key] }">{{ field.label }}<input v-model.trim="draft[field.key]" :placeholder="field.placeholder || '不限'" /></label>
-        <label v-for="field in optionFields" :key="field.key" :class="{ selected: draft[field.key] }">{{ field.label }}<select v-model="draft[field.key]"><option value="">全部</option><option v-for="option in options[field.options] || []" :key="option">{{ option }}</option></select></label>
-        <label :class="{ selected: draft.status }">亮点状态<select v-model="draft.status"><option value="">全部</option><option v-for="(label,key) in labels" :key="key" :value="key">{{ label }}</option></select></label>
-        <label :class="{ selected: draft.date_from }">开始日期<input v-model="draft.date_from" type="date" /></label>
-        <label :class="{ selected: draft.date_to }">结束日期<input v-model="draft.date_to" type="date" /></label>
+    <form class="card-surface filter-card" :class="{ 'mobile-expanded': showMobileFilters }" @submit.prevent="apply">
+      <div class="filter-head">
+        <div><div class="filter-kicker">筛选面板</div><h3>快速定位亮点记录</h3></div>
+        <div class="filter-head-actions">
+          <span v-if="activeFilterCount" class="active-filter-pill">已选 {{ activeFilterCount }} 项</span>
+          <button type="button" class="btn btn-secondary mobile-filter-toggle" :aria-expanded="showMobileFilters" @click="showMobileFilters = !showMobileFilters">{{ showMobileFilters ? '收起筛选' : '展开筛选' }}</button>
+        </div>
       </div>
-      <p class="filter-note">{{ dirty ? '筛选条件已调整，点击“开始筛选”后生效。' : '当前清单按已应用条件查询，每次只加载当前页。' }}</p>
-      <div class="actions"><button type="button" class="btn btn-secondary" @click="draft = emptyFilters()">清空条件</button><button class="btn btn-primary" :disabled="loading">{{ loading ? '筛选中…' : '开始筛选' }}</button></div>
+      <FilterSummary :fields="filterSummaryFields" manual />
+      <div class="filter-grid">
+        <div class="filter-item" :data-filter-state="filterFieldState('id')"><label for="highlight-id">亮点ID</label><input id="highlight-id" v-model.trim="draft.id" placeholder="例如 HL1（精确匹配）" /></div>
+        <div class="filter-item" :data-filter-state="filterFieldState('dateRange')"><label>检查时间范围</label><DateRangePicker v-model:date-from="draft.date_from" v-model:date-to="draft.date_to" placeholder="选择检查时间范围" aria-label="选择亮点检查时间范围" /></div>
+        <div v-for="field in optionFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label :for="`highlight-${field.key}`">{{ field.label }}</label><select :id="`highlight-${field.key}`" v-model="draft[field.key]"><option value="">全部</option><option v-for="option in options[field.options] || []" :key="option">{{ option }}</option></select></div>
+        <div v-for="field in textFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label :for="`highlight-${field.key}`">{{ field.label }}</label><input :id="`highlight-${field.key}`" v-model.trim="draft[field.key]" :placeholder="`输入${field.label}`" /></div>
+        <div class="filter-item" :data-filter-state="filterFieldState('status')"><label for="highlight-status">亮点状态</label><select id="highlight-status" v-model="draft.status"><option value="">全部</option><option v-for="(label,key) in labels" :key="key" :value="key">{{ label }}</option></select></div>
+      </div>
+      <div class="filter-actions"><div class="filter-main-actions"><span v-if="dirty" class="filter-pending-hint">筛选条件已调整，点击开始筛选后生效</span><button type="button" class="btn btn-secondary" @click="draft = emptyFilters()">重置筛选</button><button class="btn btn-primary" :disabled="loading">{{ loading ? '筛选中...' : '开始筛选' }}</button></div></div>
       <p v-if="optionsError" role="alert">{{ optionsError }} <button type="button" class="btn btn-secondary" @click="loadOptions">重试</button></p>
     </form>
     <p v-if="message" class="notice card-surface" role="status">{{ message }}</p>
@@ -45,14 +52,25 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
+import FilterSummary from '@/components/FilterSummary.vue'
+import DateRangePicker from '@/components/DateRangePicker.vue'
+import { buildFilterSummary } from '@/utils/filterSummary'
+const showMobileFilters = ref(false)
 const labels = { pending: '待审核', approved: '已确认亮点', rejected: '审核未通过' }
 const emptyFilters = () => ({ id: '', description: '', manager: '', inspector: '', region: '', station: '', table: '', status: '', date_from: '', date_to: '' })
 const draft = ref(emptyFilters()), applied = ref(emptyFilters()), rows = ref([]), options = ref({}), optionsError = ref('')
 const page = ref(1), size = ref(window.innerWidth <= 768 ? 5 : 20), total = ref(0), loading = ref(false), message = ref(''), preview = ref(''), decision = ref(null), busy = ref(new Set())
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(applied.value))
 const pages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
-const textFields = [{ key: 'id', label: '亮点ID', placeholder: '例如 HL1（精确匹配）' }, { key: 'description', label: '亮点描述' }, { key: 'manager', label: '站点负责人' }, { key: 'inspector', label: '检查人员' }]
+const textFields = [{ key: 'manager', label: '站点负责人' }, { key: 'inspector', label: '检查人员' }, { key: 'description', label: '亮点描述' }]
 const optionFields = [{ key: 'region', label: '站点所属地', options: 'regions' }, { key: 'station', label: '站点名称', options: 'stations' }, { key: 'table', label: '检查表', options: 'tables' }]
+const summaryValues = value => ({ ...value, dateFrom: value.date_from, dateTo: value.date_to, status: labels[value.status] || '' })
+const filterSummaryFields = computed(() => buildFilterSummary(
+  [['id', '亮点ID'], ['dateRange', '检查时间范围'], ...optionFields.map(field => [field.key, field.label]), ...textFields.map(field => [field.key, field.label]), ['status', '亮点状态']],
+  summaryValues(draft.value), summaryValues(applied.value)
+))
+const activeFilterCount = computed(() => filterSummaryFields.value.filter(field => field.value).length)
+const filterFieldState = key => filterSummaryFields.value.find(field => field.key === key)?.state || 'empty'
 const columns = [{key:'month',label:'检查月度'},{key:'time',label:'检查时间'},{key:'region',label:'站点所属地'},{key:'station',label:'站点名称'},{key:'station_manager',label:'站点负责人'},{key:'station_manager_phone',label:'站点负责人手机号'},{key:'inspector',label:'检查人员'},{key:'inspector_phone',label:'检查人员手机号'},{key:'inspection_table_name',label:'检查表'},{key:'description',label:'亮点描述'}]
 const image = path => path ? `/storage/${String(path).replace(/^\//, '')}` : ''
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
@@ -93,16 +111,28 @@ onBeforeUnmount(() => { controller?.abort(); sequence++; document.removeEventLis
 </script>
 
 <style scoped>
-.highlights-page { display:grid; gap:20px; min-width:0; padding:24px; }
+.highlights-page { display:flex; flex-direction:column; gap:20px; min-width:0; }
 .highlights-page > * { min-width:0; }
-.card-surface { background:#fff; border:1px solid #dfe8f1; border-radius:20px; box-shadow:0 8px 28px #23374d08; }
-.page-header { padding:24px; background:linear-gradient(120deg,#fff,#f0f8fb); }.page-header h2 { margin:10px 0; }.page-desc { color:#61748a; line-height:1.7; margin-bottom:0; }
-.eyebrow { color:#267a8e; font-size:13px; letter-spacing:2px; }
-.filters,.results { padding:22px; border-radius:20px; }
-.filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
+.card-surface { background:rgba(255,255,255,.96); border:1px solid #dbe4ee; border-radius:22px; box-shadow:0 16px 36px rgba(15,23,42,.06); }
+.page-header { padding:24px 28px; }
+.page-header h2 { margin:0; font-size:34px; color:#0f172a; }
+.page-kicker { display:inline-flex; padding:6px 12px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:12px; font-weight:700; margin-bottom:14px; }
+.filter-card,.results { padding:20px; }
+.filter-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; }
+.filter-kicker { display:inline-flex; margin-bottom:8px; padding:5px 10px; border-radius:999px; background:#ecfeff; color:#0f766e; font-size:12px; font-weight:900; }
+.filter-head h3 { margin:0; color:#0f172a; font-size:18px; }
+.filter-head-actions { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.active-filter-pill { display:inline-flex; align-items:center; justify-content:center; min-height:32px; padding:0 11px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:12px; font-weight:900; }
+.mobile-filter-toggle { display:none; }
+.filter-grid { display:grid; grid-template-columns:repeat(4,minmax(220px,1fr)); gap:16px; }
+.filter-item { display:flex; flex-direction:column; gap:8px; }
+.filter-item label { font-size:14px; font-weight:700; color:#374151; }
+.filter-item input,.filter-item select { height:42px; border-color:#d1d5db; padding:0 12px; font-size:14px; }
+.filter-actions { margin-top:16px; display:flex; justify-content:flex-end; gap:12px; padding-top:14px; border-top:1px solid #eef2f7; }
+.filter-main-actions { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.filter-pending-hint { color:#a65d0b; font-size:12px; }
 label { display:grid; gap:8px; color:#64748b; font-size:13px; }
 input,select,textarea { width:100%; min-height:42px; padding:9px 12px; border:1px solid #d7e1ec; border-radius:10px; background:white; color:#172b45; font:inherit; }
-label.selected { color:#116e94; } label.selected input,label.selected select { border-color:#54a6c1; background:#f1faff; }
 .actions,.pagination,.result-heading { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .filter-note { color:#61748a; font-size:13px; }.result-heading { justify-content:space-between; }.result-heading small { font-weight:400; color:#718198; }
 .notice { padding:14px 20px; color:#126885; }.empty { text-align:center; padding:45px; color:#718198; }
@@ -112,4 +142,24 @@ label.selected { color:#116e94; } label.selected input,label.selected select { b
 .pagination { justify-content:center; margin-top:20px; }.pagination select { width:auto; }.mobile-cards { display:none; }
 .highlight-overlay { position:fixed; inset:0; z-index:10000; background:#102038d9; display:flex; align-items:center; justify-content:center; padding:20px; }.full-photo { max-width:95vw; max-height:88dvh; object-fit:contain; }.close { position:absolute; right:20px; top:15px; border:0; padding:10px 18px; border-radius:10px; cursor:pointer; }.decision { background:white; border-radius:20px; padding:24px; max-width:550px; width:100%; max-height:90dvh; overflow:auto; }.decision p { white-space:pre-wrap; overflow-wrap:anywhere; }.decision .actions { margin-top:20px; }
 @media(max-width:768px) { .filters,.results { padding:15px; }.filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }input,select,textarea { font-size:16px; }.desktop-table { display:none; }.mobile-cards { display:grid; gap:16px; }.highlight-card { border:1px solid #dce7f0; border-radius:16px; padding:16px; }.highlight-card header { display:flex; gap:8px; justify-content:space-between; flex-wrap:wrap; }.highlight-card .description { min-width:0; }.highlight-card .photo img { width:160px; height:120px; }dl { display:grid; grid-template-columns:110px 1fr; gap:8px; font-size:13px; }dt { color:#758397; }dd { margin:0; overflow-wrap:anywhere; }.result-heading span { display:none; } }
+@media(max-width:1200px) { .filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:768px) {
+  .highlights-page { gap:14px; }
+  .page-header { padding:18px 16px; }
+  .page-header h2 { font-size:28px; }
+  .page-kicker { margin-bottom:10px; }
+  .filter-card { padding:14px; border-radius:20px; }
+  .filter-head { align-items:center; margin-bottom:0; }
+  .filter-card.mobile-expanded .filter-head { margin-bottom:14px; }
+  .filter-head h3 { font-size:17px; }
+  .filter-head-actions { align-items:flex-end; flex-direction:column; gap:8px; }
+  .mobile-filter-toggle { display:inline-flex; min-height:38px; }
+  .filter-card:not(.mobile-expanded) .filter-grid,.filter-card:not(.mobile-expanded) .filter-actions { display:none; }
+  .filter-grid { grid-template-columns:minmax(0,1fr); gap:14px; }
+  .filter-item label { font-size:13px; }
+  .filter-item input,.filter-item select { height:46px; font-size:16px; }
+  .filter-actions,.filter-main-actions { flex-direction:column; align-items:stretch; width:100%; }
+  .filter-actions { padding-top:0; border-top:0; }
+  .filter-main-actions .btn { width:100%; }
+}
 </style>
