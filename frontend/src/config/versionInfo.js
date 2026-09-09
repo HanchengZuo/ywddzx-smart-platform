@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v7.0', date: '2026-09-09', title: '独立亮点登记与审核',
+    summary: '巡检登记新增亮点模式，使用HL独立编号，不进入巡检记录及整改复核。',
+    items: [
+      '登记页选择亮点后，只需选择站点、检查表并填写描述和照片，支持手机拍照、相册及拼图。',
+      '新增亮点列表，服务端分页和主动筛选，支持照片放大及独立审核。',
+      '数据范围、审核权限及检查人员联系方式隐藏沿用巡检问题权限，审核结果独立留痕。'
+    ]
+  },
+  {
     version: 'v6.9',
     date: '2026-09-07',
     title: '待复核问题按页加载',

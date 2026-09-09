@@ -239,7 +239,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "6.9.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.0.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -806,7 +806,7 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "audit_inspection_issues",
-        "name": "审核巡检问题",
+        "name": "审核巡检问题与亮点",
         "category": "巡检问题列表",
         "description": "对巡检问题判定审核通过或否决；否决后不参与巡检记录统计和问题流转。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
@@ -40235,6 +40235,8 @@ def uploaded_file(filename):
 
 register_issue_appeals(app, globals())
 register_quality_deadlines(app, globals())
+from highlights import register_highlights
+register_highlights(app, globals())
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

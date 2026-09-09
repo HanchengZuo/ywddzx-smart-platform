@@ -815,7 +815,7 @@ const inspectionScopeConfigs = {
   '巡检问题列表': {
     permissionKey: 'limit_issue_inspection_table_scope',
     title: '巡检问题检查表范围',
-    description: '启用后，只限制巡检问题列表能看到哪些检查表的问题。'
+    description: '启用后，限制巡检问题列表和亮点列表可见的检查表范围；亮点沿用问题审核权限。'
   },
   '巡检记录': {
     permissionKey: 'limit_record_inspection_table_scope',
