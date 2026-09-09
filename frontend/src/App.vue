@@ -232,6 +232,13 @@
           <span v-if="!sidebarCollapsed">巡检问题列表</span>
         </button>
 
+        <button v-if="canViewHighlights" class="nav-item"
+          :class="{ active: isActive('/inspection/highlights'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/inspection/highlights')" :title="sidebarCollapsed ? '亮点列表' : ''">
+          <span class="nav-item-icon">亮</span>
+          <span v-if="!sidebarCollapsed">亮点列表</span>
+        </button>
+
         <button v-if="canViewRecords" class="nav-item"
           :class="{ active: isActive('/inspection/records'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/records')" :title="sidebarCollapsed ? '巡检记录' : ''">
@@ -996,6 +1003,7 @@ const canViewRecords = computed(() => (
   Boolean(localPermissions.value.limit_record_station_region_scope) ||
   Boolean(localPermissions.value.view_own_inspection_records)
 ) && isPageVisible('/inspection/records'))
+const canViewHighlights = computed(() => (isRoot.value || ['view_all_inspection_issues', 'limit_issue_station_region_scope', 'view_own_inspection_issues', 'submit_inspections'].some(key => localPermissions.value[key])) && isPageVisible('/inspection/highlights'))
 const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans') && isPageVisible('/inspection/plan'))
 const canViewInspectionReports = computed(() => hasPermissionKey('view_inspection_reports') && isPageVisible('/inspection/reports'))
 const canViewCertificates = computed(() => (
@@ -1015,6 +1023,7 @@ const canViewInspectionSection = computed(() => (
   canViewChecklistOriginals.value ||
   canViewMyIssues.value ||
   canViewIssues.value ||
+  canViewHighlights.value ||
   canViewRecords.value ||
   canViewInspectionPlans.value ||
   canViewInspectionReports.value ||

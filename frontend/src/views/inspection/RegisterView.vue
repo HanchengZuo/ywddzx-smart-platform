@@ -39,6 +39,14 @@
             </div>
           </div>
           <div class="form-item form-item-full">
+            <label>是否为亮点登记</label>
+            <div class="issue-toggle-group" role="radiogroup" aria-label="是否为亮点登记">
+              <button type="button" class="issue-toggle-btn" :class="{ active: !form.isHighlight }" :disabled="submitting" @click="form.isHighlight = false">否，巡检登记</button>
+              <button type="button" class="issue-toggle-btn" :class="{ active: form.isHighlight }" :disabled="submitting" @click="form.isHighlight = true">是，亮点登记</button>
+            </div>
+            <p v-if="form.isHighlight" class="highlight-hint">选择检查表后填写亮点描述及照片。亮点独立审核，不进入巡检记录和整改复核。</p>
+          </div>
+          <div v-if="!form.isHighlight" class="form-item form-item-full">
             <label>是否发现问题</label>
             <div class="issue-toggle-group" role="radiogroup" aria-label="是否发现问题">
               <button type="button" class="issue-toggle-btn" :class="{ active: normalizedHasIssue === 'yes' }"
@@ -206,16 +214,16 @@
         </div>
 
         <template v-if="showIssueFields">
-          <div class="section-title issue-section-title">{{ referenceMode === 'ai' ? '问题照片' : '问题信息' }}</div>
+          <div class="section-title issue-section-title">{{ form.isHighlight ? '亮点信息' : referenceMode === 'ai' ? '问题照片' : '问题信息' }}</div>
 
           <div class="form-grid">
-            <div v-if="referenceMode === 'manual'" class="form-item form-item-full">
-              <label>实际问题描述</label>
-              <textarea v-model="form.description" rows="4" placeholder="请填写现场实际问题描述"></textarea>
+            <div v-if="form.isHighlight || referenceMode === 'manual'" class="form-item form-item-full">
+              <label>{{ form.isHighlight ? '亮点描述' : '实际问题描述' }}</label>
+              <textarea v-model="form.description" rows="4" :placeholder="form.isHighlight ? '请记录值得推广的现场做法与亮点' : '请填写现场实际问题描述'"></textarea>
             </div>
 
             <div ref="issuePhotoUploadSectionRef" class="form-item form-item-full upload-follow-anchor">
-              <label>上传问题照片</label>
+              <label>{{ form.isHighlight ? '上传亮点照片' : '上传问题照片' }}</label>
               <div class="upload-card">
                 <input id="issue-photo-upload" class="upload-input" type="file" accept="image/*" multiple
                   @change="handleFileChange" />
@@ -229,8 +237,8 @@
                   @drop.prevent="handlePhotoDrop" @paste="handlePhotoPaste">
                   <div class="upload-icon">↑</div>
                   <div class="upload-title">
-                    <span class="desktop-upload-title">选择或拖拽问题照片</span>
-                    <span class="mobile-upload-title">选择或添加问题照片</span>
+                    <span class="desktop-upload-title">选择或拖拽{{ form.isHighlight ? '亮点' : '问题' }}照片</span>
+                    <span class="mobile-upload-title">选择或添加{{ form.isHighlight ? '亮点' : '问题' }}照片</span>
                   </div>
                   <div class="upload-desc">
                     最多上传3张，系统会自动拼接成一张照片提交；你也可以进入图片编辑调整裁剪和画圈标注。
@@ -473,8 +481,10 @@ const LAST_REGISTER_STATION_KEY = 'inspection_register_last_station'
 const REGISTER_DRAFT_SCOPE = 'inspection-register'
 let registerDraftManager = null
 let registerDraftReady = false
+let restoringRegisterDraft = false
 
 const form = ref({
+  isHighlight: false,
   stationId: '',
   hasIssue: 'yes',
   inspectionTableId: '',
@@ -644,12 +654,14 @@ const selectedStandard = computed(() => {
 })
 
 const normalizedHasIssue = computed(() => {
+  if (form.value.isHighlight) return 'highlight'
   return String(form.value.hasIssue || 'yes').trim().toLowerCase()
 })
 
 const standardSourceModeLabel = computed(() => standardSourceMode.value === 'external' ? '外部规范库' : '内部规范库')
 
 const showIssueFields = computed(() => {
+  if (form.value.isHighlight) return Boolean(form.value.stationId && form.value.inspectionTableId)
   const hasIssueYes = String(form.value.hasIssue || 'yes').trim().toLowerCase() === 'yes'
   const hasStation = Boolean(String(form.value.stationId || '').trim())
   const hasStandard = Boolean(String(form.value.standardId || '').trim())
@@ -937,10 +949,15 @@ const setReferenceMode = (mode) => {
 
 watch(
   normalizedHasIssue,
-  (hasIssueValue) => {
+  (hasIssueValue, previousValue) => {
+    if (restoringRegisterDraft) return
+    if (previousValue === 'highlight') {
+      form.value.description = ''
+      clearImage()
+    }
     clearSelectedStandard()
     clearAiReferenceState()
-    if (hasIssueValue === 'no') {
+    if (hasIssueValue === 'no' || hasIssueValue === 'highlight') {
       referenceMode.value = 'manual'
       form.value.description = ''
       clearImage()
@@ -1102,9 +1119,11 @@ const restoreRegisterDraft = async () => {
   const draft = registerDraftManager?.load()?.data
   if (!draft || isRegisterDraftEmpty(draft)) return false
 
-  await registerDraftManager.pause(async () => {
+  restoringRegisterDraft = true
+  try { await registerDraftManager.pause(async () => {
     const draftForm = draft.form || {}
     form.value = {
+      isHighlight: draftForm.isHighlight === true,
       stationId: draftForm.stationId || '',
       hasIssue: draftForm.hasIssue === 'no' ? 'no' : 'yes',
       inspectionTableId: String(draftForm.inspectionTableId || ''),
@@ -1120,7 +1139,7 @@ const restoreRegisterDraft = async () => {
     referenceMode.value = draft.referenceMode === 'ai' ? 'ai' : 'manual'
     standardSearch.value = draft.standardSearch || ''
 
-    if (form.value.hasIssue === 'yes' && draft.standardSourceMode && draft.standardSourceMode !== standardSourceMode.value) {
+    if (!form.value.isHighlight && form.value.hasIssue === 'yes' && draft.standardSourceMode && draft.standardSourceMode !== standardSourceMode.value) {
       clearSelectedStandard()
     } else if (form.value.standardId) {
       const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
@@ -1146,7 +1165,8 @@ const restoreRegisterDraft = async () => {
     }
   })
 
-  showSubmitToast('已恢复上次未提交的巡检登记草稿。', 'success')
+  } finally { restoringRegisterDraft = false }
+  showSubmitToast('已恢复上次未提交的登记草稿。', 'success')
   return true
 }
 
@@ -1576,6 +1596,7 @@ const clearImage = () => {
 
 const resetForm = (preserveMessage = false) => {
   form.value = {
+    isHighlight: false,
     stationId: '',
     hasIssue: 'yes',
     inspectionTableId: '',
@@ -1623,18 +1644,18 @@ const handleSubmit = async () => {
     return
   }
 
-  if (hasIssueValue === 'no' && !form.value.inspectionTableId) {
+  if (hasIssueValue !== 'yes' && !form.value.inspectionTableId) {
     showSubmitToast('请选择检查表。', 'error')
     return
   }
 
-  if (hasIssueValue === 'yes' && !form.value.description.trim()) {
-    showSubmitToast('请填写实际问题描述。', 'error')
+  if (hasIssueValue !== 'no' && !form.value.description.trim()) {
+    showSubmitToast(form.value.isHighlight ? '请填写亮点描述。' : '请填写实际问题描述。', 'error')
     return
   }
 
-  if (hasIssueValue === 'yes' && !imageFile.value) {
-    showSubmitToast('请上传问题照片。', 'error')
+  if (hasIssueValue !== 'no' && !imageFile.value) {
+    showSubmitToast(form.value.isHighlight ? '请上传亮点照片。' : '请上传问题照片。', 'error')
     return
   }
 
@@ -1670,7 +1691,11 @@ const handleSubmit = async () => {
       formData.append('inspection_table_id', String(form.value.inspectionTableId))
     }
 
-    const response = await axios.post('/api/inspection-register', formData)
+    if (form.value.isHighlight) {
+      formData.append('description', form.value.description)
+      formData.append('photo', imageFile.value)
+    }
+    const response = await axios.post(form.value.isHighlight ? '/api/highlights' : '/api/inspection-register', formData)
     resetForm(true)
     showSubmitToast(response.data.message || '提交成功。', 'success')
   } catch (error) {
@@ -1740,7 +1765,7 @@ onMounted(async () => {
     showSubmitToast(getRequestErrorMessage(stationResult.reason, '站点数据加载失败，请稍后重试。'), 'error')
   } else if (tableResult.status === 'rejected') {
     showSubmitToast(getRequestErrorMessage(tableResult.reason, '检查表数据加载失败，请稍后重试。'), 'error')
-  } else if (standardLoadError.value) {
+  } else if (!form.value.isHighlight && standardLoadError.value) {
     showSubmitToast(standardLoadError.value, 'error')
   }
 })
@@ -1763,6 +1788,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.highlight-hint { padding: 12px 16px; border-radius: 12px; background: #eef7fb; color: #256080; line-height: 1.7; }
 .page-shell {
   display: flex;
   flex-direction: column;

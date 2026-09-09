@@ -48,6 +48,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '查看、筛选、审核和导出巡检问题。'
       },
       {
+        key: '/inspection/highlights',
+        path: '/inspection/highlights',
+        title: '亮点列表',
+        description: '独立展示及审核亮点，沿用巡检问题的数据范围与审核权限。'
+      },
+      {
         key: '/inspection/records',
         path: '/inspection/records',
         title: '巡检记录',

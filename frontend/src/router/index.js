@@ -25,6 +25,10 @@ const routes = [
     component: () => import('../views/inspection/RegisterView.vue'),
   },
   {
+    path: '/inspection/highlights',
+    component: () => import('../views/inspection/HighlightsView.vue'),
+  },
+  {
     path: '/inspection/standards',
     component: InspectionStandardsView
   },
@@ -161,7 +165,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/inspection/register') return hasPermission(role, permissions, 'submit_inspections')
   if (path === '/inspection/standards') return hasPermission(role, permissions, 'view_inspection_standards')
   if (path === '/inspection/checklist-originals') return hasPermission(role, permissions, 'view_checklist_originals')
-  if (path === '/inspection/issues') {
+  if (path === '/inspection/issues' || path === '/inspection/highlights') {
     return Boolean(
       permissions.view_all_inspection_issues ||
       permissions.limit_issue_station_region_scope ||
