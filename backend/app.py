@@ -1,5 +1,6 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+from external_standard_status import disabled_standard_ids, require_active_standards
 import fcntl
 import hashlib
 import json
@@ -240,7 +241,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.1.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.2.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -21928,6 +21929,8 @@ def parse_internal_standards_backup_file(file_storage):
 
 def build_external_inspection_standard_ai_catalog(cur):
     external_map = fetch_external_standard_map(cur)
+    disabled = disabled_standard_ids(cur)
+    external_map = {key: value for key, value in external_map.items() if key not in disabled}
     internal_links = fetch_internal_links_by_external_ids(cur, external_map.keys())
     ai_catalog = []
     full_standards = []
@@ -21979,6 +21982,7 @@ def build_internal_inspection_standard_ai_catalog(cur):
         """
     )
     internal_rows = cur.fetchall()
+    disabled = disabled_standard_ids(cur)
     fields = [dict(field) for field in get_internal_standard_fields(cur)]
     link_map = fetch_internal_standard_links(cur, [row["id"] for row in internal_rows])
     ai_catalog = []
@@ -21986,6 +21990,8 @@ def build_internal_inspection_standard_ai_catalog(cur):
 
     for row in internal_rows:
         standard = serialize_internal_standard(row, link_map.get(row["id"], []), fields)
+        if any(int(link['external_standard_id']) in disabled for link in standard.get('linked_externals', [])):
+            continue
         if not standard.get("linked_externals"):
             continue
 
@@ -28338,6 +28344,9 @@ def get_management_checklist_standards(inspection_table_id):
         )
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         items = [serialize_standard_row(field_meta, row) for row in cur.fetchall()]
+        disabled = disabled_standard_ids(cur)
+        for item in items:
+            item['is_active'] = int(item['standard_id']) not in disabled
         conn.commit()
         return jsonify(
             {
@@ -28358,6 +28367,38 @@ def get_management_checklist_standards(inspection_table_id):
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route('/api/management/checklists/<int:inspection_table_id>/standards/<int:standard_id>/status', methods=['PUT'])
+def set_external_standard_status(inspection_table_id, standard_id):
+    conn = cur = None
+    try:
+        user = get_current_request_user()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if not has_permission(cur, user, 'manage_checklists'):
+            return jsonify(error='无权维护外部规范。'), 403
+        data = request.get_json(silent=True) or {}
+        if type(data.get('is_active')) is not bool:
+            return jsonify(error='启停状态必须为布尔值。'), 400
+        _, _, physical = get_management_checklist_standard_context(cur, inspection_table_id, require_fields=False)
+        cur.execute('SELECT pg_advisory_xact_lock(%s)', (standard_id,))
+        if not fetch_standard_from_table(cur, physical, standard_id):
+            return jsonify(error='外部规范不存在。'), 404
+        cur.execute('''INSERT INTO external_standard_status(standard_id,is_active,updated_by)
+          VALUES(%s,%s,%s) ON CONFLICT(standard_id) DO UPDATE
+          SET is_active=EXCLUDED.is_active,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
+          (standard_id, data['is_active'], user['id']))
+        conn.commit()
+        return jsonify(success=True, is_active=data['is_active'])
+    except LookupError:
+        return jsonify(error='检查表不存在。'), 404
+    except Exception:
+        if conn: conn.rollback()
+        logging.exception('External standard availability update failed')
+        return jsonify(error='规范状态保存失败，请稍后重试。'), 500
     finally:
         close_db_resources(cur, conn)
 
@@ -30243,6 +30284,9 @@ def get_external_standards():
             return jsonify({"success": False, "error": "当前账号无权查看规范库。"}), 403
 
         external_map = fetch_external_standard_map(cur)
+        if request.args.get('active_only') == '1':
+            disabled = disabled_standard_ids(cur)
+            external_map = {key: value for key, value in external_map.items() if key not in disabled}
         conn.commit()
         internal_links = fetch_internal_links_by_external_ids(cur, external_map.keys())
         items = []
@@ -30313,6 +30357,7 @@ def get_inspection_internal_standards():
         link_map = fetch_internal_standard_links(cur, [row["id"] for row in rows])
         tag_map = fetch_internal_standard_custom_tags(cur, [row["id"] for row in rows])
         tag_groups = get_internal_standard_tag_groups(cur)
+        disabled = disabled_standard_ids(cur) if request.args.get('active_only') == '1' else set()
         items = []
         for row in rows:
             item = serialize_internal_standard(
@@ -30321,6 +30366,8 @@ def get_inspection_internal_standards():
                 fields,
                 tag_map.get(row["id"], []),
             )
+            if any(int(link['external_standard_id']) in disabled for link in item.get('linked_externals', [])):
+                continue
             haystack = "\n".join(
                 [
                     item["internal_standard_id"],
@@ -31213,6 +31260,7 @@ def inspection_register():
                     ), 400
                 external_standards.append(external)
 
+            require_active_standards(cur, [entry['external_standard_id'] for entry in external_standards])
             targets = prepare_issue_registration_targets(
                 cur,
                 station_id,
@@ -31308,6 +31356,9 @@ def inspection_register():
         ensure_checklist_field_columns(cur, physical_table_name, fields)
 
         today = beijing_today()
+
+        if has_issue != 'no':
+            require_active_standards(cur, [standard_id])
 
         inspection_id = get_or_create_period_inspection(
             cur,

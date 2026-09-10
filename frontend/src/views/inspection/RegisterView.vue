@@ -801,7 +801,7 @@ const fetchStandardSourceMode = async () => {
 const fetchStandards = async () => {
   if (standardSourceMode.value === 'external') {
     const response = await axios.get('/api/external-standards', {
-      params: { _ts: Date.now() }
+      params: { _ts: Date.now(), active_only: '1' }
     })
     standardFields.value = []
     standards.value = (response.data?.items || []).map((item) => ({
@@ -817,7 +817,7 @@ const fetchStandards = async () => {
   }
 
   const response = await axios.get('/api/inspection-internal-standards', {
-    params: { _ts: Date.now() }
+    params: { _ts: Date.now(), active_only: '1' }
   })
   const fields = response.data?.fields || []
   standardFields.value = fields
