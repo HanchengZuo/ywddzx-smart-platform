@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v7.2', date: '2026-09-10', title: '外部规范启停管理',
+    summary: '外部规范支持独立启停，维护弹窗不再被顶部导航遮挡。',
+    items: [
+      '维护规范数据新增启停开关，停用后不可用于新问题登记，历史问题和规范详情保持不变。',
+      '登记候选及AI推荐排除停用规范，服务端同时校验直接登记和内部规范关联登记。',
+      '维护弹窗提升层级，适配移动端高度，内容滚动时保留头部和底部操作。'
+    ]
+  },
+  {
     version: 'v7.1', date: '2026-09-10', title: '质安分阶段工作小时时限',
     summary: '片区与质安部独立计时，四项时限改为小时并排除法定非工作日。',
     items: [

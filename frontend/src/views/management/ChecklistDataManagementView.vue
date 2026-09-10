@@ -429,7 +429,8 @@
       </section>
     </div>
 
-    <div v-if="standardDialog.visible && selectedChecklist" class="dialog-backdrop">
+    <Teleport to="body">
+    <div v-if="standardDialog.visible && selectedChecklist" class="dialog-backdrop standard-backdrop">
       <section class="edit-dialog standard-dialog card-surface">
         <div class="dialog-head">
           <div>
@@ -442,6 +443,7 @@
 
         <div class="dialog-body">
           <div class="standard-manager">
+            <div v-if="standardStatusError" class="message-card error" role="alert">{{ standardStatusError }}</div>
             <div v-if="!standardState.editingDraft" class="standard-editor-card">
               <div class="standard-section-head">
                 <div>
@@ -500,7 +502,7 @@
               <div class="standard-toolbar">
                 <div>
                   <strong>外部规范数据清单</strong>
-                  <span>可在这里编辑或删除现有规范。</span>
+                  <span>停用后不可登记新问题，历史问题及规范详情不受影响。</span>
                 </div>
                 <div class="standard-toolbar-controls">
                   <label class="standard-search">
@@ -544,6 +546,13 @@
                       <td>{{ item.created_at || '-' }}</td>
                       <td>
                         <div class="row-actions">
+                          <button type="button" role="switch" :aria-checked="item.is_active !== false"
+                            :aria-label="`外部规范 ${item.standard_id} 启用状态`"
+                            class="standard-switch" :class="{ enabled: item.is_active !== false }"
+                            :disabled="togglingStandards.has(item.standard_id)" @click="toggleStandard(item)">
+                            <span class="switch-track"><span /></span>
+                            {{ togglingStandards.has(item.standard_id) ? '保存中' : item.is_active !== false ? '已启用' : '已停用' }}
+                          </button>
                           <button class="btn btn-secondary btn-sm" type="button"
                             @click="startEditStandard(standardState, item, selectedFields)">
                             编辑
@@ -583,6 +592,7 @@
         </div>
       </section>
     </div>
+    </Teleport>
   </div>
 </template>
 
@@ -592,10 +602,10 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
-let localPermissions = {}
+let localPermissions
 try {
   localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
+} catch {
   localPermissions = {}
 }
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_checklists)
@@ -954,6 +964,20 @@ const closeStandardDialog = () => {
   standardDialog.visible = false
   standardState.editingStandardId = null
   standardState.editingDraft = null
+}
+
+const togglingStandards = ref(new Set())
+const standardStatusError = ref('')
+const toggleStandard = async (item) => {
+  if (togglingStandards.value.has(item.standard_id)) return
+  standardStatusError.value = ''
+  togglingStandards.value.add(item.standard_id)
+  try {
+    const { data } = await axios.put(`/api/management/checklists/${selectedChecklist.value.id}/standards/${item.standard_id}/status`, { is_active: item.is_active === false })
+    item.is_active = data.is_active
+  } catch (error) {
+    standardStatusError.value = error.response?.data?.error || '规范状态保存失败，请重试。'
+  } finally { togglingStandards.value.delete(item.standard_id) }
 }
 
 const insertFieldAt = (fields, tableCode, index) => {
@@ -2033,7 +2057,19 @@ onMounted(fetchChecklists)
 
 .standard-dialog {
   width: min(1120px, calc(100vw - 32px));
+  height: calc(100dvh - 32px);
 }
+
+.standard-backdrop { z-index: 12000; }
+.standard-dialog .dialog-head, .standard-dialog .dialog-actions { flex-shrink: 0; }
+.standard-dialog .dialog-body { min-height: 0; overflow-y: auto; }
+.standard-switch { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:#64748b; cursor:pointer; padding:8px; white-space:nowrap; }
+.standard-switch:disabled { opacity:.6; cursor:wait; }
+.switch-track { display:inline-flex; align-items:center; width:34px; height:20px; border-radius:12px; background:#94a3b8; padding:2px; box-sizing:border-box; }
+.switch-track > span { width:16px; height:16px; border-radius:50%; background:white; transition:transform .15s; }
+.standard-switch.enabled { color:#15803d; }
+.standard-switch.enabled .switch-track { background:#16a34a; }
+.standard-switch.enabled .switch-track > span { transform:translateX(14px); }
 
 .public-field-dialog {
   width: min(980px, calc(100vw - 32px));
