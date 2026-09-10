@@ -734,7 +734,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .section-head {
@@ -1188,6 +1188,31 @@ onBeforeUnmount(() => {
 .permission-desc {
   color: #64748b;
   font-size: 14px;
+}
+
+@media (min-width: 1201px) {
+  .list-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .list-card .section-head {
+    flex-shrink: 0;
+  }
+
+  /* Let the preview determine the shared row height, not the directory length. */
+  .checklist-list {
+    flex: 1 1 0;
+    height: 0;
+    min-height: 0;
+    max-height: none;
+    scrollbar-gutter: stable;
+  }
+
+  .checklist-list > * {
+    flex-shrink: 0;
+  }
 }
 
 @media (max-width: 1200px) {
