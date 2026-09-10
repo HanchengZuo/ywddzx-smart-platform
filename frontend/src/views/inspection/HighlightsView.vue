@@ -40,13 +40,13 @@
           <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td v-if="visible('id')"><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
             <td v-if="visible('photo')"><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
             <td v-if="visible('status')"><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
-            <td v-if="visible('audit')"><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
+            <td v-if="visible('audit')"><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="audit(row, action.key)">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
 <td v-if="canManage"><div class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary btn-sm" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑' : '调检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger btn-sm" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button><span v-if="!row.can_edit && !row.can_delete && !row.can_change_inspector" class="audit-meta">{{ row.audit_status !== 'pending' ? '已审核，无操作权限' : '暂无可操作' }}</span></div></td>
           </tr></tbody></table></div>
         <div class="mobile-cards"><article v-for="row in rows" :key="row.id" class="highlight-card"><header><strong v-if="visible('id')">{{ row.display_id }}</strong><span v-if="visible('status')" class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></header>
           <p v-if="visible('description')" class="description">{{ row.description }}</p><button v-if="visible('photo')" class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button>
           <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ row[column.key] || '—' }}</dd></template><template v-if="visible('audit')"><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></template></dl>
-          <div class="actions audit-actions" v-if="row.can_audit && visible('audit')"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button></template></div>
+          <div class="actions audit-actions" v-if="row.can_audit && visible('audit')"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="audit(row, action.key)">{{ action.label }}</button></template></div>
           <div v-if="canManage" class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑亮点' : '调整检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button></div>
         </article></div>
       </div>
@@ -67,7 +67,6 @@
       <InspectionPhotoPreview v-if="preview" :url="preview" title="亮点照片" :style="{ zIndex: 12000 }" @close="preview = ''" />
       <div v-if="editing" class="highlight-overlay" @click.self="closeEdit"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="编辑亮点" @submit.prevent="saveEdit"><h3>{{ editing.row.can_edit ? '编辑亮点' : '调整检查人' }} · {{ editing.row.display_id }}</h3><label v-if="editing.row.can_edit">亮点描述<textarea v-model="editing.description" required maxlength="10000" rows="5" :disabled="saving" /></label><template v-if="editing.row.can_edit"><label>亮点照片（不选择则保留原照片）<input type="file" accept="image/*" :disabled="saving" @change="selectEditPhoto" /></label><button type="button" class="photo" @click="preview = editing.photoUrl || image(editing.row.photo_path)"><img :src="editing.photoUrl || image(editing.row.photo_path)" alt="当前亮点照片" /></button></template><label v-if="editing.row.can_change_inspector">检查人员<select v-model="editing.inspector" :disabled="saving || inspectorsLoading"><option value="">保留原检查人</option><option v-for="person in editInspectors" :key="person.id" :value="person.id">{{ person.name }}</option></select></label><p v-if="editError" role="alert">{{ editError }}</p><div class="actions"><button class="btn btn-secondary" type="button" :disabled="saving" @click="closeEdit">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button></div></form></div>
       <div v-if="deletion" class="highlight-overlay"><section class="decision card-surface" role="dialog" aria-modal="true" aria-label="确认删除亮点"><h3>删除 {{ deletion.display_id }}？</h3><p>此操作将删除该亮点及其关联审核记录，不能恢复。</p><p v-if="editError" role="alert">{{ editError }}</p><div class="actions"><button class="btn btn-secondary" :disabled="saving" @click="deletion = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="removeHighlight">{{ saving ? '删除中…' : '确认删除' }}</button></div></section></div>
-      <div v-if="decision" class="highlight-overlay" @click.self="decision = null"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="审核亮点" @submit.prevent="audit"><h3>{{ decision.label }} · {{ decision.row.display_id }}</h3><p>{{ decision.row.description }}</p><label>审核说明（选填）<textarea v-model="decision.note" maxlength="2000" rows="3" /></label><div class="actions"><button class="btn btn-secondary" type="button" @click="decision = null">取消</button><button class="btn" :class="auditButtonClass(decision.action)">确认{{ decision.label }}</button></div></form></div>
     </Teleport>
   </div>
 </template>
@@ -153,7 +152,7 @@ const labels = { pending: '待审核', approved: '已确认亮点', rejected: '�
 const emptyFilters = () => ({ id: '', month: '', description: '', manager: '', inspectors: [], region: [], station: [], table: [], status: '', date_from: '', date_to: '' })
 const draft = ref(emptyFilters()), applied = ref(emptyFilters()), rows = ref([]), options = ref({}), optionsError = ref('')
 const optionsLoading = ref(false)
-const page = ref(1), size = ref(window.innerWidth <= 768 ? 5 : 20), total = ref(0), loading = ref(false), message = ref(''), preview = ref(''), decision = ref(null), busy = ref(new Set())
+const page = ref(1), size = ref(window.innerWidth <= 768 ? 5 : 20), total = ref(0), loading = ref(false), message = ref(''), preview = ref(''), busy = ref(new Set())
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(applied.value))
 const pages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 const pageJump = ref('')
@@ -213,18 +212,19 @@ function apply() {
   if (draft.value.date_from && draft.value.date_to && draft.value.date_from > draft.value.date_to) { message.value = '开始日期不能晚于结束日期。'; return }
   applied.value = { ...draft.value }; message.value = ''; load(1)
 }
-async function audit() {
-  const { row, action, note } = decision.value; decision.value = null; busy.value.add(row.id)
+async function audit(row, action) {
+  if (!row?.id || !row.can_audit || busy.value.has(row.id)) return
+  busy.value.add(row.id)
   try {
-    const { data } = await axios.post(`/api/highlights/${row.id}/audit`, { action, note, expected_status: row.audit_status, expected_revision: row.revision })
+    const { data } = await axios.post(`/api/highlights/${row.id}/audit`, { action, expected_status: row.audit_status, expected_revision: row.revision })
     const found = rows.value.find(item => item.id === row.id)
-    if (found) { Object.assign(found,data); found.audit_note = note }
+    if (found) { Object.assign(found,data); found.audit_note = '' }
     if (applied.value.status && applied.value.status !== data.audit_status && found) { rows.value = rows.value.filter(item => item.id !== row.id); total.value-- }
     message.value = `${row.display_id}：${labels[data.audit_status]}`
   } catch (e) { message.value = e.response?.data?.error || '审核失败，请重试。' }
   finally { busy.value.delete(row.id) }
 }
-function keydown(event) { if (event.key === 'Escape') { if (preview.value) preview.value = ''; else if (editing.value) closeEdit(); else if (deletion.value && !saving.value) deletion.value = null; else if (decision.value) decision.value = null; else if (columnSettingsOpen.value) columnSettingsOpen.value = false; else if (tableFullscreen.value) exitFullscreen() } }
+function keydown(event) { if (event.key === 'Escape') { if (preview.value) preview.value = ''; else if (editing.value) closeEdit(); else if (deletion.value && !saving.value) deletion.value = null; else if (columnSettingsOpen.value) columnSettingsOpen.value = false; else if (tableFullscreen.value) exitFullscreen() } }
 onMounted(() => { load(); loadOptions(); document.addEventListener('keydown', keydown); document.addEventListener('fullscreenchange', fullscreenChanged); document.addEventListener('click',outsideClick) })
 onBeforeUnmount(() => { controller?.abort(); sequence++; if (tableFullscreen.value) exitFullscreen(); if (editing.value?.photoUrl) URL.revokeObjectURL(editing.value.photoUrl); document.removeEventListener('keydown', keydown); document.removeEventListener('fullscreenchange', fullscreenChanged); document.removeEventListener('click',outsideClick) })
 </script>
