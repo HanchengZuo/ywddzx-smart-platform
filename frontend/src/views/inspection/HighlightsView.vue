@@ -23,22 +23,31 @@
       <div class="filter-actions"><div class="filter-main-actions"><span v-if="dirty" class="filter-pending-hint">筛选条件已调整，点击开始筛选后生效</span><button type="button" class="btn btn-secondary" @click="draft = emptyFilters()">重置筛选</button><button class="btn btn-primary" :disabled="loading">{{ loading ? '筛选中...' : '开始筛选' }}</button></div></div>
       <p v-if="optionsError" role="alert">{{ optionsError }} <button type="button" class="btn btn-secondary" @click="loadOptions">重试</button></p>
     </form>
-    <p v-if="message" class="notice card-surface" role="status">{{ message }}</p>
-    <section class="card-surface results" :aria-busy="loading">
-      <div class="table-card-head"><div><div class="filter-kicker">亮点清单</div><h3>亮点明细</h3></div></div>
+    <p v-if="message && !tableFullscreen" class="notice card-surface" role="status">{{ message }}</p>
+    <section ref="tableCard" class="card-surface results" :class="{ 'fullscreen-table-card': tableFullscreen }" :aria-busy="loading">
+      <div class="table-card-head"><div><div class="filter-kicker">亮点清单</div><h3>{{ tableFullscreen ? '全屏查看亮点' : '亮点明细' }}</h3></div>
+        <div class="table-view-actions">
+          <label v-if="tableFullscreen" class="zoom-control">缩放 {{ Math.round(tableZoom * 100) }}%<input v-model.number="tableZoom" type="range" min="0.2" max="1" step="0.02" /></label>
+          <div ref="columnSettings" class="column-settings-wrap"><button class="btn btn-secondary" type="button" :aria-expanded="columnSettingsOpen" @click="columnSettingsOpen = !columnSettingsOpen">字段显示 {{ visibleDefinitions.length }}/{{ columnDefinitions.length }}</button>
+            <div v-if="columnSettingsOpen" class="column-settings-panel card-surface"><header><strong>字段显示设置</strong><button class="btn btn-sm" aria-label="关闭字段设置" @click="columnSettingsOpen = false">×</button></header><p>隐藏暂时不看的字段，亮点数据不会受影响。</p><div class="actions"><button class="btn btn-primary btn-sm" @click="setColumns('all')">全部显示</button><button class="btn btn-secondary btn-sm" @click="setColumns('compact')">常用精简</button><button class="btn btn-secondary btn-sm" @click="setColumns('all')">恢复默认</button></div><div class="column-options"><label v-for="column in columnDefinitions" :key="column.key" :class="{ active: visible(column.key) }"><input type="checkbox" :checked="visible(column.key)" @change="toggleColumn(column.key)" />{{ column.label }}</label></div></div>
+          </div><button class="btn btn-secondary" @click="toggleFullscreen">{{ tableFullscreen ? '退出全屏' : '全屏显示' }}</button>
+        </div>
+      </div>
       <div v-if="loading" class="table-empty-state" role="status"><div><div class="filter-kicker">筛选中</div><h3>正在查询亮点记录</h3><p>系统正在按已应用条件查询当前页，无需加载全部亮点。</p><div class="filter-query-progress" aria-hidden="true"><span></span></div></div></div>
       <div v-else-if="!rows.length" class="table-empty-state"><div><div class="filter-kicker">暂无记录</div><h3>当前没有符合条件的亮点记录</h3><p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p></div></div>
-      <div v-else>
-        <div class="desktop-table"><table><thead><tr><th>亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th>亮点照片</th><th>亮点状态</th><th>审核</th></tr></thead>
-          <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
-            <td><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
-            <td><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
-            <td><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
+      <div v-else class="table-content">
+        <div class="desktop-table"><table :style="{ zoom: tableFullscreen ? tableZoom : 1 }"><thead><tr><th v-if="visible('id')">亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th v-if="visible('photo')">亮点照片</th><th v-if="visible('status')">亮点状态</th><th v-if="visible('audit')">审核</th><th v-if="canManage">操作</th></tr></thead>
+          <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td v-if="visible('id')"><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
+            <td v-if="visible('photo')"><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
+            <td v-if="visible('status')"><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
+            <td v-if="visible('audit')"><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
+<td v-if="canManage"><div class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary btn-sm" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑' : '调检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger btn-sm" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button><span v-if="!row.can_edit && !row.can_delete && !row.can_change_inspector" class="audit-meta">{{ row.audit_status !== 'pending' ? '已审核，无操作权限' : '暂无可操作' }}</span></div></td>
           </tr></tbody></table></div>
-        <div class="mobile-cards"><article v-for="row in rows" :key="row.id" class="highlight-card"><header><strong>{{ row.display_id }} · {{ row.station }}</strong><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></header>
-          <p class="description">{{ row.description }}</p><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button>
-          <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ row[column.key] || '—' }}</dd></template><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></dl>
-          <div class="actions audit-actions" v-if="row.can_audit"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button></template></div>
+        <div class="mobile-cards"><article v-for="row in rows" :key="row.id" class="highlight-card"><header><strong v-if="visible('id')">{{ row.display_id }}</strong><span v-if="visible('status')" class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></header>
+          <p v-if="visible('description')" class="description">{{ row.description }}</p><button v-if="visible('photo')" class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button>
+          <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ row[column.key] || '—' }}</dd></template><template v-if="visible('audit')"><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></template></dl>
+          <div class="actions audit-actions" v-if="row.can_audit && visible('audit')"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="decision = { row, action: action.key, label: action.label, note: '' }">{{ action.label }}</button></template></div>
+          <div v-if="canManage" class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑亮点' : '调整检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button></div>
         </article></div>
       </div>
       <nav class="pagination-bar" aria-label="亮点清单分页">
@@ -51,16 +60,20 @@
           <div class="pagination-jump"><span>跳至</span><input v-model="pageJump" type="number" min="1" :max="pages" :placeholder="`1-${pages}`" aria-label="跳转页码" @keyup.enter="jumpToPage" /><button class="btn btn-primary" :disabled="loading" @click="jumpToPage">跳转</button></div>
         </div>
       </nav>
+      <div ref="overlayHost" class="fullscreen-overlay-host"></div>
     </section>
-    <Teleport to="body">
-      <InspectionPhotoPreview v-if="preview" :url="preview" title="亮点照片" @close="preview = ''" />
+    <Teleport :to="tableFullscreen && overlayHost ? overlayHost : 'body'">
+      <p v-if="message && tableFullscreen" class="notice fullscreen-notice" role="status" @click="message = ''">{{ message }}</p>
+      <InspectionPhotoPreview v-if="preview" :url="preview" title="亮点照片" :style="{ zIndex: 12000 }" @close="preview = ''" />
+      <div v-if="editing" class="highlight-overlay" @click.self="closeEdit"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="编辑亮点" @submit.prevent="saveEdit"><h3>{{ editing.row.can_edit ? '编辑亮点' : '调整检查人' }} · {{ editing.row.display_id }}</h3><label v-if="editing.row.can_edit">亮点描述<textarea v-model="editing.description" required maxlength="10000" rows="5" :disabled="saving" /></label><template v-if="editing.row.can_edit"><label>亮点照片（不选择则保留原照片）<input type="file" accept="image/*" :disabled="saving" @change="selectEditPhoto" /></label><button type="button" class="photo" @click="preview = editing.photoUrl || image(editing.row.photo_path)"><img :src="editing.photoUrl || image(editing.row.photo_path)" alt="当前亮点照片" /></button></template><label v-if="editing.row.can_change_inspector">检查人员<select v-model="editing.inspector" :disabled="saving || inspectorsLoading"><option value="">保留原检查人</option><option v-for="person in editInspectors" :key="person.id" :value="person.id">{{ person.name }}</option></select></label><p v-if="editError" role="alert">{{ editError }}</p><div class="actions"><button class="btn btn-secondary" type="button" :disabled="saving" @click="closeEdit">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button></div></form></div>
+      <div v-if="deletion" class="highlight-overlay"><section class="decision card-surface" role="dialog" aria-modal="true" aria-label="确认删除亮点"><h3>删除 {{ deletion.display_id }}？</h3><p>此操作将删除该亮点及其关联审核记录，不能恢复。</p><p v-if="editError" role="alert">{{ editError }}</p><div class="actions"><button class="btn btn-secondary" :disabled="saving" @click="deletion = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="removeHighlight">{{ saving ? '删除中…' : '确认删除' }}</button></div></section></div>
       <div v-if="decision" class="highlight-overlay" @click.self="decision = null"><form class="decision card-surface" role="dialog" aria-modal="true" aria-label="审核亮点" @submit.prevent="audit"><h3>{{ decision.label }} · {{ decision.row.display_id }}</h3><p>{{ decision.row.description }}</p><label>审核说明（选填）<textarea v-model="decision.note" maxlength="2000" rows="3" /></label><div class="actions"><button class="btn btn-secondary" type="button" @click="decision = null">取消</button><button class="btn" :class="auditButtonClass(decision.action)">确认{{ decision.label }}</button></div></form></div>
     </Teleport>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import FilterSummary from '@/components/FilterSummary.vue'
 import DateRangePicker from '@/components/DateRangePicker.vue'
@@ -68,6 +81,74 @@ import InspectionFilterSelect from '@/components/InspectionFilterSelect.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 const showMobileFilters = ref(false)
+const tableCard = ref(null), overlayHost = ref(null), tableFullscreen = ref(false), tableZoom = ref(1)
+const columnSettings = ref(null), columnSettingsOpen = ref(false), hiddenColumns = ref([]), canManage = ref(false)
+const editing = ref(null), deletion = ref(null), saving = ref(false), editError = ref(''), editInspectors = ref([]), inspectorsLoading = ref(false)
+const COLUMN_KEY = 'highlight-list-hidden-columns-v1'
+try { const stored = JSON.parse(localStorage.getItem(COLUMN_KEY) || '[]'); if (Array.isArray(stored)) hiddenColumns.value = stored.filter(key => typeof key === 'string') } catch { /* Browser storage may be disabled. */ }
+const visible = key => !hiddenColumns.value.includes(key)
+const visibleDefinitions = computed(() => columnDefinitions.value.filter(column => visible(column.key)))
+function persistColumns() { try { localStorage.setItem(COLUMN_KEY, JSON.stringify(hiddenColumns.value)) } catch { message.value = '浏览器不允许保存字段偏好，本次显示仍有效。' } }
+function toggleColumn(key) {
+  if (visible(key) && visibleDefinitions.value.length <= 1) { message.value = '至少保留一个字段显示。'; return }
+  hiddenColumns.value = visible(key) ? [...hiddenColumns.value, key] : hiddenColumns.value.filter(value => value !== key)
+  persistColumns()
+}
+function setColumns(mode) {
+  hiddenColumns.value = mode === 'compact' ? columnDefinitions.value.filter(column => !['id','time','station','description','photo','status','audit'].includes(column.key)).map(column => column.key) : []
+  persistColumns()
+}
+let previousOverflow = ''
+async function exitFullscreen() {
+  tableFullscreen.value = false; document.body.style.overflow = previousOverflow
+  if (document.fullscreenElement === tableCard.value) { try { await document.exitFullscreen() } catch { /* Keep page fallback usable. */ } }
+}
+async function toggleFullscreen() {
+  if (tableFullscreen.value) return exitFullscreen()
+  previousOverflow = document.body.style.overflow; tableFullscreen.value = true; document.body.style.overflow = 'hidden'
+  columnSettingsOpen.value = false
+  await nextTick()
+  try { await tableCard.value?.requestFullscreen?.() } catch { /* Mobile browsers can use fixed-position fullscreen. */ }
+}
+function fullscreenChanged() { if (!document.fullscreenElement && tableFullscreen.value) { tableFullscreen.value = false; document.body.style.overflow = previousOverflow } }
+function outsideClick(event) { if (!columnSettings.value?.contains(event.target)) columnSettingsOpen.value = false }
+function openDelete(row) { editError.value = ''; deletion.value = row }
+async function openEdit(row) {
+  editError.value = ''; editInspectors.value = []; editing.value = { row: { ...row }, description: row.description, inspector: '', photo: null, photoUrl: '' }
+  if (!row.can_change_inspector) return
+  inspectorsLoading.value = true
+  try { const { data } = await axios.get(`/api/highlights/${row.id}/inspector-options`); if (editing.value?.row.id === row.id) editInspectors.value = data.items }
+  catch (error) { if (editing.value?.row.id === row.id) editError.value = error.response?.data?.error || '检查人列表读取失败。' }
+  finally { inspectorsLoading.value = false }
+}
+function closeEdit() { if (saving.value) return; if (editing.value?.photoUrl) URL.revokeObjectURL(editing.value.photoUrl); editing.value = null }
+function selectEditPhoto(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) { editError.value = '请选择图片文件。'; return }
+  if (editing.value.photoUrl) URL.revokeObjectURL(editing.value.photoUrl)
+  editing.value.photo = file; editing.value.photoUrl = URL.createObjectURL(file)
+}
+async function saveEdit() {
+  if (saving.value) return
+  const entry = editing.value
+  saving.value = true; editError.value = ''; busy.value.add(entry.row.id)
+  try {
+    const data = new FormData(); data.append('expected_revision',entry.row.revision)
+    if (entry.row.can_edit) { data.append('description',entry.description); if (entry.photo) data.append('photo',entry.photo) }
+    if (entry.inspector) data.append('target_inspector_id',entry.inspector)
+    await axios.put(`/api/highlights/${entry.row.id}`,data)
+    saving.value = false; closeEdit(); message.value = `${entry.row.display_id} 已保存。`; await load(page.value); loadOptions()
+  } catch (error) { editError.value = error.response?.data?.error || '保存失败，请重试。' }
+  finally { saving.value = false; busy.value.delete(entry.row.id) }
+}
+async function removeHighlight() {
+  if (saving.value) return
+  const row = deletion.value; saving.value = true; editError.value = ''; busy.value.add(row.id)
+  try { await axios.delete(`/api/highlights/${row.id}`,{ data: { expected_revision: row.revision } }); deletion.value = null; message.value = `${row.display_id} 已删除。`; await load(page.value); loadOptions() }
+  catch (error) { editError.value = error.response?.data?.error || '删除失败，请重试。' }
+  finally { saving.value = false; busy.value.delete(row.id) }
+}
 const labels = { pending: '待审核', approved: '已确认亮点', rejected: '审核未通过' }
 const emptyFilters = () => ({ id: '', month: '', description: '', manager: '', inspectors: [], region: [], station: [], table: [], status: '', date_from: '', date_to: '' })
 const draft = ref(emptyFilters()), applied = ref(emptyFilters()), rows = ref([]), options = ref({}), optionsError = ref('')
@@ -98,7 +179,9 @@ const filterSummaryFields = computed(() => buildFilterSummary(
 ))
 const activeFilterCount = computed(() => filterSummaryFields.value.filter(field => field.value).length)
 const filterFieldState = key => filterSummaryFields.value.find(field => field.key === key)?.state || 'empty'
-const columns = [{key:'month',label:'检查月度'},{key:'time',label:'检查时间'},{key:'region',label:'站点所属地'},{key:'station',label:'站点名称'},{key:'station_manager',label:'站点负责人'},{key:'station_manager_phone',label:'站点负责人手机号'},{key:'inspector',label:'检查人员'},{key:'inspector_phone',label:'检查人员手机号'},{key:'inspection_table_name',label:'检查表'},{key:'description',label:'亮点描述'}]
+const baseColumns = [{key:'month',label:'检查月度'},{key:'time',label:'检查时间'},{key:'region',label:'站点所属地'},{key:'station',label:'站点名称'},{key:'station_manager',label:'站点负责人'},{key:'station_manager_phone',label:'站点负责人手机号'},{key:'inspector',label:'检查人员'},{key:'inspector_phone',label:'检查人员手机号'},{key:'inspection_table_name',label:'检查表'},{key:'description',label:'亮点描述'}]
+const columnDefinitions = computed(() => [{key:'id',label:'亮点ID'},...baseColumns.filter(column => !options.value.hide_inspector_contact || !['inspector','inspector_phone'].includes(column.key)),{key:'photo',label:'亮点照片'},{key:'status',label:'亮点状态'},{key:'audit',label:'审核'}])
+const columns = computed(() => baseColumns.filter(column => visibleDefinitions.value.some(entry => entry.key === column.key)))
 const image = path => {
   if (!path) return ''
   const value = String(path)
@@ -116,7 +199,7 @@ async function load(next = 1) {
     for (const key of ['region', 'station', 'table', 'inspectors']) params[key] = JSON.stringify(applied.value[key])
     const { data } = await axios.get('/api/highlights', { params, signal: controller.signal })
     if (current !== sequence) return
-    rows.value = data.items; total.value = data.total; page.value = data.page
+    rows.value = data.items; total.value = data.total; page.value = data.page; canManage.value = data.can_manage || data.items.some(row => row.can_edit || row.can_delete || row.can_change_inspector)
   } catch (e) { if (!axios.isCancel(e)) message.value = e.response?.data?.error || '亮点加载失败，请重新筛选。' }
   finally { if (current === sequence) loading.value = false }
 }
@@ -133,20 +216,23 @@ function apply() {
 async function audit() {
   const { row, action, note } = decision.value; decision.value = null; busy.value.add(row.id)
   try {
-    const { data } = await axios.post(`/api/highlights/${row.id}/audit`, { action, note, expected_status: row.audit_status })
+    const { data } = await axios.post(`/api/highlights/${row.id}/audit`, { action, note, expected_status: row.audit_status, expected_revision: row.revision })
     const found = rows.value.find(item => item.id === row.id)
-    if (found) { found.audit_status = data.audit_status; found.audit_note = note; found.audited_by_name = data.audited_by_name; found.audited_at = data.audited_at }
+    if (found) { Object.assign(found,data); found.audit_note = note }
     if (applied.value.status && applied.value.status !== data.audit_status && found) { rows.value = rows.value.filter(item => item.id !== row.id); total.value-- }
     message.value = `${row.display_id}：${labels[data.audit_status]}`
   } catch (e) { message.value = e.response?.data?.error || '审核失败，请重试。' }
   finally { busy.value.delete(row.id) }
 }
-function keydown(event) { if (event.key === 'Escape') { preview.value = ''; decision.value = null } }
-onMounted(() => { load(); loadOptions(); document.addEventListener('keydown', keydown) })
-onBeforeUnmount(() => { controller?.abort(); sequence++; document.removeEventListener('keydown', keydown) })
+function keydown(event) { if (event.key === 'Escape') { if (preview.value) preview.value = ''; else if (editing.value) closeEdit(); else if (deletion.value && !saving.value) deletion.value = null; else if (decision.value) decision.value = null; else if (columnSettingsOpen.value) columnSettingsOpen.value = false; else if (tableFullscreen.value) exitFullscreen() } }
+onMounted(() => { load(); loadOptions(); document.addEventListener('keydown', keydown); document.addEventListener('fullscreenchange', fullscreenChanged); document.addEventListener('click',outsideClick) })
+onBeforeUnmount(() => { controller?.abort(); sequence++; if (tableFullscreen.value) exitFullscreen(); if (editing.value?.photoUrl) URL.revokeObjectURL(editing.value.photoUrl); document.removeEventListener('keydown', keydown); document.removeEventListener('fullscreenchange', fullscreenChanged); document.removeEventListener('click',outsideClick) })
 </script>
 
 <style scoped>
+.table-view-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }.zoom-control { display:flex; align-items:center; white-space:nowrap; }.zoom-control input { width:120px; padding:0; }.column-settings-wrap { position:relative; }.column-settings-panel { position:absolute; right:0; top:48px; width:min(420px,calc(100vw - 48px)); padding:18px; z-index:30; background:white; max-height:65dvh; overflow:auto; }.column-settings-panel header { display:flex; align-items:center; justify-content:space-between; }.column-settings-panel p { font-size:12px; color:#64748b; }.column-options { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }.column-options label { display:flex; align-items:center; border:1px solid #dbe4ee; padding:8px; border-radius:9px; }.column-options label.active { background:#eff6ff; color:#1d4ed8; }.column-options input { width:16px; min-height:16px; accent-color:#2563eb; }
+.table-actions { display:flex; flex-direction:column; align-items:center; gap:8px; min-width:100px; }.table-actions .btn { min-width:84px; }.desktop-table .audit-actions { flex-direction:column; gap:8px; min-width:100px; }.audit-actions .btn { min-width:84px; }.fullscreen-table-card { position:fixed; inset:0; z-index:3000; border-radius:0 !important; display:flex; flex-direction:column; box-sizing:border-box; background:white; height:100dvh; overflow:hidden; }.fullscreen-table-card .table-content { flex:1; min-height:0; display:flex; flex-direction:column; }.fullscreen-table-card .desktop-table { display:block; flex:1; max-height:none; min-height:0; }.fullscreen-table-card .mobile-cards { display:none; }.fullscreen-table-card .pagination-bar { flex-shrink:0; }.fullscreen-notice { position:fixed; top:18px; left:50%; transform:translateX(-50%); z-index:11000; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; max-width:85vw; }.fullscreen-overlay-host { position:relative; z-index:4000; }.table-content { min-width:0; }
+@media(max-width:768px) { .table-card-head { flex-direction:column; }.table-view-actions { width:100%; }.column-settings-panel { left:0; right:auto; }.fullscreen-table-card .pagination-controls { flex-direction:row; }.fullscreen-table-card .pagination-page-list,.fullscreen-table-card .pagination-jump { display:none; }.highlight-card .table-actions { margin-top:12px; } }
 .highlights-page { display:flex; flex-direction:column; gap:20px; min-width:0; }
 .highlights-page > * { min-width:0; }
 .card-surface { background:rgba(255,255,255,.96); border:1px solid #dbe4ee; border-radius:22px; box-shadow:0 16px 36px rgba(15,23,42,.06); }

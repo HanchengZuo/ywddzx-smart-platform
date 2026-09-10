@@ -50,6 +50,23 @@ class HighlightTests(unittest.TestCase):
     def test_unauthenticated_api_is_rejected(self):
         with api.app.test_client() as client:
             self.assertEqual(client.get('/api/highlights').status_code,401)
+            self.assertEqual(client.put('/api/highlights/1').status_code,401)
+            self.assertEqual(client.delete('/api/highlights/1').status_code,401)
+
+    def test_creator_lock_and_explicit_management_permissions(self):
+        core = SimpleNamespace(**vars(api))
+        core.can_view_all_inspection_issues = lambda *a: True
+        core.can_view_region_inspection_issues = lambda *a: False
+        core.is_inspection_table_allowed_for_user = lambda *a: True
+        core.is_station_region_allowed_for_user = lambda *a: True
+        row = dict(inspector_id=2,station_id=1,inspection_table_id=1,region='浦东',audit_status='pending')
+        caps = dict(edit=False,delete=False,change=False)
+        self.assertTrue(hl.operation_permissions(core,None,{'id':2},row,caps=caps)['can_edit'])
+        self.assertFalse(hl.operation_permissions(core,None,{'id':3},row,caps=caps)['can_delete'])
+        self.assertFalse(hl.operation_permissions(core,None,{'id':2},dict(row,audit_status='approved'),caps=caps)['can_edit'])
+        self.assertTrue(hl.operation_permissions(core,None,{'id':3},dict(row,audit_status='approved'),caps=dict(edit=True,delete=True,change=True))['can_delete'])
+        core.is_station_region_allowed_for_user = lambda *a: False
+        self.assertFalse(hl.operation_permissions(core,None,{'id':3},row,caps=dict(edit=True,delete=True,change=True))['can_edit'])
 
 
 @unittest.skipUnless(os.getenv('ISSUE_LIFECYCLE_DB_TEST') == '1','local database opt-in')
@@ -70,6 +87,7 @@ class HighlightDatabaseTests(unittest.TestCase):
         self.user = {'id':1,'username':'root','role':'root','real_name':'管理员'}
         namespace = dict(vars(api))
         namespace.update(get_current_request_user=lambda:self.user,
+            get_user_by_id=lambda cur,uid: {'id':uid,'role':'supervisor'} if uid==2 else None,
             get_db_connection=lambda:SimpleNamespace(cursor=self.conn.cursor,commit=lambda:None,rollback=lambda:None),
             close_db_resources=lambda *args:None, save_uploaded_file=lambda *args:'/issues/test.jpg',
             remove_storage_file=lambda *args:None)
@@ -86,6 +104,40 @@ class HighlightDatabaseTests(unittest.TestCase):
     def create(self, station=1, table=1):
         return self.client.post('/api/highlights',data={'station_id':str(station),'inspection_table_id':str(table),'inspector_id':'3',
             'description':'值得推广的做法','photo':(BytesIO(b'photo'),'photo.jpg')})
+
+    def revision(self):
+        self.cur.execute('SELECT xmin::text AS revision FROM inspection_highlights WHERE id=1')
+        return self.cur.fetchone()['revision']
+
+    def test_edit_delete_and_associated_audits(self):
+        self.create()
+        response = self.client.put('/api/highlights/1',data={'expected_revision':self.revision(),'description':'新的亮点内容','photo':(BytesIO(b'new'),'new.jpg')})
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(self.client.get('/api/highlights').json['items'][0]['description'],'新的亮点内容')
+        self.assertEqual(self.client.put('/api/highlights/1',json={'expected_revision':'stale','description':'冲突'}).status_code,409)
+        self.assertEqual(self.client.put('/api/highlights/1',json={'expected_revision':self.revision(),'standard_id':3}).status_code,400)
+        self.assertEqual(self.client.delete('/api/highlights/1',json={'expected_revision':self.revision()}).status_code,200)
+        self.cur.execute('SELECT count(*) AS n FROM inspection_highlight_audits')
+        self.assertEqual(self.cur.fetchone()['n'],0)
+        self.assertEqual(self.client.get('/api/highlights').json['total'],0)
+
+    def test_creator_can_only_edit_pending_and_cannot_spoof_manager(self):
+        self.create()
+        self.cur.execute('UPDATE inspection_highlights SET inspector_id=2 WHERE id=1')
+        self.user={'id':2,'role':'supervisor','username':'inspector'}
+        self.assertEqual(self.client.put('/api/highlights/1',json={'description':'自己的待审核亮点','expected_revision':self.revision()}).status_code,200)
+        self.cur.execute("UPDATE inspection_highlights SET audit_status='approved' WHERE id=1")
+        self.assertEqual(self.client.put('/api/highlights/1',json={'description':'不能越权','expected_revision':self.revision(),'user_id':1}).status_code,403)
+        self.assertEqual(self.client.delete('/api/highlights/1',json={'expected_revision':self.revision(),'user_id':1}).status_code,403)
+
+    def test_only_change_inspector_cannot_change_description(self):
+        self.create()
+        self.user={'id':2,'role':'supervisor','username':'inspector'}
+        with patch('app.get_effective_permissions',return_value={'view_all_inspection_issues':True,'change_issue_inspector':True}):
+            response=self.client.put('/api/highlights/1',json={'description':'越权修改','expected_revision':self.revision()})
+            self.assertEqual(response.status_code,403)
+            response=self.client.put('/api/highlights/1',json={'target_inspector_id':2,'expected_revision':self.revision()})
+            self.assertEqual(response.status_code,200,response.json)
 
     def test_independent_ids_and_audit_cycle(self):
         self.assertEqual(self.create().get_json()['id'],'HL1')
