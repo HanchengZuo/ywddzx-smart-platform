@@ -1,5 +1,6 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+from upload_request import PlatformRequest
 from external_standard_status import disabled_standard_ids, require_active_standards
 import fcntl
 import hashlib
@@ -101,6 +102,7 @@ except Exception:
     CosS3Client = None
 
 app = Flask(__name__)
+app.request_class = PlatformRequest
 APP_ENV = str(os.environ.get("APP_ENV", "development")).strip().lower()
 APP_SECRET_KEY = str(os.environ.get("APP_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip()
 if not APP_SECRET_KEY:
@@ -241,7 +243,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.2.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.3.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -27067,15 +27069,13 @@ def export_management_full_backup():
 
 @app.route("/api/management/backups/import", methods=["POST"])
 def import_management_full_backup():
-    user_id = str(request.form.get("user_id", "")).strip()
-    backup_file = request.files.get("file")
     conn = None
     cur = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        require_management_user(cur, user_id, "manage_backups")
+        require_management_user(cur, None, "manage_backups")
         close_db_resources(cur, conn)
         cur = None
         conn = None
@@ -27083,6 +27083,7 @@ def import_management_full_backup():
         if not backup_job_lock.acquire(blocking=False):
             return jsonify({"success": False, "error": "已有备份或恢复任务正在执行，请稍后再试。"}), 409
         try:
+            backup_file = request.files.get("file")
             manifest = restore_full_backup_archive(backup_file)
         finally:
             backup_job_lock.release()
@@ -31068,6 +31069,8 @@ def recommend_inspection_standard_by_ai():
 
     if len(description) < 4:
         return jsonify({"success": False, "error": "请先填写更具体的实际问题描述。"}), 400
+    if len(description) > 10000:
+        return jsonify({"success": False, "error": "问题描述请控制在10000字以内。"}), 400
 
     conn = None
     cur = None
@@ -31127,6 +31130,7 @@ def recommend_inspection_standard_by_ai():
                 "no_related": no_related,
                 "items": [] if no_related else items,
                 "catalog_count": len(ai_catalog),
+                "retrieval": recommendation_result.get('retrieval') or {},
                 "usage_mode": usage_mode,
             }
         )

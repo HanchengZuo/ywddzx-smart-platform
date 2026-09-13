@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v7.3', date: '2026-09-13', title: 'AI引用规范检索提速',
+    summary: '本地检索召回相关规范，再由AI精排，不再把整库全文发送给AI。',
+    items: [
+      '中文BM25、业务近义词与精确规范ID召回，保留少量宽泛规范作低优先级兜底。',
+      '候选原文按相关片段压缩并限制总量，内容索引随规范新增、修改、启停自动刷新。',
+      '仅规范匹配关闭高强度思考，超时返回本地候选并保留人工引用，报告生成逻辑不变。'
+    ]
+  },
+  {
     version: 'v7.2', date: '2026-09-10', title: '外部规范启停管理',
     summary: '外部规范支持独立启停，维护弹窗不再被顶部导航遮挡。',
     items: [
