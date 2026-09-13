@@ -113,7 +113,7 @@
                 <div>
                   <div class="ai-reference-kicker">DEEPSEEK ASSISTED MATCH</div>
                   <h3>根据实际问题描述推荐规范</h3>
-                  <p>AI会读取当前{{ standardSourceModeLabel }}资料并给出候选项，最终仍由你确认引用哪一条规范。</p>
+                  <p>先从当前{{ standardSourceModeLabel }}检索相关条目，再由AI精排，不再发送整库全文；最终仍由你确认引用哪一条规范。</p>
                 </div>
               </div>
 
@@ -135,7 +135,7 @@
 
               <div v-if="aiMatching" class="ai-matching-panel">
                 <div class="ai-matching-title">正在匹配巡检规范库</div>
-                <div class="ai-matching-desc">系统正在分析问题描述和规范条目，请稍候。</div>
+                <div class="ai-matching-desc">正在本地召回相关规范并调用AI精排，无需等待整库全文分析。</div>
                 <div class="ai-progress-bar"><span></span></div>
               </div>
 

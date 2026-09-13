@@ -27,6 +27,7 @@ from ai_prompts import (
 )
 from ai_usage import build_ai_usage_meta
 from report_ai_memory import remember_report_ai
+from standard_retrieval import retrieve_standards
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -333,6 +334,16 @@ def build_standard_recommendation_result(
 
 
 def generate_standard_recommendations(issue_description, standards):
+    candidates, retrieval = retrieve_standards(str(issue_description or '').strip(), standards)
+    result = _generate_retrieved_standard_recommendations(issue_description, candidates)
+    result['retrieval'] = retrieval
+    if not candidates and standards:
+        result['message'] = result['summary'] = '未检索到有明确依据的候选规范，请补充设备、现象等描述，或改用人工引用。'
+    logging.info('Standard retrieval: %s', retrieval)
+    return result
+
+
+def _generate_retrieved_standard_recommendations(issue_description, standards):
     normalized_description = str(issue_description or "").strip()
     normalized_standards = [
         item
@@ -387,7 +398,7 @@ def generate_standard_recommendations(issue_description, standards):
     prompt_text = f"{INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT}\n{prompt}"
 
     try:
-        response = client.chat.completions.create(
+        response = client.with_options(timeout=45, max_retries=0).chat.completions.create(
             model=DEEPSEEK_MODEL,
             messages=[
                 {
@@ -397,8 +408,9 @@ def generate_standard_recommendations(issue_description, standards):
                 {"role": "user", "content": prompt},
             ],
             stream=False,
-            reasoning_effort="high",
-            extra_body={"thinking": {"type": "enabled"}},
+            max_tokens=1800,
+            response_format={"type": "json_object"},
+            extra_body={"thinking": {"type": "disabled"}},
         )
         raw_content = response.choices[0].message.content
         payload = extract_json_from_ai_text(raw_content)
