@@ -84,12 +84,22 @@ def excerpt(detail, query, limit):
     return ('【相关原文节选】\n' + '\n…\n'.join(text for _, text in selected))[:limit]
 
 
-def retrieve_standards(description, standards, *, limit=MAX_CANDIDATES):
+def retrieve_standards(description, standards, *, limit=MAX_CANDIDATES, history_ids=()):
     started = time.monotonic()
     catalog = tuple(sorted((str(row['standard_id']), str(row.get('inspection_table_name') or ''),
                             str(row.get('detail_text') or '')) for row in standards if row.get('standard_id')))
     index = cached_index(catalog)
     ranked = index.rank(description)
+    if history_ids:
+        positions = {row[0]: i for i, row in enumerate(catalog)}
+        historical = list(dict.fromkeys(positions[key] for key in history_ids if key in positions))
+        scores = defaultdict(float)
+        for weight, order in ((1.0, ranked), (1.25, historical)):
+            for rank, doc in enumerate(order):
+                scores[doc] += weight/(60+rank+1)
+        fused = sorted(scores, key=lambda doc: (-scores[doc], catalog[doc][0]))
+        # Reserve evidence from both routes; history must not crowd out actual rules.
+        ranked = list(dict.fromkeys(historical[:8] + ranked[:16] + fused))
     candidate_limit = max(1, min(int(limit), MAX_CANDIDATES))
     # No lexical evidence: don't send arbitrary records or the whole catalog to AI.
     selected = ranked[:candidate_limit]
@@ -111,7 +121,7 @@ def retrieve_standards(description, standards, *, limit=MAX_CANDIDATES):
     original = sum(len(identifier)+len(table)+len(detail)+100 for identifier, table, detail in catalog)
     sent = MAX_CONTEXT_CHARS-remaining
     return candidates, {
-        'method': VERSION, 'catalog_count': len(catalog), 'candidate_count': len(candidates),
+        'method': 'history-rrf-v1' if history_ids else VERSION, 'catalog_count': len(catalog), 'candidate_count': len(candidates),
         'catalog_chars': original, 'candidate_chars': sent,
         'retrieval_ms': round((time.monotonic()-started)*1000, 2),
         'context_reduction_percent': round(100*(1-sent/original), 1) if original else 0,

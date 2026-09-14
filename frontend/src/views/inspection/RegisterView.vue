@@ -113,7 +113,7 @@
                 <div>
                   <div class="ai-reference-kicker">DEEPSEEK ASSISTED MATCH</div>
                   <h3>根据实际问题描述推荐规范</h3>
-                  <p>先从当前{{ standardSourceModeLabel }}检索相关条目，再由AI精排，不再发送整库全文；最终仍由你确认引用哪一条规范。</p>
+                  <p>结合当前{{ standardSourceModeLabel }}和已审核问题的历史关联检索；可靠的重复描述直接复用历史推荐，其余由AI精排，最终仍由你确认。</p>
                 </div>
               </div>
 
@@ -135,7 +135,7 @@
 
               <div v-if="aiMatching" class="ai-matching-panel">
                 <div class="ai-matching-title">正在匹配巡检规范库</div>
-                <div class="ai-matching-desc">正在本地召回相关规范并调用AI精排，无需等待整库全文分析。</div>
+                <div class="ai-matching-desc">正在检索规范及已审核问题经验；历史依据充分时直接返回，否则调用AI精排。</div>
                 <div class="ai-progress-bar"><span></span></div>
               </div>
 
@@ -153,8 +153,8 @@
                       <span class="ai-recommendation-code">{{ candidate.standard_id }}</span>
                       <AiContentBadge
                         :generated="aiRecommendationsGenerated"
-                        ai-label="AI推荐"
-                        fallback-label="规则匹配"
+                        :ai-label="recommendationSource === 'ai_cache' ? 'AI历史推荐' : 'AI推荐'"
+                        :fallback-label="recommendationSource === 'approved_history' ? '历史审核推荐' : '规则匹配'"
                         compact
                       />
                     </div>
@@ -427,6 +427,7 @@ const referenceMode = ref('manual')
 const aiMatching = ref(false)
 const aiRecommendations = ref([])
 const aiRecommendationsGenerated = ref(false)
+const recommendationSource = ref('')
 const aiReferenceMessage = ref('')
 const aiReferenceMessageType = ref('info')
 const aiNoRelated = ref(false)
@@ -924,6 +925,7 @@ const handleTableInput = () => {
 }
 
 const clearAiReferenceState = () => {
+  recommendationSource.value = ''
   aiRecommendations.value = []
   aiRecommendationsGenerated.value = false
   aiReferenceMessage.value = ''
@@ -1071,6 +1073,7 @@ const runAiStandardMatch = async () => {
     })
     aiRecommendations.value = response.data?.items || []
     aiRecommendationsGenerated.value = Boolean(response.data?.ai_generated)
+    recommendationSource.value = response.data?.recommendation_source || ''
     aiNoRelated.value = Boolean(response.data?.no_related)
 
     if (aiNoRelated.value) {
@@ -1079,10 +1082,12 @@ const runAiStandardMatch = async () => {
       return
     }
 
-    aiReferenceMessage.value = response.data?.ai_generated
+    aiReferenceMessage.value = ['approved_history', 'ai_cache'].includes(recommendationSource.value)
+      ? response.data.message
+      : response.data?.ai_generated
       ? `AI已生成${standardSourceModeLabel.value}候选规范，请选择最符合现场问题的一条。`
       : `${response.data?.message || 'AI暂不可用，已使用本地规则匹配。'}请人工确认候选规范。`
-    aiReferenceMessageType.value = response.data?.ai_generated ? 'success' : 'warning'
+    aiReferenceMessageType.value = response.data?.ai_generated || recommendationSource.value === 'approved_history' ? 'success' : 'warning'
   } catch (error) {
     aiRecommendations.value = []
     aiRecommendationsGenerated.value = false
