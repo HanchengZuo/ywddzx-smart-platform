@@ -1,7 +1,7 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from upload_request import PlatformRequest
-from standard_history import fetch_standard_history
+from standard_history import fetch_standard_history, recommend_from_history
 from external_standard_status import disabled_standard_ids, require_active_standards
 import fcntl
 import hashlib
@@ -244,7 +244,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.4.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.5.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -31065,6 +31065,15 @@ def import_management_internal_standards():
 
 @app.route("/api/inspection-standards/ai-recommend", methods=["POST"])
 def recommend_inspection_standard_by_ai():
+    return recommend_inspection_standard(history_only=False)
+
+
+@app.route("/api/inspection-standards/history-recommend", methods=["POST"])
+def recommend_inspection_standard_by_history():
+    return recommend_inspection_standard(history_only=True)
+
+
+def recommend_inspection_standard(history_only=False):
     data = request.get_json(silent=True) or {}
     description = str(data.get("description") or "").strip()
 
@@ -31092,19 +31101,11 @@ def recommend_inspection_standard_by_ai():
                                          build_issue_list_visibility_scope)
         conn.commit()
 
-        recommendation_result = generate_standard_recommendations(
-            description,
-            ai_catalog,
-            history=history,
-        )
-        record_ai_usage_log(
-            cur,
-            current_user,
-            recommendation_result,
-            "巡检登记",
-            "AI引用规范",
-            description[:200],
-        )
+        if history_only:
+            recommendation_result = recommend_from_history(description, ai_catalog, history)
+        else:
+            recommendation_result = generate_standard_recommendations(description, ai_catalog, history=history)
+            record_ai_usage_log(cur, current_user, recommendation_result, "巡检登记", "AI引用规范", description[:200])
         conn.commit()
         standard_map = {
             str(item.get("standard_id")): item
