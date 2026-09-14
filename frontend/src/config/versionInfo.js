@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v7.4', date: '2026-09-14', title: '历史问题增强AI规范引用',
+    summary: '已审核问题关联参与本地检索，复用可靠的历史推荐，减少重复AI等待。',
+    items: [
+      '结合历史描述相似度与规范原文双路召回，仅使用权限范围内已审核且无争议的问题。',
+      '多站点一致且当前规范印证的重复描述可直接推荐，其余由AI精排，仍须人工确认。',
+      '相同输入与有效资料短期复用成功的AI推荐；历史或规范变化自动失效，保留调用与复用记录。'
+    ]
+  },
+  {
     version: 'v7.3', date: '2026-09-13', title: 'AI引用规范检索提速',
     summary: '本地检索召回相关规范，再由AI精排，不再把整库全文发送给AI。',
     items: [

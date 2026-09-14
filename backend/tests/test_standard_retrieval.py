@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import ai_utils
+import standard_recommendation_cache as response_cache
 from standard_retrieval import retrieve_standards, cached_index, excerpt, MAX_CONTEXT_CHARS
 
 
@@ -13,6 +14,7 @@ def rule(identifier, text, table='计量稽查检查表（现场）'):
 class RetrievalTests(unittest.TestCase):
     def setUp(self):
         cached_index.cache_clear()
+        response_cache._entries.clear()
 
     def test_chinese_and_domain_expansion(self):
         rows = [rule(1, '加油机铅封施封无效或不规范'), rule(2, '商品未先进先出'), rule(3, '灭火器压力不足')]
@@ -74,6 +76,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertNotIn('reasoning_effort', args)
         client.with_options.assert_called_with(timeout=45, max_retries=0)
         client.chat.completions.create.side_effect = TimeoutError('test timeout')
+        response_cache._entries.clear()
         with patch.object(ai_utils, 'get_deepseek_client', return_value=client):
             result = ai_utils.generate_standard_recommendations('灭火器无称重记录', rows)
         self.assertFalse(result['generated'])

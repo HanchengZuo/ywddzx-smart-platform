@@ -1,6 +1,7 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from upload_request import PlatformRequest
+from standard_history import fetch_standard_history
 from external_standard_status import disabled_standard_ids, require_active_standards
 import fcntl
 import hashlib
@@ -243,7 +244,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.3.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.4.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -31087,11 +31088,14 @@ def recommend_inspection_standard_by_ai():
 
         usage_mode = get_inspection_standard_usage_mode(cur)
         ai_catalog, full_standards = build_inspection_standard_ai_catalog(cur, usage_mode["mode"])
+        history = fetch_standard_history(cur, current_user, usage_mode['mode'], full_standards,
+                                         build_issue_list_visibility_scope)
         conn.commit()
 
         recommendation_result = generate_standard_recommendations(
             description,
             ai_catalog,
+            history=history,
         )
         record_ai_usage_log(
             cur,
@@ -31125,6 +31129,7 @@ def recommend_inspection_standard_by_ai():
             {
                 "success": True,
                 "ai_generated": bool(recommendation_result.get("generated")),
+                "recommendation_source": recommendation_result.get('recommendation_source', 'ai'),
                 "message": recommendation_result.get("message") or "",
                 "summary": recommendation_result.get("summary") or "",
                 "no_related": no_related,

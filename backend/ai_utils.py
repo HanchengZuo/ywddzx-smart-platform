@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import re
+import time
 
 from ai_prompts import (
     EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT,
@@ -28,6 +29,8 @@ from ai_prompts import (
 from ai_usage import build_ai_usage_meta
 from report_ai_memory import remember_report_ai
 from standard_retrieval import retrieve_standards
+from standard_history import match_history
+from standard_recommendation_cache import recommendation_key, get_recommendation, remember_recommendation
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -333,13 +336,41 @@ def build_standard_recommendation_result(
     }
 
 
-def generate_standard_recommendations(issue_description, standards):
-    candidates, retrieval = retrieve_standards(str(issue_description or '').strip(), standards)
+def generate_standard_recommendations(issue_description, standards, *, history=()):
+    started = time.monotonic()
+    cache_key = recommendation_key(issue_description, standards, history)
+    reused = get_recommendation(cache_key)
+    if reused is not None:
+        reused['recommendation_source'] = 'ai_cache'
+        reused['message'] = '已复用相同输入与当前有效资料的AI推荐，本次未调用AI，请人工确认。'
+        reused['retrieval']['response_cache_hit'] = True
+        reused['retrieval']['response_cache_ms'] = round((time.monotonic()-started)*1000, 2)
+        logging.info('Standard retrieval cache hit: %s', reused['retrieval'])
+        return with_ai_usage_meta(reused, success=True)
+    experience = match_history(issue_description, standards, history) if history else {}
+    history_stats = {key: experience.get(key, default) for key, default in (
+        ('history_count', 0), ('exact_count', 0), ('exact_conflict', False), ('top_similarity', 0))}
+    history_stats['history_search_ms'] = round((time.monotonic()-started)*1000, 2)
+    if experience.get('fast_recommendation'):
+        retrieval = {'method': 'approved-history-exact-v1', 'catalog_count': len(standards),
+                     'candidate_count': 1, 'candidate_chars': 0, **history_stats}
+        logging.info('Standard retrieval: %s', retrieval)
+        return with_ai_usage_meta({
+            'generated': False, 'recommendation_source': 'approved_history',
+            'message': '已复用多站点一致的历史审核关联，本次未调用AI，请人工确认。',
+            'summary': '相同描述的历史规范引用一致。', 'no_related': False,
+            'recommendations': [experience['fast_recommendation']], 'retrieval': retrieval,
+        }, success=True)
+    candidates, retrieval = retrieve_standards(str(issue_description or '').strip(), standards,
+                                               history_ids=experience.get('ranked_ids', ()))
+    retrieval.update(history_stats)
     result = _generate_retrieved_standard_recommendations(issue_description, candidates)
+    result['recommendation_source'] = 'ai' if result.get('generated') else 'local_retrieval'
     result['retrieval'] = retrieval
     if not candidates and standards:
         result['message'] = result['summary'] = '未检索到有明确依据的候选规范，请补充设备、现象等描述，或改用人工引用。'
     logging.info('Standard retrieval: %s', retrieval)
+    remember_recommendation(cache_key, result)
     return result
 
 
