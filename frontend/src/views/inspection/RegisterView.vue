@@ -65,13 +65,30 @@
               <button type="button" class="reference-mode-btn" :class="{ active: referenceMode === 'manual' }"
                 @click="setReferenceMode('manual')">
                 <strong>人工引用规范</strong>
-                <span>手动输入{{ standardSourceMode === 'internal' ? '内部规范ID' : '外部规范ID' }}，按现有流程选择规范。</span>
+                <span>先描述问题，可查找相似历史规范，也可自行搜索选择。历史检索不调用AI。</span>
               </button>
               <button type="button" class="reference-mode-btn reference-mode-btn-ai"
                 :class="{ active: referenceMode === 'ai' }" @click="setReferenceMode('ai')">
                 <strong>AI引用规范</strong>
                 <span>先填写问题描述，由AI从{{ standardSourceModeLabel }}推荐候选规范。</span>
               </button>
+            </div>
+          </div>
+
+          <div v-if="normalizedHasIssue === 'yes' && referenceMode === 'manual'" class="form-item form-item-full">
+            <label>实际问题描述</label>
+            <textarea v-model="form.description" rows="5" maxlength="10000" placeholder="先填写现场实际问题描述，例如设备位置、异常现象，再选择适用规范。"></textarea>
+            <div class="history-reference-panel" :aria-busy="historyMatching">
+              <div class="history-reference-header">
+                <div>
+                  <strong>历史相似规范</strong>
+                  <p>描述填写好后点击查找；仅检索已审核问题，不调用AI，也不会自动选中或替换规范。</p>
+                </div>
+                <button class="btn btn-secondary" type="button" :disabled="historyMatching || form.description.trim().length < 4" @click="runHistoryStandardMatch">
+                  {{ historyMatching ? '正在检索...' : '查找相似规范（不调用AI）' }}
+                </button>
+              </div>
+              <p v-if="historyMessage" class="history-reference-message" role="status">{{ historyMessage }}</p>
             </div>
           </div>
 
@@ -92,17 +109,26 @@
                 <div v-for="standard in standardsLoading || standardLoadError ? [] : filteredStandards"
                   :key="getStandardIdentity(standard)"
                   class="search-select-option" @click="selectStandard(standard)">
-                  <div class="option-main">
-                    {{ standard.standard_id }}｜{{ getStandardTitle(standard) }}
-                  </div>
-                  <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}</div>
-                  <div class="option-sub standard-detail-preview">{{ getRegisterStandardPreview(standard) }}</div>
+                  <RegisterStandardSummary :standard="standard" />
                 </div>
                 <div v-if="!standardsLoading && !standardLoadError && filteredStandards.length === 0"
                   class="search-select-empty">
                   {{ standards.length ? '无匹配规范，请检查输入的规范ID。' : '当前规范库暂无可用规范。' }}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div v-if="normalizedHasIssue === 'yes' && referenceMode === 'manual' && historyRecommendations.length" class="form-item form-item-full">
+            <label>历史相似规范候选（请人工确认）</label>
+            <div class="ai-recommendation-list">
+              <button v-for="candidate in historyRecommendations" :key="getStandardIdentity(candidate)" type="button"
+                class="ai-recommendation-card" :class="{ selected: String(candidate.standard_id) === String(form.standardId) }"
+                @click="selectStandard(candidate)">
+                <RegisterStandardSummary :standard="candidate" />
+                <div class="ai-recommendation-reason">{{ candidate.reason }}</div>
+                <span class="history-reference-choice">{{ String(candidate.standard_id) === String(form.standardId) ? '已选择此规范' : '选择此规范' }}</span>
+              </button>
             </div>
           </div>
 
@@ -150,7 +176,6 @@
                   @click="selectRecommendedStandard(candidate)">
                   <div class="ai-recommendation-top">
                     <div class="ai-recommendation-identity">
-                      <span class="ai-recommendation-code">{{ candidate.standard_id }}</span>
                       <AiContentBadge
                         :generated="aiRecommendationsGenerated"
                         :ai-label="recommendationSource === 'ai_cache' ? 'AI历史推荐' : 'AI推荐'"
@@ -162,8 +187,7 @@
                       {{ candidate.confidence || '中' }}相关
                     </span>
                   </div>
-                  <div class="ai-recommendation-title">{{ getStandardTitle(candidate) }}</div>
-                  <div class="ai-recommendation-table">{{ candidate.inspection_table_name || '未命名检查表' }}</div>
+                  <RegisterStandardSummary :standard="candidate" />
                   <div class="ai-recommendation-reason">
                     {{ candidate.reason || (aiRecommendationsGenerated ? 'AI认为该规范与问题描述相关。' : '本地规则认为该规范与问题描述相关。') }}
                   </div>
@@ -214,10 +238,10 @@
         </div>
 
         <template v-if="showIssueFields">
-          <div class="section-title issue-section-title">{{ form.isHighlight ? '亮点信息' : referenceMode === 'ai' ? '问题照片' : '问题信息' }}</div>
+          <div class="section-title issue-section-title">{{ form.isHighlight ? '亮点信息' : '问题照片' }}</div>
 
           <div class="form-grid">
-            <div v-if="form.isHighlight || referenceMode === 'manual'" class="form-item form-item-full">
+            <div v-if="form.isHighlight" class="form-item form-item-full">
               <label>{{ form.isHighlight ? '亮点描述' : '实际问题描述' }}</label>
               <textarea v-model="form.description" rows="4" :placeholder="form.isHighlight ? '请记录值得推广的现场做法与亮点' : '请填写现场实际问题描述'"></textarea>
             </div>
@@ -375,6 +399,9 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
+import { getRegisterStandardLabel } from '@/utils/registerStandardPresentation'
+import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import AiContentBadge from '@/components/AiContentBadge.vue'
@@ -428,6 +455,11 @@ const aiMatching = ref(false)
 const aiRecommendations = ref([])
 const aiRecommendationsGenerated = ref(false)
 const recommendationSource = ref('')
+const historyMatching = ref(false)
+const historyRecommendations = ref([])
+const historyMessage = ref('')
+const historyRequests = createLatestRequest()
+const aiRequests = createLatestRequest()
 const aiReferenceMessage = ref('')
 const aiReferenceMessageType = ref('info')
 const aiNoRelated = ref(false)
@@ -702,14 +734,6 @@ const normalizeStandardDetailForRegister = (value) => {
   return result.join('\n')
 }
 
-const getRegisterStandardPreview = (standard) => {
-  const hasRegisterDisplayText = Object.prototype.hasOwnProperty.call(standard || {}, 'register_display_text')
-  const text = hasRegisterDisplayText ? standard?.register_display_text : standard?.standard_detail_text
-  return normalizeStandardDetailForRegister(
-    text || '未设置登记展示字段'
-  )
-}
-
 const filteredStations = computed(() => {
   return stations.value.filter((item) => {
     return matchesSmartSearch([item.station_name, item.region, item.station_usernames], stationSearch.value)
@@ -733,27 +757,6 @@ const filteredStandards = computed(() => {
     return matchesSmartSearch(getStandardSearchValues(item), standardSearch.value)
   }).slice(0, STANDARD_SEARCH_RESULT_LIMIT)
 })
-
-const getStandardFallbackTitle = (item) => {
-  const firstLine = String(item?.standard_detail_text || item?.content || '')
-    .replace(/\\n/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean)
-  if (!firstLine) return ''
-  const separatorIndex = firstLine.indexOf('：')
-  return separatorIndex > -1 ? firstLine.slice(separatorIndex + 1).trim() : firstLine
-}
-
-const getStandardTitle = (item) => {
-  if (item?.internal_standard_id) {
-    const firstValue = standardFields.value
-      .map((field) => String(item?.field_values?.[field.field_key] || '').trim())
-      .find(Boolean)
-    return firstValue || getStandardFallbackTitle(item) || '未命名内部规范'
-  }
-  return item.check_content || item.check_item || item.project_name || getStandardFallbackTitle(item) || '未命名规范'
-}
 
 const getStandardIdentity = (item) => {
   if (item?.internal_standard_id) return `internal:${item.internal_standard_id}`
@@ -835,10 +838,10 @@ const fetchStandards = async () => {
       standard_id: item.internal_standard_id,
       internal_standard_id: item.internal_standard_id,
       standard_detail_text: detailText,
-      register_display_text: item.register_display_text || detailText,
+      register_display_text: item.register_display_text || '',
       inspection_table_id: '',
       inspection_table_name: linkedTableNames.length
-        ? `${linkedTableNames.join('、')}（共挂载${linkedExternals.length}条外部规范）`
+        ? linkedTableNames.join('、')
         : '未挂载外部检查表',
       linked_externals: linkedExternals
     }
@@ -1027,7 +1030,7 @@ const scrollToSelectedStandard = async () => {
 }
 
 const selectStandard = async (standard) => {
-  standardSearch.value = `${standard.standard_id}｜${getStandardTitle(standard)}`
+  standardSearch.value = getRegisterStandardLabel(standard)
   form.value.standardId = standard.internal_standard_id || standard.standard_id
   form.value.inspectionTableId = standard.internal_standard_id ? '' : String(standard.inspection_table_id || '')
   aiSelectedStandard.value = { ...standard }
@@ -1054,6 +1057,26 @@ const selectInspectionTable = (table) => {
   tableDropdownVisible.value = false
 }
 
+const runHistoryStandardMatch = async () => {
+  const description = String(form.value.description || '').trim()
+  if (description.length < 4 || normalizedHasIssue.value !== 'yes' || referenceMode.value !== 'manual') return
+  const ticket = historyRequests.start()
+  historyMatching.value = true
+  historyRecommendations.value = []
+  historyMessage.value = '正在检索已审核问题的相似描述...'
+  try {
+    const response = await axios.post('/api/inspection-standards/history-recommend', { description }, { signal: ticket.signal })
+    if (!ticket.isCurrent()) return
+    historyRecommendations.value = response.data?.items || []
+    historyMessage.value = response.data?.message || '暂无相似规范，可继续手动搜索。'
+  } catch (error) {
+    if (!ticket.isCurrent()) return
+    historyMessage.value = getRequestErrorMessage(error, '历史检索暂不可用，请继续手动搜索规范。')
+  } finally {
+    if (ticket.isCurrent()) historyMatching.value = false
+  }
+}
+
 const runAiStandardMatch = async () => {
   const description = String(form.value.description || '').trim()
   if (description.length < 4) {
@@ -1064,13 +1087,15 @@ const runAiStandardMatch = async () => {
 
   clearSelectedStandard()
   clearAiReferenceState()
+  const ticket = aiRequests.start()
 
   try {
     aiMatching.value = true
     const response = await axios.post('/api/inspection-standards/ai-recommend', {
       description,
       standard_source_mode: standardSourceMode.value
-    })
+    }, { signal: ticket.signal })
+    if (!ticket.isCurrent()) return
     aiRecommendations.value = response.data?.items || []
     aiRecommendationsGenerated.value = Boolean(response.data?.ai_generated)
     recommendationSource.value = response.data?.recommendation_source || ''
@@ -1089,13 +1114,14 @@ const runAiStandardMatch = async () => {
       : `${response.data?.message || 'AI暂不可用，已使用本地规则匹配。'}请人工确认候选规范。`
     aiReferenceMessageType.value = response.data?.ai_generated || recommendationSource.value === 'approved_history' ? 'success' : 'warning'
   } catch (error) {
+    if (!ticket.isCurrent()) return
     aiRecommendations.value = []
     aiRecommendationsGenerated.value = false
     aiNoRelated.value = true
     aiReferenceMessage.value = error?.response?.data?.error || 'AI匹配失败，请稍后重试或改用人工引用。'
     aiReferenceMessageType.value = 'error'
   } finally {
-    aiMatching.value = false
+    if (ticket.isCurrent()) aiMatching.value = false
   }
 }
 
@@ -1150,7 +1176,7 @@ const restoreRegisterDraft = async () => {
       const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
       if (standard) {
         aiSelectedStandard.value = { ...standard }
-        standardSearch.value = draft.standardSearch || `${standard.standard_id}｜${getStandardTitle(standard)}`
+        standardSearch.value = getRegisterStandardLabel(standard)
       }
     }
 
@@ -1734,13 +1760,18 @@ watch(
 )
 
 watch(
-  () => form.value.description,
-  () => {
-    if (referenceMode.value !== 'ai') return
-    if (!aiRecommendations.value.length && !aiNoRelated.value && !form.value.standardId) return
-    clearSelectedStandard()
+  [() => form.value.description, referenceMode, normalizedHasIssue, standardSourceMode],
+  ([description], [previousDescription]) => {
+    historyRequests.cancel()
+    aiRequests.cancel()
+    historyMatching.value = false
+    aiMatching.value = false
+    historyRecommendations.value = []
+    historyMessage.value = ''
+    if (!restoringRegisterDraft && referenceMode.value === 'ai' && description !== previousDescription) clearSelectedStandard()
     clearAiReferenceState()
-  }
+  },
+  { flush: 'sync' }
 )
 
 watch(
@@ -1776,6 +1807,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  historyRequests.cancel()
+  aiRequests.cancel()
   registerDraftManager?.flush()
   registerDraftManager?.destroy()
   document.removeEventListener('click', handleClickOutside)
@@ -1793,6 +1826,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.history-reference-panel { margin-top: 12px; padding: 16px; border: 1px solid #cbdedb; border-radius: 18px; background: #f5faf9; }
+.history-reference-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.history-reference-header strong { color: #115e59; }
+.history-reference-header p, .history-reference-message { color: #526777; font-size: 13px; line-height: 1.7; }
+.history-reference-panel .ai-recommendation-list { margin-top: 12px; }
+.history-reference-choice { display: block; margin-top: 10px; color: #0f766e; font-weight: 700; font-size: 13px; }
+.history-reference-panel .btn { white-space: normal; }
 .highlight-hint { padding: 12px 16px; border-radius: 12px; background: #eef7fb; color: #256080; line-height: 1.7; }
 .page-shell {
   display: flex;

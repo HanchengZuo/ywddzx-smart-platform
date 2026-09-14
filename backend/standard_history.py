@@ -89,6 +89,7 @@ class HistoryIndex:
             best[identifier] = 1.0
         ranked = sorted(best, key=lambda identifier: (-best[identifier], identifier))[:24]
         return {'ranked_ids': [str(current[key]['standard_id']) for key in ranked], 'fast_recommendation': fast,
+                'similarities': {str(current[key]['standard_id']): best[key] for key in ranked},
                 'exact_count': len(exact), 'exact_conflict': len(ids) > 1,
                 'top_similarity': round(max(best.values(), default=0), 4),
                 'history_count': sum(len(rows) for rows in self.exact.values())}
@@ -103,3 +104,26 @@ def match_history(description, standards, history):
     # Entire scoped row content is the key: edits, audit reversals and permission
     # changes cannot leave an old recommendation active until a TTL expires.
     return cached_history_index(tuple(sorted(history))).search(description, standards)
+
+
+def recommend_from_history(description, standards, history):
+    """Explicit manual assist: high-similarity history only, never an AI fallback."""
+    result = match_history(description, standards, history)
+    recommendations = []
+    for identifier in result['ranked_ids']:
+        similarity = result['similarities'][identifier]
+        if similarity < .55:
+            continue
+        recommendations.append({
+            'standard_id': identifier,
+            'confidence': '高' if similarity >= .8 else '中',
+            'reason': f'历史描述相似度约{round(min(1, similarity)*100)}%，仅供参考，请核对规范适用性。',
+        })
+        if len(recommendations) >= 6:
+            break
+    return {
+        'generated': False, 'recommendation_source': 'local_history',
+        'recommendations': recommendations, 'no_related': not recommendations,
+        'message': '已从已审核问题中检索相似规范，未调用AI。请选择或继续手动搜索。' if recommendations
+                   else '暂无足够相似的历史规范，请补充描述或继续手动搜索。未调用AI。',
+    }
