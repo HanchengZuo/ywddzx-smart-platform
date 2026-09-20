@@ -12,6 +12,7 @@
     </div>
     <p v-if="!analysis.generated">首次生成后展示 AI 选题；可先手动设置特性、严重问题。</p>
     <p v-else>AI选题来源：{{ analysis.source_generated_at || '最近生成报告' }}。问题库变化后需重新生成更新AI选题。</p>
+    <p v-for="warning in analysis.selection_warnings || []" :key="warning" role="alert" class="error">{{ warning }}</p>
     <small>{{ savedLabel }}</small>
     <Teleport to="body">
       <div v-if="active" class="equipment-topic-overlay" @click.self="close">
