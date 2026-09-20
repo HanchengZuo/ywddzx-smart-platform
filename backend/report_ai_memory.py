@@ -22,6 +22,7 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    "equipment_topics": "设备设施高频、特性与严重问题选题",
     "quality_flow": "质量计量问题环节分类",
     "non_oil_category": "非油其他问题分类",
     "non_oil_key": "非油重点问题分类",
@@ -33,6 +34,7 @@ STAGE_LABELS = {
     "non_oil_insights": "非油典型问题、归因分析与改善建议",
 }
 INSIGHT_FIELDS = {
+    "equipment_topics": {"issue_ids": list},
     "quality_insights": {"management_trace": dict, "work_plan": list, "prohibited_decisions": list},
     "safety_insights": {"typical_issues": list, "category_highlights": list,
                         "problem_analysis": list, "work_suggestions": list},

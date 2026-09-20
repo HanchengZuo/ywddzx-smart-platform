@@ -40,6 +40,13 @@ export function reportConfigurationDiffers(report, current) {
     const relevant = (current.flow_classifications || []).filter(item => selection.mode !== 'custom' || stationIds.has(Number(item.station_id)))
     return categoriesChanged(relevant, context.flow_classifications || report.flow_classifications)
   }
+  if (current.type === 'equipment_facilities') {
+    const library = context.issue_library || report.issue_library_snapshot
+    const included = rows => ids(rows.filter(item => item.included !== false).map(item => item.issue_id))
+    if (Array.isArray(library) && !equal(included(current.issue_library || []), included(library))) return true
+    return Boolean(current.equipment_analysis && ['special_issue_ids', 'severe_issue_ids'].some(key =>
+      !equal(ids(current.equipment_analysis[key] || []), ids(report.equipment_analysis?.[key] || []))))
+  }
   if (current.type === 'non_oil') {
     const previousPeriod = historicalRectificationPeriod(report)
     if (previousPeriod && !equal(current.rectification_period, previousPeriod)) return true

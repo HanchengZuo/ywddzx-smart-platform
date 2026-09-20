@@ -57,7 +57,8 @@ class MemoryUnitTest(unittest.TestCase):
         self.assertFalse(valid_insights(payload, "finance_insights", {1}))
 
     def test_all_six_insight_schemas_registered(self):
-        self.assertEqual(len(INSIGHT_FIELDS), 6)
+        self.assertEqual(len(INSIGHT_FIELDS), 7)
+        self.assertEqual(INSIGHT_FIELDS['equipment_topics'], {'issue_ids': list})
 
     def test_no_job_context_preserves_non_report_call_behavior(self):
         called = []
@@ -183,6 +184,26 @@ class MemoryPostgresTest(unittest.TestCase):
         memory.batch(run, ctx, "finance_insights", "v2", "model1")
         memory.batch(run, ctx, "finance_insights", "v2", "model2")
         self.assertEqual(len(calls), 5)
+
+    def test_equipment_choices_reused_across_jobs_but_changed_evidence_invalidates(self):
+        calls = []
+        def run(context):
+            calls.append(context)
+            return ai_result({'issue_ids': [1]})
+        context = {'kind': 'severe', 'issues': [{'issue_id': 1, 'description': '原始描述'}]}
+        for _ in range(2):
+            memory = self.new_job('equipment_facilities')
+            memory.evidence = {'issues': context['issues'], 'issue_ids': [1]}
+            result = memory.batch(run, context, 'equipment_topics', 'v1', 'deepseek-v4-pro')
+            self.assertEqual(result['payload'], {'issue_ids': [1]})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(memory.snapshot()['summary']['ai_calls'], 0)
+        self.assertEqual(memory.snapshot()['summary']['reuse_steps'], 1)
+        context['issues'][0]['description'] = '修改后的描述'
+        memory = self.new_job('equipment_facilities')
+        memory.evidence = {'issues': context['issues'], 'issue_ids': [1]}
+        memory.batch(run, context, 'equipment_topics', 'v1', 'deepseek-v4-pro')
+        self.assertEqual(len(calls), 2)
 
     def test_failed_fallback_or_invalid_results_are_not_cached(self):
         memory = self.new_job()

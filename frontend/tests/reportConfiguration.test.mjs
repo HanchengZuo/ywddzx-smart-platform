@@ -89,3 +89,22 @@ test('all non-oil panels participate in effective comparison', () => {
 test('no generated report does not show mismatch warning', () => {
   assert.equal(reportConfigurationDiffers({}, inputs()), false)
 })
+
+test('equipment selection is shared and compared with the generated snapshot', () => {
+  const report = { month: '2026-07', snapshot: period, issue_library_snapshot: [
+    { issue_id: 1, included: true }, { issue_id: 2, included: false }
+  ] }
+  const current = { ...period, type: 'equipment_facilities', issue_library: [
+    { issue_id: 2, included: false }, { issue_id: 1, included: true }
+  ] }
+  assert.equal(reportConfigurationDiffers(report, current), false)
+  current.issue_library[0].included = true
+  assert.equal(reportConfigurationDiffers(report, current), true)
+  report.issue_library_snapshot[1].included = true
+  assert.equal(reportConfigurationDiffers(report, current), false)
+  report.equipment_analysis = { special_issue_ids: [1], severe_issue_ids: [2] }
+  current.equipment_analysis = { special_issue_ids: [1], severe_issue_ids: [2] }
+  assert.equal(reportConfigurationDiffers(report, current), false)
+  current.equipment_analysis.severe_issue_ids = []
+  assert.equal(reportConfigurationDiffers(report, current), true)
+})

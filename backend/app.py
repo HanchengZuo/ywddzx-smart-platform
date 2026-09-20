@@ -2,6 +2,8 @@ from flask import Flask, abort, g, has_request_context, jsonify, request, send_f
 from flask_cors import CORS
 from upload_request import PlatformRequest
 from standard_history import fetch_standard_history, recommend_from_history
+from equipment_report_library import exclusions as equipment_issue_exclusions, save_exclusions as save_equipment_issue_exclusions
+import equipment_report_analysis as equipment_analysis
 from external_standard_status import disabled_standard_ids, require_active_standards
 import fcntl
 import hashlib
@@ -244,7 +246,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.5.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.6.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -12181,6 +12183,108 @@ def serialize_equipment_report_issue(row):
         "description": str(row.get("description") or "").strip(),
         "issue_photo": row.get("issue_photo") or "",
     }
+
+
+def fetch_equipment_report_issue_library(cur, user, start, end):
+    where = ["COALESCE(ins.inspection_date::date,i.created_at::date)>=%s",
+             "COALESCE(ins.inspection_date::date,i.created_at::date)<%s",
+             "REPLACE(t.table_name,%s,'')=%s",
+             "ins.inspector_completion_status='已确认完成'", "i.audit_status='approved'"]
+    params = [start, end, DISPLAY_REMOVED_STATION_PHRASE, EQUIPMENT_FACILITIES_REPORT_TABLE]
+    if not append_inspection_table_scope_filter(cur, user, where, params, 'i.inspection_table_id',
+            'limit_plan_inspection_table_scope', permissions=REPORT_SHARED_SCOPE_PERMISSIONS):
+        return []
+    if not append_station_region_scope_filter(cur, user, where, params, 's.region',
+            'limit_plan_station_region_scope', permissions=REPORT_SHARED_SCOPE_PERMISSIONS):
+        return []
+    cur.execute(f'''SELECT i.id,i.station_id,s.station_name,s.region,s.address,t.table_name,
+        i.standard_id,i.standard_detail_text,i.description,i.photo_path AS issue_photo,
+        COALESCE(ins.inspection_date::date,i.created_at::date) AS report_date
+        FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
+        JOIN stations s ON s.id=i.station_id JOIN inspection_tables t ON t.id=i.inspection_table_id
+        WHERE {' AND '.join(where)} ORDER BY i.id''', params)
+    return [dict(row) for row in cur.fetchall()]
+
+
+@app.route('/api/inspection-reports/equipment-issue-selection', methods=['GET', 'PUT'])
+def manage_equipment_report_issue_selection():
+    conn = cur = None
+    try:
+        source = (request.get_json(silent=True) or {}) if request.method == 'PUT' else request.args
+        start, end = resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
+            source.get('month', ''), dict(source))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        raw = fetch_equipment_report_issue_library(cur, user, start, end)
+        eligible = [row['id'] for row in raw]
+        if request.method == 'PUT':
+            excluded = save_equipment_issue_exclusions(cur, eligible, source.get('excluded_issue_ids'), user['id'])
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES, user, section='issue_library')
+        else:
+            excluded = equipment_issue_exclusions(cur, eligible)
+        rows = []
+        for row in raw:
+            item = serialize_equipment_report_issue(row)
+            rows.append(dict(item, unit_name=item['management_unit'], table_name=row['table_name'],
+                standard_detail_text=row.get('standard_detail_text') or '', category_name=item['area_name'],
+                category_display_name=item['area_name'], included=item['issue_id'] not in excluded))
+        categories = [{'name': name, 'display_name': name, 'total_count': sum(r['category_name']==name for r in rows),
+                       'included_count': sum(r['category_name']==name and r['included'] for r in rows)}
+                      for name in sorted({r['category_name'] for r in rows})]
+        conn.commit()
+        return jsonify(success=True, issues=rows, categories=categories)
+    except PermissionError as exc:
+        if conn: conn.rollback()
+        return jsonify(success=False, error=str(exc)), 403
+    except ValueError as exc:
+        if conn: conn.rollback()
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception:
+        if conn: conn.rollback()
+        app.logger.exception('Equipment issue library failed')
+        return jsonify(success=False, error='设备设施报告问题库操作失败，请稍后重试。'), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
+@app.route('/api/inspection-reports/equipment-analysis', methods=['GET', 'PUT'])
+def manage_equipment_analysis():
+    conn = cur = None
+    try:
+        source = (request.get_json(silent=True) or {}) if request.method == 'PUT' else request.args
+        start, end = resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
+                                                      source.get('month', ''), dict(source))
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_authorized_inspection_report_user(cur)
+        raw = fetch_equipment_report_issue_library(cur, user, start, end)
+        excluded = equipment_issue_exclusions(cur, [row['id'] for row in raw])
+        issues = equipment_analysis.enrich([serialize_equipment_report_issue(row) for row in raw if row['id'] not in excluded])
+        report = get_latest_inspection_report_snapshot(cur, REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES) or {}
+        analysis = report.get('equipment_analysis') or {}
+        if request.method == 'PUT':
+            equipment_analysis.save_overrides(cur, issues, analysis, source, user['id'])
+            save_report_workspace(cur, REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES, user, section='equipment_analysis')
+        result = equipment_analysis.apply_overrides(analysis, issues,
+            equipment_analysis.load_overrides(cur, [i['issue_id'] for i in issues]))
+        result['issues'] = issues
+        result['generated'] = bool(analysis)
+        result['source_generated_at'] = (report.get('summary') or {}).get('generated_at')
+        conn.commit()
+        return jsonify(success=True, analysis=result)
+    except PermissionError as exc:
+        if conn: conn.rollback()
+        return jsonify(success=False, error=str(exc)), 403
+    except ValueError as exc:
+        if conn: conn.rollback()
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception:
+        if conn: conn.rollback()
+        app.logger.exception('Equipment analysis settings failed')
+        return jsonify(success=False, error='设备设施选题设置操作失败，请稍后重试。'), 500
+    finally:
+        close_db_resources(cur, conn)
 
 
 def serialize_equipment_inspection_station(row):
@@ -33500,47 +33604,35 @@ def generate_equipment_facilities_report_job(
             f"{len(issue_rows)} 条审核通过问题，正在统计片区、站点和问题分类"
         ),
     )
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        excluded = equipment_issue_exclusions(cur, [row['id'] for row in issue_rows])
+        topic_overrides = equipment_analysis.load_overrides(cur, [row['id'] for row in issue_rows])
+    finally:
+        close_db_resources(cur, conn)
+    issue_library_snapshot = [dict(serialize_equipment_report_issue(row), included=row['id'] not in excluded)
+                              for row in issue_rows]
+    issue_rows = [row for row in issue_rows if row['id'] not in excluded]
     report, equipment_issues = build_equipment_facilities_report_payload(
         month_start,
         issue_rows,
         inspection_rows,
     )
     report["source_selection"] = source_selection
-    insight_result = None
-    if equipment_issues:
-        update_inspection_report_job(
-            task_id,
-            "running",
-            52,
-            "正在调用 DeepSeek 识别高频典型问题并生成分析建议",
-        )
-        ai_context = build_equipment_report_ai_context(
-            month_start,
-            equipment_issues,
-            report.get("area_distribution") or [],
-            report.get("item_distribution") or [],
-        )
-        set_report_ai_evidence(issue_rows)
-        insight_result = generate_equipment_facilities_report_insights(ai_context)
-    else:
-        update_inspection_report_job(
-            task_id,
-            "running",
-            72,
-            "当前月份暂无审核通过问题，正在生成基础统计报告",
-        )
-
+    report["month"] = report_month
+    report["issue_library_snapshot"] = issue_library_snapshot
+    report["template_version"] = "equipment-native-2"
+    update_inspection_report_job(task_id, 'running', 52, '正在复用历史或调用AI挑选高频、特性与严重问题')
+    set_report_ai_evidence(issue_rows)
+    report['equipment_analysis'] = equipment_analysis.analyze(equipment_issues, topic_overrides)
+    report['region_rows'].sort(key=lambda row: equipment_analysis.unit_order(row['unit_name']))
     update_inspection_report_job(
         task_id,
         "running",
         84,
-        "AI 分析已完成，正在编排设备设施检查报告五个章节",
-    )
-    report["deep_analysis"] = build_equipment_deep_analysis(
-        equipment_issues,
-        report.get("area_distribution") or [],
-        report.get("item_distribution") or [],
-        insight_result,
+        "选题已完成，正在编排全部片区与受检站点分析页",
     )
 
     conn = None
@@ -33551,15 +33643,6 @@ def generate_equipment_facilities_report_job(
         user = get_user_by_id(cur, user_id)
         if not user:
             raise ValueError("生成任务所属用户不存在。")
-        if equipment_issues and insight_result:
-            record_ai_usage_log(
-                cur,
-                user,
-                insight_result,
-                "AI报告生成",
-                "设备设施检查报告分析",
-                f"{report.get('month_label')} · 问题{len(equipment_issues)}项",
-            )
         save_inspection_report_snapshot(
             cur,
             REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES,
