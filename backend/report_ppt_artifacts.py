@@ -37,6 +37,9 @@ def artifact_key(report_type, report, storage_root):
     if not source_path.is_file():
         source_path = TEMPLATE_FILE
     source_hash = _digest_file(source_path) if report_type == 'non_oil' and source_path.is_file() else ''
+    if report_type == 'equipment_facilities':
+        from equipment_report_presentation import TEMPLATE_FILE as EQUIPMENT_TEMPLATE, RENDERER_VERSION
+        source_hash = _digest_file(EQUIPMENT_TEMPLATE) + RENDERER_VERSION
     value = [COMPATIBILITY_VERSION, FONT_ENVIRONMENT, report_type, report, source_hash]
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 
@@ -80,6 +83,9 @@ def build_artifact(report_type, report, storage_root):
                 result = copy_existing_non_oil_presentation(report,pptx,storage_root)
                 if not result:
                     result = build_non_oil_template_presentation(report,staging,pptx,storage_root)
+            elif report_type == 'equipment_facilities':
+                from equipment_report_presentation import build_equipment_template_presentation
+                result = build_equipment_template_presentation(report, pptx, storage_root)
             else:
                 result = build_inspection_report_presentation(report_type,report,storage_root,pptx)
             if not result.get('slide_files'):

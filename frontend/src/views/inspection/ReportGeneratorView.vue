@@ -7,7 +7,7 @@
         <p>每种报告展示最后生成成功的成稿；面板保留最新保存设置，重新生成后更新报告。</p>
       </div>
       <div class="report-month-control">
-        <button v-if="hasReport && !isQualityMeasurementReport && !isNonOilReport" type="button" class="btn btn-outline" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看文字汇总' : '返回PPT预览' }}</button>
+        <button v-if="hasReport && !isQualityMeasurementReport && !hasIssueLibrary" type="button" class="btn btn-outline" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看文字汇总' : '返回PPT预览' }}</button>
         <button
           type="button"
           class="export-ppt-btn"
@@ -112,7 +112,7 @@
       />
     </section>
 
-    <section v-if="(isQualityMeasurementReport || isNonOilReport) && !templateUnavailable" class="report-config-workspace card-surface">
+    <section v-if="(isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface">
       <header class="report-config-heading">
         <div><span>REPORT CONFIGURATION</span><h3>{{ currentReportType.name }} · 专属配置</h3><p>所有用户共享最新保存设置；保存不调用 AI，重新生成后应用到报告。</p></div>
         <span class="shared-config-badge">全局共享</span>
@@ -221,13 +221,13 @@
       <small class="config-last-saved">{{ configSavedLabel('flow_classification', latestClassificationSave(flowClassifications)) }}</small>
     </section>
 
-    <section v-if="isNonOilReport && !templateUnavailable" class="quality-classification-panel non-oil-issue-library-panel card-surface">
+    <section v-if="hasIssueLibrary && !templateUnavailable" class="quality-classification-panel non-oil-issue-library-panel card-surface">
       <div class="classification-panel-intro">
         <div class="classification-ai-mark library-mark" aria-hidden="true">库</div>
         <div>
           <span>REPORT ISSUE LIBRARY</span>
           <h3>报告问题库</h3>
-          <p>按检查项目归类展示当前日期范围内的审核通过问题，可自由选择哪些问题参与报告。</p>
+          <p>{{ isEquipmentFacilitiesReport ? '按所属区域归类展示审核通过问题，可选择参与报告的问题；受检站点数仍按已完成巡检统计，包含零问题站点。' : '按检查项目归类展示当前日期范围内的审核通过问题，可自由选择哪些问题参与报告。' }}</p>
         </div>
       </div>
       <div class="classification-panel-stats">
@@ -252,6 +252,13 @@
       </button>
       <small class="config-last-saved">{{ configSavedLabel('issue_library') }}</small>
     </section>
+
+    <EquipmentReportTopics v-if="isEquipmentFacilitiesReport && !templateUnavailable"
+      :month="selectedMonth" :date-from="reportDateFrom" :date-to="reportDateTo"
+      :generated-at="reportGeneratedAt" :resolve-image="resolveImage"
+      :library-signature="nonOilIssueLibrary.filter(i => i.included).map(i => i.issue_id).join(',')"
+      :saved-label="configSavedLabel('equipment_analysis')" @change="equipmentTopicSelection = $event"
+      @saved="refreshWorkspaceMeta" @photo="openImagePreview($event.issue_photo, `问题 #${$event.issue_id}`)" />
 
     <NonOilRectificationPeriod
       v-if="isNonOilReport && !templateUnavailable"
@@ -1776,13 +1783,13 @@
           </footer>
         </section>
       </div>
-      <div v-if="nonOilIssueLibraryDialogVisible && isNonOilReport" class="flow-classification-dialog-layer non-oil-issue-library-layer">
-        <section class="flow-classification-dialog non-oil-issue-library-dialog" role="dialog" aria-modal="true" aria-label="非油报告问题库">
+      <div v-if="nonOilIssueLibraryDialogVisible && hasIssueLibrary" class="flow-classification-dialog-layer non-oil-issue-library-layer">
+        <section class="flow-classification-dialog non-oil-issue-library-dialog" role="dialog" aria-modal="true" aria-label="报告问题库">
           <button type="button" class="classification-dialog-close" aria-label="关闭" @click="closeNonOilIssueLibraryDialog">×</button>
           <header class="classification-dialog-head issue-library-dialog-head">
             <div>
               <span>REPORT ISSUE LIBRARY</span>
-              <h3>选择参与非油报告的问题</h3>
+              <h3>{{ isEquipmentFacilitiesReport ? '按所属区域选择设备设施报告问题' : '选择参与非油报告的问题' }}</h3>
               <p>数据只包含当前日期范围内、检查人已确认且审核通过的问题。选择不会改动原始问题数据。</p>
             </div>
             <div><strong>{{ nonOilIssueSelectionDraftIds.length }}/{{ nonOilIssueLibrary.length }}</strong><span>已选问题</span></div>
@@ -2128,9 +2135,11 @@ import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
+import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
 import { reportConfigurationDiffers } from '@/utils/reportConfiguration'
 
+const equipmentTopicSelection = ref(null)
 const currentRole = localStorage.getItem('user_role') || ''
 let storedPermissions = {}
 try {
@@ -2412,12 +2421,14 @@ const validReportDateRange = computed(() => Boolean(
 const hasSavedReportChanges = computed(() => {
   if (!configurationReady.value || loading.value || workspaceSaving.value) return false
   if (isQualityMeasurementReport.value && (sourceError.value || selectionSettingsError.value || flowClassificationsError.value)) return false
+  if (hasIssueLibrary.value && nonOilIssueLibraryError.value) return false
   if (isNonOilReport.value && (nonOilIssueLibraryError.value || nonOilClassificationsError.value || nonOilKeyClassificationsError.value)) return false
   return reportConfigurationDiffers(report.value, {
     type: selectedReportType.value, date_from: reportDateFrom.value, date_to: reportDateTo.value,
     source: { mode: sourceSelectionMode.value, station_ids: selectedSourceStationIds.value },
     selection_rules: selectionSettings.value, flow_classifications: flowClassifications.value,
     rectification_period: nonOilRectificationPeriod.value, issue_library: nonOilIssueLibrary.value,
+    equipment_analysis: equipmentTopicSelection.value,
     category_classifications: nonOilClassifications.value, key_classifications: nonOilKeyClassifications.value
   })
 })
@@ -2427,6 +2438,10 @@ const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')
 const isNonOilReport = computed(() => selectedReportType.value === 'non_oil')
+const hasIssueLibrary = computed(() => isNonOilReport.value || isEquipmentFacilitiesReport.value)
+const issueLibraryEndpoint = computed(() => isEquipmentFacilitiesReport.value
+  ? '/api/inspection-reports/equipment-issue-selection'
+  : '/api/inspection-reports/non-oil-issue-selection')
 const qualitySlides = computed(() => (
   Array.isArray(report.value?.slides) ? report.value.slides : []
 ))
@@ -3511,15 +3526,15 @@ const resetNonOilIssueLibraryState = () => {
 }
 
 const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
-  if (!isNonOilReport.value || !nonOilDateFrom.value || !nonOilDateTo.value) {
-    if (!isNonOilReport.value) resetNonOilIssueLibraryState()
+  if (!hasIssueLibrary.value || !nonOilDateFrom.value || !nonOilDateTo.value) {
+    if (!hasIssueLibrary.value) resetNonOilIssueLibraryState()
     return
   }
   const libraryRequestId = ++nonOilIssueLibraryRequestId
   nonOilIssueLibraryLoading.value = true
   nonOilIssueLibraryError.value = ''
   try {
-    const response = await axios.get('/api/inspection-reports/non-oil-issue-selection', {
+    const response = await axios.get(issueLibraryEndpoint.value, {
       params: {
         month: selectedMonth.value,
         date_from: nonOilDateFrom.value,
@@ -3527,7 +3542,7 @@ const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
       }
     })
     if (requestId !== contextRequestId || libraryRequestId !== nonOilIssueLibraryRequestId) return
-    if (!response.data?.success) throw new Error(response.data?.error || '读取非油报告问题库失败。')
+    if (!response.data?.success) throw new Error(response.data?.error || '读取报告问题库失败。')
     nonOilIssueLibrary.value = Array.isArray(response.data.issues) ? response.data.issues : []
     nonOilIssueCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
     nonOilIssueSelectionDraftIds.value = nonOilIssueLibrary.value
@@ -3538,7 +3553,7 @@ const loadNonOilIssueLibrary = async (requestId = contextRequestId) => {
     nonOilIssueLibrary.value = []
     nonOilIssueCategories.value = []
     nonOilIssueSelectionDraftIds.value = []
-    nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '读取非油报告问题库失败。'
+    nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '读取报告问题库失败。'
   } finally {
     if (requestId === contextRequestId && libraryRequestId === nonOilIssueLibraryRequestId) {
       nonOilIssueLibraryLoading.value = false
@@ -3596,6 +3611,7 @@ const selectAllNonOilIssues = () => {
 
 const saveNonOilIssueSelection = async () => {
   if (nonOilIssueLibrarySaving.value) return
+  const requestId = contextRequestId
   nonOilIssueLibrarySaving.value = true
   nonOilIssueLibraryError.value = ''
   try {
@@ -3603,12 +3619,13 @@ const saveNonOilIssueSelection = async () => {
     const excludedIssueIds = nonOilIssueLibrary.value
       .map((item) => Number(item.issue_id))
       .filter((issueId) => !selectedIds.has(issueId))
-    const response = await axios.put('/api/inspection-reports/non-oil-issue-selection', {
+    const response = await axios.put(issueLibraryEndpoint.value, {
       month: selectedMonth.value,
       date_from: nonOilDateFrom.value,
       date_to: nonOilDateTo.value,
       excluded_issue_ids: excludedIssueIds
     })
+    if (requestId !== contextRequestId) return
     if (!response.data?.success) throw new Error(response.data?.error || '保存报告问题选择失败。')
     nonOilIssueLibrary.value = Array.isArray(response.data.issues) ? response.data.issues : []
     nonOilIssueCategories.value = Array.isArray(response.data.categories) ? response.data.categories : []
@@ -3620,6 +3637,7 @@ const saveNonOilIssueSelection = async () => {
     await loadNonOilKeyClassifications(contextRequestId)
     await refreshWorkspaceMeta()
   } catch (err) {
+    if (requestId !== contextRequestId) return
     nonOilIssueLibraryError.value = err?.response?.data?.error || err?.message || '保存报告问题选择失败。'
   } finally {
     nonOilIssueLibrarySaving.value = false
@@ -4287,7 +4305,7 @@ const loadReportState = async () => {
       resetNonOilIssueLibraryState()
       resetNonOilClassificationState()
       resetNonOilKeyClassificationState()
-    } else if (isNonOilReport.value) {
+    } else if (hasIssueLibrary.value) {
       await loadNonOilIssueLibrary(requestId)
       if (requestId !== contextRequestId) return
       await loadNonOilClassifications(requestId)
@@ -4332,7 +4350,7 @@ const handleReportDateRangeChange = async () => {
     await loadSourceOptions({}, {}, requestId)
     if (requestId !== contextRequestId) return
     await loadFlowClassifications(requestId)
-  } else if (isNonOilReport.value) {
+  } else if (hasIssueLibrary.value) {
     await loadNonOilIssueLibrary(requestId)
     if (requestId !== contextRequestId) return
     await loadNonOilClassifications(requestId)
