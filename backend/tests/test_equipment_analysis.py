@@ -15,6 +15,33 @@ def issues():
 
 
 class EquipmentAnalysisTest(unittest.TestCase):
+    def test_ai_ids_normalized_without_inventing_references(self):
+        context = {'kind': 'severe', 'issues': [{'issue_id': i} for i in range(1,6)]}
+        self.assertEqual(analysis.normalize_topic_ids({'issue_ids':[' 1 ',1,'2',3,4]}, context), ([1,2,3], False))
+        self.assertEqual(analysis.normalize_topic_ids({'issue_ids':[True,1.0,'1.0',9000,{'issue_id':1},'2']}, context), ([2], True))
+        self.assertEqual(analysis.normalize_topic_ids({'issue_ids':[]}, context), ([], False))
+        self.assertEqual(analysis.normalize_topic_ids({'issue_ids':[999]}, context), ([], True))
+        self.assertEqual(analysis.normalize_topic_ids(None, context), ([], True))
+
+    def test_invalid_ai_output_does_not_abort_or_become_successful_memory(self):
+        client = MagicMock()
+        response = client.with_options.return_value.chat.completions.create.return_value
+        response.choices[0].message.content = '{"issue_ids":[99999]}'
+        with patch('ai_utils.get_deepseek_client', return_value=client):
+            result = analysis.choose_topics({'kind':'severe', 'issues':[{'issue_id':1}]})
+        self.assertEqual(result['payload']['issue_ids'], [])
+        self.assertFalse(result['generated'])
+        self.assertTrue(result['usage']['fallback_used'])
+        self.assertIn('warning', result)
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+
+    def test_failed_selection_is_visible_and_manual_choices_still_apply(self):
+        with patch.object(analysis, 'choose_topics', return_value={
+            'payload':{'issue_ids':[]}, 'warning':'待核查'}):
+            result = analysis.analyze(issues(), {('severe',1):True})
+        self.assertEqual(result['severe_issue_ids'], [1])
+        self.assertTrue(result['selection_warnings'])
+
     def test_reference_causes_are_not_generated(self):
         rows = analysis.enrich(issues())
         self.assertEqual(rows[0]['phrase'], '油罐区静电接地检测箱未接地')
