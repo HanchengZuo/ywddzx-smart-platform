@@ -40,6 +40,14 @@ class EquipmentAnalysisTest(unittest.TestCase):
             captions = [s for s in slide.shapes if s.has_text_frame and '问题ID' in s.text]
             self.assertEqual(len(captions),1)
             self.assertEqual(captions[0].text_frame.paragraphs[0].alignment,PP_ALIGN.CENTER)
+            frame = slide.shapes[0]
+            caption = captions[0]
+            self.assertGreater(caption.left, frame.left)
+            self.assertLess(caption.left+caption.width, frame.left+frame.width)
+            self.assertLess(caption.top+caption.height, frame.top+frame.height)
+            from pptx.enum.shapes import MSO_SHAPE_TYPE
+            picture = next(s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE)
+            self.assertLess(picture.top+picture.height, caption.top)
             other = prs.slides.add_slide(prs.slide_layouts[6])
             photos(other,[{'issue_id':124,'station_name':'缺图站','issue_photo':''}],(.5,.5,4,3),directory)
             self.assertFalse(any('124' in s.text for s in other.shapes if s.has_text_frame))

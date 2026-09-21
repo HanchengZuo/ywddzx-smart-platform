@@ -103,7 +103,10 @@ def photos(slide, issues, box, storage_root):
     for i, issue in enumerate(issues):
         first = len(slide.shapes)
         _add_picture_contain(slide, issue.get('issue_photo'),
-            tuple(Inches(v) for v in (x+i*(width+.12), y, width, h-.35)), storage_root)
+            tuple(Inches(v) for v in (x+i*(width+.12), y, width, h-.45)), storage_root)
+        # Keep the image's contain geometry, extending only its background frame
+        # to include the reserved caption band inside the same card.
+        slide.shapes[first].height = Inches(h)
         for shape in list(slide.shapes)[first:]:
             if shape.has_text_frame:
                 for paragraph in shape.text_frame.paragraphs:
@@ -111,7 +114,7 @@ def photos(slide, issues, box, storage_root):
                         run.font.color.rgb = RGBColor.from_string('64748B')
         has_picture = any(s.shape_type == MSO_SHAPE_TYPE.PICTURE for s in list(slide.shapes)[first:])
         label = f"{issue.get('station_name', '')} · 问题ID：{issue['issue_id']}" if has_picture else issue.get('station_name', '')
-        caption = fitted_text(slide, label, x+i*(width+.12), y+h-.32, width, .3, 11, color='526477')
+        caption = fitted_text(slide, label, x+i*(width+.12)+.12, y+h-.36, width-.24, .25, 11, color='526477')
         for paragraph in caption.text_frame.paragraphs:
             paragraph.alignment = PP_ALIGN.CENTER
 
