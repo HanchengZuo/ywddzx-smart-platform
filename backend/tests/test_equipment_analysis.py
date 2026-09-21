@@ -17,6 +17,33 @@ def issues():
 
 
 class EquipmentAnalysisTest(unittest.TestCase):
+    def test_grounding_distribution_merges_only_requested_standard_ids(self):
+        rows = analysis.enrich([dict(issue_id=i,external_standard_id=s) for i,s in enumerate(sorted(analysis.GROUNDING_STANDARD_IDS))])
+        rows += analysis.enrich([dict(issue_id=100, external_standard_id=9005)])
+        result = analysis.phrase_distribution(rows)
+        self.assertEqual(result[0], {'name':'设备接地不规范','count':24,'percentage':96.0})
+        self.assertEqual(result[1]['name'], analysis.catalog()['9005']['phrase'])
+        self.assertEqual(sum(r['count'] for r in result), 25)
+        self.assertNotEqual(rows[0]['phrase'], '设备接地不规范')
+        self.assertEqual(analysis.phrase_distribution([]), [])
+
+    def test_picture_ids_are_centered_and_missing_photos_have_no_id(self):
+        from PIL import Image
+        from pptx.enum.text import PP_ALIGN
+        from equipment_report_detail_slides import photos
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'photo.png'
+            Image.new('RGB',(160,100),'white').save(path)
+            prs = Presentation()
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            photos(slide,[{'issue_id':123,'station_name':'测试站','issue_photo':'photo.png'}],(.5,.5,4,3),directory)
+            captions = [s for s in slide.shapes if s.has_text_frame and '问题ID' in s.text]
+            self.assertEqual(len(captions),1)
+            self.assertEqual(captions[0].text_frame.paragraphs[0].alignment,PP_ALIGN.CENTER)
+            other = prs.slides.add_slide(prs.slide_layouts[6])
+            photos(other,[{'issue_id':124,'station_name':'缺图站','issue_photo':''}],(.5,.5,4,3),directory)
+            self.assertFalse(any('124' in s.text for s in other.shapes if s.has_text_frame))
+
     def test_more_than_forty_slides_have_unique_package_parts(self):
         report = {'month':'2026-09', 'summary':{'station_count':60, 'total_issue_count':0},
                   'equipment_analysis':{'issues':[], 'phrase_distribution':[]},
@@ -132,6 +159,8 @@ class EquipmentAnalysisTest(unittest.TestCase):
             self.assertIn('实际问题5',content)
             self.assertNotIn('龚路',content)
             self.assertNotIn('环南',content)
+            self.assertNotIn('严重问题', content)
+            self.assertNotIn('#', content)
             self.assertEqual(len(prs.slides),21)
             page_texts = ['\n'.join(s.text for s in page.shapes if s.has_text_frame) for page in prs.slides]
             self.assertEqual(sum('加油站设备设施各类问题占比情况' in value for value in page_texts), 1)

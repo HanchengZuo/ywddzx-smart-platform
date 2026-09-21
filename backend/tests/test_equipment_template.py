@@ -30,7 +30,7 @@ class EquipmentTemplateTest(unittest.TestCase):
             normalize_template_fonts(original)
             self.assertEqual(len(generated.slides), 40)
             for index in [1, 2, 4, 7, *range(10, 40)]:
-                self.assertEqual(original.slides[index]._element.xml, generated.slides[index]._element.xml)
+                self.assertEqual(original.slides[index]._element.xml.replace('严重问题', '重点问题'), generated.slides[index]._element.xml)
             texts = lambda i: '\n'.join(s.text for s in generated.slides[i].shapes if s.has_text_frame)
             self.assertIn('2026年9月', texts(0))
             self.assertNotIn('199', texts(3))

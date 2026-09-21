@@ -22,7 +22,7 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
-    "equipment_topics": "设备设施高频、特性与严重问题选题",
+    "equipment_topics": "设备设施高频、特性与重点问题选题",
     "quality_flow": "质量计量问题环节分类",
     "non_oil_category": "非油其他问题分类",
     "non_oil_key": "非油重点问题分类",
