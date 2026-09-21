@@ -33624,7 +33624,7 @@ def generate_equipment_facilities_report_job(
     report["month"] = report_month
     report["issue_library_snapshot"] = issue_library_snapshot
     report["template_version"] = "equipment-native-2"
-    update_inspection_report_job(task_id, 'running', 52, '正在复用历史或调用AI挑选高频、特性与严重问题')
+    update_inspection_report_job(task_id, 'running', 52, '正在复用历史或调用AI挑选高频、特性与重点问题')
     set_report_ai_evidence(issue_rows)
     report['equipment_analysis'] = equipment_analysis.analyze(equipment_issues, topic_overrides)
     report['region_rows'].sort(key=lambda row: equipment_analysis.unit_order(row['unit_name']))

@@ -7,8 +7,10 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 from pptx.opc.packuri import PackURI
+from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from non_oil_report_presentation import _delete_slide, _move_slide, _remove_shape, _add_picture_contain, _set_chart_fonts
-from equipment_report_analysis import canonical_unit, unit_order
+from equipment_report_analysis import canonical_unit, unit_order, phrase_distribution
 
 
 def wrap(text, width, size):
@@ -107,14 +109,17 @@ def photos(slide, issues, box, storage_root):
                 for paragraph in shape.text_frame.paragraphs:
                     for run in paragraph.runs:
                         run.font.color.rgb = RGBColor.from_string('64748B')
-        text(slide, f"#{issue['issue_id']} {issue.get('station_name', '')}",
-             x+i*(width+.12), y+h-.32, width, .3, 11)
+        has_picture = any(s.shape_type == MSO_SHAPE_TYPE.PICTURE for s in list(slide.shapes)[first:])
+        label = f"{issue.get('station_name', '')} · 问题ID：{issue['issue_id']}" if has_picture else issue.get('station_name', '')
+        caption = fitted_text(slide, label, x+i*(width+.12), y+h-.32, width, .3, 11, color='526477')
+        for paragraph in caption.text_frame.paragraphs:
+            paragraph.alignment = PP_ALIGN.CENTER
 
 
 def build_details(prs, original, report, storage_root):
     analysis = report.get('equipment_analysis') or {}
     issues = analysis.get('issues') or []
-    distribution = analysis.get('phrase_distribution') or []
+    distribution = phrase_distribution(issues) if 'issues' in analysis else analysis.get('phrase_distribution') or []
     for old in original[10:39]:
         _delete_slide(prs, old)
     # python-pptx allocates new slide part names from the current slide count.
@@ -202,7 +207,7 @@ def build_details(prs, original, report, storage_root):
         for station in stations:
             station_issues = [i for i in unit_issues if i.get('station_id') == station['station_id']]
             station_special = [i for i in station_issues if i['issue_id'] in special_ids]
-            description = '主要问题：\n'+'\n'.join(f"#{i['issue_id']} {i['description']}" for i in station_issues) if station_issues else '本次未发现参与报告的问题。'
+            description = '主要问题：\n'+'\n'.join(i['description'] for i in station_issues) if station_issues else '本次未发现参与报告的问题。'
             main_pages = pages(description, 4.5, 4.5, 17)
             photo_chunks = [station_special[i:i+2] for i in range(0,len(station_special),2)] or [[]]
             for page_index in range(max(len(main_pages),len(photo_chunks))):
@@ -214,7 +219,7 @@ def build_details(prs, original, report, storage_root):
                 text(slide, '特性问题', 5.3, 1.25, 7.5, .6, 24, bold=True)
                 selected = photo_chunks[page_index] if page_index<len(photo_chunks) else []
                 for i, item in enumerate(selected):
-                    text(slide, f"#{item['issue_id']} {item['phrase']}", 5.25+i*3.9, 1.95, 3.7, 1, 17)
+                    fitted_text(slide, item['phrase'], 5.25+i*3.9, 1.95, 3.7, 1, 17)
                 photos(slide, selected, (5.25, 3.05, 7.6, 3.95), storage_root)
 
     severe = [i for i in issues if i['issue_id'] in set(analysis.get('severe_issue_ids') or [])]
@@ -222,7 +227,7 @@ def build_details(prs, original, report, storage_root):
         selected = severe[start:start+3]
         slide = new_page(prs, original[38], ai=True)
         if not selected:
-            text(slide, '本次暂无选定的严重问题。', .8, 2, 11, 1)
+            text(slide, '本次暂无选定的重点问题。', .8, 2, 11, 1)
         width = (12.6-.3*max(0,len(selected)-1))/max(1,len(selected))
         for i, issue in enumerate(selected):
             x = .35+i*(width+.3)

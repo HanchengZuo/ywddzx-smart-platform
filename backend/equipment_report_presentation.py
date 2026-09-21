@@ -12,7 +12,7 @@ from non_oil_report_presentation import _fill_table, _remove_shape, _move_slide,
 from pptx_compatibility import _normalize_package_fonts
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/equipment_report_template/template.pptx'
-RENDERER_VERSION = 'equipment-native-4'
+RENDERER_VERSION = 'equipment-native-5'
 
 
 def normalize_template_fonts(prs):
@@ -165,6 +165,10 @@ def build_equipment_template_presentation(report, output_path, storage_root=None
     if 'equipment_analysis' in report:
         from equipment_report_detail_slides import build_details
         build_details(prs, original, report, storage_root)
+    for page in prs.slides:
+        for shape in page.shapes:
+            if shape.has_text_frame:
+                replace_text(shape, [(r'严重问题', '重点问题')])
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # Keep the existing font whitelist without adding compatibility pages or moving template objects.

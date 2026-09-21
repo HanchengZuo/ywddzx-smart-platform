@@ -41,9 +41,10 @@
       </button>
     </div>
     <div class="panel-notes">
-      <p v-if="!analysis.generated">首次生成后展示 AI 选题，也可先手动设置特性、严重问题。</p>
+      <p v-if="!analysis.generated">首次生成后展示 AI 选题，也可先手动设置特性、重点问题。</p>
       <p v-else>选题来源：{{ analysis.source_generated_at || '最近生成报告' }}</p>
       <p>保存不调用 AI；重新生成报告后应用选题。</p>
+      <p>饼图统计将指定的 24 个接地类规范统一归为“设备接地不规范”，其他分类不变；选题依据仍保留原规范短语。</p>
       <small>{{ savedLabel }}</small>
     </div>
     <p
@@ -178,7 +179,7 @@
                 ><span>{{
                   active === 'special'
                     ? '高频类别不可重复选为特性问题'
-                    : '请依据实际风险确认严重问题'
+                    : '请依据实际风险确认重点问题'
                 }}</span>
               </div>
             </div>
@@ -295,7 +296,7 @@ const tabs = [
   },
   {
     key: 'severe',
-    label: '严重问题',
+    label: '重点问题',
     symbol: '重',
     description: '核查重点风险问题，人工确认需要着重通报的选题。',
   },
