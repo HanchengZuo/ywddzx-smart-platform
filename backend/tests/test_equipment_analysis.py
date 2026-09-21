@@ -114,6 +114,9 @@ class EquipmentAnalysisTest(unittest.TestCase):
     def test_native_pages_cover_all_stations_and_final_template(self):
         with patch.object(analysis, 'choose_topics', side_effect=lambda c: {'payload': {'issue_ids':[c['issues'][0]['issue_id']]}}):
             result = analysis.analyze(issues())
+        long_title = '加油机内各元件静电接地线是否规范连接至接地端子排不合规'
+        result['high_groups'][0]['phrase'] = long_title
+        result['phrase_distribution'] = [dict(name=r['phrase'],count=1,percentage=1.5) for r in analysis.catalog().values()]
         report = {'month':'2026-09', 'summary':{'station_count':6,'total_issue_count':5},
                   'equipment_analysis':result,
                   'region_rows':[dict(unit_name='浦东',unit_type='region',station_count=6,issue_count=5,average_issue_count=.8)],
@@ -130,6 +133,11 @@ class EquipmentAnalysisTest(unittest.TestCase):
             self.assertNotIn('龚路',content)
             self.assertNotIn('环南',content)
             self.assertEqual(len(prs.slides),21)
+            page_texts = ['\n'.join(s.text for s in page.shapes if s.has_text_frame) for page in prs.slides]
+            self.assertEqual(sum('加油站设备设施各类问题占比情况' in value for value in page_texts), 1)
+            self.assertEqual(sum('加油站设备设施高频问题原因分析' in value for value in page_texts), 1)
+            self.assertIn(long_title, page_texts[11].replace('\n',''))
+            self.assertIn('检查站数：6站（站1、站2、站3、站4、站5、站6）', ''.join(page_texts).replace('\n',''))
             for page in list(prs.slides)[10:-1]:
                 for shape in page.shapes:
                     self.assertLessEqual(shape.top+shape.height,prs.slide_height)

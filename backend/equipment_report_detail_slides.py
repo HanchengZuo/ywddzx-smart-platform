@@ -33,6 +33,27 @@ def pages(text, width, height, size):
     return ['\n'.join(lines[i:i+per]) for i in range(0, len(lines), per)] or ['']
 
 
+def fitted_text(slide, value, x, y, w, h, size=18, **kwargs):
+    # Fit the entire semantic block; headings and summary cards must not paginate.
+    while size > 6 and len(wrap(value, w, size))*size*1.35 > h*72:
+        size -= .5
+    return text(slide, '\n'.join(wrap(value, w, size)), x, y, w, h, size, **kwargs)
+
+
+def legend_layout(rows, width, height):
+    labels = [f"{r['name']}  {r['count']}项 / {r['percentage']}%" for r in rows]
+    for size in (14, 13, 12, 11, 10, 9, 8, 7, 6):
+        for columns in range(1, 5):
+            per = max(1, math.ceil(len(labels)/columns))
+            column_width = width/columns
+            chunks = [labels[i:i+per] for i in range(0, len(labels), per)]
+            heights = [[max(.22, len(wrap(label, column_width-.28, size))*size*1.35/72+.04)
+                        for label in chunk] for chunk in chunks]
+            if all(sum(values) <= height for values in heights):
+                return size, column_width, chunks, heights
+    raise ValueError('设备设施短语数量超出单页图例容量，请检查规范短语配置。')
+
+
 def text(slide, value, x, y, w, h, size=18, color='111111', bold=False, fill=None):
     shape = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     if fill:
@@ -101,13 +122,13 @@ def build_details(prs, original, report, storage_root):
     # enough evidence pages are added. Relationships follow the part objects.
     for index, existing in enumerate(prs.slides, 1):
         existing.part.partname = PackURI(f'/ppt/slides/slide{index}.xml')
-    # Keep every phrase: dense legends continue rather than hiding categories under "other".
+    # One pie page, including all phrases in an adaptive multi-column legend.
     slide = new_page(prs, original[10])
     text(slide, '加油站设备设施各类问题占比情况', .4, 1.03, 12.4, .5, 22, '0000FF', True)
     data = CategoryChartData()
     data.categories = [r['name'] for r in distribution] or ['暂无问题']
     data.add_series('问题数', [r['count'] for r in distribution] or [0])
-    chart = slide.shapes.add_chart(XL_CHART_TYPE.PIE, Inches(.35), Inches(1.7), Inches(8.6), Inches(5.25), data).chart
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.PIE, Inches(.2), Inches(1.65), Inches(4.7), Inches(4.7), data).chart
     chart.has_legend = False
     chart.has_title = False
     plot = chart.plots[0]
@@ -119,9 +140,9 @@ def build_details(prs, original, report, storage_root):
     plot.has_data_labels = True
     plot.data_labels.show_percentage = True
     plot.data_labels.show_value = False
-    plot.data_labels.show_category_name = len(distribution) <= 10
+    plot.data_labels.show_category_name = False
     plot.data_labels.position = XL_LABEL_POSITION.BEST_FIT
-    if len(distribution) > 15:
+    if len(distribution) > 10:
         plot.has_data_labels = False
     _set_chart_fonts(chart, category_size=11)
     maximum = distribution[0]['count'] if distribution else 0
@@ -131,42 +152,30 @@ def build_details(prs, original, report, storage_root):
         note = f"{lead['name']}是单类问题{'并列' if len(leaders)>1 else ''}最多的项，共 {lead['count']} 个问题，占比 {lead['percentage']}%，是本次巡检最集中的单一问题。"
     else:
         note = '本次报告问题库暂无参与统计的问题。'
-    note_pages = pages(note, 3.65, 2.15, 17)
-    text(slide, note_pages[0], 9.25, 1.7, 3.65, 2.15, 17, 'C00000', True)
-    legend_slide, x, y, bottom, width = slide, 9.25, 4.0, 7.05, 3.65
-    for row, color in zip(distribution, colors):
-        label = '\n'.join(wrap(f"{row['name']}：{row['count']}项 / {row['percentage']}%", width-.3, 12))
-        height = max(.32, len(label.splitlines())*12*1.35/72+.08)
-        if y+height > bottom:
-            legend_slide = new_page(prs, original[10])
-            text(legend_slide, '检查内容短语统计（图例续页）', .5, 1.05, 12, .5, 22, '0000FF', True)
-            x, y, width = .7, 1.8, 11.8
-            label = '\n'.join(wrap(f"{row['name']}：{row['count']}项 / {row['percentage']}%", width-.3, 12))
-            height = max(.32, len(label.splitlines())*12*1.35/72+.08)
-        text(legend_slide, '', x, y+.04, .18, .18, fill=color)
-        text(legend_slide, label, x+.28, y, width-.3, height, 12)
-        y += height
-    for value in note_pages[1:]:
-        extra = new_page(prs, original[10])
-        text(extra, '检查内容短语统计（续）', .5, 1.05, 12, .5, 22, '0000FF', True)
-        text(extra, value, .7, 1.8, 11.8, 5.2, 18)
+    fitted_text(slide, note, .45, 6.5, 12.4, .58, 18, color='C00000', bold=True)
+    size, width, chunks, heights = legend_layout(distribution, 7.95, 4.7)
+    color_index = 0
+    for column, (labels, row_heights) in enumerate(zip(chunks, heights)):
+        x, y = 5.0+column*width, 1.65
+        for label, height in zip(labels, row_heights):
+            text(slide, '', x, y+.035, .13, .13, fill=colors[color_index])
+            text(slide, '\n'.join(wrap(label, width-.28, size)), x+.2, y, width-.28, height, size)
+            color_index += 1
+            y += height
 
     groups = analysis.get('high_groups') or []
     for start in range(0, max(1, len(groups)), 2):
         pair = groups[start:start+2]
-        causes = [pages('原因（参考表原文）：'+ '；'.join(g['causes']), 5.95, 2.0, 17) for g in pair]
-        titles = [pages(f"{start+i+1}、{g['phrase']}（{len(g['issues'])}项）", 5.95, .72, 20) for i,g in enumerate(pair)]
-        for continuation in range(max([len(p) for p in causes+titles] or [1])):
-            slide = new_page(prs, original[11], ai=True)
-            text(slide, '加油站设备设施高频问题原因分析', .49, 1.0, 12, .55, 23, '0000FF', True)
-            if not pair:
-                text(slide, '本次暂无经AI确认的高频问题。', .8, 2, 11, 1)
-            for i, group in enumerate(pair):
-                x = 3.69 if len(pair) == 1 else .35+i*6.65
-                text(slide, titles[i][min(continuation,len(titles[i])-1)], x, 1.7, 5.95, .72, 20, bold=True)
-                representatives = sorted(group['issues'], key=lambda r: (not bool(r.get('issue_photo')), r['issue_id']))[:2]
-                photos(slide, representatives, (x, 2.5, 5.95, 2.35), storage_root)
-                text(slide, causes[i][continuation] if continuation<len(causes[i]) else '', x, 5.02, 5.95, 2, 17)
+        slide = new_page(prs, original[11], ai=True)
+        text(slide, '加油站设备设施高频问题原因分析', .49, 1.0, 12, .55, 23, '0000FF', True)
+        if not pair:
+            text(slide, '本次暂无经AI确认的高频问题。', .8, 2, 11, 1)
+        for i, group in enumerate(pair):
+            x = 3.69 if len(pair) == 1 else .35+i*6.65
+            fitted_text(slide, f"{start+i+1}、{group['phrase']}（{len(group['issues'])}项）", x, 1.7, 5.95, 1.05, 20, bold=True)
+            representatives = sorted(group['issues'], key=lambda r: (not bool(r.get('issue_photo')), r['issue_id']))[:2]
+            photos(slide, representatives, (x, 2.85, 5.95, 2.25), storage_root)
+            fitted_text(slide, '原因（参考表原文）：'+'；'.join(group['causes']), x, 5.22, 5.95, 1.85, 17)
 
     special_ids = set(analysis.get('special_issue_ids') or [])
     for region in sorted(report.get('region_rows') or [], key=lambda r: unit_order(r['unit_name'])):
@@ -174,19 +183,22 @@ def build_details(prs, original, report, storage_root):
         stations = [s for s in report.get('station_ranking', []) if canonical_unit(s['management_unit']) == unit]
         unit_issues = [i for i in issues if i['management_unit'] == unit]
         special = [i for i in unit_issues if i['issue_id'] in special_ids]
-        stats = f"检查站数：{region['station_count']}站\n问题总数：{region['issue_count']}项\n站均问题数：{region['average_issue_count']}项\n"+'、'.join(s['station_name'] for s in stations)
-        stat_pages = pages(stats, 6.1, 2.1, 18)
-        # Two evidence cards per page; all manually selected special issues are retained.
-        chunks = [special[i:i+2] for i in range(0, len(special), 2)] or [[]]
-        for page_index in range(max(len(stat_pages), len(chunks))):
-            chosen = chunks[page_index] if page_index<len(chunks) else []
-            descriptions = pages('特性问题：\n'+'\n'.join(f"#{i['issue_id']} {i['station_name']}：{i['description']}" for i in chosen), 6.1, 2.1, 16)
-            for detail in descriptions:
-                slide = new_page(prs, original[13], unit, ai=True)
-                text(slide, stat_pages[min(page_index,len(stat_pages)-1)], .3, 1.2, 6.1, 2.1, 18, bold=True)
-                text(slide, detail if chosen else '本片区暂无选定的特性问题。', 6.9, 1.2, 6.1, 2.1, 16, fill='E8EBF2')
-                text(slide, '主要问题类型：特性问题照片', .4, 3.6, 12, .5, 22, '0000FF', True)
-                photos(slide, chosen, (.45, 4.2, 12.4, 2.85), storage_root)
+        names = '、'.join(s['station_name'] for s in stations)
+        stats = f"• 检查站数：{region['station_count']}站（{names}）\n\n• 问题总数：{region['issue_count']}项\n\n• 站均问题数：{region['average_issue_count']}项"
+        chunks = [special[i:i+3] for i in range(0, len(special), 3)] or [[]]
+        for chosen in chunks:
+            slide = new_page(prs, original[13], unit, ai=True)
+            fitted_text(slide, stats, .3, 1.25, 6.1, 2.2, 18, bold=True)
+            text(slide, '', 6.85, 1.2, 6.15, 2.45, fill='E8EBF2')
+            text(slide, '特性问题：', 6.95, 1.35, 5.9, .45, 21, '0000FF', True)
+            detail = '\n'.join(f"{i['station_name']}：{i['description']}" for i in chosen) or '本片区暂无选定的特性问题。'
+            fitted_text(slide, detail, 6.95, 1.88, 5.9, 1.65, 17)
+            text(slide, '主要问题类型：', .4, 3.72, 12, .45, 22, '0000FF', True)
+            width = (12.4-.25*max(0,len(chosen)-1))/max(1,len(chosen))
+            for index, item in enumerate(chosen):
+                x = .45+index*(width+.25)
+                fitted_text(slide, '• '+item['phrase'], x, 4.22, width, .55, 17, bold=True)
+                photos(slide, [item], (x, 4.85, width, 2.2), storage_root)
         for station in stations:
             station_issues = [i for i in unit_issues if i.get('station_id') == station['station_id']]
             station_special = [i for i in station_issues if i['issue_id'] in special_ids]
