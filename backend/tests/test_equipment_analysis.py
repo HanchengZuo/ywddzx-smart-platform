@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import zipfile
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from pptx import Presentation
@@ -15,6 +17,25 @@ def issues():
 
 
 class EquipmentAnalysisTest(unittest.TestCase):
+    def test_more_than_forty_slides_have_unique_package_parts(self):
+        report = {'month':'2026-09', 'summary':{'station_count':60, 'total_issue_count':0},
+                  'equipment_analysis':{'issues':[], 'phrase_distribution':[]},
+                  'region_rows':[dict(unit_name='浦东',unit_type='region',station_count=60,issue_count=0,average_issue_count=0)],
+                  'station_ranking':[dict(station_id=i,station_name=f'站{i}',management_unit='浦东',issue_count=0) for i in range(60)]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'large.pptx'
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', UserWarning)
+                build_equipment_template_presentation(report,path)
+            with zipfile.ZipFile(path) as archive:
+                names = archive.namelist()
+                self.assertEqual(len(names), len(set(names)))
+            prs = Presentation(path)
+            self.assertGreater(len(prs.slides), 40)
+            self.assertEqual(len({slide.part.partname for slide in prs.slides}), len(prs.slides))
+            original = Presentation(TEMPLATE_FILE); normalize_template_fonts(original)
+            self.assertEqual(prs.slides[-1]._element.xml,original.slides[-1]._element.xml)
+
     def test_ai_ids_normalized_without_inventing_references(self):
         context = {'kind': 'severe', 'issues': [{'issue_id': i} for i in range(1,6)]}
         self.assertEqual(analysis.normalize_topic_ids({'issue_ids':[' 1 ',1,'2',3,4]}, context), ([1,2,3], False))

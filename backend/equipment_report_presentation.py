@@ -12,7 +12,7 @@ from non_oil_report_presentation import _fill_table, _remove_shape, _move_slide,
 from pptx_compatibility import _normalize_package_fonts
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/equipment_report_template/template.pptx'
-RENDERER_VERSION = 'equipment-native-2'
+RENDERER_VERSION = 'equipment-native-3'
 
 
 def normalize_template_fonts(prs):

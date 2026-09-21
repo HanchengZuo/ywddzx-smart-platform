@@ -6,6 +6,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
+from pptx.opc.packuri import PackURI
 from non_oil_report_presentation import _delete_slide, _move_slide, _remove_shape, _add_picture_contain, _set_chart_fonts
 from equipment_report_analysis import canonical_unit, unit_order
 
@@ -95,6 +96,11 @@ def build_details(prs, original, report, storage_root):
     distribution = analysis.get('phrase_distribution') or []
     for old in original[10:39]:
         _delete_slide(prs, old)
+    # python-pptx allocates new slide part names from the current slide count.
+    # Compact survivors first: the retained slide40 would otherwise collide once
+    # enough evidence pages are added. Relationships follow the part objects.
+    for index, existing in enumerate(prs.slides, 1):
+        existing.part.partname = PackURI(f'/ppt/slides/slide{index}.xml')
     # Keep every phrase: dense legends continue rather than hiding categories under "other".
     slide = new_page(prs, original[10])
     text(slide, '加油站设备设施各类问题占比情况', .4, 1.03, 12.4, .5, 22, '0000FF', True)
