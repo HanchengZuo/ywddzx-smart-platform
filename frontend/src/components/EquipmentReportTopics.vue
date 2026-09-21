@@ -165,11 +165,7 @@
                 <button
                   class="reset-button"
                   :disabled="!keyword && !unit && !selectedOnly"
-                  @click="
-                    keyword = ''
-                    unit = ''
-                    selectedOnly = false
-                  "
+                  @click="resetFilters"
                 >
                   清空筛选
                 </button>
@@ -361,6 +357,11 @@ async function load() {
   } finally {
     if (id === requestId) loading.value = false
   }
+}
+function resetFilters() {
+  keyword.value = ''
+  unit.value = ''
+  selectedOnly.value = false
 }
 function open(key) {
   if (loading.value || error.value) return
