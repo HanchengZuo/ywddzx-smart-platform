@@ -76,7 +76,7 @@ def text(slide, value, x, y, w, h, size=18, color='111111', bold=False, fill=Non
     return shape
 
 
-def new_page(prs, source, suffix=None, ai=False):
+def new_page(prs, source, suffix=None):
     slide = prs.slides.add_slide(source.slide_layout)
     for shape in list(slide.shapes):
         _remove_shape(shape)
@@ -88,8 +88,6 @@ def new_page(prs, source, suffix=None, ai=False):
             _remove_shape(shape)
         text(slide, '三、检查发现', .69, .24, 2.5, .6, 28, bold=True)
         text(slide, '——'+suffix, 3.18, .24, 9.1, .6, 26, 'C00000', True)
-    if ai:
-        text(slide, 'AI辅助选题；选题证据及人工调整详见报告面板', .35, 7.18, 11.8, .2, 9, '64748B')
     _move_slide(prs, slide, len(prs.slides)-2)
     return slide
 
@@ -112,9 +110,11 @@ def photos(slide, issues, box, storage_root):
                 for paragraph in shape.text_frame.paragraphs:
                     for run in paragraph.runs:
                         run.font.color.rgb = RGBColor.from_string('64748B')
-        has_picture = any(s.shape_type == MSO_SHAPE_TYPE.PICTURE for s in list(slide.shapes)[first:])
+        picture = next((s for s in list(slide.shapes)[first:] if s.shape_type == MSO_SHAPE_TYPE.PICTURE), None)
+        has_picture = picture is not None
         label = f"{issue.get('station_name', '')} · 问题ID：{issue['issue_id']}" if has_picture else issue.get('station_name', '')
-        caption = fitted_text(slide, label, x+i*(width+.12)+.12, y+h-.36, width-.24, .25, 11, color='526477')
+        caption_y = (picture.top + picture.height) / Inches(1) + .02 if has_picture else y+h-.36
+        caption = fitted_text(slide, label, x+i*(width+.12)+.12, caption_y, width-.24, .25, 11, color='526477')
         for paragraph in caption.text_frame.paragraphs:
             paragraph.alignment = PP_ALIGN.CENTER
 
@@ -174,7 +174,7 @@ def build_details(prs, original, report, storage_root):
     groups = analysis.get('high_groups') or []
     for start in range(0, max(1, len(groups)), 2):
         pair = groups[start:start+2]
-        slide = new_page(prs, original[11], ai=True)
+        slide = new_page(prs, original[11])
         text(slide, '加油站设备设施高频问题原因分析', .49, 1.0, 12, .55, 23, '0000FF', True)
         if not pair:
             text(slide, '本次暂无经AI确认的高频问题。', .8, 2, 11, 1)
@@ -195,7 +195,7 @@ def build_details(prs, original, report, storage_root):
         stats = f"• 检查站数：{region['station_count']}站（{names}）\n\n• 问题总数：{region['issue_count']}项\n\n• 站均问题数：{region['average_issue_count']}项"
         chunks = [special[i:i+3] for i in range(0, len(special), 3)] or [[]]
         for chosen in chunks:
-            slide = new_page(prs, original[13], unit, ai=True)
+            slide = new_page(prs, original[13], unit)
             fitted_text(slide, stats, .3, 1.25, 6.1, 2.2, 18, bold=True)
             text(slide, '', 6.85, 1.2, 6.15, 2.45, fill='E8EBF2')
             text(slide, '特性问题：', 6.95, 1.35, 5.9, .45, 21, '0000FF', True)
@@ -214,7 +214,7 @@ def build_details(prs, original, report, storage_root):
             main_pages = pages(description, 4.5, 4.5, 17)
             photo_chunks = [station_special[i:i+2] for i in range(0,len(station_special),2)] or [[]]
             for page_index in range(max(len(main_pages),len(photo_chunks))):
-                slide = new_page(prs, original[14], unit, ai=True)
+                slide = new_page(prs, original[14], unit)
                 text(slide, '', .15, 1.15, 4.8, 5.9, fill='E8EBF2')
                 text(slide, station['station_name'], .3, 1.35, 4.5, .65, 24, '0000FF', True)
                 text(slide, f"问题总数：{len(station_issues)}个", .3, 2.08, 4.5, .45, 20, bold=True)
@@ -228,7 +228,7 @@ def build_details(prs, original, report, storage_root):
     severe = [i for i in issues if i['issue_id'] in set(analysis.get('severe_issue_ids') or [])]
     for start in range(0, max(1,len(severe)), 3):
         selected = severe[start:start+3]
-        slide = new_page(prs, original[38], ai=True)
+        slide = new_page(prs, original[38])
         if not selected:
             text(slide, '本次暂无选定的重点问题。', .8, 2, 11, 1)
         width = (12.6-.3*max(0,len(selected)-1))/max(1,len(selected))

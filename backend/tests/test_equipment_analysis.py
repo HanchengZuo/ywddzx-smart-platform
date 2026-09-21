@@ -48,6 +48,8 @@ class EquipmentAnalysisTest(unittest.TestCase):
             from pptx.enum.shapes import MSO_SHAPE_TYPE
             picture = next(s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE)
             self.assertLess(picture.top+picture.height, caption.top)
+            from pptx.util import Inches
+            self.assertAlmostEqual(caption.top-picture.top-picture.height, Inches(.02), delta=2)
             other = prs.slides.add_slide(prs.slide_layouts[6])
             photos(other,[{'issue_id':124,'station_name':'缺图站','issue_photo':''}],(.5,.5,4,3),directory)
             self.assertFalse(any('124' in s.text for s in other.shapes if s.has_text_frame))
@@ -168,6 +170,8 @@ class EquipmentAnalysisTest(unittest.TestCase):
             self.assertNotIn('龚路',content)
             self.assertNotIn('环南',content)
             self.assertNotIn('严重问题', content)
+            self.assertNotIn('AI辅助选题', content)
+            self.assertNotIn('报告面板', content)
             self.assertNotIn('#', content)
             self.assertEqual(len(prs.slides),21)
             page_texts = ['\n'.join(s.text for s in page.shapes if s.has_text_frame) for page in prs.slides]
