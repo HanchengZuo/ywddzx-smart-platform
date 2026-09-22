@@ -1,12 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
+import { operationsPages } from '../config/operationsCatalog'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
 import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisibility'
 
 const EmptyRouteView = { template: '<div></div>' }
 
 const routes = [
+  ...operationsPages.map(page => ({ path: page.path, component: () => import('../views/operations/OperationsDashboardView.vue'), props: { mode: page.key } })),
   {
     path: '/',
     redirect: '/inspection/issues'
@@ -162,6 +164,8 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
   if (path === '/inspection/station-map') return hasPermission(role, permissions, 'view_station_map')
+  const operationsPage = operationsPages.find(page => page.path === path)
+  if (operationsPage) return hasPermission(role, permissions, operationsPage.permission)
   if (path === '/inspection/register') return hasPermission(role, permissions, 'submit_inspections')
   if (path === '/inspection/standards') return hasPermission(role, permissions, 'view_inspection_standards')
   if (path === '/inspection/checklist-originals') return hasPermission(role, permissions, 'view_checklist_originals')
@@ -211,6 +215,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
     )
   }
   if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  operationsPages.forEach(page => { if (permissions[page.permission]) candidates.push(page.path) })
   if (permissions.view_station_map) candidates.push('/inspection/station-map')
   if (permissions.submit_inspections) candidates.push('/inspection/register')
   if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
