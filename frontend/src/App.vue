@@ -181,10 +181,15 @@
         </button>
       </div>
 
-      <div v-if="canViewStationMap" class="menu-section">
-        <div v-if="!sidebarCollapsed" class="menu-section-title">地图中心</div>
+      <div v-if="canViewStationMap || visibleOperationsPages.length" class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">运营系统</div>
+        <button v-for="page in visibleOperationsPages" :key="page.key" class="nav-item"
+          :class="{ active: isActive(page.path), collapsed: sidebarCollapsed }" type="button"
+          @click="go(page.path)" :title="sidebarCollapsed ? page.title : ''">
+          <span class="nav-item-icon">{{ page.icon }}</span><span v-if="!sidebarCollapsed">{{ page.title }}</span>
+        </button>
 
-        <button class="nav-item" :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
+        <button v-if="canViewStationMap" class="nav-item" :class="{ active: isActive('/inspection/station-map'), collapsed: sidebarCollapsed }"
           type="button" @click="go('/inspection/station-map')" :title="sidebarCollapsed ? '站点地图' : ''">
           <span class="nav-item-icon">图</span>
           <span v-if="!sidebarCollapsed">站点地图</span>
@@ -683,6 +688,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
+import { operationsPages } from './config/operationsCatalog'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
 import {
@@ -987,6 +993,7 @@ const isAreaAccount = computed(() => authState.role === 'area_account')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const isPageVisible = (path) => pageVisibilitySettings.value[path] !== false
 const canViewStationMap = computed(() => hasPermissionKey('view_station_map') && isPageVisible('/inspection/station-map'))
+const visibleOperationsPages = computed(() => operationsPages.filter(page => hasPermissionKey(page.permission) && isPageVisible(page.path)))
 const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections') && isPageVisible('/inspection/register'))
 const canViewInspectionStandards = computed(() => hasPermissionKey('view_inspection_standards') && isPageVisible('/inspection/standards'))
 const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklist_originals') && isPageVisible('/inspection/checklist-originals'))
@@ -1799,6 +1806,7 @@ const resolveHomePath = (user) => {
   const permissions = user?.permissions || {}
   const candidates = []
   if (role === 'station_manager') candidates.push('/inspection/my-issues')
+  operationsPages.forEach(page => { if (role === 'root' || permissions[page.permission]) candidates.push(page.path) })
   if (role === 'root' || permissions.view_station_map) candidates.push('/inspection/station-map')
   if (permissions.submit_inspections) candidates.push('/inspection/register')
   if (permissions.view_inspection_standards) candidates.push('/inspection/standards')

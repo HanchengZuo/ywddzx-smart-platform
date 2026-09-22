@@ -1,9 +1,12 @@
+import { operationsPages } from './operationsCatalog'
+
 export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'map',
-    title: '地图中心',
-    description: '地图中心相关页面',
+    title: '运营系统',
+    description: '巡检运营总览、整改跟踪、问题洞察和站点地图',
     pages: [
+      ...operationsPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description })),
       {
         key: '/inspection/station-map',
         path: '/inspection/station-map',
