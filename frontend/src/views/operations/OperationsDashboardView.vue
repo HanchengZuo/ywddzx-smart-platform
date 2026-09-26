@@ -1,376 +1,420 @@
 <template>
-  <div class="page-shell operations-page">
-    <header class="page-header card-surface dashboard-header">
-      <div>
-        <div class="page-kicker">运营系统 / BUSINESS INTELLIGENCE</div>
-        <h2>{{ page.title }}</h2>
-        <p>{{ page.description }}</p>
+  <div ref="cockpit" class="operations-cockpit" :class="{ 'screen-mode': expanded }">
+    <header class="cockpit-header">
+      <div class="brand-mark">
+        <span class="brand-glyph" aria-hidden="true">◈</span>
+        <div>业务督导中心<small>OPERATIONS COMMAND</small></div>
       </div>
-      <div class="live-tag"><i></i> 业务实数 · 按权限统计</div>
+      <div class="cockpit-title">
+        <p>巡检 · 整改 · 洞察</p>
+        <h1>运营数据驾驶舱</h1>
+        <div class="title-beam" aria-hidden="true"></div>
+      </div>
+      <div class="header-actions">
+        <span class="data-status"><i></i> 按权限汇总 · 非实时推送</span
+        ><button class="screen-button" :aria-pressed="expanded" @click="toggleScreen">
+          {{ expanded ? '退出大屏' : '全屏驾驶舱' }}
+          <span aria-hidden="true">{{ expanded ? '↙' : '↗' }}</span>
+        </button>
+      </div>
     </header>
 
-    <form class="card-surface dashboard-filters" @submit.prevent="load">
-      <div class="filter-label"><strong>分析区间</strong><span>默认当月，点击后应用</span></div>
-      <label>开始日期<input v-model="draft.date_from" type="date" required /></label>
-      <span class="date-separator">至</span
-      ><label>结束日期<input v-model="draft.date_to" type="date" required /></label>
+    <form class="command-bar" @submit.prevent="load">
+      <span class="command-label">数据窗口 <small>TIME WINDOW</small></span>
       <label
-        >站点所属地<select v-model="draft.region">
+        ><span class="sr-only">开始日期</span
+        ><input v-model="draft.date_from" type="date" required /></label
+      ><span class="range-dash">—</span>
+      <label
+        ><span class="sr-only">结束日期</span><input v-model="draft.date_to" type="date" required
+      /></label>
+      <label class="region-select"
+        ><span class="sr-only">站点所属地</span
+        ><select v-model="draft.region">
           <option value="">全部可见片区</option>
           <option v-for="region in regionOptions" :key="region">{{ region }}</option>
         </select></label
       >
-      <div class="filter-buttons">
-        <button type="button" class="btn btn-secondary" @click="reset">本月</button
-        ><button class="btn btn-primary" :disabled="loading">
-          {{ loading ? '统计中…' : '开始分析' }}
-        </button>
-      </div>
-      <p v-if="dirty" class="dirty">
-        筛选条件已调整，点击“开始分析”后生效。当前图表仍为上次分析结果。
-      </p>
+      <button type="button" class="console-button" @click="reset">本月</button
+      ><button class="console-button primary" :disabled="loading">
+        {{ loading ? '汇总中…' : '开始分析' }}
+      </button>
+      <span class="snapshot-time">{{
+        data ? '数据更新 ' + formatTime(data.generated_at) : '等待业务数据'
+      }}</span>
     </form>
-    <div v-if="error" class="notice error" role="alert">
-      {{ error }}<button class="btn btn-secondary" @click="load">重试</button>
-    </div>
-    <div v-if="loading" class="loading card-surface" role="status">
-      <span class="loading-track"></span>正在汇总权限范围内的数据，不加载问题全库…
+    <p v-if="dirty" class="cockpit-notice">
+      筛选尚未应用。点击“开始分析”后更新，当前图表仍使用上次分析范围。
+    </p>
+    <p v-if="error" class="cockpit-notice error" role="alert">
+      {{ error }} <button class="console-button" @click="load">重试</button>
+    </p>
+    <div v-if="loading" class="cockpit-loading" role="status">
+      <div class="loading-orbit" aria-hidden="true"></div>
+      <strong>正在汇总运营数据</strong><span>服务端聚合 · 不加载问题全库</span>
     </div>
 
-    <main v-else-if="data" class="dashboard-content">
-      <div class="snapshot">
+    <main v-else-if="data" class="cockpit-main">
+      <div class="scope-line">
         <span
-          >{{ applied.date_from }} 至 {{ applied.date_to }} ·
+          >{{ applied.date_from }} — {{ applied.date_to }} <b>/</b>
           {{ applied.region || '全部可见片区' }}</span
-        ><span>统计于 {{ formatTime(data.generated_at) }}</span>
+        ><span>点击图表条目可查看关联问题</span>
       </div>
-      <section class="metric-grid" aria-label="核心指标">
+      <section class="kpi-strip" aria-label="核心运营指标">
         <article
-          v-for="metric in metrics"
+          v-for="(metric, index) in metrics"
           :key="metric.label"
-          class="metric card-surface"
+          class="kpi"
           :class="metric.tone"
         >
-          <div class="metric-label">{{ metric.label }}</div>
-          <div class="metric-value">
+          <span class="kpi-index">0{{ index + 1 }}</span>
+          <div class="kpi-label">{{ metric.label }}</div>
+          <div class="kpi-value">
             {{ metric.value }}<small>{{ metric.unit }}</small>
           </div>
           <p>{{ metric.hint }}</p>
+          <div class="kpi-rule" aria-hidden="true"></div>
         </article>
       </section>
 
-      <template v-if="mode === 'overview'">
-        <section class="two-columns">
-          <article class="card-surface chart-card trend-card">
-            <div class="section-head">
-              <div>
-                <span class="eyebrow">INSPECTION PULSE</span>
-                <h3>问题登记趋势</h3>
-              </div>
-              <span class="legend"><i></i> 已审核有效问题</span>
+      <section class="command-grid">
+        <div class="wing left-wing">
+          <article class="instrument trend-instrument">
+            <div class="instrument-title">
+              <h2>巡检发现趋势</h2>
+              <span>DAILY SIGNAL</span>
             </div>
-            <p class="muted">按问题登记日期统计；数量反映检查发现，不代表站点经营质量评分。</p>
-            <div v-if="trend.length" class="trend-scroll">
-              <svg
-                viewBox="0 0 720 230"
-                role="img"
-                :aria-label="`所选期间有效问题${data.summary.valid}项`"
-              >
-                <g v-for="tick in [0, 1, 2, 3]" :key="tick">
-                  <line
-                    x1="40"
-                    x2="700"
-                    :y1="190 - tick * 50"
-                    :y2="190 - tick * 50"
-                    stroke="#e2e8f0"
-                  />
-                  <text x="30" :y="194 - tick * 50" text-anchor="end" class="svg-label">
-                    {{ Math.round((trendMax * tick) / 3) }}
-                  </text>
-                </g>
-                <path
-                  :d="`${trendPath} L ${trendX(trend.length - 1)} 190 L ${trendX(0)} 190 Z`"
-                  fill="#e5f3fa"
+            <div class="panel-caption">
+              <span>有效问题 / 按登记日</span
+              ><strong>{{ data.summary.valid }}<small> 项</small></strong>
+            </div>
+            <svg
+              v-if="trend.length"
+              class="trend-chart"
+              viewBox="0 0 420 190"
+              role="img"
+              aria-label="所选期间有效问题登记趋势"
+            >
+              <defs>
+                <linearGradient id="cockpit-trend-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#32d8f2" stop-opacity=".35" />
+                  <stop offset="1" stop-color="#32d8f2" stop-opacity="0" />
+                </linearGradient>
+              </defs>
+              <g v-for="tick in [0, 1, 2, 3]" :key="tick">
+                <line
+                  x1="32"
+                  x2="407"
+                  :y1="150 - tick * 40"
+                  :y2="150 - tick * 40"
+                  stroke="#24495e"
+                  stroke-dasharray="3 5"
                 />
-                <path
-                  :d="trendPath"
-                  fill="none"
-                  stroke="#147da5"
-                  stroke-width="3"
-                  stroke-linejoin="round"
-                />
-                <circle
-                  v-for="(point, index) in trend"
-                  :key="point.day"
-                  :cx="trendX(index)"
-                  :cy="190 - (point.valid / trendMax) * 150"
-                  r="3"
-                  fill="#147da5"
-                >
-                  <title>
-                    {{ point.day }}：{{ point.valid }}项有效问题 / 登记{{ point.registered }}项
-                  </title>
-                </circle>
-                <text x="40" y="218" class="svg-label">{{ applied.date_from }}</text>
-                <text x="700" y="218" text-anchor="end" class="svg-label">
-                  {{ applied.date_to }}
+                <text x="25" :y="154 - tick * 40" text-anchor="end">
+                  {{ Math.round((trendMax * tick) / 3) }}
                 </text>
-              </svg>
-            </div>
-            <p v-else class="empty">本期间暂无问题登记数据</p>
-            <div class="mini-stats">
+              </g>
+              <path :d="trendArea" fill="url(#cockpit-trend-fill)" />
+              <path :d="trendPath" fill="none" stroke="#48dff2" stroke-width="2" />
+              <circle
+                v-for="(point, index) in trend"
+                :key="point.day"
+                :cx="trendX(index)"
+                :cy="trendY(point.valid)"
+                r="2.2"
+                fill="#a6f6ff"
+              >
+                <title>
+                  {{ point.day }}：{{ point.valid }}项有效问题 / 登记{{ point.registered }}项
+                </title>
+              </circle>
+              <text x="32" y="178">{{ applied.date_from }}</text>
+              <text x="407" y="178" text-anchor="end">{{ applied.date_to }}</text>
+            </svg>
+            <p v-else class="empty-state">所选期间暂无问题登记</p>
+            <div class="signal-footer">
               <span
-                >问题登记 <b>{{ data.summary.total }}</b> 项</span
-              ><span
-                >审核待办 <b>{{ data.summary.pending_audit }}</b> 项</span
-              ><span
-                >确认亮点 <b>{{ data.highlights }}</b> 项</span
-              >
-            </div>
-          </article>
-          <article class="card-surface chart-card">
-            <div class="section-head">
-              <div>
-                <span class="eyebrow">WORKFLOW SNAPSHOT</span>
-                <h3>当前流程分布</h3>
-              </div>
-              <span class="muted">点击查看明细</span>
-            </div>
-            <div v-if="data.phases.length" class="phase-list">
-              <button
-                v-for="row in orderedPhases"
-                :key="row.phase"
-                class="phase-row"
-                @click="showDetails(row.phase, { phase: row.phase })"
-              >
-                <span><i :style="{ background: phaseColor(row.phase) }"></i>{{ row.phase }}</span
-                ><b>{{ row.count }}<small>项 ›</small></b>
+                >全部登记 <b>{{ data.summary.total }}</b></span
+              ><button @click="showDetails('待审核', { phase: '待审核' })">
+                待审核 <b>{{ data.summary.pending_audit }}</b> ›
               </button>
             </div>
-            <p v-else class="empty">暂无问题数据</p>
           </article>
-        </section>
-        <section class="card-surface chart-card">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">REGIONAL VIEW</span>
-              <h3>片区巡检发现对比</h3>
+          <article class="instrument aging-instrument">
+            <div class="instrument-title">
+              <h2>待处理账龄</h2>
+              <span>AGING WATCH</span>
             </div>
-            <span class="muted">有问题站均 = 有效问题 ÷ 有问题站点数</span>
-          </div>
-          <RegionTable :rows="data.units" @open="openRegion" />
-        </section>
-      </template>
-
-      <template v-else-if="mode === 'rectification'">
-        <section class="card-surface chart-card">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">ACTION PIPELINE</span>
-              <h3>待处理事项分布</h3>
+            <div class="age-alert">
+              <span>登记已满30天</span><strong>{{ data.summary.aged }}<small>项</small></strong
+              ><i aria-hidden="true"></i>
             </div>
-            <span class="muted">当前状态快照，不是流量漏斗</span>
-          </div>
-          <div class="pipeline">
-            <button
-              v-for="(phase, index) in openPhases"
-              :key="phase"
-              @click="showDetails(phase, { phase })"
-            >
-              <span class="step">0{{ index + 1 }}</span
-              ><strong>{{ phase }}</strong
-              ><b>{{ phaseCount(phase) }}<small>项</small></b
-              ><span>查看关联问题 ›</span>
-            </button>
-          </div>
-        </section>
-        <section class="two-columns">
-          <article class="card-surface chart-card">
-            <div class="section-head">
-              <div>
-                <span class="eyebrow">AGING WATCH</span>
-                <h3>待处理问题账龄</h3>
-              </div>
-            </div>
-            <p class="muted">从登记日至今天的自然日天数，不等同于流程超时或考核认定。</p>
-            <div v-if="data.ages.length" class="bars">
-              <div v-for="row in data.ages" :key="row.label" class="bar-row">
+            <div v-if="data.ages.length" class="age-bars">
+              <div v-for="row in data.ages" :key="row.label">
                 <span>{{ row.label }}</span>
-                <div class="bar-track">
+                <div class="segmented-track">
                   <i
-                    :style="{
-                      width: barWidth(row.count, data.ages, 'count'),
-                      background: row.rank === 3 ? '#c77931' : '#168a9a',
-                    }"
+                    :class="{ amber: row.rank === 3 }"
+                    :style="{ width: barWidth(row.count, data.ages) }"
                   ></i>
                 </div>
                 <b>{{ row.count }}</b>
               </div>
             </div>
-            <p v-else class="empty">本期间登记的问题暂无待处理事项</p>
+            <p v-else class="empty-state">暂无待处理事项</p>
+            <p class="instrument-note">按登记日起的自然日计算，不作为流程超时认定。</p>
           </article>
-          <article class="card-surface chart-card">
-            <div class="section-head">
-              <div>
-                <span class="eyebrow">FOLLOW-UP LIST</span>
-                <h3>优先跟进站点</h3>
+        </div>
+
+        <article class="instrument command-core">
+          <div class="instrument-title">
+            <h2>整改闭环中枢</h2>
+            <span>WORKFLOW CONTROL</span>
+          </div>
+          <div class="core-visual">
+            <div class="core-readout left-readout">
+              <span>已闭环</span><strong>{{ data.summary.closed }}</strong
+              ><small>项有效问题</small>
+            </div>
+            <div class="orbital-gauge">
+              <svg viewBox="0 0 300 300" role="img" :aria-label="'有效问题闭环率 ' + closureLabel">
+                <circle
+                  class="orbit-slow"
+                  cx="150"
+                  cy="150"
+                  r="141"
+                  fill="none"
+                  stroke="#28758c"
+                  stroke-width="1"
+                  stroke-dasharray="55 18 5 18"
+                />
+                <circle
+                  cx="150"
+                  cy="150"
+                  r="129"
+                  fill="none"
+                  stroke="#224857"
+                  stroke-width="5"
+                  stroke-dasharray="1 8"
+                />
+                <circle cx="150" cy="150" r="111" fill="none" stroke="#153e50" stroke-width="10" />
+                <circle
+                  cx="150"
+                  cy="150"
+                  r="111"
+                  fill="none"
+                  stroke="#4bdedc"
+                  stroke-width="10"
+                  pathLength="100"
+                  :stroke-dasharray="closurePercent + ' 100'"
+                  transform="rotate(-90 150 150)"
+                  stroke-linecap="butt"
+                />
+                <circle
+                  cx="150"
+                  cy="150"
+                  r="91"
+                  fill="#092437"
+                  fill-opacity=".85"
+                  stroke="#28647a"
+                />
+                <path
+                  d="M 143 48 h 14 M 143 252 h 14 M 48 143 v 14 M 252 143 v 14"
+                  stroke="#93eff4"
+                  stroke-width="2"
+                />
+              </svg>
+              <div class="gauge-label">
+                <span>有效问题闭环率</span
+                ><strong
+                  >{{ data.summary.valid ? closurePercent.toFixed(1) : '—'
+                  }}<small v-if="data.summary.valid">%</small></strong
+                ><em>CLOSED LOOP</em>
               </div>
-              <span class="muted">待处理数量前12</span>
             </div>
-            <div v-if="data.stations.length" class="station-list">
-              <button
-                v-for="(row, index) in data.stations"
-                :key="row.station_id"
-                @click="
-                  showDetails(`${row.station_name} · 待处理`, {
-                    station_id: row.station_id,
-                    open: '1',
-                  })
-                "
-              >
-                <span class="rank">{{ index + 1 }}</span
-                ><span
-                  ><strong>{{ row.station_name }}</strong
-                  ><small>{{ row.region }} · 最长账龄{{ row.oldest }}天</small></span
-                ><b>{{ row.count }}<small>项 ›</small></b>
-              </button>
-            </div>
-            <p v-else class="empty">暂无待跟进站点</p>
-          </article>
-        </section>
-        <section class="card-surface chart-card">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">REGIONAL FOLLOW-UP</span>
-              <h3>片区闭环进度</h3>
+            <div class="core-readout right-readout">
+              <span>待处理</span><strong>{{ data.summary.open }}</strong
+              ><small>项待继续流转</small>
             </div>
           </div>
-          <RegionTable :rows="data.units" @open="openRegion" />
-        </section>
-      </template>
-
-      <template v-else>
-        <section class="two-columns insights-columns">
-          <article class="card-surface chart-card">
-            <div class="section-head">
+          <div class="flow-controls">
+            <button
+              v-for="(phase, index) in openPhases"
+              :key="phase"
+              @click="showDetails(phase, { phase })"
+            >
+              <small>0{{ index + 1 }}</small
+              ><span>{{ phase }}</span
+              ><strong>{{ phaseCount(phase) }}</strong>
+            </button>
+          </div>
+          <div class="core-meta">
+            <button @click="showDetails('站级无法整改', { phase: '站级无法整改' })">
+              站级无法整改 <b>{{ data.summary.unable }}</b></button
+            ><button @click="showDetails('已销毁', { phase: '已销毁' })">
+              已销毁 <b>{{ data.summary.destroyed }}</b></button
+            ><span>当前状态分布，非流量漏斗</span>
+          </div>
+          <div class="region-head">
+            <h3>片区运行矩阵</h3>
+            <span>有效问题 / 闭环率</span>
+          </div>
+          <div v-if="data.units.length" class="region-matrix">
+            <button v-for="row in data.units" :key="row.region" @click="openRegion(row.region)">
+              <span :title="row.region">{{ row.region }}</span>
               <div>
-                <span class="eyebrow">BUSINESS MIX</span>
-                <h3>检查表问题构成</h3>
+                <strong>{{ row.valid }}<small> 项</small></strong
+                ><em>{{ row.valid ? percent(row.closed, row.valid) + '%' : '—' }}</em>
               </div>
+              <div class="matrix-track">
+                <i :style="{ width: percent(row.closed, row.valid) + '%' }"></i>
+              </div>
+            </button>
+          </div>
+          <p v-else class="empty-state">暂无片区问题数据</p>
+        </article>
+
+        <div class="wing right-wing">
+          <article class="instrument mix-instrument">
+            <div class="instrument-title">
+              <h2>检查表问题构成</h2>
+              <span>BUSINESS MIX</span>
             </div>
-            <div v-if="data.tables.length" class="table-bars">
+            <div v-if="data.tables.length" class="table-signals panel-scroll">
               <button
                 v-for="row in data.tables"
                 :key="row.inspection_table_id"
                 @click="
-                  showDetails(`${row.table_name}（${row.mode}）`, {
+                  showDetails(row.table_name + '（' + row.mode + '）', {
                     table_id: row.inspection_table_id,
                     valid: '1',
                   })
                 "
               >
                 <div>
-                  <strong
-                    >{{ row.table_name }}<small>（{{ row.mode }}）</small></strong
-                  ><b>{{ row.count }} 项</b>
+                  <span
+                    >{{ row.table_name }}<small> / {{ row.mode }}</small></span
+                  ><b>{{ row.count }}</b>
                 </div>
-                <div class="bar-track">
-                  <i :style="{ width: barWidth(row.count, data.tables, 'count') }"></i>
+                <div class="signal-track">
+                  <i :style="{ width: barWidth(row.count, data.tables) }"></i>
                 </div>
                 <small
-                  >涉及{{ row.stations }}座站 · 占有效问题{{
-                    percent(row.count, data.summary.valid)
-                  }}%</small
+                  >{{ row.stations }}座站 · 占比{{ percent(row.count, data.summary.valid) }}%</small
                 >
               </button>
             </div>
-            <p v-else class="empty">暂无已审核有效问题</p>
+            <p v-else class="empty-state">暂无有效问题</p>
           </article>
-          <article class="card-surface chart-card">
-            <div class="section-head">
-              <div>
-                <span class="eyebrow">RECURRING FINDINGS</span>
-                <h3>高频规范 TOP 15</h3>
-              </div>
-              <span class="muted">按规范引用次数，不调用AI</span>
+          <article class="instrument standards-instrument">
+            <div class="instrument-title">
+              <h2>高频规范排行</h2>
+              <span>TOP 15</span>
             </div>
-            <div v-if="data.standards.length" class="standards-list">
+            <div v-if="data.standards.length" class="standards-list panel-scroll">
               <button
                 v-for="(row, index) in data.standards"
                 :key="row.standard_key"
                 @click="
-                  showDetails(`规范 ${row.standard_key}`, {
+                  showDetails('规范 ' + row.standard_key, {
                     standard_key: row.standard_key,
                     valid: '1',
                   })
                 "
               >
-                <span class="rank">{{ index + 1 }}</span
+                <span class="rank" :class="{ lead: index < 3 }">{{
+                  String(index + 1).padStart(2, '0')
+                }}</span
                 ><span class="standard-copy"
                   ><strong>{{ row.standard_key }}</strong
-                  ><span>{{ row.detail || '暂无规范描述' }}</span
+                  ><span :title="row.detail">{{ row.detail || '暂无规范描述' }}</span
                   ><small>涉及{{ row.stations }}座站</small></span
                 ><b>{{ row.count }}<small>次 ›</small></b>
               </button>
             </div>
-            <p v-else class="empty">暂无规范引用数据</p>
+            <p v-else class="empty-state">暂无规范引用</p>
           </article>
-        </section>
-        <section class="card-surface chart-card">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">REGIONAL COMPARISON</span>
-              <h3>片区问题对比</h3>
-            </div>
-            <span class="muted">不同检查覆盖下不作绩效排名</span>
+        </div>
+      </section>
+
+      <section class="action-deck">
+        <article class="instrument regional-detail">
+          <div class="instrument-title">
+            <h2>片区协同明细</h2>
+            <span>REGIONAL PERFORMANCE · 非绩效排名</span>
           </div>
           <RegionTable :rows="data.units" @open="openRegion" />
-        </section>
-      </template>
-      <details class="card-surface methodology">
-        <summary>指标口径与数据说明</summary>
+        </article>
+        <article class="instrument station-instrument">
+          <div class="instrument-title">
+            <h2>优先跟进站点</h2>
+            <span>待处理数量 TOP 12</span>
+          </div>
+          <div v-if="data.stations.length" class="station-list panel-scroll">
+            <button
+              v-for="(row, index) in data.stations"
+              :key="row.station_id"
+              @click="
+                showDetails(row.station_name + ' · 待处理', {
+                  station_id: row.station_id,
+                  open: '1',
+                })
+              "
+            >
+              <span class="rank">{{ String(index + 1).padStart(2, '0') }}</span
+              ><span
+                ><strong>{{ row.station_name }}</strong
+                ><small>{{ row.region }} · 最长账龄{{ row.oldest }}天</small></span
+              ><b>{{ row.count }}<small>项 ›</small></b>
+            </button>
+          </div>
+          <p v-else class="empty-state">暂无待跟进站点</p>
+        </article>
+      </section>
+      <details class="methodology">
+        <summary>统计口径与数据说明 <span>DATA DEFINITIONS</span></summary>
         <p>
-          问题按登记日期筛选，展示查询时的最新状态。有效问题仅含审核通过且未销毁的问题；待审核、审核否决及申诉通过销毁的问题不计入有效问题。闭环率
-          = 已闭环有效问题 ÷ 全部有效问题，“站级无法整改”单列，不计入闭环。
+          问题按登记日期筛选，展示查询时的最新状态，不是历史时点快照。有效问题仅含审核通过且未销毁的问题；闭环率
+          = 已闭环有效问题 ÷
+          全部有效问题。待处理含待验收、待整改、待复核、申诉中；站级无法整改独立统计，不计入闭环。
         </p>
         <p>
-          巡检触达按巡检日期统计底层“站点 ×
-          检查表”记录，站点去重，包含未发现问题的巡检；列表按月合并展示的数量可能不同。巡检与问题分别沿用各自的数据权限，不能直接相除计算发现率。有问题站均只用于片区内问题密度观察，不代表全部受检站点平均。
+          巡检触达按巡检日期对站点去重，含零问题站点；底层巡检记录按站点与检查表计数。问题、亮点、巡检分别沿用原业务数据范围。有问题站均只统计有问题站点，不是全部受检站点平均。账龄按登记日至今天的自然日计算，不等同于流程超时，不作为考核结论。
         </p>
         <p>
-          趋势中的有效问题、闭环状态会随后续审核和整改变化，不是历史时点快照。默认当月，单次最多366天；账龄不扣除节假日，不作为超时考核依据。数据不涉及证照、站点评分，也不调用AI。
+          单次分析最多366天；数据只在打开页面或点击开始分析时读取，不自动轮询。图形装饰不代表额外业务指标。未使用证照、站点评分数据，不调用AI。
         </p>
       </details>
     </main>
-
     <dialog
       ref="detailDialog"
-      class="detail-dialog"
+      class="cockpit-dialog"
       aria-labelledby="operations-detail-title"
       @click="closeOnBackdrop"
       @close="closeDetails"
     >
       <div class="operations-dialog-head">
         <div>
-          <span class="eyebrow">问题明细</span>
+          <span class="eyebrow">关联问题 / EVIDENCE</span>
           <h3 id="operations-detail-title">{{ detailTitle }}</h3>
           <p>{{ applied.date_from }} 至 {{ applied.date_to }} · 共{{ detail.total }}项</p>
         </div>
-        <button class="btn btn-secondary" aria-label="关闭问题明细" @click="detailDialog.close()">
+        <button class="console-button" aria-label="关闭问题明细" @click="detailDialog.close()">
           关闭
         </button>
       </div>
       <div class="dialog-body" :aria-busy="detailLoading">
-        <p v-if="detailLoading" class="empty" role="status">正在加载当前页…</p>
+        <p v-if="detailLoading" class="empty-state" role="status">正在加载当前页…</p>
         <p v-else-if="detailError" class="error" role="alert">
           {{ detailError }}
-          <button class="btn btn-secondary" @click="loadDetails(detail.page)">重试</button>
+          <button class="console-button" @click="loadDetails(detail.page)">重试</button>
         </p>
         <div v-else-if="detail.rows.length" class="detail-items">
           <article v-for="row in detail.rows" :key="row.id">
             <header>
               <strong>#{{ row.id }} · {{ row.station_name }}</strong
-              ><span class="phase-pill">{{ row.phase }}</span>
+              ><span>{{ row.phase }}</span>
             </header>
             <small
               >{{ row.region }} · {{ row.table_name }}（{{ row.mode }}） ·
@@ -379,7 +423,7 @@
             <p>{{ row.description }}</p>
           </article>
         </div>
-        <p v-else class="empty">没有符合条件的问题</p>
+        <p v-else class="empty-state">没有符合条件的问题</p>
       </div>
       <footer class="dialog-footer">
         <span
@@ -387,13 +431,13 @@
         >
         <div>
           <button
-            class="btn btn-secondary"
+            class="console-button"
             :disabled="detailLoading || detail.page <= 1"
             @click="loadDetails(detail.page - 1)"
           >
             上一页</button
           ><button
-            class="btn btn-primary"
+            class="console-button primary"
             :disabled="detailLoading || detail.page * 20 >= detail.total"
             @click="loadDetails(detail.page + 1)"
           >
@@ -406,17 +450,46 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { operationsPages } from '../../config/operationsCatalog'
 import RegionTable from './RegionTable.vue'
 
-const props = defineProps({ mode: { type: String, required: true } })
-const page = computed(
-  () => operationsPages.find((item) => item.key === props.mode) || operationsPages[0],
-)
+const cockpit = ref(null),
+  expanded = ref(false)
+let nativeScreen = false
+async function toggleScreen() {
+  if (expanded.value) {
+    if (document.fullscreenElement === cockpit.value) await document.exitFullscreen()
+    expanded.value = false
+    nativeScreen = false
+    return
+  }
+  expanded.value = true
+  if (cockpit.value?.requestFullscreen) {
+    try {
+      await cockpit.value.requestFullscreen()
+      nativeScreen = true
+    } catch {
+      nativeScreen = false
+    }
+  }
+}
+function syncScreen() {
+  if (nativeScreen && document.fullscreenElement !== cockpit.value) {
+    expanded.value = false
+    nativeScreen = false
+  }
+}
+function escapeScreen(event) {
+  if (event.key === 'Escape' && !document.fullscreenElement && !detailDialog.value?.open)
+    expanded.value = false
+}
 const localDate = (date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  String(date.getFullYear()) +
+  '-' +
+  String(date.getMonth() + 1).padStart(2, '0') +
+  '-' +
+  String(date.getDate()).padStart(2, '0')
 const defaults = () => {
   const now = new Date()
   return {
@@ -433,114 +506,63 @@ const loading = ref(false),
   error = ref('')
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(applied.value))
 const openPhases = ['待验收', '待整改', '待复核', '申诉中']
-const phaseOrder = ['待审核', ...openPhases, '已闭环', '站级无法整改', '已销毁', '其他状态']
-const orderedPhases = computed(() =>
-  [...(data.value?.phases || [])].sort(
-    (a, b) => phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase),
-  ),
-)
 const percent = (value, total) => (total ? ((value / total) * 100).toFixed(1) : '0.0')
 const phaseCount = (phase) => data.value?.phases.find((row) => row.phase === phase)?.count || 0
-const phaseColor = (phase) =>
-  ({
-    已闭环: '#138a79',
-    已销毁: '#94a3b8',
-    待审核: '#a88b50',
-    待复核: '#3588bc',
-    申诉中: '#c77931',
-  })[phase] || '#617aa6'
-const barWidth = (value, rows, key) =>
-  `${(value / Math.max(1, ...rows.map((row) => Number(row[key])))) * 100}%`
+const barWidth = (value, rows) =>
+  String((value / Math.max(1, ...rows.map((row) => Number(row.count)))) * 100) + '%'
 const formatTime = (value) => new Date(value).toLocaleString('zh-CN', { hour12: false })
+const closurePercent = computed(() =>
+  data.value?.summary.valid ? (data.value.summary.closed / data.value.summary.valid) * 100 : 0,
+)
+const closureLabel = computed(() =>
+  data.value?.summary.valid ? closurePercent.value.toFixed(1) + '%' : '暂无有效问题',
+)
 const metrics = computed(() => {
   if (!data.value) return []
   const s = data.value.summary,
     r = data.value.records
-  const closed = {
-    label: '有效问题闭环率',
-    value: s.valid ? percent(s.closed, s.valid) : '—',
-    unit: s.valid ? '%' : '',
-    hint: `已闭环${s.closed}项 / 有效问题${s.valid}项`,
-    tone: 'teal',
-  }
-  if (props.mode === 'overview')
-    return [
-      {
-        label: '巡检触达站点',
-        value: r ? r.stations : '—',
-        unit: '座',
-        hint: r ? `底层巡检记录${r.records}条 · 含零问题站点` : '无巡检记录查看权限',
-        tone: 'blue',
-      },
-      {
-        label: '已审核有效问题',
-        value: s.valid,
-        unit: '项',
-        hint: `涉及${s.stations}座站点 · 不含待审核及销毁`,
-        tone: 'blue',
-      },
-      closed,
-      {
-        label: '待处理事项',
-        value: s.open,
-        unit: '项',
-        hint: `验收 / 整改 / 复核 / 申诉 · 30天以上${s.aged}项`,
-        tone: 'amber',
-      },
-    ]
-  if (props.mode === 'rectification')
-    return [
-      {
-        label: '待处理事项',
-        value: s.open,
-        unit: '项',
-        hint: '所选期间登记，当前仍需继续处理',
-        tone: 'blue',
-      },
-      {
-        label: '账龄30天及以上',
-        value: s.aged,
-        unit: '项',
-        hint: '自登记日起，不代表流程逾期',
-        tone: 'amber',
-      },
-      closed,
-      {
-        label: '站级无法整改',
-        value: s.unable,
-        unit: '项',
-        hint: '经复核确认，独立统计，不计入闭环',
-        tone: 'slate',
-      },
-    ]
   return [
+    {
+      label: '巡检触达站点',
+      value: r ? r.stations : '—',
+      unit: '座',
+      hint: r ? '底层巡检记录 ' + r.records + ' 条' : '无巡检记录查看权限',
+      tone: 'cyan',
+    },
     {
       label: '已审核有效问题',
       value: s.valid,
       unit: '项',
-      hint: '仅审核通过且未销毁',
-      tone: 'blue',
+      hint: '涉及 ' + s.stations + ' 座站点',
+      tone: 'cyan',
     },
     {
-      label: '涉及检查表',
-      value: data.value.tables.length,
-      unit: '张',
-      hint: '仅统计存在有效问题的检查表',
-      tone: 'teal',
-    },
-    {
-      label: '有问题站点',
-      value: s.stations,
-      unit: '座',
-      hint: '按站点去重，不等于受检站点数',
-      tone: 'slate',
-    },
-    {
-      label: '首位规范占比',
-      value: percent(data.value.standards[0]?.count || 0, s.valid),
-      unit: '%',
-      hint: s.valid ? `首位规范：${data.value.standards[0]?.standard_key}` : '暂无有效问题',
+      label: '待处理事项',
+      value: s.open,
+      unit: '项',
+      hint: '验收 / 整改 / 复核 / 申诉',
       tone: 'amber',
+    },
+    {
+      label: '账龄30天及以上',
+      value: s.aged,
+      unit: '项',
+      hint: '自然日账龄 · 非超时认定',
+      tone: 'amber',
+    },
+    {
+      label: '确认亮点',
+      value: data.value.highlights,
+      unit: '项',
+      hint: '所选期间已审核通过',
+      tone: 'mint',
+    },
+    {
+      label: '站级无法整改',
+      value: s.unable,
+      unit: '项',
+      hint: '经复核确认 · 不计入闭环',
+      tone: 'slate',
     },
   ]
 })
@@ -548,8 +570,8 @@ const trend = computed(() => {
   if (!data.value?.trend?.length) return []
   const byDay = new Map(data.value.trend.map((row) => [row.day, row]))
   const rows = [],
-    day = new Date(`${applied.value.date_from}T12:00:00`),
-    end = new Date(`${applied.value.date_to}T12:00:00`)
+    day = new Date(applied.value.date_from + 'T12:00:00'),
+    end = new Date(applied.value.date_to + 'T12:00:00')
   while (day <= end) {
     const key = localDate(day)
     rows.push(byDay.get(key) || { day: key, valid: 0, registered: 0 })
@@ -559,14 +581,15 @@ const trend = computed(() => {
 })
 const trendMax = computed(() => Math.max(3, ...trend.value.map((row) => row.valid)))
 const trendX = (index) =>
-  trend.value.length === 1 ? 370 : 40 + (index / Math.max(1, trend.value.length - 1)) * 660
+  trend.value.length === 1 ? 220 : 32 + (index / Math.max(1, trend.value.length - 1)) * 375
+const trendY = (value) => 150 - (value / trendMax.value) * 120
 const trendPath = computed(() =>
   trend.value
-    .map(
-      (row, index) =>
-        `${index ? 'L' : 'M'} ${trendX(index)} ${190 - (row.valid / trendMax.value) * 150}`,
-    )
+    .map((row, index) => (index ? 'L' : 'M') + ' ' + trendX(index) + ' ' + trendY(row.valid))
     .join(' '),
+)
+const trendArea = computed(
+  () => trendPath.value + ' L ' + trendX(trend.value.length - 1) + ' 150 L ' + trendX(0) + ' 150 Z',
 )
 let requestController, detailController
 async function load() {
@@ -578,7 +601,7 @@ async function load() {
   detailDialog.value?.close()
   const filters = { ...draft.value }
   try {
-    const response = await axios.get(`/api/operations/${props.mode}`, {
+    const response = await axios.get('/api/operations/overview', {
       params: filters,
       signal: controller.signal,
     })
@@ -588,7 +611,7 @@ async function load() {
     regionOptions.value = response.data.regions
   } catch (err) {
     if (!axios.isCancel(err)) {
-      error.value = err.response?.data?.error || '看板加载失败，请重试。'
+      error.value = err.response?.data?.error || '驾驶舱数据加载失败，请重试。'
       data.value = null
     }
   } finally {
@@ -612,7 +635,7 @@ function showDetails(title, filters) {
   loadDetails(1)
 }
 function openRegion(region) {
-  showDetails(`${region} · 有效问题`, { region, valid: '1' })
+  showDetails(region + ' · 有效问题', { region, valid: '1' })
 }
 function closeOnBackdrop(event) {
   if (event.target === detailDialog.value) detailDialog.value.close()
@@ -627,7 +650,7 @@ async function loadDetails(pageNumber) {
   detailLoading.value = true
   detailError.value = ''
   try {
-    const response = await axios.get(`/api/operations/${props.mode}/issues`, {
+    const response = await axios.get('/api/operations/overview/issues', {
       params: { ...applied.value, ...detailFilters, page: pageNumber },
       signal: controller.signal,
     })
@@ -638,687 +661,1451 @@ async function loadDetails(pageNumber) {
     if (detailController === controller) detailLoading.value = false
   }
 }
-watch(
-  () => props.mode,
-  () => {
-    data.value = null
-    regionOptions.value = []
-    draft.value = defaults()
-    load()
-  },
-  { immediate: true },
-)
+onMounted(() => {
+  load()
+  document.addEventListener('fullscreenchange', syncScreen)
+  document.addEventListener('keydown', escapeScreen)
+})
 onBeforeUnmount(() => {
   requestController?.abort()
   detailController?.abort()
   detailDialog.value?.close()
+  document.removeEventListener('fullscreenchange', syncScreen)
+  document.removeEventListener('keydown', escapeScreen)
+  if (document.fullscreenElement === cockpit.value) document.exitFullscreen().catch(() => {})
 })
 </script>
 
 <style scoped>
-.operations-page {
-  --ink: #18314e;
-  --muted: #64758b;
-  --line: #dce6ef;
-  --accent: #137da6;
-  color: var(--ink);
-  display: grid;
-  gap: 18px;
-  min-width: 0;
-}
-.card-surface {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  box-shadow: 0 7px 24px #17375206;
-}
-.dashboard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 25px 28px;
-  background: radial-gradient(ellipse at 100% 0, #e7f4f8, transparent 55%), #fff;
-}
-.page-kicker,
-.eyebrow {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 1.6px;
-  color: #3883a0;
-}
-.dashboard-header h2 {
-  font-size: 26px;
-  margin: 7px 0 8px;
-}
-.dashboard-header p,
-.muted {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.7;
-  margin: 0;
-}
-.live-tag {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  white-space: nowrap;
-  font-size: 12px;
-  color: #19786f;
-  padding: 10px 14px;
-  border: 1px solid #c9e7df;
-  border-radius: 30px;
-  background: #f0faf7;
-}
-.live-tag i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #1c9b88;
-}
-.dashboard-filters {
-  padding: 20px;
-  display: flex;
-  align-items: end;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.filter-label {
-  display: grid;
-  gap: 7px;
-  margin-right: auto;
-  align-self: center;
-}
-.filter-label span {
-  font-size: 11px;
-  color: var(--muted);
-}
-.dashboard-filters label {
-  display: grid;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.dashboard-filters input,
-.dashboard-filters select {
-  height: 40px;
-  padding: 8px 10px;
-  border: 1px solid #cbd8e4;
-  border-radius: 8px;
-  background: #fff;
-  color: var(--ink);
-  font: inherit;
-  min-width: 145px;
-}
-.date-separator {
-  align-self: end;
-  padding-bottom: 12px;
-  color: var(--muted);
-}
-.filter-buttons {
-  display: flex;
-  gap: 8px;
-}
-.dirty {
-  flex-basis: 100%;
-  color: #986122;
-  background: #fff8eb;
-  padding: 9px 12px;
-  margin: 0;
-  border-radius: 8px;
-  font-size: 12px;
-}
-.snapshot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.dashboard-content {
-  display: grid;
-  gap: 18px;
-}
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 15px;
-}
-.metric {
-  padding: 22px;
+.operations-cockpit {
+  --c-bg: #061421;
+  --c-panel: #0b2031;
+  --c-line: #234759;
+  --c-text: #d7ebf5;
+  --c-muted: #8cabbf;
+  --c-cyan: #50e3f2;
+  --c-amber: #f4bb68;
+  color: var(--c-text);
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
   position: relative;
-  overflow: hidden;
-  border-top: 3px solid #197daa;
-}
-.metric.teal {
-  border-top-color: #138a79;
-}
-.metric.amber {
-  border-top-color: #c77931;
-}
-.metric.slate {
-  border-top-color: #8190a8;
-}
-.metric-label {
-  font-size: 13px;
-  color: #516782;
-  font-weight: 600;
-}
-.metric-value {
-  font-size: 38px;
-  font-weight: 750;
-  letter-spacing: -1px;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
-}
-.metric-value small {
-  font-size: 13px;
-  font-weight: 400;
-  letter-spacing: 0;
-  margin-left: 7px;
-  color: var(--muted);
-}
-.metric p {
-  font-size: 11px;
-  color: var(--muted);
-  margin: 4px 0 0;
-  line-height: 1.7;
-}
-.two-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
-}
-.chart-card {
-  padding: 24px;
   min-width: 0;
+  padding: 22px;
+  border: 1px solid #1e4156;
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse at 50% 20%, #0d344745, transparent 60%),
+    linear-gradient(#16354728 1px, transparent 1px),
+    linear-gradient(90deg, #16354728 1px, transparent 1px), var(--c-bg);
+  background-size:
+    auto,
+    40px 40px,
+    40px 40px,
+    auto;
+  isolation: isolate;
 }
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
+.operations-cockpit.screen-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  border-radius: 0;
+  overflow: auto;
+  padding: 22px 28px;
 }
-.section-head h3 {
-  font-size: 18px;
-  margin: 6px 0 0;
-}
-.legend {
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.legend i {
-  width: 14px;
-  height: 3px;
-  background: var(--accent);
-}
-.trend-scroll {
-  margin-top: 20px;
-}
-.trend-scroll svg {
+.operations-cockpit:fullscreen {
   width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+.cockpit-header {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 19px;
+  min-height: 76px;
+}
+.brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: #bbdae9;
+}
+.brand-mark small {
   display: block;
+  font-size: 9px;
+  letter-spacing: 1.8px;
+  margin-top: 7px;
+  color: #648da5;
 }
-.svg-label {
+.brand-glyph {
+  font-size: 38px;
+  color: var(--c-cyan);
+  text-shadow: 0 0 20px #29a4bc;
+}
+.cockpit-title {
+  text-align: center;
+  position: relative;
+  padding: 0 12px 14px;
+}
+.cockpit-title p {
+  color: #81abbe;
   font-size: 11px;
-  fill: #74859a;
+  letter-spacing: 8px;
+  margin: 0 0 8px;
 }
-.mini-stats {
-  display: flex;
-  flex-wrap: wrap;
+.cockpit-title h1 {
+  font-size: clamp(23px, 2.2vw, 38px);
+  font-weight: 600;
+  letter-spacing: 6px;
+  margin: 0;
+  color: #e3faff;
+  text-shadow: 0 0 24px #59cfe048;
+}
+.title-beam {
+  position: absolute;
+  bottom: 0;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #48cbdf, transparent);
+}
+.title-beam:before,
+.title-beam:after {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 5px;
+  background: #4dd9ea;
+  top: -1px;
+  transform: skewX(-35deg);
+}
+.title-beam:before {
+  left: 10%;
+}
+.title-beam:after {
+  right: 10%;
+}
+.header-actions {
+  display: grid;
   gap: 12px;
-  justify-content: space-between;
-  border-top: 1px solid var(--line);
-  padding-top: 15px;
+  justify-items: end;
+}
+.data-status {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--c-muted);
+}
+.data-status i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: #58e8c9;
+  margin-right: 6px;
+  box-shadow: 0 0 8px #58e8c9;
+}
+.screen-button,
+.console-button {
+  font: inherit;
   font-size: 12px;
-  color: var(--muted);
-}
-.mini-stats b {
-  font-size: 17px;
-  color: var(--ink);
-  margin: 0 4px;
-}
-.phase-list {
-  display: grid;
-  gap: 3px;
-}
-.phase-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 12px 7px;
-  border: 0;
-  border-bottom: 1px solid #edf2f6;
-  background: transparent;
-  color: var(--ink);
+  border: 1px solid #326074;
+  background: #0f2e41;
+  color: #caeaf5;
+  border-radius: 3px;
+  padding: 9px 14px;
   cursor: pointer;
+  white-space: nowrap;
 }
-.phase-row > span {
+.screen-button {
+  background: linear-gradient(110deg, #17455c, #092335);
+  border-color: #347089;
+}
+.screen-button span {
+  color: var(--c-cyan);
+  margin-left: 12px;
+}
+.console-button.primary {
+  background: #14617d;
+  border-color: #4dc3dd;
+  color: #effcff;
+}
+.console-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #aaf5ff;
+  outline-offset: 3px;
+}
+button:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+.command-bar {
+  border-block: 1px solid #234757;
+  background: #0c2433c9;
+  padding: 11px 14px;
   display: flex;
-  gap: 9px;
   align-items: center;
-}
-.phase-row i {
-  height: 8px;
-  width: 8px;
-  border-radius: 50%;
-}
-.phase-row b {
-  font-size: 20px;
-}
-.phase-row small,
-.station-list b small,
-.standards-list b small {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--muted);
-  margin-left: 7px;
-}
-.phase-row:hover,
-.station-list button:hover,
-.standards-list button:hover {
-  background: #f1f7fb;
-}
-.pipeline {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-.pipeline button {
-  display: grid;
-  text-align: left;
   gap: 10px;
-  padding: 20px;
-  border: 1px solid #d5e6ef;
-  border-radius: 12px;
-  background: linear-gradient(130deg, #f3f9fc, #fff);
-  color: var(--ink);
-  cursor: pointer;
+  flex-wrap: wrap;
 }
-.pipeline button:hover {
-  border-color: #248cae;
-}
-.pipeline .step {
+.command-label {
   font-size: 12px;
   letter-spacing: 2px;
-  color: #6c97af;
+  margin-right: 10px;
+  display: grid;
+  gap: 4px;
 }
-.pipeline b {
-  font-size: 30px;
+.command-label small {
+  font-size: 8px;
+  color: #6f98ad;
+  letter-spacing: 1px;
 }
-.pipeline b small {
+.command-bar input,
+.command-bar select {
+  color-scheme: dark;
+  background: #091c2a;
+  color: #c9e6f3;
+  border: 1px solid #315366;
+  border-radius: 3px;
+  height: 34px;
+  padding: 5px 8px;
+  font: inherit;
   font-size: 12px;
-  font-weight: 400;
-  margin-left: 7px;
+  max-width: 100%;
 }
-.pipeline button > span:last-child {
+.command-bar select {
+  min-width: 150px;
+}
+.command-bar label {
+  min-width: 0;
+}
+.range-dash {
   font-size: 11px;
-  color: var(--muted);
+  color: #7491a2;
 }
-.bars {
-  display: grid;
-  gap: 24px;
-  margin: 28px 0;
+.snapshot-time {
+  margin-left: auto;
+  color: #7fa4b7;
+  font-size: 10px;
 }
-.bar-row {
-  display: grid;
-  grid-template-columns: 95px minmax(0, 1fr) 35px;
+.cockpit-notice {
+  border-left: 2px solid var(--c-amber);
+  padding: 10px 15px;
+  background: #65441b33;
+  font-size: 12px;
+  color: #f4cb8a;
+}
+.error {
+  color: #ffb3a3;
+}
+.cockpit-loading {
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  justify-content: center;
+  color: var(--c-cyan);
 }
-.bar-track {
-  height: 9px;
-  border-radius: 5px;
-  background: #edf3f7;
-  overflow: hidden;
+.cockpit-loading > span {
+  font-size: 12px;
+  color: var(--c-muted);
 }
-.bar-track i {
-  height: 100%;
-  display: block;
-  background: #268cb1;
-  border-radius: 5px;
+.loading-orbit {
+  width: 60px;
+  height: 60px;
+  border: 1px solid #245970;
+  border-top: 2px solid #65eaf5;
+  border-radius: 50%;
+  animation: orbit 1.8s linear infinite;
 }
-.station-list,
-.standards-list {
+.cockpit-main {
   display: grid;
-  gap: 2px;
+  gap: 14px;
 }
-.station-list button,
-.standards-list button {
-  width: 100%;
+.scope-line {
+  font-size: 10px;
+  color: #8cb0c4;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 13px;
+}
+.scope-line b {
+  margin: 0 10px;
+  color: #427085;
+}
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border: 1px solid #285168;
+  background: linear-gradient(180deg, #103046aa, #09233399);
+}
+.kpi {
+  position: relative;
+  padding: 17px 18px 13px;
+  border-right: 1px solid #285168;
+  min-width: 0;
+}
+.kpi:last-child {
+  border-right: 0;
+}
+.kpi-index {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  color: #55798c;
+  font:
+    10px 'Consolas',
+    monospace;
+}
+.kpi-label {
+  color: #a3c3d4;
+  font-size: 12px;
+  padding-right: 15px;
+}
+.kpi-value {
+  font-family: 'Bahnschrift', 'DIN Alternate', 'Consolas', sans-serif;
+  font-size: clamp(27px, 2.6vw, 43px);
+  font-variant-numeric: tabular-nums;
+  color: #68e7f1;
+  margin-top: 8px;
+  line-height: 1.15;
+  letter-spacing: 1px;
+  text-shadow: 0 0 20px #46d3dd33;
+}
+.kpi-value small {
+  font-family: 'Microsoft YaHei', sans-serif;
+  font-size: 11px;
+  color: #8fb5c8;
+  margin-left: 6px;
+}
+.kpi.amber .kpi-value {
+  color: #f4c27d;
+  text-shadow: 0 0 20px #deaa4c30;
+}
+.kpi.mint .kpi-value {
+  color: #6aedc7;
+}
+.kpi.slate .kpi-value {
+  color: #b7c9eb;
+}
+.kpi p {
+  font-size: 9px;
+  line-height: 1.6;
+  color: #8ba9bb;
+  margin: 9px 0;
+}
+.kpi-rule {
+  height: 2px;
+  width: 28px;
+  background: #4aafc0;
+  box-shadow:
+    8px 0 0 #286075,
+    16px 0 0 #133c51;
+}
+.command-grid {
+  display: grid;
+  grid-template-columns: minmax(235px, 1fr) minmax(390px, 1.55fr) minmax(240px, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.wing {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 14px;
+  min-width: 0;
+}
+.instrument {
+  position: relative;
+  border: 1px solid #285168;
+  background: linear-gradient(120deg, #0b2335eb, #081b2bea);
+  min-width: 0;
+  padding: 16px;
+  box-shadow: inset 0 0 30px #0a233933;
+}
+.instrument:before,
+.instrument:after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.instrument:before {
+  left: -1px;
+  top: -1px;
+  border-left: 2px solid #58c5d8;
+  border-top: 2px solid #58c5d8;
+}
+.instrument:after {
+  right: -1px;
+  bottom: -1px;
+  border-right: 2px solid #326c83;
+  border-bottom: 2px solid #326c83;
+}
+.instrument-title {
   display: flex;
   align-items: center;
-  gap: 12px;
-  text-align: left;
-  padding: 12px 4px;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #26465a;
+  padding-bottom: 11px;
+  margin-bottom: 12px;
+}
+.instrument-title h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  color: #d5edf7;
+  position: relative;
+  padding-left: 10px;
+}
+.instrument-title h2:before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  width: 3px;
+  height: 12px;
+  background: #4bcedd;
+}
+.instrument-title > span {
+  font-size: 8px;
+  letter-spacing: 1.1px;
+  color: #749bad;
+  text-align: right;
+}
+.panel-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #85acbf;
+}
+.panel-caption strong {
+  font-size: 18px;
+  color: #62ddee;
+  font-family: 'Consolas', monospace;
+}
+.panel-caption small {
+  font-size: 10px;
+  font-weight: 400;
+}
+.trend-chart {
+  display: block;
+  width: 100%;
+  height: 170px;
+}
+.trend-chart text {
+  font-size: 10px;
+  fill: #88aabd;
+}
+.signal-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  border-top: 1px solid #203d50;
+  padding-top: 10px;
+  color: #8cafc2;
+}
+.signal-footer button {
   border: 0;
-  border-bottom: 1px solid #edf2f6;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.signal-footer b {
+  font-family: 'Consolas', monospace;
+  font-size: 16px;
+  color: #c9edf5;
+  margin-left: 6px;
+}
+.age-alert {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 9px 12px;
+  background: linear-gradient(90deg, #8a622324, transparent);
+  border-left: 2px solid #c69b57;
+}
+.age-alert > span {
+  font-size: 11px;
+  color: #e4be81;
+}
+.age-alert strong {
+  font-family: 'Consolas', monospace;
+  font-size: 25px;
+  font-weight: 400;
+  color: #f9cb83;
+}
+.age-alert small {
+  font-size: 10px;
+  margin-left: 5px;
+}
+.age-alert i {
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  transform: rotate(45deg);
+  background: #e5bb78;
+  box-shadow: 0 0 12px #e5bb7850;
+}
+.age-bars {
+  display: grid;
+  gap: 17px;
+  margin: 20px 0;
+}
+.age-bars > div {
+  display: grid;
+  grid-template-columns: 78px 1fr 25px;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+}
+.age-bars b {
+  color: #c5e8f1;
+  font-family: 'Consolas', monospace;
+  text-align: right;
+}
+.segmented-track {
+  height: 7px;
+  background: #143446;
+}
+.segmented-track i {
+  display: block;
+  height: 100%;
+  background: repeating-linear-gradient(90deg, #39b9cf 0, #39b9cf 5px, #0b263b 5px, #0b263b 7px);
+}
+.segmented-track i.amber {
+  background: repeating-linear-gradient(90deg, #e8b776 0, #e8b776 5px, #0b263b 5px, #0b263b 7px);
+}
+.instrument-note {
+  font-size: 9px;
+  line-height: 1.8;
+  color: #7ca0b5;
+  margin: 12px 0 0;
+}
+.panel-scroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d6278 transparent;
+}
+.command-core {
+  background:
+    radial-gradient(ellipse at 50% 25%, #12415765, transparent 60%),
+    linear-gradient(180deg, #0b2539e8, #081b2ae8);
+  display: flex;
+  flex-direction: column;
+}
+.core-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 240px;
+}
+.core-visual:after {
+  content: '';
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  bottom: 4px;
+  height: 22px;
+  border: 1px solid #35728a55;
+  border-radius: 50%;
+  box-shadow: 0 5px 20px #16b6c719;
+  pointer-events: none;
+}
+.orbital-gauge {
+  width: clamp(210px, 20vw, 290px);
+  position: relative;
+  flex-shrink: 1;
+  min-width: 180px;
+}
+.orbital-gauge svg {
+  display: block;
+  width: 100%;
+  filter: drop-shadow(0 0 12px #44c3d323);
+}
+.orbit-slow {
+  transform-origin: 150px 150px;
+  animation: orbit 70s linear infinite;
+}
+.gauge-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+}
+.gauge-label > span {
+  font-size: 11px;
+  color: #aed1df;
+}
+.gauge-label strong {
+  font-family: 'Bahnschrift', 'DIN Alternate', 'Consolas', sans-serif;
+  font-weight: 400;
+  font-size: clamp(28px, 3.6vw, 52px);
+  color: #c8fbff;
+  margin: 7px 0;
+  letter-spacing: -1px;
+}
+.gauge-label strong small {
+  font-size: 16px;
+  letter-spacing: 0;
+}
+.gauge-label em {
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: #5ea0b6;
+}
+.core-readout {
+  display: grid;
+  gap: 6px;
+  font-size: 10px;
+  color: #8ab7cb;
+  min-width: 55px;
+}
+.core-readout strong {
+  font-family: 'Consolas', monospace;
+  font-size: 25px;
+  font-weight: 400;
+  color: #70e6d9;
+}
+.core-readout small {
+  font-size: 8px;
+  color: #739aaf;
+}
+.right-readout {
+  text-align: right;
+}
+.right-readout strong {
+  color: #f2c98a;
+}
+.flow-controls {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.flow-controls button {
+  position: relative;
+  border: 1px solid #2c6074;
+  background: linear-gradient(130deg, #15425470, #0a253455);
+  color: #b9dce9;
+  padding: 12px 5px 9px;
+  display: grid;
+  gap: 5px;
+  cursor: pointer;
+  text-align: center;
+  min-width: 0;
+}
+.flow-controls small {
+  font-size: 8px;
+  color: #497e95;
+  position: absolute;
+  top: 3px;
+  left: 4px;
+}
+.flow-controls span {
+  font-size: 11px;
+}
+.flow-controls strong {
+  font-size: 23px;
+  font-weight: 400;
+  font-family: 'Consolas', monospace;
+  color: #7ee4f1;
+}
+.core-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 11px 0;
+  font-size: 9px;
+  border-bottom: 1px solid #214357;
+  color: #86a8bd;
+}
+.core-meta button {
+  border: 0;
+  background: none;
+  color: #95bacd;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.core-meta b {
+  margin-left: 5px;
+  color: #d0e9f3;
+}
+.core-meta > span {
+  margin-left: auto;
+  color: #7296ab;
+}
+.region-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 10px;
+}
+.region-head h3 {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 2px;
+  margin: 0;
+}
+.region-head > span {
+  font-size: 9px;
+  color: #82a9bc;
+}
+.region-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 188px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d6278 transparent;
+}
+.region-matrix button {
+  padding: 9px;
+  border: 1px solid #234c60;
+  background: #0b2a3d99;
+  color: #a7ccdd;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.region-matrix button > span {
+  display: block;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.region-matrix button > div:not(.matrix-track) {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+  gap: 5px;
+}
+.region-matrix strong {
+  color: #c4eff8;
+  font-size: 18px;
+  font-weight: 400;
+  font-family: 'Consolas', monospace;
+}
+.region-matrix strong small {
+  font-size: 8px;
+  color: #7facc0;
+}
+.region-matrix em {
+  font-size: 9px;
+  font-style: normal;
+  color: #61d9bd;
+}
+.matrix-track {
+  margin-top: 7px;
+  height: 2px;
+  background: #184055;
+}
+.matrix-track i {
+  display: block;
+  height: 100%;
+  background: #54cdb7;
+}
+.table-signals {
+  max-height: 235px;
+  display: grid;
+  gap: 14px;
+  padding-right: 5px;
+}
+.table-signals button {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: #abcddb;
+}
+.table-signals button > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.table-signals button span small {
+  font-size: 9px;
+  color: #7da0b5;
+}
+.table-signals b {
+  font:
+    16px 'Consolas',
+    monospace;
+  color: #7dd7ee;
+}
+.signal-track {
+  height: 5px;
+  background: #183747;
+  margin: 7px 0 5px;
+}
+.signal-track i {
+  height: 100%;
+  display: block;
+  background: linear-gradient(90deg, #216b99, #5bd5e9);
+}
+.table-signals button > small {
+  font-size: 9px;
+  color: #7197ac;
+}
+.standards-list {
+  max-height: 235px;
+}
+.standards-list button,
+.station-list button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 1px;
+  border: 0;
+  border-bottom: 1px solid #214256;
   background: transparent;
-  color: var(--ink);
+  text-align: left;
+  color: var(--c-text);
   cursor: pointer;
 }
 .rank {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  color: #658a9f;
+  min-width: 20px;
+}
+.rank.lead {
+  color: #f0c18a;
+}
+.standard-copy {
   display: grid;
-  place-items: center;
-  background: #f0f5f9;
-  border-radius: 6px;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.standard-copy strong {
+  font-size: 12px;
+  color: #b9e9f4;
+  font-weight: 500;
+}
+.standard-copy > span {
+  font-size: 10px;
+  color: #97b6c9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.standard-copy small {
+  font-size: 9px;
+  color: #7499ae;
+}
+.standards-list b,
+.station-list b {
+  font:
+    18px 'Consolas',
+    monospace;
+  color: #70d2e7;
+  white-space: nowrap;
+}
+.standards-list b small,
+.station-list b small {
+  font:
+    9px 'Microsoft YaHei',
+    sans-serif;
+  color: #7da6bd;
+  margin-left: 4px;
+}
+.action-deck {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 14px;
+}
+.regional-detail :deep(.region-table) {
+  max-height: 240px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2d6278 transparent;
+}
+.regional-detail :deep(table) {
+  color: #b0d0e0;
   font-size: 11px;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  color: #50708c;
+}
+.regional-detail :deep(th) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #102e40;
+  color: #8cb3c8;
+  font-size: 10px;
+}
+.regional-detail :deep(td) {
+  border-color: #1d3b4d;
+  padding: 12px 13px;
+}
+.regional-detail :deep(td:first-child) {
+  color: #bfdbe7;
+  font-weight: 400;
+}
+.regional-detail :deep(.progress) {
+  background: #183d4e;
+}
+.regional-detail :deep(.progress i) {
+  background: #54cbb3;
+}
+.regional-detail :deep(small) {
+  color: #8ebdcf;
+}
+.regional-detail :deep(button) {
+  background: #15415a;
+  color: #84dcef;
+  border-radius: 2px;
+}
+.regional-detail :deep(.pending) {
+  color: #f1c28b;
+}
+.regional-detail :deep(.empty) {
+  color: #80a6b9;
+}
+.station-list {
+  max-height: 240px;
 }
 .station-list button > span:nth-child(2) {
   flex: 1;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
-.station-list small,
-.standard-copy small {
+.station-list strong {
   font-size: 11px;
-  color: var(--muted);
+  font-weight: 400;
 }
-.station-list strong,
-.standard-copy strong {
-  font-size: 13px;
-}
-.station-list b,
-.standards-list b {
-  white-space: nowrap;
-  font-size: 19px;
-}
-.insights-columns {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
-}
-.table-bars {
-  display: grid;
-  gap: 18px;
-}
-.table-bars button {
-  display: grid;
-  gap: 10px;
-  border: 0;
-  background: transparent;
-  padding: 8px 0;
-  text-align: left;
-  color: var(--ink);
-  cursor: pointer;
-}
-.table-bars button > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 13px;
-}
-.table-bars strong {
-  font-weight: 500;
-}
-.table-bars small {
-  font-size: 11px;
-  color: var(--muted);
-}
-.standard-copy {
-  display: grid;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-}
-.standard-copy > span {
-  font-size: 12px;
-  color: #526881;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
+.station-list small {
+  font-size: 9px;
+  color: #7da2b7;
 }
 .methodology {
-  padding: 18px 22px;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.85;
+  font-size: 11px;
+  color: #85a9bd;
+  line-height: 1.9;
+  border-top: 1px solid #26495d;
+  padding-top: 10px;
 }
 .methodology summary {
   cursor: pointer;
-  color: #3e5977;
-  font-weight: 700;
+  color: #99bdcd;
+  font-size: 10px;
 }
-.empty {
+.methodology summary span {
+  font-size: 8px;
+  margin-left: 10px;
+  letter-spacing: 1px;
+  color: #537f96;
+}
+.empty-state {
   text-align: center;
-  color: var(--muted);
-  padding: 35px 10px;
-  font-size: 13px;
+  padding: 25px 5px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #8ab0c3;
 }
-.error {
-  padding: 16px;
-  color: #b33f3f;
-  background: #fff3f2;
-  border-radius: 12px;
-}
-.error button {
-  margin-left: 12px;
-}
-.loading {
-  padding: 30px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 13px;
-}
-.loading-track {
-  height: 3px;
-  max-width: 220px;
-  display: block;
-  margin: 0 auto 18px;
-  background: linear-gradient(90deg, #e7f1f6, #1783ad, #e7f1f6);
-  background-size: 200%;
-  animation: loading 1.8s linear infinite;
-}
-.detail-dialog {
+.cockpit-dialog {
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  width: min(860px, 94vw);
+  width: min(850px, 94vw);
   max-height: 88dvh;
-  color: var(--ink);
-  box-shadow: 0 25px 80px #0b213644;
+  border: 1px solid #42809a;
+  border-radius: 6px;
+  background: #0b2031;
+  color: #d2e9f4;
+  box-shadow: 0 0 60px #2a8dac22;
 }
-.detail-dialog::backdrop {
-  background: #10273e80;
-  backdrop-filter: blur(3px);
+.cockpit-dialog::backdrop {
+  background: #010b17bb;
 }
 .operations-dialog-head {
+  padding: 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 15px;
-  padding: 22px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #285168;
 }
 .operations-dialog-head h3 {
-  margin: 6px 0;
-  font-size: 19px;
+  font-size: 18px;
+  margin: 7px 0;
+}
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #63c7db;
 }
 .operations-dialog-head p {
+  font-size: 11px;
+  color: #91b3c8;
   margin: 0;
-  font-size: 12px;
-  color: var(--muted);
 }
 .dialog-body {
-  overflow: auto;
+  padding: 0 20px;
   max-height: 58dvh;
-  padding: 0 22px;
+  overflow: auto;
 }
 .detail-items article {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 17px 0;
+  border-bottom: 1px solid #26495d;
 }
 .detail-items header {
   display: flex;
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+  font-size: 13px;
+}
+.detail-items header > span {
+  font-size: 10px;
+  white-space: nowrap;
+  color: #8cdae8;
+  border: 1px solid #2e6378;
+  padding: 4px 8px;
 }
 .detail-items small {
   display: block;
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 8px;
+  margin-top: 9px;
+  font-size: 10px;
+  color: #8db3c8;
 }
 .detail-items p {
-  font-size: 14px;
-  line-height: 1.8;
-  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.9;
   overflow-wrap: anywhere;
-}
-.phase-pill {
-  padding: 4px 9px;
-  border-radius: 20px;
-  background: #eef5fa;
-  font-size: 11px;
-  white-space: nowrap;
+  white-space: pre-wrap;
 }
 .dialog-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 22px;
-  font-size: 12px;
-  color: var(--muted);
+  padding: 16px 20px;
   gap: 10px;
+  color: #91b3c8;
+  font-size: 11px;
 }
 .dialog-footer > div {
   display: flex;
-  gap: 8px;
+  gap: 7px;
 }
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-summary:focus-visible {
-  outline: 2px solid #187fa6;
-  outline-offset: 3px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
 }
-@keyframes loading {
+@keyframes orbit {
   to {
-    background-position: 200% 0;
+    transform: rotate(360deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .loading-track {
+  .orbit-slow,
+  .loading-orbit {
     animation: none;
   }
 }
-@media (max-width: 1100px) {
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* Keep the main instruments in one screen; long lists scroll inside their panels. */
+@media (min-width: 1500px) and (min-height: 900px) {
+  .operations-cockpit.screen-mode {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    box-sizing: border-box;
+    padding: 14px 22px;
   }
-  .two-columns {
-    grid-template-columns: 1fr;
+  .screen-mode .cockpit-header {
+    min-height: 68px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
   }
-  .filter-label {
-    width: 100%;
+  .screen-mode .command-bar {
+    flex-shrink: 0;
+    padding-block: 8px;
   }
-  .dashboard-header {
-    align-items: start;
-    gap: 15px;
+  .screen-mode .cockpit-main {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: auto auto minmax(440px, 1fr) 172px auto;
+    gap: 10px;
   }
-  .live-tag {
-    font-size: 10px;
+  .screen-mode .kpi {
+    padding: 10px 16px;
   }
-  .pipeline {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .screen-mode .kpi-value {
+    font-size: 34px;
+    margin-top: 5px;
+  }
+  .screen-mode .kpi p {
+    margin: 5px 0;
+  }
+  .screen-mode .command-grid,
+  .screen-mode .wing,
+  .screen-mode .action-deck {
+    min-height: 0;
+    gap: 10px;
+  }
+  .screen-mode .wing {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .screen-mode .instrument {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 12px;
+  }
+  .screen-mode .instrument-title {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+  .screen-mode .panel-scroll,
+  .screen-mode .region-matrix,
+  .screen-mode .regional-detail :deep(.region-table) {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+  }
+  .screen-mode .core-visual {
+    min-height: 180px;
+    flex: 1;
+  }
+  .screen-mode .orbital-gauge {
+    width: clamp(180px, 21vh, 240px);
+  }
+  .screen-mode .gauge-label strong {
+    font-size: 38px;
+  }
+  .screen-mode .region-matrix {
+    flex: 0 1 132px;
+  }
+  .screen-mode .region-matrix button {
+    padding: 7px 9px;
+  }
+  .screen-mode .trend-chart {
+    flex: 1;
+    min-height: 0;
+    max-height: 165px;
+  }
+  .screen-mode .age-alert {
+    margin-block: 4px;
+    padding-block: 5px;
+  }
+  .screen-mode .age-bars {
+    gap: 9px;
+  }
+  .screen-mode .instrument-note {
+    margin-bottom: 0;
+  }
+  .screen-mode .methodology {
+    padding-top: 5px;
   }
 }
-@media (max-width: 600px) {
-  .dashboard-header {
-    padding: 20px;
-    display: block;
+@media (max-width: 1200px) {
+  .command-grid {
+    grid-template-columns: minmax(215px, 1fr) minmax(330px, 1.5fr);
   }
-  .dashboard-header h2 {
-    font-size: 23px;
+  .right-wing {
+    grid-column: 1/-1;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
   }
-  .live-tag {
-    width: fit-content;
-    margin-top: 16px;
+  .kpi {
+    padding: 15px 12px;
   }
-  .dashboard-filters {
-    padding: 16px;
-    gap: 12px;
+  .kpi-label {
+    font-size: 10px;
   }
-  .dashboard-filters label {
-    flex: 1;
-    min-width: 0;
+  .kpi p {
+    font-size: 9px;
   }
-  .dashboard-filters input,
-  .dashboard-filters select {
-    width: 100%;
-    min-width: 0;
-  }
-  .date-separator {
-    display: none;
-  }
-  .dashboard-filters label:last-of-type {
-    flex-basis: 100%;
-  }
-  .filter-buttons {
-    width: 100%;
-    justify-content: flex-end;
-  }
-  .metric {
-    padding: 16px 12px;
-  }
-  .metric-value {
+  .kpi-value {
     font-size: 30px;
   }
-  .metric-label {
+  .brand-mark {
     font-size: 12px;
   }
-  .chart-card {
-    padding: 18px 14px;
+  .brand-mark small {
+    font-size: 8px;
   }
-  .section-head {
+  .cockpit-title h1 {
+    font-size: 25px;
+    letter-spacing: 3px;
+  }
+  .cockpit-title p {
+    letter-spacing: 4px;
+  }
+  .brand-glyph {
+    font-size: 30px;
+  }
+  .action-deck {
+    grid-template-columns: 1.4fr 1fr;
+  }
+}
+@media (max-width: 850px) {
+  .operations-cockpit {
+    padding: 16px;
+  }
+  .cockpit-header {
+    grid-template-columns: 1fr auto;
+    gap: 15px;
+  }
+  .brand-mark {
+    display: none;
+  }
+  .cockpit-title {
+    text-align: left;
+    padding-left: 0;
+  }
+  .cockpit-title p {
+    font-size: 9px;
+  }
+  .cockpit-title h1 {
+    font-size: 23px;
+  }
+  .header-actions .data-status {
+    display: none;
+  }
+  .kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .kpi:nth-child(3) {
+    border-right: 0;
+  }
+  .kpi:nth-child(-n + 3) {
+    border-bottom: 1px solid #285168;
+  }
+  .command-grid {
+    grid-template-columns: 1fr;
+  }
+  .command-core {
+    grid-row: 1;
+  }
+  .left-wing,
+  .right-wing {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto;
+  }
+  .action-deck {
+    grid-template-columns: 1fr;
+  }
+  .core-visual {
+    min-height: 240px;
+  }
+  .orbital-gauge {
+    width: 245px;
+  }
+  .gauge-label strong {
+    font-size: 43px;
+  }
+  .core-readout {
+    min-width: 70px;
+  }
+  .region-matrix {
+    max-height: 200px;
+  }
+  .snapshot-time {
+    width: 100%;
+    margin-left: 0;
+  }
+  .scope-line {
     flex-wrap: wrap;
   }
-  .section-head h3 {
-    font-size: 17px;
+  .instrument-title h2 {
+    font-size: 13px;
   }
-  .snapshot {
-    flex-wrap: wrap;
-    font-size: 11px;
+}
+@media (max-width: 520px) {
+  .operations-cockpit {
+    padding: 12px;
+    border-radius: 5px;
   }
-  .pipeline {
+  .operations-cockpit.screen-mode {
+    padding: 12px;
+  }
+  .cockpit-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 13px;
     gap: 8px;
   }
-  .pipeline button {
-    padding: 15px;
+  .cockpit-title h1 {
+    font-size: 19px;
+    letter-spacing: 2px;
   }
-  .pipeline strong {
-    font-size: 14px;
+  .cockpit-title p {
+    font-size: 8px;
+    letter-spacing: 3px;
   }
-  .detail-dialog {
-    width: 96vw;
-    max-height: 94dvh;
+  .header-actions {
+    gap: 0;
   }
-  .operations-dialog-head,
+  .screen-button {
+    font-size: 10px;
+    padding: 8px;
+  }
+  .screen-button span {
+    margin-left: 2px;
+  }
+  .command-bar {
+    padding: 10px;
+    gap: 8px;
+  }
+  .command-label {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    margin-bottom: 3px;
+  }
+  .command-bar label {
+    flex: 1 1 40%;
+  }
+  .command-bar input {
+    width: 100%;
+    font-size: 11px;
+    padding: 4px;
+  }
+  .command-bar .region-select {
+    flex-basis: 50%;
+  }
+  .command-bar select {
+    width: 100%;
+    min-width: 0;
+    font-size: 11px;
+  }
+  .command-bar .console-button {
+    padding: 8px;
+    font-size: 11px;
+  }
+  .snapshot-time {
+    font-size: 9px;
+    line-height: 1.8;
+  }
+  .kpi {
+    padding: 13px 9px;
+  }
+  .kpi-index {
+    display: none;
+  }
+  .kpi-label {
+    font-size: 10px;
+    padding-right: 0;
+  }
+  .kpi-value {
+    font-size: 27px;
+  }
+  .kpi-value small {
+    font-size: 9px;
+    margin-left: 3px;
+  }
+  .kpi p {
+    font-size: 8px;
+    min-height: 26px;
+  }
+  .left-wing,
+  .right-wing {
+    grid-template-columns: 1fr;
+  }
+  .instrument {
+    padding: 13px;
+  }
+  .core-visual {
+    min-height: 200px;
+  }
+  .orbital-gauge {
+    width: 195px;
+    min-width: 150px;
+  }
+  .core-readout {
+    min-width: 45px;
+    font-size: 9px;
+  }
+  .core-readout strong {
+    font-size: 21px;
+  }
+  .core-readout small {
+    font-size: 7px;
+  }
+  .gauge-label > span {
+    font-size: 9px;
+  }
+  .gauge-label strong {
+    font-size: 32px;
+  }
+  .gauge-label em {
+    font-size: 7px;
+    letter-spacing: 1px;
+  }
+  .flow-controls {
+    gap: 6px;
+  }
+  .flow-controls strong {
+    font-size: 21px;
+  }
+  .flow-controls span {
+    font-size: 10px;
+  }
+  .region-matrix {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 245px;
+  }
+  .core-meta {
+    font-size: 8px;
+    gap: 9px;
+  }
+  .core-meta > span {
+    width: 100%;
+    margin: 0;
+  }
+  .instrument-title > span {
+    font-size: 7px;
+  }
+  .scope-line {
+    font-size: 9px;
+    line-height: 1.7;
+  }
+  .table-signals,
+  .standards-list {
+    max-height: 290px;
+  }
   .dialog-footer {
+    flex-wrap: wrap;
+  }
+  .cockpit-dialog {
+    width: 96vw;
+  }
+  .operations-dialog-head {
     padding: 15px;
   }
   .dialog-body {
     padding: 0 15px;
   }
-  .dialog-footer {
-    flex-wrap: wrap;
-  }
-  .metric-grid {
-    gap: 10px;
-  }
-  .standards-list button {
-    gap: 8px;
-  }
-  .live-tag i {
-    flex-shrink: 0;
+  .operations-dialog-head h3 {
+    font-size: 16px;
   }
 }
 </style>

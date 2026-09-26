@@ -22,6 +22,9 @@ class OperationsTest(unittest.TestCase):
         self.assertEqual(parse_period({'date_from':'2024-01-01','date_to':'2024-12-31'})[1],date(2024,12,31))
 
     def test_defaults_only_supervisor_and_root(self):
+        self.assertEqual(PERMISSIONS, {'overview':'view_operations_overview'})
+        for retired in ('view_operations_rectification','view_operations_insights'):
+            self.assertNotIn(retired,core_app.PERMISSION_KEYS)
         for key in PERMISSIONS.values():
             for role in core_app.ROLE_OPTIONS:
                 self.assertEqual(core_app.role_default_permission(role, key), role in ('root','supervisor'))
@@ -48,6 +51,9 @@ class OperationsTest(unittest.TestCase):
                 self.assertEqual(response.status_code,403)
                 self.assertEqual(core['has_permission'].call_args.args[1:],(user,key))
         self.assertEqual(app.test_client().get('/api/operations/unknown').status_code,404)
+        for mode in ('rectification','insights'):
+            self.assertEqual(app.test_client().get('/api/operations/'+mode).status_code,404)
+            self.assertEqual(app.test_client().get('/api/operations/'+mode+'/issues').status_code,404)
 
     def test_api_errors_do_not_expose_internals(self):
         core=dict(get_current_request_user=lambda:{'id':1}, get_db_connection=MagicMock(),
@@ -117,10 +123,10 @@ class OperationsDatabaseTest(unittest.TestCase):
         self.assertIn('嘉青',overview['regions'])
         self.assertEqual(overview['highlights'],1)
         self.assertEqual(overview['trend'][0]['valid'],8)
-        rectification=dashboard(self.core,self.cur,self.user,'rectification',self.source)
+        rectification=overview
         self.assertEqual(rectification['ages'][0]['count'],4)
         self.assertEqual(rectification['stations'][0]['count'],4)
-        insight=dashboard(self.core,self.cur,self.user,'insights',self.source)
+        insight=overview
         self.assertEqual(len(insight['tables']),2)
         self.assertEqual(insight['standards'][0]['count'],8)
         self.assertEqual(insight['standards'][0]['stations'],2)

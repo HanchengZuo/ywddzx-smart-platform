@@ -9,8 +9,6 @@ from flask import jsonify, request
 
 PERMISSIONS = {
     'overview': 'view_operations_overview',
-    'rectification': 'view_operations_rectification',
-    'insights': 'view_operations_insights',
 }
 OPEN_PHASES = ('待验收', '待整改', '待复核', '申诉中')
 PHASES = ('待审核', '待验收', '待整改', '待复核', '申诉中', '已闭环', '站级无法整改', '已销毁', '其他状态')
@@ -135,7 +133,6 @@ def dashboard(core, cur, user, mode, source):
           JOIN stations s ON s.id=i.station_id CROSS JOIN LATERAL (SELECT i.inspector_id) ins
           WHERE ''' + ' AND '.join(where), hp)
         result['highlights'] = cur.fetchone()['count']
-    elif mode == 'rectification':
         cur.execute(cte + '''SELECT CASE WHEN age_days<7 THEN '0–6天' WHEN age_days<15 THEN '7–14天'
           WHEN age_days<30 THEN '15–29天' ELSE '30天及以上' END AS label,
           CASE WHEN age_days<7 THEN 0 WHEN age_days<15 THEN 1 WHEN age_days<30 THEN 2 ELSE 3 END AS rank,
@@ -146,7 +143,6 @@ def dashboard(core, cur, user, mode, source):
           FROM selected WHERE valid AND phase IN ('待验收','待整改','待复核','申诉中')
           GROUP BY station_id,station_name,region ORDER BY count DESC,station_id LIMIT 12''', params)
         result['stations'] = [dict(r) for r in cur.fetchall()]
-    else:
         cur.execute(cte + '''SELECT inspection_table_id,table_name,mode,COUNT(*) AS count,
           COUNT(DISTINCT station_id) AS stations FROM selected WHERE valid
           GROUP BY inspection_table_id,table_name,mode ORDER BY count DESC,inspection_table_id''', params)

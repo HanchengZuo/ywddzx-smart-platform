@@ -739,9 +739,7 @@ PERMISSION_CATALOG = [
          "description": "查看运营系统看板及权限范围内的统计和明细，不扩大原有业务数据范围。",
          "defaults": {"root": True, "supervisor": True}}
         for key, title in (
-            ("view_operations_overview", "运营总览"),
-            ("view_operations_rectification", "整改跟踪"),
-            ("view_operations_insights", "问题洞察"),
+            ("view_operations_overview", "运营驾驶舱"),
         )
     ],
     {

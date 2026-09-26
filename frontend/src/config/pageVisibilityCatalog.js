@@ -4,7 +4,7 @@ export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'map',
     title: '运营系统',
-    description: '巡检运营总览、整改跟踪、问题洞察和站点地图',
+    description: '统一运营驾驶舱和站点地图',
     pages: [
       ...operationsPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description })),
       {
