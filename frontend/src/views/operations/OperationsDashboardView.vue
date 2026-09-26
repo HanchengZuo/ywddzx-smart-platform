@@ -11,7 +11,7 @@
         <div class="title-beam" aria-hidden="true"></div>
       </div>
       <div class="header-actions">
-        <span class="data-status"><i></i> 按权限汇总 · 非实时推送</span
+        <span class="data-status"><i></i> {{ refreshStatus }}</span
         ><button class="screen-button" :aria-pressed="expanded" @click="toggleScreen">
           {{ expanded ? '退出大屏' : '全屏驾驶舱' }}
           <span aria-hidden="true">{{ expanded ? '↙' : '↗' }}</span>
@@ -19,7 +19,7 @@
       </div>
     </header>
 
-    <form class="command-bar" @submit.prevent="load">
+    <form class="command-bar" @submit.prevent="load()">
       <span class="command-label">数据窗口 <small>TIME WINDOW</small></span>
       <label
         ><span class="sr-only">开始日期</span
@@ -40,15 +40,16 @@
         {{ loading ? '汇总中…' : '开始分析' }}
       </button>
       <span class="snapshot-time">{{
-        data ? '数据更新 ' + formatTime(data.generated_at) : '等待业务数据'
+        data ? '数据更新 ' + formatTime(data.generated_at) + ' · ' + refreshStatus : refreshStatus
       }}</span>
     </form>
     <p v-if="dirty" class="cockpit-notice">
       筛选尚未应用。点击“开始分析”后更新，当前图表仍使用上次分析范围。
     </p>
     <p v-if="error" class="cockpit-notice error" role="alert">
-      {{ error }} <button class="console-button" @click="load">重试</button>
+      {{ error }} <button class="console-button" @click="load()">重试</button>
     </p>
+    <p v-if="refreshError" class="cockpit-notice" role="status">{{ refreshError }}</p>
     <div v-if="loading" class="cockpit-loading" role="status">
       <div class="loading-orbit" aria-hidden="true"></div>
       <strong>正在汇总运营数据</strong><span>服务端聚合 · 不加载问题全库</span>
@@ -383,7 +384,7 @@
           巡检触达按巡检日期对站点去重，含零问题站点；底层巡检记录按站点与检查表计数。问题、亮点、巡检分别沿用原业务数据范围。有问题站均只统计有问题站点，不是全部受检站点平均。账龄按登记日至今天的自然日计算，不等同于流程超时，不作为考核结论。
         </p>
         <p>
-          单次分析最多366天；数据只在打开页面或点击开始分析时读取，不自动轮询。图形装饰不代表额外业务指标。未使用证照、站点评分数据，不调用AI。
+          单次分析最多366天；可见且联网时每60秒静默刷新已应用范围，切回页面或网络恢复时补刷新。失败后退避重试，最长间隔5分钟；不是秒级推送。未提交的筛选不会自动应用，已打开的明细保留打开时快照，重新打开读取最新数据。图形装饰不代表额外业务指标。未使用证照、站点评分数据，不调用AI。
         </p>
       </details>
     </main>
@@ -399,6 +400,7 @@
           <span class="eyebrow">关联问题 / EVIDENCE</span>
           <h3 id="operations-detail-title">{{ detailTitle }}</h3>
           <p>{{ applied.date_from }} 至 {{ applied.date_to }} · 共{{ detail.total }}项</p>
+          <p>明细按打开或翻页时读取，关闭后重新打开可获取最新数据。</p>
         </div>
         <button class="console-button" aria-label="关闭问题明细" @click="detailDialog.close()">
           关闭
@@ -453,6 +455,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 import RegionTable from './RegionTable.vue'
+import { createAdaptivePolling } from '../../utils/adaptivePolling'
 
 const cockpit = ref(null),
   expanded = ref(false)
@@ -504,6 +507,21 @@ const draft = ref(defaults()),
   regionOptions = ref([])
 const loading = ref(false),
   error = ref('')
+const refreshing = ref(false),
+  refreshError = ref(''),
+  online = ref(navigator.onLine),
+  authPaused = ref(false)
+const refreshStatus = computed(() =>
+  authPaused.value
+    ? '自动更新已暂停，请检查登录和权限'
+    : !online.value
+      ? '网络离线 · 自动更新暂停'
+      : refreshing.value
+        ? '正在同步最新数据…'
+        : refreshError.value
+          ? '更新延迟 · 等待重试'
+          : '每60秒自动更新',
+)
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(applied.value))
 const openPhases = ['待验收', '待整改', '待复核', '申诉中']
 const percent = (value, total) => (total ? ((value / total) * 100).toFixed(1) : '0.0')
@@ -592,31 +610,65 @@ const trendArea = computed(
   () => trendPath.value + ' L ' + trendX(trend.value.length - 1) + ' 150 L ' + trendX(0) + ' 150 Z',
 )
 let requestController, detailController
-async function load() {
+async function load({ background = false } = {}) {
+  if (background && (loading.value || refreshing.value || authPaused.value)) return
   requestController?.abort()
   const controller = new AbortController()
   requestController = controller
-  loading.value = true
-  error.value = ''
-  detailDialog.value?.close()
-  const filters = { ...draft.value }
+  refreshing.value = background
+  loading.value = !background
+  if (!background) {
+    error.value = ''
+    detailDialog.value?.close()
+  }
+  const filters = { ...(background ? applied.value : draft.value) }
   try {
     const response = await axios.get('/api/operations/overview', {
       params: filters,
       signal: controller.signal,
+      timeout: 30000,
     })
     if (controller.signal.aborted) return
     data.value = response.data
     applied.value = filters
     regionOptions.value = response.data.regions
+    refreshError.value = ''
+    error.value = ''
+    authPaused.value = false
+    if (!background) polling.start()
   } catch (err) {
-    if (!axios.isCancel(err)) {
+    if (controller.signal.aborted || axios.isCancel(err)) return
+    if ([401, 403].includes(err.response?.status)) {
+      authPaused.value = true
+      polling.pause()
+      data.value = null
+      detail.value = { rows: [], total: 0, page: 1 }
+      detailDialog.value?.close()
+      error.value = '登录状态或查看权限已失效，请重新登录或联系管理员。'
+      refreshError.value = ''
+    } else if (background) {
+      refreshError.value =
+        '自动更新暂时失败，保留上次成功数据，稍后自动重试。请以上方数据更新时间为准。'
+      throw err
+    } else {
       error.value = err.response?.data?.error || '驾驶舱数据加载失败，请重试。'
       data.value = null
     }
   } finally {
-    if (requestController === controller) loading.value = false
+    if (requestController === controller) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
+}
+const polling = createAdaptivePolling({
+  task: () => load({ background: true }),
+  canRun: () => !document.hidden && navigator.onLine && !authPaused.value,
+})
+function syncAutoRefresh() {
+  online.value = navigator.onLine
+  if (document.hidden || !online.value || authPaused.value) polling.pause()
+  else polling.start({ immediate: true })
 }
 function reset() {
   draft.value = defaults()
@@ -663,10 +715,18 @@ async function loadDetails(pageNumber) {
 }
 onMounted(() => {
   load()
+  polling.start()
+  document.addEventListener('visibilitychange', syncAutoRefresh)
+  window.addEventListener('online', syncAutoRefresh)
+  window.addEventListener('offline', syncAutoRefresh)
   document.addEventListener('fullscreenchange', syncScreen)
   document.addEventListener('keydown', escapeScreen)
 })
 onBeforeUnmount(() => {
+  polling.dispose()
+  document.removeEventListener('visibilitychange', syncAutoRefresh)
+  window.removeEventListener('online', syncAutoRefresh)
+  window.removeEventListener('offline', syncAutoRefresh)
   requestController?.abort()
   detailController?.abort()
   detailDialog.value?.close()
