@@ -246,7 +246,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.7.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.8.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -737,7 +737,9 @@ PERMISSION_CATALOG = [
     *[
         {"key": key, "name": "查看页面", "category": title,
          "description": "查看运营系统看板及权限范围内的统计和明细，不扩大原有业务数据范围。",
-         "defaults": {"root": True, "supervisor": True}}
+         "defaults": {"root": True, "supervisor": True, "quality_safety": True,
+                      "development_plan": True, "oil_gas": True, "non_oil": True,
+                      "finance": True, "area_account": True}}
         for key, title in (
             ("view_operations_overview", "运营驾驶舱"),
         )

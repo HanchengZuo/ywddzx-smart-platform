@@ -2,6 +2,7 @@ import importlib.util
 import os
 import unittest
 import uuid
+from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,13 +22,24 @@ class OperationsTest(unittest.TestCase):
             with self.assertRaises(ValueError): parse_period(args)
         self.assertEqual(parse_period({'date_from':'2024-01-01','date_to':'2024-12-31'})[1],date(2024,12,31))
 
-    def test_defaults_only_supervisor_and_root(self):
+    def test_defaults_open_departments_and_areas_not_station_accounts(self):
         self.assertEqual(PERMISSIONS, {'overview':'view_operations_overview'})
         for retired in ('view_operations_rectification','view_operations_insights'):
             self.assertNotIn(retired,core_app.PERMISSION_KEYS)
         for key in PERMISSIONS.values():
             for role in core_app.ROLE_OPTIONS:
-                self.assertEqual(core_app.role_default_permission(role, key), role in ('root','supervisor'))
+                self.assertEqual(core_app.role_default_permission(role, key), role in (
+                    'root','supervisor','quality_safety','development_plan','oil_gas','non_oil','finance','area_account'))
+
+    def test_new_roles_use_effective_grants_and_preserve_individual_denials(self):
+        with patch.object(core_app, 'get_role_permission_overrides', return_value={}), \
+             patch.object(core_app, 'get_permission_overrides', return_value={}):
+            for role in ('quality_safety','development_plan','oil_gas','non_oil','finance','area_account'):
+                self.assertTrue(core_app.has_permission(MagicMock(), {'id':17,'role':role}, 'view_operations_overview'))
+            with patch.object(core_app, 'get_permission_overrides', return_value={'view_operations_overview':False}):
+                self.assertFalse(core_app.has_permission(MagicMock(), {'id':17,'role':'quality_safety'}, 'view_operations_overview'))
+            with patch.object(core_app, 'get_role_permission_overrides', return_value={'view_operations_overview':False}):
+                self.assertFalse(core_app.has_permission(MagicMock(), {'id':17,'role':'area_account'}, 'view_operations_overview'))
 
     def test_scoped_cte_uses_existing_business_visibility(self):
         core = SimpleNamespace(build_issue_list_visibility_scope=MagicMock(return_value=(['i.station_id=%s','i.inspection_table_id=%s'],[12,8])))
@@ -194,3 +206,79 @@ class OperationsDatabaseTest(unittest.TestCase):
             migration.upgrade()
             self.cur.execute("SELECT is_allowed FROM role_permissions WHERE permission_key='view_operations_insights'")
             self.assertFalse(self.cur.fetchone()['is_allowed'])
+
+    def test_department_migration_only_adds_six_page_grants(self):
+        path=Path(__file__).parents[1]/'migrations/versions/20260927_001_operations_department_access.py'
+        spec=importlib.util.spec_from_file_location('department_migration',path)
+        migration=importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
+        self.cur.execute("INSERT INTO role_permissions VALUES('finance','view_operations_overview',FALSE),('area_account','limit_issue_station_region_scope',TRUE)")
+        with patch.object(migration.op,'execute',side_effect=self.cur.execute):
+            migration.upgrade(); migration.upgrade()
+            self.cur.execute('SELECT * FROM role_permissions ORDER BY role,permission_key')
+            rows=[dict(r) for r in self.cur.fetchall()]
+            self.assertEqual(len(rows),7)
+            self.assertEqual(sum(r['is_allowed'] for r in rows if r['permission_key']=='view_operations_overview'),5)
+            self.assertTrue(next(r for r in rows if r['permission_key']=='limit_issue_station_region_scope')['is_allowed'])
+            migration.downgrade()
+            self.cur.execute('SELECT * FROM role_permissions ORDER BY role,permission_key')
+            self.assertEqual([dict(r) for r in self.cur.fetchall()],rows)
+
+    def test_real_department_and_area_scopes_cover_all_cockpit_data(self):
+        self.cur.execute('TRUNCATE issues, inspections, inspection_highlights, inspection_tables')
+        self.cur.execute('ALTER TABLE inspection_tables ADD COLUMN is_active bool DEFAULT TRUE')
+        role_tables = [('quality_safety','计量稽查检查表'), ('development_plan','设备设施检查表'),
+                       ('oil_gas','现场检查明细表'), ('non_oil','非油检查表'), ('finance','财务检查表')]
+        for table_id, (role, name) in enumerate(role_tables, 1):
+            self.cur.execute("INSERT INTO inspection_tables(id,table_name,checklist_mode) VALUES(%s,%s,'offline')",(table_id,name))
+            for station in (1,2):
+                inspection=table_id*10+station
+                self.cur.execute("INSERT INTO inspections(id,station_id,inspector_id,inspection_table_id,inspection_date,sign_status) VALUES(%s,%s,10,%s,'2020-01-15','已签名确认')",(inspection,station,table_id))
+                self.cur.execute("INSERT INTO inspection_highlights VALUES(%s,%s,%s,10,'2020-01-15','approved')",(inspection,station,table_id))
+                for n in range(table_id):
+                    self.cur.execute("""INSERT INTO issues(id,station_id,inspection_id,inspection_table_id,inspector_id,standard_id,
+                      description,created_at,audit_status,status) VALUES(%s,%s,%s,%s,10,%s,'范围测试','2020-01-15','approved','待整改')""",
+                      (inspection*10+n,station,inspection,table_id,9000+table_id))
+        # Use the production permission/scope builders, mocking only persisted administrator settings.
+        with ExitStack() as stack:
+            for name, result in [('get_permission_overrides',{}), ('get_role_permission_overrides',{}),
+                                 ('get_user_inspection_table_scope_overrides',[]), ('get_role_inspection_table_scope_overrides',[]),
+                                 ('get_role_station_region_scope_overrides',[])]:
+                stack.enter_context(patch.object(core_app,name,return_value=result))
+            region_override=stack.enter_context(patch.object(core_app,'get_user_station_region_scope_overrides',return_value=['浦东']))
+            for table_id, (role, name) in enumerate(role_tables,1):
+                user={'id':17,'role':role}
+                result=dashboard(core_app,self.cur,user,'overview',self.source)
+                self.assertEqual(result['summary']['valid'],table_id*2,role)
+                self.assertEqual(result['highlights'],2,role)
+                self.assertEqual(result['records']['records'],2,role)
+                self.assertEqual([r['table_name'] for r in result['tables']],[name],role)
+                self.assertEqual(result['standards'][0]['standard_key'],str(9000+table_id),role)
+                self.assertEqual(sum(r['valid'] for r in result['trend']),table_id*2,role)
+                self.assertEqual(sum(r['count'] for r in result['ages']),table_id*2,role)
+                self.assertEqual(details(core_app,self.cur,user,dict(self.source,table_id=table_id%5+1))['total'],0,role)
+                self.assertTrue(all(r['table_name']==name for r in details(core_app,self.cur,user,self.source)['rows']),role)
+            with patch.object(core_app,'get_permission_overrides',return_value={
+                'view_all_inspection_issues':False,'view_all_inspection_records':False,
+                'limit_issue_station_region_scope':True,'limit_record_station_region_scope':True}):
+                personal=dashboard(core_app,self.cur,{'id':19,'role':'finance'},'overview',self.source)
+                self.assertEqual(personal['summary']['valid'],5)
+                self.assertEqual(personal['records']['records'],1)
+                self.assertEqual(personal['highlights'],1)
+                self.assertEqual(personal['regions'],['浦东'])
+            area={'id':18,'role':'area_account'}
+            result=dashboard(core_app,self.cur,area,'overview',self.source)
+            self.assertEqual(result['summary']['valid'],15)
+            self.assertEqual(result['highlights'],5)
+            self.assertEqual(result['records']['records'],5)
+            self.assertEqual(result['regions'],['浦东'])
+            self.assertEqual([r['region'] for r in result['units']],['浦东'])
+            self.assertTrue(all(r['station_id']==1 for r in result['stations']))
+            for params in ({'region':'宝静'}, {'station_id':2}, {'region':"浦东' OR TRUE --"}):
+                self.assertEqual(details(core_app,self.cur,area,dict(self.source,**params))['total'],0)
+            self.assertEqual(details(core_app,self.cur,area,dict(self.source,user_id=1))['total'],15)
+            region_override.return_value=[]
+            empty=dashboard(core_app,self.cur,area,'overview',self.source)
+            self.assertEqual(empty['summary']['total'],0)
+            self.assertEqual(empty['records']['records'],0)
+            self.assertEqual(empty['highlights'],0)
+            self.assertEqual(empty['regions'],[])
