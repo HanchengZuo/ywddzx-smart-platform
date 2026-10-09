@@ -574,22 +574,25 @@
               <label>复核照片</label>
               <div class="drawer-upload-card">
                 <input id="review-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
-                  @change="handleReviewFileChange" />
+                  :disabled="submittingAction" @change="handleReviewFileChange" />
                 <input id="review-photo-camera" class="drawer-upload-input" type="file" accept="image/*"
-                  capture="environment" @change="handleReviewFileChange" />
+                  capture="environment" :disabled="submittingAction" @change="handleReviewFileChange" />
 
-                <label for="review-photo-upload" class="drawer-upload-dropzone">
+                <div class="drawer-upload-dropzone review-photo-dropzone" tabindex="0"
+                  role="group" aria-label="复核照片上传，可粘贴或拖入图片" :aria-busy="reviewPhotoProcessing"
+                  @paste="handleReviewPhotoPaste" @dragover.prevent @drop.prevent="handleReviewPhotoDrop">
                   <div class="drawer-upload-icon">↑</div>
-                  <div class="drawer-upload-title">选择或更换复核照片</div>
+                  <div class="drawer-upload-title">{{ reviewPhotoProcessing ? '正在处理照片…' : '选择、粘贴或拖入复核照片' }}</div>
                   <div class="drawer-upload-desc">
                     请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。
                   </div>
+                  <div class="drawer-upload-desc">复制图片后按 Ctrl+V / ⌘V 即可粘贴，也可将图片拖入此处。每次保留一张，新图会替换旧图。</div>
                   <div class="drawer-upload-trigger-group">
                     <label for="review-photo-camera"
                       class="drawer-upload-trigger drawer-upload-trigger-secondary">拍照上传</label>
                     <label for="review-photo-upload" class="drawer-upload-trigger">相册选择</label>
                   </div>
-                </label>
+                </div>
 
                 <div v-if="actionForm.reviewPhotoPreview" class="drawer-image-preview-panel">
                   <img :src="actionForm.reviewPhotoPreview" alt="复核照片预览" class="drawer-preview-thumb" />
@@ -600,7 +603,7 @@
                       <label for="review-photo-camera" class="btn btn-light btn-sm drawer-preview-btn">重新拍照</label>
                       <label for="review-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">相册重选</label>
                       <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
-                        @click="clearReviewFile">
+                        :disabled="submittingAction" @click="clearReviewFile">
                         移除图片
                       </button>
                     </div>
@@ -614,7 +617,7 @@
           </template>
 
           <div class="drawer-actions">
-            <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction">
+            <button class="btn btn-primary" type="button" @click="submitAction" :disabled="submittingAction || reviewPhotoProcessing">
               {{ submittingAction ? '提交中...' : (currentRole === 'station_manager' ? '确认提交整改' : '确认提交复核') }}
             </button>
             <button class="btn btn-secondary" type="button" @click="closeActionDrawer"
@@ -672,6 +675,8 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
 import {
   clearFileInputsById,
+  getImageFilesFromClipboardEvent,
+  getImageFilesFromDataTransfer,
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
@@ -1254,6 +1259,7 @@ const openActionDrawer = (item) => {
     showActionToast('当前问题所属检查表尚未完成站经理签名确认，暂不可提交整改。', 'error')
     return
   }
+  clearReviewFile()
   actionDrawer.value = {
     visible: true,
     item
@@ -1271,8 +1277,8 @@ const openActionDrawer = (item) => {
 
 const closeActionDrawer = () => {
   flowHistoryRequestSequence += 1
+  clearReviewFile()
   revokeObjectUrl(actionForm.value.rectificationPhotoPreview)
-  revokeObjectUrl(actionForm.value.reviewPhotoPreview)
 
   actionDrawer.value = {
     visible: false,
@@ -1319,16 +1325,22 @@ const clearRectificationFile = () => {
   clearFileInputsById(['rectification-photo-upload', 'rectification-photo-camera'])
 }
 
-const handleReviewFileChange = async (event) => {
-  const file = event.target.files?.[0]
+const reviewPhotoProcessing = ref(false)
+let reviewPhotoSequence = 0
+const canReceiveReviewPhoto = () => actionDrawer.value.visible &&
+  currentRole.value !== 'station_manager' && shouldShowReviewPhotoUpload.value && !submittingAction.value
 
-  if (!file) {
-    clearReviewFile()
-    return
-  }
-
+const processReviewPhoto = async (file, multiple = false) => {
+  if (!file || !canReceiveReviewPhoto()) return
+  const sequence = ++reviewPhotoSequence
+  reviewPhotoProcessing.value = true
   try {
     const prepared = await prepareImagePreview(file)
+    // Closing/reopening the drawer, removing a photo, or changing the result invalidates pending work.
+    if (sequence !== reviewPhotoSequence || !canReceiveReviewPhoto()) {
+      revokeObjectUrl(prepared.previewUrl)
+      return
+    }
     actionForm.value.reviewPhotoFile = prepared.file
     revokeObjectUrl(actionForm.value.reviewPhotoPreview)
     actionForm.value.reviewPhotoPreview = prepared.previewUrl
@@ -1339,13 +1351,42 @@ const handleReviewFileChange = async (event) => {
     }
     actionMessage.value = ''
     actionMessageType.value = 'info'
+    if (multiple) showActionToast('复核照片仅保留一张，已使用第一张图片。', 'info')
   } catch (error) {
+    if (sequence !== reviewPhotoSequence) return
     showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
-    clearReviewFile()
+  } finally {
+    if (sequence === reviewPhotoSequence) reviewPhotoProcessing.value = false
   }
 }
 
+const handleReviewFileChange = async (event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  await processReviewPhoto(file)
+}
+
+const handleReviewPhotoPaste = (event) => {
+  if (event.defaultPrevented || !canReceiveReviewPhoto() || previewState.value.visible || standardDetailState.value.visible) return
+  const files = getImageFilesFromClipboardEvent(event)
+  if (!files.length) return
+  event.preventDefault()
+  return processReviewPhoto(files[0], files.length > 1)
+}
+
+const handleReviewPhotoDrop = (event) => {
+  if (!canReceiveReviewPhoto()) return
+  const files = getImageFilesFromDataTransfer(event.dataTransfer)
+  if (!files.length) {
+    showActionToast('请拖入图片文件。', 'error')
+    return
+  }
+  return processReviewPhoto(files[0], files.length > 1)
+}
+
 const clearReviewFile = () => {
+  reviewPhotoSequence += 1
+  reviewPhotoProcessing.value = false
   actionForm.value.reviewPhotoFile = null
   revokeObjectUrl(actionForm.value.reviewPhotoPreview)
   actionForm.value.reviewPhotoPreview = ''
@@ -1364,7 +1405,7 @@ watch(
 watch(
   () => actionForm.value.reviewResult,
   (value) => {
-    if (skipsIssuePhotoUpload(value)) {
+    if (!reviewRequiresPhoto(value)) {
       clearReviewFile()
     }
   }
@@ -1386,7 +1427,7 @@ const showActionToast = (message, type = 'info') => {
 }
 
 const submitAction = async () => {
-  if (!actionDrawer.value.item) return
+  if (!actionDrawer.value.item || submittingAction.value || reviewPhotoProcessing.value) return
 
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
@@ -1490,6 +1531,7 @@ const updateResponsiveState = () => {
 }
 
 onMounted(() => {
+  window.addEventListener('paste', handleReviewPhotoPaste)
   document.addEventListener('click', handleClickOutside)
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
@@ -1500,6 +1542,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('paste', handleReviewPhotoPaste)
+  reviewPhotoSequence += 1
   listSequence++; listController?.abort(); optionsController?.abort(); initialized = false
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateResponsiveState)
@@ -2939,6 +2983,11 @@ onBeforeUnmount(() => {
 .drawer-upload-dropzone:hover {
   border-color: #93c5fd;
   background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
+}
+
+.review-photo-dropzone:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .drawer-upload-icon {
