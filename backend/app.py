@@ -6,6 +6,12 @@ from equipment_report_library import exclusions as equipment_issue_exclusions, s
 import equipment_report_analysis as equipment_analysis
 from external_standard_status import disabled_standard_ids, require_active_standards
 from inspection_registration import parse_standard_selections
+from issue_description_filter import (
+    IssueDescriptionFilterError,
+    description_filter_clause,
+    normalize_description_match,
+    parse_description_keywords,
+)
 import fcntl
 import hashlib
 import json
@@ -247,7 +253,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.1.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.2.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -7294,6 +7300,7 @@ def normalize_issue_export_filter_summary(raw_summary):
         "standardId",
         "standardDetail",
         "standardTags",
+        "issueDescription",
         "rectificationResult",
         "reviewResult",
         "status",
@@ -31891,6 +31898,10 @@ def normalize_issue_list_filters(source):
         text = str(value or "").strip()
         return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
 
+    # Description separators are meaningful; the generic value helper splits commas.
+    description = str(source.get("issue_description", source.get("issueDescription", "")) or "").strip()
+    parse_description_keywords(description)
+    description_match = normalize_description_match(source.get("description_match", source.get("descriptionMatch")))
     month = first_value("month")
     date_from = valid_date(first_value("date_from", "dateFrom"))
     date_to = valid_date(first_value("date_to", "dateTo"))
@@ -31924,7 +31935,8 @@ def normalize_issue_list_filters(source):
         "standard_id": first_value("standard_id", "standardId"),
         "standard_detail": first_value("standard_detail", "standardDetail"),
         "standard_tags": _issue_list_source_values(source, "standard_tags", "standardTags"),
-        "issue_description": first_value("issue_description", "issueDescription"),
+        "issue_description": description,
+        "description_match": description_match,
         "rectification_result": first_value("rectification_result", "rectificationResult"),
         "review_result": first_value("review_result", "reviewResult"),
         "status": first_value("status"),
@@ -32030,8 +32042,12 @@ def append_issue_list_filter_clauses(where_clauses, params, filters, hide_inspec
         )
         params.extend([filters["standard_tags"]] * 3)
     if filters["issue_description"]:
-        where_clauses.append("COALESCE(i.description, '') ILIKE %s")
-        params.append(f"%{filters['issue_description']}%")
+        description_clause, description_params = description_filter_clause(
+            filters["issue_description"], filters.get("description_match", "all")
+        )
+        if description_clause:
+            where_clauses.append(description_clause)
+            params.extend(description_params)
     if filters["rectification_result"]:
         where_clauses.append("COALESCE(i.rectification_result, '') = %s")
         params.append(filters["rectification_result"])
@@ -32289,8 +32305,11 @@ def get_issues():
                 "total_pages": max(1, (total + page_size - 1) // page_size),
             }
         )
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except IssueDescriptionFilterError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        app.logger.exception("Failed to fetch inspection issues")
+        return jsonify({"success": False, "error": "巡检问题加载失败，请稍后重试。"}), 500
     finally:
         close_db_resources(cur, conn)
 
