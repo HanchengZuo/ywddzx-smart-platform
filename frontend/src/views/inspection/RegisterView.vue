@@ -15,6 +15,7 @@
       </div>
 
       <form v-else class="register-form" @submit.prevent="handleSubmit">
+        <fieldset class="register-fields" :disabled="submitting">
         <div class="section-title">基础信息</div>
 
         <div class="form-grid">
@@ -93,9 +94,9 @@
           </div>
 
           <div v-if="normalizedHasIssue === 'yes' && referenceMode === 'manual'" class="form-item form-item-full">
-            <label>搜索并选择规范ID</label>
+            <label>搜索并选择规范ID（可多选）</label>
             <div class="search-select" ref="standardSelectRef">
-              <input v-model="standardSearch" type="text" placeholder="输入规范ID搜索" @focus="openStandardDropdown"
+              <input v-model="standardSearch" type="text" placeholder="输入规范ID或内容，选择后可继续搜索" :disabled="submitting" @focus="openStandardDropdown"
                 @input="handleStandardInput" />
               <div v-if="standardDropdownVisible" class="search-select-dropdown search-select-dropdown-wide">
                 <div v-if="standardsLoading" class="search-select-status standard-loading-state">
@@ -108,7 +109,11 @@
                 </div>
                 <div v-for="standard in standardsLoading || standardLoadError ? [] : filteredStandards"
                   :key="getStandardIdentity(standard)"
-                  class="search-select-option" @click="selectStandard(standard)">
+                  class="search-select-option standard-multi-option" :class="{ selected: isSelected(standard) }"
+                  role="button" tabindex="0" :aria-pressed="isSelected(standard)"
+                  @keydown.enter.prevent="selectStandard(standard)" @keydown.space.prevent="selectStandard(standard)"
+                  @click="selectStandard(standard)">
+                  <span class="standard-check" aria-hidden="true">{{ isSelected(standard) ? '✓' : '+' }}</span>
                   <RegisterStandardSummary :standard="standard" />
                 </div>
                 <div v-if="!standardsLoading && !standardLoadError && filteredStandards.length === 0"
@@ -123,11 +128,11 @@
             <label>历史相似规范候选（请人工确认）</label>
             <div class="ai-recommendation-list">
               <button v-for="candidate in historyRecommendations" :key="getStandardIdentity(candidate)" type="button"
-                class="ai-recommendation-card" :class="{ selected: String(candidate.standard_id) === String(form.standardId) }"
+                class="ai-recommendation-card" :class="{ selected: isSelected(candidate) }" :aria-pressed="isSelected(candidate)" :disabled="submitting"
                 @click="selectStandard(candidate)">
                 <RegisterStandardSummary :standard="candidate" />
                 <div class="ai-recommendation-reason">{{ candidate.reason }}</div>
-                <span class="history-reference-choice">{{ String(candidate.standard_id) === String(form.standardId) ? '已选择此规范' : '选择此规范' }}</span>
+                <span class="history-reference-choice">{{ isSelected(candidate) ? '已选择 · 点击移除' : '添加此规范' }}</span>
               </button>
             </div>
           </div>
@@ -172,7 +177,7 @@
               <div v-if="aiRecommendations.length" class="ai-recommendation-list">
                 <button v-for="candidate in aiRecommendations" :key="getStandardIdentity(candidate)" type="button"
                   class="ai-recommendation-card"
-                  :class="{ selected: String(candidate.standard_id) === String(form.standardId) }"
+                  :class="{ selected: isSelected(candidate) }" :aria-pressed="isSelected(candidate)" :disabled="submitting"
                   @click="selectRecommendedStandard(candidate)">
                   <div class="ai-recommendation-top">
                     <div class="ai-recommendation-identity">
@@ -188,6 +193,7 @@
                     </span>
                   </div>
                   <RegisterStandardSummary :standard="candidate" />
+                  <span class="history-reference-choice">{{ isSelected(candidate) ? '已选择 · 点击移除' : '添加此规范' }}</span>
                   <div class="ai-recommendation-reason">
                     {{ candidate.reason || (aiRecommendationsGenerated ? 'AI认为该规范与问题描述相关。' : '本地规则认为该规范与问题描述相关。') }}
                   </div>
@@ -217,24 +223,20 @@
             </div>
           </div>
 
-          <template v-if="normalizedHasIssue === 'yes' && selectedStandard">
-            <div class="form-item form-item-full selected-standard-field selected-standard-first"
-              ref="selectedStandardStartRef">
-              <label>{{ selectedStandard.internal_standard_id ? '内部规范ID' : '外部规范ID' }}</label>
-              <input :value="selectedStandard.standard_id || ''" type="text" readonly />
+          <div v-if="normalizedHasIssue === 'yes'" class="form-item form-item-full selected-standards-panel">
+            <div class="selected-standards-header">
+              <div><strong>已选规范 {{ selectedStandards.length }} 条</strong><p>同一描述和照片将分别登记为 {{ expectedIssueCount }} 条独立问题，可跨检查表多选。人工与AI引用共用此清单。</p></div>
+              <button v-if="selectedStandards.length" type="button" class="btn btn-light" :disabled="submitting" @click="clearSelectedStandard">清空选择</button>
             </div>
-
-            <div class="form-item form-item-full selected-standard-field">
-              <label>{{ selectedStandard.internal_standard_id ? '关联检查表' : '检查表名称' }}</label>
-              <input :value="selectedStandard.inspection_table_name || ''" type="text" readonly />
+            <p v-if="!selectedStandards.length" class="selected-standards-empty">尚未选择规范。从搜索结果、历史候选或AI推荐中添加，已选项不会因继续搜索而丢失。</p>
+            <div v-for="standard in selectedStandards" :key="getStandardIdentity(standard)" class="selected-standard-item">
+              <div class="selected-standard-row">
+                <RegisterStandardSummary :standard="standard" />
+                <button type="button" class="standard-remove" :disabled="submitting" :aria-label="`移除规范 ${standardCode(standard)}`" @click="selectStandard(standard)">移除</button>
+              </div>
+              <details><summary>查看规范详情{{ standard.internal_standard_id ? `（关联${standard.linked_externals?.length || 0}条外部规范）` : '' }}</summary><pre>{{ normalizeStandardDetailForRegister(standard.standard_detail_text || '') }}</pre></details>
             </div>
-
-            <div class="form-item form-item-full selected-standard-field selected-standard-detail">
-              <label>规范详情</label>
-              <textarea :value="normalizeStandardDetailForRegister(selectedStandard.standard_detail_text || '')"
-                rows="8" readonly></textarea>
-            </div>
-          </template>
+          </div>
         </div>
 
         <template v-if="showIssueFields">
@@ -305,7 +307,7 @@
 
         <div class="form-actions">
           <button class="btn btn-primary" type="submit" :disabled="submitting">
-            {{ submitting ? '提交中...' : '提交登记' }}
+            {{ submitting ? '提交中...' : normalizedHasIssue === 'yes' && expectedIssueCount ? `提交登记（${expectedIssueCount}条问题）` : '提交登记' }}
           </button>
           <button class="btn btn-secondary" type="button" @click="resetForm" :disabled="submitting">重置</button>
         </div>
@@ -313,6 +315,7 @@
         <transition name="toast-fade">
           <div v-if="submitMessage" class="submit-toast" :class="submitMessageType">{{ submitMessage }}</div>
         </transition>
+        </fieldset>
       </form>
     </div>
 
@@ -331,7 +334,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
 import PhotoEditor from '@/components/PhotoEditor.vue'
-import { getRegisterStandardLabel } from '@/utils/registerStandardPresentation'
+import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
@@ -371,7 +374,6 @@ const hasPermission = currentRole === 'root' || Boolean(localPermissions.submit_
 const stationSelectRef = ref(null)
 const standardSelectRef = ref(null)
 const tableSelectRef = ref(null)
-const selectedStandardStartRef = ref(null)
 const stationDropdownVisible = ref(false)
 const standardDropdownVisible = ref(false)
 const tableDropdownVisible = ref(false)
@@ -392,7 +394,7 @@ const aiRequests = createLatestRequest()
 const aiReferenceMessage = ref('')
 const aiReferenceMessageType = ref('info')
 const aiNoRelated = ref(false)
-const aiSelectedStandard = ref(null)
+const selectedStandardSnapshots = ref({})
 const imageFile = ref(null)
 const imagePreviewUrl = ref('')
 const imageDraftAsset = ref(null)
@@ -441,7 +443,7 @@ const form = ref({
   stationId: '',
   hasIssue: 'yes',
   inspectionTableId: '',
-  standardId: '',
+  standardIds: [],
   description: ''
 })
 
@@ -463,7 +465,7 @@ const buildRegisterDraftFallbackData = (data) => ({
 const isRegisterDraftEmpty = (data) => {
   const draftForm = data?.form || {}
   return !String(draftForm.description || '').trim() &&
-    !String(draftForm.standardId || '').trim() &&
+    !(draftForm.standardIds?.length || String(draftForm.standardId || '').trim()) &&
     !String(draftForm.inspectionTableId || '').trim() &&
     !String(data?.standardSearch || '').trim() &&
     !String(data?.tableSearch || '').trim() &&
@@ -597,14 +599,9 @@ const matchesNumericStandardSearch = (item, keyword) => {
   })
 }
 
-const selectedStandard = computed(() => {
-  const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
-  if (standard) return standard
-  if (String(aiSelectedStandard.value?.standard_id || '') === String(form.value.standardId || '')) {
-    return aiSelectedStandard.value
-  }
-  return null
-})
+const selectedStandards = computed(() => form.value.standardIds.map(id => standards.value.find(item => standardCode(item) === id) || selectedStandardSnapshots.value[id]).filter(Boolean))
+const isSelected = standard => isStandardSelected(form.value.standardIds, standard)
+const expectedIssueCount = computed(() => registrationIssueCount(selectedStandards.value))
 
 const normalizedHasIssue = computed(() => {
   if (form.value.isHighlight) return 'highlight'
@@ -617,7 +614,7 @@ const showIssueFields = computed(() => {
   if (form.value.isHighlight) return Boolean(form.value.stationId && form.value.inspectionTableId)
   const hasIssueYes = String(form.value.hasIssue || 'yes').trim().toLowerCase() === 'yes'
   const hasStation = Boolean(String(form.value.stationId || '').trim())
-  const hasStandard = Boolean(String(form.value.standardId || '').trim())
+  const hasStandard = selectedStandards.value.length > 0
   return hasIssueYes && hasStation && hasStandard
 })
 
@@ -813,13 +810,6 @@ const openStationDropdown = () => {
 }
 
 const openStandardDropdown = async () => {
-  if (form.value.standardId || standardSearch.value) {
-    form.value.inspectionTableId = ''
-    form.value.standardId = ''
-    standardSearch.value = ''
-    aiSelectedStandard.value = null
-    clearAiReferenceState()
-  }
   standardDropdownVisible.value = true
   if (!standardsLoading.value && (!standards.value.length || standardLoadError.value)) {
     await reloadStandardCatalog()
@@ -836,9 +826,6 @@ const handleStationInput = () => {
 }
 
 const handleStandardInput = () => {
-  form.value.inspectionTableId = ''
-  form.value.standardId = ''
-  aiSelectedStandard.value = null
   standardDropdownVisible.value = true
 }
 
@@ -858,17 +845,16 @@ const clearAiReferenceState = () => {
 
 const clearSelectedStandard = () => {
   form.value.inspectionTableId = ''
-  form.value.standardId = ''
+  form.value.standardIds = []
   standardSearch.value = ''
   standardDropdownVisible.value = false
-  aiSelectedStandard.value = null
+  selectedStandardSnapshots.value = {}
 }
 
 const setReferenceMode = (mode) => {
   const nextMode = mode === 'ai' ? 'ai' : 'manual'
   if (referenceMode.value === nextMode) return
   referenceMode.value = nextMode
-  clearSelectedStandard()
   clearAiReferenceState()
 }
 
@@ -907,55 +893,14 @@ const selectStation = (station) => {
   )
 }
 
-const findScrollableParent = (element) => {
-  let parent = element?.parentElement || null
-  while (parent && parent !== document.body) {
-    const style = window.getComputedStyle(parent)
-    const overflowY = style.overflowY
-    const canScroll = parent.scrollHeight > parent.clientHeight
-    if (canScroll && ['auto', 'scroll', 'overlay'].includes(overflowY)) {
-      return parent
-    }
-    parent = parent.parentElement
-  }
-  return window
-}
-
-const scrollToSelectedStandard = async () => {
-  await nextTick()
-  const target = selectedStandardStartRef.value
-  if (!target || typeof window === 'undefined') return
-
-  const isMobile = window.matchMedia?.('(max-width: 900px)').matches
-  const topOffset = isMobile ? 8 : 24
-  const scrollParent = findScrollableParent(target)
-  requestAnimationFrame(() => {
-    if (scrollParent === window) {
-      const targetTop = target.getBoundingClientRect().top + window.scrollY - topOffset
-      window.scrollTo({
-        top: Math.max(targetTop, 0),
-        behavior: 'smooth'
-      })
-      return
-    }
-
-    const parentRect = scrollParent.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const targetTop = scrollParent.scrollTop + targetRect.top - parentRect.top - topOffset
-    scrollParent.scrollTo({
-      top: Math.max(targetTop, 0),
-      behavior: 'smooth'
-    })
-  })
-}
-
 const selectStandard = async (standard) => {
-  standardSearch.value = getRegisterStandardLabel(standard)
-  form.value.standardId = standard.internal_standard_id || standard.standard_id
-  form.value.inspectionTableId = standard.internal_standard_id ? '' : String(standard.inspection_table_id || '')
-  aiSelectedStandard.value = { ...standard }
-  standardDropdownVisible.value = false
-  await scrollToSelectedStandard()
+  if (submitting.value) return
+  try {
+    form.value.standardIds = toggleStandardId(form.value.standardIds, standard)
+    selectedStandardSnapshots.value[standardCode(standard)] = { ...standard }
+  } catch (error) {
+    showSubmitToast(error.message, 'error')
+  }
 }
 
 const selectRecommendedStandard = async (candidate) => {
@@ -967,7 +912,7 @@ const selectRecommendedStandard = async (candidate) => {
     confidence: candidate.confidence,
     reason: candidate.reason
   })
-  aiReferenceMessage.value = `已引用规范 ${candidate.standard_id}，请继续上传问题照片后提交。`
+  aiReferenceMessage.value = `当前已选 ${selectedStandards.value.length} 条规范，可继续添加其他候选，提交时分别登记问题。`
   aiReferenceMessageType.value = 'success'
 }
 
@@ -1005,7 +950,6 @@ const runAiStandardMatch = async () => {
     return
   }
 
-  clearSelectedStandard()
   clearAiReferenceState()
   const ticket = aiRequests.start()
 
@@ -1030,7 +974,7 @@ const runAiStandardMatch = async () => {
     aiReferenceMessage.value = ['approved_history', 'ai_cache'].includes(recommendationSource.value)
       ? response.data.message
       : response.data?.ai_generated
-      ? `AI已生成${standardSourceModeLabel.value}候选规范，请选择最符合现场问题的一条。`
+      ? `AI已生成${standardSourceModeLabel.value}候选规范，可多选适用于现场问题的规范。`
       : `${response.data?.message || 'AI暂不可用，已使用本地规则匹配。'}请人工确认候选规范。`
     aiReferenceMessageType.value = response.data?.ai_generated || recommendationSource.value === 'approved_history' ? 'success' : 'warning'
   } catch (error) {
@@ -1078,7 +1022,7 @@ const restoreRegisterDraft = async () => {
       stationId: draftForm.stationId || '',
       hasIssue: draftForm.hasIssue === 'no' ? 'no' : 'yes',
       inspectionTableId: String(draftForm.inspectionTableId || ''),
-      standardId: String(draftForm.standardId || ''),
+      standardIds: restoreStandardIds(draftForm, standards.value),
       description: draftForm.description || ''
     }
     stationSearch.value = draft.stationSearch || stations.value.find((item) => {
@@ -1092,12 +1036,6 @@ const restoreRegisterDraft = async () => {
 
     if (!form.value.isHighlight && form.value.hasIssue === 'yes' && draft.standardSourceMode && draft.standardSourceMode !== standardSourceMode.value) {
       clearSelectedStandard()
-    } else if (form.value.standardId) {
-      const standard = standards.value.find((item) => String(item.standard_id) === String(form.value.standardId))
-      if (standard) {
-        aiSelectedStandard.value = { ...standard }
-        standardSearch.value = getRegisterStandardLabel(standard)
-      }
     }
 
     if (draft.image?.data_url) {
@@ -1348,7 +1286,7 @@ const resetForm = (preserveMessage = false) => {
     stationId: '',
     hasIssue: 'yes',
     inspectionTableId: '',
-    standardId: '',
+    standardIds: [],
     description: ''
   }
   stationSearch.value = ''
@@ -1359,7 +1297,7 @@ const resetForm = (preserveMessage = false) => {
   standardDropdownVisible.value = false
   tableDropdownVisible.value = false
   clearAiReferenceState()
-  aiSelectedStandard.value = null
+  selectedStandardSnapshots.value = {}
   if (!preserveMessage) {
     submitMessage.value = ''
     submitMessageType.value = 'info'
@@ -1371,6 +1309,7 @@ const resetForm = (preserveMessage = false) => {
 }
 
 const handleSubmit = async () => {
+  if (submitting.value) return
   const hasIssueValue = normalizedHasIssue.value
 
   if (!form.value.stationId) {
@@ -1378,16 +1317,14 @@ const handleSubmit = async () => {
     return
   }
 
-  const currentStandard = selectedStandard.value
-
-  if (hasIssueValue === 'yes' && !form.value.standardId) {
+  if (hasIssueValue === 'yes' && !selectedStandards.value.length) {
     showSubmitToast(referenceMode.value === 'ai'
-      ? '请先通过AI匹配并确认一条规范，或改用人工引用规范。'
+      ? '请先通过AI匹配并确认至少一条规范，或改用人工引用规范。'
       : '请先搜索并选择规范ID，系统会自动带出检查表。', 'error')
     return
   }
 
-  if (hasIssueValue === 'yes' && !currentStandard?.internal_standard_id && !form.value.inspectionTableId) {
+  if (hasIssueValue === 'yes' && selectedStandards.value.some(standard => !standard.internal_standard_id && !standard.inspection_table_id)) {
     showSubmitToast('所选规范缺少检查表信息，请重新选择规范。', 'error')
     return
   }
@@ -1414,6 +1351,7 @@ const handleSubmit = async () => {
   }
 
   try {
+    const registrationSelections = buildRegistrationSelections(selectedStandards.value)
     submitting.value = true
     if (submitMessageTimer) {
       clearTimeout(submitMessageTimer)
@@ -1427,12 +1365,7 @@ const handleSubmit = async () => {
     formData.append('has_issue', hasIssueValue)
 
     if (hasIssueValue === 'yes') {
-      if (currentStandard?.internal_standard_id) {
-        formData.append('internal_standard_id', String(currentStandard.internal_standard_id))
-      } else {
-        formData.append('inspection_table_id', String(form.value.inspectionTableId))
-        formData.append('standard_id', String(form.value.standardId))
-      }
+      formData.append('standards', JSON.stringify(registrationSelections))
       formData.append('description', form.value.description)
       formData.append('photo', imageFile.value)
     } else {
@@ -1467,7 +1400,7 @@ const handleClickOutside = (event) => {
 
 
 watch(
-  [() => form.value.standardId, () => form.value.inspectionTableId],
+  [() => form.value.standardIds, () => form.value.inspectionTableId],
   () => {
     if (submitMessageType.value !== 'success') {
       submitMessage.value = ''
@@ -1485,7 +1418,9 @@ watch(
     aiMatching.value = false
     historyRecommendations.value = []
     historyMessage.value = ''
-    if (!restoringRegisterDraft && referenceMode.value === 'ai' && description !== previousDescription) clearSelectedStandard()
+    if (!restoringRegisterDraft && referenceMode.value === 'ai' && description !== previousDescription && selectedStandards.value.length) {
+      showSubmitToast('描述已修改，请确认已选规范仍适用；可重新匹配并调整选择。', 'info')
+    }
     clearAiReferenceState()
   },
   { flush: 'sync' }
@@ -1543,6 +1478,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.register-fields { display: contents; }
+.standard-multi-option { display: flex; align-items: flex-start; gap: 12px; }
+.standard-multi-option.selected { background: #eff6ff; }
+.standard-check { flex: 0 0 24px; width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid #93c5fd; border-radius: 7px; color: #2563eb; font-weight: 700; }
+.standard-multi-option.selected .standard-check { background: #2563eb; color: white; }
+.selected-standards-panel { border: 1px solid #cbdcf0; border-radius: 18px; padding: 18px; background: #f6f9fd; min-width: 0; }
+.selected-standards-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.selected-standards-header strong { color: #1e40af; font-size: 16px; }
+.selected-standards-header p, .selected-standards-empty { margin: 8px 0; color: #64748b; font-size: 13px; line-height: 1.7; }
+.selected-standards-header .btn { flex-shrink: 0; }
+.selected-standard-item { padding: 14px; margin-top: 10px; border: 1px solid #dbe4ee; border-radius: 12px; background: white; }
+.selected-standard-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; overflow-wrap: anywhere; }
+.standard-remove { flex-shrink: 0; min-height: 36px; padding: 7px 12px; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; background: #fff7f7; cursor: pointer; }
+.selected-standard-item summary { margin-top: 10px; color: #2563eb; font-size: 13px; cursor: pointer; padding: 6px 0; }
+.selected-standard-item pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; color: #334155; }
+@media (max-width: 768px) {
+  .selected-standards-panel { padding: 12px; }
+  .selected-standards-header { flex-wrap: wrap; }
+  .selected-standard-item { padding: 10px; }
+  .standard-remove { min-height: 42px; }
+}
 .history-reference-panel { margin-top: 12px; padding: 16px; border: 1px solid #cbdedb; border-radius: 18px; background: #f5faf9; }
 .history-reference-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .history-reference-header strong { color: #115e59; }
@@ -1978,54 +1934,6 @@ onBeforeUnmount(() => {
 .form-item textarea[readonly] {
   background: #f8fafc;
   color: #475569;
-}
-
-.selected-standard-field {
-  box-sizing: border-box;
-  position: relative;
-  padding: 14px;
-  border: 1px solid rgba(147, 197, 253, 0.46);
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 34%),
-    linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
-}
-
-.selected-standard-field *,
-.selected-standard-field *::before,
-.selected-standard-field *::after {
-  box-sizing: border-box;
-}
-
-.selected-standard-first {
-  scroll-margin-top: 18px;
-}
-
-.selected-standard-first::before {
-  content: '已选择规范';
-  width: fit-content;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: #dbeafe;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.selected-standard-field label {
-  color: #1e3a8a;
-}
-
-.selected-standard-field input,
-.selected-standard-field textarea {
-  border-color: rgba(191, 219, 254, 0.96);
-  background: rgba(255, 255, 255, 0.9);
-}
-
-.selected-standard-detail textarea {
-  min-height: 152px;
-  resize: none;
 }
 
 .search-select {
@@ -2601,20 +2509,6 @@ onBeforeUnmount(() => {
 
   .search-select-option {
     padding: 11px 10px;
-  }
-
-  .selected-standard-field {
-    padding: 12px;
-    border-radius: 16px;
-  }
-
-  .selected-standard-first {
-    scroll-margin-top: 12px;
-  }
-
-  .selected-standard-detail textarea {
-    min-height: 168px;
-    max-height: 42vh;
   }
 
   .option-main {

@@ -5,6 +5,7 @@ from standard_history import fetch_standard_history, recommend_from_history
 from equipment_report_library import exclusions as equipment_issue_exclusions, save_exclusions as save_equipment_issue_exclusions
 import equipment_report_analysis as equipment_analysis
 from external_standard_status import disabled_standard_ids, require_active_standards
+from inspection_registration import parse_standard_selections
 import fcntl
 import hashlib
 import json
@@ -246,7 +247,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "7.9.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.0.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -21657,6 +21658,9 @@ def prepare_issue_registration_targets(
 ):
     targets = []
     period = get_inspection_completion_config(cur)["record_uniqueness_period"]
+    # Acquire multi-table locks in a stable order to avoid concurrent batch deadlocks.
+    for table_id in sorted({int(entry["inspection_table_id"]) for entry in external_standards}):
+        lock_inspection_period_scope(cur, station_id, table_id, today, period)
     for external in external_standards:
         inspection_table_id = str(external.get("inspection_table_id") or "").strip()
         standard_id = str(external.get("external_standard_id") or external.get("standard_id") or "").strip()
@@ -21669,7 +21673,6 @@ def prepare_issue_registration_targets(
         if not inspection_table["is_active"]:
             raise ValueError(f"外部规范ID【{standard_id}】对应的检查表未启用。")
 
-        lock_inspection_period_scope(cur, station_id, inspection_table_id, today, period)
         existing_inspection = find_period_inspection(
             cur,
             station_id,
@@ -21689,9 +21692,62 @@ def prepare_issue_registration_targets(
                 "standard_id": int(standard_id),
                 "standard_detail_text": external.get("standard_detail_text") or "",
                 "inspection_id": existing_inspection["id"] if existing_inspection else None,
+                "internal_standard_id": external.get("internal_standard_id"),
+                "internal_standard_detail_text": external.get("internal_standard_detail_text"),
             }
         )
     return targets
+
+
+def resolve_registration_standards(cur, selections, usage_mode):
+    """Resolve table/detail metadata on the server, then validate the whole batch."""
+    external_ids, internal_by_external = [], {}
+    for selection in selections:
+        internal_code = selection.get("internal_standard_id")
+        if bool(internal_code) != (usage_mode == "internal"):
+            raise ValueError("规范库使用方式已变更，请刷新页面后重新选择规范。")
+        if not internal_code:
+            external_ids.append(int(selection["standard_id"]))
+            continue
+        internal, _fields, links = fetch_internal_standard_by_code(cur, internal_code)
+        if not internal:
+            raise ValueError(f"内部规范【{internal_code}】不存在或未启用。")
+        if not links:
+            raise ValueError(f"内部规范【{internal_code}】尚未挂载外部规范，不能登记问题。")
+        for link in links:
+            external_id = int(link["external_standard_id"])
+            external_ids.append(external_id)
+            internal_by_external[external_id] = internal
+    external_ids = list(dict.fromkeys(external_ids))
+    external_map = fetch_external_standard_map(cur, external_ids)
+    linked_internal = fetch_internal_links_by_external_ids(cur, external_ids) if usage_mode == "external" else internal_by_external
+    require_active_standards(cur, external_ids)
+    results = []
+    table_claims = {int(item["standard_id"]): item.get("inspection_table_id") for item in selections if "standard_id" in item}
+    for external_id in external_ids:
+        external = external_map.get(external_id)
+        if not external:
+            raise ValueError(f"外部规范【{external_id}】不存在或检查表未启用。")
+        table_claim = table_claims.get(external_id)
+        if table_claim and int(table_claim) != int(external["inspection_table_id"]):
+            raise ValueError(f"外部规范【{external_id}】与所选检查表不一致，请重新选择。")
+        if not external.get("standard_detail_text"):
+            raise ValueError(f"外部规范【{external_id}】详情不完整，请联系管理员。")
+        internal = linked_internal.get(external_id) or {}
+        results.append({**external, "internal_standard_id": internal.get("internal_standard_id"),
+                        "internal_standard_detail_text": internal.get("content")})
+    return results
+
+
+def copy_registration_photo(photo_path):
+    """Use independent files so deleting one generated issue never breaks another."""
+    destination = os.path.join(os.path.dirname(photo_path), f"issue_{uuid.uuid4().hex}.jpg").replace("\\", "/")
+    try:
+        shutil.copyfile(resolve_storage_abs_path(photo_path), resolve_storage_abs_path(destination))
+    except Exception:
+        remove_storage_file(destination)
+        raise
+    return destination
 
 
 def resolve_issue_standard_edit_target(
@@ -31270,38 +31326,31 @@ def inspection_register():
     station_id = str(request.form.get("station_id", "")).strip()
     inspection_table_id = str(request.form.get("inspection_table_id", "")).strip()
     has_issue = str(request.form.get("has_issue", "yes")).strip().lower()
-    standard_id = str(request.form.get("standard_id", "")).strip()
-    internal_standard_id = str(request.form.get("internal_standard_id", "")).strip().upper()
     description = str(request.form.get("description", "")).strip()
     photo = request.files.get("photo")
 
     if not inspector_id:
         return jsonify({"success": False, "error": "缺少巡检人信息。"}), 400
-
     if not station_id:
         return jsonify({"success": False, "error": "请选择站点名称。"}), 400
-
-    if has_issue != "yes" and not inspection_table_id:
-        return jsonify({"success": False, "error": "请选择检查表。"}), 400
-
     if has_issue not in {"yes", "no"}:
         return jsonify({"success": False, "error": "是否发现问题参数不合法。"}), 400
-
-    if has_issue == "yes" and not standard_id and not internal_standard_id:
-        return jsonify({"success": False, "error": "请选择规范。"}), 400
-
-    if has_issue == "yes" and standard_id and not internal_standard_id and not inspection_table_id:
+    if has_issue == "no" and not inspection_table_id:
         return jsonify({"success": False, "error": "请选择检查表。"}), 400
-
     if has_issue == "yes" and not description:
         return jsonify({"success": False, "error": "请填写实际问题描述。"}), 400
-
+    if len(description) > 10000:
+        return jsonify({"success": False, "error": "问题描述最多10000字。"}), 400
     if has_issue == "yes" and (not photo or not photo.filename):
         return jsonify({"success": False, "error": "请上传问题照片。"}), 400
+    try:
+        selections = parse_standard_selections(request.form) if has_issue == "yes" else []
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
-    conn = None
-    cur = None
-
+    conn, cur = None, None
+    photo_paths = []
+    committed = False
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -31312,283 +31361,89 @@ def inspection_register():
         auto_complete_overdue_inspections(cur)
         conn.commit()
 
-        cur.execute(
-            """
-            SELECT id, username, role, real_name
-            FROM users
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (inspector_id,),
-        )
+        cur.execute("SELECT id, username, role, real_name FROM users WHERE id = %s LIMIT 1;", (inspector_id,))
         inspector = cur.fetchone()
-
         if not inspector:
             return jsonify({"success": False, "error": "巡检人不存在。"}), 404
-
         if not has_permission(cur, inspector, "submit_inspections"):
-            return (
-                jsonify(
-                    {"success": False, "error": "只有督导组账号可以提交巡检登记。"}
-                ),
-                403,
-            )
+            return jsonify({"success": False, "error": "当前账号无权提交巡检登记。"}), 403
 
-        cur.execute(
-            """
-            SELECT id, station_name
-            FROM stations
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (station_id,),
-        )
-        station = cur.fetchone()
-
-        if not station:
+        cur.execute("SELECT id, station_name FROM stations WHERE id = %s LIMIT 1;", (station_id,))
+        if not cur.fetchone():
             return jsonify({"success": False, "error": "站点不存在。"}), 404
 
         today = beijing_today()
-        batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
-        usage_mode = get_inspection_standard_usage_mode(cur)
-
-        if has_issue == "yes" and usage_mode["mode"] == "external" and internal_standard_id:
-            return jsonify({"success": False, "error": "当前巡检登记已切换为外部规范库，请选择外部规范ID后提交。"}), 400
-
-        if has_issue == "yes" and usage_mode["mode"] == "internal" and standard_id and not internal_standard_id:
-            return jsonify({"success": False, "error": "当前巡检登记已切换为内部规范库，请选择内部规范ID后提交。"}), 400
-
-        if has_issue == "yes" and internal_standard_id:
-            internal_standard, _internal_fields, linked_externals = fetch_internal_standard_by_code(
-                cur,
-                internal_standard_id,
-            )
-            if not internal_standard:
-                return jsonify({"success": False, "error": "所选内部规范不存在或未启用。"}), 404
-            if not linked_externals:
-                return jsonify({"success": False, "error": "所选内部规范尚未挂载外部规范，不能登记问题。"}), 400
-
-            external_map = fetch_external_standard_map(
-                cur,
-                [link["external_standard_id"] for link in linked_externals],
-            )
-            external_standards = []
-            for link in linked_externals:
-                external = external_map.get(int(link["external_standard_id"]))
-                if not external:
-                    return jsonify(
-                        {
-                            "success": False,
-                            "error": f"内部规范挂载的外部规范ID【{link['external_standard_id']}】不存在。",
-                        }
-                    ), 400
-                external_standards.append(external)
-
-            require_active_standards(cur, [entry['external_standard_id'] for entry in external_standards])
-            targets = prepare_issue_registration_targets(
-                cur,
-                station_id,
-                inspector_id,
-                external_standards,
-                batch_id,
-                today,
-            )
-            photo_path = save_uploaded_file(photo, "issues")
-            inspection_id_by_table = {}
-            created_issue_ids = []
-            internal_detail_text = internal_standard.get("content") or ""
-
-            for target in targets:
-                table_key = str(target["inspection_table_id"])
-                inspection_id = target["inspection_id"] or inspection_id_by_table.get(table_key)
-                if not inspection_id:
-                    inspection_id = create_inspection_record(
-                        cur,
-                        station_id,
-                        inspector_id,
-                        target["inspection_table_id"],
-                        batch_id,
-                    )
-                    inspection_id_by_table[table_key] = inspection_id
-
-                cur.execute(
-                    """
-                    INSERT INTO issues (
-                        inspection_id,
-                        inspector_id,
-                        station_id,
-                        inspection_table_id,
-                        standard_id,
-                        standard_detail_text,
-                        internal_standard_id,
-                        internal_standard_detail_text,
-                        description,
-                        photo_path,
-                        status
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id;
-                    """,
-                    (
-                        inspection_id,
-                        inspector_id,
-                        station_id,
-                        target["inspection_table_id"],
-                        target["standard_id"],
-                        target["standard_detail_text"],
-                        internal_standard["internal_standard_id"],
-                        internal_detail_text,
-                        description,
-                        photo_path,
-                        "待整改",
-                    ),
-                )
-                created_issue_ids.append(cur.fetchone()["id"])
-                mark_related_plan_items_completed(
-                    cur,
-                    station_id,
-                    target["inspection_table_id"],
-                    inspection_id,
-                    today,
-                )
-
-            conn.commit()
-            return jsonify(
-                {
-                    "success": True,
-                    "message": f"巡检问题登记成功，已按内部规范生成 {len(created_issue_ids)} 条外部规范问题。",
-                    "inspection_id": next(iter(inspection_id_by_table.values()), targets[0]["inspection_id"]),
-                    "issue_id": created_issue_ids[0] if created_issue_ids else None,
-                    "issue_ids": created_issue_ids,
-                }
-            )
-
-        inspection_table = get_inspection_table_record(cur, inspection_table_id)
-        if not inspection_table:
-            return jsonify({"success": False, "error": "检查表不存在。"}), 404
-
-        if not inspection_table["is_active"]:
-            return jsonify({"success": False, "error": "检查表未启用。"}), 400
-
-        physical_table_name = get_physical_table_name_by_code(
-            inspection_table["table_code"]
-        )
-        fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table["id"], include_public=True)]
-        field_meta = [(field["field_key"], field["field_label"]) for field in fields]
-        if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
-            return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
-        ensure_checklist_field_columns(cur, physical_table_name, fields)
-
-        today = beijing_today()
-
-        if has_issue != 'no':
-            require_active_standards(cur, [standard_id])
-
-        inspection_id = get_or_create_period_inspection(
-            cur,
-            station_id,
-            inspector_id,
-            inspection_table_id,
-            today,
-        )
-
         if has_issue == "no":
-            mark_related_plan_items_completed(
-                cur,
-                station_id,
-                inspection_table_id,
-                inspection_id,
-                today,
-            )
+            inspection_table = get_inspection_table_record(cur, inspection_table_id)
+            if not inspection_table or not inspection_table["is_active"]:
+                raise ValueError("检查表不存在或未启用。")
+            physical_table_name = get_physical_table_name_by_code(inspection_table["table_code"])
+            if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
+                raise ValueError("检查表未配置物理表映射。")
+            inspection_id = get_or_create_period_inspection(cur, station_id, inspector_id, inspection_table_id, today)
+            mark_related_plan_items_completed(cur, station_id, inspection_table_id, inspection_id, today)
             conn.commit()
-            return jsonify(
-                {
-                    "success": True,
-                    "message": "巡检记录提交成功，未发现问题。",
-                    "inspection_id": inspection_id,
-                    "issue_id": None,
-                }
+            committed = True
+            return jsonify({"success": True, "message": "巡检记录提交成功，未发现问题。",
+                            "inspection_id": inspection_id, "issue_id": None})
+
+        usage_mode = get_inspection_standard_usage_mode(cur)["mode"]
+        external_standards = resolve_registration_standards(cur, selections, usage_mode)
+        batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
+        targets = prepare_issue_registration_targets(cur, station_id, inspector_id, external_standards, batch_id, today)
+        # Validate every target before saving photos or inserting any issues.
+        photo_paths.append(save_uploaded_file(photo, "issues"))
+        for _ in targets[1:]:
+            photo_paths.append(copy_registration_photo(photo_paths[0]))
+
+        inspection_id_by_table, created_issue_ids = {}, []
+        for target, photo_path in zip(targets, photo_paths):
+            table_id = target["inspection_table_id"]
+            inspection_id = inspection_id_by_table.get(table_id) or target["inspection_id"]
+            if not inspection_id:
+                inspection_id = create_inspection_record(cur, station_id, inspector_id, table_id, batch_id)
+            inspection_id_by_table[table_id] = inspection_id
+            cur.execute(
+                """
+                INSERT INTO issues (
+                    inspection_id, inspector_id, station_id, inspection_table_id,
+                    standard_id, standard_detail_text, internal_standard_id,
+                    internal_standard_detail_text, description, photo_path, status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id;
+                """,
+                (inspection_id, inspector_id, station_id, table_id,
+                 target["standard_id"], target["standard_detail_text"],
+                 target["internal_standard_id"], target["internal_standard_detail_text"],
+                 description, photo_path, "待整改"),
             )
-
-        standard = fetch_standard_from_table(
-            cur,
-            physical_table_name,
-            standard_id,
-        )
-        if not standard:
-            return jsonify({"success": False, "error": "所选规范不存在。"}), 404
-
-        standard_detail_text = build_standard_detail_text(
-            field_meta,
-            standard,
-        )
-        if not standard_detail_text:
-            return jsonify({"success": False, "error": "规范详情生成失败。"}), 400
-
-        linked_internal = fetch_internal_links_by_external_ids(cur, [standard_id]).get(int(standard_id))
-        linked_internal_standard_id = linked_internal.get("internal_standard_id") if linked_internal else None
-        linked_internal_detail_text = linked_internal.get("content") if linked_internal else None
-        photo_path = save_uploaded_file(photo, "issues")
-
-        cur.execute(
-            """
-            INSERT INTO issues (
-                inspection_id,
-                inspector_id,
-                station_id,
-                inspection_table_id,
-                standard_id,
-                standard_detail_text,
-                internal_standard_id,
-                internal_standard_detail_text,
-                description,
-                photo_path,
-                status
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id;
-            """,
-            (
-                inspection_id,
-                inspector_id,
-                station_id,
-                inspection_table_id,
-                standard_id,
-                standard_detail_text,
-                linked_internal_standard_id,
-                linked_internal_detail_text,
-                description,
-                photo_path,
-                "待整改",
-            ),
-        )
-        issue = cur.fetchone()
-
-        mark_related_plan_items_completed(
-            cur,
-            station_id,
-            inspection_table_id,
-            inspection_id,
-            today,
-        )
+            created_issue_ids.append(cur.fetchone()["id"])
+        for table_id, inspection_id in inspection_id_by_table.items():
+            mark_related_plan_items_completed(cur, station_id, table_id, inspection_id, today)
         conn.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "巡检问题登记成功。",
-                "inspection_id": inspection_id,
-                "issue_id": issue["id"],
-            }
-        )
-    except ValueError as e:
+        committed = True
+        return jsonify({
+            "success": True,
+            "message": f"巡检问题登记成功，已按所选规范生成 {len(created_issue_ids)} 条独立问题。",
+            "inspection_id": next(iter(inspection_id_by_table.values())),
+            "inspection_ids": list(inspection_id_by_table.values()),
+            "issue_id": created_issue_ids[0],
+            "issue_ids": created_issue_ids,
+            "created_count": len(created_issue_ids),
+        })
+    except ValueError as exc:
         if conn:
             conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 400
-    except Exception as e:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
         if conn:
             conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        logging.exception("Inspection registration failed.")
+        return jsonify({"success": False, "error": "登记失败，未保存本次问题，请稍后重试。"}), 500
     finally:
+        if not committed:
+            for photo_path in photo_paths:
+                remove_storage_file(photo_path)
         close_db_resources(cur, conn)
 
 
