@@ -418,9 +418,10 @@
             </div>
           </div>
         </div>
-        <div class="filter-item" :data-filter-state="filterFieldState('issueDescription')">
+        <div class="filter-item filter-item-wide" :data-filter-state="filterFieldState('issueDescription')">
           <label>问题描述</label>
-          <input v-model.trim="filters.issueDescription" placeholder="搜索问题描述关键词" />
+          <IssueDescriptionFilter v-model="filters.issueDescription" v-model:match-mode="filters.descriptionMatch"
+            @apply="startIssueFilter" />
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('rectificationResult')">
           <label>站经理整改结果</label>
@@ -1357,6 +1358,8 @@ import {
   replaceIssueById
 } from '@/utils/issueAudit'
 import DateRangePicker from '@/components/DateRangePicker.vue'
+import IssueDescriptionFilter from '@/components/IssueDescriptionFilter.vue'
+import { describeDescriptionFilter, descriptionFilterError } from '@/utils/issueDescriptionFilter'
 
 const currentMonthValue = () => {
   const now = new Date()
@@ -1377,6 +1380,7 @@ const createDefaultIssueFilters = () => ({
   standardDetail: '',
   standardTags: [],
   issueDescription: '',
+  descriptionMatch: 'all',
   rectificationResult: '',
   reviewResult: '',
   status: '',
@@ -2223,6 +2227,7 @@ const buildIssueQueryParams = (source = appliedFilters.value) => ({
   standard_detail: source.standardDetail,
   standard_tags: serializeIssueMultiFilter(source.standardTags),
   issue_description: source.issueDescription,
+  description_match: source.descriptionMatch || 'all',
   rectification_result: source.rectificationResult,
   review_result: source.reviewResult,
   status: source.status,
@@ -2278,6 +2283,11 @@ const removeIssueFromList = (issueId) => {
 }
 
 const startIssueFilter = async () => {
+  const error = descriptionFilterError(filters.value.issueDescription)
+  if (error) {
+    showActionMessage(error, 'error')
+    return
+  }
   appliedFilters.value = cloneIssueFilters(filters.value)
   if (page.value !== 1) {
     suppressNextIssuePageFetch = true
@@ -2434,6 +2444,7 @@ const filterMyTodayIssues = async () => {
     standardDetail: '',
     standardTags: [],
     issueDescription: '',
+    descriptionMatch: 'all',
     rectificationResult: '',
     reviewResult: '',
     status: '',
@@ -2468,8 +2479,9 @@ const handleIssueDateRangeChange = () => {
 const buildCurrentExportFilterSummary = () => {
   return Object.fromEntries(
     Object.entries(appliedFilters.value)
+      .filter(([key]) => key !== 'descriptionMatch')
       .map(([key, value]) => {
-        const normalized = Array.isArray(value)
+        const normalized = key === 'issueDescription' ? describeDescriptionFilter(appliedFilters.value) : Array.isArray(value)
           ? value.map((item) => String(item || '').trim()).filter(Boolean).join('、')
           : String(value || '').trim()
         return [key, normalized]

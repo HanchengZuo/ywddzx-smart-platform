@@ -1,3 +1,5 @@
+import { describeDescriptionFilter } from './issueDescriptionFilter.js'
+
 export const filterValues = (value) => (Array.isArray(value) ? value : [value])
   .filter((item) => item !== null && item !== undefined && String(item).trim() !== '')
   .map((item) => String(item).trim())
@@ -14,8 +16,10 @@ const valueLabels = {
 
 export const buildFilterSummary = (definitions, draft, applied = draft) => definitions.map(([key, label]) => {
   const dateRange = (source) => [source.dateFrom || '', source.dateTo || '']
-  const raw = key === 'dateRange' ? dateRange(draft) : draft[key]
-  const previous = key === 'dateRange' ? dateRange(applied) : applied[key]
+  const readValue = (source) => key === 'dateRange' ? dateRange(source)
+    : key === 'issueDescription' && 'descriptionMatch' in source ? describeDescriptionFilter(source) : source[key]
+  const raw = readValue(draft)
+  const previous = readValue(applied)
   const display = (value) => {
     if (key === 'dateRange') {
       return value.some(Boolean) ? `${value[0] || '不限开始'} 至 ${value[1] || '不限结束'}` : ''
