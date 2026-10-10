@@ -319,11 +319,8 @@
       </form>
     </div>
 
-    <div v-if="issuePhotoPreviewVisible" class="issue-photo-preview-overlay" @click.self="closeIssuePhotoPreview">
-      <div class="issue-photo-preview-dialog" @wheel.prevent="handleIssuePhotoPreviewWheel" @dblclick="resetIssuePhotoPreviewScale">
-        <img :src="imagePreviewUrl" :style="issuePhotoPreviewImageStyle" alt="问题照片大图预览" />
-      </div>
-    </div>
+    <InspectionPhotoPreview v-if="issuePhotoPreviewVisible" :url="imagePreviewUrl"
+      :title="form.isHighlight ? '亮点照片' : '问题照片'" @close="closeIssuePhotoPreview" />
 
     <PhotoEditor v-if="photoEditorVisible" :photos="sourcePhotos" :composition="photoComposition"
       :title="form.isHighlight ? '亮点照片编辑' : '问题照片编辑'" :save-photo="savePhotoEditor" @close="closePhotoEditor" />
@@ -334,6 +331,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
 import PhotoEditor from '@/components/PhotoEditor.vue'
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
@@ -402,7 +400,6 @@ const sourcePhotos = ref([])
 const photoComposition = ref({ width: 1200, height: 800, items: [], circles: [] })
 const photoEditorVisible = ref(false)
 const issuePhotoPreviewVisible = ref(false)
-const issuePhotoPreviewScale = ref(1)
 const issuePhotoUploadSectionRef = ref(null)
 const isPhotoDragActive = ref(false)
 const submitMessage = ref('')
@@ -617,10 +614,6 @@ const showIssueFields = computed(() => {
   const hasStandard = selectedStandards.value.length > 0
   return hasIssueYes && hasStation && hasStandard
 })
-
-const issuePhotoPreviewImageStyle = computed(() => ({
-  transform: `scale(${issuePhotoPreviewScale.value})`
-}))
 
 const normalizeStandardDetailForRegister = (value) => {
   const lines = String(value || '')
@@ -1165,23 +1158,11 @@ const openIssuePhotoPicker = () => {
 
 const openIssuePhotoPreview = () => {
   if (!imagePreviewUrl.value) return
-  issuePhotoPreviewScale.value = 1
   issuePhotoPreviewVisible.value = true
 }
 
 const closeIssuePhotoPreview = () => {
   issuePhotoPreviewVisible.value = false
-  issuePhotoPreviewScale.value = 1
-}
-
-const resetIssuePhotoPreviewScale = () => {
-  issuePhotoPreviewScale.value = 1
-}
-
-const handleIssuePhotoPreviewWheel = (event) => {
-  const delta = event.deltaY > 0 ? -0.12 : 0.12
-  const nextScale = issuePhotoPreviewScale.value + delta
-  issuePhotoPreviewScale.value = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
 
 const handlePhotoDragEnter = (event) => {
@@ -2287,40 +2268,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.issue-photo-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 4000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.76);
-}
-
-.issue-photo-preview-dialog {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: min(980px, 96vw);
-  max-height: 92vh;
-  overflow: visible;
-  cursor: zoom-in;
-}
-
-.issue-photo-preview-dialog img {
-  display: block;
-  max-width: 100%;
-  max-height: 92vh;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
-  transform-origin: center center;
-  transition: transform 0.12s ease-out;
-  will-change: transform;
 }
 
 

@@ -2107,9 +2107,8 @@
           </footer>
         </section>
       </div>
-      <div v-if="imagePreview.visible" class="report-image-preview" @click.self="closeImagePreview">
-        <img :src="imagePreview.src" :alt="imagePreview.title || '问题照片预览'" />
-      </div>
+      <InspectionPhotoPreview v-if="imagePreview.visible" :url="imagePreview.src"
+        :title="imagePreview.title || '问题照片预览'" @close="closeImagePreview" />
       <div v-if="standardDetailPreview.visible" class="standard-detail-preview" @click.self="closeStandardDetail">
         <section role="dialog" aria-modal="true" aria-label="外部规范详情">
           <button type="button" aria-label="关闭" @click="closeStandardDetail">×</button>
@@ -2133,6 +2132,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
@@ -10332,28 +10332,6 @@ onBeforeUnmount(() => {
 
 .equipment-analysis-title h4 {
   margin: 0;
-}
-
-.report-image-preview {
-  position: fixed;
-  inset: 0;
-  z-index: 90000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 26px;
-  background: rgba(2, 6, 23, 0.82);
-  backdrop-filter: blur(8px);
-  cursor: zoom-out;
-}
-
-.report-image-preview img {
-  max-width: min(1100px, 96vw);
-  max-height: 92vh;
-  object-fit: contain;
-  border-radius: 18px;
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
-  cursor: default;
 }
 
 .standard-detail-preview {

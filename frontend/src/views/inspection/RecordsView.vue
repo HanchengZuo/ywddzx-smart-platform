@@ -259,9 +259,11 @@
                   </span>
                 </div>
                 <div v-if="isRecordFlowSigned(record)" class="record-flow-signature-preview">
-                  <img v-if="recordImagesReady && record.station_manager_signature_path"
-                    :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
-                    alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                  <button v-if="recordImagesReady && record.station_manager_signature_path" type="button"
+                    class="record-photo-trigger" aria-label="放大站经理签名" @click="previewPhoto(record.station_manager_signature_path, '站经理签名')">
+                    <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                      alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                  </button>
                   <div v-else class="signature-preview-placeholder">{{ record.quality_accept_source === 'automatic' ? '自动验收' : '签名' }}</div>
                   <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
                 </div>
@@ -433,9 +435,11 @@
                         </span>
                       </div>
                       <div v-if="isRecordFlowSigned(record)" class="record-flow-signature-preview">
-                        <img v-if="recordImagesReady && record.station_manager_signature_path"
-                          :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
-                          alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                        <button v-if="recordImagesReady && record.station_manager_signature_path" type="button"
+                          class="record-photo-trigger" aria-label="放大站经理签名" @click="previewPhoto(record.station_manager_signature_path, '站经理签名')">
+                          <img :src="resolveImage(record.station_manager_signature_path)" class="signature-preview-image"
+                            alt="站经理签名" loading="lazy" decoding="async" fetchpriority="low" />
+                        </button>
                         <div v-else class="signature-preview-placeholder">{{ record.quality_accept_source === 'automatic' ? '自动验收' : '签名' }}</div>
                         <div class="signature-preview-time">{{ record.station_manager_signed_at || '已完成签名验收' }}</div>
                       </div>
@@ -704,20 +708,26 @@
               <div class="batch-issue-image-grid">
                 <div class="batch-issue-image-card">
                   <span>问题照片</span>
-                  <img v-if="issue.issue_photo" :src="resolveImage(issue.issue_photo)" class="batch-issue-image"
-                    alt="问题照片" loading="lazy" decoding="async" />
+                  <button v-if="issue.issue_photo" type="button" class="record-photo-trigger" aria-label="放大问题照片"
+                    @click="previewPhoto(issue.issue_photo, '问题照片')">
+                    <img :src="resolveImage(issue.issue_photo)" class="batch-issue-image" alt="问题照片" loading="lazy" decoding="async" />
+                  </button>
                   <div v-else class="batch-issue-image-empty">暂无问题照片</div>
                 </div>
                 <div class="batch-issue-image-card">
                   <span>整改照片</span>
-                  <img v-if="issue.rectification_photo" :src="resolveImage(issue.rectification_photo)"
-                    class="batch-issue-image" alt="整改照片" loading="lazy" decoding="async" />
+                  <button v-if="issue.rectification_photo" type="button" class="record-photo-trigger" aria-label="放大整改照片"
+                    @click="previewPhoto(issue.rectification_photo, '整改照片')">
+                    <img :src="resolveImage(issue.rectification_photo)" class="batch-issue-image" alt="整改照片" loading="lazy" decoding="async" />
+                  </button>
                   <div v-else class="batch-issue-image-empty">暂无整改照片</div>
                 </div>
                 <div class="batch-issue-image-card">
                   <span>复核照片</span>
-                  <img v-if="issue.review_photo" :src="resolveImage(issue.review_photo)" class="batch-issue-image"
-                    alt="复核照片" loading="lazy" decoding="async" />
+                  <button v-if="issue.review_photo" type="button" class="record-photo-trigger" aria-label="放大复核照片"
+                    @click="previewPhoto(issue.review_photo, '复核照片')">
+                    <img :src="resolveImage(issue.review_photo)" class="batch-issue-image" alt="复核照片" loading="lazy" decoding="async" />
+                  </button>
                   <div v-else class="batch-issue-image-empty">暂无复核照片</div>
                 </div>
               </div>
@@ -728,11 +738,13 @@
       </div>
     </div>
   </div>
+  <InspectionPhotoPreview v-if="photoPreview" :url="photoPreview.url" :title="photoPreview.title" @close="photoPreview = null" />
 </template>
 
 <script setup>
 import FilterSummary from '@/components/FilterSummary.vue'
 import WorkflowDeadline from '@/components/WorkflowDeadline.vue'
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { groupInspectionRecords } from '@/utils/inspectionRecordGroups'
 import { computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
@@ -1025,6 +1037,12 @@ const resolveImage = (path) => {
     return `/storage${value}`
   }
   return `/storage/${value}`
+}
+
+const photoPreview = ref(null)
+const previewPhoto = (path, title) => {
+  const url = resolveImage(path)
+  if (url) photoPreview.value = { url, title }
 }
 
 const getInspectionDate = (inspection) => inspection?.inspection_date || inspection?.date || '-'
@@ -3955,6 +3973,9 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+
+.record-photo-trigger { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.record-photo-trigger:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
 
 .batch-issue-image-card {
   border-radius: 14px;

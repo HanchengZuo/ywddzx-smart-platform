@@ -226,15 +226,12 @@
       </div>
     </section>
 
-    <div v-if="preview.visible" class="image-preview-overlay" @click.self="closePreview">
-      <div class="image-preview-dialog" @wheel.prevent="handlePreviewWheel" @dblclick="resetPreviewScale">
-        <img :src="preview.url" :style="previewImageStyle" alt="反馈截图预览" />
-      </div>
-    </div>
+    <InspectionPhotoPreview v-if="preview.visible" :url="preview.url" title="反馈截图" @close="closePreview" />
   </div>
 </template>
 
 <script setup>
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
@@ -254,6 +251,8 @@ import {
   draftAssetToFile,
   fileToDraftAsset
 } from '@/utils/localDraft'
+
+defineOptions({ name: 'FeedbackView' })
 
 const defaultFeedbackTypes = ['Bug反馈', '功能建议', '界面优化', '流程建议', '其他']
 const defaultModules = [
@@ -330,8 +329,7 @@ const message = reactive({
 })
 const preview = reactive({
   visible: false,
-  url: '',
-  scale: 1
+  url: ''
 })
 let messageTimer = null
 let screenshotDragDepth = 0
@@ -742,28 +740,12 @@ const deleteComment = async (comment) => {
 
 const previewImage = (path) => {
   preview.url = resolveStorageUrl(path)
-  preview.scale = 1
   preview.visible = true
 }
 
 const closePreview = () => {
   preview.visible = false
   preview.url = ''
-  preview.scale = 1
-}
-
-const previewImageStyle = computed(() => ({
-  transform: `scale(${preview.scale})`
-}))
-
-const resetPreviewScale = () => {
-  preview.scale = 1
-}
-
-const handlePreviewWheel = (event) => {
-  const delta = event.deltaY > 0 ? -0.12 : 0.12
-  const nextScale = preview.scale + delta
-  preview.scale = Math.min(4, Math.max(0.5, Number(nextScale.toFixed(2))))
 }
 
 watch(
@@ -1576,40 +1558,6 @@ onBeforeUnmount(() => {
   color: #64748b;
   text-align: center;
   background: #f8fafc;
-}
-
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 4000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.76);
-}
-
-.image-preview-dialog {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: min(960px, 96vw);
-  max-height: 92vh;
-  overflow: visible;
-  cursor: zoom-in;
-}
-
-.image-preview-dialog img {
-  display: block;
-  max-width: 100%;
-  max-height: 92vh;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.32);
-  transform-origin: center center;
-  transition: transform 0.12s ease-out;
-  will-change: transform;
 }
 
 @media (max-width: 1024px) {

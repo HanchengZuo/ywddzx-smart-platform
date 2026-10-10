@@ -301,13 +301,12 @@
       </section>
     </div>
 
-    <div v-if="imagePreview.visible" class="image-preview-backdrop" @click="closePreview">
-      <img :src="imagePreview.url" alt="问题照片预览" @click.stop />
-    </div>
+    <InspectionPhotoPreview v-if="imagePreview.visible" :url="imagePreview.url" title="问题照片预览" @close="closePreview" />
   </div>
 </template>
 
 <script setup>
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
@@ -362,7 +361,7 @@ const currentRole = localStorage.getItem('user_role') || localStorage.getItem('r
 let parsedPermissions = {}
 try {
   parsedPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
+} catch {
   parsedPermissions = {}
 }
 
@@ -525,7 +524,7 @@ const toPinyinText = (value, options = {}) => {
       nonZh: 'consecutive',
       ...options
     })
-  } catch (error) {
+  } catch {
     return ''
   }
 }
@@ -1466,8 +1465,7 @@ onBeforeUnmount(() => {
   background: #b44a3b;
 }
 
-.dialog-backdrop,
-.image-preview-backdrop {
+.dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -1475,18 +1473,6 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 24px;
   background: rgba(13, 22, 34, 0.48);
-}
-
-.image-preview-backdrop {
-  z-index: 95;
-  cursor: zoom-out;
-}
-
-.image-preview-backdrop img {
-  max-width: min(92vw, 1200px);
-  max-height: 88vh;
-  border-radius: 16px;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
 }
 
 .adjust-dialog,
