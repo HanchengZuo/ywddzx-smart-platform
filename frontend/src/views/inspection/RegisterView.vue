@@ -265,7 +265,7 @@
                     <span class="mobile-upload-title">选择或添加{{ form.isHighlight ? '亮点' : '问题' }}照片</span>
                   </div>
                   <div class="upload-desc">
-                    最多上传3张，系统会自动拼接成一张照片提交；你也可以进入图片编辑调整裁剪和画圈标注。
+                    最多上传3张，系统会自动拼接成一张照片提交；也可进入图片编辑裁剪，并用圆形或矩形标注重点。
                     <span class="desktop-drop-hint">桌面端可拖拽多张图片，也可复制图片后在此处粘贴上传。</span>
                   </div>
                   <div class="upload-trigger-group">
@@ -322,84 +322,15 @@
       </div>
     </div>
 
-    <div v-if="photoEditor.visible" class="photo-editor-overlay">
-      <div class="photo-editor-dialog">
-        <div class="photo-editor-head">
-          <div>
-            <span>问题照片编辑</span>
-            <h3>拼接、调换、裁剪和标注</h3>
-          </div>
-          <button class="photo-editor-close" type="button" @click="closePhotoEditor">×</button>
-        </div>
-
-        <div class="photo-editor-body">
-          <aside class="photo-editor-side">
-            <div class="editor-tool-group">
-              <button type="button" :class="{ active: photoEditor.tool === 'crop' }" @click="photoEditor.tool = 'crop'">
-                裁剪调整
-              </button>
-              <button type="button" :class="{ active: photoEditor.tool === 'swap' }" @click="photoEditor.tool = 'swap'">
-                调换位置
-              </button>
-              <button type="button" :class="{ active: photoEditor.tool === 'circle' }" @click="photoEditor.tool = 'circle'">
-                画圈标注
-              </button>
-            </div>
-
-            <div class="editor-tip">
-              <template v-if="photoEditor.tool === 'crop'">
-                选择下方图片后，在画布中拖动可调整裁剪位置，也可用缩放条放大图片。
-              </template>
-              <template v-else-if="photoEditor.tool === 'swap'">
-                在画布中按住一张照片拖到另一个框，两张照片会调换位置。
-              </template>
-              <template v-else>
-                在画布上按住并拖动即可画圈，适合标出问题位置。
-              </template>
-            </div>
-
-            <div class="editor-source-list">
-              <button v-for="photo in sourcePhotos" :key="photo.id" type="button"
-                :class="{ active: photoEditor.selectedPhotoId === photo.id }" @click="selectEditorPhoto(photo.id)">
-                <img :src="photo.url" :alt="photo.name" />
-                <span>{{ photo.name }}</span>
-              </button>
-            </div>
-
-            <label v-if="photoEditor.tool === 'crop' && selectedEditorItem" class="editor-range">
-              <span>图片缩放 {{ Math.round(selectedEditorItem.scale * 100) }}%</span>
-              <input v-model.number="selectedEditorItem.scale" type="range" min="1" max="3" step="0.05"
-                @input="handleEditorScaleChange" />
-            </label>
-
-            <div class="editor-actions-stack">
-              <button class="btn btn-light" type="button" @click="resetPhotoComposition">自动重新拼接</button>
-              <button class="btn btn-light" type="button" :disabled="!photoComposition.circles.length"
-                @click="undoEditorCircle">撤销画圈</button>
-            </div>
-          </aside>
-
-          <main class="photo-editor-canvas-wrap">
-            <canvas ref="photoEditorCanvasRef" class="photo-editor-canvas" @pointerdown="handleEditorPointerDown"
-              @pointermove="handleEditorPointerMove" @pointerup="handleEditorPointerUp"
-              @pointercancel="handleEditorPointerUp" @pointerleave="handleEditorPointerLeave"></canvas>
-          </main>
-        </div>
-
-        <div class="photo-editor-foot">
-          <button class="btn btn-secondary" type="button" @click="closePhotoEditor">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="photoEditor.saving" @click="savePhotoEditor">
-            {{ photoEditor.saving ? '生成中...' : '保存拼接照片' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <PhotoEditor v-if="photoEditorVisible" :photos="sourcePhotos" :composition="photoComposition"
+      :title="form.isHighlight ? '亮点照片编辑' : '问题照片编辑'" :save-photo="savePhotoEditor" @close="closePhotoEditor" />
   </div>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
+import PhotoEditor from '@/components/PhotoEditor.vue'
 import { getRegisterStandardLabel } from '@/utils/registerStandardPresentation'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
@@ -419,10 +350,8 @@ import {
   scrollImageUploadIntoView
 } from '@/utils/imageUpload'
 import {
-  clampCompositionItemOffset,
   createAutoIssuePhotoComposition,
-  exportIssuePhotoCompositionFile,
-  renderIssuePhotoComposition
+  exportIssuePhotoCompositionFile
 } from '@/utils/imageComposer'
 import {
   createLocalDraftManager,
@@ -469,16 +398,7 @@ const imagePreviewUrl = ref('')
 const imageDraftAsset = ref(null)
 const sourcePhotos = ref([])
 const photoComposition = ref({ width: 1200, height: 800, items: [], circles: [] })
-const photoEditorCanvasRef = ref(null)
-const photoEditor = ref({
-  visible: false,
-  tool: 'crop',
-  selectedPhotoId: '',
-  swapTargetPhotoId: '',
-  saving: false,
-  pointer: null,
-  draftCircle: null
-})
+const photoEditorVisible = ref(false)
 const issuePhotoPreviewVisible = ref(false)
 const issuePhotoPreviewScale = ref(1)
 const issuePhotoUploadSectionRef = ref(null)
@@ -1201,11 +1121,6 @@ const restoreRegisterDraft = async () => {
   return true
 }
 
-const selectedEditorItem = computed(() => {
-  return (photoComposition.value.items || []).find((item) => item.photoId === photoEditor.value.selectedPhotoId) || null
-})
-
-const getPhotoById = (photoId) => sourcePhotos.value.find((photo) => photo.id === photoId)
 
 const revokeSourcePhotos = () => {
   sourcePhotos.value.forEach((photo) => revokeObjectUrl(photo.url))
@@ -1228,16 +1143,8 @@ const setFinalIssuePhotoFile = async (file, options = {}) => {
   registerDraftManager?.scheduleSave()
 }
 
-const redrawPhotoEditor = () => {
-  renderIssuePhotoComposition(photoEditorCanvasRef.value, sourcePhotos.value, photoComposition.value, {
-    selectedPhotoId: photoEditor.value.tool === 'crop' ? photoEditor.value.selectedPhotoId : '',
-    swapSourcePhotoId: photoEditor.value.pointer?.type === 'swap' ? photoEditor.value.pointer.sourcePhotoId : '',
-    swapTargetPhotoId: photoEditor.value.tool === 'swap' ? photoEditor.value.swapTargetPhotoId : '',
-    draftCircle: photoEditor.value.draftCircle
-  })
-}
 
-const generateCompositePhoto = async (options = {}) => {
+const generateCompositePhoto = async () => {
   if (!sourcePhotos.value.length) return false
   const outputFile = await exportIssuePhotoCompositionFile(
     sourcePhotos.value,
@@ -1245,20 +1152,12 @@ const generateCompositePhoto = async (options = {}) => {
     `inspection-issue-${Date.now()}.jpg`
   )
   await setFinalIssuePhotoFile(outputFile, { silentDraftWarning: true })
-  if (!options.keepEditorCanvas) {
-    await nextTick()
-  }
   return true
 }
 
 const resetPhotoComposition = async () => {
   photoComposition.value = createAutoIssuePhotoComposition(sourcePhotos.value)
-  photoEditor.value.selectedPhotoId = sourcePhotos.value[0]?.id || ''
-  photoEditor.value.swapTargetPhotoId = ''
-  photoEditor.value.draftCircle = null
-  await nextTick()
-  redrawPhotoEditor()
-  await generateCompositePhoto({ keepEditorCanvas: true })
+  await generateCompositePhoto()
 }
 
 const handleFileChange = async (event) => {
@@ -1295,8 +1194,6 @@ const processSelectedImages = async (files = []) => {
 
     sourcePhotos.value = [...sourcePhotos.value, ...addedPhotos].slice(0, 3)
     photoComposition.value = createAutoIssuePhotoComposition(sourcePhotos.value)
-    photoEditor.value.selectedPhotoId = sourcePhotos.value[0]?.id || ''
-    photoEditor.value.swapTargetPhotoId = ''
     await generateCompositePhoto()
 
     if (incomingFiles.length > remainingCount) {
@@ -1397,7 +1294,7 @@ const handlePhotoPaste = async (event) => {
 }
 
 const handleWindowPhotoPaste = async (event) => {
-  if (event.defaultPrevented || normalizedHasIssue.value !== 'yes') return
+  if (event.defaultPrevented || photoEditorVisible.value || normalizedHasIssue.value !== 'yes') return
   const files = getImageFilesFromClipboardEvent(event)
   if (!files.length) return
   event.preventDefault()
@@ -1410,7 +1307,7 @@ const handleWindowPhotoPaste = async (event) => {
 }
 
 const removeSourcePhoto = async (photoId) => {
-  const target = getPhotoById(photoId)
+  const target = sourcePhotos.value.find(photo => photo.id === photoId)
   if (target) revokeObjectUrl(target.url)
   sourcePhotos.value = sourcePhotos.value.filter((photo) => photo.id !== photoId)
   if (!sourcePhotos.value.length) {
@@ -1420,194 +1317,14 @@ const removeSourcePhoto = async (photoId) => {
   await resetPhotoComposition()
 }
 
-const selectEditorPhoto = (photoId) => {
-  photoEditor.value.selectedPhotoId = photoId
-  photoEditor.value.tool = 'crop'
-  nextTick(redrawPhotoEditor)
+const openPhotoEditor = () => {
+  if (sourcePhotos.value.length) photoEditorVisible.value = true
 }
-
-const openPhotoEditor = async () => {
-  if (!sourcePhotos.value.length) return
-  photoEditor.value.visible = true
-  photoEditor.value.tool = 'crop'
-  photoEditor.value.selectedPhotoId = photoEditor.value.selectedPhotoId || sourcePhotos.value[0]?.id || ''
-  photoEditor.value.swapTargetPhotoId = ''
-  photoEditor.value.pointer = null
-  photoEditor.value.draftCircle = null
-  await nextTick()
-  redrawPhotoEditor()
-}
-
-const closePhotoEditor = (force = false) => {
-  if (photoEditor.value.saving && !force) return
-  photoEditor.value.visible = false
-  photoEditor.value.pointer = null
-  photoEditor.value.draftCircle = null
-  photoEditor.value.swapTargetPhotoId = ''
-}
-
-const getCanvasPoint = (event) => {
-  const canvas = photoEditorCanvasRef.value
-  const rect = canvas?.getBoundingClientRect()
-  if (!canvas || !rect) return null
-  return {
-    x: (event.clientX - rect.left) * (canvas.width / rect.width),
-    y: (event.clientY - rect.top) * (canvas.height / rect.height)
-  }
-}
-
-const findCompositionItemAtPoint = (point) => {
-  if (!point) return null
-  return [...(photoComposition.value.items || [])].reverse().find((item) => (
-    point.x >= item.x &&
-    point.x <= item.x + item.w &&
-    point.y >= item.y &&
-    point.y <= item.y + item.h
-  )) || null
-}
-
-const handleEditorPointerDown = (event) => {
-  const point = getCanvasPoint(event)
-  if (!point) return
-  photoEditorCanvasRef.value?.setPointerCapture?.(event.pointerId)
-
-  if (photoEditor.value.tool === 'circle') {
-    photoEditor.value.pointer = { type: 'circle', startX: point.x, startY: point.y }
-    photoEditor.value.draftCircle = { x: point.x, y: point.y, r: 1, color: '#ef4444', lineWidth: 8 }
-    redrawPhotoEditor()
-    return
-  }
-
-  const item = findCompositionItemAtPoint(point)
-  if (!item) return
-  photoEditor.value.selectedPhotoId = item.photoId
-
-  if (photoEditor.value.tool === 'swap') {
-    photoEditor.value.swapTargetPhotoId = item.photoId
-    photoEditor.value.pointer = {
-      type: 'swap',
-      sourcePhotoId: item.photoId
-    }
-    redrawPhotoEditor()
-    return
-  }
-
-  photoEditor.value.pointer = {
-    type: 'crop',
-    startX: point.x,
-    startY: point.y,
-    itemPhotoId: item.photoId,
-    startOffsetX: item.offsetX || 0,
-    startOffsetY: item.offsetY || 0
-  }
-  redrawPhotoEditor()
-}
-
-const handleEditorPointerMove = (event) => {
-  const pointer = photoEditor.value.pointer
-  if (!pointer) return
-  const point = getCanvasPoint(event)
-  if (!point) return
-
-  if (pointer.type === 'circle') {
-    const dx = point.x - pointer.startX
-    const dy = point.y - pointer.startY
-    photoEditor.value.draftCircle = {
-      x: pointer.startX,
-      y: pointer.startY,
-      r: Math.max(1, Math.sqrt(dx * dx + dy * dy)),
-      color: '#ef4444',
-      lineWidth: 8
-    }
-    redrawPhotoEditor()
-    return
-  }
-
-  if (pointer.type === 'swap') {
-    const targetItem = findCompositionItemAtPoint(point)
-    photoEditor.value.swapTargetPhotoId = targetItem?.photoId || ''
-    redrawPhotoEditor()
-    return
-  }
-
-  const item = (photoComposition.value.items || []).find((entry) => entry.photoId === pointer.itemPhotoId)
-  const photo = getPhotoById(pointer.itemPhotoId)
-  if (!item || !photo) return
-  item.offsetX = pointer.startOffsetX + point.x - pointer.startX
-  item.offsetY = pointer.startOffsetY + point.y - pointer.startY
-  clampCompositionItemOffset(item, photo)
-  redrawPhotoEditor()
-}
-
-const handleEditorPointerUp = async () => {
-  const pointer = photoEditor.value.pointer
-  if (!pointer) return
-
-  if (pointer.type === 'circle' && photoEditor.value.draftCircle?.r > 8) {
-    photoComposition.value.circles = [
-      ...(photoComposition.value.circles || []),
-      { ...photoEditor.value.draftCircle }
-    ]
-  }
-
-  if (pointer.type === 'swap') {
-    const sourceItem = (photoComposition.value.items || []).find((entry) => entry.photoId === pointer.sourcePhotoId)
-    const targetItem = (photoComposition.value.items || []).find((entry) => entry.photoId === photoEditor.value.swapTargetPhotoId)
-    if (sourceItem && targetItem && sourceItem !== targetItem) {
-      const sourcePhotoId = sourceItem.photoId
-      sourceItem.photoId = targetItem.photoId
-      targetItem.photoId = sourcePhotoId
-      ;[sourceItem, targetItem].forEach((item) => {
-        item.scale = 1
-        item.offsetX = 0
-        item.offsetY = 0
-      })
-      photoEditor.value.selectedPhotoId = sourcePhotoId
-    }
-  }
-
-  photoEditor.value.pointer = null
-  photoEditor.value.draftCircle = null
-  photoEditor.value.swapTargetPhotoId = ''
-  redrawPhotoEditor()
-  await generateCompositePhoto({ keepEditorCanvas: true })
-}
-
-const handleEditorPointerLeave = (event) => {
-  if (!photoEditor.value.pointer) return
-  if (event.buttons === 0) {
-    handleEditorPointerUp()
-  }
-}
-
-const handleEditorScaleChange = async () => {
-  const item = selectedEditorItem.value
-  const photo = getPhotoById(item?.photoId)
-  if (item && photo) {
-    clampCompositionItemOffset(item, photo)
-  }
-  redrawPhotoEditor()
-  await generateCompositePhoto({ keepEditorCanvas: true })
-}
-
-const undoEditorCircle = async () => {
-  photoComposition.value.circles = (photoComposition.value.circles || []).slice(0, -1)
-  redrawPhotoEditor()
-  await generateCompositePhoto({ keepEditorCanvas: true })
-}
-
-const savePhotoEditor = async () => {
-  try {
-    photoEditor.value.saving = true
-    await generateCompositePhoto({ keepEditorCanvas: true })
-    photoEditor.value.saving = false
-    closePhotoEditor(true)
-    showSubmitToast('拼接照片已更新。', 'success')
-  } catch (error) {
-    showSubmitToast(error?.message || '拼接照片生成失败，请稍后重试。', 'error')
-  } finally {
-    photoEditor.value.saving = false
-  }
+const closePhotoEditor = () => { photoEditorVisible.value = false }
+const savePhotoEditor = async (file, composition) => {
+  await setFinalIssuePhotoFile(file, { silentDraftWarning: true })
+  photoComposition.value = composition
+  showSubmitToast('编辑照片已更新。', 'success')
 }
 
 const clearImage = () => {
@@ -2698,239 +2415,6 @@ onBeforeUnmount(() => {
   will-change: transform;
 }
 
-.photo-editor-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 4300;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background:
-    radial-gradient(circle at 20% 10%, rgba(96, 165, 250, 0.22), transparent 28%),
-    rgba(15, 23, 42, 0.78);
-  backdrop-filter: blur(10px);
-}
-
-.photo-editor-dialog {
-  width: min(1280px, calc(100vw - 24px));
-  height: min(96vh, 980px);
-  max-height: calc(100vh - 24px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 24px;
-  background: #fff;
-  box-shadow: 0 34px 80px rgba(15, 23, 42, 0.36);
-}
-
-.photo-editor-head,
-.photo-editor-foot {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 18px 22px;
-  border-bottom: 1px solid #e2e8f0;
-  background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #f1f5f9 100%);
-}
-
-.photo-editor-head span {
-  display: inline-flex;
-  margin-bottom: 4px;
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.12em;
-}
-
-.photo-editor-head h3 {
-  margin: 0;
-  color: #0f172a;
-  font-size: 22px;
-  font-weight: 900;
-}
-
-.photo-editor-close {
-  width: 38px;
-  height: 38px;
-  border: 1px solid #dbe4ee;
-  border-radius: 999px;
-  background: #fff;
-  color: #475569;
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.photo-editor-close:hover {
-  color: #0f172a;
-  background: #f8fafc;
-}
-
-.photo-editor-body {
-  min-height: 0;
-  flex: 1;
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 0;
-  overflow: hidden;
-}
-
-.photo-editor-side {
-  min-height: 0;
-  padding: 18px;
-  overflow-y: auto;
-  border-right: 1px solid #e2e8f0;
-  background: #f8fafc;
-}
-
-.editor-tool-group {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.editor-tool-group button,
-.editor-source-list button {
-  border: 1px solid #dbe4ee;
-  border-radius: 12px;
-  background: #fff;
-  color: #334155;
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.editor-tool-group button {
-  min-height: 42px;
-  padding: 0 10px;
-  font-size: 13px;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.editor-tool-group button.active,
-.editor-source-list button.active {
-  color: #1d4ed8;
-  border-color: #93c5fd;
-  background: #eff6ff;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
-}
-
-.editor-tip {
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #dbeafe;
-  border-radius: 14px;
-  background: #eff6ff;
-  color: #1e40af;
-  font-size: 13px;
-  line-height: 1.75;
-}
-
-.editor-source-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.editor-source-list button {
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-height: 58px;
-  padding: 8px;
-  text-align: left;
-}
-
-.editor-source-list img {
-  width: 58px;
-  height: 42px;
-  object-fit: cover;
-  border-radius: 10px;
-  background: #e2e8f0;
-}
-
-.editor-source-list span {
-  min-width: 0;
-  overflow: hidden;
-  color: inherit;
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.editor-range {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 13px;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #fff;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.editor-range input {
-  width: 100%;
-  accent-color: #2563eb;
-}
-
-.editor-actions-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.photo-editor-canvas-wrap {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 20px 22px 26px;
-  overflow: hidden;
-  background:
-    linear-gradient(45deg, rgba(203, 213, 225, 0.24) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(203, 213, 225, 0.24) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(203, 213, 225, 0.24) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(203, 213, 225, 0.24) 75%),
-    #eef2f7;
-  background-position: 0 0, 0 14px, 14px -14px, -14px 0;
-  background-size: 28px 28px;
-}
-
-.photo-editor-canvas {
-  display: block;
-  width: auto;
-  max-width: 100%;
-  max-height: 100%;
-  height: auto;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
-  cursor: grab;
-  touch-action: none;
-}
-
-.photo-editor-canvas:active {
-  cursor: grabbing;
-}
-
-.photo-editor-foot {
-  justify-content: flex-end;
-  border-top: 1px solid #e2e8f0;
-  border-bottom: 0;
-}
 
 .btn {
   height: 42px;
@@ -3220,103 +2704,6 @@ onBeforeUnmount(() => {
     height: 50px;
   }
 
-  .photo-editor-overlay {
-    align-items: stretch;
-    padding: 0;
-  }
-
-  .photo-editor-dialog {
-    width: 100vw;
-    height: 100dvh;
-    max-height: none;
-    border-radius: 0;
-  }
-
-  .photo-editor-head,
-  .photo-editor-foot {
-    padding: 14px;
-  }
-
-  .photo-editor-head h3 {
-    font-size: 18px;
-  }
-
-  .photo-editor-close {
-    width: 36px;
-    height: 36px;
-  }
-
-  .photo-editor-body {
-    display: flex;
-    flex-direction: column;
-    grid-template-columns: 1fr;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .photo-editor-side {
-    flex: 0 0 auto;
-    padding: 14px;
-    border-right: 0;
-    border-bottom: 1px solid #e2e8f0;
-    overflow: visible;
-  }
-
-  .editor-tip {
-    margin-top: 10px;
-    padding: 10px;
-    font-size: 12px;
-  }
-
-  .editor-source-list {
-    flex-direction: row;
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .editor-source-list button {
-    grid-template-columns: 52px 88px;
-    flex: 0 0 auto;
-    width: 154px;
-  }
-
-  .editor-source-list img {
-    width: 52px;
-    height: 40px;
-  }
-
-  .editor-tool-group button {
-    min-height: 40px;
-    font-size: 12px;
-    padding: 0 8px;
-  }
-
-  .editor-actions-stack {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .photo-editor-canvas-wrap {
-    flex: 0 0 auto;
-    min-height: 0;
-    padding: 12px 12px 18px;
-    align-items: flex-start;
-    justify-content: center;
-    overflow: visible;
-  }
-
-  .photo-editor-canvas {
-    width: min(100%, 720px);
-    max-height: none;
-    border-radius: 14px;
-  }
-
-  .photo-editor-foot {
-    flex: 0 0 auto;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
 
   .form-actions {
     flex-direction: column;

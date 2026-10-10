@@ -1,4 +1,18 @@
-import { canvasToBlob } from './imageUpload'
+import { canvasToBlob } from './imageUpload.js'
+
+export const DEFAULT_ANNOTATION_LINE_WIDTH = 6
+
+export const createPhotoAnnotation = (shape, start, end, width, height, lineWidth = DEFAULT_ANNOTATION_LINE_WIDTH) => {
+  const stroke = clamp(Number(lineWidth) || DEFAULT_ANNOTATION_LINE_WIDTH, 2, 16)
+  const point = p => ({ x: clamp(p.x, stroke / 2, width - stroke / 2), y: clamp(p.y, stroke / 2, height - stroke / 2) })
+  const a = point(start), b = point(end)
+  const common = { color: '#ef4444', lineWidth: stroke }
+  if (shape === 'rectangle') {
+    return { ...common, type: 'rectangle', x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }
+  }
+  return { ...common, type: 'circle', x: a.x, y: a.y,
+    r: Math.min(Math.hypot(b.x - a.x, b.y - a.y), a.x - stroke / 2, width - a.x - stroke / 2, a.y - stroke / 2, height - a.y - stroke / 2) }
+}
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
@@ -201,15 +215,18 @@ export const renderIssuePhotoComposition = (canvas, photos = [], composition, op
     }
   })
 
-  const circles = [...(composition.circles || [])]
-  if (options.draftCircle) circles.push(options.draftCircle)
-  circles.forEach((circle) => {
-    if (!circle || !Number.isFinite(circle.r) || circle.r <= 2) return
+  const annotations = [...(composition.circles || []), ...(composition.annotations || [])]
+  if (options.draftAnnotation || options.draftCircle) annotations.push(options.draftAnnotation || options.draftCircle)
+  annotations.forEach((annotation) => {
+    if (!annotation) return
+    const rectangle = annotation.type === 'rectangle'
+    if (rectangle ? !(annotation.w > 2 && annotation.h > 2) : !(annotation.r > 2)) return
     ctx.save()
-    ctx.strokeStyle = circle.color || '#ef4444'
-    ctx.lineWidth = circle.lineWidth || 8
+    ctx.strokeStyle = annotation.color || '#ef4444'
+    ctx.lineWidth = annotation.lineWidth || DEFAULT_ANNOTATION_LINE_WIDTH
     ctx.beginPath()
-    ctx.arc(circle.x, circle.y, circle.r, 0, Math.PI * 2)
+    if (rectangle) ctx.rect(annotation.x, annotation.y, annotation.w, annotation.h)
+    else ctx.arc(annotation.x, annotation.y, annotation.r, 0, Math.PI * 2)
     ctx.stroke()
     ctx.restore()
   })
