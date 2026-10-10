@@ -27,11 +27,13 @@
           ref="viewport"
           class="photo-preview-viewport"
           :class="{ dragging: pointers.size > 0, zoomed: transform.scale > 1 }"
-          @pointerdown="startPointer"
+          @pointerdown.prevent="startPointer"
           @pointermove="movePointer"
           @pointerup="endPointer"
           @pointercancel="endPointer"
-          @lostpointercapture="endPointer"
+          @lostpointercapture="lostPointer"
+          @selectstart.prevent
+          @dragstart.prevent
           @dblclick.prevent="reset"
         >
           <img
@@ -81,11 +83,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
+  clearPhotoPointers,
   clampPhotoPosition,
   fitPhoto,
   lockPhotoPreviewScroll,
   MAX_PHOTO_SCALE,
   MIN_PHOTO_SCALE,
+  resetPhotoPreview,
   zoomPhoto,
 } from '@/utils/photoPreview'
 const props = defineProps({
@@ -119,7 +123,10 @@ let releaseScroll
 let resizeObserver
 let disposed = false
 function reset() {
-  Object.assign(transform, { scale: 1, x: 0, y: 0 })
+  resetPhotoPreview(transform, pointers, viewport.value)
+}
+function clearGestures() {
+  clearPhotoPointers(pointers, viewport.value)
 }
 function imageLoaded(event) {
   if (event.target.getAttribute('src') !== props.url) return
@@ -218,6 +225,12 @@ function movePointer(event) {
 }
 function endPointer(event) {
   pointers.delete(event.pointerId)
+  if (viewport.value?.hasPointerCapture(event.pointerId))
+    viewport.value.releasePointerCapture(event.pointerId)
+}
+function lostPointer(event) {
+  // A delayed capture-loss event must not cancel a new drag using the same pointer ID.
+  if (!viewport.value?.hasPointerCapture(event.pointerId)) pointers.delete(event.pointerId)
 }
 function handleKeydown(event) {
   if (event.key === 'Escape') {
@@ -252,7 +265,6 @@ watch(
   () => {
     loaded.value = false
     failed.value = false
-    pointers.clear()
     reset()
   },
 )
@@ -261,6 +273,7 @@ onMounted(async () => {
   releaseScroll = lockPhotoPreviewScroll(document.body)
   document.addEventListener('fullscreenchange', updateFullscreenTarget)
   window.addEventListener('resize', measureViewport)
+  window.addEventListener('blur', clearGestures)
   await updateFullscreenTarget()
   if (disposed) return
   resizeObserver = new ResizeObserver(measureViewport)
@@ -268,9 +281,11 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   disposed = true
+  clearGestures()
   resizeObserver?.disconnect()
   document.removeEventListener('fullscreenchange', updateFullscreenTarget)
   window.removeEventListener('resize', measureViewport)
+  window.removeEventListener('blur', clearGestures)
   releaseScroll?.()
   if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
 })
@@ -336,6 +351,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   cursor: zoom-in;
 }
 .photo-preview-viewport.zoomed {
