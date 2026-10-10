@@ -259,16 +259,13 @@
       </section>
     </div>
 
-    <div v-if="imagePreview.visible" class="station-image-preview-backdrop" @click.self="closeImagePreview">
-      <section class="station-image-preview" role="dialog" aria-modal="true" :aria-label="imagePreview.title">
-        <header><strong>{{ imagePreview.title }}</strong><button type="button" @click="closeImagePreview">×</button></header>
-        <img :src="imagePreview.src" :alt="imagePreview.title" />
-      </section>
-    </div>
+    <InspectionPhotoPreview v-if="imagePreview.visible" :url="imagePreview.src"
+      :title="imagePreview.title || '图片预览'" @close="closeImagePreview" />
   </div>
 </template>
 
 <script setup>
+import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
@@ -2132,8 +2129,7 @@ onBeforeUnmount(() => {
   opacity: 0.6;
 }
 
-.station-issue-dialog-backdrop,
-.station-image-preview-backdrop {
+.station-issue-dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 2600;
@@ -2182,8 +2178,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.station-issue-dialog-close,
-.station-image-preview header button {
+.station-issue-dialog-close {
   width: 38px;
   height: 38px;
   border: 1px solid #d7e0ea;
@@ -2392,38 +2387,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.station-image-preview-backdrop {
-  z-index: 2800;
-}
-
-.station-image-preview {
-  width: min(1100px, 96vw);
-  max-height: 92vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 18px;
-  background: #0f172a;
-  box-shadow: 0 30px 70px rgba(2, 6, 23, 0.5);
-}
-
-.station-image-preview header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  color: #f8fafc;
-}
-
-.station-image-preview img {
-  display: block;
-  width: 100%;
-  max-height: calc(92vh - 64px);
-  object-fit: contain;
-  background: #020617;
-}
-
 @media (max-width: 1200px) {
   .summary-grid {
     grid-template-columns: 1fr;
@@ -2431,8 +2394,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .station-issue-dialog-backdrop,
-  .station-image-preview-backdrop {
+  .station-issue-dialog-backdrop {
     padding: 10px;
   }
 

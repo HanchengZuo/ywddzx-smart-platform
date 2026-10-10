@@ -38,7 +38,7 @@
           <footer><button type="button" :disabled="saving" @click="selected = null">取消</button><button class="primary" :disabled="saving || !decision || !reason.trim()">{{ saving ? '正在提交…' : '确认提交审核结果' }}</button></footer>
         </form>
       </div>
-      <div v-if="photo" class="overlay photo-overlay" role="dialog" aria-label="问题照片预览" @click="photo = ''"><button aria-label="关闭照片">关闭</button><img :src="photo" alt="完整问题照片" @click.stop /></div>
+      <InspectionPhotoPreview v-if="photo" :url="photo" title="问题照片" @close="photo = ''" />
     </Teleport>
   </div>
 </template>
@@ -48,6 +48,7 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import AppealProgress from '../../components/AppealProgress.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
+import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 const expiredReviews = ref(new Set())
 const reviewDeadlineKey = item => `${item.id}:${item.review_deadline_ms}`
 const reviewDeadlineHint = (item, expired = false) => {
@@ -140,6 +141,5 @@ label { display: grid; gap: 8px; font-size: 14px; } input,select,textarea { font
 .notice,.outcome { background: #eaf5fd; color: #246187; padding: 14px; border-radius: 12px; } .notice { display: flex; justify-content: space-between; align-items: center; } .notice button { border: 0; background: none; }
 .error { color: #b42318; } .overlay { position: fixed; inset: 0; z-index: 4000; background: #13223a99; display: grid; place-items: center; padding: 20px; }
 .decision { width: min(580px,100%); max-height: 90dvh; overflow-y: auto; box-sizing: border-box; } .decision footer { display: flex; gap: 10px; justify-content: end; margin-top: 18px; }
-.photo-overlay img { max-width: 95vw; max-height: 86dvh; object-fit: contain; } .photo-overlay > button { position: absolute; top: 20px; right: 20px; }
 @media(max-width:700px) { .surface { padding: 16px; } .page-heading,.issue-content { flex-direction: column; align-items: start; } .tabs { width: 100%; } .scope-note { display: none; } }
 </style>

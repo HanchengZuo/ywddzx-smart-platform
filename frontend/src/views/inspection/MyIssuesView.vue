@@ -527,7 +527,10 @@
                 </label>
 
                 <div v-if="actionForm.rectificationPhotoPreview" class="drawer-image-preview-panel">
-                  <img :src="actionForm.rectificationPhotoPreview" alt="整改照片预览" class="drawer-preview-thumb" />
+                  <button type="button" class="drawer-photo-trigger" aria-label="放大整改照片"
+                    @click="preview(actionForm.rectificationPhotoPreview, '整改照片预览')">
+                    <img :src="actionForm.rectificationPhotoPreview" alt="整改照片预览" class="drawer-preview-thumb" />
+                  </button>
                   <div class="drawer-preview-meta">
                     <div class="drawer-preview-title">已选择整改照片</div>
                     <div class="drawer-preview-name">{{ actionForm.rectificationPhotoFile?.name || '已上传图片' }}</div>
@@ -595,7 +598,10 @@
                 </div>
 
                 <div v-if="actionForm.reviewPhotoPreview" class="drawer-image-preview-panel">
-                  <img :src="actionForm.reviewPhotoPreview" alt="复核照片预览" class="drawer-preview-thumb" />
+                  <button type="button" class="drawer-photo-trigger" aria-label="放大复核照片"
+                    @click="preview(actionForm.reviewPhotoPreview, '复核照片预览')">
+                    <img :src="actionForm.reviewPhotoPreview" alt="复核照片预览" class="drawer-preview-thumb" />
+                  </button>
                   <div class="drawer-preview-meta">
                     <div class="drawer-preview-title">已选择复核照片</div>
                     <div class="drawer-preview-name">{{ actionForm.reviewPhotoFile?.name || '已上传图片' }}</div>
@@ -636,15 +642,8 @@
     <PhotoEditor v-if="reviewPhotoEditorVisible" :photos="reviewSourcePhotos" :composition="reviewComposition"
       title="复核照片编辑" :save-photo="saveReviewPhotoEditor" @close="reviewPhotoEditorVisible = false" />
 
-    <div v-if="previewState.visible" class="image-modal" @click.self="closePreview">
-      <div class="image-modal-content">
-        <div class="image-modal-header">
-          <span>{{ previewState.title }}</span>
-          <button class="close-btn" type="button" @click="closePreview">×</button>
-        </div>
-        <img :src="previewState.url" class="image-modal-full" :alt="previewState.title" />
-      </div>
-    </div>
+    <InspectionPhotoPreview v-if="previewState.visible" :url="previewState.url"
+      :title="previewState.title || '图片预览'" @close="closePreview" />
     <div v-if="standardDetailState.visible" class="image-modal" @click.self="closeStandardDetail">
       <div class="image-modal-content standard-detail-modal">
         <div class="image-modal-header">
@@ -670,6 +669,7 @@
 import { useRouter } from 'vue-router'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import PhotoEditor from '../../components/PhotoEditor.vue'
+import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import { createAutoIssuePhotoComposition } from '@/utils/imageComposer'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
@@ -3226,13 +3226,8 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.image-modal-full {
-  display: block;
-  width: 100%;
-  max-height: 78vh;
-  object-fit: contain;
-  background: #f8fafc;
-}
+.drawer-photo-trigger { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.drawer-photo-trigger:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
 
 .standard-detail-modal {
   width: min(880px, 100%);

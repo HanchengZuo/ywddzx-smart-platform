@@ -6134,14 +6134,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.image-modal-full {
-  display: block;
-  width: 100%;
-  max-height: 78vh;
-  object-fit: contain;
-  background: #f8fafc;
-}
-
 .issue-export-modal {
   width: min(780px, 100%);
   max-height: min(88vh, 860px);
