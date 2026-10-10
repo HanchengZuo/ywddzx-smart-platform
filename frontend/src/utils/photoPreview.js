@@ -30,6 +30,19 @@ export function zoomPhoto(state, requestedScale, anchor, image, viewport) {
   return { scale, ...position }
 }
 
+export function clearPhotoPointers(pointers, target) {
+  const ids = [...pointers.keys()]
+  pointers.clear()
+  for (const id of ids) {
+    if (target?.hasPointerCapture(id)) target.releasePointerCapture(id)
+  }
+}
+
+export function resetPhotoPreview(state, pointers, target) {
+  clearPhotoPointers(pointers, target)
+  Object.assign(state, { scale: 1, x: 0, y: 0 })
+}
+
 const scrollLocks = new WeakMap()
 export function lockPhotoPreviewScroll(body) {
   let lock = scrollLocks.get(body)
