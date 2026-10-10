@@ -418,10 +418,9 @@
             </div>
           </div>
         </div>
-        <div class="filter-item filter-item-wide" :data-filter-state="filterFieldState('issueDescription')">
+        <div class="filter-item" :data-filter-state="filterFieldState('issueDescription')">
           <label>问题描述</label>
-          <IssueDescriptionFilter v-model="filters.issueDescription" v-model:match-mode="filters.descriptionMatch"
-            @apply="startIssueFilter" />
+          <input v-model.trim="filters.issueDescription" placeholder="如：接地 锈蚀（空格分隔多个关键词）" />
         </div>
         <div class="filter-item" :data-filter-state="filterFieldState('rectificationResult')">
           <label>站经理整改结果</label>
@@ -1358,8 +1357,7 @@ import {
   replaceIssueById
 } from '@/utils/issueAudit'
 import DateRangePicker from '@/components/DateRangePicker.vue'
-import IssueDescriptionFilter from '@/components/IssueDescriptionFilter.vue'
-import { describeDescriptionFilter, descriptionFilterError } from '@/utils/issueDescriptionFilter'
+import { descriptionFilterError } from '@/utils/issueDescriptionFilter'
 
 const currentMonthValue = () => {
   const now = new Date()
@@ -1380,7 +1378,6 @@ const createDefaultIssueFilters = () => ({
   standardDetail: '',
   standardTags: [],
   issueDescription: '',
-  descriptionMatch: 'all',
   rectificationResult: '',
   reviewResult: '',
   status: '',
@@ -2227,7 +2224,6 @@ const buildIssueQueryParams = (source = appliedFilters.value) => ({
   standard_detail: source.standardDetail,
   standard_tags: serializeIssueMultiFilter(source.standardTags),
   issue_description: source.issueDescription,
-  description_match: source.descriptionMatch || 'all',
   rectification_result: source.rectificationResult,
   review_result: source.reviewResult,
   status: source.status,
@@ -2444,7 +2440,6 @@ const filterMyTodayIssues = async () => {
     standardDetail: '',
     standardTags: [],
     issueDescription: '',
-    descriptionMatch: 'all',
     rectificationResult: '',
     reviewResult: '',
     status: '',
@@ -2479,9 +2474,8 @@ const handleIssueDateRangeChange = () => {
 const buildCurrentExportFilterSummary = () => {
   return Object.fromEntries(
     Object.entries(appliedFilters.value)
-      .filter(([key]) => key !== 'descriptionMatch')
       .map(([key, value]) => {
-        const normalized = key === 'issueDescription' ? describeDescriptionFilter(appliedFilters.value) : Array.isArray(value)
+        const normalized = Array.isArray(value)
           ? value.map((item) => String(item || '').trim()).filter(Boolean).join('、')
           : String(value || '').trim()
         return [key, normalized]
