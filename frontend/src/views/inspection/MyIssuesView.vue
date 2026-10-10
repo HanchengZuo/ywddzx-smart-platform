@@ -586,7 +586,7 @@
                   <div class="drawer-upload-desc">
                     请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。
                   </div>
-                  <div class="drawer-upload-desc">复制图片后按 Ctrl+V / ⌘V 即可粘贴，也可将图片拖入此处。每次保留一张，新图会替换旧图。</div>
+                  <div class="drawer-upload-desc">复制图片后按 Ctrl+V / ⌘V 即可粘贴，也可将图片拖入此处。选图后可点击“图片编辑”裁剪和标注；新图会替换旧图。</div>
                   <div class="drawer-upload-trigger-group">
                     <label for="review-photo-camera"
                       class="drawer-upload-trigger drawer-upload-trigger-secondary">拍照上传</label>
@@ -600,6 +600,8 @@
                     <div class="drawer-preview-title">已选择复核照片</div>
                     <div class="drawer-preview-name">{{ actionForm.reviewPhotoFile?.name || '已上传图片' }}</div>
                     <div class="drawer-preview-actions">
+                      <button v-if="reviewSourcePhotos.length" class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
+                        :disabled="submittingAction || reviewPhotoProcessing" @click="reviewPhotoEditorVisible = true">图片编辑</button>
                       <label for="review-photo-camera" class="btn btn-light btn-sm drawer-preview-btn">重新拍照</label>
                       <label for="review-photo-upload" class="btn btn-light btn-sm drawer-preview-btn">相册重选</label>
                       <button class="btn btn-secondary btn-sm drawer-preview-btn" type="button"
@@ -630,6 +632,9 @@
         </div>
       </div>
     </div>
+
+    <PhotoEditor v-if="reviewPhotoEditorVisible" :photos="reviewSourcePhotos" :composition="reviewComposition"
+      title="复核照片编辑" :save-photo="saveReviewPhotoEditor" @close="reviewPhotoEditorVisible = false" />
 
     <div v-if="previewState.visible" class="image-modal" @click.self="closePreview">
       <div class="image-modal-content">
@@ -664,6 +669,8 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
+import PhotoEditor from '../../components/PhotoEditor.vue'
+import { createAutoIssuePhotoComposition } from '@/utils/imageComposer'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
@@ -677,6 +684,7 @@ import {
   clearFileInputsById,
   getImageFilesFromClipboardEvent,
   getImageFilesFromDataTransfer,
+  loadImageFromFile,
   prepareImagePreview,
   revokeObjectUrl
 } from '@/utils/imageUpload'
@@ -1326,16 +1334,19 @@ const clearRectificationFile = () => {
 }
 
 const reviewPhotoProcessing = ref(false)
+const reviewPhotoEditorVisible = ref(false), reviewSourcePhotos = ref([]), reviewComposition = ref(null)
 let reviewPhotoSequence = 0
 const canReceiveReviewPhoto = () => actionDrawer.value.visible &&
-  currentRole.value !== 'station_manager' && shouldShowReviewPhotoUpload.value && !submittingAction.value
+  currentRole.value !== 'station_manager' && shouldShowReviewPhotoUpload.value && !submittingAction.value && !reviewPhotoEditorVisible.value
 
 const processReviewPhoto = async (file, multiple = false) => {
   if (!file || !canReceiveReviewPhoto()) return
   const sequence = ++reviewPhotoSequence
   reviewPhotoProcessing.value = true
+  let prepared
   try {
-    const prepared = await prepareImagePreview(file)
+    prepared = await prepareImagePreview(file)
+    const img = await loadImageFromFile(prepared.file)
     // Closing/reopening the drawer, removing a photo, or changing the result invalidates pending work.
     if (sequence !== reviewPhotoSequence || !canReceiveReviewPhoto()) {
       revokeObjectUrl(prepared.previewUrl)
@@ -1344,6 +1355,10 @@ const processReviewPhoto = async (file, multiple = false) => {
     actionForm.value.reviewPhotoFile = prepared.file
     revokeObjectUrl(actionForm.value.reviewPhotoPreview)
     actionForm.value.reviewPhotoPreview = prepared.previewUrl
+    reviewSourcePhotos.value.forEach(photo => revokeObjectUrl(photo.url))
+    reviewSourcePhotos.value = [{ id: `review-${sequence}`, file: prepared.file, img,
+      url: URL.createObjectURL(prepared.file), name: prepared.file.name }]
+    reviewComposition.value = createAutoIssuePhotoComposition(reviewSourcePhotos.value)
 
     if (actionMessageTimer) {
       clearTimeout(actionMessageTimer)
@@ -1353,11 +1368,26 @@ const processReviewPhoto = async (file, multiple = false) => {
     actionMessageType.value = 'info'
     if (multiple) showActionToast('复核照片仅保留一张，已使用第一张图片。', 'info')
   } catch (error) {
+    revokeObjectUrl(prepared?.previewUrl)
     if (sequence !== reviewPhotoSequence) return
     showActionToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
   } finally {
     if (sequence === reviewPhotoSequence) reviewPhotoProcessing.value = false
   }
+}
+
+const saveReviewPhotoEditor = async (file, composition) => {
+  const sequence = reviewPhotoSequence
+  const prepared = await prepareImagePreview(file)
+  if (sequence !== reviewPhotoSequence || !actionDrawer.value.visible || !shouldShowReviewPhotoUpload.value) {
+    revokeObjectUrl(prepared.previewUrl)
+    throw new Error('当前复核已关闭，请重新选择照片。')
+  }
+  revokeObjectUrl(actionForm.value.reviewPhotoPreview)
+  actionForm.value.reviewPhotoPreview = prepared.previewUrl
+  actionForm.value.reviewPhotoFile = prepared.file
+  reviewComposition.value = composition
+  showActionToast('复核照片编辑已保存。', 'success')
 }
 
 const handleReviewFileChange = async (event) => {
@@ -1387,6 +1417,10 @@ const handleReviewPhotoDrop = (event) => {
 const clearReviewFile = () => {
   reviewPhotoSequence += 1
   reviewPhotoProcessing.value = false
+  reviewPhotoEditorVisible.value = false
+  reviewSourcePhotos.value.forEach(photo => revokeObjectUrl(photo.url))
+  reviewSourcePhotos.value = []
+  reviewComposition.value = null
   actionForm.value.reviewPhotoFile = null
   revokeObjectUrl(actionForm.value.reviewPhotoPreview)
   actionForm.value.reviewPhotoPreview = ''
@@ -1427,7 +1461,7 @@ const showActionToast = (message, type = 'info') => {
 }
 
 const submitAction = async () => {
-  if (!actionDrawer.value.item || submittingAction.value || reviewPhotoProcessing.value) return
+  if (!actionDrawer.value.item || submittingAction.value || reviewPhotoProcessing.value || reviewPhotoEditorVisible.value) return
 
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
@@ -1544,6 +1578,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('paste', handleReviewPhotoPaste)
   reviewPhotoSequence += 1
+  reviewSourcePhotos.value.forEach(photo => revokeObjectUrl(photo.url))
   listSequence++; listController?.abort(); optionsController?.abort(); initialized = false
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('resize', updateResponsiveState)
