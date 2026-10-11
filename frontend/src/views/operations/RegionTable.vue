@@ -4,30 +4,36 @@
       <thead>
         <tr>
           <th>片区 / 单位</th>
-          <th>有效问题</th>
+          <th>登记问题</th>
           <th>有问题站点</th>
-          <th>有问题站均</th>
-          <th>待处理</th>
-          <th>闭环率</th>
+          <th>在库问题</th>
+          <th>待审核</th>
+          <th>审核进度</th>
           <th>明细</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="row.region">
           <td>{{ row.region }}</td>
-          <td>{{ row.valid }}</td>
+          <td>{{ row.registered }}</td>
           <td>{{ row.stations }}</td>
-          <td>{{ row.stations ? (row.valid / row.stations).toFixed(1) : '—' }}</td>
+          <td>{{ row.live }}</td>
           <td>
-            <span :class="{ pending: row.open }">{{ row.open }}</span>
+            <span :class="{ pending: row.pending_audit }">{{ row.pending_audit }}</span>
           </td>
           <td>
             <div class="progress">
-              <i :style="{ width: `${row.valid ? (row.closed / row.valid) * 100 : 0}%` }"></i>
+              <i
+                :style="{ width: `${row.registered ? (row.reviewed / row.registered) * 100 : 0}%` }"
+              ></i>
             </div>
-            <small>{{ row.valid ? `${((row.closed / row.valid) * 100).toFixed(1)}%` : '—' }}</small>
+            <small>{{
+              row.registered ? `${((row.reviewed / row.registered) * 100).toFixed(1)}%` : '—'
+            }}</small>
           </td>
-          <td><button :disabled="!row.valid" @click="$emit('open', row.region)">查看</button></td>
+          <td>
+            <button :disabled="!row.registered" @click="$emit('open', row.region)">查看</button>
+          </td>
         </tr>
       </tbody>
     </table>
