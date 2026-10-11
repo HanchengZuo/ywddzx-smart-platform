@@ -5,6 +5,6 @@ export const operationsPages = [
     permission: 'view_operations_overview',
     title: '运营驾驶舱',
     icon: '舱',
-    description: '一屏掌握巡检触达、整改进度与共性问题。',
+    description: '一屏掌握巡检采集、审核准备与问题分布，不必等待月底审核。',
   },
 ]

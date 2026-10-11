@@ -36,7 +36,7 @@ def issue_cte(core, cur, user, source):
       SELECT i.id, i.station_id, s.station_name, COALESCE(NULLIF(s.region,''),'未分配片区') AS region,
         i.inspection_table_id, t.table_name,
         CASE WHEN t.checklist_mode='offline' THEN '现场' ELSE '视频' END AS mode,
-        i.created_at, i.description,
+        i.created_at, i.description, COALESCE(i.audit_status,'pending') AS audit_state,
         COALESCE(i.standard_id::text, NULLIF(i.internal_standard_id,''), '未关联规范') AS standard_key,
         LEFT(COALESCE(NULLIF(i.standard_detail_text,''),i.internal_standard_detail_text,''),140) AS standard_text,
         i.audit_status='approved' AND COALESCE(i.status,'')<>'已销毁' AS valid,
@@ -95,6 +95,12 @@ def dashboard(core, cur, user, mode, source):
       SELECT json_build_object(
         'regions', (SELECT COALESCE(json_agg(region ORDER BY region),'[]') FROM (SELECT DISTINCT region FROM scoped) r),
         'summary', (SELECT json_build_object('total',COUNT(*),'valid',COUNT(*) FILTER(WHERE valid),
+          'live',COUNT(*) FILTER(WHERE phase<>'已销毁'),
+          'discovery_stations',COUNT(DISTINCT station_id) FILTER(WHERE phase<>'已销毁'),
+          'active_days',COUNT(DISTINCT created_at::date),
+          'audit_approved',COUNT(*) FILTER(WHERE audit_state='approved'),
+          'audit_rejected',COUNT(*) FILTER(WHERE audit_state='rejected'),
+          'reviewed',COUNT(*) FILTER(WHERE audit_state IN ('approved','rejected')),
           'stations',COUNT(DISTINCT station_id) FILTER(WHERE valid),
           'pending_audit',COUNT(*) FILTER(WHERE phase='待审核'),
           'closed',COUNT(*) FILTER(WHERE valid AND phase='已闭环'),
@@ -105,11 +111,40 @@ def dashboard(core, cur, user, mode, source):
         ) FROM selected),
         'phases', (SELECT COALESCE(json_agg(r ORDER BY phase),'[]') FROM (
           SELECT phase,COUNT(*) AS count FROM selected GROUP BY phase) r),
-        'units', (SELECT COALESCE(json_agg(r ORDER BY valid DESC,region),'[]') FROM (
-          SELECT region,COUNT(*) FILTER(WHERE valid) AS valid,COUNT(DISTINCT station_id) FILTER(WHERE valid) AS stations,
+        'units', (SELECT COALESCE(json_agg(r ORDER BY registered DESC,region),'[]') FROM (
+          SELECT region,COUNT(*) AS registered,COUNT(*) FILTER(WHERE phase<>'已销毁') AS live,
+          COUNT(*) FILTER(WHERE phase='待审核') AS pending_audit,
+          COUNT(*) FILTER(WHERE audit_state IN ('approved','rejected')) AS reviewed,
+          COUNT(*) FILTER(WHERE valid) AS valid,COUNT(DISTINCT station_id) FILTER(WHERE phase<>'已销毁') AS stations,
           COUNT(*) FILTER(WHERE valid AND phase='已闭环') AS closed,
           COUNT(*) FILTER(WHERE valid AND phase IN ('待验收','待整改','待复核','申诉中')) AS open
-          FROM selected GROUP BY region) r)
+          FROM selected GROUP BY region) r),
+        'trend', (SELECT COALESCE(json_agg(r ORDER BY day),'[]') FROM (
+          SELECT created_at::date AS day,COUNT(*) AS registered,
+          COUNT(*) FILTER(WHERE phase='待审核') AS pending_audit,
+          COUNT(*) FILTER(WHERE valid) AS valid FROM selected GROUP BY created_at::date) r),
+        'ages', (SELECT COALESCE(json_agg(r ORDER BY rank),'[]') FROM (
+          SELECT CASE WHEN age_days<7 THEN '0–6天' WHEN age_days<15 THEN '7–14天'
+            WHEN age_days<30 THEN '15–29天' ELSE '30天及以上' END AS label,
+            CASE WHEN age_days<7 THEN 0 WHEN age_days<15 THEN 1 WHEN age_days<30 THEN 2 ELSE 3 END AS rank,
+            COUNT(*) AS count FROM selected WHERE phase='待审核' GROUP BY 1,2) r),
+        'stations', (SELECT COALESCE(json_agg(r ORDER BY count DESC,station_id),'[]') FROM (
+          SELECT station_id,station_name,region,COUNT(*) AS count,
+            COUNT(*) FILTER(WHERE phase='待审核') AS pending_audit,
+            COUNT(DISTINCT standard_key) AS standards
+          FROM selected WHERE phase<>'已销毁' GROUP BY station_id,station_name,region
+          ORDER BY count DESC,station_id LIMIT 12) r),
+        'tables', (SELECT COALESCE(json_agg(r ORDER BY count DESC,inspection_table_id),'[]') FROM (
+          SELECT inspection_table_id,table_name,mode,COUNT(*) AS count,
+            COUNT(*) FILTER(WHERE phase='待审核') AS pending_audit,COUNT(DISTINCT station_id) AS stations
+          FROM selected WHERE phase<>'已销毁' GROUP BY inspection_table_id,table_name,mode) r),
+        'standards', (SELECT COALESCE(json_agg(r ORDER BY count DESC,standard_key),'[]') FROM (
+          SELECT standard_key,MIN(standard_text) AS detail,COUNT(*) AS count,
+            COUNT(DISTINCT station_id) AS stations FROM selected WHERE phase<>'已销毁'
+          GROUP BY standard_key ORDER BY count DESC,standard_key LIMIT 15) r),
+        'modes', (SELECT COALESCE(json_agg(r ORDER BY mode),'[]') FROM (
+          SELECT mode,COUNT(*) AS count,COUNT(DISTINCT station_id) AS stations
+          FROM selected WHERE phase<>'已销毁' GROUP BY mode) r)
       ) AS payload''', params)
     result = cur.fetchone()['payload']
     if mode == 'overview':
@@ -117,40 +152,22 @@ def dashboard(core, cur, user, mode, source):
         # Include zero-problem stations' regions when the initial all-region view is loaded.
         if result['records']:
             result['regions'] = sorted(set(result['regions']) | set(result['records']['regions']))
-        cur.execute(cte + '''SELECT created_at::date AS day,COUNT(*) AS registered,
-          COUNT(*) FILTER(WHERE valid) AS valid,COUNT(*) FILTER(WHERE phase='已闭环' AND valid) AS closed
-          FROM selected GROUP BY created_at::date ORDER BY day''', params)
-        result['trend'] = [dict(r, day=r['day'].isoformat()) for r in cur.fetchall()]
         # Highlights reuse the identical issue visibility aliases without joining inspections.
         where, hp = core.build_issue_list_visibility_scope(cur, user)
         start, end = parse_period(source)
-        where += ['i.created_at >= %s::date', 'i.created_at < %s::date', "i.audit_status='approved'"]
+        where += ['i.created_at >= %s::date', 'i.created_at < %s::date']
         hp += [start, end + timedelta(days=1)]
         if source.get('region'):
             where.append("COALESCE(NULLIF(s.region,''),'未分配片区')=%s")
             hp.append(source['region'])
-        cur.execute('''SELECT COUNT(*) AS count FROM inspection_highlights i
+        cur.execute('''SELECT COUNT(*) AS count,
+          COUNT(*) FILTER(WHERE COALESCE(i.audit_status,'pending')='pending') AS pending,
+          COUNT(*) FILTER(WHERE i.audit_status='approved') AS approved,
+          COUNT(*) FILTER(WHERE i.audit_status='rejected') AS rejected FROM inspection_highlights i
           JOIN stations s ON s.id=i.station_id CROSS JOIN LATERAL (SELECT i.inspector_id) ins
           WHERE ''' + ' AND '.join(where), hp)
-        result['highlights'] = cur.fetchone()['count']
-        cur.execute(cte + '''SELECT CASE WHEN age_days<7 THEN '0–6天' WHEN age_days<15 THEN '7–14天'
-          WHEN age_days<30 THEN '15–29天' ELSE '30天及以上' END AS label,
-          CASE WHEN age_days<7 THEN 0 WHEN age_days<15 THEN 1 WHEN age_days<30 THEN 2 ELSE 3 END AS rank,
-          COUNT(*) AS count FROM selected WHERE valid AND phase IN ('待验收','待整改','待复核','申诉中')
-          GROUP BY 1,2 ORDER BY 2''', params)
-        result['ages'] = [dict(r) for r in cur.fetchall()]
-        cur.execute(cte + '''SELECT station_id,station_name,region,COUNT(*) AS count,MAX(age_days) AS oldest
-          FROM selected WHERE valid AND phase IN ('待验收','待整改','待复核','申诉中')
-          GROUP BY station_id,station_name,region ORDER BY count DESC,station_id LIMIT 12''', params)
-        result['stations'] = [dict(r) for r in cur.fetchall()]
-        cur.execute(cte + '''SELECT inspection_table_id,table_name,mode,COUNT(*) AS count,
-          COUNT(DISTINCT station_id) AS stations FROM selected WHERE valid
-          GROUP BY inspection_table_id,table_name,mode ORDER BY count DESC,inspection_table_id''', params)
-        result['tables'] = [dict(r) for r in cur.fetchall()]
-        cur.execute(cte + '''SELECT standard_key,MIN(standard_text) AS detail,COUNT(*) AS count,
-          COUNT(DISTINCT station_id) AS stations FROM selected WHERE valid
-          GROUP BY standard_key ORDER BY count DESC,standard_key LIMIT 15''', params)
-        result['standards'] = [dict(r) for r in cur.fetchall()]
+        result['highlight_summary'] = dict(cur.fetchone())
+        result['highlights'] = result['highlight_summary']['approved']
     start, end = parse_period(source)
     result.update(date_from=start.isoformat(), date_to=end.isoformat(), generated_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat())
     return result
@@ -174,6 +191,8 @@ def details(core, cur, user, source):
             where.append(f'{column}=%s'); params.append(value)
     if source.get('valid') == '1':
         where.append('valid')
+    if source.get('live') == '1':
+        where.append("phase<>'已销毁'")
     try: page = max(1, int(source.get('page',1)))
     except (TypeError, ValueError): raise ValueError('页码不正确。') from None
     if page > 100000:

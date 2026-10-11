@@ -129,18 +129,20 @@ class OperationsDatabaseTest(unittest.TestCase):
 
     def test_all_dashboards_statistics_and_zero_problem_inspections(self):
         overview=dashboard(self.core,self.cur,self.user,'overview',self.source)
-        self.assertEqual(overview['summary'],dict(total=11,valid=8,stations=2,pending_audit=1,closed=3,unable=1,destroyed=2,open=4,aged=4))
+        self.assertEqual(overview['summary'],dict(total=11,valid=8,stations=2,pending_audit=1,closed=3,unable=1,destroyed=2,open=4,aged=4,
+            live=9,discovery_stations=2,active_days=1,audit_approved=9,audit_rejected=1,reviewed=10))
         self.assertEqual(overview['records']['stations'],4)
         self.assertEqual(overview['records']['records'],6)
         self.assertIn('嘉青',overview['regions'])
         self.assertEqual(overview['highlights'],1)
+        self.assertEqual(overview['highlight_summary'],dict(count=2,pending=1,approved=1,rejected=0))
         self.assertEqual(overview['trend'][0]['valid'],8)
         rectification=overview
-        self.assertEqual(rectification['ages'][0]['count'],4)
-        self.assertEqual(rectification['stations'][0]['count'],4)
+        self.assertEqual(rectification['ages'][0]['count'],1)
+        self.assertEqual(rectification['stations'][0]['count'],8)
         insight=overview
         self.assertEqual(len(insight['tables']),2)
-        self.assertEqual(insight['standards'][0]['count'],8)
+        self.assertEqual(insight['standards'][0]['count'],9)
         self.assertEqual(insight['standards'][0]['stations'],2)
 
     def test_scope_filters_apply_to_summary_and_every_drilldown(self):
@@ -155,6 +157,52 @@ class OperationsDatabaseTest(unittest.TestCase):
         self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,station_id=2))['total'],0)
         self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,region='宝静'))['total'],0)
         self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,phase='待验收'))['total'],1)
+
+    def test_collecting_month_with_no_audited_issues_populates_every_primary_panel(self):
+        self.cur.execute("UPDATE issues SET audit_status='pending',status='待整改'")
+        result=dashboard(self.core,self.cur,self.user,'overview',self.source)
+        self.assertEqual(result['summary']['valid'],0)
+        self.assertEqual(result['summary']['reviewed'],0)
+        self.assertEqual(result['summary']['live'],11)
+        self.assertEqual(result['summary']['pending_audit'],11)
+        self.assertEqual(sum(r['registered'] for r in result['trend']),11)
+        for panel in ('tables','standards','stations','ages','modes'):
+            self.assertEqual(sum(r['count'] for r in result[panel]),11,panel)
+        self.assertEqual(sum(r['registered'] for r in result['units']),11)
+        self.assertEqual(sum(r['pending_audit'] for r in result['units']),11)
+        self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,live='1'))['total'],11)
+        self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,phase='待审核'))['total'],11)
+
+    def test_primary_panels_share_one_aggregation_and_only_three_summary_queries(self):
+        execute=MagicMock(side_effect=self.cur.execute)
+        cursor=SimpleNamespace(execute=execute,fetchone=self.cur.fetchone)
+        result=dashboard(self.core,cursor,self.user,'overview',self.source)
+        self.assertEqual(execute.call_count,3)
+        self.assertEqual(result['summary']['total'],11)
+        self.assertEqual(result['records']['stations'],4)
+        self.assertEqual(result['highlight_summary']['count'],2)
+
+    def test_primary_ranking_drilldowns_match_and_exclude_destroyed(self):
+        result=dashboard(self.core,self.cur,self.user,'overview',self.source)
+        for panel,key in [('tables','table_id'),('standards','standard_key'),('stations','station_id')]:
+            for row in result[panel]:
+                value=row['inspection_table_id'] if panel=='tables' else row[key]
+                detail=details(self.core,self.cur,self.user,dict(self.source,live='1',**{key:value}))
+                self.assertEqual(detail['total'],row['count'])
+                self.assertTrue(all(r['phase']!='已销毁' for r in detail['rows']))
+        for row in result['units']:
+            self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,region=row['region']))['total'],row['registered'])
+
+    def test_pending_visibility_is_preserved_for_area_and_station_roles(self):
+        self.cur.execute("UPDATE issues SET audit_status='pending',status='待整改'")
+        self.core.build_issue_list_visibility_scope=lambda *args:(["COALESCE(i.audit_status,'pending')<>'pending'"],[])
+        for role in ('area_account','station_manager'):
+            result=dashboard(self.core,self.cur,{'id':18,'role':role},'overview',self.source)
+            self.assertEqual(result['summary']['total'],0)
+            self.assertEqual(result['ages'],[])
+            self.assertEqual(result['tables'],[])
+            self.assertEqual(result['highlight_summary']['count'],1)
+            self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,phase='待审核'))['total'],0)
 
     def test_empty_bounds_and_pagination(self):
         self.cur.execute('''INSERT INTO issues SELECT 100+n,1,1,1,10,9000,NULL,'规范',NULL,'分页','2020-01-31 23:59:59','approved','待整改'
@@ -254,7 +302,7 @@ class OperationsDatabaseTest(unittest.TestCase):
                 self.assertEqual([r['table_name'] for r in result['tables']],[name],role)
                 self.assertEqual(result['standards'][0]['standard_key'],str(9000+table_id),role)
                 self.assertEqual(sum(r['valid'] for r in result['trend']),table_id*2,role)
-                self.assertEqual(sum(r['count'] for r in result['ages']),table_id*2,role)
+                self.assertEqual(sum(r['count'] for r in result['ages']),0,role)
                 self.assertEqual(details(core_app,self.cur,user,dict(self.source,table_id=table_id%5+1))['total'],0,role)
                 self.assertTrue(all(r['table_name']==name for r in details(core_app,self.cur,user,self.source)['rows']),role)
             with patch.object(core_app,'get_permission_overrides',return_value={

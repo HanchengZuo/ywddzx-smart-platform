@@ -6,7 +6,7 @@
         <div>业务督导中心<small>OPERATIONS COMMAND</small></div>
       </div>
       <div class="cockpit-title">
-        <p>巡检 · 整改 · 洞察</p>
+        <p>巡检采集 · 审核准备 · 问题分布</p>
         <h1>运营数据驾驶舱</h1>
         <div class="title-beam" aria-hidden="true"></div>
       </div>
@@ -60,7 +60,7 @@
         <span
           >{{ applied.date_from }} — {{ applied.date_to }} <b>/</b>
           {{ applied.region || '全部可见片区' }}</span
-        ><span>点击图表条目可查看关联问题</span>
+        ><span>含可见待审核登记 · 点击条目查看关联问题</span>
       </div>
       <section class="kpi-strip" aria-label="核心运营指标">
         <article
@@ -83,19 +83,19 @@
         <div class="wing left-wing">
           <article class="instrument trend-instrument">
             <div class="instrument-title">
-              <h2>巡检发现趋势</h2>
+              <h2>每日问题登记</h2>
               <span>DAILY SIGNAL</span>
             </div>
             <div class="panel-caption">
-              <span>有效问题 / 按登记日</span
-              ><strong>{{ data.summary.valid }}<small> 项</small></strong>
+              <span>全部登记 / 不等待月底审核</span
+              ><strong>{{ data.summary.total }}<small> 项</small></strong>
             </div>
             <svg
               v-if="trend.length"
               class="trend-chart"
               viewBox="0 0 420 190"
               role="img"
-              aria-label="所选期间有效问题登记趋势"
+              aria-label="所选期间全部问题登记趋势"
             >
               <defs>
                 <linearGradient id="cockpit-trend-fill" x1="0" y1="0" x2="0" y2="1">
@@ -122,12 +122,14 @@
                 v-for="(point, index) in trend"
                 :key="point.day"
                 :cx="trendX(index)"
-                :cy="trendY(point.valid)"
+                :cy="trendY(point.registered)"
                 r="2.2"
                 fill="#a6f6ff"
               >
                 <title>
-                  {{ point.day }}：{{ point.valid }}项有效问题 / 登记{{ point.registered }}项
+                  {{ point.day }}：登记{{ point.registered }}项 / 当前待审核{{
+                    point.pending_audit || 0
+                  }}项
                 </title>
               </circle>
               <text x="32" y="178">{{ applied.date_from }}</text>
@@ -136,7 +138,7 @@
             <p v-else class="empty-state">所选期间暂无问题登记</p>
             <div class="signal-footer">
               <span
-                >全部登记 <b>{{ data.summary.total }}</b></span
+                >活跃登记日 <b>{{ data.summary.active_days }}</b></span
               ><button @click="showDetails('待审核', { phase: '待审核' })">
                 待审核 <b>{{ data.summary.pending_audit }}</b> ›
               </button>
@@ -144,11 +146,12 @@
           </article>
           <article class="instrument aging-instrument">
             <div class="instrument-title">
-              <h2>待处理账龄</h2>
-              <span>AGING WATCH</span>
+              <h2>审核准备与采集方式</h2>
+              <span>INTAKE MONITOR</span>
             </div>
             <div class="age-alert">
-              <span>登记已满30天</span><strong>{{ data.summary.aged }}<small>项</small></strong
+              <span>待审核工作量</span
+              ><strong>{{ data.summary.pending_audit }}<small>项</small></strong
               ><i aria-hidden="true"></i>
             </div>
             <div v-if="data.ages.length" class="age-bars">
@@ -163,23 +166,29 @@
                 <b>{{ row.count }}</b>
               </div>
             </div>
-            <p v-else class="empty-state">暂无待处理事项</p>
-            <p class="instrument-note">按登记日起的自然日计算，不作为流程超时认定。</p>
+            <p v-else class="empty-state">当前可见范围暂无待审核登记</p>
+            <div class="capture-modes">
+              <div v-for="row in data.modes" :key="row.mode">
+                <span>{{ row.mode }}巡检</span><strong>{{ row.count }}<small>项</small></strong>
+                <small>涉及{{ row.stations }}座站</small>
+              </div>
+            </div>
+            <p class="instrument-note">账龄仅指待审核登记的自然日等待时间，非超时或考核结论。</p>
           </article>
         </div>
 
         <article class="instrument command-core">
           <div class="instrument-title">
-            <h2>整改闭环中枢</h2>
-            <span>WORKFLOW CONTROL</span>
+            <h2>问题采集与审核中枢</h2>
+            <span>REGISTRATION CONTROL</span>
           </div>
           <div class="core-visual">
             <div class="core-readout left-readout">
-              <span>已闭环</span><strong>{{ data.summary.closed }}</strong
-              ><small>项有效问题</small>
+              <span>已审核通过</span><strong>{{ data.summary.audit_approved }}</strong
+              ><small>项登记问题</small>
             </div>
             <div class="orbital-gauge">
-              <svg viewBox="0 0 300 300" role="img" :aria-label="'有效问题闭环率 ' + closureLabel">
+              <svg viewBox="0 0 300 300" role="img" :aria-label="'问题审核进度 ' + auditLabel">
                 <circle
                   class="orbit-slow"
                   cx="150"
@@ -208,7 +217,7 @@
                   stroke="#4bdedc"
                   stroke-width="10"
                   pathLength="100"
-                  :stroke-dasharray="closurePercent + ' 100'"
+                  :stroke-dasharray="auditPercent + ' 100'"
                   transform="rotate(-90 150 150)"
                   stroke-linecap="butt"
                 />
@@ -227,49 +236,62 @@
                 />
               </svg>
               <div class="gauge-label">
-                <span>有效问题闭环率</span
-                ><strong
-                  >{{ data.summary.valid ? closurePercent.toFixed(1) : '—'
-                  }}<small v-if="data.summary.valid">%</small></strong
-                ><em>CLOSED LOOP</em>
+                <span>当前在库问题</span><strong>{{ data.summary.live }}<small>项</small></strong
+                ><em>LIVE OBSERVATIONS</em>
               </div>
             </div>
             <div class="core-readout right-readout">
-              <span>待处理</span><strong>{{ data.summary.open }}</strong
-              ><small>项待继续流转</small>
+              <span>待审核</span><strong>{{ data.summary.pending_audit }}</strong
+              ><small>项待集中判定</small>
             </div>
           </div>
-          <div class="flow-controls">
-            <button
-              v-for="(phase, index) in openPhases"
-              :key="phase"
-              @click="showDetails(phase, { phase })"
+          <div class="intake-callout">
+            <strong
+              >{{ data.summary.discovery_stations }} 座有问题站点 · 审核进度
+              {{ auditLabel }}</strong
             >
-              <small>0{{ index + 1 }}</small
-              ><span>{{ phase }}</span
-              ><strong>{{ phaseCount(phase) }}</strong>
+            <span>待审核登记是巡检发现线索，尚未成为审核确认的问题。</span>
+            <button class="console-button" @click="showDetails('全部登记问题', {})">
+              查看全部登记 ›
             </button>
           </div>
-          <div class="core-meta">
-            <button @click="showDetails('站级无法整改', { phase: '站级无法整改' })">
-              站级无法整改 <b>{{ data.summary.unable }}</b></button
-            ><button @click="showDetails('已销毁', { phase: '已销毁' })">
-              已销毁 <b>{{ data.summary.destroyed }}</b></button
-            ><span>当前状态分布，非流量漏斗</span>
-          </div>
+          <details class="downstream">
+            <summary>
+              审核后流转概况
+              <span>有效 {{ data.summary.valid }} 项 · 已闭环 {{ data.summary.closed }} 项</span>
+            </summary>
+            <div class="flow-controls">
+              <button
+                v-for="(phase, index) in openPhases"
+                :key="phase"
+                @click="showDetails(phase, { phase })"
+              >
+                <small>0{{ index + 1 }}</small
+                ><span>{{ phase }}</span
+                ><strong>{{ phaseCount(phase) }}</strong>
+              </button>
+            </div>
+            <div class="core-meta">
+              <button @click="showDetails('站级无法整改', { phase: '站级无法整改' })">
+                站级无法整改 <b>{{ data.summary.unable }}</b></button
+              ><button @click="showDetails('已销毁', { phase: '已销毁' })">
+                已销毁 <b>{{ data.summary.destroyed }}</b></button
+              ><span>已审核问题的当前状态，不影响上方登记统计</span>
+            </div>
+          </details>
           <div class="region-head">
             <h3>片区运行矩阵</h3>
-            <span>有效问题 / 闭环率</span>
+            <span>登记量 / 审核进度 · 非绩效排名</span>
           </div>
           <div v-if="data.units.length" class="region-matrix">
             <button v-for="row in data.units" :key="row.region" @click="openRegion(row.region)">
               <span :title="row.region">{{ row.region }}</span>
               <div>
-                <strong>{{ row.valid }}<small> 项</small></strong
-                ><em>{{ row.valid ? percent(row.closed, row.valid) + '%' : '—' }}</em>
+                <strong>{{ row.registered }}<small> 项</small></strong
+                ><em>待审{{ row.pending_audit }}</em>
               </div>
               <div class="matrix-track">
-                <i :style="{ width: percent(row.closed, row.valid) + '%' }"></i>
+                <i :style="{ width: percent(row.reviewed, row.registered) + '%' }"></i>
               </div>
             </button>
           </div>
@@ -279,7 +301,7 @@
         <div class="wing right-wing">
           <article class="instrument mix-instrument">
             <div class="instrument-title">
-              <h2>检查表问题构成</h2>
+              <h2>在库问题检查表构成</h2>
               <span>BUSINESS MIX</span>
             </div>
             <div v-if="data.tables.length" class="table-signals panel-scroll">
@@ -289,7 +311,7 @@
                 @click="
                   showDetails(row.table_name + '（' + row.mode + '）', {
                     table_id: row.inspection_table_id,
-                    valid: '1',
+                    live: '1',
                   })
                 "
               >
@@ -302,15 +324,17 @@
                   <i :style="{ width: barWidth(row.count, data.tables) }"></i>
                 </div>
                 <small
-                  >{{ row.stations }}座站 · 占比{{ percent(row.count, data.summary.valid) }}%</small
+                  >{{ row.stations }}座站 · 待审{{ row.pending_audit }}项 · 占比{{
+                    percent(row.count, data.summary.live)
+                  }}%</small
                 >
               </button>
             </div>
-            <p v-else class="empty-state">暂无有效问题</p>
+            <p v-else class="empty-state">暂无在库问题，待审核登记也将计入此处</p>
           </article>
           <article class="instrument standards-instrument">
             <div class="instrument-title">
-              <h2>高频规范排行</h2>
+              <h2>巡检发现高频规范</h2>
               <span>TOP 15</span>
             </div>
             <div v-if="data.standards.length" class="standards-list panel-scroll">
@@ -320,7 +344,7 @@
                 @click="
                   showDetails('规范 ' + row.standard_key, {
                     standard_key: row.standard_key,
-                    valid: '1',
+                    live: '1',
                   })
                 "
               >
@@ -342,46 +366,52 @@
       <section class="action-deck">
         <article class="instrument regional-detail">
           <div class="instrument-title">
-            <h2>片区协同明细</h2>
-            <span>REGIONAL PERFORMANCE · 非绩效排名</span>
+            <h2>片区采集与审核明细</h2>
+            <span>REGISTRATION MATRIX · 非绩效排名</span>
           </div>
           <RegionTable :rows="data.units" @open="openRegion" />
         </article>
         <article class="instrument station-instrument">
           <div class="instrument-title">
-            <h2>优先跟进站点</h2>
-            <span>待处理数量 TOP 12</span>
+            <h2>巡检问题集中站点</h2>
+            <span>在库问题 TOP 12 · 非风险评级</span>
           </div>
           <div v-if="data.stations.length" class="station-list panel-scroll">
             <button
               v-for="(row, index) in data.stations"
               :key="row.station_id"
               @click="
-                showDetails(row.station_name + ' · 待处理', {
+                showDetails(row.station_name + ' · 在库问题', {
                   station_id: row.station_id,
-                  open: '1',
+                  live: '1',
                 })
               "
             >
               <span class="rank">{{ String(index + 1).padStart(2, '0') }}</span
               ><span
                 ><strong>{{ row.station_name }}</strong
-                ><small>{{ row.region }} · 最长账龄{{ row.oldest }}天</small></span
+                ><small
+                  >{{ row.region }} · 待审{{ row.pending_audit }}项 ·
+                  {{ row.standards }}类规范</small
+                ></span
               ><b>{{ row.count }}<small>项 ›</small></b>
             </button>
           </div>
-          <p v-else class="empty-state">暂无待跟进站点</p>
+          <p v-else class="empty-state">暂无在库问题站点</p>
         </article>
       </section>
       <details class="methodology">
         <summary>统计口径与数据说明 <span>DATA DEFINITIONS</span></summary>
         <p>
-          问题按登记日期筛选，展示查询时的最新状态，不是历史时点快照。有效问题仅含审核通过且未销毁的问题；闭环率
-          = 已闭环有效问题 ÷
-          全部有效问题。待处理含待验收、待整改、待复核、申诉中；站级无法整改独立统计，不计入闭环。
+          登记量和趋势包括所选期间所有可见登记，不必等待审核；在库问题包括待审核及已通过但未销毁的问题，排除已否决/已销毁。
+          检查表、规范、站点排行按在库问题统计，是采集线索而非审核结论或风险评级。审核进度 =
+          已判定通过或否决的登记 ÷ 全部登记。
+          有效问题仅含审核通过且未销毁的问题，验收、整改、复核与申诉展示在“审核后流转概况”。
         </p>
         <p>
-          巡检触达按巡检日期对站点去重，含零问题站点；底层巡检记录按站点与检查表计数。问题、亮点、巡检分别沿用原业务数据范围。有问题站均只统计有问题站点，不是全部受检站点平均。账龄按登记日至今天的自然日计算，不等同于流程超时，不作为考核结论。
+          巡检触达按巡检日期对站点去重，含零问题站点；底层巡检记录按站点与检查表计数。问题、亮点、巡检分别沿用原业务数据范围。
+          片区/站点账号原本不可见的待审核内容仍不展示，不能将可见数据当成公司全量。亮点登记不等于确认亮点。
+          问题按登记日期筛选，展示查询时的最新状态，不是历史时点快照；待审核账龄不等同于流程超时，不作为考核结论。
         </p>
         <p>
           单次分析最多366天；可见且联网时每60秒静默刷新已应用范围，切回页面或网络恢复时补刷新。失败后退避重试，最长间隔5分钟；不是秒级推送。未提交的筛选不会自动应用，已打开的明细保留打开时快照，重新打开读取最新数据。图形装饰不代表额外业务指标。未使用证照、站点评分数据，不调用AI。
@@ -456,6 +486,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import axios from 'axios'
 import RegionTable from './RegionTable.vue'
 import { createAdaptivePolling } from '../../utils/adaptivePolling'
+import { auditProgress, intakeMetrics } from '../../utils/operationsIntake'
 
 const cockpit = ref(null),
   expanded = ref(false)
@@ -529,61 +560,11 @@ const phaseCount = (phase) => data.value?.phases.find((row) => row.phase === pha
 const barWidth = (value, rows) =>
   String((value / Math.max(1, ...rows.map((row) => Number(row.count)))) * 100) + '%'
 const formatTime = (value) => new Date(value).toLocaleString('zh-CN', { hour12: false })
-const closurePercent = computed(() =>
-  data.value?.summary.valid ? (data.value.summary.closed / data.value.summary.valid) * 100 : 0,
+const auditPercent = computed(() => auditProgress(data.value?.summary))
+const auditLabel = computed(() =>
+  data.value?.summary.total ? auditPercent.value.toFixed(1) + '%' : '暂无登记',
 )
-const closureLabel = computed(() =>
-  data.value?.summary.valid ? closurePercent.value.toFixed(1) + '%' : '暂无有效问题',
-)
-const metrics = computed(() => {
-  if (!data.value) return []
-  const s = data.value.summary,
-    r = data.value.records
-  return [
-    {
-      label: '巡检触达站点',
-      value: r ? r.stations : '—',
-      unit: '座',
-      hint: r ? '底层巡检记录 ' + r.records + ' 条' : '无巡检记录查看权限',
-      tone: 'cyan',
-    },
-    {
-      label: '已审核有效问题',
-      value: s.valid,
-      unit: '项',
-      hint: '涉及 ' + s.stations + ' 座站点',
-      tone: 'cyan',
-    },
-    {
-      label: '待处理事项',
-      value: s.open,
-      unit: '项',
-      hint: '验收 / 整改 / 复核 / 申诉',
-      tone: 'amber',
-    },
-    {
-      label: '账龄30天及以上',
-      value: s.aged,
-      unit: '项',
-      hint: '自然日账龄 · 非超时认定',
-      tone: 'amber',
-    },
-    {
-      label: '确认亮点',
-      value: data.value.highlights,
-      unit: '项',
-      hint: '所选期间已审核通过',
-      tone: 'mint',
-    },
-    {
-      label: '站级无法整改',
-      value: s.unable,
-      unit: '项',
-      hint: '经复核确认 · 不计入闭环',
-      tone: 'slate',
-    },
-  ]
-})
+const metrics = computed(() => intakeMetrics(data.value))
 const trend = computed(() => {
   if (!data.value?.trend?.length) return []
   const byDay = new Map(data.value.trend.map((row) => [row.day, row]))
@@ -597,13 +578,13 @@ const trend = computed(() => {
   }
   return rows
 })
-const trendMax = computed(() => Math.max(3, ...trend.value.map((row) => row.valid)))
+const trendMax = computed(() => Math.max(3, ...trend.value.map((row) => row.registered)))
 const trendX = (index) =>
   trend.value.length === 1 ? 220 : 32 + (index / Math.max(1, trend.value.length - 1)) * 375
 const trendY = (value) => 150 - (value / trendMax.value) * 120
 const trendPath = computed(() =>
   trend.value
-    .map((row, index) => (index ? 'L' : 'M') + ' ' + trendX(index) + ' ' + trendY(row.valid))
+    .map((row, index) => (index ? 'L' : 'M') + ' ' + trendX(index) + ' ' + trendY(row.registered))
     .join(' '),
 )
 const trendArea = computed(
@@ -687,7 +668,7 @@ function showDetails(title, filters) {
   loadDetails(1)
 }
 function openRegion(region) {
-  showDetails(region + ' · 有效问题', { region, valid: '1' })
+  showDetails(region + ' · 全部登记问题', { region })
 }
 function closeOnBackdrop(event) {
   if (event.target === detailDialog.value) detailDialog.value.close()
@@ -737,6 +718,62 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.capture-modes {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.capture-modes > div {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #24526b;
+  background: #102c40;
+}
+.capture-modes strong {
+  color: #73e6ed;
+  font-size: 24px;
+}
+.capture-modes small {
+  font-size: 11px;
+  color: #8baabc;
+  margin-left: 4px;
+}
+.intake-callout {
+  display: grid;
+  gap: 10px;
+  text-align: center;
+  margin: 4px 0 18px;
+}
+.intake-callout strong {
+  color: #8de8ec;
+  font-size: 16px;
+}
+.intake-callout span {
+  color: #8baabc;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.intake-callout button {
+  justify-self: center;
+}
+.downstream {
+  border-top: 1px solid #24526b;
+  padding-top: 14px;
+  margin-bottom: 20px;
+}
+.downstream summary {
+  color: #a9c7d6;
+  cursor: pointer;
+  font-size: 13px;
+}
+.downstream summary span {
+  display: block;
+  margin: 8px 0 14px;
+  color: #6e99ae;
+  font-size: 11px;
+}
 .operations-cockpit {
   --c-bg: #061421;
   --c-panel: #0b2031;
@@ -1837,6 +1874,46 @@ button:hover:not(:disabled) {
     min-height: 0;
     padding: 12px;
   }
+  .screen-mode .aging-instrument,
+  .screen-mode .command-core {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #2d6278 transparent;
+  }
+  .screen-mode .capture-modes {
+    margin-top: 6px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .screen-mode .capture-modes > div {
+    padding: 6px 9px;
+    gap: 3px;
+    font-size: 11px;
+  }
+  .screen-mode .capture-modes strong {
+    font-size: 18px;
+  }
+  .screen-mode .capture-modes small {
+    font-size: 9px;
+  }
+  .screen-mode .intake-callout {
+    margin-bottom: 12px;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .screen-mode .intake-callout strong {
+    font-size: 14px;
+  }
+  .screen-mode .downstream {
+    margin-bottom: 10px;
+    padding-top: 10px;
+    flex-shrink: 0;
+  }
+  .screen-mode .downstream summary span {
+    display: inline;
+    margin-left: 8px;
+    font-size: 9px;
+  }
   .screen-mode .instrument-title {
     flex-shrink: 0;
     margin-bottom: 8px;
@@ -1851,17 +1928,17 @@ button:hover:not(:disabled) {
     overflow: auto;
   }
   .screen-mode .core-visual {
-    min-height: 180px;
-    flex: 1;
+    min-height: 165px;
+    flex: 0 0 auto;
   }
   .screen-mode .orbital-gauge {
-    width: clamp(180px, 21vh, 240px);
+    width: clamp(165px, 17vh, 200px);
   }
   .screen-mode .gauge-label strong {
     font-size: 38px;
   }
   .screen-mode .region-matrix {
-    flex: 0 1 132px;
+    flex: 1 0 94px;
   }
   .screen-mode .region-matrix button {
     padding: 7px 9px;
@@ -1876,10 +1953,15 @@ button:hover:not(:disabled) {
     padding-block: 5px;
   }
   .screen-mode .age-bars {
-    gap: 9px;
+    gap: 5px;
+    margin-block: 8px;
+    flex-shrink: 0;
   }
   .screen-mode .instrument-note {
     margin-bottom: 0;
+    margin-top: 6px;
+    font-size: 8px;
+    line-height: 1.5;
   }
   .screen-mode .methodology {
     padding-top: 5px;
