@@ -319,6 +319,7 @@
       </form>
     </div>
 
+    <RegistrationDuplicateDialog v-if="duplicateWarning" :warning="duplicateWarning" @resolve="resolveDuplicateWarning" />
     <InspectionPhotoPreview v-if="issuePhotoPreviewVisible" :url="imagePreviewUrl"
       :title="form.isHighlight ? '亮点照片' : '问题照片'" @close="closeIssuePhotoPreview" />
 
@@ -332,6 +333,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
 import PhotoEditor from '@/components/PhotoEditor.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
+import RegistrationDuplicateDialog from '@/components/RegistrationDuplicateDialog.vue'
 import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
@@ -1276,6 +1278,18 @@ const resetForm = (preserveMessage = false) => {
   registerDraftManager?.clear()
 }
 
+const duplicateWarning = ref(null)
+let duplicateResolver = null
+const resolveDuplicateWarning = (confirmed) => {
+  duplicateResolver?.(confirmed)
+  duplicateResolver = null
+  duplicateWarning.value = null
+}
+const confirmDuplicateRegistration = (warning) => new Promise((resolve) => {
+  duplicateResolver = resolve
+  duplicateWarning.value = warning
+})
+
 const handleSubmit = async () => {
   if (submitting.value) return
   const hasIssueValue = normalizedHasIssue.value
@@ -1344,7 +1358,18 @@ const handleSubmit = async () => {
       formData.append('description', form.value.description)
       formData.append('photo', imageFile.value)
     }
-    const response = await axios.post(form.value.isHighlight ? '/api/highlights' : '/api/inspection-register', formData)
+    const endpoint = form.value.isHighlight ? '/api/highlights' : '/api/inspection-register'
+    let response
+    while (!response) {
+      try {
+        response = await axios.post(endpoint, formData)
+      } catch (error) {
+        const warning = error?.response?.data
+        if (error?.response?.status !== 409 || warning?.code !== 'duplicate_registration') throw error
+        if (!await confirmDuplicateRegistration(warning)) return
+        formData.set('duplicate_confirmation', warning.confirmation_token)
+      }
+    }
     resetForm(true)
     showSubmitToast(response.data.message || '提交成功。', 'success')
   } catch (error) {
@@ -1427,6 +1452,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  resolveDuplicateWarning(false)
   historyRequests.cancel()
   aiRequests.cancel()
   registerDraftManager?.flush()
