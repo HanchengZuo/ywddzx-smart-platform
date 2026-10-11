@@ -1,6 +1,33 @@
 export const auditProgress = (summary) =>
   summary?.total ? (summary.reviewed / summary.total) * 100 : 0
 
+export function intakeSignals(data) {
+  const total = data?.summary?.total || 0
+  const activeDays = data?.summary?.active_days || 0
+  const peak = [...(data?.trend || [])]
+    .filter((row) => row.registered > 0)
+    .sort((a, b) => b.registered - a.registered || a.day.localeCompare(b.day))[0]
+  const modes = data?.modes || []
+  const modeTotal = modes.reduce((sum, row) => sum + row.count, 0)
+  let offset = 0
+  return {
+    peak: peak || null,
+    activeDayAverage: activeDays ? (total / activeDays).toFixed(1) : '—',
+    modeTotal,
+    modes: modes.map((row, index) => {
+      const share = modeTotal ? (row.count / modeTotal) * 100 : 0
+      const result = {
+        ...row,
+        share,
+        offset,
+        color: ['#52dded', '#739df5', '#6ee2bb', '#e8bc77'][index % 4],
+      }
+      offset += share
+      return result
+    }),
+  }
+}
+
 export function intakeMetrics(data) {
   if (!data) return []
   const s = data.summary,

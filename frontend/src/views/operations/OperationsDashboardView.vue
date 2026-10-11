@@ -92,8 +92,9 @@
             </div>
             <svg
               v-if="trend.length"
+              ref="trendChart"
               class="trend-chart"
-              viewBox="0 0 420 190"
+              :viewBox="`0 0 ${chartSize.width} ${chartSize.height}`"
               role="img"
               aria-label="所选期间全部问题登记趋势"
             >
@@ -105,25 +106,34 @@
               </defs>
               <g v-for="tick in [0, 1, 2, 3]" :key="tick">
                 <line
-                  x1="32"
-                  x2="407"
-                  :y1="150 - tick * 40"
-                  :y2="150 - tick * 40"
+                  :x1="plot.left"
+                  :x2="plot.right"
+                  :y1="trendY((trendMax * tick) / 3)"
+                  :y2="trendY((trendMax * tick) / 3)"
                   stroke="#24495e"
                   stroke-dasharray="3 5"
                 />
-                <text x="25" :y="154 - tick * 40" text-anchor="end">
+                <text
+                  :x="plot.left - 8 * chartSize.unit"
+                  :y="trendY((trendMax * tick) / 3) + 4 * chartSize.unit"
+                  text-anchor="end"
+                >
                   {{ Math.round((trendMax * tick) / 3) }}
                 </text>
               </g>
               <path :d="trendArea" fill="url(#cockpit-trend-fill)" />
-              <path :d="trendPath" fill="none" stroke="#48dff2" stroke-width="2" />
+              <path
+                :d="trendPath"
+                fill="none"
+                stroke="#48dff2"
+                :stroke-width="2 * chartSize.unit"
+              />
               <circle
                 v-for="(point, index) in trend"
                 :key="point.day"
                 :cx="trendX(index)"
                 :cy="trendY(point.registered)"
-                r="2.2"
+                :r="2.2 * chartSize.unit"
                 fill="#a6f6ff"
               >
                 <title>
@@ -132,16 +142,25 @@
                   }}项
                 </title>
               </circle>
-              <text x="32" y="178">{{ applied.date_from }}</text>
-              <text x="407" y="178" text-anchor="end">{{ applied.date_to }}</text>
+              <text :x="plot.left" :y="chartSize.height - 7 * chartSize.unit">
+                {{ applied.date_from }}
+              </text>
+              <text :x="plot.right" :y="chartSize.height - 7 * chartSize.unit" text-anchor="end">
+                {{ applied.date_to }}
+              </text>
             </svg>
             <p v-else class="empty-state">所选期间暂无问题登记</p>
-            <div class="signal-footer">
-              <span
-                >活跃登记日 <b>{{ data.summary.active_days }}</b></span
-              ><button @click="showDetails('待审核', { phase: '待审核' })">
-                待审核 <b>{{ data.summary.pending_audit }}</b> ›
-              </button>
+            <div class="trend-insights">
+              <div>
+                <span>单日登记峰值</span>
+                <strong>{{ signals.peak?.registered ?? '—' }}<small>项</small></strong>
+                <em>{{ signals.peak?.day || '暂无登记' }}</em>
+              </div>
+              <div>
+                <span>活跃日均登记</span>
+                <strong>{{ signals.activeDayAverage }}<small>项 / 天</small></strong>
+                <em>仅按有登记的日期计算</em>
+              </div>
             </div>
           </article>
           <article class="instrument aging-instrument">
@@ -149,11 +168,11 @@
               <h2>审核准备与采集方式</h2>
               <span>INTAKE MONITOR</span>
             </div>
-            <div class="age-alert">
+            <button class="age-alert" @click="showDetails('待审核', { phase: '待审核' })">
               <span>待审核工作量</span
               ><strong>{{ data.summary.pending_audit }}<small>项</small></strong
               ><i aria-hidden="true"></i>
-            </div>
+            </button>
             <div v-if="data.ages.length" class="age-bars">
               <div v-for="row in data.ages" :key="row.label">
                 <span>{{ row.label }}</span>
@@ -167,10 +186,44 @@
               </div>
             </div>
             <p v-else class="empty-state">当前可见范围暂无待审核登记</p>
-            <div class="capture-modes">
-              <div v-for="row in data.modes" :key="row.mode">
-                <span>{{ row.mode }}巡检</span><strong>{{ row.count }}<small>项</small></strong>
-                <small>涉及{{ row.stations }}座站</small>
+            <div v-if="signals.modeTotal" class="capture-breakdown">
+              <div class="mode-donut">
+                <svg viewBox="0 0 140 140" role="img" aria-label="在库问题采集方式占比">
+                  <circle cx="70" cy="70" r="54" fill="none" stroke="#163c50" stroke-width="10" />
+                  <circle
+                    v-for="row in signals.modes"
+                    :key="row.mode"
+                    cx="70"
+                    cy="70"
+                    r="54"
+                    fill="none"
+                    :stroke="row.color"
+                    stroke-width="10"
+                    pathLength="100"
+                    :stroke-dasharray="`${row.share} ${100 - row.share}`"
+                    :stroke-dashoffset="-row.offset"
+                    transform="rotate(-90 70 70)"
+                  >
+                    <title>{{ row.mode }}：{{ row.share.toFixed(1) }}%</title>
+                  </circle>
+                </svg>
+                <div>
+                  <strong>{{ signals.modeTotal }}</strong
+                  ><span>在库采集 / 项</span>
+                </div>
+              </div>
+              <div class="capture-modes">
+                <div
+                  v-for="row in signals.modes"
+                  :key="row.mode"
+                  :style="{ '--mode-color': row.color }"
+                >
+                  <span
+                    ><i></i>{{ row.mode }}巡检 <b>{{ row.share.toFixed(1) }}%</b></span
+                  >
+                  <strong>{{ row.count }}<small>项</small></strong>
+                  <small>涉及{{ row.stations }}座站</small>
+                </div>
               </div>
             </div>
             <p class="instrument-note">账龄仅指待审核登记的自然日等待时间，非超时或考核结论。</p>
@@ -182,78 +235,98 @@
             <h2>问题采集与审核中枢</h2>
             <span>REGISTRATION CONTROL</span>
           </div>
-          <div class="core-visual">
-            <div class="core-readout left-readout">
-              <span>已审核通过</span><strong>{{ data.summary.audit_approved }}</strong
-              ><small>项登记问题</small>
-            </div>
-            <div class="orbital-gauge">
-              <svg viewBox="0 0 300 300" role="img" :aria-label="'问题审核进度 ' + auditLabel">
-                <circle
-                  class="orbit-slow"
-                  cx="150"
-                  cy="150"
-                  r="141"
-                  fill="none"
-                  stroke="#28758c"
-                  stroke-width="1"
-                  stroke-dasharray="55 18 5 18"
-                />
-                <circle
-                  cx="150"
-                  cy="150"
-                  r="129"
-                  fill="none"
-                  stroke="#224857"
-                  stroke-width="5"
-                  stroke-dasharray="1 8"
-                />
-                <circle cx="150" cy="150" r="111" fill="none" stroke="#153e50" stroke-width="10" />
-                <circle
-                  cx="150"
-                  cy="150"
-                  r="111"
-                  fill="none"
-                  stroke="#4bdedc"
-                  stroke-width="10"
-                  pathLength="100"
-                  :stroke-dasharray="auditPercent + ' 100'"
-                  transform="rotate(-90 150 150)"
-                  stroke-linecap="butt"
-                />
-                <circle
-                  cx="150"
-                  cy="150"
-                  r="91"
-                  fill="#092437"
-                  fill-opacity=".85"
-                  stroke="#28647a"
-                />
-                <path
-                  d="M 143 48 h 14 M 143 252 h 14 M 48 143 v 14 M 252 143 v 14"
-                  stroke="#93eff4"
-                  stroke-width="2"
-                />
-              </svg>
-              <div class="gauge-label">
-                <span>当前在库问题</span><strong>{{ data.summary.live }}<small>项</small></strong
-                ><em>LIVE OBSERVATIONS</em>
+          <div class="core-hero">
+            <div class="core-visual">
+              <div class="core-readout left-readout">
+                <span>已审核通过</span><strong>{{ data.summary.audit_approved }}</strong
+                ><small>项登记问题</small>
+              </div>
+              <div class="orbital-gauge">
+                <svg viewBox="0 0 300 300" role="img" :aria-label="'问题审核进度 ' + auditLabel">
+                  <circle
+                    class="orbit-slow"
+                    cx="150"
+                    cy="150"
+                    r="141"
+                    fill="none"
+                    stroke="#28758c"
+                    stroke-width="1"
+                    stroke-dasharray="55 18 5 18"
+                  />
+                  <circle
+                    cx="150"
+                    cy="150"
+                    r="129"
+                    fill="none"
+                    stroke="#224857"
+                    stroke-width="5"
+                    stroke-dasharray="1 8"
+                  />
+                  <circle
+                    cx="150"
+                    cy="150"
+                    r="111"
+                    fill="none"
+                    stroke="#153e50"
+                    stroke-width="10"
+                  />
+                  <circle
+                    cx="150"
+                    cy="150"
+                    r="111"
+                    fill="none"
+                    stroke="#4bdedc"
+                    stroke-width="10"
+                    pathLength="100"
+                    :stroke-dasharray="auditPercent + ' 100'"
+                    transform="rotate(-90 150 150)"
+                    stroke-linecap="butt"
+                  />
+                  <circle
+                    cx="150"
+                    cy="150"
+                    r="91"
+                    fill="#092437"
+                    fill-opacity=".85"
+                    stroke="#28647a"
+                  />
+                  <path
+                    d="M 143 48 h 14 M 143 252 h 14 M 48 143 v 14 M 252 143 v 14"
+                    stroke="#93eff4"
+                    stroke-width="2"
+                  />
+                </svg>
+                <div class="gauge-label">
+                  <span>当前在库问题</span><strong>{{ data.summary.live }}<small>项</small></strong
+                  ><em>LIVE OBSERVATIONS</em>
+                </div>
+              </div>
+              <div class="core-readout right-readout">
+                <span>待审核</span><strong>{{ data.summary.pending_audit }}</strong
+                ><small>项待集中判定</small>
               </div>
             </div>
-            <div class="core-readout right-readout">
-              <span>待审核</span><strong>{{ data.summary.pending_audit }}</strong
-              ><small>项待集中判定</small>
+            <div class="intake-callout">
+              <span class="intake-eyebrow">当前采集概况</span>
+              <div class="intake-facts">
+                <div>
+                  <strong>{{ data.summary.discovery_stations }}<small>座</small></strong
+                  ><span>有问题站点</span>
+                </div>
+                <div>
+                  <strong>{{ data.units.length }}<small>个</small></strong
+                  ><span>登记涉及片区 / 单位</span>
+                </div>
+              </div>
+              <div class="audit-caption">
+                <span>登记审核进度</span><b>{{ auditLabel }}</b>
+              </div>
+              <div class="signal-track"><i :style="{ width: auditPercent + '%' }"></i></div>
+              <span>待审核登记为巡检发现线索，尚未审核确认。</span>
+              <button class="console-button" @click="showDetails('全部登记问题', {})">
+                查看全部登记 ›
+              </button>
             </div>
-          </div>
-          <div class="intake-callout">
-            <strong
-              >{{ data.summary.discovery_stations }} 座有问题站点 · 审核进度
-              {{ auditLabel }}</strong
-            >
-            <span>待审核登记是巡检发现线索，尚未成为审核确认的问题。</span>
-            <button class="console-button" @click="showDetails('全部登记问题', {})">
-              查看全部登记 ›
-            </button>
           </div>
           <details class="downstream">
             <summary>
@@ -280,19 +353,27 @@
             </div>
           </details>
           <div class="region-head">
-            <h3>片区运行矩阵</h3>
-            <span>登记量 / 审核进度 · 非绩效排名</span>
+            <h3>
+              片区运行矩阵 <small>{{ data.units.length }} 个</small>
+            </h3>
+            <span>登记分布 · 非绩效排名</span>
           </div>
           <div v-if="data.units.length" class="region-matrix">
             <button v-for="row in data.units" :key="row.region" @click="openRegion(row.region)">
-              <span :title="row.region">{{ row.region }}</span>
+              <span :title="row.region"
+                >{{ row.region
+                }}<small>{{ percent(row.registered, data.summary.total) }}%</small></span
+              >
               <div>
                 <strong>{{ row.registered }}<small> 项</small></strong
                 ><em>待审{{ row.pending_audit }}</em>
               </div>
               <div class="matrix-track">
-                <i :style="{ width: percent(row.reviewed, row.registered) + '%' }"></i>
+                <i :style="{ width: percent(row.registered, data.summary.total) + '%' }"></i>
               </div>
+              <small class="matrix-status"
+                >审核进度 <b>{{ percent(row.reviewed, row.registered) }}%</b></small
+              >
             </button>
           </div>
           <p v-else class="empty-state">暂无片区问题数据</p>
@@ -482,11 +563,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import RegionTable from './RegionTable.vue'
 import { createAdaptivePolling } from '../../utils/adaptivePolling'
-import { auditProgress, intakeMetrics } from '../../utils/operationsIntake'
+import { auditProgress, intakeMetrics, intakeSignals } from '../../utils/operationsIntake'
 
 const cockpit = ref(null),
   expanded = ref(false)
@@ -565,6 +646,28 @@ const auditLabel = computed(() =>
   data.value?.summary.total ? auditPercent.value.toFixed(1) + '%' : '暂无登记',
 )
 const metrics = computed(() => intakeMetrics(data.value))
+const signals = computed(() => intakeSignals(data.value))
+const trendChart = ref(null)
+const chartSize = ref({ width: 420, height: 190, unit: 1 })
+let chartObserver
+watch(trendChart, (element) => {
+  chartObserver?.disconnect()
+  if (!element) return
+  // Use the actual panel size so the plot never letterboxes on a wide screen.
+  chartObserver = new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect
+    if (!width || !height) return
+    const unit = parseFloat(getComputedStyle(element).fontSize) / 10 || 1
+    chartSize.value = { width, height, unit }
+  })
+  chartObserver.observe(element)
+})
+const plot = computed(() => ({
+  left: 38 * chartSize.value.unit,
+  right: chartSize.value.width - 12 * chartSize.value.unit,
+  top: 16 * chartSize.value.unit,
+  bottom: chartSize.value.height - 28 * chartSize.value.unit,
+}))
 const trend = computed(() => {
   if (!data.value?.trend?.length) return []
   const byDay = new Map(data.value.trend.map((row) => [row.day, row]))
@@ -580,15 +683,28 @@ const trend = computed(() => {
 })
 const trendMax = computed(() => Math.max(3, ...trend.value.map((row) => row.registered)))
 const trendX = (index) =>
-  trend.value.length === 1 ? 220 : 32 + (index / Math.max(1, trend.value.length - 1)) * 375
-const trendY = (value) => 150 - (value / trendMax.value) * 120
+  trend.value.length === 1
+    ? (plot.value.left + plot.value.right) / 2
+    : plot.value.left + (index / (trend.value.length - 1)) * (plot.value.right - plot.value.left)
+const trendY = (value) =>
+  plot.value.bottom - (value / trendMax.value) * (plot.value.bottom - plot.value.top)
 const trendPath = computed(() =>
   trend.value
     .map((row, index) => (index ? 'L' : 'M') + ' ' + trendX(index) + ' ' + trendY(row.registered))
     .join(' '),
 )
 const trendArea = computed(
-  () => trendPath.value + ' L ' + trendX(trend.value.length - 1) + ' 150 L ' + trendX(0) + ' 150 Z',
+  () =>
+    trendPath.value +
+    ' L ' +
+    trendX(trend.value.length - 1) +
+    ' ' +
+    plot.value.bottom +
+    ' L ' +
+    trendX(0) +
+    ' ' +
+    plot.value.bottom +
+    ' Z',
 )
 let requestController, detailController
 async function load({ background = false } = {}) {
@@ -704,6 +820,7 @@ onMounted(() => {
   document.addEventListener('keydown', escapeScreen)
 })
 onBeforeUnmount(() => {
+  chartObserver?.disconnect()
   polling.dispose()
   document.removeEventListener('visibilitychange', syncAutoRefresh)
   window.removeEventListener('online', syncAutoRefresh)
@@ -719,62 +836,159 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .capture-modes {
-  display: flex;
-  gap: 10px;
-  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(8 * var(--c-unit));
+  min-width: 0;
 }
 .capture-modes > div {
-  flex: 1;
   display: grid;
-  gap: 6px;
-  padding: 12px;
+  gap: calc(4 * var(--c-unit));
+  padding: calc(8 * var(--c-unit));
   border: 1px solid #24526b;
-  background: #102c40;
+  background: linear-gradient(130deg, #14364b, #0a2639);
+  min-width: 0;
+}
+.capture-modes > div > span {
+  font-size: calc(11 * var(--c-unit));
+  display: flex;
+  align-items: center;
+  gap: calc(5 * var(--c-unit));
+}
+.capture-modes b {
+  margin-left: auto;
+  color: var(--mode-color);
+  font-size: calc(10 * var(--c-unit));
+  font-weight: 400;
+}
+.capture-modes i {
+  width: calc(5 * var(--c-unit));
+  height: calc(5 * var(--c-unit));
+  background: var(--mode-color);
 }
 .capture-modes strong {
-  color: #73e6ed;
-  font-size: 24px;
+  color: var(--mode-color);
+  font-size: calc(23 * var(--c-unit));
+  font-family: 'Consolas', monospace;
+  font-weight: 400;
 }
 .capture-modes small {
-  font-size: 11px;
+  font-size: calc(10 * var(--c-unit));
   color: #8baabc;
   margin-left: 4px;
 }
+.capture-breakdown {
+  display: grid;
+  grid-template-columns: calc(84 * var(--c-unit)) minmax(0, 1fr);
+  gap: calc(10 * var(--c-unit));
+  align-items: center;
+  margin-top: calc(8 * var(--c-unit));
+}
+.mode-donut {
+  position: relative;
+}
+.mode-donut svg {
+  display: block;
+  width: 100%;
+}
+.mode-donut > div {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: calc(5 * var(--c-unit));
+}
+.mode-donut strong {
+  color: #cceef7;
+  font:
+    calc(23 * var(--c-unit)) 'Consolas',
+    monospace;
+}
+.mode-donut span {
+  font-size: calc(8 * var(--c-unit));
+  color: #85b2c7;
+}
+.core-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(170px, 1fr);
+  gap: calc(16 * var(--c-unit));
+  align-items: center;
+}
 .intake-callout {
   display: grid;
-  gap: 10px;
-  text-align: center;
-  margin: 4px 0 18px;
+  gap: calc(6 * var(--c-unit));
+  border-left: 1px solid #285369;
+  padding-left: calc(18 * var(--c-unit));
+  margin-block: calc(6 * var(--c-unit));
 }
 .intake-callout strong {
   color: #8de8ec;
-  font-size: 16px;
+  font:
+    calc(28 * var(--c-unit)) 'Consolas',
+    monospace;
+}
+.intake-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(10 * var(--c-unit));
+}
+.intake-facts > div {
+  display: grid;
+  gap: calc(6 * var(--c-unit));
+}
+.intake-facts strong small {
+  font:
+    calc(10 * var(--c-unit)) 'Microsoft YaHei',
+    sans-serif;
+  color: #85b2c7;
+  margin-left: calc(4 * var(--c-unit));
+}
+.intake-callout .intake-eyebrow {
+  color: #5ed5e7;
+  font-size: calc(10 * var(--c-unit));
+  letter-spacing: 2px;
+}
+.audit-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: calc(5 * var(--c-unit));
+  font-size: calc(11 * var(--c-unit));
+}
+.audit-caption b {
+  color: #77dbc9;
+  font-family: 'Consolas', monospace;
+}
+.intake-callout .signal-track {
+  margin: 0;
 }
 .intake-callout span {
   color: #8baabc;
-  font-size: 12px;
+  font-size: calc(10 * var(--c-unit));
   line-height: 1.6;
 }
 .intake-callout button {
-  justify-self: center;
+  justify-self: start;
 }
 .downstream {
   border-top: 1px solid #24526b;
-  padding-top: 14px;
-  margin-bottom: 20px;
+  padding-top: calc(12 * var(--c-unit));
+  margin-bottom: calc(12 * var(--c-unit));
 }
 .downstream summary {
   color: #a9c7d6;
   cursor: pointer;
-  font-size: 13px;
+  font-size: calc(11 * var(--c-unit));
 }
 .downstream summary span {
   display: block;
   margin: 8px 0 14px;
   color: #6e99ae;
-  font-size: 11px;
+  font-size: calc(10 * var(--c-unit));
 }
 .operations-cockpit {
+  --c-unit: 1px;
   --c-bg: #061421;
   --c-panel: #0b2031;
   --c-line: #234759;
@@ -825,19 +1039,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 11px;
-  font-size: 15px;
+  font-size: calc(15 * var(--c-unit));
   letter-spacing: 2px;
   color: #bbdae9;
 }
 .brand-mark small {
   display: block;
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   letter-spacing: 1.8px;
   margin-top: 7px;
   color: #648da5;
 }
 .brand-glyph {
-  font-size: 38px;
+  font-size: calc(38 * var(--c-unit));
   color: var(--c-cyan);
   text-shadow: 0 0 20px #29a4bc;
 }
@@ -848,13 +1062,15 @@ onBeforeUnmount(() => {
 }
 .cockpit-title p {
   color: #81abbe;
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
   letter-spacing: 8px;
-  margin: 0 0 8px;
+  margin: 0 0 calc(6 * var(--c-unit));
+  line-height: 1.2;
 }
 .cockpit-title h1 {
-  font-size: clamp(23px, 2.2vw, 38px);
+  font-size: calc(34 * var(--c-unit));
   font-weight: 600;
+  line-height: 1.15;
   letter-spacing: 6px;
   margin: 0;
   color: #e3faff;
@@ -890,7 +1106,7 @@ onBeforeUnmount(() => {
   justify-items: end;
 }
 .data-status {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   letter-spacing: 1px;
   color: var(--c-muted);
 }
@@ -905,12 +1121,12 @@ onBeforeUnmount(() => {
 .screen-button,
 .console-button {
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   border: 1px solid #326074;
   background: #0f2e41;
   color: #caeaf5;
   border-radius: 3px;
-  padding: 9px 14px;
+  padding: calc(8 * var(--c-unit)) calc(12 * var(--c-unit));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -951,14 +1167,14 @@ button:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 .command-label {
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   letter-spacing: 2px;
   margin-right: 10px;
   display: grid;
   gap: 4px;
 }
 .command-label small {
-  font-size: 8px;
+  font-size: calc(8 * var(--c-unit));
   color: #6f98ad;
   letter-spacing: 1px;
 }
@@ -969,14 +1185,14 @@ button:hover:not(:disabled) {
   color: #c9e6f3;
   border: 1px solid #315366;
   border-radius: 3px;
-  height: 34px;
-  padding: 5px 8px;
+  height: calc(34 * var(--c-unit));
+  padding: calc(5 * var(--c-unit)) calc(8 * var(--c-unit));
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   max-width: 100%;
 }
 .command-bar select {
-  min-width: 150px;
+  min-width: calc(150 * var(--c-unit));
 }
 .command-bar label {
   min-width: 0;
@@ -988,7 +1204,7 @@ button:hover:not(:disabled) {
 .snapshot-time {
   margin-left: auto;
   color: #7fa4b7;
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
 }
 .cockpit-notice {
   border-left: 2px solid var(--c-amber);
@@ -1026,7 +1242,7 @@ button:hover:not(:disabled) {
   gap: 14px;
 }
 .scope-line {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   color: #8cb0c4;
   display: flex;
   justify-content: space-between;
@@ -1058,17 +1274,17 @@ button:hover:not(:disabled) {
   top: 12px;
   color: #55798c;
   font:
-    10px 'Consolas',
+    calc(10 * var(--c-unit)) 'Consolas',
     monospace;
 }
 .kpi-label {
   color: #a3c3d4;
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   padding-right: 15px;
 }
 .kpi-value {
   font-family: 'Bahnschrift', 'DIN Alternate', 'Consolas', sans-serif;
-  font-size: clamp(27px, 2.6vw, 43px);
+  font-size: calc(38 * var(--c-unit));
   font-variant-numeric: tabular-nums;
   color: #68e7f1;
   margin-top: 8px;
@@ -1078,7 +1294,7 @@ button:hover:not(:disabled) {
 }
 .kpi-value small {
   font-family: 'Microsoft YaHei', sans-serif;
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
   color: #8fb5c8;
   margin-left: 6px;
 }
@@ -1093,7 +1309,7 @@ button:hover:not(:disabled) {
   color: #b7c9eb;
 }
 .kpi p {
-  font-size: 9px;
+  font-size: calc(10 * var(--c-unit));
   line-height: 1.6;
   color: #8ba9bb;
   margin: 9px 0;
@@ -1108,13 +1324,13 @@ button:hover:not(:disabled) {
 }
 .command-grid {
   display: grid;
-  grid-template-columns: minmax(235px, 1fr) minmax(390px, 1.55fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(235px, 1fr) minmax(390px, 1.5fr) minmax(240px, 1fr);
   gap: 14px;
   align-items: stretch;
 }
 .wing {
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1.1fr 1fr;
   gap: 14px;
   min-width: 0;
 }
@@ -1150,31 +1366,32 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: calc(10 * var(--c-unit));
   border-bottom: 1px solid #26465a;
-  padding-bottom: 11px;
-  margin-bottom: 12px;
+  padding-bottom: calc(9 * var(--c-unit));
+  margin-bottom: calc(10 * var(--c-unit));
 }
 .instrument-title h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14 * var(--c-unit));
   font-weight: 500;
+  line-height: 1.3;
   letter-spacing: 1.5px;
   color: #d5edf7;
   position: relative;
-  padding-left: 10px;
+  padding-left: calc(10 * var(--c-unit));
 }
 .instrument-title h2:before {
   content: '';
   position: absolute;
   left: 0;
-  top: 3px;
-  width: 3px;
-  height: 12px;
+  top: calc(3 * var(--c-unit));
+  width: calc(3 * var(--c-unit));
+  height: calc(12 * var(--c-unit));
   background: #4bcedd;
 }
 .instrument-title > span {
-  font-size: 8px;
+  font-size: calc(8 * var(--c-unit));
   letter-spacing: 1.1px;
   color: #749bad;
   text-align: right;
@@ -1183,68 +1400,89 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   color: #85acbf;
 }
 .panel-caption strong {
-  font-size: 18px;
+  font-size: calc(18 * var(--c-unit));
   color: #62ddee;
   font-family: 'Consolas', monospace;
 }
 .panel-caption small {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   font-weight: 400;
 }
 .trend-chart {
   display: block;
   width: 100%;
-  height: 170px;
+  height: calc(165 * var(--c-unit));
+  font-size: calc(10 * var(--c-unit));
 }
 .trend-chart text {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   fill: #88aabd;
 }
-.signal-footer {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  border-top: 1px solid #203d50;
-  padding-top: 10px;
-  color: #8cafc2;
+.trend-insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(10 * var(--c-unit));
+  margin: calc(8 * var(--c-unit)) 0 calc(12 * var(--c-unit));
 }
-.signal-footer button {
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
+.trend-insights > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: calc(3 * var(--c-unit));
+  padding: calc(7 * var(--c-unit));
+  border: 1px solid #25495d;
+  background: linear-gradient(130deg, #12394c99, transparent);
 }
-.signal-footer b {
-  font-family: 'Consolas', monospace;
-  font-size: 16px;
-  color: #c9edf5;
-  margin-left: 6px;
+.trend-insights span {
+  font-size: calc(10 * var(--c-unit));
+  color: #8db4c8;
+}
+.trend-insights strong {
+  font:
+    calc(18 * var(--c-unit)) 'Consolas',
+    monospace;
+  color: #b9edf5;
+}
+.trend-insights small {
+  font-size: calc(9 * var(--c-unit));
+  color: #83a7ba;
+  margin-left: calc(4 * var(--c-unit));
+}
+.trend-insights em {
+  grid-column: 1 / -1;
+  font-size: calc(9 * var(--c-unit));
+  font-style: normal;
+  color: #83a7ba;
 }
 .age-alert {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 9px 12px;
+  padding: calc(8 * var(--c-unit)) calc(10 * var(--c-unit));
   background: linear-gradient(90deg, #8a622324, transparent);
   border-left: 2px solid #c69b57;
 }
 .age-alert > span {
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
   color: #e4be81;
 }
 .age-alert strong {
   font-family: 'Consolas', monospace;
-  font-size: 25px;
+  font-size: calc(25 * var(--c-unit));
   font-weight: 400;
   color: #f9cb83;
 }
 .age-alert small {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   margin-left: 5px;
 }
 .age-alert i {
@@ -1257,15 +1495,15 @@ button:hover:not(:disabled) {
 }
 .age-bars {
   display: grid;
-  gap: 17px;
-  margin: 20px 0;
+  gap: calc(10 * var(--c-unit));
+  margin: calc(10 * var(--c-unit)) 0;
 }
 .age-bars > div {
   display: grid;
-  grid-template-columns: 78px 1fr 25px;
+  grid-template-columns: calc(62 * var(--c-unit)) 1fr auto;
   align-items: center;
-  gap: 9px;
-  font-size: 11px;
+  gap: calc(9 * var(--c-unit));
+  font-size: calc(11 * var(--c-unit));
 }
 .age-bars b {
   color: #c5e8f1;
@@ -1273,7 +1511,7 @@ button:hover:not(:disabled) {
   text-align: right;
 }
 .segmented-track {
-  height: 7px;
+  height: calc(7 * var(--c-unit));
   background: #143446;
 }
 .segmented-track i {
@@ -1285,7 +1523,7 @@ button:hover:not(:disabled) {
   background: repeating-linear-gradient(90deg, #e8b776 0, #e8b776 5px, #0b263b 5px, #0b263b 7px);
 }
 .instrument-note {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   line-height: 1.8;
   color: #7ca0b5;
   margin: 12px 0 0;
@@ -1296,6 +1534,7 @@ button:hover:not(:disabled) {
   scrollbar-color: #2d6278 transparent;
 }
 .command-core {
+  container-type: inline-size;
   background:
     radial-gradient(ellipse at 50% 25%, #12415765, transparent 60%),
     linear-gradient(180deg, #0b2539e8, #081b2ae8);
@@ -1307,7 +1546,7 @@ button:hover:not(:disabled) {
   align-items: center;
   justify-content: center;
   position: relative;
-  min-height: 240px;
+  min-height: calc(215 * var(--c-unit));
 }
 .core-visual:after {
   content: '';
@@ -1322,10 +1561,10 @@ button:hover:not(:disabled) {
   pointer-events: none;
 }
 .orbital-gauge {
-  width: clamp(210px, 20vw, 290px);
+  width: calc(200 * var(--c-unit));
   position: relative;
   flex-shrink: 1;
-  min-width: 180px;
+  min-width: calc(130 * var(--c-unit));
 }
 .orbital-gauge svg {
   display: block;
@@ -1346,42 +1585,42 @@ button:hover:not(:disabled) {
   pointer-events: none;
 }
 .gauge-label > span {
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
   color: #aed1df;
 }
 .gauge-label strong {
   font-family: 'Bahnschrift', 'DIN Alternate', 'Consolas', sans-serif;
   font-weight: 400;
-  font-size: clamp(28px, 3.6vw, 52px);
+  font-size: calc(38 * var(--c-unit));
   color: #c8fbff;
   margin: 7px 0;
   letter-spacing: -1px;
 }
 .gauge-label strong small {
-  font-size: 16px;
+  font-size: calc(12 * var(--c-unit));
   letter-spacing: 0;
 }
 .gauge-label em {
   font-style: normal;
-  font-size: 8px;
-  letter-spacing: 3px;
+  font-size: calc(7 * var(--c-unit));
+  letter-spacing: calc(1.5 * var(--c-unit));
   color: #5ea0b6;
 }
 .core-readout {
   display: grid;
-  gap: 6px;
-  font-size: 10px;
+  gap: calc(6 * var(--c-unit));
+  font-size: calc(10 * var(--c-unit));
   color: #8ab7cb;
-  min-width: 55px;
+  min-width: calc(60 * var(--c-unit));
 }
 .core-readout strong {
   font-family: 'Consolas', monospace;
-  font-size: 25px;
+  font-size: calc(25 * var(--c-unit));
   font-weight: 400;
   color: #70e6d9;
 }
 .core-readout small {
-  font-size: 8px;
+  font-size: calc(8 * var(--c-unit));
   color: #739aaf;
 }
 .right-readout {
@@ -1393,15 +1632,15 @@ button:hover:not(:disabled) {
 .flow-controls {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 8px;
+  gap: calc(8 * var(--c-unit));
+  margin-top: calc(8 * var(--c-unit));
 }
 .flow-controls button {
   position: relative;
   border: 1px solid #2c6074;
   background: linear-gradient(130deg, #15425470, #0a253455);
   color: #b9dce9;
-  padding: 12px 5px 9px;
+  padding: calc(12 * var(--c-unit)) calc(5 * var(--c-unit)) calc(9 * var(--c-unit));
   display: grid;
   gap: 5px;
   cursor: pointer;
@@ -1409,17 +1648,17 @@ button:hover:not(:disabled) {
   min-width: 0;
 }
 .flow-controls small {
-  font-size: 8px;
+  font-size: calc(8 * var(--c-unit));
   color: #497e95;
   position: absolute;
   top: 3px;
   left: 4px;
 }
 .flow-controls span {
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
 }
 .flow-controls strong {
-  font-size: 23px;
+  font-size: calc(23 * var(--c-unit));
   font-weight: 400;
   font-family: 'Consolas', monospace;
   color: #7ee4f1;
@@ -1430,7 +1669,7 @@ button:hover:not(:disabled) {
   align-items: center;
   flex-wrap: wrap;
   padding: 11px 0;
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   border-bottom: 1px solid #214357;
   color: #86a8bd;
 }
@@ -1454,79 +1693,109 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 14px 0 10px;
+  margin: calc(8 * var(--c-unit)) 0 calc(10 * var(--c-unit));
 }
 .region-head h3 {
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   font-weight: 400;
   letter-spacing: 2px;
   margin: 0;
 }
 .region-head > span {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   color: #82a9bc;
+}
+.region-head h3 small {
+  margin-left: calc(8 * var(--c-unit));
+  font-size: calc(9 * var(--c-unit));
+  color: #77b7ca;
+  letter-spacing: 0;
 }
 .region-matrix {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  max-height: 188px;
+  gap: calc(8 * var(--c-unit));
+  max-height: calc(258 * var(--c-unit));
+  align-content: start;
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: #2d6278 transparent;
 }
 .region-matrix button {
-  padding: 9px;
+  padding: calc(9 * var(--c-unit));
   border: 1px solid #234c60;
   background: #0b2a3d99;
   color: #a7ccdd;
   cursor: pointer;
   text-align: left;
   min-width: 0;
+  line-height: 1.25;
 }
 .region-matrix button > span {
-  display: block;
-  font-size: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: calc(6 * var(--c-unit));
+  font-size: calc(11 * var(--c-unit));
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+.region-matrix button > span small {
+  flex-shrink: 0;
+  font:
+    calc(10 * var(--c-unit)) 'Consolas',
+    monospace;
+  color: #6eb7ce;
 }
 .region-matrix button > div:not(.matrix-track) {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-top: 6px;
+  margin-top: calc(4 * var(--c-unit));
   gap: 5px;
 }
 .region-matrix strong {
   color: #c4eff8;
-  font-size: 18px;
+  font-size: calc(22 * var(--c-unit));
   font-weight: 400;
   font-family: 'Consolas', monospace;
 }
 .region-matrix strong small {
-  font-size: 8px;
+  font-size: calc(9 * var(--c-unit));
   color: #7facc0;
 }
 .region-matrix em {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   font-style: normal;
-  color: #61d9bd;
+  color: #e2bb7d;
 }
 .matrix-track {
-  margin-top: 7px;
-  height: 2px;
+  margin-top: calc(4 * var(--c-unit));
+  height: calc(3 * var(--c-unit));
   background: #184055;
 }
 .matrix-track i {
   display: block;
   height: 100%;
-  background: #54cdb7;
+  background: linear-gradient(90deg, #296f96, #65d5e8);
+}
+.matrix-status {
+  display: flex;
+  justify-content: space-between;
+  margin-top: calc(4 * var(--c-unit));
+  font-size: calc(9 * var(--c-unit));
+  color: #7a9fb6;
+}
+.matrix-status b {
+  font-family: 'Consolas', monospace;
+  font-weight: 400;
+  color: #8dd6c5;
 }
 .table-signals {
   max-height: 235px;
   display: grid;
-  gap: 14px;
+  gap: calc(12 * var(--c-unit));
+  align-content: start;
   padding-right: 5px;
 }
 .table-signals button {
@@ -1542,20 +1811,20 @@ button:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
 }
 .table-signals button span small {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   color: #7da0b5;
 }
 .table-signals b {
   font:
-    16px 'Consolas',
+    calc(16 * var(--c-unit)) 'Consolas',
     monospace;
   color: #7dd7ee;
 }
 .signal-track {
-  height: 5px;
+  height: calc(5 * var(--c-unit));
   background: #183747;
   margin: 7px 0 5px;
 }
@@ -1565,7 +1834,7 @@ button:hover:not(:disabled) {
   background: linear-gradient(90deg, #216b99, #5bd5e9);
 }
 .table-signals button > small {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   color: #7197ac;
 }
 .standards-list {
@@ -1576,8 +1845,8 @@ button:hover:not(:disabled) {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 10px;
-  padding: 11px 1px;
+  gap: calc(10 * var(--c-unit));
+  padding: calc(11 * var(--c-unit)) 1px;
   border: 0;
   border-bottom: 1px solid #214256;
   background: transparent;
@@ -1587,39 +1856,39 @@ button:hover:not(:disabled) {
 }
 .rank {
   font-family: 'Consolas', monospace;
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   color: #658a9f;
-  min-width: 20px;
+  min-width: calc(20 * var(--c-unit));
 }
 .rank.lead {
   color: #f0c18a;
 }
 .standard-copy {
   display: grid;
-  gap: 5px;
+  gap: calc(4 * var(--c-unit));
   flex: 1;
   min-width: 0;
 }
 .standard-copy strong {
-  font-size: 12px;
+  font-size: calc(12 * var(--c-unit));
   color: #b9e9f4;
   font-weight: 500;
 }
 .standard-copy > span {
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
   color: #97b6c9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .standard-copy small {
-  font-size: 9px;
+  font-size: calc(9 * var(--c-unit));
   color: #7499ae;
 }
 .standards-list b,
 .station-list b {
   font:
-    18px 'Consolas',
+    calc(18 * var(--c-unit)) 'Consolas',
     monospace;
   color: #70d2e7;
   white-space: nowrap;
@@ -1627,7 +1896,7 @@ button:hover:not(:disabled) {
 .standards-list b small,
 .station-list b small {
   font:
-    9px 'Microsoft YaHei',
+    calc(9 * var(--c-unit)) 'Microsoft YaHei',
     sans-serif;
   color: #7da6bd;
   margin-left: 4px;
@@ -1645,7 +1914,7 @@ button:hover:not(:disabled) {
 }
 .regional-detail :deep(table) {
   color: #b0d0e0;
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
 }
 .regional-detail :deep(th) {
   position: sticky;
@@ -1653,11 +1922,12 @@ button:hover:not(:disabled) {
   z-index: 1;
   background: #102e40;
   color: #8cb3c8;
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
+  padding: calc(10 * var(--c-unit)) calc(12 * var(--c-unit));
 }
 .regional-detail :deep(td) {
   border-color: #1d3b4d;
-  padding: 12px 13px;
+  padding: calc(10 * var(--c-unit)) calc(12 * var(--c-unit));
 }
 .regional-detail :deep(td:first-child) {
   color: #bfdbe7;
@@ -1665,17 +1935,23 @@ button:hover:not(:disabled) {
 }
 .regional-detail :deep(.progress) {
   background: #183d4e;
+  width: calc(60 * var(--c-unit));
+  height: calc(4 * var(--c-unit));
+  margin-right: calc(6 * var(--c-unit));
 }
 .regional-detail :deep(.progress i) {
   background: #54cbb3;
 }
 .regional-detail :deep(small) {
   color: #8ebdcf;
+  font-size: calc(10 * var(--c-unit));
 }
 .regional-detail :deep(button) {
   background: #15415a;
   color: #84dcef;
   border-radius: 2px;
+  font-size: calc(10 * var(--c-unit));
+  padding: calc(5 * var(--c-unit)) calc(10 * var(--c-unit));
 }
 .regional-detail :deep(.pending) {
   color: #f1c28b;
@@ -1690,17 +1966,19 @@ button:hover:not(:disabled) {
   flex: 1;
   display: grid;
   gap: 5px;
+  min-width: 0;
 }
 .station-list strong {
-  font-size: 11px;
+  font-size: calc(12 * var(--c-unit));
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .station-list small {
-  font-size: 9px;
+  font-size: calc(10 * var(--c-unit));
   color: #7da2b7;
 }
 .methodology {
-  font-size: 11px;
+  font-size: calc(11 * var(--c-unit));
   color: #85a9bd;
   line-height: 1.9;
   border-top: 1px solid #26495d;
@@ -1709,10 +1987,10 @@ button:hover:not(:disabled) {
 .methodology summary {
   cursor: pointer;
   color: #99bdcd;
-  font-size: 10px;
+  font-size: calc(10 * var(--c-unit));
 }
 .methodology summary span {
-  font-size: 8px;
+  font-size: calc(8 * var(--c-unit));
   margin-left: 10px;
   letter-spacing: 1px;
   color: #537f96;
@@ -1723,6 +2001,12 @@ button:hover:not(:disabled) {
   font-size: 12px;
   line-height: 1.8;
   color: #8ab0c3;
+  margin: 0;
+}
+.instrument > .empty-state {
+  flex: 1;
+  display: grid;
+  align-content: center;
 }
 .cockpit-dialog {
   padding: 0;
@@ -1825,54 +2109,66 @@ button:hover:not(:disabled) {
     animation: none;
   }
 }
-/* Keep the main instruments in one screen; long lists scroll inside their panels. */
+/* Scale both typography and instruments, not empty grid tracks, on large displays. */
 @media (min-width: 1500px) and (min-height: 900px) {
   .operations-cockpit.screen-mode {
+    --c-unit: clamp(1px, min(0.05208333vw, 0.09259259dvh), 2px);
     display: flex;
     flex-direction: column;
     height: 100dvh;
     box-sizing: border-box;
-    padding: 14px 22px;
+    padding: calc(14 * var(--c-unit)) calc(22 * var(--c-unit));
   }
   .screen-mode .cockpit-header {
-    min-height: 68px;
-    margin-bottom: 10px;
+    min-height: calc(68 * var(--c-unit));
+    margin-bottom: calc(10 * var(--c-unit));
     flex-shrink: 0;
   }
   .screen-mode .command-bar {
     flex-shrink: 0;
-    padding-block: 8px;
+    padding: calc(6 * var(--c-unit)) calc(14 * var(--c-unit));
+    gap: calc(10 * var(--c-unit));
   }
   .screen-mode .cockpit-main {
     flex: 1;
     min-height: 0;
-    grid-template-rows: auto auto minmax(440px, 1fr) 172px auto;
-    gap: 10px;
+    grid-template-rows:
+      auto auto minmax(calc(390 * var(--c-unit)), 2.1fr) minmax(calc(190 * var(--c-unit)), 1fr)
+      auto;
+    gap: calc(10 * var(--c-unit));
   }
   .screen-mode .kpi {
-    padding: 10px 16px;
+    padding: calc(8 * var(--c-unit)) calc(16 * var(--c-unit));
+  }
+  .screen-mode .kpi-label {
+    line-height: 1.2;
   }
   .screen-mode .kpi-value {
-    font-size: 34px;
-    margin-top: 5px;
+    font-size: calc(36 * var(--c-unit));
+    margin-top: calc(5 * var(--c-unit));
   }
   .screen-mode .kpi p {
-    margin: 5px 0;
+    margin: calc(3 * var(--c-unit)) 0;
+    font-size: calc(9 * var(--c-unit));
+    line-height: 1.4;
+  }
+  .screen-mode .scope-line {
+    margin-top: calc(6 * var(--c-unit));
   }
   .screen-mode .command-grid,
   .screen-mode .wing,
   .screen-mode .action-deck {
     min-height: 0;
-    gap: 10px;
+    gap: calc(10 * var(--c-unit));
   }
   .screen-mode .wing {
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.05fr) minmax(0, 1fr);
   }
   .screen-mode .instrument {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 12px;
+    padding: calc(12 * var(--c-unit));
   }
   .screen-mode .aging-instrument,
   .screen-mode .command-core {
@@ -1880,44 +2176,23 @@ button:hover:not(:disabled) {
     scrollbar-width: thin;
     scrollbar-color: #2d6278 transparent;
   }
-  .screen-mode .capture-modes {
-    margin-top: 6px;
-    gap: 8px;
+  .screen-mode .core-hero {
     flex-shrink: 0;
-  }
-  .screen-mode .capture-modes > div {
-    padding: 6px 9px;
-    gap: 3px;
-    font-size: 11px;
-  }
-  .screen-mode .capture-modes strong {
-    font-size: 18px;
-  }
-  .screen-mode .capture-modes small {
-    font-size: 9px;
-  }
-  .screen-mode .intake-callout {
-    margin-bottom: 12px;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .screen-mode .intake-callout strong {
-    font-size: 14px;
   }
   .screen-mode .downstream {
-    margin-bottom: 10px;
-    padding-top: 10px;
+    margin-bottom: calc(6 * var(--c-unit));
+    padding-top: calc(8 * var(--c-unit));
     flex-shrink: 0;
   }
   .screen-mode .downstream summary span {
     display: inline;
-    margin-left: 8px;
-    font-size: 9px;
+    margin-left: calc(8 * var(--c-unit));
+    font-size: calc(9 * var(--c-unit));
   }
   .screen-mode .instrument-title {
     flex-shrink: 0;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
+    margin-bottom: calc(8 * var(--c-unit));
+    padding-bottom: calc(8 * var(--c-unit));
   }
   .screen-mode .panel-scroll,
   .screen-mode .region-matrix,
@@ -1925,49 +2200,110 @@ button:hover:not(:disabled) {
     flex: 1;
     min-height: 0;
     max-height: none;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .screen-mode .regional-detail :deep(.region-table) {
+    overflow-x: auto;
   }
   .screen-mode .core-visual {
-    min-height: 165px;
-    flex: 0 0 auto;
+    min-height: calc(175 * var(--c-unit));
   }
   .screen-mode .orbital-gauge {
-    width: clamp(165px, 17vh, 200px);
-  }
-  .screen-mode .gauge-label strong {
-    font-size: 38px;
+    width: calc(180 * var(--c-unit));
   }
   .screen-mode .region-matrix {
-    flex: 1 0 94px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    flex: 1 1 calc(130 * var(--c-unit));
   }
   .screen-mode .region-matrix button {
-    padding: 7px 9px;
+    padding: calc(7 * var(--c-unit)) calc(9 * var(--c-unit));
   }
   .screen-mode .trend-chart {
-    flex: 1;
-    min-height: 0;
-    max-height: 165px;
+    flex: 1 1 auto;
+    min-height: calc(65 * var(--c-unit));
+    height: 0;
+    max-height: none;
+  }
+  .screen-mode .panel-caption,
+  .screen-mode .trend-insights {
+    flex-shrink: 0;
+  }
+  .screen-mode .trend-insights {
+    margin-block: calc(5 * var(--c-unit)) calc(8 * var(--c-unit));
   }
   .screen-mode .age-alert {
-    margin-block: 4px;
-    padding-block: 5px;
+    margin-block: calc(4 * var(--c-unit));
+    padding-block: calc(3 * var(--c-unit));
   }
   .screen-mode .age-bars {
-    gap: 5px;
-    margin-block: 8px;
+    gap: calc(7 * var(--c-unit));
+    margin-block: calc(6 * var(--c-unit));
     flex-shrink: 0;
   }
   .screen-mode .instrument-note {
     margin-bottom: 0;
-    margin-top: 6px;
-    font-size: 8px;
+    margin-top: auto;
+    padding-top: calc(2 * var(--c-unit));
     line-height: 1.5;
   }
+  .screen-mode .regional-detail :deep(td) {
+    padding-block: calc(8 * var(--c-unit));
+  }
+  .screen-mode .station-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    column-gap: calc(16 * var(--c-unit));
+  }
+  .screen-mode .station-list button {
+    padding-block: calc(9 * var(--c-unit));
+  }
   .screen-mode .methodology {
-    padding-top: 5px;
+    padding-top: calc(5 * var(--c-unit));
+  }
+  .screen-mode .methodology summary {
+    line-height: 1.3;
   }
 }
-@media (max-width: 1200px) {
+@container (min-width: 650px) {
+  .region-matrix {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@container (max-width: 560px) {
+  .core-hero {
+    grid-template-columns: 1fr;
+  }
+  .intake-callout {
+    border-left: 0;
+    border-top: 1px solid #285369;
+    padding: 12px 0 0;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: 'eyebrow audit' 'facts track' 'facts note' 'facts action';
+  }
+  .intake-eyebrow {
+    grid-area: eyebrow;
+  }
+  .intake-facts {
+    grid-area: facts;
+    align-self: start;
+  }
+  .intake-callout > .signal-track {
+    grid-area: track;
+  }
+  .intake-callout > span:not(.intake-eyebrow) {
+    grid-area: note;
+  }
+  .intake-callout > button {
+    grid-area: action;
+  }
+  .audit-caption {
+    grid-area: audit;
+    padding-top: 0;
+  }
+}
+@media (max-width: 1360px) {
   .command-grid {
     grid-template-columns: minmax(215px, 1fr) minmax(330px, 1.5fr);
   }
