@@ -278,7 +278,7 @@
 
                 <div v-if="imagePreviewUrl" class="image-preview-panel">
                   <button class="image-preview-thumb-btn" type="button" @click="openIssuePhotoPreview">
-                    <img :src="imagePreviewUrl" alt="问题照片预览" class="image-preview-thumb" />
+                    <img :src="imagePreviewUrl" :alt="form.isHighlight ? '亮点照片预览' : '问题照片预览'" class="image-preview-thumb" />
                   </button>
                   <div class="image-preview-meta">
                     <div class="image-preview-title">最终提交照片</div>
@@ -1101,10 +1101,11 @@ const handleFileChange = async (event) => {
 const processSelectedImages = async (files = []) => {
   const incomingFiles = Array.from(files || []).filter(Boolean)
   if (!incomingFiles.length) return false
+  const photoLabel = form.value.isHighlight ? '亮点照片' : '问题照片'
 
   const remainingCount = Math.max(0, 3 - sourcePhotos.value.length)
   if (remainingCount <= 0) {
-    showSubmitToast('问题照片最多只能添加3张。', 'error')
+    showSubmitToast(`${photoLabel}最多只能添加3张。`, 'error')
     return false
   }
 
@@ -1119,7 +1120,7 @@ const processSelectedImages = async (files = []) => {
         file: preparedFile,
         url: URL.createObjectURL(preparedFile),
         img,
-        name: preparedFile.name || file.name || '问题照片'
+        name: preparedFile.name || file.name || photoLabel
       })
     }
 
@@ -1128,9 +1129,9 @@ const processSelectedImages = async (files = []) => {
     await generateCompositePhoto()
 
     if (incomingFiles.length > remainingCount) {
-      showSubmitToast('最多添加3张问题照片，已自动忽略超出的图片。', 'info')
+      showSubmitToast(`最多添加3张${photoLabel}，已自动忽略超出的图片。`, 'info')
     } else if (sourcePhotos.value.length > 1) {
-      showSubmitToast('已自动拼接问题照片，可点击图片编辑继续调整。', 'success')
+      showSubmitToast(`已自动拼接${photoLabel}，可点击图片编辑继续调整。`, 'success')
     }
 
     if (submitMessageType.value !== 'success' && submitMessageTimer) {
@@ -1198,22 +1199,8 @@ const handlePhotoDrop = async (event) => {
 }
 
 const handlePhotoPaste = async (event) => {
-  const files = getImageFilesFromClipboardEvent(event)
-  if (!files.length) {
-    showSubmitToast('剪贴板里没有可上传的图片。', 'error')
-    return
-  }
-  event.preventDefault()
-  photoDragDepth = 0
-  isPhotoDragActive.value = false
-  const uploaded = await processSelectedImages(files)
-  if (uploaded) {
-    await scrollToIssuePhotoUpload()
-  }
-}
-
-const handleWindowPhotoPaste = async (event) => {
-  if (event.defaultPrevented || photoEditorVisible.value || normalizedHasIssue.value !== 'yes') return
+  if (event.defaultPrevented || !hasPermission || !showIssueFields.value || submitting.value
+    || photoEditorVisible.value || issuePhotoPreviewVisible.value) return
   const files = getImageFilesFromClipboardEvent(event)
   if (!files.length) return
   event.preventDefault()
@@ -1419,7 +1406,7 @@ watch(
 onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('paste', handleWindowPhotoPaste)
+  window.addEventListener('paste', handlePhotoPaste)
   window.addEventListener('beforeunload', handleRegisterBeforeUnload)
   const [stationResult, tableResult] = await Promise.allSettled([
     fetchStations(),
@@ -1445,7 +1432,7 @@ onBeforeUnmount(() => {
   registerDraftManager?.flush()
   registerDraftManager?.destroy()
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('paste', handleWindowPhotoPaste)
+  window.removeEventListener('paste', handlePhotoPaste)
   window.removeEventListener('beforeunload', handleRegisterBeforeUnload)
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
