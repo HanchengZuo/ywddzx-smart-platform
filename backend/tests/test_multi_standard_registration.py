@@ -13,6 +13,27 @@ from inspection_registration import parse_standard_selections
 
 
 class SelectionTests(unittest.TestCase):
+    def test_confirmation_expiry_user_month_and_standard_binding(self):
+        from itsdangerous import TimestampSigner
+        from unittest.mock import Mock
+        cur = Mock()
+        cur.fetchall.return_value = [{'id': 12, 'standard_id': 1, 'description': '旧问题', 'registered_at': '2026-10-01 10:00'}]
+        station = {'id': 1, 'station_name': '测试站'}
+        user = {'id': 7}
+        standards = [{'external_standard_id': 1}]
+        today = api.date(2026, 10, 1)
+        with patch.object(api, 'build_issue_list_visibility_scope', return_value=([], [])):
+            with api.app.test_request_context(data={'description': '新问题'}), patch.object(TimestampSigner, 'get_timestamp', return_value=1000):
+                warning = api.check_registration_duplicates(cur, user, station, standards, today)
+            token = warning['confirmation_token']
+            with api.app.test_request_context(data={'description': '新问题', 'duplicate_confirmation': token}), patch.object(TimestampSigner, 'get_timestamp', return_value=1001):
+                self.assertIsNone(api.check_registration_duplicates(cur, user, station, standards, today))
+                self.assertIsNotNone(api.check_registration_duplicates(cur, {'id': 8}, station, standards, today))
+                self.assertIsNotNone(api.check_registration_duplicates(cur, user, station, [{'external_standard_id': 2}], today))
+                self.assertIsNotNone(api.check_registration_duplicates(cur, user, station, standards, api.date(2026, 11, 1)))
+            with api.app.test_request_context(data={'description': '新问题', 'duplicate_confirmation': token}), patch.object(TimestampSigner, 'get_timestamp', return_value=1601):
+                self.assertIsNotNone(api.check_registration_duplicates(cur, user, station, standards, today))
+
     def test_legacy_and_cross_table_selections(self):
         self.assertEqual(parse_standard_selections({'standard_id': '001', 'inspection_table_id': '2'}), [{'standard_id': '1', 'inspection_table_id': '2'}])
         self.assertEqual(parse_standard_selections({'internal_standard_id': 'n1'}), [{'internal_standard_id': 'N1'}])
@@ -77,15 +98,16 @@ class RegistrationDatabaseTests(unittest.TestCase):
     def setUp(self):
         self.conn = api.get_db_connection()
         self.cur = self.conn.cursor()
-        self.cur.execute('''CREATE TEMP TABLE users(id integer, username text, role text, real_name text);
+        self.cur.execute('''CREATE TEMP TABLE users(id integer, username text, role text, real_name text, station_id integer);
             CREATE TEMP TABLE stations(id integer, station_name text);
             CREATE TEMP TABLE inspections(id serial PRIMARY KEY, station_id integer, inspector_id integer,
               inspection_table_id integer, batch_id integer, inspection_date date, inspector_completion_status text, inspector_completed_at timestamp);
             CREATE TEMP TABLE issues(id serial PRIMARY KEY, inspection_id integer, inspector_id integer, station_id integer,
               inspection_table_id integer, standard_id bigint, standard_detail_text text, internal_standard_id text,
-              internal_standard_detail_text text, description text, photo_path text, status text);
+              internal_standard_detail_text text, description text, photo_path text, status text,
+              created_at timestamp DEFAULT CURRENT_TIMESTAMP);
             SET LOCAL search_path TO pg_temp;
-            INSERT INTO users VALUES(7,'inspector','supervisor','检查人');
+            INSERT INTO users VALUES(7,'inspector','supervisor','检查人',NULL);
             INSERT INTO stations VALUES(1,'测试站'); SAVEPOINT registration;''')
         self.folder = TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
@@ -108,6 +130,7 @@ class RegistrationDatabaseTests(unittest.TestCase):
             patch.object(api, 'fetch_external_standard_map', return_value=self.rows),
             patch.object(api, 'fetch_internal_links_by_external_ids', return_value={}),
             patch.object(api, 'require_active_standards'),
+            patch.object(api, 'build_issue_list_visibility_scope', return_value=([], [])),
             patch.object(api, 'create_inspection_record', side_effect=create),
             patch.object(api, 'mark_related_plan_items_completed'),
             patch.object(api, 'STORAGE_ROOT', self.folder.name),
@@ -147,6 +170,45 @@ class RegistrationDatabaseTests(unittest.TestCase):
         api.remove_storage_file(rows[0]['photo_path'])
         self.assertTrue(Path(paths[1]).exists())
         self.assertTrue(Path(paths[2]).exists())
+
+    def test_duplicate_requires_confirmation_and_rechecks_new_records(self):
+        choices = [{'standard_id': '1'}, {'standard_id': '3'}]
+        self.assertEqual(self.post(choices).status_code, 200)
+        self.cur.execute('RELEASE SAVEPOINT registration; SAVEPOINT registration')
+        warning = self.post(choices)
+        self.assertEqual(warning.status_code, 409, warning.json)
+        self.assertEqual(len(warning.json['duplicates']), 2)
+        self.assertEqual(warning.json['duplicates'][0]['description'], '同一处现场问题')
+        token = warning.json['confirmation_token']
+        self.assertEqual(self.post(choices, duplicate_confirmation=token+'bad').status_code, 409)
+        self.assertEqual(self.post(choices, duplicate_confirmation=token, description='另一问题').status_code, 409)
+        self.assertEqual(self.post(choices, duplicate_confirmation=token).status_code, 200)
+        self.cur.execute('RELEASE SAVEPOINT registration; SAVEPOINT registration')
+        self.assertEqual(self.post(choices, duplicate_confirmation=token).status_code, 409)
+        self.cur.execute('SELECT count(*) AS n FROM issues')
+        self.assertEqual(self.cur.fetchone()['n'], 4)
+
+    def test_other_month_station_or_standard_does_not_warn(self):
+        self.assertEqual(self.post([{'standard_id': '1'}]).status_code, 200)
+        self.cur.execute("UPDATE issues SET created_at = %s", (api.beijing_today().replace(day=1)-api.timedelta(days=1),))
+        self.assertEqual(self.post([{'standard_id': '1'}]).status_code, 200)
+        self.cur.execute('UPDATE issues SET station_id=2')
+        self.assertEqual(self.post([{'standard_id': '1'}]).status_code, 200)
+        self.assertEqual(self.post([{'standard_id': '3'}]).status_code, 200)
+
+    def test_other_inspector_warns_but_hidden_data_is_not_returned(self):
+        self.assertEqual(self.post([{'standard_id': '1'}]).status_code, 200)
+        self.cur.execute('UPDATE issues SET inspector_id=999')
+        self.cur.execute('RELEASE SAVEPOINT registration; SAVEPOINT registration')
+        warning = self.post([{'standard_id': '1'}])
+        self.assertEqual(warning.status_code, 409)
+        self.assertEqual(warning.json['duplicates'][0]['description'], '同一处现场问题')
+        with patch.object(api, 'build_issue_list_visibility_scope', return_value=(['i.inspector_id = %s'], [7])):
+            hidden = self.post([{'standard_id': '1'}])
+        self.assertEqual(hidden.status_code, 409)
+        self.assertIsNone(hidden.json['duplicates'][0]['description'])
+        self.assertIsNone(hidden.json['duplicates'][0]['issue_id'])
+        self.assertIsNone(hidden.json['duplicates'][0]['registered_at'])
 
     def test_late_insert_failure_rolls_back_rows_and_all_photos(self):
         original = self.conn.cursor

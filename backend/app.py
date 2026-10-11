@@ -253,7 +253,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.3.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.4.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -31327,6 +31327,49 @@ def recommend_inspection_standard(history_only=False):
         close_db_resources(cur, conn)
 
 
+def check_registration_duplicates(cur, user, station, standards, today):
+    standard_ids = sorted({int(row.get("external_standard_id") or row["standard_id"]) for row in standards})
+    month_start = today.replace(day=1)
+    next_month = (month_start + timedelta(days=32)).replace(day=1)
+    visibility, scope_params = build_issue_list_visibility_scope(cur, user)
+    visible_sql = " AND ".join(visibility) or "TRUE"
+    cur.execute(f"""
+        SELECT i.id, i.standard_id,
+               CASE WHEN ({visible_sql}) THEN i.description ELSE NULL END AS description,
+               TO_CHAR(i.created_at, 'YYYY-MM-DD HH24:MI') AS registered_at
+        FROM issues i
+        JOIN inspections ins ON ins.id = i.inspection_id
+        JOIN stations s ON s.id = i.station_id
+        WHERE i.station_id = %s AND i.standard_id = ANY(%s)
+          AND i.created_at >= %s::date AND i.created_at < %s::date
+        ORDER BY i.standard_id, i.id DESC
+    """, [*scope_params, station["id"], standard_ids, month_start, next_month])
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    # Only opaque fingerprints enter the signed acknowledgment, not hidden issue IDs.
+    context = {"user": user["id"], "station": station["id"], "month": today.strftime("%Y-%m"),
+               "standards": standard_ids,
+               "description": request.form.get("description", "").strip(),
+               "existing": [(row["id"], row["description"]) for row in rows]}
+    fingerprint = hashlib.sha256(json.dumps(context, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="registration-duplicate-confirmation-v1")
+    try:
+        if serializer.loads(request.form.get("duplicate_confirmation", ""), max_age=600) == fingerprint:
+            return None
+    except BadSignature:
+        pass
+    return {"success": False, "code": "duplicate_registration",
+            "error": "本站本月所选规范已有问题，请确认是否继续登记。",
+            "month": today.strftime("%Y-%m"), "station": station["station_name"],
+            "duplicates": [{"standard_id": row["standard_id"],
+                            "issue_id": row["id"] if row["description"] is not None else None,
+                            "description": row["description"],
+                            "registered_at": row["registered_at"] if row["description"] is not None else None}
+                           for row in rows],
+            "confirmation_token": serializer.dumps(fingerprint)}
+
+
 @app.route("/api/inspection-register", methods=["POST"])
 def inspection_register():
     inspector_id = get_authenticated_request_user_id(request.form.get("inspector_id"))
@@ -31368,7 +31411,7 @@ def inspection_register():
         auto_complete_overdue_inspections(cur)
         conn.commit()
 
-        cur.execute("SELECT id, username, role, real_name FROM users WHERE id = %s LIMIT 1;", (inspector_id,))
+        cur.execute("SELECT id, username, role, real_name, station_id FROM users WHERE id = %s LIMIT 1;", (inspector_id,))
         inspector = cur.fetchone()
         if not inspector:
             return jsonify({"success": False, "error": "巡检人不存在。"}), 404
@@ -31376,7 +31419,8 @@ def inspection_register():
             return jsonify({"success": False, "error": "当前账号无权提交巡检登记。"}), 403
 
         cur.execute("SELECT id, station_name FROM stations WHERE id = %s LIMIT 1;", (station_id,))
-        if not cur.fetchone():
+        station = cur.fetchone()
+        if not station:
             return jsonify({"success": False, "error": "站点不存在。"}), 404
 
         today = beijing_today()
@@ -31396,6 +31440,13 @@ def inspection_register():
 
         usage_mode = get_inspection_standard_usage_mode(cur)["mode"]
         external_standards = resolve_registration_standards(cur, selections, usage_mode)
+        # Serialize duplicate checks independently of configurable inspection periods.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s));",
+                    (f"registration-duplicates:{station['id']}:{today:%Y-%m}",))
+        duplicate_warning = check_registration_duplicates(cur, inspector, station, external_standards, today)
+        if duplicate_warning:
+            conn.rollback()
+            return jsonify(duplicate_warning), 409
         batch_id = get_or_create_inspection_batch(cur, station_id, inspector_id, today)
         targets = prepare_issue_registration_targets(cur, station_id, inspector_id, external_standards, batch_id, today)
         # Validate every target before saving photos or inserting any issues.
