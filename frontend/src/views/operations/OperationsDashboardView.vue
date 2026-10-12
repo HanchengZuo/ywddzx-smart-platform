@@ -568,10 +568,12 @@ import axios from 'axios'
 import RegionTable from './RegionTable.vue'
 import { createAdaptivePolling } from '../../utils/adaptivePolling'
 import { auditProgress, intakeMetrics, intakeSignals } from '../../utils/operationsIntake'
+import { setPresentationMode } from '../../utils/presentationSession'
 
 const cockpit = ref(null),
   expanded = ref(false)
 let nativeScreen = false
+watch(expanded, (active) => setPresentationMode('cockpit', active), { flush: 'sync' })
 async function toggleScreen() {
   if (expanded.value) {
     if (document.fullscreenElement === cockpit.value) await document.exitFullscreen()
@@ -821,6 +823,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   chartObserver?.disconnect()
+  setPresentationMode('cockpit', false)
   polling.dispose()
   document.removeEventListener('visibilitychange', syncAutoRefresh)
   window.removeEventListener('online', syncAutoRefresh)

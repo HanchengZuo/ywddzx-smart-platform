@@ -124,7 +124,7 @@ export const storeAuthSession = (user, token, expiresInSeconds = null) => {
   syncAxiosAuthHeader()
 }
 
-export const verifyAuthSession = async ({ force = false } = {}) => {
+export const verifyAuthSession = async ({ force = false, preserveOnTransientError = false } = {}) => {
   const token = getStoredAuthToken()
   if (!isUsableAuthToken(token)) {
     clearAuthSession(token ? DEFAULT_EXPIRED_MESSAGE : '')
@@ -162,6 +162,7 @@ export const verifyAuthSession = async ({ force = false } = {}) => {
       return result
     })
     .catch((error) => {
+      if (preserveOnTransientError && error?.response?.status !== 401) throw error
       const message = error?.response?.data?.error || DEFAULT_EXPIRED_MESSAGE
       clearAuthSession(message)
       return {
@@ -175,6 +176,19 @@ export const verifyAuthSession = async ({ force = false } = {}) => {
     })
 
   return authMeInFlight
+}
+
+export const renewPresentationSession = async (kind) => {
+  const token = getStoredAuthToken()
+  const response = await axios.post('/api/auth/presentation/renew', { kind }, { timeout: 15000 })
+  // Do not restore an account that logged out or switched while renewal was in flight.
+  if (getStoredAuthToken() !== token) return { ok: true, superseded: true }
+  return {
+    ok: true,
+    user: response.data.user,
+    token: response.data.token,
+    expiresIn: Number(response.data.expires_in || 0)
+  }
 }
 
 export const configureAxiosAuth = () => {
