@@ -267,7 +267,8 @@
 <script setup>
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { setPresentationMode } from '../../utils/presentationSession'
 
 const AMAP_KEY = '9f35886b6810874b8578ab8dd3d2525e'
 const SHANGHAI_CENTER = [121.4737, 31.2304]
@@ -277,6 +278,7 @@ const mapFrameRef = ref(null)
 const mapBooting = ref(false)
 const mapError = ref('')
 const isFullscreen = ref(false)
+watch(isFullscreen, (active) => setPresentationMode('map', active), { flush: 'sync' })
 const stations = ref([])
 const autoRotateEnabled = ref(true)
 const autoRotateTarget = ref(null)
@@ -1290,7 +1292,7 @@ const toggleFullscreen = async () => {
 }
 
 const handleFullscreenChange = () => {
-  isFullscreen.value = Boolean(document.fullscreenElement)
+  isFullscreen.value = document.fullscreenElement === mapFrameRef.value
   setTimeout(() => {
     if (mapInstance) {
       mapInstance.resize()
@@ -1335,6 +1337,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  setPresentationMode('map', false)
   if (!hasPermission.value) {
     return
   }

@@ -649,7 +649,7 @@
       </section>
     </div>
 
-    <div v-if="sessionNotice.visible && sessionNotice.mode === 'warning' && !isLoginPage" class="session-warning-toast"
+    <div v-if="sessionNotice.visible && sessionNotice.mode === 'warning' && !isLoginPage && !presentationKind" class="session-warning-toast"
       role="status">
       <div class="session-warning-mark">!</div>
       <div class="session-warning-body">
@@ -700,8 +700,10 @@ import {
   isUsableAuthToken,
   storeAuthSession,
   syncAxiosAuthHeader,
-  verifyAuthSession
+  verifyAuthSession,
+  renewPresentationSession
 } from './utils/authSession'
+import { activePresentation, presentationKindForRoute, needsPresentationRenewal } from './utils/presentationSession'
 import {
   clearPageVisibilityCache,
   fetchPageVisibility,
@@ -718,6 +720,7 @@ import {
 
 const router = useRouter()
 const route = useRoute()
+const presentationKind = computed(() => presentationKindForRoute(route.path, activePresentation.value))
 
 const loginForm = reactive({
   username: '',
@@ -1283,7 +1286,7 @@ const resetSessionNotice = () => {
 }
 
 const showSessionWarning = (secondsRemaining) => {
-  if (isLoginPage.value) return
+  if (isLoginPage.value || presentationKind.value) return
   const currentToken = getStoredAuthToken()
   if (dismissedSessionWarningToken === currentToken && secondsRemaining > 120) return
   sessionNotice.visible = true
@@ -1319,6 +1322,7 @@ const stopIdleLogoutTimer = () => {
 
 const isIdleLogoutDue = () => (
   !isLoginPage.value &&
+  !presentationKind.value &&
   isUsableAuthToken(getStoredAuthToken()) &&
   Date.now() - lastUserActivityAt >= idleLogoutMs
 )
@@ -1349,13 +1353,14 @@ const handleIdleLogout = async () => {
 
 const scheduleIdleLogout = () => {
   stopIdleLogoutTimer()
-  if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) return
+  if (presentationKind.value || isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) return
 
   const delay = Math.max(0, idleLogoutMs - (Date.now() - lastUserActivityAt))
   idleLogoutTimer = window.setTimeout(handleIdleLogout, delay)
 }
 
 const markUserActivity = () => {
+  if (presentationKind.value) return
   if (isLoginPage.value || !isUsableAuthToken(getStoredAuthToken())) {
     stopIdleLogoutTimer()
     return
@@ -1424,7 +1429,10 @@ const verifySessionSilently = async () => {
   sessionNotice.checking = true
 
   try {
-    const result = await verifyAuthSession()
+    const result = needsPresentationRenewal(presentationKind.value, getStoredAuthSecondsRemaining())
+      ? await renewPresentationSession(presentationKind.value)
+      : await verifyAuthSession({ preserveOnTransientError: Boolean(presentationKind.value) })
+    if (result.superseded) return
     if (!result.ok) {
       showSessionExpired(result.error || '登录已过期，请重新登录。')
       return
@@ -1467,6 +1475,8 @@ const checkStoredSessionClock = () => {
     verifySessionSilently()
     return
   }
+
+  if (presentationKind.value) return
 
   if (remainingSeconds <= sessionWarningThresholdSeconds) {
     if (sessionNotice.visible && sessionNotice.mode === 'warning') {
@@ -1693,6 +1703,15 @@ const handlePeerReviewPendingRefresh = () => {
 const handlePlanAssignmentPendingRefresh = () => {
   refreshNotificationSummary({ force: true })
 }
+
+watch(presentationKind, (kind, previousKind) => {
+  if (!kind && !previousKind) return
+  lastUserActivityAt = Date.now()
+  lastIdleActivityMarkedAt = lastUserActivityAt
+  scheduleIdleLogout()
+  if (sessionNotice.mode === 'warning') resetSessionNotice()
+  runSessionMonitor()
+}, { flush: 'sync' })
 
 watch(
   () => route.path,

@@ -23097,6 +23097,49 @@ def get_authenticated_user():
         close_db_resources(cur, conn)
 
 
+@app.route("/api/auth/presentation/renew", methods=["POST"])
+def renew_presentation_session():
+    # Normal signed-token middleware still rejects expired/revoked sessions and forced changes.
+    data = request.get_json(silent=True)
+    kind = data.get("kind") if isinstance(data, dict) else None
+    permission = {
+        "cockpit": "view_operations_overview",
+        "map": "view_station_map",
+    }.get(kind) if isinstance(kind, str) else None
+    if not permission:
+        return jsonify({"success": False, "error": "不支持的全屏展示类型。"}), 400
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = g.current_user
+        if not has_permission(cur, user, permission):
+            return jsonify({"success": False, "error": "无权使用此展示页面。"}), 403
+        payload = g.auth_payload
+        token = extract_bearer_token()
+        expires_in = get_auth_payload_expires_in(payload)
+        impersonator = getattr(g, "impersonator", None)
+        if expires_in <= 30 * 60:
+            if impersonator:
+                token = create_impersonation_token(user, impersonator)
+                expires_in = min(get_auth_token_ttl_seconds(user), get_auth_token_ttl_seconds(impersonator))
+            else:
+                token = create_auth_token(user, payload.get("amr") or "password")
+                expires_in = get_auth_token_ttl_seconds(user)
+        return build_authenticated_response({
+            "success": True,
+            "token": token,
+            "expires_in": expires_in,
+            "user": build_auth_user_payload(cur, user, payload.get("amr"), impersonator=impersonator),
+        }, token)
+    except Exception:
+        logging.exception("Presentation session renewal failed.")
+        return jsonify({"success": False, "error": "展示会话续期失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/auth/passkeys", methods=["GET"])
 def list_current_user_passkeys():
     conn = None
