@@ -4,6 +4,40 @@ import { readFileSync } from 'node:fs'
 import { parse, compileTemplate, compileScript } from '@vue/compiler-sfc'
 import { operationsPages } from '../src/config/operationsCatalog.js'
 import { auditProgress, intakeMetrics, intakeSignals } from '../src/utils/operationsIntake.js'
+import { operationsScopeLabel } from '../src/utils/operationsScope.js'
+
+test('one scope label distinguishes all regions, entire region and individual station', () => {
+  const options = [{ region: '浦东', stations: [{ id: 12, name: '甲站' }] }]
+  assert.equal(operationsScopeLabel({ region: '', station_id: '' }, options), '全部可见片区')
+  assert.equal(operationsScopeLabel({ region: '浦东', station_id: '' }, options), '浦东')
+  assert.equal(operationsScopeLabel({ region: '浦东', station_id: '12' }, options), '浦东 / 甲站')
+  assert.equal(
+    operationsScopeLabel({ region: '浦东', station_id: '13' }, options),
+    '浦东 / 站点 #13',
+  )
+})
+
+test('cascading scope edits drafts only; polling and drilldowns retain the applied station', () => {
+  const source = readFileSync(
+    new URL('../src/views/operations/OperationsDashboardView.vue', import.meta.url),
+    'utf8',
+  )
+  assert.match(source, /<OperationsScopePicker v-model="draftScope"/)
+  assert.ok(!source.includes('<select v-model="draft.region">'))
+  assert.match(source, /station_id: ''/)
+  assert.match(source, /set: \(scope\) => Object.assign\(draft.value, scope\)/)
+  assert.match(source, /background \? applied.value : draft.value/)
+  assert.match(source, /params: \{ \.\.\.applied.value, \.\.\.detailFilters, page: pageNumber \}/)
+  assert.match(source, /scopeOptions.value = response.data.scope_options/)
+  const picker = readFileSync(
+    new URL('../src/views/operations/OperationsScopePicker.vue', import.meta.url),
+    'utf8',
+  )
+  assert.ok(!picker.includes('axios'))
+  assert.match(picker, /station_id: station \? String\(station\) : ''/)
+  assert.match(picker, /@keydown.esc.stop.prevent/)
+  assert.match(picker, /removeEventListener\('pointerdown', outside\)/)
+})
 
 test('visual signals use active days and current intake modes, never reviewed-only counts', () => {
   const data = {
@@ -125,7 +159,7 @@ test('large-screen instruments scale with their panels and release chart observe
   assert.ok(!source.includes('1fr) 172px auto'))
 })
 
-for (const component of ['OperationsDashboardView', 'RegionTable']) {
+for (const component of ['OperationsDashboardView', 'RegionTable', 'OperationsScopePicker']) {
   test(`${component} compiles`, () => {
     const filename = new URL(`../src/views/operations/${component}.vue`, import.meta.url)
     const { descriptor, errors } = parse(readFileSync(filename, 'utf8'))

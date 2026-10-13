@@ -26,8 +26,21 @@ def parse_period(source, today=None):
     return start, end
 
 
+def selected_station(source):
+    value = source.get('station_id')
+    if value in (None, ''):
+        return 0
+    if isinstance(value, bool) or not str(value).isdigit():
+        raise ValueError('站点筛选参数不正确。')
+    identifier = int(value)
+    if not 1 <= identifier <= 2147483647:
+        raise ValueError('站点筛选参数不正确。')
+    return identifier
+
+
 def issue_cte(core, cur, user, source):
     start, end = parse_period(source)
+    station = selected_station(source)
     where, params = core.build_issue_list_visibility_scope(cur, user)
     where += ['i.created_at >= %s::date', 'i.created_at < %s::date']
     params += [start, end + timedelta(days=1)]
@@ -57,7 +70,8 @@ def issue_cte(core, cur, user, source):
       FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
       JOIN stations s ON s.id=i.station_id JOIN inspection_tables t ON t.id=i.inspection_table_id
       WHERE ''' + ' AND '.join(where or ['TRUE']) + '''
-    ), selected AS MATERIALIZED (SELECT * FROM scoped WHERE (%s='' OR region=%s)) ''' , params + [source.get('region',''), source.get('region','')]
+    ), selected AS MATERIALIZED (SELECT * FROM scoped WHERE (%s='' OR region=%s)
+        AND (%s=0 OR station_id=%s)) ''' , params + [source.get('region',''), source.get('region',''), station, station]
 
 
 def record_summary(core, cur, user, source):
@@ -79,13 +93,17 @@ def record_summary(core, cur, user, source):
     where += ['ins.inspection_date >= %s', 'ins.inspection_date <= %s']
     params += [start, end]
     cur.execute('''WITH records AS MATERIALIZED (
-        SELECT ins.*,COALESCE(NULLIF(s.region,''),'未分配片区') AS region
+        SELECT ins.station_id,ins.sign_status,ins.quality_accept_source,s.station_name,
+          COALESCE(NULLIF(s.region,''),'未分配片区') AS region
         FROM inspections ins JOIN stations s ON s.id=ins.station_id WHERE ''' + ' AND '.join(where) + '''
         ) SELECT COUNT(*) AS records, COUNT(DISTINCT ins.station_id) AS stations,
         COUNT(*) FILTER (WHERE ins.sign_status='已签名确认') AS signed,
         COUNT(*) FILTER (WHERE ins.quality_accept_source='automatic') AS auto_signed,
-        (SELECT COALESCE(json_agg(region ORDER BY region),'[]') FROM (SELECT DISTINCT region FROM records) r) AS regions
-        FROM records ins WHERE (%s='' OR region=%s)''', params + [source.get('region','')]*2)
+        (SELECT COALESCE(json_agg(region ORDER BY region),'[]') FROM (SELECT DISTINCT region FROM records) r) AS regions,
+        (SELECT COALESCE(json_agg(r ORDER BY region,station_name,station_id),'[]')
+          FROM (SELECT DISTINCT station_id,station_name,region FROM records) r) AS scope_stations
+        FROM records ins WHERE (%s='' OR region=%s) AND (%s=0 OR ins.station_id=%s)''',
+        params + [source.get('region','')]*2 + [selected_station(source)]*2)
     return dict(cur.fetchone())
 
 
@@ -94,6 +112,8 @@ def dashboard(core, cur, user, mode, source):
     cur.execute(cte + '''
       SELECT json_build_object(
         'regions', (SELECT COALESCE(json_agg(region ORDER BY region),'[]') FROM (SELECT DISTINCT region FROM scoped) r),
+        'scope_stations', (SELECT COALESCE(json_agg(r ORDER BY region,station_name,station_id),'[]')
+          FROM (SELECT DISTINCT station_id,station_name,region FROM scoped) r),
         'summary', (SELECT json_build_object('total',COUNT(*),'valid',COUNT(*) FILTER(WHERE valid),
           'live',COUNT(*) FILTER(WHERE phase<>'已销毁'),
           'discovery_stations',COUNT(DISTINCT station_id) FILTER(WHERE phase<>'已销毁'),
@@ -147,27 +167,41 @@ def dashboard(core, cur, user, mode, source):
           FROM selected WHERE phase<>'已销毁' GROUP BY mode) r)
       ) AS payload''', params)
     result = cur.fetchone()['payload']
+    choices = result.pop('scope_stations', [])
     if mode == 'overview':
         result['records'] = record_summary(core, cur, user, source)
-        # Include zero-problem stations' regions when the initial all-region view is loaded.
+        # Keep the visible choice catalog intact, including zero-problem inspections.
         if result['records']:
             result['regions'] = sorted(set(result['regions']) | set(result['records']['regions']))
+            choices += result['records'].pop('scope_stations', [])
         # Highlights reuse the identical issue visibility aliases without joining inspections.
         where, hp = core.build_issue_list_visibility_scope(cur, user)
         start, end = parse_period(source)
         where += ['i.created_at >= %s::date', 'i.created_at < %s::date']
         hp += [start, end + timedelta(days=1)]
-        if source.get('region'):
-            where.append("COALESCE(NULLIF(s.region,''),'未分配片区')=%s")
-            hp.append(source['region'])
-        cur.execute('''SELECT COUNT(*) AS count,
+        # Choice metadata uses the unfiltered visible window, not just the selected station.
+        cur.execute('''WITH scoped AS MATERIALIZED (
+          SELECT i.station_id,i.audit_status,s.station_name,COALESCE(NULLIF(s.region,''),'未分配片区') AS region
+          FROM inspection_highlights i JOIN stations s ON s.id=i.station_id
+          CROSS JOIN LATERAL (SELECT i.inspector_id) ins WHERE ''' + ' AND '.join(where or ['TRUE']) + ''')
+          SELECT COUNT(*) AS count,
           COUNT(*) FILTER(WHERE COALESCE(i.audit_status,'pending')='pending') AS pending,
           COUNT(*) FILTER(WHERE i.audit_status='approved') AS approved,
-          COUNT(*) FILTER(WHERE i.audit_status='rejected') AS rejected FROM inspection_highlights i
-          JOIN stations s ON s.id=i.station_id CROSS JOIN LATERAL (SELECT i.inspector_id) ins
-          WHERE ''' + ' AND '.join(where), hp)
+          COUNT(*) FILTER(WHERE i.audit_status='rejected') AS rejected,
+          (SELECT COALESCE(json_agg(r ORDER BY region,station_name,station_id),'[]')
+            FROM (SELECT DISTINCT station_id,station_name,region FROM scoped) r) AS scope_stations
+          FROM scoped i WHERE (%s='' OR region=%s) AND (%s=0 OR station_id=%s)''',
+          hp + [source.get('region','')]*2 + [selected_station(source)]*2)
         result['highlight_summary'] = dict(cur.fetchone())
+        choices += result['highlight_summary'].pop('scope_stations', [])
         result['highlights'] = result['highlight_summary']['approved']
+    # Only expose stations supported by visible issues, records or highlights in this date window.
+    station_map = {row['station_id']: row for row in choices}
+    groups = {region: [] for region in result['regions']}
+    for row in sorted(station_map.values(), key=lambda row: (row['station_name'], row['station_id'])):
+        groups.setdefault(row['region'], []).append(dict(id=row['station_id'], name=row['station_name']))
+    result['scope_options'] = [dict(region=region, stations=groups[region]) for region in sorted(groups)]
+    result['regions'] = [row['region'] for row in result['scope_options']]
     start, end = parse_period(source)
     result.update(date_from=start.isoformat(), date_to=end.isoformat(), generated_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat())
     return result
