@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileTemplate, compileScript } from '@vue/compiler-sfc'
-import { operationsPages } from '../src/config/operationsCatalog.js'
+import { operationsPages, operationsMenuPages } from '../src/config/operationsCatalog.js'
+import { PAGE_VISIBILITY_GROUPS } from '../src/config/pageVisibilityCatalog.js'
 import { auditProgress, intakeMetrics, intakeSignals } from '../src/utils/operationsIntake.js'
 import { operationsScopeLabel } from '../src/utils/operationsScope.js'
 
@@ -196,5 +197,24 @@ test('cockpit and expert share one permission with guarded redirects from retire
     new URL('../src/config/pageVisibilityCatalog.js', import.meta.url),
     'utf8',
   )
-  assert.ok(catalog.includes('...operationsPages.map'))
+  assert.ok(catalog.includes('operationsMenuPages.map'))
+})
+
+test('expert menu follows station map with unchanged independent access checks', () => {
+  assert.deepEqual(
+    operationsMenuPages.map((page) => page.title),
+    ['运营驾驶舱', '站点地图', '专家问答'],
+  )
+  assert.equal(operationsMenuPages[1].permission, 'view_station_map')
+  assert.equal(operationsMenuPages[2].permission, 'view_operations_overview')
+  assert.deepEqual(
+    PAGE_VISIBILITY_GROUPS[0].pages.map((page) => page.path),
+    operationsMenuPages.map((page) => page.path),
+  )
+  const source = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /operationsMenuPages.filter\(page => hasPermissionKey\(page.permission\) && isPageVisible\(page.path\)\)/,
+  )
+  assert.match(source, /v-for="page in visibleOperationsPages"/)
 })
