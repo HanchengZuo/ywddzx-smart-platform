@@ -574,7 +574,7 @@
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
-              <label>复核照片</label>
+              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult)" class="optional-field-tag">选填</span></label>
               <div class="drawer-upload-card">
                 <input id="review-photo-upload" class="drawer-upload-input" type="file" accept="image/*"
                   :disabled="submittingAction" @change="handleReviewFileChange" />
@@ -587,7 +587,7 @@
                   <div class="drawer-upload-icon">↑</div>
                   <div class="drawer-upload-title">{{ reviewPhotoProcessing ? '正在处理照片…' : '选择、粘贴或拖入复核照片' }}</div>
                   <div class="drawer-upload-desc">
-                    请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。
+                    {{ reviewRequiresPhoto(actionForm.reviewResult) ? '请上传能够清晰反映复核结果的现场照片，建议画面完整、重点明确。' : '可上传能够说明整改未通过原因的照片，建议画面完整、重点明确；不上传也可以提交。' }}
                   </div>
                   <div class="drawer-upload-desc">复制图片后按 Ctrl+V / ⌘V 即可粘贴，也可将图片拖入此处。选图后可点击“图片编辑”裁剪和标注；新图会替换旧图。</div>
                   <div class="drawer-upload-trigger-group">
@@ -672,7 +672,7 @@ import PhotoEditor from '../../components/PhotoEditor.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import { createAutoIssuePhotoComposition } from '@/utils/imageComposer'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
-import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
+import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
@@ -1139,13 +1139,9 @@ const actionForm = ref({
 
 const skipsIssuePhotoUpload = value => isUnableRectification(value) || isReviewReturned(value) || value === '通过站级无法整改'
 const shouldShowRectificationPhotoUpload = computed(() => !isUnableRectification(actionForm.value.rectificationResult))
-const shouldShowReviewPhotoUpload = computed(() => reviewRequiresPhoto(actionForm.value.reviewResult))
+const shouldShowReviewPhotoUpload = computed(() => reviewAllowsPhoto(actionForm.value.reviewResult))
 const reviewPhotoSkipMessage = computed(() => {
   if (isUnableRectification(actionDrawer.value.item?.rectification_result)) return '站级无法整改申请复核无需上传照片，复核说明选填。'
-  if (isReviewReturned(actionForm.value.reviewResult)) {
-    return '整改不通过将退回站经理重新整改，本次无需上传复核照片。'
-  }
-
   return '选择复核结果后，系统会根据结果提示是否需要上传照片。'
 })
 const reviewOutcomeHint = computed(() => {
@@ -1154,7 +1150,7 @@ const reviewOutcomeHint = computed(() => {
     return {
       type: 'returned',
       title: '将退回站经理重新整改',
-      description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。'
+      description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。' + (reviewAllowsPhoto(actionForm.value.reviewResult) ? '复核照片选填，可用于说明退回原因。' : '')
     }
   }
   if (reviewRequiresPhoto(actionForm.value.reviewResult)) {
@@ -1347,7 +1343,7 @@ const processReviewPhoto = async (file, multiple = false) => {
   try {
     prepared = await prepareImagePreview(file)
     const img = await loadImageFromFile(prepared.file)
-    // Closing/reopening the drawer, removing a photo, or changing the result invalidates pending work.
+    // Closing/reopening, removing a photo, or switching to a no-photo result invalidates pending work.
     if (sequence !== reviewPhotoSequence || !canReceiveReviewPhoto()) {
       revokeObjectUrl(prepared.previewUrl)
       return
@@ -1439,7 +1435,7 @@ watch(
 watch(
   () => actionForm.value.reviewResult,
   (value) => {
-    if (!reviewRequiresPhoto(value)) {
+    if (!reviewAllowsPhoto(value)) {
       clearReviewFile()
     }
   }
@@ -1526,7 +1522,7 @@ const submitAction = async () => {
     formData.append('user_id', userId)
     formData.append('review_result', actionForm.value.reviewResult)
     formData.append('review_note', actionForm.value.reviewNote)
-    if (reviewPhotoRequired && actionForm.value.reviewPhotoFile) {
+    if (reviewAllowsPhoto(actionForm.value.reviewResult) && actionForm.value.reviewPhotoFile) {
       formData.append('review_photo', actionForm.value.reviewPhotoFile)
     }
 

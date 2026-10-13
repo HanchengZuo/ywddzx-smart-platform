@@ -4,6 +4,7 @@ export const reviewOptionsFor = result => isUnableRectification(result)
   ? ['通过站级无法整改', '驳回站级无法整改']
   : ['整改通过', '整改不通过']
 export const reviewRequiresPhoto = result => result === '整改通过'
+export const reviewAllowsPhoto = result => ['整改通过', '整改不通过'].includes(result)
 
 export const rectificationReturnKind = item => item?.appeal_rejected ? 'appeal' : isReviewReturned(item?.review_result) ? 'review' : ''
 
