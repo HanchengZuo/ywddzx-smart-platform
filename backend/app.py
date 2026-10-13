@@ -253,7 +253,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.6.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.7.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -743,7 +743,7 @@ STATION_REGION_SCOPE_PERMISSION_KEYS = (
 PERMISSION_CATALOG = [
     *[
         {"key": key, "name": "查看页面", "category": title,
-         "description": "查看运营系统看板及权限范围内的统计和明细，不扩大原有业务数据范围。",
+         "description": "共用运营驾驶舱和专家问答访问权限。驾驶舱保留原数据范围，专家问答查询全局业务资料（不含安全凭据）。",
          "defaults": {"root": True, "supervisor": True, "quality_safety": True,
                       "development_plan": True, "oil_gas": True, "non_oil": True,
                       "finance": True, "area_account": True}}
@@ -40374,6 +40374,8 @@ from highlights import register_highlights
 register_highlights(app, globals())
 from operations_dashboard import register_operations
 register_operations(app, globals())
+from expert_qa import register_expert_qa
+register_expert_qa(app, globals())
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

@@ -1,10 +1,10 @@
-import { operationsPages } from './operationsCatalog'
+import { operationsPages } from './operationsCatalog.js'
 
 export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'map',
     title: '运营系统',
-    description: '统一运营驾驶舱和站点地图',
+    description: '运营驾驶舱、专家问答和站点地图',
     pages: [
       ...operationsPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description })),
       {
