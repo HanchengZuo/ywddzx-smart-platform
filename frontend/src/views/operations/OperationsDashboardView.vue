@@ -28,13 +28,7 @@
       <label
         ><span class="sr-only">结束日期</span><input v-model="draft.date_to" type="date" required
       /></label>
-      <label class="region-select"
-        ><span class="sr-only">站点所属地</span
-        ><select v-model="draft.region">
-          <option value="">全部可见片区</option>
-          <option v-for="region in regionOptions" :key="region">{{ region }}</option>
-        </select></label
-      >
+      <OperationsScopePicker v-model="draftScope" class="region-select" :options="scopeOptions" />
       <button type="button" class="console-button" @click="reset">本月</button
       ><button class="console-button primary" :disabled="loading">
         {{ loading ? '汇总中…' : '开始分析' }}
@@ -59,7 +53,7 @@
       <div class="scope-line">
         <span
           >{{ applied.date_from }} — {{ applied.date_to }} <b>/</b>
-          {{ applied.region || '全部可见片区' }}</span
+          {{ appliedScopeLabel }}</span
         ><span>含可见待审核登记 · 点击条目查看关联问题</span>
       </div>
       <section class="kpi-strip" aria-label="核心运营指标">
@@ -566,6 +560,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import RegionTable from './RegionTable.vue'
+import OperationsScopePicker from './OperationsScopePicker.vue'
+import { operationsScopeLabel } from '../../utils/operationsScope'
 import { createAdaptivePolling } from '../../utils/adaptivePolling'
 import { auditProgress, intakeMetrics, intakeSignals } from '../../utils/operationsIntake'
 import { setPresentationMode } from '../../utils/presentationSession'
@@ -613,12 +609,18 @@ const defaults = () => {
     date_from: localDate(new Date(now.getFullYear(), now.getMonth(), 1)),
     date_to: localDate(now),
     region: '',
+    station_id: '',
   }
 }
 const draft = ref(defaults()),
   applied = ref(defaults()),
   data = ref(null),
-  regionOptions = ref([])
+  scopeOptions = ref([])
+const draftScope = computed({
+  get: () => ({ region: draft.value.region, station_id: draft.value.station_id }),
+  set: (scope) => Object.assign(draft.value, scope),
+})
+const appliedScopeLabel = computed(() => operationsScopeLabel(applied.value, scopeOptions.value))
 const loading = ref(false),
   error = ref('')
 const refreshing = ref(false),
@@ -730,7 +732,7 @@ async function load({ background = false } = {}) {
     if (controller.signal.aborted) return
     data.value = response.data
     applied.value = filters
-    regionOptions.value = response.data.regions
+    scopeOptions.value = response.data.scope_options || []
     refreshError.value = ''
     error.value = ''
     authPaused.value = false
@@ -741,6 +743,7 @@ async function load({ background = false } = {}) {
       authPaused.value = true
       polling.pause()
       data.value = null
+      scopeOptions.value = []
       detail.value = { rows: [], total: 0, page: 1 }
       detailDialog.value?.close()
       error.value = '登录状态或查看权限已失效，请重新登录或联系管理员。'
@@ -1161,6 +1164,8 @@ button:hover:not(:disabled) {
   filter: brightness(1.18);
 }
 .command-bar {
+  position: relative;
+  z-index: 15;
   border-block: 1px solid #234757;
   background: #0c2433c9;
   padding: 11px 14px;

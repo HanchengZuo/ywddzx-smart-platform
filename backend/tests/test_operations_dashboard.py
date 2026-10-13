@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from flask import Flask
 import app as core_app
-from operations_dashboard import PERMISSIONS, dashboard, details, issue_cte, parse_period, register_operations
+from operations_dashboard import PERMISSIONS, dashboard, details, issue_cte, parse_period, register_operations, selected_station
 
 
 class OperationsTest(unittest.TestCase):
@@ -47,8 +47,21 @@ class OperationsTest(unittest.TestCase):
         self.assertIn('i.station_id=%s AND i.inspection_table_id=%s', cte)
         self.assertNotIn("x' OR TRUE", cte)
         self.assertEqual(params[:2],[12,8])
-        self.assertEqual(params[-1],"x' OR TRUE --")
+        self.assertEqual(params[-4:], ["x' OR TRUE --", "x' OR TRUE --", 0, 0])
         core.build_issue_list_visibility_scope.assert_called_once()
+
+    def test_station_scope_validates_and_binds_ids_without_widening_visibility(self):
+        self.assertEqual(selected_station({}), 0)
+        self.assertEqual(selected_station({'station_id':'12'}), 12)
+        for value in ('0', '-1', '1.2', '1 OR TRUE', True, 2147483648):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                selected_station({'station_id':value})
+        core=SimpleNamespace(build_issue_list_visibility_scope=lambda *args:(['i.station_id=%s'],[12]))
+        cte, params=issue_cte(core, MagicMock(), {}, {'station_id':'13','region':'浦东'})
+        self.assertIn('i.station_id=%s',cte)
+        self.assertIn('AND (%s=0 OR station_id=%s)',cte)
+        self.assertEqual(params[0],12)
+        self.assertEqual(params[-4:],['浦东','浦东',13,13])
 
     def test_api_authentication_and_independent_authorization(self):
         response = core_app.app.test_client().get('/api/operations/overview')
@@ -182,6 +195,64 @@ class OperationsDatabaseTest(unittest.TestCase):
         self.assertEqual(result['records']['stations'],4)
         self.assertEqual(result['highlight_summary']['count'],2)
 
+    def test_single_station_applies_to_all_metrics_rankings_and_details(self):
+        source=dict(self.source, region='浦东', station_id='1')
+        result=dashboard(self.core,self.cur,self.user,'overview',source)
+        self.assertEqual(result['summary']['total'],10)
+        self.assertEqual(result['records']['records'],3)
+        self.assertEqual(result['records']['stations'],1)
+        self.assertEqual(result['highlight_summary']['count'],2)
+        self.assertEqual(sum(r['registered'] for r in result['trend']),10)
+        self.assertEqual(sum(r['registered'] for r in result['units']),10)
+        self.assertEqual(sum(r['count'] for r in result['phases']),10)
+        for panel,key in [('tables','table_id'),('standards','standard_key'),('stations','station_id')]:
+            self.assertEqual(sum(r['count'] for r in result[panel]),8)
+            for row in result[panel]:
+                value=row['inspection_table_id'] if panel=='tables' else row[key]
+                detail=details(self.core,self.cur,self.user,dict(source,live='1',**{key:value}))
+                self.assertEqual(detail['total'],row['count'])
+                self.assertTrue(all(r['station_name']=='甲站' for r in detail['rows']))
+        self.assertEqual(details(self.core,self.cur,self.user,source)['total'],10)
+        self.assertEqual(details(self.core,self.cur,self.user,dict(source,phase='待审核'))['total'],1)
+        other=dashboard(self.core,self.cur,self.user,'overview',dict(self.source,station_id=2))
+        self.assertEqual(other['summary']['total'],1)
+        self.assertEqual(other['records']['records'],1)
+        self.assertEqual(other['highlight_summary']['count'],0)
+
+    def test_picker_choices_remain_visible_after_filtering_and_include_zero_problem_stations(self):
+        expected=[dict(region='嘉青',stations=[dict(id=4,name='仅零问题片区')]),
+                  dict(region='宝静',stations=[dict(id=2,name='乙站')]),
+                  dict(region='浦东',stations=[dict(id=1,name='甲站'),dict(id=3,name='零问题站')])]
+        for filters in ({}, {'region':'浦东'}, {'region':'浦东','station_id':3}, {'region':'宝静','station_id':1}):
+            result=dashboard(self.core,self.cur,self.user,'overview',dict(self.source,**filters))
+            self.assertEqual(result['scope_options'],expected)
+        zero=dashboard(self.core,self.cur,self.user,'overview',dict(self.source,station_id=3))
+        self.assertEqual(zero['summary']['total'],0)
+        self.assertEqual(zero['records']['records'],1)
+        self.assertEqual(zero['records']['stations'],1)
+        self.assertEqual(zero['highlight_summary']['count'],0)
+        mismatch=dashboard(self.core,self.cur,self.user,'overview',dict(self.source,region='宝静',station_id=1))
+        self.assertEqual(mismatch['summary']['total'],0)
+        self.assertEqual(mismatch['records']['records'],0)
+        self.assertEqual(mismatch['highlight_summary']['count'],0)
+        empty=dashboard(self.core,self.cur,self.user,'overview',dict(date_from='2019-01-01',date_to='2019-01-01'))
+        self.assertEqual(empty['scope_options'],[])
+
+    def test_highlight_only_station_is_selectable_but_hidden_by_business_permissions(self):
+        self.cur.execute("INSERT INTO stations VALUES(5,'仅亮点站','亮点片区'); INSERT INTO inspection_highlights VALUES(3,5,1,10,'2020-01-15','approved')")
+        source=dict(self.source,station_id=5)
+        result=dashboard(self.core,self.cur,self.user,'overview',source)
+        self.assertEqual(result['summary']['total'],0)
+        self.assertEqual(result['records']['records'],0)
+        self.assertEqual(result['highlight_summary']['count'],1)
+        self.assertIn(dict(region='亮点片区',stations=[dict(id=5,name='仅亮点站')]),result['scope_options'])
+        self.core.build_issue_list_visibility_scope=lambda *args:(['i.station_id=%s'],[1])
+        self.core.can_view_all_inspection_records=lambda *args:False
+        self.core.can_view_own_inspection_records=lambda *args:False
+        result=dashboard(self.core,self.cur,self.user,'overview',source)
+        self.assertEqual(result['highlight_summary']['count'],0)
+        self.assertEqual(result['scope_options'],[dict(region='浦东',stations=[dict(id=1,name='甲站')])])
+
     def test_primary_ranking_drilldowns_match_and_exclude_destroyed(self):
         result=dashboard(self.core,self.cur,self.user,'overview',self.source)
         for panel,key in [('tables','table_id'),('standards','standard_key'),('stations','station_id')]:
@@ -304,6 +375,10 @@ class OperationsDatabaseTest(unittest.TestCase):
                 self.assertEqual(sum(r['valid'] for r in result['trend']),table_id*2,role)
                 self.assertEqual(sum(r['count'] for r in result['ages']),0,role)
                 self.assertEqual(details(core_app,self.cur,user,dict(self.source,table_id=table_id%5+1))['total'],0,role)
+                single=dashboard(core_app,self.cur,user,'overview',dict(self.source,station_id=1))
+                self.assertEqual(single['summary']['total'],table_id,role)
+                self.assertEqual(single['records']['records'],1,role)
+                self.assertEqual(single['highlights'],1,role)
                 self.assertTrue(all(r['table_name']==name for r in details(core_app,self.cur,user,self.source)['rows']),role)
             with patch.object(core_app,'get_permission_overrides',return_value={
                 'view_all_inspection_issues':False,'view_all_inspection_records':False,
@@ -321,6 +396,11 @@ class OperationsDatabaseTest(unittest.TestCase):
             self.assertEqual(result['regions'],['浦东'])
             self.assertEqual([r['region'] for r in result['units']],['浦东'])
             self.assertTrue(all(r['station_id']==1 for r in result['stations']))
+            self.assertEqual(result['scope_options'],[dict(region='浦东',stations=[dict(id=1,name='甲站')])])
+            denied=dashboard(core_app,self.cur,area,'overview',dict(self.source,station_id=2))
+            self.assertEqual(denied['summary']['total'],0)
+            self.assertEqual(denied['records']['records'],0)
+            self.assertEqual(denied['highlights'],0)
             for params in ({'region':'宝静'}, {'station_id':2}, {'region':"浦东' OR TRUE --"}):
                 self.assertEqual(details(core_app,self.cur,area,dict(self.source,**params))['total'],0)
             self.assertEqual(details(core_app,self.cur,area,dict(self.source,user_id=1))['total'],15)
