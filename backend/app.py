@@ -253,7 +253,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.8.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.9.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -6859,6 +6859,7 @@ def resolve_issue_review_transition(value, rectification_result=None):
             "review_result": review_result,
             "new_status": "已闭环" if review_result == "整改通过" else "站级无法整改",
             "photo_required": review_result == "整改通过",
+            "photo_allowed": review_result == "整改通过",
             "returns_to_station": False,
         }
     if review_result in {"整改不通过", "驳回站级无法整改"}:
@@ -6866,6 +6867,7 @@ def resolve_issue_review_transition(value, rectification_result=None):
             "review_result": review_result,
             "new_status": "待整改",
             "photo_required": False,
+            "photo_allowed": review_result == "整改不通过",
             "returns_to_station": True,
         }
 
@@ -40283,7 +40285,7 @@ def submit_review(issue_id):
         review_result = transition["review_result"]
         new_status = transition["new_status"]
         review_photo_path = None
-        if review_photo_required and review_photo and review_photo.filename:
+        if transition["photo_allowed"] and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")
 
         cur.execute(
