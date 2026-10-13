@@ -1,19 +1,11 @@
-import { operationsPages } from './operationsCatalog.js'
+import { operationsMenuPages } from './operationsCatalog.js'
 
 export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'map',
     title: '运营系统',
-    description: '运营驾驶舱、专家问答和站点地图',
-    pages: [
-      ...operationsPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description })),
-      {
-        key: '/inspection/station-map',
-        path: '/inspection/station-map',
-        title: '站点地图',
-        description: '查看站点分布、站点状态和地图事件流。'
-      }
-    ]
+    description: '运营驾驶舱、站点地图和专家问答',
+    pages: operationsMenuPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description }))
   },
   {
     key: 'inspection',

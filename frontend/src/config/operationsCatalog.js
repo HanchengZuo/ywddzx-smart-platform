@@ -16,3 +16,16 @@ export const operationsPages = [
     description: '基于全局业务资料和数据库事实，提供带来源的专家问答。',
   },
 ]
+
+export const operationsMenuPages = [
+  operationsPages[0],
+  {
+    key: 'station-map',
+    path: '/inspection/station-map',
+    permission: 'view_station_map',
+    title: '站点地图',
+    icon: '图',
+    description: '查看站点分布、站点状态和地图事件流。',
+  },
+  ...operationsPages.slice(1),
+]
