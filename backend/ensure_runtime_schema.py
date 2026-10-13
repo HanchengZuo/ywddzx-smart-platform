@@ -122,6 +122,16 @@ def verify_inspection_report_jobs(cur):
         )
 
 
+def verify_expert_qa_schema(cur):
+    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='expert_qa_questions'")
+    columns = {row[0] for row in cur.fetchall()}
+    required = {'id', 'user_id', 'session_key', 'question', 'options', 'status', 'result',
+                'error_message', 'cache_key', 'created_at', 'updated_at'}
+    missing = sorted(required - columns)
+    if missing:
+        raise RuntimeError('public.expert_qa_questions columns missing: ' + ', '.join(missing))
+
+
 def get_alembic_version(cur):
     cur.execute("SELECT to_regclass('public.alembic_version');")
     if cur.fetchone()[0] is None:
@@ -208,6 +218,7 @@ def main():
                 verify_inspection_report_jobs(cur)
                 verify_account_security_schema(cur)
                 verify_quality_deadline_schema(cur)
+                verify_expert_qa_schema(cur)
         print(
             "Runtime schema ready: "
             f"database={database_name}, schema={schema_name}, "

@@ -141,8 +141,10 @@ for (const component of ['OperationsDashboardView', 'RegionTable']) {
     assert.doesNotThrow(() => compileScript(descriptor, { id: component }))
   })
 }
-test('one cockpit permission with guarded redirects from retired menus', () => {
-  assert.equal(operationsPages.length, 1)
+test('cockpit and expert share one permission with guarded redirects from retired menus', () => {
+  assert.equal(operationsPages.length, 2)
+  assert.equal(operationsPages[1].permission, operationsPages[0].permission)
+  assert.equal(operationsPages[1].path, '/operations/expert')
   assert.equal(operationsPages[0].permission, 'view_operations_overview')
   assert.equal(operationsPages[0].title, '运营驾驶舱')
   assert.ok(

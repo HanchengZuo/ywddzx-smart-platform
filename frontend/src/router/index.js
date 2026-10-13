@@ -8,7 +8,9 @@ import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisib
 const EmptyRouteView = { template: '<div></div>' }
 
 const routes = [
-  ...operationsPages.map(page => ({ path: page.path, component: () => import('../views/operations/OperationsDashboardView.vue') })),
+  ...operationsPages.map(page => ({ path: page.path, component: page.key === 'expert'
+    ? () => import('../views/operations/ExpertQaView.vue')
+    : () => import('../views/operations/OperationsDashboardView.vue') })),
   { path: '/operations/rectification', redirect: '/operations/overview' },
   { path: '/operations/insights', redirect: '/operations/overview' },
   {
