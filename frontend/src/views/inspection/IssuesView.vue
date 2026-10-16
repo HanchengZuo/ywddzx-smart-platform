@@ -821,7 +821,7 @@
             <div class="export-notice">
               <div>
                 <strong>导出说明</strong>
-                <p>默认导出当前筛选后的文字数据，并按不同检查表拆分为多个 Sheet；外部规范详情会按检查表原字段展开为独立列。照片导出会明显增加生成时间和文件体积，仅授权用户可勾选。默认使用兼容模式，避免旧版 Excel 或 WPS 显示 #VALUE!。</p>
+                <p>默认导出当前筛选后的数据，包含问题、整改和复核照片，并按不同检查表拆分为多个 Sheet；外部规范详情会按检查表原字段展开为独立列。所有可导出数据的用户均可附带照片，也可在下方取消照片字段以减少生成时间和文件体积。默认使用兼容模式，避免旧版 Excel 或 WPS 显示 #VALUE!。</p>
               </div>
               <span>Excel</span>
             </div>
@@ -880,7 +880,6 @@
                   <div class="export-section-title">导出字段选择</div>
                   <p>
                     默认勾选当前账号可导出的全部字段。内部规范和外部规范作为两个整体导出选项；外部规范会在 Excel 中按检查表原字段展开。
-                    <span v-if="!canExportIssuePhotos">当前账号未获得“导出巡检照片”权限，照片字段暂不可勾选。</span>
                   </p>
                 </div>
                 <div class="export-field-actions">
@@ -1854,7 +1853,6 @@ const canEditIssues = computed(() => currentRole === 'root' || Boolean(localPerm
 const canDeleteIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.delete_inspection_issues))
 const canAuditIssues = computed(() => currentRole === 'root' || Boolean(localPermissions.value.audit_inspection_issues) || list.value.some((item) => item?.can_audit_issue))
 const canChangeIssueInspectors = computed(() => currentRole === 'root' || Boolean(localPermissions.value.change_issue_inspector) || list.value.some((item) => item?.can_change_issue_inspector))
-const canExportIssuePhotos = computed(() => currentRole === 'root' || Boolean(localPermissions.value.export_issue_photos))
 const hideInspectorContactInfo = computed(() => currentRole !== 'root' && Boolean(localPermissions.value.hide_inspector_contact_info))
 const canManageIssues = computed(() => (
   canEditIssues.value ||
@@ -2490,7 +2488,7 @@ const createDefaultExportFieldOptions = () => {
       option.key,
       hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value
         ? false
-        : option.photo ? canExportIssuePhotos.value : true
+        : true
     ])
   )
 }
@@ -2506,8 +2504,6 @@ const normalizeExportFieldOptions = (rawOptions = {}) => {
       option.key,
       hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value
         ? false
-        : option.photo
-        ? Boolean(includeFields[option.key]) && canExportIssuePhotos.value
         : Boolean(includeFields[option.key])
     ])
   )
@@ -2517,7 +2513,7 @@ const buildExportPhotoOptionsFromFields = () => {
   return Object.fromEntries(
     exportPhotoFieldKeys.map((key) => [
       key,
-      canExportIssuePhotos.value && Boolean(exportDialog.value.includeFields[key])
+      Boolean(exportDialog.value.includeFields[key])
     ])
   )
 }
@@ -2525,7 +2521,7 @@ const buildExportPhotoOptionsFromFields = () => {
 const canSelectExportField = (option) => {
   if (exportDialog.value.taskId) return false
   if (hiddenInspectorColumnKeys.has(option.key) && hideInspectorContactInfo.value) return false
-  return !option.photo || canExportIssuePhotos.value
+  return true
 }
 
 const selectedExportFieldCount = computed(() => (
