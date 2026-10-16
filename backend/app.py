@@ -253,7 +253,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "8.9.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.0.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -843,13 +843,6 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
-        "key": "export_issue_photos",
-        "name": "导出巡检照片",
-        "category": "巡检问题列表",
-        "description": "导出巡检问题 Excel 时，可选择把问题照片、整改照片、复核照片嵌入表格。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
-    },
-    {
         "key": "hide_inspector_contact_info",
         "name": "隐藏检查人信息",
         "category": "巡检信息显示",
@@ -1138,10 +1131,6 @@ PERMISSION_ANY_DEPENDENCIES = {
     ),
     "change_issue_inspector": (
         "view_all_inspection_issues",
-    ),
-    "export_issue_photos": (
-        "view_all_inspection_issues",
-        "view_own_inspection_issues",
     ),
     "delete_inspection_records": (
         "view_all_inspection_records",
@@ -6810,10 +6799,6 @@ def can_change_issue_inspector(cur, user):
     return has_permission(cur, user, "change_issue_inspector")
 
 
-def can_export_issue_photos(cur, user):
-    return has_permission(cur, user, "export_issue_photos")
-
-
 def normalize_issue_audit_status(value):
     status = str(value or "pending").strip().lower()
     return status if status in ISSUE_AUDIT_STATUS_OPTIONS else "pending"
@@ -7386,11 +7371,6 @@ def normalize_issue_export_options(raw_options):
         "include_photos": include_photos,
         "photo_mode": photo_mode,
     }
-
-
-def issue_export_includes_photos(export_options):
-    include_photos = (export_options or {}).get("include_photos") or {}
-    return any(bool(include_photos.get(key)) for key in ISSUE_EXPORT_PHOTO_KEYS)
 
 
 def selected_issue_export_field_keys(export_options):
@@ -36093,8 +36073,6 @@ def create_issue_export_task():
                 raise ValueError("当前筛选结果为空，不能导出。")
         if not selected_issue_export_field_keys(export_options):
             raise ValueError("请至少选择一个导出字段。")
-        if issue_export_includes_photos(export_options) and not can_export_issue_photos(cur, user):
-            raise PermissionError("当前账号无权导出巡检照片，请联系 root 授权。")
         visible_issue_rows = fetch_issue_export_rows(cur, user, issue_ids)
         if len({row["id"] for row in visible_issue_rows}) != len(set(issue_ids)):
             raise PermissionError("导出数据中包含当前账号无权查看的问题，请刷新列表后重新选择。")

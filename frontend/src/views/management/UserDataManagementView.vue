@@ -793,7 +793,6 @@ const anyDependentPermissionMap = {
   delete_inspection_issues: ['view_all_inspection_issues'],
   audit_inspection_issues: ['view_all_inspection_issues'],
   change_issue_inspector: ['view_all_inspection_issues'],
-  export_issue_photos: ['view_own_inspection_issues', 'view_all_inspection_issues'],
   delete_inspection_records: ['view_all_inspection_records'],
   reset_inspection_signature: ['view_all_inspection_records']
 }
@@ -887,7 +886,7 @@ const normalizeStationRegionScopeMap = (value) => {
 const scopedPermissionLayouts = {
   '巡检问题列表': {
     scopeKeys: ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues', 'limit_issue_inspection_table_scope'],
-    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector', 'export_issue_photos'],
+    actionKeys: ['edit_inspection_issues', 'delete_inspection_issues', 'audit_inspection_issues', 'change_issue_inspector'],
     readonlyItems: [
       {
         key: 'creator_issue_controls',
@@ -1268,7 +1267,7 @@ const buildDefaultPermissions = (role) => {
 }
 
 const enforceExclusivePermissions = (permissionMap, role = form.role) => {
-  const nextPermissions = { ...(permissionMap || {}) }
+  const nextPermissions = { ...permissionMap }
   if (role === 'root') return nextPermissions
 
   exclusivePermissionGroups.forEach((group) => {
@@ -1481,7 +1480,7 @@ const saveRolePermissions = async () => {
     rolePermissionDialog.saving = true
     rolePermissionDialog.error = ''
     const payloadPermissions = enforceExclusivePermissions(
-      { ...(rolePermissionDialog.permissions || {}) },
+      { ...rolePermissionDialog.permissions },
       rolePermissionDialog.role
     )
     const response = await axios.put(`/api/management/role-permissions/${rolePermissionDialog.role}`, {
@@ -1739,7 +1738,7 @@ const resetForm = (options = {}) => {
 const resetCreateTextFields = (options = {}) => {
   const rememberedRole = form.role || 'supervisor'
   const rememberedPermissions = enforceExclusivePermissions(
-    { ...(form.permissions || {}) },
+    { ...form.permissions },
     rememberedRole
   )
   const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
