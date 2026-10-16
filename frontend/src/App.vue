@@ -360,17 +360,17 @@
 
       <div v-if="canViewManagementSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">管理系统</div>
-        <button v-if="canManageUsers" class="nav-item"
-          :class="{ active: isActive('/management/users'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/management/users')" :title="sidebarCollapsed ? '用户数据管理' : ''">
-          <span class="nav-item-icon">用</span>
-          <span v-if="!sidebarCollapsed">用户数据管理</span>
-        </button>
         <button v-if="canManageSecurity" class="nav-item"
           :class="{ active: isActive('/management/security'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/security')" :title="sidebarCollapsed ? '系统安全管理' : ''">
           <span class="nav-item-icon">安</span>
           <span v-if="!sidebarCollapsed">系统安全管理</span>
+        </button>
+        <button v-if="canManageUsers" class="nav-item"
+          :class="{ active: isActive('/management/users'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/users')" :title="sidebarCollapsed ? '用户数据管理' : ''">
+          <span class="nav-item-icon">用</span>
+          <span v-if="!sidebarCollapsed">用户数据管理</span>
         </button>
         <button v-if="canManageStations" class="nav-item"
           :class="{ active: isActive('/management/stations'), collapsed: sidebarCollapsed }" type="button"

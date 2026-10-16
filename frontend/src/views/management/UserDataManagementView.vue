@@ -150,10 +150,28 @@
                 <strong>页面权限开关</strong>
                 <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '涉及站点范围的页面先选择数据范围，再配置该范围内的查看、编辑或删除能力。' }}</p>
               </div>
+              <span class="permission-overview">{{ roleLabel(form.role) }} · {{ enabledPermissionCount }} / {{ permissions.length }} 项已开启</span>
             </div>
 
-            <div class="permission-groups">
-              <div v-for="group in groupedPermissions" :key="group.category" class="permission-group">
+            <div class="permission-workspace">
+              <aside class="permission-category-sidebar">
+                <label class="permission-search">
+                  <span>查找页面权限</span>
+                  <input v-model="permissionKeyword" type="search" placeholder="搜索页面或权限" />
+                </label>
+                <nav class="permission-category-nav" aria-label="页面权限分类">
+                  <button v-for="group in filteredPermissionGroups" :key="group.category" type="button"
+                    class="permission-category-button" :class="{ active: activePermissionCategory === group.category }"
+                    :aria-pressed="activePermissionCategory === group.category" aria-controls="user-permission-detail"
+                    @click="activePermissionCategory = group.category">
+                    <span>{{ group.category }}</span>
+                    <small>{{ countEnabledPermissions(group, form.permissions, form.role) }}/{{ group.items.length }}</small>
+                  </button>
+                  <p v-if="!filteredPermissionGroups.length" class="permission-empty">没有匹配的页面或权限</p>
+                </nav>
+              </aside>
+            <div id="user-permission-detail" class="permission-groups user-permission-groups">
+              <div v-for="group in visiblePermissionGroups" :key="group.category" class="permission-group">
                 <div class="permission-group-title">
                   <span>{{ group.category }}</span>
                   <em v-if="group.hasScopedLayout">先定范围</em>
@@ -310,6 +328,7 @@
                 </div>
               </div>
             </div>
+            </div>
           </div>
         </div>
 
@@ -410,6 +429,12 @@
                 <td>
                   <div class="row-actions">
                     <button class="btn btn-secondary btn-sm" type="button" @click="startEdit(user)">编辑</button>
+                    <button class="btn btn-reset-password btn-sm" type="button"
+                      :disabled="user.role === 'root' || resetPasswordDialog.loading"
+                      :title="user.role === 'root' ? 'root 账号使用 Passkey 登录，无需重置密码' : '生成随机初始密码，用户登录后须改密'"
+                      @click="openPasswordReset(user)">
+                      {{ user.role === 'root' ? 'Passkey 账号' : '重置密码' }}
+                    </button>
                     <button class="btn btn-danger btn-sm" type="button"
                       :class="{ 'btn-locked': user.role === 'root' }"
                       :disabled="user.role === 'root' || deletingId === user.id"
@@ -448,6 +473,10 @@
         </div>
       </section>
     </template>
+
+    <AccountPasswordResetDialog :visible="resetPasswordDialog.visible" :loading="resetPasswordDialog.loading"
+      :target="resetPasswordDialog.target" :credential="resetPasswordDialog.credential" :error="resetPasswordDialog.error"
+      @confirm="resetUserPassword" @close="closePasswordReset" />
 
     <div v-if="birthdayDialog.visible" class="modal-backdrop birthday-modal-backdrop" @click.self="closeBirthdayDialog">
       <div class="birthday-management-modal card-surface">
@@ -725,6 +754,8 @@
 import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { clearAuthSession } from '@/utils/authSession'
+import AccountPasswordResetDialog from '@/components/AccountPasswordResetDialog.vue'
+import { countEnabledPermissions, filterPermissionGroups, resolvePermissionCategory } from '@/utils/permissionPanel'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -749,6 +780,9 @@ const exporting = ref(false)
 const importing = ref(false)
 const resettingPermissions = ref(false)
 const deletingId = ref(null)
+const resetPasswordDialog = reactive({ visible: false, loading: false, target: null, credential: null, error: '' })
+const permissionKeyword = ref('')
+const activePermissionCategory = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const formError = ref('')
@@ -976,6 +1010,12 @@ const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
 }
 
 const groupedPermissions = computed(() => buildPermissionGroupsFor(form.role, true))
+const filteredPermissionGroups = computed(() => filterPermissionGroups(groupedPermissions.value, permissionKeyword.value))
+const visiblePermissionGroups = computed(() => filteredPermissionGroups.value.filter((group) => group.category === activePermissionCategory.value))
+const enabledPermissionCount = computed(() => permissions.value.filter((item) => form.role === 'root' || form.permissions[item.key]).length)
+watch(filteredPermissionGroups, (groups) => {
+  activePermissionCategory.value = resolvePermissionCategory(groups, activePermissionCategory.value)
+}, { immediate: true })
 const roleTemplatePermissionGroups = computed(() => buildPermissionGroupsFor(rolePermissionDialog.role, false))
 const roleTemplateRoles = computed(() => roles.value.filter((item) => item.value !== 'root'))
 
@@ -2029,6 +2069,32 @@ const saveUser = async () => {
   }
 }
 
+const openPasswordReset = (user) => {
+  if (!hasPermission || user.role === 'root' || resetPasswordDialog.loading) return
+  Object.assign(resetPasswordDialog, { visible: true, target: { ...user }, credential: null, error: '' })
+}
+
+const closePasswordReset = () => {
+  if (resetPasswordDialog.loading) return
+  Object.assign(resetPasswordDialog, { visible: false, target: null, credential: null, error: '' })
+}
+
+const resetUserPassword = async () => {
+  if (!hasPermission || !resetPasswordDialog.target || resetPasswordDialog.loading || resetPasswordDialog.credential) return
+  resetPasswordDialog.loading = true
+  resetPasswordDialog.error = ''
+  try {
+    const response = await axios.post(`/api/management/users/${resetPasswordDialog.target.id}/reset-password`, { user_id: currentUserId })
+    resetPasswordDialog.credential = response.data.credentials?.[0] || null
+    if (form.id === resetPasswordDialog.target.id) form.password = ''
+    setMessage(response.data.message || '密码已重置。', 'success')
+  } catch (error) {
+    resetPasswordDialog.error = error?.response?.data?.error || '密码重置失败，请稍后重试。'
+  } finally {
+    resetPasswordDialog.loading = false
+  }
+}
+
 const deleteUser = async (user) => {
   const confirmed = window.confirm(`确定删除用户【${user.username}】吗？`)
   if (!confirmed) return
@@ -2351,6 +2417,39 @@ onBeforeUnmount(() => {
   font-size: 15px;
   font-weight: 900;
 }
+
+.permission-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.permission-overview { flex-shrink: 0; padding: 7px 11px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1d4ed8; font-size: 12px; font-weight: 800; }
+.permission-workspace { display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: start; gap: 18px; }
+.permission-category-sidebar { position: sticky; top: 100px; min-width: 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+.permission-search { display: grid; gap: 7px; padding: 4px 3px 12px; color: #475569; font-size: 12px; font-weight: 800; }
+.permission-search input { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; border: 1px solid #d7e0ea; border-radius: 9px; padding: 0 9px; font: inherit; background: #f8fafc; }
+.permission-category-nav { display: flex; flex-direction: column; gap: 4px; max-height: min(65vh, 680px); overflow: auto; }
+.permission-category-button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 11px 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #475569; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+.permission-category-button span { min-width: 0; line-height: 1.5; }
+.permission-category-button small { flex-shrink: 0; padding: 2px 6px; border-radius: 6px; background: #f1f5f9; color: #64748b; font-size: 11px; font-variant-numeric: tabular-nums; }
+.permission-category-button:hover { background: #f8fafc; }
+.permission-category-button.active { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; font-weight: 800; }
+.permission-category-button.active small { background: #dbeafe; color: #1d4ed8; }
+.permission-category-button:focus-visible, .permission-search input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.permission-empty { margin: 12px 4px; color: #64748b; font-size: 12px; line-height: 1.7; }
+.permission-groups.user-permission-groups { display: block; min-width: 0; }
+.user-permission-groups .permission-group { padding: 20px; }
+.user-permission-groups .permission-group-title { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid #e2e8f0; font-size: 16px; }
+.user-permission-groups .permission-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }
+.user-permission-groups .permission-section-label { grid-column: 1 / -1; margin-bottom: 2px; }
+.user-permission-groups .permission-item { min-width: 0; margin: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 11px; background: #fff; cursor: pointer; }
+.user-permission-groups .permission-item:has(input:checked) { border-color: #bfdbfe; background: #f5f9ff; }
+.user-permission-groups .permission-item.disabled { cursor: not-allowed; }
+.user-permission-groups .permission-item > span { min-width: 0; overflow-wrap: anywhere; }
+.user-permission-groups .permission-item input { width: 16px; height: 16px; accent-color: #2563eb; }
+.user-permission-groups .permission-section .permission-item:first-of-type { border-top: 1px solid #e2e8f0; }
+.user-permission-groups .readonly-section { grid-template-columns: 1fr; }
+.user-permission-groups .permission-item strong em { white-space: nowrap; }
+.user-permission-groups .inspection-scope-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+.user-permission-groups .inspection-scope-item { min-width: 0; }
+.btn.btn-reset-password { border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412; }
+.btn.btn-reset-password:disabled { color: #64748b; border-color: #e2e8f0; background: #f1f5f9; }
 
 .permission-panel-head p {
   margin: 5px 0 14px;
@@ -3214,6 +3313,15 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 980px) {
+  .permission-panel-head { flex-direction: column; gap: 0; margin-bottom: 14px; }
+  .permission-workspace { grid-template-columns: 1fr; gap: 12px; }
+  .permission-category-sidebar { position: static; }
+  .permission-search { max-width: 100%; }
+  .permission-category-nav { flex-direction: row; max-height: none; overflow-x: auto; padding-bottom: 4px; }
+  .permission-category-button { flex: 0 0 auto; width: auto; }
+  .permission-category-button span { white-space: nowrap; }
+  .user-permission-groups .permission-group { padding: 14px; }
+
   .basic-form,
   .permission-groups,
   .inspection-scope-grid,

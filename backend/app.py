@@ -26129,6 +26129,75 @@ def update_management_user(target_user_id):
         close_db_resources(cur, conn)
 
 
+@app.route("/api/management/users/<int:target_user_id>/reset-password", methods=["POST"])
+def reset_management_user_password(target_user_id):
+    data = request.get_json(silent=True) or {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        actor = require_management_user(cur, str(data.get("user_id", "")).strip(), "manage_users")
+        if not is_root_user(actor):
+            raise PermissionError("仅 root 系统管理员可重置用户密码。")
+        ensure_user_security_schema(cur)
+        cur.execute(
+            """
+            SELECT u.id, u.username, u.role, u.real_name, u.phone, u.password_hash,
+                   u.station_id, u.account_status, u.auth_version, s.hos_station_code
+            FROM users u
+            LEFT JOIN stations s ON s.id = u.station_id
+            WHERE u.id = %s
+            FOR UPDATE OF u;
+            """,
+            (target_user_id,),
+        )
+        target_user = cur.fetchone()
+        if not target_user:
+            raise LookupError("用户不存在。")
+        if is_root_user(target_user):
+            raise ValueError("root 账号仅支持 Passkey 登录，无需重置密码。")
+
+        policy = fetch_password_policy(cur)
+        new_password = generate_strong_initial_password(target_user, policy)
+        update_user_password(
+            cur, target_user, new_password, policy=policy,
+            must_change_password=True, force_change_immediately=True,
+        )
+        record_security_event(
+            cur, actor, "administrator_password_reset", "success", target=target_user,
+            request_ip=get_request_client_ip(), user_agent=request.headers.get("User-Agent"),
+            details={"forced_change_on_next_login": True, "random_initial_password": True},
+        )
+        conn.commit()
+        invalidate_auth_caches_for_user(target_user_id)
+        response = jsonify({
+            "success": True,
+            "message": "密码已重置，原登录会话已失效，用户下次登录后须立即修改密码。",
+            "credentials": [{"username": target_user["username"], "password": new_password}],
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except PermissionError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 403
+    except LookupError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        if conn:
+            conn.rollback()
+        return jsonify({"success": False, "error": "用户密码重置失败，请稍后重试。"}), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/management/users/<int:target_user_id>", methods=["DELETE"])
 def delete_management_user(target_user_id):
     data = request.get_json(silent=True) or {}
