@@ -36,6 +36,18 @@ from psycopg2 import sql
 from psycopg2.extras import Json, RealDictCursor
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
+from backups import archive_validation as backup_archive_validation
+from backups import configuration as backup_configuration
+from backups import cos as backup_cos
+from backups import local_files as backup_local_files
+from backups.configuration import (
+    BACKUP_FREQUENCY_INTERVALS,
+    normalize_backup_scheduled_time,
+    parse_backup_scheduled_time,
+    parse_backup_time,
+)
+from backups.http import BackupTransferEndpoints
+from backups.transfers import BackupTransfers
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -1595,13 +1607,6 @@ def format_file_size(size_bytes):
     return f"{size:.1f} {units[unit_index]}"
 
 
-BACKUP_FREQUENCY_INTERVALS = {
-    "off": None,
-    "hourly": timedelta(hours=1),
-    "daily": timedelta(days=1),
-    "weekly": timedelta(days=7),
-    "monthly": timedelta(days=30),
-}
 backup_scheduler_started = False
 backup_scheduler_lock = threading.Lock()
 backup_job_lock = threading.Lock()
@@ -1621,61 +1626,12 @@ def isoformat_or_none(value):
     return str(value)
 
 
-def parse_backup_time(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value))
-    except ValueError:
-        return None
-
-
-def normalize_backup_scheduled_time(value):
-    text = str(value or "").strip()
-    if not text:
-        return "02:00"
-    matched = re.fullmatch(r"(\d{1,2}):([0-5]\d)", text)
-    if not matched:
-        raise ValueError("自动备份执行时间必须是 HH:MM 格式。")
-    hour = int(matched.group(1))
-    if hour > 23:
-        raise ValueError("自动备份执行时间小时必须在 00-23 之间。")
-    return f"{hour:02d}:{matched.group(2)}"
-
-
-def parse_backup_scheduled_time(value):
-    scheduled_time = normalize_backup_scheduled_time(value)
-    hour, minute = scheduled_time.split(":")
-    return int(hour), int(minute)
-
-
 def normalize_backup_destination_path(value):
-    raw_value = str(value or "").strip()
-    if not raw_value:
-        return os.path.abspath(DEFAULT_BACKUP_DIR)
-    if os.path.isabs(raw_value):
-        return os.path.abspath(raw_value)
-    return os.path.abspath(os.path.join(DEFAULT_BACKUP_DIR, raw_value))
+    return backup_configuration.normalize_backup_destination_path(value, DEFAULT_BACKUP_DIR)
 
 
 def get_default_backup_config():
-    return {
-        "destination_path": os.path.abspath(DEFAULT_BACKUP_DIR),
-        "frequency": "off",
-        "scheduled_time": "02:00",
-        "next_auto_run_at": None,
-        "last_auto_export_at": None,
-        "last_backup_path": None,
-        "last_backup_size": None,
-        "last_cos_status": "not_configured",
-        "last_cos_key": None,
-        "last_cos_uploaded_at": None,
-        "last_cos_retained_count": 0,
-        "last_cos_error": "",
-        "last_status": "idle",
-        "last_error": "",
-        "updated_at": None,
-    }
+    return backup_configuration.get_default_backup_config(DEFAULT_BACKUP_DIR)
 
 
 def read_backup_config():
@@ -1689,28 +1645,13 @@ def read_backup_config():
         except (OSError, json.JSONDecodeError):
             pass
 
-    config["destination_path"] = normalize_backup_destination_path(
-        config.get("destination_path")
-    )
-    if config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
-        config["frequency"] = "off"
-    config["scheduled_time"] = normalize_backup_scheduled_time(config.get("scheduled_time"))
-    if config.get("frequency") == "off":
-        config["next_auto_run_at"] = None
-    return config
+    return backup_configuration.normalize_backup_config(config, DEFAULT_BACKUP_DIR)
 
 
 def write_backup_config(config):
     next_config = get_default_backup_config()
     next_config.update(config or {})
-    next_config["destination_path"] = normalize_backup_destination_path(
-        next_config.get("destination_path")
-    )
-    if next_config.get("frequency") not in BACKUP_FREQUENCY_INTERVALS:
-        next_config["frequency"] = "off"
-    next_config["scheduled_time"] = normalize_backup_scheduled_time(next_config.get("scheduled_time"))
-    if next_config.get("frequency") == "off":
-        next_config["next_auto_run_at"] = None
+    next_config = backup_configuration.normalize_backup_config(next_config, DEFAULT_BACKUP_DIR)
     next_config["updated_at"] = beijing_now().isoformat()
     os.makedirs(os.path.dirname(BACKUP_CONFIG_PATH), exist_ok=True)
     with open(BACKUP_CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -1719,254 +1660,84 @@ def write_backup_config(config):
 
 
 def calculate_next_auto_run_at(config, from_time=None):
-    frequency = config.get("frequency")
-    interval = BACKUP_FREQUENCY_INTERVALS.get(frequency)
-    if not interval:
-        return None
-    now = (from_time or beijing_now()).astimezone(BEIJING_TZ)
-
-    if frequency == "hourly":
-        return (now + interval).replace(second=0, microsecond=0).isoformat()
-
-    hour, minute = parse_backup_scheduled_time(config.get("scheduled_time"))
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if frequency == "daily":
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate.isoformat()
-
-    if frequency == "weekly":
-        while candidate <= now:
-            candidate += timedelta(days=7)
-        return candidate.isoformat()
-
-    if frequency == "monthly":
-        while candidate <= now:
-            candidate += timedelta(days=30)
-        return candidate.isoformat()
-
-    return None
+    return backup_configuration.calculate_next_auto_run_at(
+        config, from_time, clock=beijing_now, timezone=BEIJING_TZ
+    )
 
 
 def get_backup_next_run_at(config):
-    if config.get("frequency") == "off":
-        return None
-    saved_next_run = parse_backup_time(config.get("next_auto_run_at"))
-    if saved_next_run:
-        return saved_next_run.astimezone(BEIJING_TZ).isoformat()
-    return calculate_next_auto_run_at(config)
+    return backup_configuration.get_backup_next_run_at(
+        config, clock=beijing_now, timezone=BEIJING_TZ
+    )
 
 
 def list_backup_files(destination_path):
-    backup_dir = normalize_backup_destination_path(destination_path)
-    if not os.path.isdir(backup_dir):
-        return []
-    rows = []
-    for filename in os.listdir(backup_dir):
-        if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
-            continue
-        file_path = os.path.join(backup_dir, filename)
-        if not os.path.isfile(file_path):
-            continue
-        stat = os.stat(file_path)
-        rows.append(
-            {
-                "filename": filename,
-                "path": file_path,
-                "size": stat.st_size,
-                "updated_at": datetime.fromtimestamp(stat.st_mtime, BEIJING_TZ).isoformat(),
-            }
-        )
-    return sorted(rows, key=lambda item: item["updated_at"], reverse=True)[:20]
+    return backup_local_files.list_backup_files(
+        normalize_backup_destination_path(destination_path),
+        backup_prefix=BACKUP_PREFIX,
+        timezone=BEIJING_TZ,
+    )
 
 
 def get_cos_env_config():
-    secret_id = os.environ.get("COS_SECRET_ID", "").strip()
-    secret_key = os.environ.get("COS_SECRET_KEY", "").strip()
-    region = os.environ.get("COS_REGION", "").strip()
-    bucket = os.environ.get("COS_BUCKET", "").strip()
-    prefix = f"{COS_BACKUP_PREFIX}/" if COS_BACKUP_PREFIX else ""
-    configured = all((secret_id, secret_key, region, bucket))
-    return {
-        "secret_id": secret_id,
-        "secret_key": secret_key,
-        "region": region,
-        "bucket": bucket,
-        "prefix": prefix,
-        "configured": configured,
-        "sdk_available": bool(CosConfig and CosS3Client),
-        "retention_count": COS_BACKUP_RETENTION_COUNT,
-        "use_internal": os.environ.get("COS_USE_INTERNAL", "false").lower() in {"true", "1", "yes"},
-    }
+    return backup_cos.get_cos_env_config(
+        environ=os.environ,
+        prefix=COS_BACKUP_PREFIX,
+        retention_count=COS_BACKUP_RETENTION_COUNT,
+        sdk_available=bool(CosConfig and CosS3Client),
+    )
 
 
 def get_cos_public_status(config=None, error=""):
-    cos_config = get_cos_env_config()
-    if not cos_config["configured"]:
-        status = "not_configured"
-        message = "未配置 COS 环境变量，当前仅保留本地备份。"
-    elif not cos_config["sdk_available"]:
-        status = "error"
-        message = "后端缺少腾讯云 COS Python SDK，请重新安装依赖。"
-    elif error:
-        status = "error"
-        message = error
-    else:
-        status = "ready"
-        message = "COS 环境变量已配置，备份会自动上传对象存储。"
-
-    return {
-        "status": status,
-        "message": message,
-        "configured": cos_config["configured"],
-        "sdk_available": cos_config["sdk_available"],
-        "bucket": cos_config["bucket"] if cos_config["configured"] else "",
-        "region": cos_config["region"] if cos_config["configured"] else "",
-        "prefix": cos_config["prefix"],
-        "retention_count": cos_config["retention_count"],
-        "last_cos_status": (config or {}).get("last_cos_status"),
-        "last_cos_key": (config or {}).get("last_cos_key"),
-        "last_cos_uploaded_at": (config or {}).get("last_cos_uploaded_at"),
-        "last_cos_error": (config or {}).get("last_cos_error") or "",
-        "last_cos_retained_count": (config or {}).get("last_cos_retained_count") or 0,
-    }
+    return backup_cos.get_cos_public_status(get_cos_env_config(), config, error)
 
 
 def get_cos_client():
-    cos_config = get_cos_env_config()
-    if not cos_config["configured"]:
-        raise RuntimeError("未配置 COS_SECRET_ID、COS_SECRET_KEY、COS_REGION 或 COS_BUCKET。")
-    if not cos_config["sdk_available"]:
-        raise RuntimeError("后端缺少腾讯云 COS Python SDK，请重新安装依赖。")
-    config = CosConfig(
-        Region=cos_config["region"],
-        SecretId=cos_config["secret_id"],
-        SecretKey=cos_config["secret_key"],
-        Scheme="https",
-        EnableOldDomain=not cos_config.get("use_internal", False),
-        EnableInternalDomain=cos_config.get("use_internal", False),
+    return backup_cos.get_cos_client(
+        get_cos_env_config(), config_factory=CosConfig, client_factory=CosS3Client
     )
-    return CosS3Client(config), cos_config
 
 
 def parse_cos_last_modified(value):
-    text = str(value or "").strip()
-    if not text:
-        return datetime.min.replace(tzinfo=BEIJING_TZ)
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(BEIJING_TZ)
-    except ValueError:
-        try:
-            return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=ZoneInfo("UTC")).astimezone(BEIJING_TZ)
-        except ValueError:
-            return datetime.min.replace(tzinfo=BEIJING_TZ)
+    return backup_cos.parse_cos_last_modified(value, timezone=BEIJING_TZ)
 
 
 def list_cos_backup_objects():
-    client, cos_config = get_cos_client()
-    rows = []
-    marker = ""
-    while True:
-        response = client.list_objects(
-            Bucket=cos_config["bucket"],
-            Prefix=cos_config["prefix"],
-            Marker=marker,
-            MaxKeys=1000,
-        )
-        contents = response.get("Contents") or []
-        if isinstance(contents, dict):
-            contents = [contents]
-        for item in contents:
-            key = item.get("Key") or ""
-            filename = os.path.basename(key)
-            if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
-                continue
-            last_modified = item.get("LastModified") or ""
-            rows.append(
-                {
-                    "key": key,
-                    "filename": filename,
-                    "size": int(item.get("Size") or 0),
-                    "updated_at": parse_cos_last_modified(last_modified).isoformat(),
-                    "etag": str(item.get("ETag") or "").strip('"'),
-                }
-            )
-        if str(response.get("IsTruncated", "")).lower() not in {"true", "1"}:
-            break
-        marker = response.get("NextMarker") or response.get("Marker") or ""
-        if not marker:
-            break
-    return sorted(rows, key=lambda item: item["updated_at"], reverse=True)
+    return backup_cos.list_cos_backup_objects(
+        get_client=get_cos_client,
+        backup_prefix=BACKUP_PREFIX,
+        parse_last_modified=parse_cos_last_modified,
+    )
 
 
 def prune_cos_backup_objects(objects=None):
-    client, cos_config = get_cos_client()
-    rows = objects if objects is not None else list_cos_backup_objects()
-    stale_objects = rows[COS_BACKUP_RETENTION_COUNT:]
-    for item in stale_objects:
-        client.delete_object(Bucket=cos_config["bucket"], Key=item["key"])
-    return rows[:COS_BACKUP_RETENTION_COUNT], stale_objects
+    return backup_cos.prune_cos_backup_objects(
+        objects,
+        get_client=get_cos_client,
+        list_objects=list_cos_backup_objects,
+        retention_count=COS_BACKUP_RETENTION_COUNT,
+    )
 
 
 def upload_backup_archive_to_cos(local_path, object_filename):
-    cos_config = get_cos_env_config()
-    if not cos_config["configured"]:
-        return {
-            "status": "not_configured",
-            "message": "未配置 COS 环境变量，已跳过云端上传。",
-        }
-    if not cos_config["sdk_available"]:
-        return {
-            "status": "error",
-            "message": "后端缺少腾讯云 COS Python SDK，请重新安装依赖。",
-        }
-
-    try:
-        client, cos_config = get_cos_client()
-        object_key = f"{cos_config['prefix']}{object_filename}"
-        local_size = os.path.getsize(local_path)
-        # SDK multipart upload avoids the 5GB single-PUT limit without loading the archive into RAM.
-        client.upload_file(
-            Bucket=cos_config["bucket"],
-            Key=object_key,
-            LocalFilePath=local_path,
-            PartSize=16,
-            MAXThread=2,
-            EnableMD5=True,
-        )
-        metadata = client.head_object(Bucket=cos_config["bucket"], Key=object_key)
-        if int(metadata.get("Content-Length", -1)) != local_size:
-            raise RuntimeError("云端备份大小校验失败，旧备份未清理。")
-        objects = list_cos_backup_objects()
-        if not any(item["key"] == object_key and item["size"] == local_size for item in objects):
-            raise RuntimeError("云端列表尚未确认新备份，旧备份未清理。")
-        retained, removed = prune_cos_backup_objects(objects)
-        return {
-            "status": "success",
-            "message": f"COS 上传成功，云端已保留最近 {len(retained)} 个备份。",
-            "key": object_key,
-            "bucket": cos_config["bucket"],
-            "region": cos_config["region"],
-            "uploaded_at": beijing_now().isoformat(),
-            "retained_count": len(retained),
-            "removed_count": len(removed),
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "message": f"COS 上传失败：{str(exc)}",
-        }
+    return backup_cos.upload_backup_archive_to_cos(
+        local_path,
+        object_filename,
+        get_environment=get_cos_env_config,
+        get_client=get_cos_client,
+        list_objects=list_cos_backup_objects,
+        prune_objects=prune_cos_backup_objects,
+        clock=beijing_now,
+    )
 
 
 def get_cos_backup_overview(config=None):
-    status = get_cos_public_status(config)
-    backups = []
-    if status["configured"] and status["sdk_available"]:
-        try:
-            backups = list_cos_backup_objects()[:COS_BACKUP_RETENTION_COUNT]
-        except Exception as exc:
-            status = get_cos_public_status(config, f"COS 备份列表读取失败：{str(exc)}")
-    return status, backups
+    return backup_cos.get_cos_backup_overview(
+        config,
+        get_public_status=get_cos_public_status,
+        list_objects=list_cos_backup_objects,
+        retention_count=COS_BACKUP_RETENTION_COUNT,
+    )
 
 
 def build_pg_environment():
@@ -1989,102 +1760,42 @@ def run_backup_subprocess(command, env):
 
 
 def get_database_backup_member_name(names):
-    if "database.dump" in names:
-        return "database.dump"
-    if "database.sql" in names:
-        return "database.sql"
-    raise ValueError("备份文件缺少 database.dump 或 database.sql。")
+    return backup_archive_validation.get_database_backup_member_name(names)
 
 
 def should_skip_storage_backup_path(path, excluded_dirs):
-    abs_path = os.path.abspath(path)
-    for excluded_dir in excluded_dirs:
-        try:
-            if os.path.commonpath([excluded_dir, abs_path]) == excluded_dir:
-                return True
-        except ValueError:
-            continue
-    return False
+    return backup_local_files.should_skip_storage_backup_path(path, excluded_dirs)
 
 
 def get_storage_backup_excluded_dirs(destination_path):
-    storage_root_abs = os.path.abspath(STORAGE_ROOT)
-    excluded_dirs = [os.path.abspath(INSPECTION_REPORT_EXPORTS_STORAGE_DIR)]
-    for candidate in (destination_path, DEFAULT_BACKUP_DIR):
-        candidate_abs = os.path.abspath(candidate)
-        try:
-            if (
-                candidate_abs != storage_root_abs
-                and os.path.commonpath([storage_root_abs, candidate_abs]) == storage_root_abs
-                and candidate_abs not in excluded_dirs
-            ):
-                excluded_dirs.append(candidate_abs)
-        except ValueError:
-            continue
-    return excluded_dirs
+    return backup_local_files.get_storage_backup_excluded_dirs(
+        destination_path,
+        storage_root=STORAGE_ROOT,
+        report_exports_dir=INSPECTION_REPORT_EXPORTS_STORAGE_DIR,
+        default_backup_dir=DEFAULT_BACKUP_DIR,
+    )
 
 
 def add_storage_to_backup(zip_file, destination_path):
-    storage_root_abs = os.path.abspath(STORAGE_ROOT)
-    excluded_dirs = get_storage_backup_excluded_dirs(destination_path)
-    for root, dirs, files in os.walk(storage_root_abs):
-        dirs[:] = [
-            name
-            for name in dirs
-            if not should_skip_storage_backup_path(os.path.join(root, name), excluded_dirs)
-        ]
-        if should_skip_storage_backup_path(root, excluded_dirs):
-            continue
-        for filename in files:
-            file_path = os.path.join(root, filename)
-            if file_path == os.path.abspath(BACKUP_CONFIG_PATH):
-                continue
-            if (
-                os.path.abspath(root) == storage_root_abs
-                and filename.startswith(BACKUP_PREFIX)
-                and filename.endswith(".zip")
-            ):
-                continue
-            if should_skip_storage_backup_path(file_path, excluded_dirs):
-                continue
-            relative_path = os.path.relpath(file_path, storage_root_abs).replace("\\", "/")
-            zip_file.write(file_path, f"storage/{relative_path}")
+    return backup_local_files.add_storage_to_backup(
+        zip_file,
+        destination_path,
+        storage_root=STORAGE_ROOT,
+        config_path=BACKUP_CONFIG_PATH,
+        backup_prefix=BACKUP_PREFIX,
+        get_excluded_dirs=get_storage_backup_excluded_dirs,
+        should_skip_path=should_skip_storage_backup_path,
+    )
 
 
 def publish_backup_archive(temp_zip_path, final_path):
-    final_dir = os.path.dirname(final_path)
-    os.makedirs(final_dir, exist_ok=True)
-    staging_path = os.path.join(
-        final_dir,
-        f".{os.path.basename(final_path)}.{uuid.uuid4().hex}.tmp",
-    )
-
-    try:
-        shutil.copy2(temp_zip_path, staging_path)
-        os.replace(staging_path, final_path)
-    finally:
-        if os.path.exists(staging_path):
-            os.remove(staging_path)
+    return backup_local_files.publish_backup_archive(temp_zip_path, final_path)
 
 
 def cleanup_local_backup_files(backup_dir, keep_path=None):
-    backup_dir = normalize_backup_destination_path(backup_dir)
-    keep_abs = os.path.abspath(keep_path) if keep_path else ""
-    if not os.path.isdir(backup_dir):
-        return
-    for filename in os.listdir(backup_dir):
-        if not (filename.startswith(BACKUP_PREFIX) and filename.endswith(".zip")):
-            continue
-        file_path = os.path.abspath(os.path.join(backup_dir, filename))
-        try:
-            if os.path.commonpath([backup_dir, file_path]) != backup_dir:
-                continue
-        except ValueError:
-            continue
-        if keep_abs and file_path == keep_abs:
-            continue
-        if os.path.isfile(file_path):
-            os.remove(file_path)
+    return backup_local_files.cleanup_local_backup_files(
+        normalize_backup_destination_path(backup_dir), keep_path, backup_prefix=BACKUP_PREFIX
+    )
 
 
 def create_full_backup_archive(destination_path=None, reason="manual"):
@@ -2152,21 +1863,9 @@ def create_full_backup_archive(destination_path=None, reason="manual"):
 
 
 def validate_backup_archive(zip_path):
-    try:
-        with zipfile.ZipFile(zip_path, "r") as zip_file:
-            names = set(zip_file.namelist())
-            if "manifest.json" not in names:
-                raise ValueError("备份文件缺少 manifest.json。")
-            database_member_name = get_database_backup_member_name(names)
-            manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
-            if manifest.get("backup_type") != "ywddzx_full_backup":
-                raise ValueError("备份文件类型不正确。")
-            manifest["database_member"] = database_member_name
-            return manifest
-    except zipfile.BadZipFile as exc:
-        raise ValueError("备份文件不是有效的 ZIP 文件。") from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError("备份文件清单格式不正确。") from exc
+    return backup_archive_validation.validate_backup_archive(
+        zip_path, select_database_member=get_database_backup_member_name
+    )
 
 
 def should_skip_restore_sql_line(line):
@@ -2289,17 +1988,9 @@ def clear_storage_root_for_restore():
 
 
 def validate_storage_backup_members(zip_file):
-    storage_root_abs = os.path.abspath(STORAGE_ROOT)
-    for member in zip_file.infolist():
-        name = member.filename
-        if not name.startswith("storage/") or name.endswith("/"):
-            continue
-        relative_path = name[len("storage/") :]
-        if not relative_path:
-            continue
-        target_path = os.path.abspath(os.path.join(storage_root_abs, relative_path))
-        if os.path.commonpath([storage_root_abs, target_path]) != storage_root_abs:
-            raise ValueError("备份文件中存在非法 storage 路径。")
+    return backup_archive_validation.validate_storage_backup_members(
+        zip_file, storage_root=STORAGE_ROOT
+    )
 
 
 def restore_storage_from_backup(zip_path):
@@ -27207,117 +26898,29 @@ def update_management_backup_config():
         close_db_resources(cur, conn)
 
 
+def _backup_transfer_endpoints():
+    return BackupTransferEndpoints(
+        get_connection=get_db_connection,
+        require_management_user=require_management_user,
+        close_resources=close_db_resources,
+        transfers=BackupTransfers(
+            job_lock=backup_job_lock,
+            read_config=read_backup_config,
+            write_config=write_backup_config,
+            create_archive=create_full_backup_archive,
+            restore_archive=restore_full_backup_archive,
+        ),
+    )
+
+
 @app.route("/api/management/backups/export", methods=["POST"])
 def export_management_full_backup():
-    data = request.get_json(silent=True) or {}
-    user_id = str(data.get("user_id", "")).strip()
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        require_management_user(cur, user_id, "manage_backups")
-        close_db_resources(cur, conn)
-        cur = None
-        conn = None
-
-        if not backup_job_lock.acquire(blocking=False):
-            return jsonify({"success": False, "error": "已有备份或恢复任务正在执行，请稍后再试。"}), 409
-        try:
-            config = read_backup_config()
-            result = create_full_backup_archive(config.get("destination_path"), reason="manual")
-            cos_result = result.get("cos") or {}
-            cos_status = cos_result.get("status") or "not_configured"
-            config.update(
-                {
-                    "last_backup_path": result["path"],
-                    "last_backup_size": result["size"],
-                    "last_cos_status": cos_status,
-                    "last_cos_key": cos_result.get("key"),
-                    "last_cos_uploaded_at": cos_result.get("uploaded_at"),
-                    "last_cos_retained_count": cos_result.get("retained_count") or 0,
-                    "last_cos_error": cos_result.get("message") if cos_status == "error" else "",
-                    "last_status": "warning" if cos_status == "error" else "success",
-                    "last_error": cos_result.get("message") if cos_status == "error" else "",
-                }
-            )
-            write_backup_config(config)
-        finally:
-            backup_job_lock.release()
-
-        response = send_file(
-            result["path"],
-            as_attachment=True,
-            download_name=result["download_filename"],
-            mimetype="application/zip",
-        )
-        response.headers["X-Backup-Path"] = result["path"]
-        response.headers["X-Backup-Size"] = str(result["size"])
-        response.headers["X-COS-Backup-Status"] = cos_status
-        response.headers["X-COS-Backup-Key"] = cos_result.get("key") or ""
-        response.headers["Cache-Control"] = "no-store"
-        return response
-    except PermissionError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return _backup_transfer_endpoints().export()
 
 
 @app.route("/api/management/backups/import", methods=["POST"])
 def import_management_full_backup():
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        require_management_user(cur, None, "manage_backups")
-        close_db_resources(cur, conn)
-        cur = None
-        conn = None
-
-        if not backup_job_lock.acquire(blocking=False):
-            return jsonify({"success": False, "error": "已有备份或恢复任务正在执行，请稍后再试。"}), 409
-        try:
-            backup_file = request.files.get("file")
-            manifest = restore_full_backup_archive(backup_file)
-        finally:
-            backup_job_lock.release()
-
-        config = read_backup_config()
-        config.update(
-            {
-                "last_status": "success",
-                "last_error": "",
-            }
-        )
-        write_backup_config(config)
-        return jsonify(
-            {
-                "success": True,
-                "message": "完整备份已导入，数据库与上传文件目录已恢复。",
-                "manifest": manifest,
-            }
-        )
-    except PermissionError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
-    except RuntimeError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 500
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+    return _backup_transfer_endpoints().restore()
 
 
 @app.route("/api/management/stations", methods=["GET"])
