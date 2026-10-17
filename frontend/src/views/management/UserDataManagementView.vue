@@ -7,6 +7,7 @@
         <p class="page-desc">维护系统用户、角色、所属站点和可操作权限。root 默认拥有全部权限，其他用户可在这里单独开关。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
+        <button v-if="!editorOpen && editorHasDraft" class="btn btn-secondary" type="button" @click="showEditor">继续编辑 {{ form.id ? form.username : '新用户' }}</button>
         <button class="btn btn-primary birthday-action-btn" type="button" :disabled="birthdayDialog.loading"
           @click="openBirthdayDialog">
           生日祝福管理
@@ -38,7 +39,7 @@
         <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
       </transition>
 
-      <section ref="editorCardRef" class="card-surface editor-card" :class="{ editing: form.id }">
+      <section v-show="editorOpen" ref="editorCardRef" class="card-surface editor-card" :class="{ editing: form.id }">
         <div class="section-head">
           <div>
             <div class="section-kicker">{{ form.id ? '编辑用户' : '新增用户' }}</div>
@@ -48,6 +49,7 @@
             </h3>
             <h3 v-else>创建系统账号</h3>
           </div>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="saving" @click="editorOpen = false">收起编辑</button>
         </div>
 
         <div class="editor-layout">
@@ -329,138 +331,17 @@
       </section>
 
       <section ref="tableCardRef" class="card-surface table-card">
-        <div class="section-head">
-          <div>
-            <div class="section-kicker">用户清单</div>
-            <h3>共 {{ filteredUsers.length }} 个用户</h3>
-          </div>
-        </div>
-
-        <div class="filter-bar">
-          <label class="filter-field keyword-field">
-            <span>关键词</span>
-            <input v-model.trim="filters.keyword" type="text" placeholder="用户名、姓名、手机号、站点、片区" />
-          </label>
-
-          <label class="filter-field">
-            <span>角色</span>
-            <select v-model="filters.role">
-              <option value="">全部角色</option>
-              <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.label }}</option>
-            </select>
-          </label>
-
-          <label class="filter-field">
-            <span>所属片区</span>
-            <select v-model="filters.station_region">
-              <option value="">全部片区</option>
-              <option v-for="region in userRegionOptions" :key="region" :value="region">{{ region }}</option>
-            </select>
-          </label>
-
-          <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        </div>
-
-        <div class="table-wrap">
-          <table class="user-table">
-            <thead>
-              <tr>
-                <th>用户名</th>
-                <th>角色</th>
-                <th>姓名</th>
-                <th>手机号</th>
-                <th>所属站点</th>
-                <th>权限概览</th>
-                <th>创建时间</th>
-                <th>更新时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="loading">
-                <td colspan="9" class="empty-cell">正在加载用户数据...</td>
-              </tr>
-              <tr v-else-if="!filteredUsers.length">
-                <td colspan="9" class="empty-cell">暂无匹配的用户数据。</td>
-              </tr>
-              <tr v-for="user in pagedUsers" :key="user.id" :class="{ active: form.id === user.id }">
-                <td>
-                  <div class="table-title">{{ user.username }}</div>
-                  <div class="table-sub">ID: {{ user.id }}</div>
-                </td>
-                <td>{{ roleLabel(user.role) }}</td>
-                <td>{{ user.real_name || '-' }}</td>
-                <td>{{ user.phone || '-' }}</td>
-                <td>
-                  <div class="table-title">{{ user.station_name || '-' }}</div>
-                  <div v-if="user.station_region" class="table-sub">{{ user.station_region }}</div>
-                </td>
-                <td>
-                  <div class="permission-summary">
-                    <span v-if="user.role === 'root'" class="permission-chip strong">全部权限</span>
-                    <template v-else>
-                      <span v-if="user.has_permission_overrides" class="permission-chip personalized">个性化权限</span>
-                      <span v-for="item in enabledPermissionLabels(user).slice(0, 3)" :key="item"
-                        class="permission-chip">{{ item }}</span>
-                      <span v-if="enabledPermissionLabels(user).length > 3" class="permission-chip muted">
-                        +{{ enabledPermissionLabels(user).length - 3 }}
-                      </span>
-                    </template>
-                  </div>
-                </td>
-                <td>{{ user.created_at || '-' }}</td>
-                <td>{{ user.updated_at || '-' }}</td>
-                <td>
-                  <div class="row-actions">
-                    <button class="btn btn-secondary btn-sm" type="button" @click="startEdit(user)">编辑</button>
-                    <button class="btn btn-reset-password btn-sm" type="button"
-                      :disabled="user.role === 'root' || resetPasswordDialog.loading"
-                      :title="user.role === 'root' ? 'root 账号使用 Passkey 登录，无需重置密码' : '生成随机初始密码，用户登录后须改密'"
-                      @click="openPasswordReset(user)">
-                      {{ user.role === 'root' ? 'Passkey 账号' : '重置密码' }}
-                    </button>
-                    <button class="btn btn-danger btn-sm" type="button"
-                      :class="{ 'btn-locked': user.role === 'root' }"
-                      :disabled="user.role === 'root' || deletingId === user.id"
-                      :title="user.role === 'root' ? 'root 系统管理员账号不可删除' : '删除用户'"
-                      @click="deleteUser(user)">
-                      {{ user.role === 'root' ? '不可删除' : deletingId === user.id ? '删除中' : '删除' }}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div v-if="filteredUsers.length" class="pagination-bar">
-          <div class="pagination-summary">显示第 {{ pageStart }}-{{ pageEnd }} 条，共 {{ filteredUsers.length }} 条</div>
-          <div class="pagination-actions">
-            <label class="page-size-field">
-              <span>每页</span>
-              <select v-model.number="pageSize">
-                <option :value="10">10</option>
-                <option :value="20">20</option>
-                <option :value="50">50</option>
-              </select>
-            </label>
-            <button class="btn btn-secondary btn-sm" type="button" :disabled="currentPage === 1"
-              @click="currentPage -= 1">
-              上一页
-            </button>
-            <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
-            <button class="btn btn-secondary btn-sm" type="button" :disabled="currentPage === totalPages"
-              @click="currentPage += 1">
-              下一页
-            </button>
-          </div>
-        </div>
+        <UserDirectory :users="users" :roles="roles" :catalog="permissions" :loading="loading" :editing-id="form.id"
+          :resetting="resetPasswordDialog.loading" :deleting-id="deletingId" @create="openCreateUser"
+          @edit="startEdit" @reset="openPasswordReset" @delete="deleteUser" @permissions="openPermissionDetails" />
       </section>
     </template>
 
     <AccountPasswordResetDialog :visible="resetPasswordDialog.visible" :loading="resetPasswordDialog.loading"
       :target="resetPasswordDialog.target" :credential="resetPasswordDialog.credential" :error="resetPasswordDialog.error"
       @confirm="resetUserPassword" @close="closePasswordReset" />
+    <UserPermissionDetailsDialog :user="permissionDetailsUser" :catalog="permissions" :roles="roles" :tables="inspectionTables"
+      :role-overrides="rolePermissionOverrides[permissionDetailsUser?.role] || {}" @close="permissionDetailsId = null" @edit="startEdit" />
 
     <div v-if="birthdayDialog.visible" class="modal-backdrop birthday-modal-backdrop" @click.self="closeBirthdayDialog">
       <div class="birthday-management-modal card-surface">
@@ -746,6 +627,8 @@ import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { clearAuthSession } from '@/utils/authSession'
 import AccountPasswordResetDialog from '@/components/AccountPasswordResetDialog.vue'
+import UserDirectory from '@/components/UserDirectory.vue'
+import UserPermissionDetailsDialog from '@/components/UserPermissionDetailsDialog.vue'
 import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
 import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
 import { isSupervisorRole } from '@/utils/roles'
@@ -779,12 +662,14 @@ const permissionDetailRef = ref(null)
 const rolePermissionKeyword = ref('')
 const activeRolePermissionCategory = ref('')
 const rolePermissionDetailRef = ref(null)
+const editorOpen = ref(false)
+const permissionDetailsId = ref(null)
+const permissionDetailsUser = computed(() => users.value.find(user => user.id === permissionDetailsId.value) || null)
+const openPermissionDetails = user => { permissionDetailsId.value = user.id }
 const selectPermissionCategory = (category) => { activePermissionCategory.value = category }
 const selectRolePermissionCategory = (category) => { activeRolePermissionCategory.value = category }
 watch(activePermissionCategory, () => { if (permissionDetailRef.value) permissionDetailRef.value.scrollTop = 0 }, { flush: 'post' })
 watch(activeRolePermissionCategory, () => { if (rolePermissionDetailRef.value) rolePermissionDetailRef.value.scrollTop = 0 }, { flush: 'post' })
-const currentPage = ref(1)
-const pageSize = ref(10)
 const formError = ref('')
 const message = reactive({
   text: '',
@@ -800,11 +685,6 @@ const birthdayDialog = reactive({
 })
 const birthdayMonthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
 
-const filters = reactive({
-  keyword: '',
-  role: '',
-  station_region: ''
-})
 const editorCardRef = ref(null)
 const tableCardRef = ref(null)
 
@@ -957,6 +837,7 @@ const createEmptyForm = () => ({
 })
 
 const form = reactive(createEmptyForm())
+const editorHasDraft = computed(() => Boolean(form.id || form.username || form.password || form.real_name || form.phone))
 
 const rolePermissionDialog = reactive({
   visible: false,
@@ -1077,39 +958,6 @@ const filteredStations = computed(() => {
     ].some((value) => String(value || '').toLowerCase().includes(keyword))
   })
 })
-
-const userRegionOptions = computed(() => {
-  return Array.from(
-    new Set(users.value.map((user) => user.station_region || '').filter(Boolean))
-  ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
-})
-
-const normalizeSearchText = (value) => String(value || '').toLowerCase().replace(/\s+/g, '')
-
-const filteredUsers = computed(() => {
-  const keyword = normalizeSearchText(filters.keyword)
-  return users.value.filter((user) => {
-    const matchedKeyword = !keyword || [
-      user.username,
-      roleLabel(user.role),
-      user.real_name,
-      user.phone,
-      user.station_name,
-      user.station_region
-    ].some((value) => normalizeSearchText(value).includes(keyword))
-    const matchedRole = !filters.role || user.role === filters.role
-    const matchedRegion = !filters.station_region || user.station_region === filters.station_region
-    return matchedKeyword && matchedRole && matchedRegion
-  })
-})
-
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredUsers.value.length / pageSize.value)))
-const pagedUsers = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredUsers.value.slice(start, start + pageSize.value)
-})
-const pageStart = computed(() => (filteredUsers.value.length ? (currentPage.value - 1) * pageSize.value + 1 : 0))
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredUsers.value.length))
 
 const editableRoles = computed(() => {
   if (form.id && form.role === 'root') {
@@ -1812,15 +1660,20 @@ const resetCreateTextFields = (options = {}) => {
   if (!options.keepMessage) setMessage('')
 }
 
-const resetFilters = () => {
-  Object.assign(filters, {
-    keyword: '',
-    role: '',
-    station_region: ''
-  })
+const showEditor = () => {
+  editorOpen.value = true
+  nextTick(() => editorCardRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
+const openCreateUser = () => {
+  if (editorHasDraft.value &&
+      !window.confirm('即将打开新增用户表单，当前编辑内容不会自动保存。是否继续？')) return
+  resetForm()
+  showEditor()
 }
 
 const startEdit = (user) => {
+  editorOpen.value = true
   Object.assign(form, {
     id: user.id,
     username: user.username || '',
@@ -1847,13 +1700,6 @@ const startEdit = (user) => {
       block: 'start'
     })
   })
-}
-
-const enabledPermissionLabels = (user) => {
-  if (user.role === 'root') return permissions.value.map((item) => `${item.category} · ${item.name}`)
-  return permissions.value
-    .filter((permission) => Boolean(user.permissions?.[permission.key]))
-    .map((permission) => `${permission.category} · ${permission.name}`)
 }
 
 const fetchUsers = async () => {
@@ -1892,7 +1738,6 @@ const fetchUsers = async () => {
         form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
       }
     }
-    if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
   } catch (error) {
     setMessage(error?.response?.data?.error || '用户数据加载失败。', 'error')
   } finally {
@@ -2035,6 +1880,7 @@ const saveUser = async () => {
     if (isCreating) resetCreateTextFields({ keepMessage: true })
     await fetchUsers()
     if (!isCreating) {
+      editorOpen.value = false
       nextTick(() => {
         tableCardRef.value?.scrollIntoView({
           behavior: 'smooth',
@@ -2109,17 +1955,6 @@ watch(stationKeyword, () => {
   if (!stillVisible) form.station_id = ''
 })
 
-watch(
-  () => [filters.keyword, filters.role, filters.station_region, pageSize.value],
-  () => {
-    currentPage.value = 1
-  }
-)
-
-watch(totalPages, (value) => {
-  if (currentPage.value > value) currentPage.value = value
-})
-
 onMounted(fetchUsers)
 
 onBeforeUnmount(() => {
@@ -2182,9 +2017,7 @@ onBeforeUnmount(() => {
 }
 
 .header-actions,
-.form-actions,
-.row-actions,
-.pagination-actions {
+.form-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2240,45 +2073,6 @@ onBeforeUnmount(() => {
 .editor-card.editing {
   border-color: #bfdbfe;
   box-shadow: 0 18px 40px rgba(37, 99, 235, 0.12);
-}
-
-.filter-bar {
-  display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) repeat(2, minmax(150px, 0.7fr)) auto;
-  gap: 12px;
-  align-items: end;
-  margin-bottom: 16px;
-  padding: 14px;
-  border-radius: 18px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-}
-
-.filter-field,
-.page-size-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.filter-field span,
-.page-size-field span {
-  color: #475569;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.filter-field input,
-.filter-field select,
-.page-size-field select {
-  width: 100%;
-  height: 38px;
-  border: 1px solid #d7e0ea;
-  border-radius: 11px;
-  padding: 0 11px;
-  background: #fff;
-  color: #0f172a;
-  font-size: 13px;
 }
 
 .editor-layout {
@@ -2417,8 +2211,6 @@ onBeforeUnmount(() => {
 .user-permission-groups .permission-item strong em { white-space: nowrap; }
 .user-permission-groups .inspection-scope-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
 .user-permission-groups .inspection-scope-item { min-width: 0; }
-.btn.btn-reset-password { border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412; }
-.btn.btn-reset-password:disabled { color: #64748b; border-color: #e2e8f0; background: #f1f5f9; }
 
 .permission-panel-head p {
   margin: 5px 0 14px;
@@ -2688,109 +2480,10 @@ onBeforeUnmount(() => {
   background: #f0fdf4;
 }
 
-.table-wrap {
-  overflow-x: auto;
-}
-
-.user-table {
-  min-width: 1300px;
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.user-table th,
-.user-table td {
-  padding: 13px 12px;
-  border-bottom: 1px solid #e2e8f0;
-  text-align: left;
-  white-space: nowrap;
-  vertical-align: middle;
-  color: #0f172a;
-  font-size: 13px;
-}
-
-.user-table th {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.user-table tr.active td {
-  background: #eff6ff;
-}
-
-.table-title {
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.table-sub {
-  margin-top: 5px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.permission-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-width: 320px;
-}
-
-.permission-chip {
-  display: inline-flex;
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.permission-chip.strong {
-  background: #ecfdf5;
-  color: #15803d;
-}
-
-.permission-chip.muted {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.permission-chip.personalized {
-  background: #fff7ed;
-  color: #c2410c;
-  border: 1px solid #fed7aa;
-}
-
 .empty-cell {
   text-align: center;
   color: #64748b;
   padding: 22px 12px;
-}
-
-.pagination-bar {
-  margin-top: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  color: #64748b;
-  font-size: 13px;
-}
-
-.pagination-summary,
-.page-indicator {
-  font-weight: 800;
-}
-
-.page-size-field {
-  flex-direction: row;
-  align-items: center;
-}
-
-.page-size-field select {
-  width: 76px;
 }
 
 .btn {
@@ -2826,12 +2519,6 @@ onBeforeUnmount(() => {
 .btn-danger {
   border-color: #fecaca;
   color: #dc2626;
-}
-
-.btn-locked {
-  border-color: #cbd5e1;
-  background: #f1f5f9;
-  color: #94a3b8;
 }
 
 .btn:disabled {
@@ -3274,14 +2961,6 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .filter-bar {
-    grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(140px, 0.7fr));
-  }
-
-  .filter-bar .btn {
-    grid-column: 1 / -1;
-    justify-self: flex-end;
-  }
 }
 
 @media (max-width: 980px) {
@@ -3292,8 +2971,7 @@ onBeforeUnmount(() => {
   .basic-form,
   .permission-groups,
   .inspection-scope-grid,
-  .station-picker-grid,
-  .filter-bar {
+  .station-picker-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3303,17 +2981,6 @@ onBeforeUnmount(() => {
 
   .station-picker-head {
     flex-direction: column;
-  }
-
-  .filter-bar .btn {
-    width: 100%;
-    justify-self: stretch;
-  }
-
-  .pagination-bar,
-  .pagination-actions {
-    flex-direction: column;
-    align-items: stretch;
   }
 
   .modal-backdrop {
