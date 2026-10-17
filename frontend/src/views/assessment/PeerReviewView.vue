@@ -496,6 +496,7 @@
 
 <script setup>
 import axios from 'axios'
+import { SUPERVISOR_ROLE_LABELS, SUPERVISOR_ROLES } from '@/utils/roles'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 const loading = ref(false)
@@ -518,7 +519,7 @@ const rolePickerState = reactive({
 })
 
 const roleLabelMap = {
-  supervisor: '督导组账号',
+  ...SUPERVISOR_ROLE_LABELS,
   quality_safety: '质安部账号',
   development_plan: '发展计划部账号',
   oil_gas: '油气事业部账号',
@@ -527,7 +528,7 @@ const roleLabelMap = {
   area_account: '片区账号',
   station_manager: '站点账号'
 }
-const roleOrder = ['supervisor', 'quality_safety', 'development_plan', 'oil_gas', 'non_oil', 'finance', 'area_account', 'station_manager']
+const roleOrder = [...SUPERVISOR_ROLES, 'quality_safety', 'development_plan', 'oil_gas', 'non_oil', 'finance', 'area_account', 'station_manager']
 
 const emptyTemplateForm = () => ({
   id: null,

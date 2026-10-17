@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
 import { operationsPages } from '../config/operationsCatalog'
+import { isSupervisorRole } from '../utils/roles'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
 import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisibility'
 
@@ -197,14 +198,14 @@ const canAccessPath = (path, role, permissions) => {
       permissions.edit_own_certificates
     )
   }
-  if (path === '/inspection/my-issues') return ['supervisor', 'station_manager'].includes(role)
+  if (path === '/inspection/my-issues') return isSupervisorRole(role) || role === 'station_manager'
   if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
   if (path === '/assessment/station-score') return hasPermission(role, permissions, 'view_station_scores')
   if (path === '/assessment/peer-review') return hasPermission(role, permissions, 'view_peer_reviews')
   if (path === '/training') return hasPermission(role, permissions, 'view_training')
   if (path === '/training/materials') return hasPermission(role, permissions, 'view_training_materials')
-  if (path === '/vehicle') return role === 'supervisor'
+  if (path === '/vehicle') return isSupervisorRole(role)
   return true
 }
 
@@ -250,7 +251,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (role === 'root') {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
   }
-  if (role === 'supervisor') candidates.push('/inspection/my-issues')
+  if (isSupervisorRole(role)) candidates.push('/inspection/my-issues')
   candidates.push('/feedback')
 
   return candidates.find((path) => canAccessPath(path, role, permissions) && isPathVisible(path)) || '/feedback'

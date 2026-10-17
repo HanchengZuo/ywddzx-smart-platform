@@ -14,9 +14,6 @@
         <button class="btn btn-primary" type="button" :disabled="loading" @click="openRolePermissionDialog">
           角色通用权限
         </button>
-        <button class="btn btn-danger" type="button" :disabled="resettingPermissions" @click="resetAllUserPermissions">
-          {{ resettingPermissions ? '重置中...' : '一键重置权限' }}
-        </button>
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchUsers">
           {{ loading ? '刷新中...' : '刷新数据' }}
         </button>
@@ -154,23 +151,10 @@
             </div>
 
             <div class="permission-workspace">
-              <aside class="permission-category-sidebar">
-                <label class="permission-search">
-                  <span>查找页面权限</span>
-                  <input v-model="permissionKeyword" type="search" placeholder="搜索页面或权限" />
-                </label>
-                <nav class="permission-category-nav" aria-label="页面权限分类">
-                  <button v-for="group in filteredPermissionGroups" :key="group.category" type="button"
-                    class="permission-category-button" :class="{ active: activePermissionCategory === group.category }"
-                    :aria-pressed="activePermissionCategory === group.category" aria-controls="user-permission-detail"
-                    @click="activePermissionCategory = group.category">
-                    <span>{{ group.category }}</span>
-                    <small>{{ countEnabledPermissions(group, form.permissions, form.role) }}/{{ group.items.length }}</small>
-                  </button>
-                  <p v-if="!filteredPermissionGroups.length" class="permission-empty">没有匹配的页面或权限</p>
-                </nav>
-              </aside>
-            <div id="user-permission-detail" class="permission-groups user-permission-groups">
+              <PermissionCategoryNav v-model:keyword="permissionKeyword" :groups="filteredPermissionGroups"
+                :permissions="form.permissions" :role="form.role" :active="activePermissionCategory"
+                controls="user-permission-detail" @select="selectPermissionCategory" />
+            <div id="user-permission-detail" ref="permissionDetailRef" class="permission-groups user-permission-groups">
               <div v-for="group in visiblePermissionGroups" :key="group.category" class="permission-group">
                 <div class="permission-group-title">
                   <span>{{ group.category }}</span>
@@ -566,6 +550,7 @@
       </div>
     </div>
 
+    <Teleport to="body">
     <div v-if="rolePermissionDialog.visible" class="modal-backdrop" @click.self="closeRolePermissionDialog">
       <div class="role-permission-modal card-surface">
         <div class="modal-head">
@@ -590,8 +575,12 @@
           </div>
         </div>
 
-        <div class="permission-groups role-template-groups">
-          <div v-for="group in roleTemplatePermissionGroups" :key="`role-${group.category}`" class="permission-group">
+        <div class="permission-workspace role-template-workspace">
+          <PermissionCategoryNav v-model:keyword="rolePermissionKeyword" :groups="filteredRolePermissionGroups"
+            :permissions="rolePermissionDialog.permissions" :role="rolePermissionDialog.role" :active="activeRolePermissionCategory"
+            controls="role-permission-detail" @select="selectRolePermissionCategory" />
+        <div id="role-permission-detail" ref="rolePermissionDetailRef" class="permission-groups user-permission-groups role-template-groups">
+          <div v-for="group in visibleRolePermissionGroups" :key="`role-${group.category}`" class="permission-group">
             <div class="permission-group-title">
               <span>{{ group.category }}</span>
               <em v-if="group.hasScopedLayout">角色默认</em>
@@ -735,6 +724,7 @@
           </div>
         </div>
 
+        </div>
         <div v-if="rolePermissionDialog.error" class="form-error">{{ rolePermissionDialog.error }}</div>
         <div class="modal-actions">
           <button class="btn btn-secondary" type="button" @click="resetRoleTemplateToSystemDefaults">
@@ -742,11 +732,12 @@
           </button>
           <button class="btn btn-secondary" type="button" @click="closeRolePermissionDialog">取消</button>
           <button class="btn btn-primary" type="button" :disabled="rolePermissionDialog.saving" @click="saveRolePermissions">
-            {{ rolePermissionDialog.saving ? '保存中...' : '保存角色通用权限' }}
+            {{ rolePermissionDialog.saving ? '保存中...' : '保存角色模板' }}
           </button>
         </div>
       </div>
     </div>
+    </Teleport>
   </div>
 </template>
 
@@ -755,7 +746,9 @@ import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { clearAuthSession } from '@/utils/authSession'
 import AccountPasswordResetDialog from '@/components/AccountPasswordResetDialog.vue'
-import { countEnabledPermissions, filterPermissionGroups, resolvePermissionCategory } from '@/utils/permissionPanel'
+import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
+import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
+import { isSupervisorRole } from '@/utils/roles'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -778,11 +771,18 @@ const loading = ref(false)
 const saving = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
-const resettingPermissions = ref(false)
 const deletingId = ref(null)
 const resetPasswordDialog = reactive({ visible: false, loading: false, target: null, credential: null, error: '' })
 const permissionKeyword = ref('')
 const activePermissionCategory = ref('')
+const permissionDetailRef = ref(null)
+const rolePermissionKeyword = ref('')
+const activeRolePermissionCategory = ref('')
+const rolePermissionDetailRef = ref(null)
+const selectPermissionCategory = (category) => { activePermissionCategory.value = category }
+const selectRolePermissionCategory = (category) => { activeRolePermissionCategory.value = category }
+watch(activePermissionCategory, () => { if (permissionDetailRef.value) permissionDetailRef.value.scrollTop = 0 }, { flush: 'post' })
+watch(activeRolePermissionCategory, () => { if (rolePermissionDetailRef.value) rolePermissionDetailRef.value.scrollTop = 0 }, { flush: 'post' })
 const currentPage = ref(1)
 const pageSize = ref(10)
 const formError = ref('')
@@ -982,7 +982,7 @@ const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
     group.items.push(permission)
   })
 
-  return groups.map((group) => {
+  return sortPermissionGroups(groups).map((group) => {
     const layout = scopedPermissionLayouts[group.category]
     if (!layout) {
       return {
@@ -997,7 +997,7 @@ const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
 
     const scopeKeys = new Set(layout.scopeKeys || [])
     const actionKeys = new Set(layout.actionKeys || [])
-    const readonlyItems = includeReadonlyItems && role === 'supervisor' ? (layout.readonlyItems || []) : []
+    const readonlyItems = includeReadonlyItems && isSupervisorRole(role) ? (layout.readonlyItems || []) : []
     return {
       ...group,
       hasScopedLayout: true,
@@ -1017,6 +1017,11 @@ watch(filteredPermissionGroups, (groups) => {
   activePermissionCategory.value = resolvePermissionCategory(groups, activePermissionCategory.value)
 }, { immediate: true })
 const roleTemplatePermissionGroups = computed(() => buildPermissionGroupsFor(rolePermissionDialog.role, false))
+const filteredRolePermissionGroups = computed(() => filterPermissionGroups(roleTemplatePermissionGroups.value, rolePermissionKeyword.value))
+const visibleRolePermissionGroups = computed(() => filteredRolePermissionGroups.value.filter((group) => group.category === activeRolePermissionCategory.value))
+watch(filteredRolePermissionGroups, (groups) => {
+  activeRolePermissionCategory.value = resolvePermissionCategory(groups, activeRolePermissionCategory.value)
+}, { immediate: true })
 const roleTemplateRoles = computed(() => roles.value.filter((item) => item.value !== 'root'))
 
 const stationRegionOptions = computed(() => {
@@ -1967,30 +1972,6 @@ const importUsers = async (event) => {
   }
 }
 
-const resetAllUserPermissions = async () => {
-  const confirmed = window.confirm(
-    '确定要把所有用户的权限重置为角色通用权限吗？\n\n这会清空所有用户的个性化权限、个性化检查表范围和个性化片区范围；角色通用权限模板本身不会被修改。'
-  )
-  if (!confirmed) return
-
-  try {
-    resettingPermissions.value = true
-    setMessage('')
-    const response = await axios.post('/api/management/users/reset-permissions-to-role-defaults', {
-      user_id: currentUserId
-    })
-    setMessage(response.data?.message || '所有用户权限已重置为角色通用权限。', 'success')
-    if (form.id) {
-      resetForm({ keepMessage: true })
-    }
-    await fetchUsers()
-  } catch (error) {
-    setMessage(error?.response?.data?.error || '一键重置权限失败，请稍后重试。', 'error')
-  } finally {
-    resettingPermissions.value = false
-  }
-}
-
 const validateForm = () => {
   if (!form.username) return '请填写用户名。'
   if (!form.id && !form.password) return '请填写初始密码。'
@@ -2420,20 +2401,8 @@ onBeforeUnmount(() => {
 
 .permission-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .permission-overview { flex-shrink: 0; padding: 7px 11px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1d4ed8; font-size: 12px; font-weight: 800; }
-.permission-workspace { display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: start; gap: 18px; }
-.permission-category-sidebar { position: sticky; top: 100px; min-width: 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
-.permission-search { display: grid; gap: 7px; padding: 4px 3px 12px; color: #475569; font-size: 12px; font-weight: 800; }
-.permission-search input { box-sizing: border-box; min-width: 0; width: 100%; height: 36px; border: 1px solid #d7e0ea; border-radius: 9px; padding: 0 9px; font: inherit; background: #f8fafc; }
-.permission-category-nav { display: flex; flex-direction: column; gap: 4px; max-height: min(65vh, 680px); overflow: auto; }
-.permission-category-button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 11px 10px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #475569; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
-.permission-category-button span { min-width: 0; line-height: 1.5; }
-.permission-category-button small { flex-shrink: 0; padding: 2px 6px; border-radius: 6px; background: #f1f5f9; color: #64748b; font-size: 11px; font-variant-numeric: tabular-nums; }
-.permission-category-button:hover { background: #f8fafc; }
-.permission-category-button.active { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; font-weight: 800; }
-.permission-category-button.active small { background: #dbeafe; color: #1d4ed8; }
-.permission-category-button:focus-visible, .permission-search input:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
-.permission-empty { margin: 12px 4px; color: #64748b; font-size: 12px; line-height: 1.7; }
-.permission-groups.user-permission-groups { display: block; min-width: 0; }
+.permission-workspace { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; gap: 18px; height: min(68vh, 720px); min-height: 360px; overflow: hidden; overflow-anchor: none; }
+.permission-groups.user-permission-groups { display: block; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; scrollbar-gutter: stable; }
 .user-permission-groups .permission-group { padding: 20px; }
 .user-permission-groups .permission-group-title { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid #e2e8f0; font-size: 16px; }
 .user-permission-groups .permission-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }
@@ -3236,7 +3205,7 @@ onBeforeUnmount(() => {
 
 .role-template-groups .permission-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 10px;
   align-items: stretch;
 }
@@ -3274,14 +3243,14 @@ onBeforeUnmount(() => {
 }
 
 .role-template-groups .inspection-scope-grid {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   max-height: 300px;
   overflow: auto;
   padding: 2px 4px 2px 0;
 }
 
 .role-template-groups .region-scope-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   max-height: 220px;
 }
 
@@ -3295,6 +3264,9 @@ onBeforeUnmount(() => {
   padding-top: 14px;
   border-top: 1px solid #e2e8f0;
 }
+
+.role-template-workspace { flex: 1 1 auto; height: min(58vh, 650px); min-height: 180px; }
+.role-template-toolbar, .role-permission-modal .modal-head { flex: 0 0 auto; }
 
 @media (max-width: 1280px) {
   .permission-groups,
@@ -3314,12 +3286,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 980px) {
   .permission-panel-head { flex-direction: column; gap: 0; margin-bottom: 14px; }
-  .permission-workspace { grid-template-columns: 1fr; gap: 12px; }
-  .permission-category-sidebar { position: static; }
-  .permission-search { max-width: 100%; }
-  .permission-category-nav { flex-direction: row; max-height: none; overflow-x: auto; padding-bottom: 4px; }
-  .permission-category-button { flex: 0 0 auto; width: auto; }
-  .permission-category-button span { white-space: nowrap; }
+  .permission-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
   .user-permission-groups .permission-group { padding: 14px; }
 
   .basic-form,
@@ -3388,5 +3355,16 @@ onBeforeUnmount(() => {
   .modal-actions .btn {
     width: 100%;
   }
+
+  .role-permission-modal { height: calc(100dvh - 28px); box-sizing: border-box; padding: 14px; }
+  .role-permission-modal .modal-head { flex-direction: row; gap: 10px; margin-bottom: 10px; }
+  .role-permission-modal .modal-head h3 { font-size: 18px; }
+  .role-permission-modal .modal-head p { margin-top: 5px; font-size: 12px; line-height: 1.5; }
+  .role-permission-modal .modal-head .section-kicker { display: none; }
+  .role-permission-modal .close-btn { flex: 0 0 32px; width: 32px; height: 32px; }
+  .role-template-toolbar { padding: 10px; margin-bottom: 10px; }
+  .role-template-note { display: none; }
+  .role-permission-modal .modal-actions { flex-wrap: nowrap; gap: 6px; margin-top: 10px; padding-top: 10px; }
+  .role-permission-modal .modal-actions .btn { flex: 1; min-width: 0; width: auto; padding: 10px 6px; font-size: 12px; }
 }
 </style>

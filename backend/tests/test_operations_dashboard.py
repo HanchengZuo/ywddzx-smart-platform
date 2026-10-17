@@ -29,7 +29,7 @@ class OperationsTest(unittest.TestCase):
         for key in PERMISSIONS.values():
             for role in core_app.ROLE_OPTIONS:
                 self.assertEqual(core_app.role_default_permission(role, key), role in (
-                    'root','supervisor','quality_safety','development_plan','oil_gas','non_oil','finance','area_account'))
+                    'root','supervisor','supervisor_manager','quality_safety','development_plan','oil_gas','non_oil','finance','area_account'))
 
     def test_new_roles_use_effective_grants_and_preserve_individual_denials(self):
         with patch.object(core_app, 'get_role_permission_overrides', return_value={}), \

@@ -233,6 +233,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 
 const loading = ref(false)
@@ -369,7 +370,7 @@ const formatMoney = (value) => `¥${Number(value || 0).toFixed(6)}`
 
 const roleLabel = (role) => {
   if (role === 'root') return '系统管理员'
-  if (role === 'supervisor') return '督导组'
+  if (isSupervisorRole(role)) return SUPERVISOR_ROLE_LABELS[role]
   if (role === 'station_manager') return '站点账号'
   if (role === 'quality_safety') return '质安部'
   if (role === 'development_plan') return '发展计划部'

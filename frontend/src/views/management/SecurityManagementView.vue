@@ -172,7 +172,7 @@
 
         <div class="policy-grid">
           <label><span>普通账号最短长度</span><input v-model.number="policyForm.normal_min_length" type="number" min="8" max="64" /><small>建议保持 12 位，后续可逐步提高。</small></label>
-          <label><span>高权限账号最短长度</span><input v-model.number="policyForm.privileged_min_length" type="number" min="8" max="64" /><small>适用于 root、supervisor 等账号。</small></label>
+          <label><span>高权限账号最短长度</span><input v-model.number="policyForm.privileged_min_length" type="number" min="8" max="64" /><small>适用于 root、督导组管理人员及督导组组员。</small></label>
           <label><span>最大密码长度</span><input v-model.number="policyForm.max_length" type="number" min="64" max="256" /><small>支持长密码短语，至少为 64 位。</small></label>
           <label><span>禁止重复最近密码</span><input v-model.number="policyForm.history_count" type="number" min="0" max="20" /><small>设置为 0 表示不检查密码历史。</small></label>
           <label><span>整改宽限期（天）</span><input v-model.number="policyForm.grace_period_days" type="number" min="0" max="365" /><small>用于风险整改安排，不做机械定期换密。</small></label>
@@ -469,7 +469,7 @@ const confirmDialog = async () => {
 }
 const viewAccountLogs = (account) => { logFilters.target_user_id = String(account.id); logFilters.keyword = ''; activeTab.value = 'logs'; loadLogs(1) }
 const clearAccountLogFilter = () => { logFilters.target_user_id = ''; loadLogs(1) }
-const actionLabel = (action) => ({ force_change: '强制下次登录改密', force_change_immediately: '立即执行强制改密', cancel_force_change: '取消强制改密', invalidate_sessions: '注销现有会话', suspend: '暂停账号', restore: '恢复账号', batch_force_change: '批量强制改密', batch_invalidate_sessions: '批量注销会话', bulk_password_initialization: '批量初始化账号密码', password_change: '用户修改密码', administrator_password_reset: '管理员重置密码', password_policy_update: '修改密码策略', plaintext_password_migration: '明文密码安全迁移', passkey_login: 'Passkey登录', root_passkey_bootstrap: 'root首次绑定Passkey', passkey_registration: '绑定Passkey', passkey_rename: '修改Passkey名称', passkey_delete: '删除Passkey', account_impersonation_start: 'Root代入账号', account_impersonation_end: 'Root退出代入' }[action] || action)
+const actionLabel = (action) => ({ supervisor_role_split: '调整为督导组管理人员', force_change: '强制下次登录改密', force_change_immediately: '立即执行强制改密', cancel_force_change: '取消强制改密', invalidate_sessions: '注销现有会话', suspend: '暂停账号', restore: '恢复账号', batch_force_change: '批量强制改密', batch_invalidate_sessions: '批量注销会话', bulk_password_initialization: '批量初始化账号密码', password_change: '用户修改密码', administrator_password_reset: '管理员重置密码', password_policy_update: '修改密码策略', plaintext_password_migration: '明文密码安全迁移', passkey_login: 'Passkey登录', root_passkey_bootstrap: 'root首次绑定Passkey', passkey_registration: '绑定Passkey', passkey_rename: '修改Passkey名称', passkey_delete: '删除Passkey', account_impersonation_start: 'Root代入账号', account_impersonation_end: 'Root退出代入' }[action] || action)
 
 onMounted(async () => { await Promise.all([loadAccounts(1), loadPolicy()]) })
 </script>

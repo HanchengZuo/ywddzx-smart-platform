@@ -683,6 +683,7 @@ import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
+import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
 import {
@@ -979,7 +980,7 @@ const passwordRuleStatus = computed(() => {
 const isRoot = computed(() => authState.role === 'root')
 const isImpersonating = computed(() => Boolean(authState.impersonation?.active))
 const canSwitchAccounts = computed(() => isRoot.value || isImpersonating.value)
-const isSupervisor = computed(() => authState.role === 'supervisor')
+const isSupervisor = computed(() => isSupervisorRole(authState.role))
 const isStationManager = computed(() => authState.role === 'station_manager')
 const isQualitySafety = computed(() => authState.role === 'quality_safety')
 const isDevelopmentPlan = computed(() => authState.role === 'development_plan')
@@ -1072,7 +1073,7 @@ const canViewManagementSection = computed(() => (
 ))
 const currentRoleLabel = computed(() => {
   if (authState.role === 'root') return '系统管理员'
-  if (authState.role === 'supervisor') return '督导组账号'
+  if (isSupervisorRole(authState.role)) return SUPERVISOR_ROLE_LABELS[authState.role]
   if (authState.role === 'quality_safety') return '质安部账号'
   if (authState.role === 'development_plan') return '发展计划部账号'
   if (authState.role === 'oil_gas') return '油气事业部账号'

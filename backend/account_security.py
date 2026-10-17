@@ -5,7 +5,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 
 PASSWORD_HASH_PREFIXES = ("scrypt:", "pbkdf2:")
-PRIVILEGED_PASSWORD_ROLES = {"root", "supervisor"}
+from roles import PRIVILEGED_ROLES
+
+PRIVILEGED_PASSWORD_ROLES = PRIVILEGED_ROLES
 DEFAULT_WEAK_PASSWORDS = [
     "123456",
     "12345678",

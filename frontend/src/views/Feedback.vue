@@ -232,6 +232,7 @@
 
 <script setup>
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
+import { SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
@@ -376,7 +377,7 @@ const handleFeedbackBeforeUnload = () => {
 const roleLabel = (role) => {
   const map = {
     root: '系统管理员',
-    supervisor: '督导组',
+    ...SUPERVISOR_ROLE_LABELS,
     station_manager: '站点账号',
     quality_safety: '质安部',
     development_plan: '发展计划部',

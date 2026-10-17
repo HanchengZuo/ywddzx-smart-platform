@@ -178,7 +178,7 @@ for (const component of ['OperationsDashboardView', 'RegionTable', 'OperationsSc
 }
 test('cockpit and expert share one permission with guarded redirects from retired menus', () => {
   assert.equal(operationsPages.length, 2)
-  assert.equal(operationsPages[1].permission, operationsPages[0].permission)
+  assert.notEqual(operationsPages[1].permission, operationsPages[0].permission)
   assert.equal(operationsPages[1].path, '/operations/expert')
   assert.equal(operationsPages[0].permission, 'view_operations_overview')
   assert.equal(operationsPages[0].title, '运营驾驶舱')
@@ -206,7 +206,7 @@ test('expert menu follows station map with unchanged independent access checks',
     ['运营驾驶舱', '站点地图', '专家问答'],
   )
   assert.equal(operationsMenuPages[1].permission, 'view_station_map')
-  assert.equal(operationsMenuPages[2].permission, 'view_operations_overview')
+  assert.equal(operationsMenuPages[2].permission, 'view_expert_qa')
   assert.deepEqual(
     PAGE_VISIBILITY_GROUPS[0].pages.map((page) => page.path),
     operationsMenuPages.map((page) => page.path),

@@ -1321,6 +1321,7 @@
 
 <script setup>
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
+import { isSupervisorRole } from '@/utils/roles'
 import { reviewOptionsFor } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
@@ -2373,7 +2374,7 @@ const fetchInspectorUserOptions = async () => {
       params: { _ts: Date.now() }
     })
     inspectorUserOptions.value = (response.data || [])
-      .filter((item) => ['root', 'supervisor'].includes(item.role))
+      .filter((item) => item.role === 'root' || isSupervisorRole(item.role))
       .map((item) => ({
         id: String(item.id),
         username: item.username || '',

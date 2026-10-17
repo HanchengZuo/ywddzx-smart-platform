@@ -10,7 +10,7 @@ export const operationsPages = [
   {
     key: 'expert',
     path: '/operations/expert',
-    permission: 'view_operations_overview',
+    permission: 'view_expert_qa',
     title: '专家问答',
     icon: '问',
     description: '基于全局业务资料和数据库事实，提供带来源的专家问答。',

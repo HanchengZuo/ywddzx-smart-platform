@@ -118,13 +118,21 @@ class ExpertApiTests(unittest.TestCase):
         register_expert_qa(self.app, self.core)
         self.client = self.app.test_client()
 
-    def test_access_is_exactly_cockpit_access_for_every_endpoint(self):
-        self.assertEqual(PERMISSION, 'view_operations_overview')
+    def test_access_uses_independent_expert_permission_for_every_endpoint(self):
+        self.assertEqual(PERMISSION, 'view_expert_qa')
         self.core['has_permission'].return_value = False
         for method, path in [('get', '/meta'), ('get', '/questions'), ('post', '/questions'), ('get', '/questions/unknown')]:
             response = getattr(self.client, method)('/api/operations/expert' + path)
             self.assertEqual(response.status_code, 403)
             self.core['has_permission'].assert_called_with(self.cur, self.user, PERMISSION)
+
+    def test_cockpit_grant_does_not_grant_expert_and_expert_does_not_require_cockpit(self):
+        for cockpit, expert, status in ((True, False, 403), (False, True, 200)):
+            with self.subTest(cockpit=cockpit, expert=expert):
+                self.core['has_permission'].side_effect = lambda cur, user, key: {
+                    'view_operations_overview': cockpit, 'view_expert_qa': expert,
+                }.get(key, False)
+                self.assertEqual(self.client.get('/api/operations/expert/meta').status_code, status)
 
     def test_global_scope_is_visible_and_read_only_metadata_connection(self):
         response = self.client.get('/api/operations/expert/meta')

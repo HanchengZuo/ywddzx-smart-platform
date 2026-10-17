@@ -1,4 +1,4 @@
-"""Global business-only RAG for cockpit-authorized experts. Never model-generated SQL."""
+"""Global business-only RAG for independently authorized experts. Never model-generated SQL."""
 from datetime import date
 from functools import lru_cache
 import json
