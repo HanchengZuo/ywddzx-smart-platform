@@ -17,12 +17,11 @@ class KnowledgeTests(unittest.TestCase):
         self.addCleanup(route_loader.stop)
 
     def test_request_bounds_and_global_period(self):
-        question, options = normalize_request({'question': '本月有什么问题', 'region': ' 浦东 '})
-        self.assertEqual(options, {'date_from': '', 'date_to': '', 'region': '浦东'})
+        question, options = normalize_request({'question': '系统有什么问题', 'region': ' 浦东 ',
+                                               'date_from': '2026-01-01', 'date_to': '2026-01-31'})
+        self.assertEqual(options, {'date_from': '', 'date_to': '', 'region': ''})
         for data in [[], {}, {'question': 'a'}, {'question': 'a' * 1501},
-                     {'question': '测试', 'date_from': '2026-02-30', 'date_to': '2026-03-01'},
-                     {'question': '测试', 'date_from': '2026-02-02', 'date_to': '2026-02-01'},
-                     {'question': '测试', 'date_to': '2026-10-01'}, {'question': '测试', 'region': ['x']}]:
+                     {'question': '2026年2月30日的问题'}, {'question': '2026年3月2日至2026年2月1日的问题'}]:
             with self.subTest(data=data), self.assertRaises(ValueError):
                 normalize_request(data)
 
@@ -225,8 +224,25 @@ class ExpertApiTests(unittest.TestCase):
         self.assertIn('failed', updates)
 
     def test_foreign_parent_does_not_retrieve_or_call_ai(self):
-        calls, retrievals = self.run_worker(parent='a' * 32)
-        self.assertEqual((calls, retrievals), (0, 0))
+        self.cur.fetchone.return_value = None
+        with patch('expert_qa.executor.submit') as submit:
+            response = self.client.post('/api/operations/expert/questions', json={'question': '铅封要求', 'parent_id': 'a' * 32})
+        self.assertEqual(response.status_code, 400)
+        submit.assert_not_called()
+
+    def test_history_summaries_do_not_read_answer_blobs_and_thread_filter_is_owned(self):
+        self.cur.fetchall.return_value = []
+        self.assertEqual(self.client.get('/api/operations/expert/questions?summary=1').status_code, 200)
+        statement, params = self.cur.execute.call_args.args
+        self.assertNotIn(',result', statement)
+        self.assertIn('LIMIT 100', statement)
+        self.assertEqual(params, [17, identity(self.user)])
+        root = 'a' * 32
+        self.assertEqual(self.client.get('/api/operations/expert/questions?conversation_id=' + root).status_code, 200)
+        statement, params = self.cur.execute.call_args.args
+        self.assertIn("COALESCE(options->>'conversation_id',id)=%s", statement)
+        self.assertEqual(params, [17, identity(self.user), root])
+        self.assertEqual(self.client.get('/api/operations/expert/questions?conversation_id=invalid').status_code, 400)
 
 
 if __name__ == '__main__':

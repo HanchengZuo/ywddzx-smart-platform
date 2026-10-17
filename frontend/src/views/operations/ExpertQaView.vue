@@ -4,133 +4,162 @@
       <div>
         <div class="page-kicker">运营系统 / KNOWLEDGE DESK</div>
         <h2>专家问答</h2>
-        <p class="page-desc">从规范到业务事实，让每个回答有据可查。</p>
+        <p>直接提问，连接全部系统业务数据与知识。回答有依据，追问有上下文。</p>
       </div>
-      <span class="status-pill info">{{ meta.model || '所选大模型' }} · 知识检索增强</span>
+      <div class="header-status">
+        <span class="status-dot"></span>
+        <div>
+          <strong>{{ meta.model || '所选大模型' }}</strong
+          ><small>全局业务资料 · 检索增强</small>
+        </div>
+      </div>
     </header>
-    <button
-      class="knowledge-toggle"
-      type="button"
-      :aria-expanded="showKnowledge"
-      @click="showKnowledge = !showKnowledge"
-    >
-      {{ showKnowledge ? '收起查询范围与知识源' : '查询范围与知识源' }} ·
-      {{ allHistory ? '全部历史' : options.date_from + ' 至 ' + options.date_to }}
-    </button>
+
+    <div class="mobile-toolbar">
+      <button class="btn" @click="showHistory = !showHistory">
+        {{ showHistory ? '收起会话' : '最近会话' }}</button
+      ><button class="btn" :disabled="loading" @click="newConversation">新建问答</button>
+    </div>
     <div class="expert-grid">
-      <aside class="knowledge-panel card-surface" :class="{ 'knowledge-expanded': showKnowledge }">
-        <div class="panel-title">
-          <span class="panel-index">01</span>
-          <h3>提问范围</h3>
-        </div>
-        <p class="scope-notice">
-          {{ meta.scope || '查询全局业务资料，不沿用其他菜单的片区与检查表限制。' }}
-        </p>
-        <label class="all-history"
-          ><input v-model="allHistory" type="checkbox" :disabled="busy" /> 查询全部登记历史</label
-        >
-        <div class="date-pair">
-          <label
-            >开始日期<input v-model="options.date_from" type="date" :disabled="busy || allHistory"
-          /></label>
-          <label
-            >结束日期<input v-model="options.date_to" type="date" :disabled="busy || allHistory"
-          /></label>
-        </div>
-        <label class="region-field"
-          >站点所属片区<input
-            v-model.trim="options.region"
-            :disabled="busy"
-            placeholder="留空查询全部；请输入完整片区名称"
-            maxlength="100"
-        /></label>
-        <p class="muted">
-          日期只限制问题、亮点登记和巡检记录。规范、计划周期、证照有效期与报告成稿不受此日期限制。
-        </p>
-        <div class="panel-title">
-          <span class="panel-index">02</span>
-          <h3>知识与业务资料</h3>
-        </div>
-        <div class="source-inventory">
-          <span v-for="kind in meta.sources" :key="kind"><i></i>{{ kind }}</span>
-        </div>
-        <p class="muted">
-          不读取密码、登录凭据、密钥或备份内容。文档仅提取可读取文字，不识别照片或扫描页。
-        </p>
-        <div class="panel-title">
-          <span class="panel-index">03</span>
-          <h3>从这里开始</h3>
-        </div>
+      <aside class="history-panel card-surface" :class="{ expanded: showHistory }">
         <button
-          v-for="example in examples"
-          :key="example"
-          type="button"
-          class="example"
-          :disabled="busy"
-          @click="question = example"
+          class="btn btn-primary new-conversation"
+          :disabled="loading"
+          @click="newConversation"
         >
-          {{ example }}<span>↗</span>
+          ＋ 新建问答
         </button>
+        <label class="sr-only" for="conversation-search">搜索最近会话</label>
+        <input
+          id="conversation-search"
+          v-model.trim="historyKeyword"
+          type="search"
+          class="history-search"
+          placeholder="搜索最近会话"
+        />
+        <div class="history-heading">
+          <h3>最近会话</h3>
+          <span>{{ groups.length }}</span>
+        </div>
+        <nav class="history-list" aria-label="最近问答会话">
+          <p v-if="loading" class="muted">正在读取会话…</p>
+          <p v-else-if="!groups.length" class="muted">
+            {{ historyKeyword ? '没有匹配的会话' : '还没有问答，从右侧开始' }}
+          </p>
+          <button
+            v-for="group in groups"
+            :key="group.id"
+            class="history-item"
+            :class="{ active: activeConversation === group.id }"
+            :aria-current="activeConversation === group.id ? 'true' : undefined"
+            @click="selectConversation(group.id)"
+          >
+            <strong>{{ group.title }}</strong
+            ><span
+              ><time>{{ group.updatedAt.slice(5, 16) }}</time
+              ><small>{{ group.running ? '回答中' : group.items.length + ' 轮问答' }}</small></span
+            >
+          </button>
+        </nav>
+        <details class="knowledge-inventory">
+          <summary>可检索的知识与数据</summary>
+          <div class="source-inventory">
+            <span v-for="kind in meta.sources" :key="kind">{{ kind }}</span>
+          </div>
+          <p>
+            默认检索全部历史，不沿用其他页面筛选。不读取密码、密钥、登录凭据或备份内容；暂不识别照片与扫描页。
+          </p>
+        </details>
+        <p class="history-note">仅展示本人的最近会话摘要，点击后读取回答。不会自动调用 AI。</p>
       </aside>
+
       <section class="conversation-panel card-surface">
         <div class="conversation-header">
           <div>
-            <h3>业务咨询台</h3>
-            <p>回答仅作辅助参考，关键判断请核对原始资料。</p>
+            <h3>{{ activeConversation ? '业务咨询' : '开始一次有据可查的对话' }}</h3>
+            <p>
+              {{
+                parentId
+                  ? '已连接当前会话上下文，可继续追问'
+                  : '默认检索全部系统资料，无需设置提问范围'
+              }}
+            </p>
           </div>
-          <button class="btn btn-light" :disabled="busy || loading" @click="newConversation">
-            新建问答
-          </button>
+          <span class="conversation-badge">全库检索</span>
         </div>
         <div v-if="error" class="error-notice" role="alert">{{ error }}</div>
-        <div v-if="loading" class="empty-conversation" role="status">正在读取最近问答…</div>
+        <div v-if="notice" class="copy-notice" role="status">{{ notice }}</div>
+        <div v-if="loading || reading" class="empty-conversation" role="status">正在读取会话…</div>
         <div v-else-if="!items.length" class="empty-conversation">
           <span class="empty-symbol">问</span>
-          <h3>把一个业务问题，交给真实资料回答</h3>
-          <p>可以询问规范要求、问题分布、整改与申诉流程，或某座站点的相关记录。</p>
+          <h3>查规范、看数据、理清业务流程</h3>
+          <p>说明你想了解的事情即可。需要某个月或某座站点时，直接写在问题里。</p>
+          <div class="starter-grid">
+            <button
+              v-for="example in examples"
+              :key="example.text"
+              class="starter"
+              @click="useQuestion(example.text)"
+            >
+              <span>{{ example.label }}</span
+              ><strong>{{ example.text }}</strong
+              ><em>填入问题 ↗</em>
+            </button>
+          </div>
         </div>
-        <div v-else ref="turns" class="turns">
+        <div v-else ref="turns" class="turns" aria-label="问答记录">
           <article v-for="item in items" :key="item.id" class="turn">
             <div class="question-bubble">
               <span class="turn-label"
                 >你的提问 <time>{{ item.created_at }}</time></span
               >
               <p>{{ item.question }}</p>
-              <small>{{ rangeLabel(item.options) }}</small>
             </div>
             <div class="answer-content">
               <div v-if="pending(item.status)" class="answer-progress" role="status">
-                <i></i><strong>{{ stages[item.status] }}</strong>
-                <p>后台处理中，离开页面后可从最近问答继续查看。</p>
-              </div>
-              <p v-else-if="item.status === 'failed'" class="error-notice">
-                {{ item.error_message || '回答未完成，请重新提问。' }}
-              </p>
-              <template v-else-if="item.result">
-                <div class="answer-meta">
-                  <span>专家回答</span
-                  ><small
-                    >{{
-                      item.result.cache_hit
-                        ? '已复用相同问题与资料的历史答案 · 未调用AI'
-                        : '已调用 ' + item.result.model
-                    }}
-                    · {{ item.updated_at }}</small
+                <div class="progress-steps">
+                  <span
+                    v-for="(label, status) in stages"
+                    :key="status"
+                    :class="{ active: item.status === status }"
+                    >{{ label }}</span
                   >
                 </div>
+                <strong><i></i>{{ stages[item.status] }}</strong>
+                <p>正在后台处理，可先整理下一个问题；离开页面后仍可查看结果。</p>
+              </div>
+              <div v-else-if="item.status === 'failed'" class="failed-answer">
+                <p class="error-notice">{{ item.error_message || '回答未完成，请重新提问。' }}</p>
+                <button class="follow-up" :disabled="busy" @click="retry(item)">
+                  重新填写此问题
+                </button>
+              </div>
+              <template v-else-if="item.result">
+                <div class="answer-meta">
+                  <strong>专家回答</strong
+                  ><small
+                    >{{ item.result.cache_hit ? '复用历史答案 · 未调用AI' : item.result.model }} ·
+                    {{ item.updated_at }}</small
+                  ><button class="copy-answer" @click="copyAnswer(item)">复制回答</button>
+                </div>
+                <p v-if="scopeSummary(item.result.retrieval?.options)" class="recognized-scope">
+                  本次识别的统计口径：{{ scopeSummary(item.result.retrieval.options) }}
+                </p>
                 <div
                   v-for="(paragraph, index) in item.result.answer.paragraphs"
                   :key="index"
                   class="answer-paragraph"
                 >
+                  <h4 v-if="paragraph.title">{{ paragraph.title }}</h4>
                   <p>{{ paragraph.text }}</p>
                   <a
                     v-for="ref in paragraph.sources"
                     :key="ref"
                     :href="'#' + item.id + '-' + ref"
                     class="citation"
+                    :title="sourceTitle(item, ref)"
                     @click.prevent="focusSource(item.id, ref)"
-                    >{{ ref }}</a
+                    >{{ ref }} · 依据</a
                   >
                 </div>
                 <p v-if="item.result.answer.caveat" class="caveat">
@@ -138,14 +167,22 @@
                 </p>
                 <details class="evidence-panel">
                   <summary>
-                    核对回答依据 <span>{{ item.result.sources.length }} 份来源</span>
+                    核对回答依据
+                    <span
+                      >引用 {{ citedSources(item.result).length }} 份 / 检索
+                      {{ item.result.sources.length }} 份</span
+                    >
                   </summary>
                   <div class="retrieval-note">
-                    <p>
-                      这是回答时保存的证据快照，不会随业务变化实时改写；需核对最新数据时请重新提问。
+                    <p>回答使用生成时的资料快照，不会随业务变化自动改写。</p>
+                    <p v-if="item.result.retrieval?.retrieved_at">
+                      资料检索时间：{{ item.result.retrieval.retrieved_at }}
                     </p>
-                    <p>{{ item.result.retrieval.limits }}</p>
-                    <p v-for="note in item.result.retrieval.notices" :key="note">{{ note }}</p>
+                    <p>{{ item.result.retrieval?.method }}</p>
+                    <p>{{ item.result.retrieval?.limits }}</p>
+                    <p v-for="note in item.result.retrieval?.notices || []" :key="note">
+                      {{ note }}
+                    </p>
                   </div>
                   <details
                     v-for="source in item.result.sources"
@@ -156,26 +193,41 @@
                     <summary>
                       <b>{{ source.id }}</b
                       ><span>{{ source.title }}</span
-                      ><small>{{ source.kind }}</small>
+                      ><small
+                        >{{ source.kind }}{{ source.locator ? ' · ' + source.locator : '' }}</small
+                      >
                     </summary>
                     <pre>{{ source.text }}</pre>
                   </details>
                 </details>
-                <button
-                  class="follow-up"
-                  type="button"
-                  :disabled="busy"
-                  @click="chooseParent(item)"
+                <div class="answer-actions">
+                  <button class="follow-up" :disabled="busy" @click="chooseParent(item)">
+                    {{ parentId === item.id ? '已连接此答案，直接继续提问' : '针对此答案追问' }}
+                  </button>
+                </div>
+                <div
+                  v-if="item.result.answer.follow_up_questions?.length"
+                  class="suggested-questions"
                 >
-                  {{ parentId === item.id ? '正在针对此答案追问' : '针对此答案追问' }}
-                </button>
+                  <span>可以继续问</span
+                  ><button
+                    v-for="suggestion in item.result.answer.follow_up_questions"
+                    :key="suggestion"
+                    :disabled="busy"
+                    @click="useQuestion(suggestion, item)"
+                  >
+                    {{ suggestion }} ↗
+                  </button>
+                </div>
               </template>
             </div>
           </article>
         </div>
+
         <form class="composer" @submit.prevent="submit">
           <div v-if="parentId" class="follow-up-label">
-            追问上一个答案 <button type="button" @click="parentId = ''">取消追问</button>
+            <span>{{ manualParent ? '针对此答案追问' : '连续对话 · 自动联系上文' }}</span
+            ><button type="button" @click="newConversation">另起新会话</button>
           </div>
           <label class="sr-only" for="expert-question">输入业务问题</label>
           <textarea
@@ -184,22 +236,21 @@
             v-model="question"
             maxlength="1500"
             rows="3"
-            :disabled="busy"
-            placeholder="例如：卸油前铅封核对有什么规范要求？本月登记了多少问题？"
+            placeholder="直接输入业务问题，例如：卸油前铅封核对有什么要求？本月非油问题分布如何？"
             @keydown.ctrl.enter.prevent="submit"
             @keydown.meta.enter.prevent="submit"
           ></textarea>
           <div class="composer-footer">
-            <span>{{ question.length }}/1500 · Ctrl / ⌘ + Enter 提问</span
+            <span>{{ question.length }}/1500 · Ctrl / ⌘ + Enter 发送</span
             ><button
               class="btn btn-primary"
-              :disabled="busy || loading || question.trim().length < 2"
+              :disabled="busy || loading || reading || question.trim().length < 2"
             >
-              {{ busy ? '正在检索与回答…' : '发送提问' }}
+              {{ busy ? '有问答正在处理中…' : '发送提问' }}
             </button>
           </div>
           <small
-            >每个账号每日最多30次，同一时间处理一条；最近20条问答仅本人可见。请勿输入密码或敏感个人信息。</small
+            >每账号每日最多30次，同时处理一条；回答仅供辅助参考，关键判断请核对原文。请勿输入密码或敏感个人信息。</small
           >
         </form>
       </section>
@@ -210,58 +261,73 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, nextTick } from 'vue'
 import axios from 'axios'
+import {
+  answerText,
+  citedSources,
+  conversationId,
+  groupConversations,
+  isExpertPending,
+  scopeSummary,
+} from '@/utils/expertConversation'
 
-const localDate = (value) =>
-  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
-const today = new Date()
-const options = reactive({
-  date_from: localDate(new Date(today.getFullYear(), today.getMonth(), 1)),
-  date_to: localDate(today),
-  region: '',
-})
-const meta = reactive({ sources: [], model: '', scope: '' })
-const showKnowledge = ref(false)
-const turns = ref(null)
-const question = ref(''),
+const meta = reactive({ sources: [], model: '' })
+const history = ref([]),
   items = ref([]),
-  loading = ref(true),
+  question = ref(''),
+  historyKeyword = ref('')
+const loading = ref(true),
+  reading = ref(false),
   sending = ref(false),
   error = ref(''),
-  allHistory = ref(false),
+  notice = ref('')
+const activeConversation = ref(''),
   parentId = ref(''),
+  manualParent = ref(false),
+  showHistory = ref(false)
+const turns = ref(null),
   composer = ref(null)
-const stages = {
-  queued: '正在准备查询',
-  retrieving: '正在检索知识库与业务数据',
-  answering: '正在依据资料整理回答',
-}
-const pending = (status) => Object.hasOwn(stages, status)
-const busy = computed(() => sending.value || items.value.some((item) => pending(item.status)))
+const groups = computed(() => groupConversations(history.value, historyKeyword.value))
+const pending = isExpertPending
+const busy = computed(() => sending.value || history.value.some((item) => pending(item.status)))
+const stages = { queued: '准备查询', retrieving: '检索系统资料', answering: '整理有据回答' }
 const examples = [
-  '卸油前铅封核对有什么规范要求？',
-  '本月登记了多少问题，审核情况如何？',
-  '申诉被驳回后，站点应如何处理？',
+  { label: '规范依据', text: '卸油前铅封核对有什么规范要求？' },
+  { label: '数据分析', text: '本月登记了多少问题，审核情况如何？' },
+  { label: '业务流程', text: '申诉被驳回后，站点应如何处理？' },
+  { label: '问题追溯', text: '问题ID 6597 的完整处理过程是什么？' },
 ]
 let timer,
   controller,
-  disposed = false
-const rangeLabel = (value) =>
-  `${value.date_from ? value.date_from + ' 至 ' + value.date_to : '全部登记历史'} · ${value.region || '全部片区'} · 全局业务资料`
-function applyItem(item) {
-  const index = items.value.findIndex((row) => row.id === item.id)
-  const followBottom =
-    index < 0 ||
-    (turns.value &&
-      turns.value.scrollHeight - turns.value.scrollTop - turns.value.clientHeight < 80)
-  if (index < 0) items.value.push(item)
-  else items.value[index] = item
-  if (items.value.length > 20) items.value.splice(0, items.value.length - 20)
-  if (followBottom) scrollToLatest()
-}
+  pollController,
+  postController,
+  disposed = false,
+  readVersion = 0
+const sourceTitle = (item, id) =>
+  item.result.sources.find((source) => source.id === id)?.title || id
 function scrollToLatest() {
   nextTick(() => {
     if (!disposed && turns.value) turns.value.scrollTop = turns.value.scrollHeight
   })
+}
+function remember(item) {
+  const summary = { ...item }
+  delete summary.result
+  const index = history.value.findIndex((row) => row.id === item.id)
+  if (index < 0) history.value.unshift(summary)
+  else history.value[index] = summary
+}
+function applyItem(item) {
+  remember(item)
+  if (conversationId(item) !== activeConversation.value) return
+  const index = items.value.findIndex((row) => row.id === item.id)
+  const followBottom =
+    index < 0 ||
+    (turns.value &&
+      turns.value.scrollHeight - turns.value.scrollTop - turns.value.clientHeight < 100)
+  if (index < 0) items.value.push(item)
+  else items.value[index] = item
+  if (followBottom) scrollToLatest()
+  if (item.status === 'completed' && !manualParent.value) parentId.value = item.id
 }
 function focusSource(id, ref) {
   const source = document.getElementById(id + '-' + ref)
@@ -269,105 +335,161 @@ function focusSource(id, ref) {
   source.open = true
   const panel = source.closest('.evidence-panel')
   if (panel) panel.open = true
-  source.scrollIntoView({ block: 'center' })
+  source.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+async function selectConversation(id) {
+  const version = ++readVersion
+  controller?.abort()
+  controller = new AbortController()
+  reading.value = true
+  activeConversation.value = id
+  items.value = []
+  parentId.value = ''
+  manualParent.value = false
+  error.value = ''
+  showHistory.value = false
+  try {
+    const response = await axios.get('/api/operations/expert/questions', {
+      params: { conversation_id: id },
+      signal: controller.signal,
+      timeout: 15000,
+    })
+    if (disposed || version !== readVersion) return
+    items.value = [...response.data.items].reverse()
+    parentId.value =
+      [...items.value].reverse().find((item) => item.status === 'completed')?.id || ''
+    scrollToLatest()
+  } catch (failure) {
+    if (!disposed && version === readVersion && !axios.isCancel(failure))
+      error.value = failure.response?.data?.error || '会话读取失败，请稍后重试。'
+  } finally {
+    if (version === readVersion) reading.value = false
+  }
 }
 async function poll(id) {
   clearTimeout(timer)
   if (disposed) return
   try {
-    controller = new AbortController()
-    const response = await axios.get(`/api/operations/expert/questions/${id}`, {
-      signal: controller.signal,
+    pollController = new AbortController()
+    const response = await axios.get('/api/operations/expert/questions/' + id, {
+      signal: pollController.signal,
       timeout: 15000,
     })
     if (disposed) return
     applyItem(response.data.item)
     if (pending(response.data.item.status)) timer = setTimeout(() => poll(id), 2500)
-    else if (response.data.item.status === 'completed') parentId.value = id
   } catch (failure) {
     if (disposed) return
     error.value = failure.response?.data?.error || '结果读取暂时失败，正在重试；无需重复发送问题。'
     if ([401, 403, 404].includes(failure.response?.status)) {
-      items.value = []
+      history.value = history.value.filter((item) => item.id !== id)
+      if ([401, 403].includes(failure.response.status)) items.value = []
       return
     }
     timer = setTimeout(() => poll(id), 10000)
   }
 }
 async function submit() {
-  if (busy.value || question.value.trim().length < 2 || disposed) return
-  if (
-    !allHistory.value &&
-    (!options.date_from || !options.date_to || options.date_from > options.date_to)
-  ) {
-    error.value = '请选择有效的开始和结束日期。'
+  if (busy.value || loading.value || reading.value || question.value.trim().length < 2 || disposed)
     return
-  }
+  const text = question.value.trim()
+  const parent = parentId.value
+  const sourceConversation = activeConversation.value
+  const version = readVersion
   sending.value = true
   error.value = ''
+  notice.value = ''
   try {
-    controller = new AbortController()
+    postController = new AbortController()
     const response = await axios.post(
       '/api/operations/expert/questions',
-      {
-        question: question.value.trim(),
-        parent_id: parentId.value,
-        ...options,
-        date_from: allHistory.value ? '' : options.date_from,
-        date_to: allHistory.value ? '' : options.date_to,
-      },
-      { signal: controller.signal, timeout: 20000 },
+      { question: text, parent_id: parentId.value },
+      { signal: postController.signal, timeout: 20000 },
     )
     if (disposed) return
+    const root = parent ? sourceConversation : response.data.id
+    if (version === readVersion) {
+      activeConversation.value = root
+      manualParent.value = false
+    }
+    const title =
+      history.value.find((item) => conversationId(item) === root)?.options?.conversation_title ||
+      text.slice(0, 80)
     applyItem({
       id: response.data.id,
-      question: question.value.trim(),
-      options: {
-        ...options,
-        date_from: allHistory.value ? '' : options.date_from,
-        date_to: allHistory.value ? '' : options.date_to,
-      },
+      question: text,
+      options: { conversation_id: root, parent_id: parent, conversation_title: title },
       status: 'queued',
       created_at: '刚刚',
     })
-    question.value = ''
+    if (question.value.trim() === text) question.value = ''
     poll(response.data.id)
   } catch (failure) {
     if (!disposed)
       error.value =
-        failure.response?.data?.error || '发送未确认，请重新进入本页核对历史记录，避免重复提问。'
+        failure.response?.data?.error || '发送未确认，请重新打开会话核对记录，避免重复提问。'
   } finally {
     sending.value = false
   }
 }
 async function chooseParent(item) {
   parentId.value = item.id
+  manualParent.value = true
   await nextTick()
   composer.value?.focus()
 }
+async function useQuestion(text, item) {
+  question.value = text
+  if (item) await chooseParent(item)
+  else {
+    await nextTick()
+    composer.value?.focus()
+  }
+}
 async function newConversation() {
+  ++readVersion
+  controller?.abort()
+  reading.value = false
+  activeConversation.value = ''
   parentId.value = ''
+  manualParent.value = false
+  items.value = []
   question.value = ''
+  error.value = ''
+  showHistory.value = false
   await nextTick()
   composer.value?.focus()
+}
+async function retry(item) {
+  parentId.value = item.options?.parent_id || ''
+  manualParent.value = Boolean(parentId.value)
+  await useQuestion(item.question)
+}
+async function copyAnswer(item) {
+  try {
+    await navigator.clipboard.writeText(answerText(item))
+    notice.value = '回答及引用来源已复制。'
+  } catch {
+    notice.value = '当前浏览器不支持直接复制，请选中回答文字复制。'
+  }
 }
 onMounted(async () => {
   try {
     controller = new AbortController()
-    const config = await axios.get('/api/operations/expert/meta', {
-      signal: controller.signal,
-      timeout: 15000,
-    })
+    const [config, response] = await Promise.all([
+      axios.get('/api/operations/expert/meta', { signal: controller.signal, timeout: 15000 }),
+      axios.get('/api/operations/expert/questions', {
+        params: { summary: '1' },
+        signal: controller.signal,
+        timeout: 15000,
+      }),
+    ])
     if (disposed) return
     Object.assign(meta, config.data)
-    const response = await axios.get('/api/operations/expert/questions', {
-      signal: controller.signal,
-      timeout: 15000,
-    })
-    if (disposed) return
-    items.value = response.data.items.reverse()
-    scrollToLatest()
-    const active = items.value.find((item) => pending(item.status))
+    history.value = response.data.items
+    const latest = history.value[0]
+    if (latest) await selectConversation(conversationId(latest))
+    const active = history.value.find((item) => pending(item.status))
     if (active) poll(active.id)
   } catch (failure) {
     if (!disposed)
@@ -380,259 +502,290 @@ onBeforeUnmount(() => {
   disposed = true
   clearTimeout(timer)
   controller?.abort()
+  pollController?.abort()
+  postController?.abort()
 })
 </script>
 
 <style scoped>
-.page-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-.card-surface {
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid #dbe4ee;
-  border-radius: 22px;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
-}
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 18px;
-  padding: 24px 28px;
-}
-.page-kicker {
-  display: inline-flex;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: #eaf4fb;
-  color: #126f98;
-  font-size: 12px;
-  font-weight: 800;
-  margin-bottom: 12px;
-}
-.page-header h2 {
-  margin: 0;
-  font-size: 34px;
-  color: #0f172a;
-}
-.page-desc {
-  color: #64748b;
-  line-height: 1.8;
-  margin-bottom: 0;
-}
-.status-pill {
-  padding: 7px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  background: #eff6ff;
-  color: #2563eb;
-  border: 1px solid #dbeafe;
-  white-space: nowrap;
-}
-.btn {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 1px solid #d7e0ea;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #17334b;
-  font-weight: 800;
-  cursor: pointer;
-}
-.btn-primary {
-  color: white;
-  border-color: #126f98;
-  background: linear-gradient(135deg, #126f98, #269bbb);
-}
-.btn:focus-visible,
-.example:focus-visible,
-.follow-up:focus-visible {
-  outline: 2px solid #76b3ca;
-  outline-offset: 3px;
-}
-.knowledge-toggle {
-  display: none;
-  border: 1px solid #c5dfe8;
-  border-radius: 10px;
-  background: #f3fafc;
-  color: #176e91;
-  padding: 12px;
-  text-align: left;
-}
 .expert-page {
   --expert-ink: #17334b;
   --expert-blue: #126f98;
   --expert-border: #dce7ed;
+  display: grid;
+  gap: 20px;
+}
+.card-surface {
+  background: #fff;
+  border: 1px solid var(--expert-border);
+  border-radius: 20px;
+  box-shadow: 0 12px 32px #17334b06;
+}
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 25px 28px;
+  background: radial-gradient(ellipse at right top, #e4f2f8, transparent 60%), white;
+}
+.page-kicker {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--expert-blue);
+  font-weight: 700;
+}
+.page-header h2 {
+  margin: 8px 0;
+  font-size: 28px;
+  color: var(--expert-ink);
+}
+.page-header p {
+  color: #708394;
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.8;
+}
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--expert-blue);
+}
+.header-status small {
+  display: block;
+  color: #8094a5;
+  margin-top: 5px;
+  font-size: 11px;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #369c8d;
+  box-shadow: 0 0 0 5px #369c8d10;
 }
 .expert-grid {
   display: grid;
-  grid-template-columns: 310px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
-.knowledge-panel {
-  padding: 24px;
-  background: linear-gradient(155deg, #f4fafc, #fff 65%);
+.history-panel {
+  padding: 18px;
+  background: linear-gradient(155deg, #f6fafc, #fff);
+  position: sticky;
+  top: 0;
 }
-.panel-title {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin: 24px 0 14px;
-}
-.panel-title:first-child {
-  margin-top: 0;
-}
-.panel-title h3 {
-  font-size: 15px;
-  margin: 0;
-}
-.panel-index {
-  font:
-    600 12px Georgia,
-    serif;
-  color: #50849b;
-  border-bottom: 2px solid #90c9d9;
-  padding-bottom: 3px;
-}
-.scope-notice {
-  font-size: 13px;
-  line-height: 1.8;
-  color: #765115;
-  background: #fff7e8;
-  border: 1px solid #efdcb6;
+.btn {
+  min-height: 40px;
+  border: 1px solid #d3e2eb;
+  padding: 8px 16px;
   border-radius: 10px;
-  padding: 12px;
-}
-.all-history {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 13px;
-  margin: 20px 0 14px;
-}
-.date-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.date-pair label,
-.region-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 12px;
-  color: #567080;
-}
-.region-field {
-  margin-top: 14px;
-}
-input:not([type='checkbox']) {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 10px 8px;
-  border: 1px solid var(--expert-border);
-  border-radius: 8px;
-  background: white;
   color: var(--expert-ink);
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
 }
-.muted {
-  color: #6c7f8b;
+.btn-primary {
+  background: linear-gradient(135deg, #126f98, #258fa6);
+  border-color: #126f98;
+  color: white;
+}
+.new-conversation {
+  width: 100%;
+}
+.history-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--expert-border);
+  border-radius: 9px;
+  padding: 10px;
   font-size: 12px;
+  margin-top: 14px;
+  background: #fff;
+}
+.history-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #8395a6;
+  font-size: 11px;
+  padding: 20px 2px 8px;
+}
+.history-heading h3 {
+  font-size: 12px;
+  margin: 0;
+  color: #536d82;
+}
+.history-list {
+  display: grid;
+  gap: 5px;
+  max-height: 45dvh;
+  overflow: auto;
+}
+.history-item {
+  border: 1px solid transparent;
+  padding: 12px 10px;
+  border-radius: 10px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+.history-item:hover {
+  background: #f0f7fb;
+}
+.history-item.active {
+  background: #e9f4fa;
+  border-color: #cde2ef;
+}
+.history-item strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.7;
+  color: #254b67;
+  font-size: 12px;
+  font-weight: 500;
+}
+.history-item > span {
+  display: flex;
+  justify-content: space-between;
+  color: #8a9cab;
+  font-size: 10px;
+  margin-top: 8px;
+}
+.history-item small {
+  font-size: inherit;
+}
+.knowledge-inventory {
+  border-top: 1px solid var(--expert-border);
+  margin-top: 20px;
+  padding-top: 16px;
+  font-size: 11px;
+  color: #698397;
+}
+.knowledge-inventory summary {
+  cursor: pointer;
+}
+.knowledge-inventory p,
+.history-note {
+  color: #8a9ba9;
+  font-size: 11px;
   line-height: 1.8;
 }
 .source-inventory {
   display: flex;
+  gap: 6px;
   flex-wrap: wrap;
-  gap: 9px;
+  padding-top: 12px;
 }
 .source-inventory span {
-  padding: 6px 9px;
-  border: 1px solid var(--expert-border);
-  background: #fff;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.source-inventory i {
-  display: inline-block;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #2a8d9c;
-  margin: 0 6px 2px 0;
-}
-.example {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 0;
-  border: none;
-  border-bottom: 1px solid var(--expert-border);
-  color: var(--expert-blue);
-  background: none;
-  cursor: pointer;
-  line-height: 1.7;
-  font-size: 13px;
-}
-.example span {
-  flex-shrink: 0;
+  background: #eef5f9;
+  padding: 4px 7px;
+  border-radius: 4px;
 }
 .conversation-panel {
-  overflow: hidden;
   min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .conversation-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 15px;
-  padding: 24px 28px;
+  padding: 20px 26px;
   border-bottom: 1px solid var(--expert-border);
-  background: linear-gradient(120deg, #fff, #f0f7fa);
 }
 .conversation-header h3 {
+  font-size: 16px;
   margin: 0;
   color: var(--expert-ink);
 }
 .conversation-header p {
-  font-size: 12px;
-  color: #647f90;
-  margin: 8px 0 0;
+  font-size: 11px;
+  color: #8095a5;
+  margin: 7px 0 0;
+}
+.conversation-badge {
+  color: #337899;
+  background: #edf7fb;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  white-space: nowrap;
 }
 .empty-conversation {
-  padding: 65px 35px;
   text-align: center;
-  color: #6c7f8b;
+  padding: 35px 28px;
+  color: #6f8799;
 }
 .empty-conversation h3 {
-  color: var(--expert-ink);
+  color: #28475e;
   font-size: 18px;
 }
 .empty-conversation p {
+  font-size: 12px;
   line-height: 1.8;
-  font-size: 13px;
 }
 .empty-symbol {
   display: inline-grid;
   place-items: center;
-  width: 65px;
-  height: 65px;
-  border: 1px solid #c5dfe8;
-  border-radius: 20px;
-  background: linear-gradient(140deg, #ecf9ff, #fff);
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: #edf7fb;
+  border: 1px solid #d4e7f0;
   color: var(--expert-blue);
-  font-size: 27px;
+  font-size: 23px;
+}
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 25px auto 0;
+  max-width: 680px;
+}
+.starter {
+  text-align: left;
+  border: 1px solid #e0eaf1;
+  border-radius: 12px;
+  padding: 16px;
+  background: white;
+  cursor: pointer;
+}
+.starter:hover {
+  border-color: #87bacd;
+  background: #f9fcfd;
+}
+.starter span {
+  font-size: 10px;
+  color: #4595ae;
+}
+.starter strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #3b5a70;
+  font-weight: 500;
+  margin: 7px 0;
+}
+.starter em {
+  font-size: 10px;
+  color: #9aadb9;
+  font-style: normal;
 }
 .turns {
-  max-height: min(64dvh, 740px);
+  min-height: 260px;
+  max-height: min(62dvh, 720px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 25px 28px;
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
   gap: 30px;
@@ -641,112 +794,130 @@ input:not([type='checkbox']) {
   min-width: 0;
 }
 .question-bubble {
-  background: #f1f6fa;
-  border: 1px solid #e4edf3;
+  margin-left: clamp(20px, 8%, 80px);
+  padding: 14px 18px;
+  border: 1px solid #e0ebf1;
+  background: #f2f7fa;
   border-radius: 14px 14px 3px 14px;
-  padding: 15px 18px;
-  margin-left: 45px;
 }
 .question-bubble p {
-  margin: 8px 0;
+  font-size: 14px;
+  color: #29475e;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  line-height: 1.8;
+  margin: 8px 0 0;
 }
 .turn-label {
-  font-size: 12px;
-  color: #547388;
+  font-size: 10px;
+  color: #8498a8;
 }
 .turn-label time {
-  margin-left: 12px;
-  color: #82929c;
-}
-.question-bubble small {
-  color: #7f909b;
-  font-size: 11px;
+  margin-left: 10px;
 }
 .answer-content {
-  padding: 18px 0 0;
+  padding-top: 20px;
 }
 .answer-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 15px;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 12px;
   color: var(--expert-blue);
-  font-size: 13px;
 }
 .answer-meta small {
-  color: #7a8f9c;
+  font-size: 10px;
+  color: #93a4b1;
+}
+.copy-answer {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: #6b879b;
   font-size: 11px;
+  cursor: pointer;
+  padding: 4px;
+}
+.recognized-scope {
+  font-size: 10px;
+  color: #8b9eac;
+  margin: 10px 0;
+}
+.answer-paragraph h4 {
+  color: #24495f;
+  font-size: 14px;
+  margin: 20px 0 0;
 }
 .answer-paragraph p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.9;
+  line-height: 1.95;
   font-size: 14px;
-  color: #243b4e;
-  margin: 16px 0 5px;
+  color: #2c465a;
+  margin: 12px 0 6px;
 }
 .citation {
   display: inline-block;
-  margin-right: 5px;
-  color: var(--expert-blue);
-  font-size: 11px;
-  background: #eaf4f8;
-  padding: 2px 6px;
-  border-radius: 4px;
+  margin-right: 6px;
+  background: #edf6fa;
+  color: #247c9e;
+  padding: 3px 7px;
+  border-radius: 5px;
   text-decoration: none;
+  font-size: 10px;
 }
 .caveat,
 .retrieval-note {
-  padding: 12px;
-  color: #627886;
+  padding: 12px 14px;
+  color: #7c8e9d;
   background: #f7f9fb;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.8;
   border-radius: 8px;
 }
 .retrieval-note p {
-  margin: 4px 0;
+  margin: 5px 0;
 }
 .evidence-panel {
-  margin-top: 18px;
+  margin-top: 15px;
   border: 1px solid var(--expert-border);
   border-radius: 10px;
-  padding: 13px;
+  padding: 12px;
 }
 .evidence-panel > summary {
-  color: var(--expert-ink);
-  font-size: 13px;
+  color: #4f7288;
+  font-size: 12px;
   cursor: pointer;
 }
 .evidence-panel > summary span {
-  font-size: 11px;
-  margin-left: 10px;
-  color: #8096a2;
+  font-size: 10px;
+  margin-left: 8px;
+  color: #8a9eac;
 }
 .evidence-item {
+  border-top: 1px solid #e8eff4;
   padding: 12px 0;
-  border-top: 1px solid #eaf0f3;
 }
 .evidence-item summary {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  font-size: 11px;
+  color: #526e82;
   cursor: pointer;
-  font-size: 12px;
 }
-.evidence-item summary b {
+.evidence-item b {
   color: var(--expert-blue);
 }
-.evidence-item summary small {
-  color: #78909d;
+.evidence-item small {
+  color: #97a8b4;
 }
 .evidence-item pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: inherit;
-  font-size: 12px;
+  font: inherit;
+  font-size: 11px;
   line-height: 1.8;
   background: #f8fafb;
   padding: 12px;
@@ -754,91 +925,145 @@ input:not([type='checkbox']) {
   overflow: auto;
 }
 .follow-up {
-  border: none;
-  background: none;
-  color: var(--expert-blue);
-  font-size: 12px;
+  background: transparent;
+  border: 0;
+  color: #277f9e;
+  font-size: 11px;
   cursor: pointer;
   padding: 12px 0;
 }
+.suggested-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.suggested-questions > span {
+  font-size: 10px;
+  color: #97a8b3;
+}
+.suggested-questions button {
+  background: white;
+  border: 1px solid #dbe8ef;
+  color: #578198;
+  font-size: 11px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
 .answer-progress {
-  padding: 18px;
-  border-left: 3px solid #7cb9cd;
   background: #f4fafc;
-  font-size: 13px;
+  padding: 16px;
+  border-radius: 10px;
+  color: #3f7b96;
+  font-size: 12px;
+}
+.answer-progress strong {
+  display: block;
+  padding-top: 15px;
 }
 .answer-progress i {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 10px;
-  background: #2386a6;
+  width: 7px;
+  height: 7px;
+  background: #3a9db5;
   border-radius: 50%;
+  margin-right: 8px;
   animation: pulse 1.8s infinite;
 }
 .answer-progress p {
-  color: #6b8695;
-  font-size: 12px;
-  margin-bottom: 0;
+  font-size: 11px;
+  color: #8ca2af;
 }
-.error-notice {
-  margin: 15px 28px;
+.progress-steps {
+  display: flex;
+  gap: 16px;
+  font-size: 10px;
+  color: #9fb3c0;
+}
+.progress-steps span {
+  padding-bottom: 5px;
+  border-bottom: 2px solid #e0ebf1;
+}
+.progress-steps .active {
+  color: #267d9c;
+  border-color: #429eb7;
+}
+.error-notice,
+.copy-notice {
+  margin: 12px 24px;
   padding: 12px;
-  background: #fff3f1;
-  color: #a84735;
+  background: #fff2ef;
+  color: #a94e3c;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 12px;
+}
+.copy-notice {
+  color: #347863;
+  background: #edf8f2;
+}
+.failed-answer .error-notice {
+  margin: 0;
 }
 .composer {
   border-top: 1px solid var(--expert-border);
-  padding: 22px 28px;
+  padding: 20px 26px;
   background: #fbfdfe;
 }
 .composer textarea {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
-  min-height: 90px;
-  max-height: 250px;
-  padding: 15px;
-  border: 1px solid #c8dfe9;
+  border: 1px solid #cfe1ea;
   border-radius: 12px;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.7;
   background: white;
-}
-.composer textarea:focus {
-  outline: 2px solid #76b3ca;
-  outline-offset: 2px;
+  padding: 14px;
+  resize: vertical;
+  min-height: 80px;
+  max-height: 220px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--expert-ink);
 }
 .composer-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
-.composer-footer span,
+.composer-footer > span,
 .composer > small {
-  font-size: 11px;
-  color: #8a9ba5;
+  font-size: 10px;
+  color: #95a7b4;
 }
 .composer > small {
   display: block;
-  margin-top: 12px;
+  line-height: 1.8;
+  margin-top: 10px;
 }
 .follow-up-label {
-  color: #41748c;
-  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #4b899e;
   margin-bottom: 10px;
 }
 .follow-up-label button {
-  background: none;
-  border: none;
-  color: #8b9ba5;
+  border: 0;
+  background: transparent;
   cursor: pointer;
-  margin-left: 12px;
+  font-size: inherit;
+  color: #849daa;
+}
+.muted {
+  color: #9aacb8;
+  font-size: 11px;
+  padding: 8px;
+}
+.mobile-toolbar {
+  display: none;
 }
 .sr-only {
   position: absolute;
@@ -851,9 +1076,16 @@ button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #79b9ce;
+  outline-offset: 3px;
+}
 @keyframes pulse {
   50% {
-    opacity: 0.35;
+    opacity: 0.3;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -863,60 +1095,105 @@ button:disabled {
 }
 @media (max-width: 1100px) {
   .expert-grid {
-    grid-template-columns: 250px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 14px;
   }
-  .knowledge-panel {
-    padding: 18px;
-  }
-  .date-pair {
-    grid-template-columns: 1fr;
+  .turns {
+    padding: 20px;
   }
 }
 @media (max-width: 760px) {
-  .knowledge-toggle {
-    display: block;
-  }
-  .knowledge-panel:not(.knowledge-expanded) {
-    display: none;
+  .expert-page {
+    gap: 12px;
   }
   .page-header {
-    flex-direction: column;
     padding: 20px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
   }
   .page-header h2 {
-    font-size: 28px;
+    font-size: 25px;
+  }
+  .header-status {
+    font-size: 11px;
   }
   .expert-grid {
     grid-template-columns: 1fr;
   }
-  .date-pair {
-    grid-template-columns: 1fr 1fr;
+  .mobile-toolbar {
+    display: flex;
+    justify-content: space-between;
   }
-  .source-inventory {
-    gap: 6px;
+  .history-panel {
+    position: static;
   }
-  .conversation-header,
-  .turns,
-  .composer {
-    padding: 18px;
+  .history-panel:not(.expanded) {
+    display: none;
+  }
+  .history-list {
+    max-height: 36dvh;
+  }
+  .new-conversation {
+    display: none;
+  }
+  .history-search {
+    margin-top: 0;
   }
   .conversation-header {
-    align-items: flex-start;
+    padding: 18px;
   }
-  .conversation-header .btn {
-    white-space: nowrap;
+  .conversation-header h3 {
+    font-size: 14px;
   }
-  .question-bubble {
-    margin-left: 15px;
-  }
-  .composer-footer {
-    flex-wrap: wrap;
-  }
-  .composer-footer button {
-    width: 100%;
+  .conversation-header p {
+    line-height: 1.7;
   }
   .empty-conversation {
-    padding: 35px 20px;
+    padding: 25px 18px;
+  }
+  .starter-grid {
+    grid-template-columns: 1fr;
+  }
+  .starter {
+    padding: 14px;
+  }
+  .turns {
+    padding: 18px;
+    max-height: 58dvh;
+  }
+  .composer {
+    padding: 16px;
+  }
+  .composer-footer {
+    align-items: flex-end;
+  }
+  .composer-footer > span {
+    max-width: 45%;
+    line-height: 1.8;
+  }
+  .composer-footer .btn {
+    font-size: 12px;
+    padding: 9px 12px;
+  }
+  .question-bubble {
+    margin-left: 16px;
+  }
+  .answer-paragraph p {
+    font-size: 13px;
+  }
+  .evidence-panel > summary span {
+    display: block;
+    margin-top: 5px;
+  }
+  .progress-steps {
+    gap: 10px;
+  }
+  .suggested-questions {
+    align-items: stretch;
+  }
+  .suggested-questions > span {
+    width: 100%;
   }
 }
 </style>
