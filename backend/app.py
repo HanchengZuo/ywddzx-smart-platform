@@ -1,5 +1,6 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+from roles import PRIVILEGED_ROLES, is_supervisor_role
 from upload_request import PlatformRequest
 from standard_history import fetch_standard_history, recommend_from_history
 from equipment_report_library import exclusions as equipment_issue_exclusions, save_exclusions as save_equipment_issue_exclusions
@@ -239,7 +240,7 @@ FILE_ACCESS_TOKEN_SALT = "ywddzx-file-access-token-v1"
 PASSKEY_BOOTSTRAP_TOKEN_SALT = "ywddzx-passkey-bootstrap-v1"
 PASSKEY_MANAGEMENT_TOKEN_SALT = "ywddzx-passkey-management-v1"
 PASSKEY_SHORT_TOKEN_MAX_AGE_SECONDS = 5 * 60
-PRIVILEGED_AUTH_ROLES = {"root", "supervisor"}
+PRIVILEGED_AUTH_ROLES = PRIVILEGED_ROLES
 
 
 def normalize_frontend_app_version(value):
@@ -687,6 +688,7 @@ from quality_deadlines import register_quality_deadlines
 ROLE_OPTIONS = {
     "root",
     "supervisor",
+    "supervisor_manager",
     "station_manager",
     "quality_safety",
     "development_plan",
@@ -697,7 +699,8 @@ ROLE_OPTIONS = {
 }
 ROLE_LABELS = {
     "root": "系统管理员",
-    "supervisor": "督导组账号",
+    "supervisor_manager": "督导组管理人员",
+    "supervisor": "督导组组员",
     "station_manager": "站点账号",
     "quality_safety": "质安部账号",
     "development_plan": "发展计划部账号",
@@ -755,7 +758,7 @@ STATION_REGION_SCOPE_PERMISSION_KEYS = (
 PERMISSION_CATALOG = [
     *[
         {"key": key, "name": "查看页面", "category": title,
-         "description": "共用运营驾驶舱和专家问答访问权限。驾驶舱保留原数据范围，专家问答查询全局业务资料（不含安全凭据）。",
+         "description": "访问运营驾驶舱，按当前账号的数据范围展示运营数据。",
          "defaults": {"root": True, "supervisor": True, "quality_safety": True,
                       "development_plan": True, "oil_gas": True, "non_oil": True,
                       "finance": True, "area_account": True}}
@@ -769,6 +772,15 @@ PERMISSION_CATALOG = [
         "category": "站点地图",
         "description": "访问运营系统的站点地图页面。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "view_expert_qa",
+        "name": "查看页面并提问",
+        "category": "专家问答",
+        "description": "独立控制专家问答访问；查询全局业务资料（不含安全凭据），不依赖运营驾驶舱权限。",
+        "defaults": {"root": True, "supervisor": True, "quality_safety": True,
+                     "development_plan": True, "oil_gas": True, "non_oil": True,
+                     "finance": True, "area_account": True},
     },
     {
         "key": "submit_inspections",
@@ -1095,6 +1107,7 @@ PERMISSION_CATALOG = [
 ]
 for permission_item in PERMISSION_CATALOG:
     defaults = permission_item.setdefault("defaults", {})
+    defaults.setdefault("supervisor_manager", bool(defaults.get("supervisor", False)))
     defaults.setdefault("development_plan", bool(defaults.get("quality_safety", False)))
     defaults.setdefault("oil_gas", bool(defaults.get("quality_safety", False)))
     defaults.setdefault("non_oil", bool(defaults.get("quality_safety", False)))
@@ -5860,7 +5873,7 @@ def is_root_user(user):
 
 
 def is_supervisor_like(user):
-    return bool(user and user.get("role") in ("root", "supervisor"))
+    return bool(user and (user.get("role") == "root" or is_supervisor_role(user.get("role"))))
 
 
 def is_station_manager(user):
@@ -15615,6 +15628,7 @@ def fetch_peer_review_people(cur):
         WHERE role <> 'root'
         ORDER BY
             CASE role
+                WHEN 'supervisor_manager' THEN 0
                 WHEN 'supervisor' THEN 1
                 WHEN 'quality_safety' THEN 2
                 WHEN 'development_plan' THEN 3
@@ -16908,7 +16922,7 @@ def normalize_user_backup_id(value):
 def normalize_user_role(value):
     role = normalize_text(value)
     if role not in ROLE_OPTIONS:
-        raise ValueError("用户角色只能选择：root、supervisor、station_manager、quality_safety、development_plan、oil_gas、non_oil、finance、area_account。")
+        raise ValueError("请选择有效的用户角色（督导组管理人员、督导组组员或其他系统角色）。")
     return role
 
 
@@ -17948,7 +17962,7 @@ def build_plan_assignment_catalog_context(cur):
         """
         SELECT id, username, real_name, phone
         FROM users
-        WHERE role = 'supervisor'
+        WHERE role IN ('supervisor_manager', 'supervisor')
         ORDER BY COALESCE(NULLIF(real_name, ''), username), id ASC;
         """
     )
@@ -18507,7 +18521,7 @@ def validate_plan_assignment_apply_row(cur, user, row, target_date):
         SELECT id
         FROM users
         WHERE id = ANY(%s)
-          AND role = 'supervisor';
+          AND role IN ('supervisor_manager', 'supervisor');
         """,
         (inspector_ids,),
     )
@@ -19027,7 +19041,7 @@ def save_inspection_plan_config_stations(plan_config_id):
                 SELECT id
                 FROM users
                 WHERE id = ANY(%s)
-                  AND role = 'supervisor';
+                  AND role IN ('supervisor_manager', 'supervisor');
                 """,
                 (inspector_ids,),
             )
@@ -19210,7 +19224,7 @@ def get_inspection_plan_inspectors():
                 real_name,
                 phone
             FROM users
-            WHERE role = 'supervisor'
+            WHERE role IN ('supervisor_manager', 'supervisor')
             ORDER BY COALESCE(NULLIF(real_name, ''), username), id ASC;
             """
         )
@@ -19800,7 +19814,7 @@ def get_my_pending_rectification_count_for_user(cur, user):
     if (
         not is_station_manager(user)
         and not is_root_user(user)
-        and user.get("role") != "supervisor"
+        and not is_supervisor_role(user.get("role"))
     ):
         return 0
 
@@ -22531,6 +22545,7 @@ def list_impersonation_accounts():
             WHERE u.role <> 'root'
             ORDER BY
                 CASE u.role
+                    WHEN 'supervisor_manager' THEN 0
                     WHEN 'supervisor' THEN 1
                     WHEN 'quality_safety' THEN 2
                     WHEN 'development_plan' THEN 3
@@ -23807,7 +23822,7 @@ def fetch_security_account_rows(cur):
             GROUP BY user_id
         ) passkey_stats ON passkey_stats.user_id = u.id
         ORDER BY
-            CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END,
+            CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor_manager' THEN 2 WHEN 'supervisor' THEN 3 ELSE 4 END,
             u.id ASC
         """
     )
@@ -24166,7 +24181,7 @@ def fetch_password_initialization_targets(cur, actor):
         WHERE u.role <> 'root'
           AND u.id <> %s
         ORDER BY
-            CASE u.role WHEN 'supervisor' THEN 1 WHEN 'station_manager' THEN 2 ELSE 3 END,
+            CASE u.role WHEN 'supervisor_manager' THEN 0 WHEN 'supervisor' THEN 1 WHEN 'station_manager' THEN 2 ELSE 3 END,
             u.id ASC
         """,
         (actor["id"],),
@@ -24772,7 +24787,8 @@ def get_management_users():
             LEFT JOIN stations s ON u.station_id = s.id
             ORDER BY
                 CASE u.role
-                    WHEN 'root' THEN 1
+                    WHEN 'root' THEN 0
+                    WHEN 'supervisor_manager' THEN 1
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
@@ -25041,7 +25057,7 @@ def get_management_user_birthdays():
                 FROM users u
                 WHERE TRIM(COALESCE(u.real_name, '')) = TRIM(b.real_name)
                 ORDER BY
-                    CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END,
+                    CASE u.role WHEN 'root' THEN 1 WHEN 'supervisor_manager' THEN 2 WHEN 'supervisor' THEN 3 ELSE 4 END,
                     u.id ASC
                 LIMIT 1
             ) matched_user ON TRUE
@@ -25253,67 +25269,6 @@ def update_management_role_permissions(role):
         close_db_resources(cur, conn)
 
 
-@app.route("/api/management/users/reset-permissions-to-role-defaults", methods=["POST"])
-def reset_all_user_permissions_to_role_defaults():
-    data = request.get_json(silent=True) or {}
-    user_id = str(data.get("user_id", "")).strip()
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_user_security_schema(cur)
-        require_management_user(cur, user_id, "manage_users")
-
-        cur.execute(
-            """
-            SELECT COUNT(DISTINCT user_id) AS affected_user_count
-            FROM (
-                SELECT user_id FROM user_permissions
-                UNION
-                SELECT user_id FROM user_inspection_table_scopes
-                UNION
-                SELECT user_id FROM user_station_region_scopes
-            ) affected_users;
-            """
-        )
-        affected_user_count = int(cur.fetchone()["affected_user_count"] or 0)
-
-        cur.execute("DELETE FROM user_permissions;")
-        deleted_permission_count = cur.rowcount
-        cur.execute("DELETE FROM user_inspection_table_scopes;")
-        deleted_table_scope_count = cur.rowcount
-        cur.execute("DELETE FROM user_station_region_scopes;")
-        deleted_region_scope_count = cur.rowcount
-        conn.commit()
-
-        return jsonify(
-            {
-                "success": True,
-                "message": f"已重置 {affected_user_count} 个用户的个性化权限，所有用户将按角色通用权限生效。",
-                "affected_user_count": affected_user_count,
-                "deleted_permission_count": deleted_permission_count,
-                "deleted_table_scope_count": deleted_table_scope_count,
-                "deleted_region_scope_count": deleted_region_scope_count,
-            }
-        )
-    except PermissionError as exc:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 403
-    except LookupError as exc:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 404
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
 @app.route("/api/management/users/export", methods=["GET"])
 def export_management_users():
     user_id = str(request.args.get("user_id", "")).strip()
@@ -25349,7 +25304,8 @@ def export_management_users():
             LEFT JOIN stations s ON u.station_id = s.id
             ORDER BY
                 CASE u.role
-                    WHEN 'root' THEN 1
+                    WHEN 'root' THEN 0
+                    WHEN 'supervisor_manager' THEN 1
                     WHEN 'supervisor' THEN 2
                     WHEN 'quality_safety' THEN 3
                     WHEN 'development_plan' THEN 4
@@ -31327,7 +31283,7 @@ def get_my_issues():
                 ]
             )
 
-        if is_root_user(user) or user.get("role") == "supervisor":
+        if is_supervisor_like(user):
             page, page_size = normalize_page_args(request.args.get('page'), request.args.get('page_size') or 20)
             where_clause, params = build_pending_review_filters(request.args)
             cur.execute(f'SELECT COUNT(*) AS total {PENDING_REVIEW_JOINS} {where_clause}', params)
@@ -31450,7 +31406,7 @@ def get_pending_review_filter_options():
     try:
         conn = get_db_connection(); cur = conn.cursor()
         user = get_current_request_user()
-        if not (is_root_user(user) or user.get('role') == 'supervisor'):
+        if not is_supervisor_like(user):
             return jsonify(success=False, error='当前账号无权查看待复核筛选项。'), 403
         # Only distinct lightweight facets; never ship all issue descriptions or photos.
         cur.execute(f"""
@@ -38580,7 +38536,7 @@ def build_inspection_record_filter_options(cur, user, can_view_all, can_view_own
             SELECT DISTINCT
                 COALESCE(NULLIF(TRIM(real_name), ''), NULLIF(TRIM(username), ''), NULLIF(TRIM(phone), ''), id::text) AS label
             FROM users
-            WHERE role IN ('root', 'supervisor')
+            WHERE role IN ('root', 'supervisor_manager', 'supervisor')
             ORDER BY label ASC;
             """
         )
@@ -39487,7 +39443,7 @@ def get_inspection_issues(inspection_id):
 
 
 def can_user_view_issue_flow_history(cur, user, issue):
-    if is_root_user(user) or user.get("role") == "supervisor":
+    if is_supervisor_like(user):
         return True
     if is_station_manager(user):
         return bool(
@@ -39890,7 +39846,7 @@ def submit_review(issue_id):
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
 
-        if not (is_root_user(user) or user.get("role") == "supervisor"):
+        if not is_supervisor_like(user):
             return (
                 jsonify({"success": False, "error": "只有督导组账号可以提交复核。"}),
                 403,

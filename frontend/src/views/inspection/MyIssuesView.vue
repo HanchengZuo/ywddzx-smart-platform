@@ -667,6 +667,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router'
+import { isSupervisorRole } from '@/utils/roles'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import PhotoEditor from '../../components/PhotoEditor.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
@@ -717,7 +718,7 @@ const appealSubmitted = () => {
 
 
 const currentRole = ref(localStorage.getItem('user_role') || '')
-const isSupervisorLike = computed(() => currentRole.value === 'root' || currentRole.value === 'supervisor')
+const isSupervisorLike = computed(() => currentRole.value === 'root' || isSupervisorRole(currentRole.value))
 const myIssuesEmptyTitle = computed(() => currentRole.value === 'station_manager' ? '当前没有待整改问题' : '当前没有待复核问题')
 const myIssuesEmptyDescription = computed(() => (
   currentRole.value === 'station_manager'

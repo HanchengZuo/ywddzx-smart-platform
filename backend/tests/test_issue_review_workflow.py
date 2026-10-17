@@ -94,6 +94,13 @@ class ReviewSubmissionTests(unittest.TestCase):
             response, code = value if isinstance(value, tuple) else (value, 200)
             return response.get_json(), code, cur, conn, saved, event
 
+    def test_both_supervisor_roles_can_review_without_expanding_other_roles(self):
+        for role in ('supervisor_manager', 'supervisor'):
+            body, code, _, conn, _, event = self.submit(role=role)
+            self.assertEqual((code, body['status']), (200, '待整改'))
+            conn.commit.assert_called_once()
+            event.assert_called_once()
+
     def test_rejection_without_photo_and_note_is_still_valid(self):
         body, code, cur, conn, saved, event = self.submit()
         self.assertEqual(code, 200)

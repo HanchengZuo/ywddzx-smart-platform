@@ -34,7 +34,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
             self.assertIn(value, params)
 
     def test_page_is_bounded_and_reads_only_current_page_without_sync(self):
-        for role in ('root', 'supervisor'):
+        for role in ('root', 'supervisor', 'supervisor_manager'):
             with self.subTest(role=role), ExitStack() as stack:
                 stack.enter_context(api.app.test_request_context('/api/my-issues?page=999&page_size=5'))
                 stack.enter_context(patch('app.get_authenticated_request_user_id', return_value=7))

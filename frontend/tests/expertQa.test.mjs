@@ -9,12 +9,13 @@ const source = readFileSync(
   new URL('../src/views/operations/ExpertQaView.vue', import.meta.url),
   'utf8',
 )
-test('expert uses cockpit permission without another independent toggle', () => {
+test('expert has an independent permission without changing global evidence access', () => {
   const expert = operationsPages.find((page) => page.key === 'expert')
-  assert.equal(
+  assert.notEqual(
     expert.permission,
     operationsPages.find((page) => page.key === 'overview').permission,
   )
+  assert.equal(expert.permission, 'view_expert_qa')
   assert.equal(expert.title, '专家问答')
   assert.ok(PAGE_VISIBILITY_PAGES.some((page) => page.path === expert.path))
   const router = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
