@@ -1,5 +1,31 @@
 import { sortPermissionGroups } from './permissionPanel.js'
 
+export const personalScopeDraft = (effective, overrides) => ({
+  ...(effective || {}),
+  ...Object.fromEntries(Object.entries(overrides || {}).filter(([, values]) => Array.isArray(values) && values.length)),
+})
+
+export function changePermissionOverride(overrides, key, mode, exclusiveGroups) {
+  const next = { ...overrides }
+  if (mode === 'inherit') delete next[key]
+  else {
+    next[key] = mode === 'allow'
+    if (next[key]) exclusiveGroups.filter(group => group.includes(key)).forEach(group => {
+      group.filter(other => other !== key && next[other] === true).forEach(other => { delete next[other] })
+    })
+  }
+  return next
+}
+
+export function previewPersonalPermissions(base, overrides, exclusiveGroups, normalize, role) {
+  const merged = { ...base, ...overrides }
+  exclusiveGroups.forEach(group => {
+    const chosen = group.find(key => overrides[key] === true)
+    if (chosen) group.forEach(key => { merged[key] = key === chosen })
+  })
+  return normalize(merged, role)
+}
+
 export const permissionConfiguration = (user) => user.role === 'root' ? 'builtin' : user.has_permission_overrides ? 'custom' : 'template'
 export const permissionConfigurationLabel = (user) => ({ builtin: '内置管理员', custom: '个性化配置', template: '角色模板' })[permissionConfiguration(user)]
 export const roleLabelFor = (roles, role) => roles.find(item => item.value === role)?.label || role || '未设置角色'

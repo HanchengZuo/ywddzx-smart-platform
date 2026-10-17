@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { directoryPageNumbers, filterDirectoryUsers, permissionConfiguration, permissionScopeDetail, permissionSummary, roleLabelFor, userPermissionGroups, userRegions } from '../src/utils/userDirectory.js'
+import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions, directoryPageNumbers, filterDirectoryUsers, permissionConfiguration, permissionScopeDetail, permissionSummary, roleLabelFor, userPermissionGroups, userRegions } from '../src/utils/userDirectory.js'
 
 const roles = [{ value: 'supervisor_manager', label: '督导组管理人员' }, { value: 'station_manager', label: '站点账号' }, { value: 'area_account', label: '片区账号' }]
 const catalog = [
@@ -89,7 +89,7 @@ test('pagination has a bounded five-page window at start, middle, end and empty 
   assert.deepEqual(directoryPageNumbers(1, 0), [])
 })
 
-for (const name of ['UserDirectory', 'UserAccountActions', 'UserPermissionDetailsDialog']) {
+for (const name of ['UserDirectory', 'UserAccountActions', 'UserPermissionDetailsDialog', 'UserPermissionToggle']) {
   test(`${name} template and script compile with actual binding metadata`, () => {
     const path = new URL(`../src/components/${name}.vue`, import.meta.url)
     const { descriptor, errors } = parse(readFileSync(path, 'utf8'))
@@ -109,7 +109,46 @@ test('permission inspector is read-only and has modal focus and teardown handlin
   const parent = readFileSync(new URL('../src/views/management/UserDataManagementView.vue', import.meta.url), 'utf8')
   assert.match(parent, /users\.value\.find\(user => user\.id === permissionDetailsId\.value\)/)
   assert.match(parent, /const editorOpen = ref\(false\)/)
-  assert.match(parent, /!editorOpen && editorHasDraft/)
-  assert.match(parent, /const editorHasDraft = computed/)
+  assert.match(parent, /userEditorDialog.value\?\.showModal\(\)/)
+  assert.match(parent, /editorMode === 'account'/)
+  assert.match(parent, /editorMode === 'permissions'/)
+  assert.doesNotMatch(parent, /v-model="form.password"/)
   assert.match(parent, /@edit="startEdit" @reset="openPasswordReset" @delete="deleteUser"/)
+})
+
+test('personal overrides are sparse, support returning to inheritance and win exclusive inherited scopes', () => {
+  const groups = [['own', 'region', 'all']]
+  const before = { expert: false }
+  const next = changePermissionOverride(before, 'own', 'allow', groups)
+  assert.deepEqual(next, { expert: false, own: true })
+  assert.deepEqual(before, { expert: false })
+  const base = { own: false, all: true, region: false, expert: true, map: false }
+  const actual = previewPersonalPermissions(base, next, groups, value => value, '')
+  assert.equal(actual.own, true); assert.equal(actual.all, false); assert.equal(actual.expert, false)
+  assert.equal(previewPersonalPermissions({ ...base, map: true }, next, groups, value => value, '').map, true)
+  assert.deepEqual(changePermissionOverride(next, 'expert', 'inherit', groups), { own: true })
+  assert.deepEqual(changePermissionOverride(next, 'region', 'allow', groups), { expert: false, region: true })
+})
+
+test('retired pages have no menu, route, visibility entry or frontend view', () => {
+  for (const path of ['App.vue', 'router/index.js', 'config/pageVisibilityCatalog.js']) {
+    const source = readFileSync(new URL('../src/' + path, import.meta.url), 'utf8')
+    assert.doesNotMatch(source, /peer-review|view_peer_reviews|view_training|\/training|TrainingMaterialsView|PeerReviewView/)
+  }
+})
+
+test('account and permission submits are separate, automatic credentials use the secure existing dialog', () => {
+  const parent = readFileSync(new URL('../src/views/management/UserDataManagementView.vue', import.meta.url), 'utf8')
+  assert.match(parent, /permission_overrides: \{ \.\.\.form.permission_overrides \}/)
+  assert.match(parent, /const payload = \{ user_id: currentUserId, username: form.username, role: form.role,/)
+  assert.doesNotMatch(parent, /permissions: form.permissions|password: form.password/)
+  assert.match(parent, /credential: response.data.credentials\[0\]/)
+})
+
+test('editing unrelated permissions retains a dormant explicitly configured data scope', () => {
+  const effective = { issue: [], record: [2] }
+  const overrides = { issue: [1, 3], record: [] }
+  assert.deepEqual(personalScopeDraft(effective, overrides), { issue: [1, 3], record: [2] })
+  assert.deepEqual(effective, { issue: [], record: [2] })
+  assert.deepEqual(personalScopeDraft(undefined, undefined), {})
 })

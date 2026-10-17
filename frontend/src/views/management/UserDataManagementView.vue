@@ -7,7 +7,6 @@
         <p class="page-desc">维护系统用户、角色、所属站点和可操作权限。root 默认拥有全部权限，其他用户可在这里单独开关。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
-        <button v-if="!editorOpen && editorHasDraft" class="btn btn-secondary" type="button" @click="showEditor">继续编辑 {{ form.id ? form.username : '新用户' }}</button>
         <button class="btn btn-primary birthday-action-btn" type="button" :disabled="birthdayDialog.loading"
           @click="openBirthdayDialog">
           生日祝福管理
@@ -39,30 +38,26 @@
         <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
       </transition>
 
-      <section v-show="editorOpen" ref="editorCardRef" class="card-surface editor-card" :class="{ editing: form.id }">
+      <Teleport to="body"><dialog ref="userEditorDialog" class="user-editor-dialog" :class="{ 'permission-mode': editorMode === 'permissions' }" aria-labelledby="user-editor-title" @cancel.prevent="closeEditor" @click="closeEditorBackdrop">
+      <section class="editor-card">
         <div class="section-head">
           <div>
-            <div class="section-kicker">{{ form.id ? '编辑用户' : '新增用户' }}</div>
-            <h3 v-if="form.id" class="editing-heading">
-              <span>正在维护</span>
+            <div class="section-kicker">{{ editorMode === 'permissions' ? '个性化权限' : form.id ? '编辑用户' : '新增用户' }}</div>
+            <h3 v-if="form.id" id="user-editor-title" class="editing-heading">
+              <span>{{ editorMode === 'permissions' ? '配置权限' : '账号资料' }}</span>
               <strong>{{ form.username }}</strong>
             </h3>
-            <h3 v-else>创建系统账号</h3>
+            <h3 v-else id="user-editor-title">创建系统账号</h3>
           </div>
-          <button class="btn btn-secondary btn-sm" type="button" :disabled="saving" @click="editorOpen = false">收起编辑</button>
+          <button class="btn btn-secondary btn-sm" type="button" :disabled="saving" @click="closeEditor">关闭</button>
         </div>
 
         <div class="editor-layout">
-          <div class="basic-form">
+          <div v-if="editorMode === 'account'" class="basic-form">
+            <p class="account-inheritance-note">{{ form.id ? '此处仅编辑账号资料，不修改个人权限。' : '初始密码由系统自动生成，创建成功后仅显示一次，首次登录必须修改。新用户默认继承角色通用权限。' }}</p>
             <label class="form-field">
               <span>用户名</span>
-              <input v-model.trim="form.username" type="text" placeholder="例如：supervisor1" />
-            </label>
-
-            <label class="form-field">
-              <span>{{ form.id ? '新密码（不填则不修改）' : '初始密码' }}</span>
-              <input v-model="form.password" type="password" autocomplete="new-password"
-                placeholder="至少12位；高权限账号至少15位" />
+              <input v-model.trim="form.username" type="text" maxlength="80" autofocus placeholder="例如：supervisor1" />
             </label>
 
             <label class="form-field">
@@ -73,21 +68,21 @@
               <small v-if="isEditingRoot" class="field-tip">root 是系统内置管理员，角色固定不可调整。</small>
             </label>
 
-            <label v-if="form.role !== 'area_account'" class="form-field">
+            <label class="form-field">
               <span>姓名</span>
               <input v-model.trim="form.real_name" type="text" placeholder="请输入姓名" />
             </label>
 
-            <label v-if="form.role !== 'area_account'" class="form-field">
+            <label class="form-field">
               <span>手机号</span>
-              <input v-model.trim="form.phone" type="text" placeholder="请输入手机号" />
+              <input v-model.trim="form.phone" type="tel" maxlength="40" placeholder="请输入手机号" />
             </label>
 
             <div v-if="form.role === 'area_account'" class="station-picker-card area-account-region-card">
               <div class="station-picker-head">
                 <div>
                   <strong>绑定片区</strong>
-                  <p>片区账号创建时不需要填写姓名和手机号，但必须指定可查看的片区范围。</p>
+                  <p>片区归属用于隔离账号数据，不属于个人权限覆盖。</p>
                 </div>
                 <span>{{ areaAccountRegion || '未选择片区' }}</span>
               </div>
@@ -143,11 +138,11 @@
             </div>
           </div>
 
-          <div class="permission-panel">
+          <div v-if="editorMode === 'permissions'" class="permission-panel">
             <div class="permission-panel-head">
               <div>
                 <strong>页面权限开关</strong>
-                <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '涉及站点范围的页面先选择数据范围，再配置该范围内的查看、编辑或删除能力。' }}</p>
+                <p>{{ form.role === 'root' ? 'root 固定拥有全部权限，不需要单独配置。' : '未单独设置的权限随角色通用权限变化；单独开启或关闭优先于角色设置，仍受依赖规则约束。' }}</p>
               </div>
               <span class="permission-overview">{{ roleLabel(form.role) }} · {{ enabledPermissionCount }} / {{ permissions.length }} 项已开启</span>
             </div>
@@ -177,46 +172,26 @@
 
                 <div v-if="group.scopeItems.length" class="permission-section">
                   <div class="permission-section-label">1 数据范围</div>
-                  <label v-for="permission in group.scopeItems" :key="permission.key"
-                    class="permission-item permission-item-scope"
-                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
-                    <input v-model="form.permissions[permission.key]" type="checkbox"
-                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
-                      @change="handlePermissionChange(permission.key)" />
-                    <span>
-                      <strong>{{ permission.name }}</strong>
-                      <small>{{ permission.description }}</small>
-                    </span>
-                  </label>
+                  <UserPermissionToggle v-for="permission in group.scopeItems" :key="permission.key" :permission="permission"
+                    :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
                 <div v-if="group.actionItems.length" class="permission-section">
                   <div class="permission-section-label">2 范围内操作</div>
-                  <label v-for="permission in group.actionItems" :key="permission.key"
-                    class="permission-item permission-item-action"
-                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
-                    <input v-model="form.permissions[permission.key]" type="checkbox"
-                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
-                      @change="handlePermissionChange(permission.key)" />
-                    <span>
-                      <strong>{{ permission.name }}</strong>
-                      <small>{{ permission.description }}</small>
-                    </span>
-                  </label>
+                  <UserPermissionToggle v-for="permission in group.actionItems" :key="permission.key" :permission="permission"
+                    :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
                 <div v-if="group.regularItems.length" class="permission-section">
                   <div v-if="group.hasScopedLayout" class="permission-section-label">其他权限</div>
-                  <label v-for="permission in group.regularItems" :key="permission.key" class="permission-item"
-                    :class="{ disabled: form.role === 'root' || isPermissionDisabled(permission.key) }">
-                    <input v-model="form.permissions[permission.key]" type="checkbox"
-                      :disabled="form.role === 'root' || isPermissionDisabled(permission.key)"
-                      @change="handlePermissionChange(permission.key)" />
-                    <span>
-                      <strong>{{ permission.name }}</strong>
-                      <small>{{ permission.description }}</small>
-                    </span>
-                  </label>
+                  <UserPermissionToggle v-for="permission in group.regularItems" :key="permission.key" :permission="permission"
+                    :mode="personalPermissionMode(permission.key)" :enabled="Boolean(form.permissions[permission.key])"
+                    :inherited="Boolean(buildDefaultPermissions(form.role)[permission.key])" :disabled="form.role === 'root'"
+                    @change="setPersonalPermission(permission.key, $event)" />
                 </div>
 
                 <div v-if="inspectionScopeConfigForCategory(group.category)" class="inspection-scope-panel"
@@ -229,6 +204,7 @@
                     <span>{{ selectedInspectionScopeSummary(inspectionScopeConfigForCategory(group.category).permissionKey) }}</span>
                   </div>
 
+                  <label class="scope-inheritance"><input type="checkbox" :checked="scopeInherited[inspectionScopeConfigForCategory(group.category).permissionKey]" @change="setScopeInheritance(inspectionScopeConfigForCategory(group.category).permissionKey, $event.target.checked)" />沿用角色通用检查表范围</label>
                   <div class="inspection-scope-actions">
                     <button class="btn btn-secondary btn-sm" type="button"
                       :disabled="isInspectionScopeDisabled(inspectionScopeConfigForCategory(group.category).permissionKey) || !hasRoleDefaultInspectionScope(form.role)"
@@ -271,7 +247,7 @@
                   </div>
                 </div>
 
-                <div v-if="stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel"
+                <div v-if="form.role !== 'area_account' && stationRegionScopeConfigForCategory(group.category)" class="inspection-scope-panel region-scope-panel"
                   :class="{ disabled: isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey) }">
                   <div class="inspection-scope-head">
                     <div>
@@ -281,6 +257,7 @@
                     <span>{{ selectedStationRegionScopeSummary(stationRegionScopeConfigForCategory(group.category).permissionKey) }}</span>
                   </div>
 
+                  <label class="scope-inheritance"><input type="checkbox" :checked="scopeInherited[stationRegionScopeConfigForCategory(group.category).permissionKey]" @change="setScopeInheritance(stationRegionScopeConfigForCategory(group.category).permissionKey, $event.target.checked)" />沿用角色通用片区范围</label>
                   <div class="inspection-scope-actions">
                     <button class="btn btn-secondary btn-sm" type="button"
                       :disabled="isStationRegionScopeDisabled(stationRegionScopeConfigForCategory(group.category).permissionKey)"
@@ -321,17 +298,15 @@
         <div v-if="formError" class="form-error">{{ formError }}</div>
 
         <div class="form-actions">
-          <button class="btn btn-secondary" type="button" @click="resetForm({ scrollToEditor: true })">
-            {{ form.id ? '放弃修改' : '清空' }}
-          </button>
+          <button class="btn btn-secondary" type="button" :disabled="saving" @click="closeEditor">取消</button>
           <button class="btn btn-primary" type="button" :disabled="saving" @click="saveUser">
-            {{ saving ? '保存中...' : form.id ? '保存修改' : '新增用户' }}
+            {{ saving ? '保存中...' : editorMode === 'permissions' ? '保存个人权限' : form.id ? '保存资料' : '创建并生成初始密码' }}
           </button>
         </div>
-      </section>
+      </section></dialog></Teleport>
 
-      <section ref="tableCardRef" class="card-surface table-card">
-        <UserDirectory :users="users" :roles="roles" :catalog="permissions" :loading="loading" :editing-id="form.id"
+      <section class="card-surface table-card">
+        <UserDirectory :users="users" :roles="roles" :catalog="permissions" :loading="loading" :editing-id="editorOpen ? form.id : null"
           :resetting="resetPasswordDialog.loading" :deleting-id="deletingId" @create="openCreateUser"
           @edit="startEdit" @reset="openPasswordReset" @delete="deleteUser" @permissions="openPermissionDetails" />
       </section>
@@ -341,7 +316,7 @@
       :target="resetPasswordDialog.target" :credential="resetPasswordDialog.credential" :error="resetPasswordDialog.error"
       @confirm="resetUserPassword" @close="closePasswordReset" />
     <UserPermissionDetailsDialog :user="permissionDetailsUser" :catalog="permissions" :roles="roles" :tables="inspectionTables"
-      :role-overrides="rolePermissionOverrides[permissionDetailsUser?.role] || {}" @close="permissionDetailsId = null" @edit="startEdit" />
+      :role-overrides="rolePermissionOverrides[permissionDetailsUser?.role] || {}" @close="permissionDetailsId = null" @edit="startPermissionEdit" />
 
     <div v-if="birthdayDialog.visible" class="modal-backdrop birthday-modal-backdrop" @click.self="closeBirthdayDialog">
       <div class="birthday-management-modal card-surface">
@@ -630,8 +605,10 @@ import AccountPasswordResetDialog from '@/components/AccountPasswordResetDialog.
 import UserDirectory from '@/components/UserDirectory.vue'
 import UserPermissionDetailsDialog from '@/components/UserPermissionDetailsDialog.vue'
 import PermissionCategoryNav from '@/components/PermissionCategoryNav.vue'
+import UserPermissionToggle from '@/components/UserPermissionToggle.vue'
 import { filterPermissionGroups, resolvePermissionCategory, sortPermissionGroups } from '@/utils/permissionPanel'
 import { isSupervisorRole } from '@/utils/roles'
+import { changePermissionOverride, personalScopeDraft, previewPersonalPermissions } from '@/utils/userDirectory'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
@@ -663,6 +640,14 @@ const rolePermissionKeyword = ref('')
 const activeRolePermissionCategory = ref('')
 const rolePermissionDetailRef = ref(null)
 const editorOpen = ref(false)
+const editorMode = ref('account')
+const userEditorDialog = ref(null)
+const scopeInherited = reactive({})
+watch(editorOpen, async open => {
+  await nextTick()
+  if (open && !userEditorDialog.value?.open) userEditorDialog.value?.showModal()
+  if (!open) userEditorDialog.value?.close()
+})
 const permissionDetailsId = ref(null)
 const permissionDetailsUser = computed(() => users.value.find(user => user.id === permissionDetailsId.value) || null)
 const openPermissionDetails = user => { permissionDetailsId.value = user.id }
@@ -685,8 +670,6 @@ const birthdayDialog = reactive({
 })
 const birthdayMonthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
 
-const editorCardRef = ref(null)
-const tableCardRef = ref(null)
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues'],
@@ -698,7 +681,6 @@ const dependentPermissionMap = {
   edit_own_certificates: 'view_own_certificates',
   adjust_station_scores: 'view_station_scores',
   reset_station_account_password: 'manage_stations',
-  manage_peer_review_tasks: 'view_peer_reviews',
   generate_inspection_reports: 'view_inspection_reports'
 }
 
@@ -826,18 +808,17 @@ const scopedPermissionLayouts = {
 const createEmptyForm = () => ({
   id: null,
   username: '',
-  password: '',
   role: 'supervisor',
   real_name: '',
   phone: '',
   station_id: '',
   inspection_table_scope_ids: createEmptyInspectionScopeMap(),
   station_region_scope_values: createEmptyStationRegionScopeMap(),
-  permissions: {}
+  permissions: {},
+  permission_overrides: {}
 })
 
 const form = reactive(createEmptyForm())
-const editorHasDraft = computed(() => Boolean(form.id || form.username || form.password || form.real_name || form.phone))
 
 const rolePermissionDialog = reactive({
   visible: false,
@@ -985,10 +966,10 @@ const roleTemplateDefaultScopeActionLabel = computed(() => {
   return `${label.replace(/账号$/, '')}默认`
 })
 const defaultScopeBadgeLabel = (label) => `${String(label || '').replace(/账号$/, '')}默认`
-const isInspectionScopeDisabled = (permissionKey) => (
+const isInspectionScopeDisabled = (permissionKey) => scopeInherited[permissionKey] || (
   form.role === 'root' || !form.permissions?.[permissionKey]
 )
-const isStationRegionScopeDisabled = (permissionKey) => (
+const isStationRegionScopeDisabled = (permissionKey) => scopeInherited[permissionKey] || (
   form.role === 'root' || !form.permissions?.[permissionKey]
 )
 const selectedInspectionScopeSummary = (permissionKey) => {
@@ -1189,14 +1170,6 @@ const enforceExclusivePermissions = (permissionMap, role = form.role) => {
   return nextPermissions
 }
 
-const isPermissionDisabled = (permissionKey) => {
-  if (permissionKey === 'review_quality_appeals') return currentRole !== 'root' || !['root', 'quality_safety'].includes(form.role)
-  const parentKey = dependentPermissionMap[permissionKey]
-  if (parentKey && !form.permissions[parentKey]) return true
-  const parentKeys = anyDependentPermissionMap[permissionKey]
-  return Boolean(parentKeys && !parentKeys.some((key) => form.permissions[key]))
-}
-
 const isPermissionDisabledForMap = (permissionMap, permissionKey) => {
   const parentKey = dependentPermissionMap[permissionKey]
   if (parentKey && !permissionMap?.[parentKey]) return true
@@ -1209,43 +1182,20 @@ const isRolePermissionDisabled = (permissionKey) => {
   return isPermissionDisabledForMap(rolePermissionDialog.permissions, permissionKey)
 }
 
-const handlePermissionChange = (permissionKey) => {
-  if (form.permissions[permissionKey]) {
-    exclusivePermissionGroups.forEach((group) => {
-      if (!group.includes(permissionKey)) return
-      group
-        .filter((key) => key !== permissionKey)
-        .forEach((key) => {
-          form.permissions[key] = false
-        })
-    })
-  }
-
-  Object.entries(dependentPermissionMap).forEach(([childKey, parentKey]) => {
-    if (permissionKey === parentKey && !form.permissions[parentKey]) {
-      form.permissions[childKey] = false
-    }
-    if (permissionKey === childKey && form.permissions[childKey] && !form.permissions[parentKey]) {
-      form.permissions[childKey] = false
-    }
-  })
-  Object.entries(anyDependentPermissionMap).forEach(([childKey, parentKeys]) => {
-    if (parentKeys.includes(permissionKey) && !parentKeys.some((key) => form.permissions[key])) {
-      form.permissions[childKey] = false
-    }
-    if (permissionKey === childKey && form.permissions[childKey] && !parentKeys.some((key) => form.permissions[key])) {
-      form.permissions[childKey] = false
-    }
-  })
-  form.permissions = enforceExclusivePermissions(form.permissions, form.role)
-
-  if (
-    inspectionTableScopePermissionKeys.includes(permissionKey) &&
-    form.permissions[permissionKey] &&
-    hasRoleDefaultInspectionScope(form.role) &&
-    !form.inspection_table_scope_ids[permissionKey]?.length
-  ) {
-    form.inspection_table_scope_ids[permissionKey] = [...getRoleDefaultInspectionTableIds(form.role)]
+const personalPermissionMode = key => Object.hasOwn(form.permission_overrides, key) ? (form.permission_overrides[key] ? 'allow' : 'deny') : 'inherit'
+const refreshPersonalPreview = () => {
+  form.permissions = previewPersonalPermissions(buildDefaultPermissions(form.role), form.permission_overrides,
+    exclusivePermissionGroups, enforceExclusivePermissions, form.role)
+}
+const setPersonalPermission = (key, mode) => {
+  form.permission_overrides = changePermissionOverride(form.permission_overrides, key, mode, exclusivePermissionGroups)
+  refreshPersonalPreview()
+}
+const setScopeInheritance = (key, inherited) => {
+  scopeInherited[key] = inherited
+  if (inherited) {
+    if (inspectionTableScopePermissionKeys.includes(key)) form.inspection_table_scope_ids[key] = [...(buildRoleTemplateInspectionScopeMap(form.role)[key] || [])]
+    else form.station_region_scope_values[key] = [...(buildRoleTemplateStationRegionScopeMap(form.role)[key] || [])]
   }
 }
 
@@ -1300,8 +1250,6 @@ const applyRoleDefaults = () => {
   form.station_region_scope_values = createEmptyStationRegionScopeMap()
   if (form.role === 'area_account') {
     form.station_id = ''
-    form.real_name = ''
-    form.phone = ''
     stationRegionFilter.value = ''
     stationKeyword.value = ''
     applyAreaAccountRegionScope()
@@ -1618,74 +1566,33 @@ const resetForm = (options = {}) => {
   areaAccountRegion.value = ''
   formError.value = ''
   if (!options.keepMessage) setMessage('')
-  if (options.scrollToEditor) {
-    nextTick(() => {
-      editorCardRef.value?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      })
-    })
-  }
 }
 
-const resetCreateTextFields = (options = {}) => {
-  const rememberedRole = form.role || 'supervisor'
-  const rememberedPermissions = enforceExclusivePermissions(
-    { ...form.permissions },
-    rememberedRole
-  )
-  const rememberedStationId = rememberedRole === 'station_manager' ? form.station_id : ''
-  const rememberedAreaRegion = rememberedRole === 'area_account' ? areaAccountRegion.value : ''
-  const rememberedScopeIds = normalizeInspectionScopeMap(form.inspection_table_scope_ids)
-  const rememberedRegionScopeValues = normalizeStationRegionScopeMap(form.station_region_scope_values)
-
-  Object.assign(form, {
-    id: null,
-    username: '',
-    password: '',
-    role: rememberedRole,
-    real_name: '',
-    phone: '',
-    station_id: rememberedStationId,
-    inspection_table_scope_ids: rememberedScopeIds,
-    station_region_scope_values: rememberedRegionScopeValues,
-    permissions: rememberedPermissions
-  })
-  stationKeyword.value = ''
-  areaAccountRegion.value = rememberedAreaRegion
-  if (rememberedRole === 'area_account') {
-    applyAreaAccountRegionScope()
-  }
-  formError.value = ''
-  if (!options.keepMessage) setMessage('')
+const closeEditor = () => { if (!saving.value) { editorOpen.value = false; formError.value = '' } }
+const closeEditorBackdrop = event => {
+  if (event.target !== userEditorDialog.value) return
+  const bounds = userEditorDialog.value.getBoundingClientRect()
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) closeEditor()
 }
+const openCreateUser = () => { resetForm(); editorMode.value = 'account'; editorOpen.value = true }
 
-const showEditor = () => {
-  editorOpen.value = true
-  nextTick(() => editorCardRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-}
-
-const openCreateUser = () => {
-  if (editorHasDraft.value &&
-      !window.confirm('即将打开新增用户表单，当前编辑内容不会自动保存。是否继续？')) return
-  resetForm()
-  showEditor()
-}
-
-const startEdit = (user) => {
+const startEdit = (user, mode = 'account') => {
+  editorMode.value = mode
   editorOpen.value = true
   Object.assign(form, {
     id: user.id,
     username: user.username || '',
-    password: '',
     role: user.role || 'supervisor',
     real_name: user.real_name || '',
     phone: user.phone || '',
     station_id: user.station_id || '',
-    inspection_table_scope_ids: normalizeInspectionScopeMap(user.inspection_table_scope_ids),
-    station_region_scope_values: normalizeStationRegionScopeMap(user.station_region_scope_values),
-    permissions: enforceExclusivePermissions(user.permissions || {}, user.role || 'supervisor')
+    inspection_table_scope_ids: normalizeInspectionScopeMap(personalScopeDraft(user.inspection_table_scope_ids, user.inspection_table_scope_overrides)),
+    station_region_scope_values: normalizeStationRegionScopeMap(personalScopeDraft(user.station_region_scope_values, user.station_region_scope_overrides)),
+    permissions: enforceExclusivePermissions(user.permissions || {}, user.role || 'supervisor'),
+    permission_overrides: { ...(user.permission_overrides || {}) }
   })
+  inspectionTableScopePermissionKeys.forEach(key => { scopeInherited[key] = !user.inspection_table_scope_overrides?.[key]?.length })
+  stationRegionScopePermissionKeys.forEach(key => { scopeInherited[key] = !user.station_region_scope_overrides?.[key]?.length })
   const station = stations.value.find((item) => String(item.id) === String(user.station_id || ''))
   stationRegionFilter.value = station?.region || ''
   stationKeyword.value = ''
@@ -1694,13 +1601,9 @@ const startEdit = (user) => {
     : ''
   formError.value = ''
   setMessage(`已进入【${user.username}】编辑状态。`, 'info')
-  nextTick(() => {
-    editorCardRef.value?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    })
-  })
 }
+
+const startPermissionEdit = user => startEdit(user, 'permissions')
 
 const fetchUsers = async () => {
   if (!hasPermission) return
@@ -1819,11 +1722,11 @@ const importUsers = async (event) => {
 
 const validateForm = () => {
   if (!form.username) return '请填写用户名。'
-  if (!form.id && !form.password) return '请填写初始密码。'
   if (!form.role) return '请选择角色。'
   if (form.role !== 'area_account' && !form.real_name) return '请填写用户姓名。'
   if (form.role === 'station_manager' && !form.station_id) return '站点账号必须选择所属站点。'
   if (form.role === 'area_account' && !areaAccountRegion.value) return '片区账号必须选择所属片区/归属地。'
+  if (editorMode.value !== 'permissions') return ''
   if (
     form.role !== 'root' &&
     inspectionTables.value.length > 0 &&
@@ -1845,9 +1748,6 @@ const validateForm = () => {
 }
 
 const saveUser = async () => {
-  if (form.role === 'area_account') {
-    applyAreaAccountRegionScope()
-  }
   formError.value = validateForm()
   if (formError.value) {
     setMessage(formError.value, 'error')
@@ -1860,34 +1760,26 @@ const saveUser = async () => {
     const normalizedRealName = form.role === 'area_account'
       ? (form.real_name || areaAccountRegion.value || form.username)
       : form.real_name
-    const payload = {
-      user_id: currentUserId,
-      username: form.username,
-      password: form.password,
-      role: form.role,
-      real_name: normalizedRealName,
-      phone: form.role === 'area_account' ? '' : form.phone,
-      station_id: form.station_id,
-      inspection_table_scope_ids: form.inspection_table_scope_ids,
-      station_region_scope_values: form.station_region_scope_values,
-      permissions: form.permissions
-    }
-    payload.permissions = enforceExclusivePermissions(payload.permissions, form.role)
-    const response = form.id
-      ? await axios.put(`/api/management/users/${form.id}`, payload)
-      : await axios.post('/api/management/users', payload)
-    setMessage(response.data?.message || '用户已保存。', 'success')
-    if (isCreating) resetCreateTextFields({ keepMessage: true })
-    await fetchUsers()
-    if (!isCreating) {
-      editorOpen.value = false
-      nextTick(() => {
-        tableCardRef.value?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        })
+    let response
+    if (editorMode.value === 'permissions') {
+      response = await axios.put(`/api/management/users/${form.id}/permissions`, {
+        user_id: currentUserId,
+        permission_overrides: { ...form.permission_overrides },
+        inspection_table_scope_ids: Object.fromEntries(inspectionTableScopePermissionKeys.map(key => [key, scopeInherited[key] ? [] : [...ensureInspectionScopeList(key)]])),
+        station_region_scope_values: Object.fromEntries(stationRegionScopePermissionKeys.map(key => [key, scopeInherited[key] ? [] : [...ensureStationRegionScopeList(key)]]))
       })
+    } else {
+      const payload = { user_id: currentUserId, username: form.username, role: form.role,
+        real_name: normalizedRealName, phone: form.phone, station_id: form.station_id }
+      if (form.role === 'area_account') payload.station_region_scope_values = Object.fromEntries(stationRegionScopePermissionKeys.map(key => [key, [areaAccountRegion.value]]))
+      response = form.id ? await axios.put(`/api/management/users/${form.id}`, payload) : await axios.post('/api/management/users', payload)
     }
+    setMessage(response.data?.message || '用户已保存。', 'success')
+    editorOpen.value = false
+    if (isCreating && response.data?.credentials?.[0]) {
+      Object.assign(resetPasswordDialog, { visible: true, target: { username: form.username, real_name: form.real_name }, credential: response.data.credentials[0], error: '' })
+    }
+    await fetchUsers()
   } catch (error) {
     formError.value = error?.response?.data?.error || '用户保存失败。'
     setMessage(formError.value, 'error')
@@ -1913,7 +1805,6 @@ const resetUserPassword = async () => {
   try {
     const response = await axios.post(`/api/management/users/${resetPasswordDialog.target.id}/reset-password`, { user_id: currentUserId })
     resetPasswordDialog.credential = response.data.credentials?.[0] || null
-    if (form.id === resetPasswordDialog.target.id) form.password = ''
     setMessage(response.data.message || '密码已重置。', 'success')
   } catch (error) {
     resetPasswordDialog.error = error?.response?.data?.error || '密码重置失败，请稍后重试。'
@@ -1958,6 +1849,7 @@ watch(stationKeyword, () => {
 onMounted(fetchUsers)
 
 onBeforeUnmount(() => {
+  userEditorDialog.value?.close()
   if (messageTimer) {
     clearTimeout(messageTimer)
     messageTimer = null
@@ -1966,6 +1858,24 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.user-editor-dialog, .user-editor-dialog * { box-sizing: border-box; }
+.user-editor-dialog { width: min(720px, calc(100vw - 28px)); max-width: none; max-height: calc(100dvh - 28px); margin: auto; padding: 22px; border: 1px solid #dbe4ee; border-radius: 20px; overflow: auto; color: #0f172a; box-shadow: 0 28px 80px #0f172a40; }
+.user-editor-dialog::backdrop { background: #0f172a80; backdrop-filter: blur(4px); }
+.user-editor-dialog.permission-mode { width: min(1160px, calc(100vw - 28px)); height: min(880px, calc(100dvh - 28px)); overflow: hidden; }
+.user-editor-dialog .editor-card { padding: 0; }
+.user-editor-dialog .section-head { align-items: flex-start; }
+.user-editor-dialog .basic-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.permission-mode .editor-card { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.permission-mode .editor-layout { flex: 1; min-height: 0; overflow: hidden; }
+.permission-mode .permission-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.permission-mode .permission-workspace { flex: 1; height: auto; min-height: 0; }
+.permission-mode .section-head, .permission-mode .form-actions, .permission-mode .form-error { flex-shrink: 0; }
+.permission-mode .form-actions { margin-top: 16px; }
+.account-inheritance-note { grid-column: 1 / -1; margin: 0; padding: 12px; border-radius: 10px; background: #eff6ff; color: #3e6090; font-size: 12px; line-height: 1.8; }
+.permission-mode .permission-section { grid-template-columns: 1fr; }
+@media (max-width: 600px) { .user-editor-dialog { padding: 16px; } .user-editor-dialog .basic-form { grid-template-columns: 1fr; padding: 14px; } }
+.scope-inheritance { display: flex; align-items: center; gap: 8px; padding: 12px 0; color: #2563eb; font-size: 12px; }
+
 .page-shell {
   display: flex;
   flex-direction: column;

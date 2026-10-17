@@ -22,7 +22,7 @@
             <div v-else class="inspector-empty"><strong>没有匹配的权限</strong><p>调整搜索词或权限状态后重试。</p></div>
           </section>
         </div>
-        <footer><span>最后更新 {{ user.updated_at || '未记录' }}</span><div><button class="inspector-secondary" type="button" @click="$emit('close')">关闭</button><button class="inspector-primary" type="button" @click="editUser">编辑该用户</button></div></footer>
+        <footer><span>最后更新 {{ user.updated_at || '未记录' }}</span><div><button class="inspector-secondary" type="button" @click="$emit('close')">关闭</button><button v-if="user.role !== 'root'" class="inspector-primary" type="button" @click="editUser">编辑权限</button></div></footer>
       </div>
     </dialog>
   </Teleport>

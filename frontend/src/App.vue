@@ -310,32 +310,8 @@
           <span class="nav-item-icon">分</span>
           <span v-if="!sidebarCollapsed">站点评分</span>
         </button>
-        <button v-if="canViewPeerReviews" class="nav-item"
-          :class="{ active: isActive('/assessment/peer-review'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/assessment/peer-review')" :title="sidebarCollapsed ? '成员互评' : ''">
-          <span class="nav-item-icon feedback-nav-icon">
-            评
-            <span v-if="peerReviewPendingCount > 0" class="feedback-unread-badge">{{ peerReviewPendingDisplay }}</span>
-          </span>
-          <span v-if="!sidebarCollapsed">成员互评</span>
-        </button>
       </div>
 
-      <div v-if="canViewTrainingSection" class="menu-section">
-        <div v-if="!sidebarCollapsed" class="menu-section-title">培训系统</div>
-        <button v-if="canViewTrainingInternal" class="nav-item"
-          :class="{ active: isActive('/training'), collapsed: sidebarCollapsed }" type="button" @click="go('/training')"
-          :title="sidebarCollapsed ? '培训系统' : ''">
-          <span class="nav-item-icon">培</span>
-          <span v-if="!sidebarCollapsed">培训系统</span>
-        </button>
-        <button v-if="canViewTrainingMaterials" class="nav-item"
-          :class="{ active: isActive('/training/materials'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/training/materials')" :title="sidebarCollapsed ? '培训材料库' : ''">
-          <span class="nav-item-icon">材</span>
-          <span v-if="!sidebarCollapsed">培训材料库</span>
-        </button>
-      </div>
 
       <div v-if="canViewVehicle" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">车辆系统</div>
@@ -811,7 +787,6 @@ const idleActivityThrottleMs = 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
-const PEER_REVIEW_PENDING_REFRESH_EVENT = 'peer-review-pending-refresh'
 const PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT = 'plan-assignment-pending-refresh'
 const BIRTHDAY_BLESSING_PREVIEW_EVENT = 'birthday-blessing-preview'
 const idleActivityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']
@@ -877,7 +852,6 @@ const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
 const appealNotificationCount = ref(0)
-const peerReviewPendingCount = ref(0)
 const planAssignmentPendingCount = ref(0)
 const planAssignmentPendingItems = ref([])
 let notificationSummaryTimer = null
@@ -1036,16 +1010,11 @@ const canViewInspectionSection = computed(() => (
 const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment') && isPageVisible('/assessment'))
 const canViewAttendance = computed(() => hasPermissionKey('view_attendance') && isPageVisible('/assessment/attendance'))
 const canViewStationScores = computed(() => hasPermissionKey('view_station_scores') && isPageVisible('/assessment/station-score'))
-const canViewPeerReviews = computed(() => hasPermissionKey('view_peer_reviews') && isPageVisible('/assessment/peer-review'))
 const canViewAssessmentSection = computed(() => (
   canViewAssessmentHome.value ||
   canViewAttendance.value ||
-  canViewStationScores.value ||
-  canViewPeerReviews.value
+  canViewStationScores.value
 ))
-const canViewTrainingInternal = computed(() => hasPermissionKey('view_training') && isPageVisible('/training'))
-const canViewTrainingMaterials = computed(() => hasPermissionKey('view_training_materials') && isPageVisible('/training/materials'))
-const canViewTrainingSection = computed(() => canViewTrainingInternal.value || canViewTrainingMaterials.value)
 const canViewVehicle = computed(() => (isRoot.value || isSupervisor.value) && isPageVisible('/vehicle'))
 const canViewFeedback = computed(() => isPageVisible('/feedback'))
 const canViewCommonSection = computed(() => canViewFeedback.value)
@@ -1123,10 +1092,6 @@ const inspectionSignPendingDisplay = computed(() => {
 })
 const myPendingRectificationDisplay = computed(() => {
   const count = Number(myPendingRectificationCount.value) || 0
-  return count > 99 ? '99+' : String(count)
-})
-const peerReviewPendingDisplay = computed(() => {
-  const count = Number(peerReviewPendingCount.value) || 0
   return count > 99 ? '99+' : String(count)
 })
 const planAssignmentPendingDisplay = computed(() => {
@@ -1534,7 +1499,6 @@ const resetNotificationCounts = () => {
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
   appealNotificationCount.value = 0
-  peerReviewPendingCount.value = 0
   planAssignmentPendingCount.value = 0
   planAssignmentPendingItems.value = []
   notificationSummaryFetchedAt = 0
@@ -1545,7 +1509,6 @@ const applyNotificationSummary = (payload = {}) => {
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
   appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
-  peerReviewPendingCount.value = Number(payload.peer_review_pending_count || 0)
   planAssignmentPendingCount.value = Number(payload.plan_assignment_pending_count || 0)
   planAssignmentPendingItems.value = Array.isArray(payload.plan_assignment_pending_items)
     ? payload.plan_assignment_pending_items
@@ -1690,9 +1653,6 @@ const handleMyPendingRectificationRefresh = () => {
   refreshNotificationSummary({ force: true })
 }
 
-const handlePeerReviewPendingRefresh = () => {
-  refreshNotificationSummary({ force: true })
-}
 
 const handlePlanAssignmentPendingRefresh = () => {
   refreshNotificationSummary({ force: true })
@@ -1739,7 +1699,6 @@ onMounted(() => {
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
-  window.addEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.addEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.addEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
@@ -1779,7 +1738,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
-  window.removeEventListener(PEER_REVIEW_PENDING_REFRESH_EVENT, handlePeerReviewPendingRefresh)
   window.removeEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.removeEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.removeEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
@@ -1842,10 +1800,7 @@ const resolveHomePath = (user) => {
   }
   if (permissions.view_attendance) candidates.push('/assessment/attendance')
   if (permissions.view_station_scores) candidates.push('/assessment/station-score')
-  if (permissions.view_peer_reviews) candidates.push('/assessment/peer-review')
   if (permissions.view_assessment) candidates.push('/assessment')
-  if (permissions.view_training) candidates.push('/training')
-  if (permissions.view_training_materials) candidates.push('/training/materials')
   if (permissions.manage_stations) candidates.push('/management/stations')
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
