@@ -90,7 +90,7 @@ export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'assessment',
     title: '考核系统',
-    description: '考核统计、评分和互评页面',
+    description: '考核统计和站点评分页面',
     pages: [
       {
         key: '/assessment',
@@ -109,31 +109,6 @@ export const PAGE_VISIBILITY_GROUPS = [
         path: '/assessment/station-score',
         title: '站点评分',
         description: '按站点、检查表和时间范围计算评分。'
-      },
-      {
-        key: '/assessment/peer-review',
-        path: '/assessment/peer-review',
-        title: '成员互评',
-        description: '发起、填写和查看成员互评任务。'
-      }
-    ]
-  },
-  {
-    key: 'training',
-    title: '培训系统',
-    description: '培训入口和培训材料页面',
-    pages: [
-      {
-        key: '/training',
-        path: '/training',
-        title: '培训系统',
-        description: '督导组内部培训系统入口页面。'
-      },
-      {
-        key: '/training/materials',
-        path: '/training/materials',
-        title: '培训材料库',
-        description: '查看、上传和维护培训 PDF 或视频材料。'
       }
     ]
   },

@@ -187,7 +187,7 @@ def business_evidence(core, cur, question, options):
         result.append(source('profile:' + str(row['id']), '业务人员', row['real_name'] or '业务账号',
                              json.dumps(row, ensure_ascii=False, default=str), ''))
     for row in recall(cur, 'SELECT id,title,description,deadline_at,status FROM peer_review_tasks', ['title','description'], question):
-        result.append(source('peer:' + str(row['id']), '考核互评任务', row['title'], json.dumps(row, ensure_ascii=False, default=str), '/assessment/peer-review'))
+        result.append(source('peer:' + str(row['id']), '考核互评任务', row['title'], json.dumps(row, ensure_ascii=False, default=str), ''))
     if any(term in question.lower() for term in ['ai', '费用', '调用', 'token']):
         where, params = period_predicates(options, 'created_at')
         cur.execute('''SELECT usage_module, COUNT(*) FILTER(WHERE ai_called) AS calls,
@@ -255,7 +255,7 @@ def knowledge_evidence(core, cur):
         JOIN inspection_tables t ON t.id=f.inspection_table_id WHERE t.is_active=TRUE ORDER BY f.id DESC''')
     files = [(dict(row), '检查表原件', '/inspection/checklist-originals') for row in cur.fetchall()]
     cur.execute('SELECT id,title,original_filename,file_path FROM training_materials ORDER BY updated_at DESC')
-    files += [(dict(row), '培训材料', '/training/materials') for row in cur.fetchall()]
+    files += [(dict(row), '培训材料', '') for row in cur.fetchall()]
     notices = []
     if len(files) > 80:
         notices.append(f'文档共{len(files)}份，本次正文索引限最近80份；其余仅检索标题。')

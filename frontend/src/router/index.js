@@ -76,18 +76,6 @@ const routes = [
     component: () => import('../views/assessment/StationScoreView.vue')
   },
   {
-    path: '/assessment/peer-review',
-    component: () => import('../views/assessment/PeerReviewView.vue')
-  },
-  {
-    path: '/training',
-    component: () => import('../views/Training.vue')
-  },
-  {
-    path: '/training/materials',
-    component: () => import('../views/TrainingMaterialsView.vue')
-  },
-  {
     path: '/vehicle',
     component: () => import('../views/VehicleManagement.vue')
   },
@@ -202,9 +190,6 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
   if (path === '/assessment/station-score') return hasPermission(role, permissions, 'view_station_scores')
-  if (path === '/assessment/peer-review') return hasPermission(role, permissions, 'view_peer_reviews')
-  if (path === '/training') return hasPermission(role, permissions, 'view_training')
-  if (path === '/training/materials') return hasPermission(role, permissions, 'view_training_materials')
   if (path === '/vehicle') return isSupervisorRole(role)
   return true
 }
@@ -238,10 +223,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   }
   if (permissions.view_attendance) candidates.push('/assessment/attendance')
   if (permissions.view_station_scores) candidates.push('/assessment/station-score')
-  if (permissions.view_peer_reviews) candidates.push('/assessment/peer-review')
   if (permissions.view_assessment) candidates.push('/assessment')
-  if (permissions.view_training) candidates.push('/training')
-  if (permissions.view_training_materials) candidates.push('/training/materials')
   if (permissions.manage_stations) candidates.push('/management/stations')
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
