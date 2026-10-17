@@ -26,7 +26,6 @@
         <div class="login-module-strip">
           <span class="active">巡检系统 已上线</span>
           <span>考核系统 规划中</span>
-          <span>培训系统 规划中</span>
         </div>
 
         <div class="login-release-row">

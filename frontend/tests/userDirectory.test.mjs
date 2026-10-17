@@ -134,6 +134,7 @@ test('retired pages have no menu, route, visibility entry or frontend view', () 
   for (const path of ['App.vue', 'router/index.js', 'config/pageVisibilityCatalog.js']) {
     const source = readFileSync(new URL('../src/' + path, import.meta.url), 'utf8')
     assert.doesNotMatch(source, /peer-review|view_peer_reviews|view_training|\/training|TrainingMaterialsView|PeerReviewView/)
+    assert.doesNotMatch(source, /培训系统 规划中/)
   }
 })
 
