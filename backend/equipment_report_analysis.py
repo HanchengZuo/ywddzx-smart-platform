@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from openpyxl import load_workbook
 from report_ai_memory import remember_report_ai
+from ai_routing import ai_scene, current_model, create_ai_completion
 
 CATALOG = Path(__file__).parent / 'assets/equipment_report_template/standards.xlsx'
 UNIT_NAMES = ['浦东管理片区', '闵普徐管理片区', '松金管理片区', '嘉青管理片区', '南汇管理片区',
@@ -116,14 +117,15 @@ def normalize_topic_ids(payload, context):
     return selected[:limit], rejected
 
 
-@remember_report_ai('equipment_topics', PROMPT, prompt_context, 'deepseek-v4-pro')
+@ai_scene(lambda context: 'equipment_' + context['kind'])
+@remember_report_ai('equipment_topics', PROMPT, prompt_context, current_model)
 def choose_topics(context):
-    from ai_utils import get_deepseek_client, extract_json_from_ai_text, with_ai_usage_meta, DEEPSEEK_MODEL
+    from ai_utils import get_deepseek_client, extract_json_from_ai_text, with_ai_usage_meta
     client = get_deepseek_client()
     if not client:
         raise ValueError('未配置AI服务，设备设施选题未生成，请配置后重试。')
-    response = client.with_options(timeout=90, max_retries=0).chat.completions.create(
-        model=DEEPSEEK_MODEL, messages=[{'role': 'system', 'content': PROMPT},
+    response = create_ai_completion(client.with_options(timeout=90, max_retries=0),
+        messages=[{'role': 'system', 'content': PROMPT},
                                      {'role': 'user', 'content': prompt_context(context)}],
         max_tokens=1500, extra_body={'thinking': {'type': 'disabled'}})
     text = response.choices[0].message.content

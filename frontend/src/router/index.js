@@ -108,6 +108,10 @@ const routes = [
     component: () => import('../views/management/AutoAuditManagementView.vue')
   },
   {
+    path: '/management/ai-models',
+    component: () => import('../views/management/AiModelManagementView.vue')
+  },
+  {
     path: '/management/ai-usage',
     component: () => import('../views/management/AiUsageManagementView.vue')
   },
@@ -153,6 +157,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
   if (path === '/management/auto-audit') return hasPermission(role, permissions, 'manage_auto_audit_rules')
   if (path === '/management/ai-usage') return hasPermission(role, permissions, 'manage_ai_usage')
+  if (path === '/management/ai-models') return hasPermission(role, permissions, 'manage_ai_models')
   if (path === '/management/security') return hasPermission(role, permissions, 'manage_security')
   if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
@@ -228,6 +233,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
   if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
+  if (permissions.manage_ai_models) candidates.push('/management/ai-models')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
   if (role === 'root') {

@@ -388,6 +388,12 @@
           <span class="nav-item-icon">备</span>
           <span v-if="!sidebarCollapsed">数据备份管理</span>
         </button>
+        <button v-if="canManageAiModels" class="nav-item"
+          :class="{ active: isActive('/management/ai-models'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/ai-models')" :title="sidebarCollapsed ? '大模型管理' : ''">
+          <span class="nav-item-icon">模</span>
+          <span v-if="!sidebarCollapsed">大模型管理</span>
+        </button>
         <button v-if="canManageAiUsage" class="nav-item"
           :class="{ active: isActive('/management/ai-usage'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/ai-usage')" :title="sidebarCollapsed ? 'AI调用统计' : ''">
@@ -1026,6 +1032,7 @@ const canManageInspectionCompletion = computed(() => isRoot.value && isPageVisib
 const canManageAutoAudit = computed(() => hasPermissionKey('manage_auto_audit_rules') && isPageVisible('/management/auto-audit'))
 const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
 const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
+const canManageAiModels = computed(() => hasPermissionKey('manage_ai_models') && isPageVisible('/management/ai-models'))
 const canManagePageVisibility = computed(() => isRoot.value)
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
@@ -1036,6 +1043,7 @@ const canViewManagementSection = computed(() => (
   canManageInspectionCompletion.value ||
   canManageAutoAudit.value ||
   canManageBackups.value ||
+  canManageAiModels.value ||
   canManageAiUsage.value ||
   canManagePageVisibility.value
 ))
@@ -1804,6 +1812,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_checklists) candidates.push('/management/checklists')
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
   if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
+  if (permissions.manage_ai_models) candidates.push('/management/ai-models')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
   if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')

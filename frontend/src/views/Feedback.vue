@@ -29,7 +29,7 @@
           </div>
           <div class="section-kicker">AI 标题生成中</div>
           <h3>正在发布反馈</h3>
-          <p>系统正在上传截图并调用 DeepSeek 生成反馈标题，请稍候，完成后会自动刷新反馈列表。</p>
+          <p>系统正在上传截图并调用所选大模型生成反馈标题，请稍候，完成后会自动刷新反馈列表。</p>
           <div class="ai-submit-progress">
             <div></div>
           </div>

@@ -10,6 +10,30 @@
 
 运行账号需要项目目录、Docker及 `/var/www/ywddzx` 的操作权限。服务器须配置 `APP_SECRET_KEY`、`DB_PASSWORD`、`WEBAUTHN_RP_ID`、`WEBAUTHN_ORIGIN` 和 `CORS_ALLOWED_ORIGINS`，且 Nginx 已加载 `deploy/nginx/ywddzx-cache.conf` 与 `ywddzx-security.conf`。配置或构建失败时不会替换前端文件；后续步骤失败会停止并说明阶段，不自动回滚已完成的部署。此脚本会实际更新生产服务并执行迁移，请仅在准备部署时运行。
 
+## v9.1 大模型管理
+
+管理菜单在“AI调用统计”前新增“大模型管理”（`manage_ai_models`，默认仅 Root 开启，可按现有权限体系授权）。支持全局默认、场景单独指定和统一应用到全部场景；配置全局共享，保存修改人、时间及前后配置，使用数据库行锁与版本号防止并发覆盖。保存只影响后续调用，不会自动重新生成历史报告或重跑任务；一次 AI 调用期间保持模型快照，不静默回退到其他厂家。
+
+已接入 DeepSeek-V4-Pro / V4-Flash、GLM-5.3 / GLM-5.3-Flash / GLM-5.3-FlashX、Qwen3.8-Max / Qwen3.8-Flash、MiMo-V2.6-Pro / MiMo-V2.6-Flash / MiMo-V2.6-Pro-UltraSpeed。默认仍为 DeepSeek-V4-Pro。调用场景如下（本地统计、检索、PPT编排和预览转换不调用大模型）：
+
+| 业务位置 | 独立调用场景 |
+| --- | --- |
+| 巡检登记 | AI引用规范：本地及历史检索后排序候选 |
+| 专家问答 | 证据检索后的结构化回答 |
+| 系统反馈 | 生成反馈标题 |
+| 质量计量监督检查报告 | AI环节分类；选题、管理追溯与工作计划 |
+| 非油检查报告 | AI其他问题分类；AI重点问题分类；典型问题与分析建议 |
+| 设备设施检查报告 | 高频问题选题；特性问题选题；重点问题选题；典型问题与分析建议 |
+| 安全质量检查报告 | 典型问题与分析建议 |
+| 财务检查报告 | 检查结果与内容建议 |
+| 现场服务检查报告 | 重点问题与总结建议 |
+
+部署执行迁移 `20261017_003`，新增 `ai_model_settings` 与 `ai_model_setting_events`；不改现有业务数据或范围权限。后端运行环境使用 `DEEPSEEK_API_KEY`、`ZHIPU_API_KEY`、`DASHSCOPE_API_KEY`、`MIMO_API_KEY`，Compose已转发四项环境变量，Key不进入数据库、页面或配置历史。页面仅显示Key是否存在，不表示已开通具体模型或付费账户状态。千问默认使用北京兼容端点，可通过服务端 `DASHSCOPE_BASE_URL` 指定与Key同地域的官方端点（不可在网页输入任意地址）；调用超时保留 `DEEPSEEK_TIMEOUT_SECONDS`，可用 `AI_TIMEOUT_SECONDS` 统一覆盖。更新环境变量后需重建后端容器。
+
+参数按厂家适配，GLM-5.3系列始终启用思考并采用低强度，千问使用 `enable_thinking`，MiMo使用其兼容的输出长度参数；保留原场景提示词和输出校验。接口依据：[智谱 GLM-5.3](https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3)、[GLM Flash/FlashX](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash)、[千问 OpenAI 兼容接口](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)、[MiMo兼容接口](https://mimo.mi.com/docs/zh-CN/api/chat/openai-api)。
+
+报告整批分析、规范推荐及问答缓存包含模型标识；切换模型后不会把旧模型的整批结果误当新结果。按全局问题ID保存的分类和人工修订仍继续复用，不因模型切换重新收费。AI调用统计记录实际模型及服务端点，Token仍为字符估算，不包含推理过程；未配置厂家单价的调用不套用DeepSeek价格、不计入估算费用，并明确显示未配置单价，实际以厂家账单为准。测试仅使用模拟AI响应及独立PostgreSQL库，不发起付费调用。
+
 ## 权限管理与督导组角色
 
 专家问答改用独立权限 `view_expert_qa`，在权限分类与运营菜单中均位于站点地图之后；与驾驶舱独立授权，但仍查询全局业务资料（不含安全凭据）。迁移 `20261017_001` 复制原驾驶舱的角色及个人显式授权/拒绝作为初始值，不覆盖已有专家问答配置，之后两者互不影响。删除“一键重置权限”按钮及批量清空个人权限的接口，保留单个用户配置、角色模板与原有数据范围。

@@ -49,7 +49,8 @@
                   >耗时 {{ (event.elapsed_ms / 1000).toFixed(1) }} 秒</span
                 >
                 <span v-if="event.model">{{ event.model }}</span>
-                <span v-if="event.ai_called"
+                <span v-if="event.ai_called && event.pricing_known === false">未配置费用单价，以厂家账单为准</span>
+                <span v-else-if="event.ai_called"
                   >估算费用 ¥{{ Number(event.cost_est || 0).toFixed(6) }}</span
                 >
                 <span v-if="event.source_generated_at"

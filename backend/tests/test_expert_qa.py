@@ -11,6 +11,11 @@ from expert_qa import PERMISSION, ExpertCallError, generate, identity, normalize
 
 
 class KnowledgeTests(unittest.TestCase):
+    def setUp(self):
+        route_loader = patch('ai_routing._loader', None)
+        route_loader.start()
+        self.addCleanup(route_loader.stop)
+
     def test_request_bounds_and_global_period(self):
         question, options = normalize_request({'question': '本月有什么问题', 'region': ' 浦东 '})
         self.assertEqual(options, {'date_from': '', 'date_to': '', 'region': '浦东'})
@@ -105,6 +110,9 @@ class KnowledgeTests(unittest.TestCase):
 
 class ExpertApiTests(unittest.TestCase):
     def setUp(self):
+        route_loader = patch('ai_routing._loader', None)
+        route_loader.start()
+        self.addCleanup(route_loader.stop)
         self.user = {'id': 17, 'role': 'area_account', 'auth_version': 2, 'account_status': 'active'}
         self.cur = MagicMock()
         self.conn = MagicMock()
