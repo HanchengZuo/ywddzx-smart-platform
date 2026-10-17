@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import logging
+import re
 from threading import BoundedSemaphore
 from types import SimpleNamespace
 import uuid
@@ -31,8 +32,9 @@ SYSTEM_PROMPT = '''你是业务督导中心的专家问答助手。只根据本�
 先直接回答，再按需要给出解释或可操作建议。不堆砌无关全局数字。资料不足明确说明缺什么，不作确定结论。
 每段可有简短标题；可给出最多3个具体、自然的后续问题，不要求用户设置范围。仅输出JSON：
 {"paragraphs":[{"title":"简短标题","text":"回答段落","sources":["S1"]}],"caveat":"必要的局限说明","follow_up_questions":["可以继续询问的问题"]}。
-每段均需引用当前资料中存在的S编号，最多8段，每段最多1200字。不得输出HTML或链接。输出格式必须是json。'''
-VERSION = 'expert-v2'
+每段sources必须是来源id的字符串数组，例如["S1","S2"]。只复制本次sources中实际存在的id，不使用key、标题、问题ID或历史编号。
+不能为凑引用随意选择来源；资料不足时说明局限，并引用支持这一说明的当前资料。最多8段，每段最多1200字。不得输出HTML或链接。输出格式必须是json。'''
+VERSION = 'expert-v3-citations'
 executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='expert-qa')
 capacity = BoundedSemaphore(2)
 
@@ -41,6 +43,56 @@ class ExpertCallError(RuntimeError):
     def __init__(self, message, usage):
         super().__init__(message)
         self.usage = usage
+
+
+class AnswerFormatError(RuntimeError):
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
+
+
+def answer_response_format(evidence):
+    # Qwen JSON-object mode guarantees JSON, not its fields or citation IDs.
+    if current_model() not in ('qwen3.8-max', 'qwen3.8-flash'):
+        return {'type': 'json_object'}
+    return {'type': 'json_schema', 'json_schema': {
+        'name': 'expert_answer', 'strict': True, 'schema': {
+            'type': 'object', 'additionalProperties': False,
+            'required': ['paragraphs', 'caveat', 'follow_up_questions'],
+            'properties': {
+                'paragraphs': {'type': 'array', 'minItems': 1, 'maxItems': 8, 'items': {
+                    'type': 'object', 'additionalProperties': False,
+                    'required': ['title', 'text', 'sources'], 'properties': {
+                        'title': {'type': 'string', 'maxLength': 60},
+                        'text': {'type': 'string', 'minLength': 1, 'maxLength': 1200},
+                        'sources': {'type': 'array', 'minItems': 1, 'maxItems': 24,
+                                    'items': {'type': 'string', 'enum': list(dict.fromkeys(item['id'] for item in evidence))}},
+                    }}},
+                'caveat': {'type': 'string', 'maxLength': 1200},
+                'follow_up_questions': {'type': 'array', 'maxItems': 3, 'items': {
+                    'type': 'string', 'minLength': 2, 'maxLength': 100}},
+            },
+        },
+    }}
+
+
+def normalize_citations(value, known):
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not value:
+        raise AnswerFormatError('missing_sources', 'AI答案缺少有效依据，请重新提问。')
+    refs = []
+    for raw in value:
+        ref = raw.strip() if isinstance(raw, str) else ''
+        if re.fullmatch(r'\[\s*[sS][1-9][0-9]*\s*\]', ref):
+            ref = ref[1:-1].strip()
+        if re.fullmatch(r'[sS][1-9][0-9]*', ref):
+            ref = ref.upper()
+        # Normalize presentation only; never guess, attach or drop unknown evidence.
+        if ref not in known:
+            raise AnswerFormatError('invalid_source', 'AI答案缺少有效依据，请重新提问。')
+        refs.append(ref)
+    return list(dict.fromkeys(refs))
 
 
 def fingerprint(value):
@@ -55,15 +107,13 @@ def identity(user):
 def normalize_answer(payload, evidence):
     known = {item['id'] for item in evidence}
     if not isinstance(payload, dict) or not isinstance(payload.get('paragraphs'), list) or not 1 <= len(payload['paragraphs']) <= 8:
-        raise RuntimeError('AI未返回有效答案，请重新提问。')
+        raise AnswerFormatError('invalid_payload', 'AI未返回有效答案，请重新提问。')
     paragraphs = []
     for row in payload['paragraphs']:
         if not isinstance(row, dict) or not isinstance(row.get('text'), str) or not row['text'].strip() or len(row['text']) > 1200:
-            raise RuntimeError('AI答案格式不正确，请重新提问。')
-        refs = row.get('sources')
-        if not isinstance(refs, list) or not refs or any(not isinstance(ref, str) or ref not in known for ref in refs):
-            raise RuntimeError('AI答案缺少有效依据，请重新提问。')
-        paragraphs.append({'text': redact(row['text'].strip()), 'sources': list(dict.fromkeys(refs))})
+            raise AnswerFormatError('invalid_paragraph', 'AI答案格式不正确，请重新提问。')
+        refs = normalize_citations(row.get('sources'), known)
+        paragraphs.append({'text': redact(row['text'].strip()), 'sources': refs})
         title = row.get('title')
         if isinstance(title, str) and title.strip():
             paragraphs[-1]['title'] = redact(title.strip())[:60]
@@ -87,12 +137,16 @@ def generate(question, evidence, context=None, client=None):
     try:
         response = create_ai_completion(client.with_options(timeout=90, max_retries=0),
             messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': prompt}],
-            stream=False, max_tokens=4096, response_format={'type': 'json_object'},
+            stream=False, max_tokens=4096, response_format=answer_response_format(evidence),
             extra_body={'thinking': {'type': 'disabled'}},
         )
         text = response.choices[0].message.content
+        if getattr(response.choices[0], 'finish_reason', None) == 'length':
+            raise AnswerFormatError('truncated', 'AI回答过长未完整返回，请缩短问题后重试。')
         answer = normalize_answer(extract_json_from_ai_text(text), evidence)
     except Exception as exc:
+        if isinstance(exc, AnswerFormatError):
+            logging.warning('Expert QA answer rejected: model=%s reason=%s', current_model(), exc.reason)
         status = getattr(exc, 'status_code', None)
         messages = {401: '大模型服务认证失败，请联系管理员。', 402: '大模型余额不足，请联系管理员。', 429: '大模型服务繁忙，请稍后重试。'}
         message = str(exc) if isinstance(exc, RuntimeError) else messages.get(status, '大模型回答未完成，请稍后重试。')
