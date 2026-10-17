@@ -181,6 +181,7 @@ class ReportMemory:
                     model=model, elapsed_ms=round((time.monotonic() - started) * 1000),
                     input_tokens_est=usage.get("input_tokens_est", 0),
                     output_tokens_est=usage.get("output_tokens_est", 0),
+                    pricing_known=usage.get('pricing_known', True),
                     cost_est=usage.get("total_cost_est", 0))
         return result
 
@@ -316,13 +317,14 @@ def remember_report_ai(operation, system_prompt, prompt_builder, model):
     def decorate(function):
         @wraps(function)
         def wrapped(context):
+            selected_model = model() if callable(model) else model
             memory = _current.get()
             if memory is None:
                 return function(context)
             if operation in CLASSIFICATION_TABLES:
-                return memory.classifications(function, context or {}, operation, model)
+                return memory.classifications(function, context or {}, operation, selected_model)
             signature = fingerprint([system_prompt, prompt_builder(canonical(context or {}))])
-            return memory.batch(function, context or {}, operation, signature, model)
+            return memory.batch(function, context or {}, operation, signature, selected_model)
         return wrapped
     return decorate
 

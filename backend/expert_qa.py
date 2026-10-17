@@ -11,7 +11,8 @@ import uuid
 from flask import jsonify, request
 from psycopg2.extras import Json
 
-from ai_utils import get_deepseek_client, DEEPSEEK_MODEL, extract_json_from_ai_text
+from ai_utils import get_deepseek_client, extract_json_from_ai_text
+from ai_routing import ai_scene, current_model, create_ai_completion, resolve_model
 from ai_usage import build_ai_usage_meta
 from expert_knowledge import normalize_request, retrieve, redact, SOURCES
 
@@ -62,17 +63,18 @@ def normalize_answer(payload, evidence):
     return {'paragraphs': paragraphs, 'caveat': redact(str(payload.get('caveat') or ''))[:1200]}
 
 
+@ai_scene('expert_qa')
 def generate(question, evidence, context=None, client=None):
     prompt = json.dumps({'question': question, 'previous': context or {}, 'sources': evidence}, ensure_ascii=False)
     if not evidence:
         raise RuntimeError('知识库中没有可供回答的资料，请补充问题或数据。')
     client = client or get_deepseek_client()
     if not client:
-        raise RuntimeError('尚未配置现有DeepSeek服务，请联系管理员。')
+        raise RuntimeError('当前场景的大模型服务尚未配置，请联系管理员。')
     text = ''
     try:
-        response = client.with_options(timeout=90, max_retries=0).chat.completions.create(
-            model=DEEPSEEK_MODEL, messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': prompt}],
+        response = create_ai_completion(client.with_options(timeout=90, max_retries=0),
+            messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': prompt}],
             stream=False, max_tokens=4096, response_format={'type': 'json_object'},
             extra_body={'thinking': {'type': 'disabled'}},
         )
@@ -82,10 +84,10 @@ def generate(question, evidence, context=None, client=None):
         status = getattr(exc, 'status_code', None)
         messages = {401: '大模型服务认证失败，请联系管理员。', 402: '大模型余额不足，请联系管理员。', 429: '大模型服务繁忙，请稍后重试。'}
         message = str(exc) if isinstance(exc, RuntimeError) else messages.get(status, '大模型回答未完成，请稍后重试。')
-        raise ExpertCallError(message, build_ai_usage_meta(DEEPSEEK_MODEL,
+        raise ExpertCallError(message, build_ai_usage_meta(current_model(),
             prompt_text=SYSTEM_PROMPT + '\n' + prompt, completion_text=text, ai_called=True, status_code=status)) from None
     return answer, build_ai_usage_meta(
-        DEEPSEEK_MODEL, prompt_text=SYSTEM_PROMPT + '\n' + prompt, completion_text=text,
+        current_model(), prompt_text=SYSTEM_PROMPT + '\n' + prompt, completion_text=text,
         ai_called=True, success=True,
     )
 
@@ -138,7 +140,8 @@ def register_expert_qa(app, namespace):
                     '运营系统', '专家问答', request_summary='任务编号：' + job_id)
             conn.commit()
 
-    def worker(job_id, initial, question, options, parent):
+    @ai_scene('expert_qa')
+    def run_worker(job_id, initial, question, options, parent):
         called = False
         try:
             update(job_id, 'retrieving')
@@ -154,7 +157,7 @@ def register_expert_qa(app, namespace):
                     previous = {'question': row['question'], 'answer': (row['result'] or {}).get('answer', {})}
                 retrieval_query = question + ('\n' + previous['question'][:500] if previous else '')
                 evidence, info = retrieve(core, cur, retrieval_query, options)
-            cache_key = fingerprint([VERSION, SYSTEM_PROMPT, DEEPSEEK_MODEL, question, previous, options, evidence])
+            cache_key = fingerprint([VERSION, SYSTEM_PROMPT, current_model(), question, previous, options, evidence])
             with connection(readonly=True) as (_, cur):
                 cur.execute('''SELECT result FROM expert_qa_questions WHERE user_id=%s AND session_key=%s
                     AND cache_key=%s AND status='completed' ORDER BY updated_at DESC LIMIT 1''', [user['id'], identity(initial), cache_key])
@@ -162,25 +165,32 @@ def register_expert_qa(app, namespace):
             update(job_id, 'answering')
             if cached:
                 answer = cached['result']['answer']
-                usage = build_ai_usage_meta(DEEPSEEK_MODEL, success=True)
+                usage = build_ai_usage_meta(current_model(), success=True)
             else:
                 client = get_deepseek_client()
                 if not client:
-                    raise RuntimeError('尚未配置现有DeepSeek服务，请联系管理员。')
+                    raise RuntimeError('当前场景的大模型服务尚未配置，请联系管理员。')
                 called = True
                 answer, usage = generate(question, evidence, previous, client=client)
             # Revocation during an AI call must not publish the result.
             with connection(readonly=True) as (_, cur):
                 user = fresh_user(cur, initial)
             update(job_id, 'completed', {'answer': answer, 'sources': evidence, 'retrieval': info,
-                'cache_hit': bool(cached), 'model': DEEPSEEK_MODEL}, cache_key=cache_key, usage=usage, user=user)
+                'cache_hit': bool(cached), 'model': current_model()}, cache_key=cache_key, usage=usage, user=user)
         except Exception as exc:
             message = str(exc) if isinstance(exc, (ValueError, PermissionError, RuntimeError)) else '问答服务暂时不可用，请稍后重试。'
             logging.warning('Expert QA task failed: task=%s type=%s', job_id, type(exc).__name__)
             try:
-                update(job_id, 'failed', error=message[:300], usage=getattr(exc, 'usage', build_ai_usage_meta(DEEPSEEK_MODEL, ai_called=called)), user=initial)
+                update(job_id, 'failed', error=message[:300], usage=getattr(exc, 'usage', build_ai_usage_meta(current_model(), ai_called=called)), user=initial)
             except Exception:
                 logging.warning('Expert QA failure could not be saved: task=%s', job_id)
+
+    def worker(job_id, initial, question, options, parent):
+        try:
+            run_worker(job_id, initial, question, options, parent)
+        except Exception:
+            logging.warning('Expert QA routing configuration unavailable: task=%s', job_id)
+            update(job_id, 'failed', error='大模型配置暂时不可用，请稍后重试。')
         finally:
             capacity.release()
 
@@ -195,7 +205,7 @@ def register_expert_qa(app, namespace):
         try:
             with connection(readonly=True) as (_, cur):
                 authorize(cur, core.get_current_request_user())
-            return jsonify(success=True, sources=SOURCES, model=DEEPSEEK_MODEL,
+            return jsonify(success=True, sources=SOURCES, model=resolve_model('expert_qa'),
                            scope='全局业务资料，不受其他业务页面的数据范围限制。密码、密钥、登录令牌等不参与问答。')
         except PermissionError as exc:
             return jsonify(error=str(exc)), 403

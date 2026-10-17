@@ -13,6 +13,9 @@ def rule(identifier, text, table='计量稽查检查表（现场）'):
 
 class RetrievalTests(unittest.TestCase):
     def setUp(self):
+        route_loader = patch('ai_routing._loader', None)
+        route_loader.start()
+        self.addCleanup(route_loader.stop)
         cached_index.cache_clear()
         response_cache._entries.clear()
 

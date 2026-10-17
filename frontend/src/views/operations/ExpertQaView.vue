@@ -6,7 +6,7 @@
         <h2>专家问答</h2>
         <p class="page-desc">从规范到业务事实，让每个回答有据可查。</p>
       </div>
-      <span class="status-pill info">{{ meta.model || 'DeepSeek' }} · 知识检索增强</span>
+      <span class="status-pill info">{{ meta.model || '所选大模型' }} · 知识检索增强</span>
     </header>
     <button
       class="knowledge-toggle"

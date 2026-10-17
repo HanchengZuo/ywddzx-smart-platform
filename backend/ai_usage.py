@@ -1,4 +1,5 @@
 import re
+from ai_routing import MODELS, model_info
 
 
 AI_USAGE_BASE_URL = "https://api.deepseek.com"
@@ -41,7 +42,8 @@ def estimate_text_tokens(text):
 
 def estimate_ai_usage(model, prompt_text="", completion_text="", cache_hit=False):
     normalized_model = str(model or "deepseek-v4-pro").strip() or "deepseek-v4-pro"
-    pricing = AI_USAGE_PRICING.get(normalized_model, AI_USAGE_PRICING["deepseek-v4-pro"])
+    pricing_known = normalized_model in AI_USAGE_PRICING
+    pricing = AI_USAGE_PRICING.get(normalized_model, {"input_cache_hit": 0, "input_cache_miss": 0, "output": 0})
     input_metrics = estimate_text_tokens(prompt_text)
     output_metrics = estimate_text_tokens(completion_text)
     input_price = pricing["input_cache_hit"] if cache_hit else pricing["input_cache_miss"]
@@ -51,7 +53,8 @@ def estimate_ai_usage(model, prompt_text="", completion_text="", cache_hit=False
 
     return {
         "model": normalized_model,
-        "base_url": AI_USAGE_BASE_URL,
+        "base_url": model_info(normalized_model)['base_url'] if normalized_model in MODELS else AI_USAGE_BASE_URL,
+        "pricing_known": pricing_known,
         "cache_hit_estimated": bool(cache_hit),
         "prompt_chars": input_metrics["chars"],
         "prompt_chinese_chars": input_metrics["chinese_chars"],

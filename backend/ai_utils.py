@@ -1,6 +1,5 @@
 import logging
 import json
-import os
 import re
 import time
 
@@ -31,6 +30,7 @@ from report_ai_memory import remember_report_ai
 from standard_retrieval import retrieve_standards
 from standard_history import match_history
 from standard_recommendation_cache import recommendation_key, get_recommendation, remember_recommendation
+from ai_routing import ai_scene, current_model, create_ai_completion, get_ai_client
 
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -88,26 +88,8 @@ FEEDBACK_TYPE_FALLBACK_TITLES = {
 
 
 def get_deepseek_client():
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
-        return None
-
-    try:
-        from openai import OpenAI
-    except Exception as exc:
-        logging.exception("OpenAI SDK is not available for DeepSeek calls.")
-        raise RuntimeError("OpenAI SDK 未安装。") from exc
-
-    try:
-        timeout_seconds = max(30.0, min(600.0, float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "240"))))
-    except (TypeError, ValueError):
-        timeout_seconds = 240.0
-    return OpenAI(
-        api_key=api_key,
-        base_url=DEEPSEEK_BASE_URL,
-        timeout=timeout_seconds,
-        max_retries=1,
-    )
+    # Keep the legacy helper for integrations; routing is now scenario-specific.
+    return get_ai_client()
 
 
 def normalize_ai_title(value):
@@ -176,7 +158,7 @@ def with_ai_usage_meta(
 ):
     payload = dict(result or {})
     payload["usage"] = build_ai_usage_meta(
-        DEEPSEEK_MODEL,
+        current_model(),
         prompt_text=prompt_text,
         completion_text=completion_text,
         ai_called=ai_called,
@@ -336,9 +318,10 @@ def build_standard_recommendation_result(
     }
 
 
+@ai_scene('standard_recommendation')
 def generate_standard_recommendations(issue_description, standards, *, history=()):
     started = time.monotonic()
-    cache_key = recommendation_key(issue_description, standards, history)
+    cache_key = current_model() + ':' + recommendation_key(issue_description, standards, history)
     reused = get_recommendation(cache_key)
     if reused is not None:
         reused['recommendation_source'] = 'ai_cache'
@@ -398,7 +381,7 @@ def _generate_retrieved_standard_recommendations(issue_description, standards):
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for standard recommendation: %s", exc)
+        logging.exception("AI service client initialization failed for standard recommendation: %s", exc)
         return with_ai_usage_meta(
             build_standard_recommendation_result(
                 normalized_description,
@@ -429,8 +412,7 @@ def _generate_retrieved_standard_recommendations(issue_description, standards):
     prompt_text = f"{INSPECTION_STANDARD_RECOMMENDATION_SYSTEM_PROMPT}\n{prompt}"
 
     try:
-        response = client.with_options(timeout=45, max_retries=0).chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client.with_options(timeout=45, max_retries=0),
             messages=[
                 {
                     "role": "system",
@@ -447,7 +429,7 @@ def _generate_retrieved_standard_recommendations(issue_description, standards):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable standard recommendation payload: %r",
+                "AI service returned an unusable standard recommendation payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -479,7 +461,7 @@ def _generate_retrieved_standard_recommendations(issue_description, standards):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek standard recommendation failed. status=%s error=%s",
+            "AI service standard recommendation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -497,15 +479,16 @@ def _generate_retrieved_standard_recommendations(issue_description, standards):
         )
 
 
+@ai_scene('quality_insights')
 @remember_report_ai("quality_insights", QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_quality_measurement_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_quality_measurement_report_insight_prompt, current_model)
 def generate_quality_measurement_report_insights(report_context):
     prompt = build_quality_measurement_report_insight_prompt(report_context or {})
     prompt_text = f"{QUALITY_MEASUREMENT_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for report insights: %s", exc)
+        logging.exception("AI service client initialization failed for report insights: %s", exc)
         return with_ai_usage_meta(
             {
                 "generated": False,
@@ -528,8 +511,7 @@ def generate_quality_measurement_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -545,7 +527,7 @@ def generate_quality_measurement_report_insights(report_context):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable report insight payload: %r",
+                "AI service returned an unusable report insight payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -574,7 +556,7 @@ def generate_quality_measurement_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek report insight generation failed. status=%s error=%s",
+            "AI service report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -591,8 +573,9 @@ def generate_quality_measurement_report_insights(report_context):
         )
 
 
+@ai_scene('quality_flow')
 @remember_report_ai("quality_flow", QUALITY_MEASUREMENT_FLOW_CLASSIFICATION_SYSTEM_PROMPT,
-                    build_quality_measurement_flow_classification_prompt, DEEPSEEK_MODEL)
+                    build_quality_measurement_flow_classification_prompt, current_model)
 def classify_quality_measurement_report_flows(classification_context):
     prompt = build_quality_measurement_flow_classification_prompt(
         classification_context or {}
@@ -602,7 +585,7 @@ def classify_quality_measurement_report_flows(classification_context):
         client = get_deepseek_client()
     except Exception as exc:
         logging.exception(
-            "DeepSeek client initialization failed for quality flow classification: %s",
+            "AI service client initialization failed for quality flow classification: %s",
             exc,
         )
         return with_ai_usage_meta(
@@ -627,8 +610,7 @@ def classify_quality_measurement_report_flows(classification_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -668,7 +650,7 @@ def classify_quality_measurement_report_flows(classification_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek quality flow classification failed. status=%s error=%s",
+            "AI service quality flow classification failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -685,15 +667,16 @@ def classify_quality_measurement_report_flows(classification_context):
         )
 
 
+@ai_scene('non_oil_category')
 @remember_report_ai("non_oil_category", NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT,
-                    build_non_oil_category_classification_prompt, DEEPSEEK_MODEL)
+                    build_non_oil_category_classification_prompt, current_model)
 def classify_non_oil_report_categories(classification_context):
     prompt = build_non_oil_category_classification_prompt(classification_context or {})
     prompt_text = f"{NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT}\n{prompt}"
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for non-oil classification: %s", exc)
+        logging.exception("AI service client initialization failed for non-oil classification: %s", exc)
         return with_ai_usage_meta(
             {"generated": False, "message": "AI服务初始化失败，已使用本地规则分类。", "payload": None},
             prompt_text=prompt_text,
@@ -706,8 +689,7 @@ def classify_non_oil_report_categories(classification_context):
             fallback_used=True,
         )
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {"role": "system", "content": NON_OIL_CATEGORY_CLASSIFICATION_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -733,7 +715,7 @@ def classify_non_oil_report_categories(classification_context):
         )
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
-        logging.exception("DeepSeek non-oil category classification failed. status=%s error=%s", status_code, exc)
+        logging.exception("AI service non-oil category classification failed. status=%s error=%s", status_code, exc)
         return with_ai_usage_meta(
             {"generated": False, "message": "AI问题分类失败，已使用本地规则分类。", "payload": None},
             prompt_text=prompt_text,
@@ -743,8 +725,9 @@ def classify_non_oil_report_categories(classification_context):
         )
 
 
+@ai_scene('non_oil_key')
 @remember_report_ai("non_oil_key", NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT,
-                    build_non_oil_key_issue_classification_prompt, DEEPSEEK_MODEL)
+                    build_non_oil_key_issue_classification_prompt, current_model)
 def classify_non_oil_key_issues(classification_context):
     prompt = build_non_oil_key_issue_classification_prompt(classification_context or {})
     prompt_text = f"{NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT}\n{prompt}"
@@ -752,7 +735,7 @@ def classify_non_oil_key_issues(classification_context):
         client = get_deepseek_client()
     except Exception as exc:
         logging.exception(
-            "DeepSeek client initialization failed for non-oil key issue classification: %s",
+            "AI service client initialization failed for non-oil key issue classification: %s",
             exc,
         )
         return with_ai_usage_meta(
@@ -767,8 +750,7 @@ def classify_non_oil_key_issues(classification_context):
             fallback_used=True,
         )
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {"role": "system", "content": NON_OIL_KEY_ISSUE_CLASSIFICATION_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -795,7 +777,7 @@ def classify_non_oil_key_issues(classification_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek non-oil key issue classification failed. status=%s error=%s",
+            "AI service non-oil key issue classification failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -808,15 +790,16 @@ def classify_non_oil_key_issues(classification_context):
         )
 
 
+@ai_scene('safety_insights')
 @remember_report_ai("safety_insights", SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_safety_quality_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_safety_quality_report_insight_prompt, current_model)
 def generate_safety_quality_report_insights(report_context):
     prompt = build_safety_quality_report_insight_prompt(report_context or {})
     prompt_text = f"{SAFETY_QUALITY_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for safety report insights: %s", exc)
+        logging.exception("AI service client initialization failed for safety report insights: %s", exc)
         return with_ai_usage_meta(
             {
                 "generated": False,
@@ -839,8 +822,7 @@ def generate_safety_quality_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -856,7 +838,7 @@ def generate_safety_quality_report_insights(report_context):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable safety report payload: %r",
+                "AI service returned an unusable safety report payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -885,7 +867,7 @@ def generate_safety_quality_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek safety report insight generation failed. status=%s error=%s",
+            "AI service safety report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -902,15 +884,16 @@ def generate_safety_quality_report_insights(report_context):
         )
 
 
+@ai_scene('finance_insights')
 @remember_report_ai("finance_insights", FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_finance_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_finance_report_insight_prompt, current_model)
 def generate_finance_report_insights(report_context):
     prompt = build_finance_report_insight_prompt(report_context or {})
     prompt_text = f"{FINANCE_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for finance report insights: %s", exc)
+        logging.exception("AI service client initialization failed for finance report insights: %s", exc)
         return with_ai_usage_meta(
             {
                 "generated": False,
@@ -933,8 +916,7 @@ def generate_finance_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -950,7 +932,7 @@ def generate_finance_report_insights(report_context):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable finance report payload: %r",
+                "AI service returned an unusable finance report payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -979,7 +961,7 @@ def generate_finance_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek finance report insight generation failed. status=%s error=%s",
+            "AI service finance report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -996,8 +978,9 @@ def generate_finance_report_insights(report_context):
         )
 
 
+@ai_scene('equipment_insights')
 @remember_report_ai("equipment_insights", EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_equipment_facilities_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_equipment_facilities_report_insight_prompt, current_model)
 def generate_equipment_facilities_report_insights(report_context):
     prompt = build_equipment_facilities_report_insight_prompt(report_context or {})
     prompt_text = f"{EQUIPMENT_FACILITIES_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -1005,7 +988,7 @@ def generate_equipment_facilities_report_insights(report_context):
         client = get_deepseek_client()
     except Exception as exc:
         logging.exception(
-            "DeepSeek client initialization failed for equipment report insights: %s",
+            "AI service client initialization failed for equipment report insights: %s",
             exc,
         )
         return with_ai_usage_meta(
@@ -1030,8 +1013,7 @@ def generate_equipment_facilities_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -1047,7 +1029,7 @@ def generate_equipment_facilities_report_insights(report_context):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable equipment report payload: %r",
+                "AI service returned an unusable equipment report payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -1076,7 +1058,7 @@ def generate_equipment_facilities_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek equipment report insight generation failed. status=%s error=%s",
+            "AI service equipment report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -1093,8 +1075,9 @@ def generate_equipment_facilities_report_insights(report_context):
         )
 
 
+@ai_scene('service_insights')
 @remember_report_ai("service_insights", ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_on_site_service_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_on_site_service_report_insight_prompt, current_model)
 def generate_on_site_service_report_insights(report_context):
     prompt = build_on_site_service_report_insight_prompt(report_context or {})
     prompt_text = f"{ON_SITE_SERVICE_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
@@ -1102,7 +1085,7 @@ def generate_on_site_service_report_insights(report_context):
         client = get_deepseek_client()
     except Exception as exc:
         logging.exception(
-            "DeepSeek client initialization failed for on-site service report insights: %s",
+            "AI service client initialization failed for on-site service report insights: %s",
             exc,
         )
         return with_ai_usage_meta(
@@ -1127,8 +1110,7 @@ def generate_on_site_service_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -1144,7 +1126,7 @@ def generate_on_site_service_report_insights(report_context):
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
             logging.warning(
-                "DeepSeek returned an unusable on-site service report payload: %r",
+                "AI service returned an unusable on-site service report payload: %r",
                 raw_content,
             )
             return with_ai_usage_meta(
@@ -1173,7 +1155,7 @@ def generate_on_site_service_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek on-site service report insight generation failed. status=%s error=%s",
+            "AI service on-site service report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -1190,15 +1172,16 @@ def generate_on_site_service_report_insights(report_context):
         )
 
 
+@ai_scene('non_oil_insights')
 @remember_report_ai("non_oil_insights", NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT,
-                    build_non_oil_report_insight_prompt, DEEPSEEK_MODEL)
+                    build_non_oil_report_insight_prompt, current_model)
 def generate_non_oil_report_insights(report_context):
     prompt = build_non_oil_report_insight_prompt(report_context or {})
     prompt_text = f"{NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT}\n{prompt}"
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed for non-oil report: %s", exc)
+        logging.exception("AI service client initialization failed for non-oil report: %s", exc)
         return with_ai_usage_meta(
             {
                 "generated": False,
@@ -1221,8 +1204,7 @@ def generate_non_oil_report_insights(report_context):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {"role": "system", "content": NON_OIL_REPORT_INSIGHT_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -1234,7 +1216,7 @@ def generate_non_oil_report_insights(report_context):
         raw_content = response.choices[0].message.content
         payload = extract_json_from_ai_text(raw_content)
         if payload is None:
-            logging.warning("DeepSeek returned an unusable non-oil report payload: %r", raw_content)
+            logging.warning("AI service returned an unusable non-oil report payload: %r", raw_content)
             return with_ai_usage_meta(
                 {
                     "generated": False,
@@ -1260,7 +1242,7 @@ def generate_non_oil_report_insights(report_context):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek non-oil report insight generation failed. status=%s error=%s",
+            "AI service non-oil report insight generation failed. status=%s error=%s",
             status_code,
             exc,
         )
@@ -1277,6 +1259,7 @@ def generate_non_oil_report_insights(report_context):
         )
 
 
+@ai_scene('feedback_title')
 def generate_feedback_title(feedback_type, module_name, detail_text):
     fallback_title = build_feedback_fallback_title(
         feedback_type,
@@ -1295,7 +1278,7 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
     try:
         client = get_deepseek_client()
     except Exception as exc:
-        logging.exception("DeepSeek client initialization failed: %s", exc)
+        logging.exception("AI service client initialization failed: %s", exc)
         return with_ai_usage_meta(
             {
                 "title": fallback_title,
@@ -1318,8 +1301,7 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
         )
 
     try:
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
+        response = create_ai_completion(client,
             messages=[
                 {
                     "role": "system",
@@ -1334,7 +1316,7 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
         raw_title = response.choices[0].message.content
         title = normalize_ai_title(raw_title)
         if not title:
-            logging.warning("DeepSeek returned an unusable feedback title: %r", raw_title)
+            logging.warning("AI service returned an unusable feedback title: %r", raw_title)
             return with_ai_usage_meta(
                 {
                     "title": fallback_title,
@@ -1360,7 +1342,7 @@ def generate_feedback_title(feedback_type, module_name, detail_text):
     except Exception as exc:
         status_code = get_ai_error_status_code(exc)
         logging.exception(
-            "DeepSeek feedback title generation failed. status=%s error=%s",
+            "AI service feedback title generation failed. status=%s error=%s",
             status_code,
             exc,
         )

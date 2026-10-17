@@ -17,6 +17,11 @@ def issues():
 
 
 class EquipmentAnalysisTest(unittest.TestCase):
+    def setUp(self):
+        route_loader = patch('ai_routing._loader', None)
+        route_loader.start()
+        self.addCleanup(route_loader.stop)
+
     def test_grounding_distribution_merges_only_requested_standard_ids(self):
         rows = analysis.enrich([dict(issue_id=i,external_standard_id=s) for i,s in enumerate(sorted(analysis.GROUNDING_STANDARD_IDS))])
         rows += analysis.enrich([dict(issue_id=100, external_standard_id=9005)])

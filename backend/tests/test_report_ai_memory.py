@@ -245,7 +245,7 @@ class MemoryPostgresTest(unittest.TestCase):
         second = self.new_job("non_oil")
         with second.connection() as cur:
             cur.execute("INSERT INTO inspection_report_non_oil_key_issue_classifications VALUES (1, 'B', 'manual', 'manual decision')")
-        result = second.classifications(run, {"issues": [{"issue_id": 1}, {"issue_id": 3}], "allowed_categories": ["A", "B"]}, "non_oil_key", "model")
+        result = second.classifications(run, {"issues": [{"issue_id": 1}, {"issue_id": 3}], "allowed_categories": ["A", "B"]}, "non_oil_key", "different-provider-model")
         self.assertEqual(batches, [[1, 2], [3]])
         self.assertEqual({item["issue_id"]: item["category"] for item in result["payload"]["classifications"]}, {1: "B", 3: "A"})
 
@@ -300,7 +300,7 @@ class MemoryPostgresTest(unittest.TestCase):
             "non_oil_insights": "generate_non_oil_report_insights",
         }
         client = MagicMock()
-        with patch("ai_utils.get_deepseek_client", return_value=client):
+        with patch("ai_utils.get_deepseek_client", return_value=client), patch('ai_routing._loader', None):
             for operation, function_name in function_names.items():
                 memory = self.new_job(operation)
                 payload = {key: kind() for key, kind in INSIGHT_FIELDS[operation].items()}

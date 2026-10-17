@@ -198,10 +198,16 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '管理数据库和上传文件备份。'
       },
       {
+        key: '/management/ai-models',
+        path: '/management/ai-models',
+        title: '大模型管理',
+        description: '统一或按调用场景切换大模型厂家与型号。'
+      },
+      {
         key: '/management/ai-usage',
         path: '/management/ai-usage',
         title: 'AI调用统计',
-        description: '查看 DeepSeek AI 调用次数、字符量和估算费用。'
+        description: '查看各模型 AI 调用次数、字符量和估算用量。'
       }
     ]
   }

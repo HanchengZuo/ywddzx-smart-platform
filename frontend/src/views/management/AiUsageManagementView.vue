@@ -4,7 +4,7 @@
       <div>
         <div class="page-kicker">管理系统</div>
         <h2>AI调用统计</h2>
-        <p>统计用户在系统中调用 DeepSeek AI 的位置、次数、字符量、估算 token 与费用，便于后续做成本和使用情况分析。</p>
+        <p>统计各厂家模型的调用位置、次数、字符量及估算用量。费用仅供参考，不代替厂家账单。</p>
       </div>
       <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchUsage">
         {{ loading ? '刷新中...' : '刷新数据' }}
@@ -37,7 +37,7 @@
         <div class="card-surface summary-card cost">
           <span>估算费用</span>
           <strong>{{ formatMoney(summary.total_cost_est) }}</strong>
-          <small>按缓存未命中输入价粗略估算</small>
+          <small>仅含已配置单价的模型；{{ summary.unpriced_calls }} 次调用未计费估算</small>
         </div>
       </section>
 
@@ -132,7 +132,7 @@
         <div class="card-surface pricing-card">
           <div class="section-kicker">估算规则</div>
           <h3>字符、Token 与价格</h3>
-          <p>系统按“中文字符约 0.6 token、其他字符约 0.3 token”粗略估算。由于无法稳定获取缓存命中情况，费用默认按输入缓存未命中价格估算。</p>
+          <p>系统按“中文字符约 0.6 token、其他字符约 0.3 token”粗略估算，不包含推理过程。费用按下表单价估算；其他厂家未配置单价，不套用 DeepSeek 价格，不代表免费，实际费用以各厂家账单为准。</p>
           <div class="pricing-table">
             <div class="pricing-head">
               <span>模型</span>
@@ -198,7 +198,7 @@
                   <small>输入 {{ formatNumber(item.prompt_chars) }} / 输出 {{ formatNumber(item.completion_chars) }}</small>
                 </td>
                 <td>{{ formatNumber(item.total_tokens_est, 2) }}</td>
-                <td>{{ formatMoney(item.total_cost_est) }}</td>
+                <td>{{ item.pricing_known || !item.ai_called ? formatMoney(item.total_cost_est) : '未配置单价' }}</td>
                 <td>
                   <span :class="['status-chip', statusClass(item)]">{{ statusLabel(item) }}</span>
                   <small>{{ item.message || '-' }}</small>
@@ -242,6 +242,7 @@ const items = ref([])
 const byUser = ref([])
 const byContext = ref([])
 const summary = reactive({
+  unpriced_calls: 0,
   total_calls: 0,
   ai_called: 0,
   success: 0,

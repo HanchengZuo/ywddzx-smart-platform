@@ -67,7 +67,7 @@ from ai_utils import (
     generate_safety_quality_report_insights,
     generate_standard_recommendations,
 )
-from ai_usage import get_ai_pricing_table
+from ai_usage import get_ai_pricing_table, AI_USAGE_PRICING
 from report_workspace import get_report_workspace, save_report_workspace, list_report_generation_requests
 from report_ai_memory import (
     begin_report_ai_memory,
@@ -1047,10 +1047,17 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "manage_ai_models",
+        "name": "管理大模型配置",
+        "category": "大模型管理",
+        "description": "按AI调用场景选择厂家与模型，或统一切换全部场景，查看配置修改记录。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "manage_ai_usage",
         "name": "查看 AI 调用统计",
         "category": "AI调用统计",
-        "description": "查看系统内 DeepSeek AI 调用次数、使用位置、字符量、估算 token 和费用。",
+        "description": "查看系统内各厂家 AI 调用次数、使用位置、模型、字符量和估算用量。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
@@ -5689,6 +5696,7 @@ def serialize_ai_usage_row(row):
         "usage_module": row["usage_module"],
         "usage_action": row["usage_action"],
         "model": row["model"],
+        "pricing_known": row["model"] in AI_USAGE_PRICING,
         "base_url": row["base_url"],
         "ai_called": bool(row["ai_called"]),
         "ai_generated": bool(row["ai_generated"]),
@@ -5754,6 +5762,7 @@ def build_ai_usage_aggregate(rows, group_keys, label_builder):
 
 def build_ai_usage_summary(rows):
     return {
+        "unpriced_calls": sum(1 for row in rows if row.get('ai_called') and not row.get('pricing_known', True)),
         "total_calls": len(rows),
         "ai_called": sum(1 for row in rows if row.get("ai_called")),
         "success": sum(1 for row in rows if row.get("success")),
@@ -8036,6 +8045,7 @@ def normalize_quality_report_ai_flow_decisions(ai_result, rows, allowed_categori
             "category": category,
             "reason": str(item.get("reason") or "").strip()[:500],
             "source": "ai",
+            "model": ((ai_result or {}).get('usage') or {}).get('model'),
         }
     return decisions
 
@@ -8124,7 +8134,7 @@ def persist_quality_report_flow_classifications(cur, rows, decisions):
                 category,
                 source,
                 decision.get("reason") or "",
-                "deepseek-v4-pro" if source == "ai" else "local-fallback-v1",
+                decision.get('model') if source == "ai" else "local-fallback-v1",
             ),
         )
 
@@ -12517,6 +12527,7 @@ def build_non_oil_key_issue_classification_decisions(rows, context, ai_result):
                 "category": category,
                 "source": "ai",
                 "reason": str(item.get("reason") or "AI根据问题内容判定。")[:500],
+                "model": ((ai_result or {}).get('usage') or {}).get('model'),
             }
     raw_map = {int(row.get("id") or 0): row for row in rows or []}
     decisions = {}
@@ -12557,7 +12568,7 @@ def persist_non_oil_key_issue_classifications(cur, decisions, user_id=None):
                 decision.get("category") or NON_OIL_KEY_ISSUE_EXCLUDED,
                 decision.get("source") or "fallback",
                 decision.get("reason"),
-                "deepseek-v4-pro" if decision.get("source") == "ai" else None,
+                decision.get('model') if decision.get("source") == "ai" else None,
                 user_id,
             ),
         )
@@ -12739,6 +12750,7 @@ def build_non_oil_category_classification_decisions(rows, context, ai_result):
                 "category": category,
                 "source": "ai",
                 "reason": str(item.get("reason") or "AI根据问题内容分类。")[:500],
+                "model": ((ai_result or {}).get('usage') or {}).get('model'),
             }
     raw_map = {int(row.get("id") or 0): row for row in rows or []}
     decisions = {}
@@ -12782,7 +12794,7 @@ def persist_non_oil_report_classifications(cur, rows, decisions, user_id=None):
                 decision.get("category"),
                 decision.get("source") or "fallback",
                 decision.get("reason"),
-                "deepseek-v4-pro" if decision.get("source") == "ai" else None,
+                decision.get('model') if decision.get("source") == "ai" else None,
                 user_id,
             ),
         )
@@ -31008,7 +31020,7 @@ def generate_quality_measurement_report_job(
             task_id,
             "running",
             26,
-            f"正在调用 DeepSeek 为 {len(classification_candidates)} 条其他问题识别业务环节",
+            f"正在调用所选大模型为 {len(classification_candidates)} 条其他问题识别业务环节",
         )
         classification_context = build_quality_report_flow_classification_context(
             classification_candidates,
@@ -31081,7 +31093,7 @@ def generate_quality_measurement_report_job(
     insight_result = None
     ai_context = None
     if rows:
-        update_inspection_report_job(task_id, "running", 52, "正在调用 DeepSeek 分析突出问题和管理追溯")
+        update_inspection_report_job(task_id, "running", 52, "正在调用所选大模型分析突出问题和管理追溯")
         ai_context = build_quality_report_ai_context(
             month_start,
             rows,
@@ -31278,7 +31290,7 @@ def generate_safety_quality_report_job(
             task_id,
             "running",
             52,
-            "正在调用 DeepSeek 筛选典型问题、重点问题并生成分析建议",
+            "正在调用所选大模型筛选典型问题、重点问题并生成分析建议",
         )
         ai_context = build_safety_quality_ai_context(month_start, private_sections)
         set_report_ai_evidence(rows)
@@ -31603,7 +31615,7 @@ def generate_on_site_service_report_job(
             task_id,
             "running",
             52,
-            "正在调用 DeepSeek 按单位和服务板块筛选突出问题并生成建议",
+            "正在调用所选大模型按单位和服务板块筛选突出问题并生成建议",
         )
         ai_context = build_on_site_service_ai_context(month_start, unit_blocks)
         set_report_ai_evidence(issue_rows)
@@ -31784,7 +31796,7 @@ def generate_finance_report_job(
             task_id,
             "running",
             52,
-            "正在调用 DeepSeek 生成检查结果分析与检查内容建议",
+            "正在调用所选大模型生成检查结果分析与检查内容建议",
         )
         ai_context = build_finance_report_ai_context(
             month_start,
@@ -32251,7 +32263,7 @@ def generate_non_oil_report_job(
             task_id,
             "running",
             44,
-            f"正在调用 DeepSeek 分类 {len(classification_context['issues'])} 条‘其他’问题",
+            f"正在调用所选大模型分类 {len(classification_context['issues'])} 条‘其他’问题",
         )
         classification_ai_result = classify_non_oil_report_categories(
             classification_context
@@ -32305,7 +32317,7 @@ def generate_non_oil_report_job(
                 "running",
                 progress,
                 (
-                    f"正在调用 DeepSeek 分批挑选重点问题 "
+                    f"正在调用所选大模型分批挑选重点问题 "
                     f"({batch_index + 1}/{total_batches}，本批 {len(issue_batch)} 条)"
                 ),
             )
@@ -32412,7 +32424,7 @@ def generate_non_oil_report_job(
             task_id,
             "running",
             52,
-            "正在调用 DeepSeek 筛选重点问题并生成归因分析",
+            "正在调用所选大模型筛选重点问题并生成归因分析",
         )
         unit_rows = report.get("units") or []
         category_distribution = report.get("category_distribution") or []
@@ -38401,6 +38413,9 @@ from highlights import register_highlights
 register_highlights(app, globals())
 from operations_dashboard import register_operations
 register_operations(app, globals())
+from ai_model_http import register_ai_model_management
+register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)
+
 from expert_qa import register_expert_qa
 register_expert_qa(app, globals())
 
