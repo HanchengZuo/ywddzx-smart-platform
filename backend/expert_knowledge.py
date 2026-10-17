@@ -1,5 +1,6 @@
 """Global business-only RAG for independently authorized experts. Never model-generated SQL."""
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -9,7 +10,9 @@ import time
 import zipfile
 from xml.etree import ElementTree
 
-from standard_retrieval import ALIASES, CatalogIndex, excerpt, tokens
+from standard_retrieval import ALIASES, CatalogIndex, tokens
+from expert_query import infer_options, resolve_entities, explicit_issue_ids
+from expert_retrieval import select_evidence
 
 MAX_CONTEXT = 24000
 MAX_EVIDENCE = 24
@@ -31,18 +34,9 @@ def normalize_request(data):
     question = data.get('question')
     if not isinstance(question, str) or not 2 <= len(question.strip()) <= 1500:
         raise ValueError('请输入2至1500字的问题。')
-    start, end = data.get('date_from') or '', data.get('date_to') or ''
-    if bool(start) != bool(end):
-        raise ValueError('请选择完整的日期范围，或清空日期查询全部历史。')
-    try:
-        if start and (date.fromisoformat(end) < date.fromisoformat(start)):
-            raise ValueError()
-    except (ValueError, TypeError):
-        raise ValueError('请选择有效的开始和结束日期。') from None
-    region = data.get('region') or ''
-    if not isinstance(region, str) or len(region) > 100:
-        raise ValueError('片区筛选格式不正确。')
-    return redact(question.strip()), {'date_from': start, 'date_to': end, 'region': region.strip()}
+    # Legacy hidden filters must not silently restrict the new all-data experience.
+    question = redact(question.strip())
+    return question, infer_options(question)
 
 
 def source(identifier, kind, title, text, path):
@@ -66,12 +60,15 @@ def report_passages(value, parent=''):
 
 def period_predicates(options, column, region_column=None):
     where, params = [], []
-    if options['date_from']:
+    if options.get('date_from'):
         where += [column + ' >= %s::date', column + " < %s::date + INTERVAL '1 day'"]
         params += [options['date_from'], options['date_to']]
-    if region_column and options['region']:
+    if region_column and options.get('region'):
         where.append(region_column + ' = %s')
         params.append(options['region'])
+    if region_column and options.get('station_names'):
+        where.append(region_column.rsplit('.', 1)[0] + '.station_name = ANY(%s)')
+        params.append(options['station_names'])
     return where, params
 
 
@@ -99,6 +96,9 @@ def recall(cur, statement, fields, question, where=(), params=(), limit=160):
 def business_evidence(core, cur, question, options):
     result = []
     where, params = period_predicates(options, 'i.created_at', 's.region')
+    if options.get('table_patterns'):
+        where.append('t.table_name ILIKE ANY(%s)')
+        params.append(options['table_patterns'])
     base = '''FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
               JOIN stations s ON s.id=i.station_id JOIN inspection_tables t ON t.id=i.inspection_table_id'''
     # Complete aggregate, not the number of retrieved snippets. Stored workflow states are labelled explicitly.
@@ -125,10 +125,17 @@ def business_evidence(core, cur, question, options):
         ' GROUP BY s.region,t.table_name,i.audit_status,i.status ORDER BY COUNT(*) DESC LIMIT 80', params)
     result.append(source('stats:distribution', '数据库统计', '片区、检查表与状态分布（最多前80组）',
                          json.dumps([dict(row) for row in cur.fetchall()], ensure_ascii=False, default=str), '/operations/overview'))
-    rows = recall(cur, '''SELECT i.id,s.station_name,s.region,t.table_name,i.created_at,i.description,
+    issue_statement = '''SELECT i.id,s.station_name,s.region,t.table_name,i.created_at,i.description,
         i.standard_id,i.standard_detail_text,i.audit_status,i.status,i.rectification_result,
-        i.rectification_note,i.review_result,i.review_note ''' + base,
-        ['i.id', 'i.description', 'i.standard_id', 'i.standard_detail_text', 'i.status', 'i.review_result', 'i.rectification_note', 'i.review_note', 's.station_name', 't.table_name'], question, where, params)
+        i.rectification_note,i.review_result,i.review_note ''' + base
+    exact_ids = options['referenced_issue_ids'] if 'referenced_issue_ids' in options else explicit_issue_ids(question)
+    if exact_ids:
+        cur.execute(issue_statement + ' WHERE i.id=ANY(%s) ORDER BY i.id', [exact_ids])
+        # An exact issue reference is global, independent of approximate keyword recall.
+        rows = [dict(row) for row in cur.fetchall()]
+    else:
+        rows = recall(cur, issue_statement,
+            ['i.id', 'i.description', 'i.standard_id', 'i.standard_detail_text', 'i.status', 'i.review_result', 'i.rectification_note', 'i.review_note', 's.station_name', 't.table_name'], question, where, params)
     for row in rows:
         result.append(source('issue:' + str(row['id']), '巡检问题', f"问题 #{row['id']} · {row['station_name']}",
                              json.dumps(row, ensure_ascii=False, default=str), '/inspection/issues'))
@@ -140,21 +147,35 @@ def business_evidence(core, cur, question, options):
                                  json.dumps(dict(row), ensure_ascii=False, default=str), '/inspection/issues'))
     if '申诉' in question:
         cur.execute('''SELECT a.status,COUNT(*) AS count FROM inspection_issue_appeals a
-            JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id WHERE ''' +
+            JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id
+            JOIN inspection_tables t ON t.id=i.inspection_table_id WHERE ''' +
             ' AND '.join(where or ['TRUE']) + ' GROUP BY a.status ORDER BY a.status', params)
         result.append(source('stats:appeals', '数据库统计', '按问题登记日期筛选的申诉完整统计',
                              json.dumps([dict(row) for row in cur.fetchall()], ensure_ascii=False), '/inspection/appeals'))
         for row in recall(cur, '''SELECT a.id,a.issue_id,a.status,a.reason,a.area_reason,a.quality_reason,a.updated_at,s.station_name,s.region
-            FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id''',
+            FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id JOIN stations s ON s.id=i.station_id
+            JOIN inspection_tables t ON t.id=i.inspection_table_id''',
             ["'申诉'",'a.reason','a.area_reason','a.quality_reason','s.station_name'], question, where, params):
             result.append(source('appeal:' + str(row['id']), '申诉', '问题 #' + str(row['issue_id']) + ' · 申诉',
                                  json.dumps(row, ensure_ascii=False, default=str), '/inspection/appeals'))
     where, params = period_predicates(options, 'i.created_at', 's.region')
+    if options.get('table_patterns'):
+        where.append('t.table_name ILIKE ANY(%s)')
+        params.append(options['table_patterns'])
+    cur.execute('''SELECT COUNT(*) AS registered,COUNT(*) FILTER(WHERE i.audit_status='approved') AS approved,
+        COUNT(*) FILTER(WHERE COALESCE(i.audit_status,'pending')='pending') AS pending_audit
+        FROM inspection_highlights i JOIN stations s ON s.id=i.station_id
+        JOIN inspection_tables t ON t.id=i.inspection_table_id WHERE ''' + ' AND '.join(where or ['TRUE']), params)
+    result.append(source('stats:highlights', '数据库统计', '亮点登记完整统计',
+                         json.dumps(dict(cur.fetchone()), ensure_ascii=False, default=str), '/inspection/highlights'))
     for row in recall(cur, '''SELECT i.id,i.description,i.audit_status,i.created_at,s.station_name,s.region,t.table_name
         FROM inspection_highlights i JOIN stations s ON s.id=i.station_id JOIN inspection_tables t ON t.id=i.inspection_table_id''',
         ['i.description', 's.station_name', 't.table_name', "'HL'||i.id::text"], question, where, params):
         result.append(source('highlight:' + str(row['id']), '亮点', '亮点 HL' + str(row['id']), json.dumps(row, ensure_ascii=False, default=str), '/inspection/highlights'))
     where, params = period_predicates(options, 'ins.inspection_date', 's.region')
+    if options.get('table_patterns'):
+        where.append('t.table_name ILIKE ANY(%s)')
+        params.append(options['table_patterns'])
     joins = ' FROM inspections ins JOIN stations s ON s.id=ins.station_id JOIN inspection_tables t ON t.id=ins.inspection_table_id'
     cur.execute('SELECT COUNT(*) AS records,COUNT(DISTINCT ins.station_id) AS stations, COUNT(*) FILTER(WHERE ins.sign_status=\'已签名确认\') AS accepted' + joins +
                 ' WHERE ' + ' AND '.join(where or ['TRUE']), params)
@@ -164,6 +185,9 @@ def business_evidence(core, cur, question, options):
         ['s.station_name', 't.table_name', 'ins.id'], question, where, params):
         result.append(source('record:' + str(row['id']), '巡检记录', '巡检记录 #' + str(row['id']), json.dumps(row, ensure_ascii=False, default=str), '/inspection/records'))
     region_where, region_params = (['s.region=%s'], [options['region']]) if options['region'] else ([], [])
+    if options.get('station_names'):
+        region_where.append('s.station_name=ANY(%s)')
+        region_params.append(options['station_names'])
     for row in recall(cur, '''SELECT psi.id,pc.period_key,pc.coverage_type,t.table_name,s.station_name,s.region,
         psi.completion_status,psi.note FROM inspection_plan_station_items psi JOIN inspection_plan_configs pc ON pc.id=psi.plan_config_id
         JOIN stations s ON s.id=psi.station_id JOIN inspection_tables t ON t.id=pc.inspection_table_id''',
@@ -186,6 +210,15 @@ def business_evidence(core, cur, question, options):
     for row in recall(cur, '''SELECT id,real_name,role FROM users''', ['real_name','role'], question):
         result.append(source('profile:' + str(row['id']), '业务人员', row['real_name'] or '业务账号',
                              json.dumps(row, ensure_ascii=False, default=str), ''))
+    if any(term in question for term in ('用户', '账号', '角色', '人员')):
+        cur.execute('SELECT role,COUNT(*) AS accounts FROM users GROUP BY role ORDER BY role')
+        result.append(source('stats:users', '数据库统计', '全部用户的角色数量（无密码及联系方式）',
+                             json.dumps([dict(row) for row in cur.fetchall()], ensure_ascii=False), ''))
+    if any(term in question for term in ('站点', '加油站', '片区')):
+        cur.execute('SELECT s.region,COUNT(*) AS stations FROM stations s WHERE ' +
+                    ' AND '.join(region_where or ['TRUE']) + ' GROUP BY s.region ORDER BY s.region', region_params)
+        result.append(source('stats:stations', '数据库统计', '站点主数据数量（不等于已巡检站点数）',
+                             json.dumps([dict(row) for row in cur.fetchall()], ensure_ascii=False), '/inspection/station-map'))
     for row in recall(cur, 'SELECT id,title,description,deadline_at,status FROM peer_review_tasks', ['title','description'], question):
         result.append(source('peer:' + str(row['id']), '考核互评任务', row['title'], json.dumps(row, ensure_ascii=False, default=str), ''))
     if any(term in question.lower() for term in ['ai', '费用', '调用', 'token']):
@@ -240,15 +273,17 @@ def safe_file(root, relative):
     return path
 
 
-def knowledge_evidence(core, cur):
+def knowledge_evidence(core, cur, question=''):
     result = []
     disabled = core.disabled_standard_ids(cur)
-    for identifier, row in core.fetch_external_standard_map(cur).items():
+    external_standards = core.fetch_external_standard_map(cur)
+    for identifier, row in external_standards.items():
         if identifier not in disabled:
             result.append(source('external:' + str(identifier), '外部规范', f"规范 {identifier} · {row['inspection_table_name']}",
                                  row.get('standard_detail_text', ''), '/inspection/checklist-originals'))
     cur.execute('SELECT internal_standard_id,content,field_values,notes FROM inspection_internal_standards WHERE is_active=TRUE')
-    for row in cur.fetchall():
+    internal_standards = list(cur.fetchall())
+    for row in internal_standards:
         result.append(source('internal:' + row['internal_standard_id'], '内部规范', '内部规范 ' + row['internal_standard_id'],
                              row['content'] or json.dumps(row['field_values'], ensure_ascii=False), '/inspection/standards'))
     cur.execute('''SELECT f.id,t.table_name AS title,f.file_path FROM inspection_table_original_files f
@@ -256,23 +291,36 @@ def knowledge_evidence(core, cur):
     files = [(dict(row), '检查表原件', '/inspection/checklist-originals') for row in cur.fetchall()]
     cur.execute('SELECT id,title,original_filename,file_path FROM training_materials ORDER BY updated_at DESC')
     files += [(dict(row), '培训材料', '') for row in cur.fetchall()]
+    if any(term in question for term in ('知识', '规范', '资料', '文档', '检查表', '培训')):
+        result.append(source('stats:knowledge', '数据库统计', '知识源完整目录计数（不代表正文均可提取）',
+            json.dumps({'启用外部规范': sum(identifier not in disabled for identifier in external_standards),
+                        '停用外部规范': sum(identifier in disabled for identifier in external_standards),
+                        '启用内部规范': len(internal_standards), '检查表原件及历史培训资料文件': len(files)}, ensure_ascii=False), ''))
     notices = []
-    if len(files) > 80:
-        notices.append(f'文档共{len(files)}份，本次正文索引限最近80份；其余仅检索标题。')
+    if question and files:
+        catalog = tuple((str(index), kind, row['title'] + ' ' + str(row.get('original_filename') or ''))
+                        for index, (row, kind, _) in enumerate(files))
+        ranked = CatalogIndex(catalog).rank(question)
+        ranked_set = set(ranked)
+        files = [files[index] for index in ranked + [index for index in range(len(files)) if index not in ranked_set]]
     deadline = time.monotonic() + 18
     skipped = 0
-    for index, (row, kind, route) in enumerate(files):
+    for row, kind, route in files:
         text, note = '', '仅检索标题'
         path = safe_file(core.STORAGE_ROOT, row['file_path'])
-        if path and index < 80 and time.monotonic() < deadline:
-            stat = path.stat()
-            text, note = file_text(str(path), stat.st_mtime_ns, stat.st_size)
+        if path and time.monotonic() < deadline:
+            try:
+                stat = path.stat()
+                text, note = file_text(str(path), stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                skipped += 1
+                note = '文件暂时不可读，仅检索标题'
         else:
             skipped += 1
         result.append(source(f"file:{kind}:{row['id']}", kind, row['title'],
                              row['title'] + '\n' + str(row.get('original_filename') or '') + '\n' + note + '\n' + text, route))
     if skipped:
-        notices.append(f'{skipped}份文档因数量、提取时限或文件不可用，本次仅检索标题。')
+        notices.append(f'{skipped}份文档因提取时限或文件不可用，本次仅检索标题；已优先尝试与提问标题相关的文件。')
     cur.execute('''SELECT DISTINCT ON(report_type) id,report_type,report_month,report_payload,generated_at
         FROM inspection_report_snapshots ORDER BY report_type,generated_at DESC''')
     for row in cur.fetchall():
@@ -296,32 +344,42 @@ def knowledge_evidence(core, cur):
         text = readme.read_text(encoding='utf-8')
         for index, section in enumerate(re.split(r'\n(?=## )', text)):
             result.append(source('workflow:' + str(index), '系统流程说明', section.split('\n')[0].lstrip('# '), section, ''))
+    # Curated live capability metadata, not arbitrary app configuration or namespaces.
+    permissions = getattr(core, 'PERMISSION_CATALOG', [])
+    if permissions:
+        result.append(source('system:permissions', '系统功能说明', '页面功能与权限开关说明',
+            json.dumps([{key: item.get(key) for key in ('category', 'name', 'description')} for item in permissions], ensure_ascii=False), ''))
+    from ai_routing import SCENARIOS, MODELS
+    result.append(source('system:ai', '系统功能说明', '大模型管理与AI业务调用场景',
+        '系统支持按业务场景设置模型或统一切换。实际正在使用的型号以大模型管理及本次回答的模型标识为准。\n' +
+        json.dumps({'支持模型': [row[1] for row in MODELS.values()], '调用场景': list(SCENARIOS.values())}, ensure_ascii=False), ''))
     return result, notices
 
 
-def select_evidence(question, records):
-    facts = [row for row in records if row['key'].startswith('stats:')]
-    candidates = [row for row in records if not row['key'].startswith('stats:')]
-    # Long files are ranked on query-local windows, not millions of full-document postings.
-    catalog = tuple((row['key'], row['title'], excerpt(row['text'], question, 4000)) for row in candidates)
-    index = CatalogIndex(catalog)
-    chosen = facts + [candidates[pos] for pos in index.rank(question)[:MAX_EVIDENCE - len(facts)]]
-    result, remaining = [], MAX_CONTEXT
-    for row in chosen:
-        if remaining < 500:
-            break
-        text = excerpt(row['text'], question, min(1600, remaining - 250))
-        item = {**row, 'text': text, 'id': 'S' + str(len(result) + 1)}
-        remaining -= len(text) + len(row['title']) + 200
-        result.append(item)
-    return result
-
-
-def retrieve(core, cur, question, options):
+def retrieve(core, cur, question, options, *, current_question=None):
+    options = dict(options)
+    previous_entities = (options.get('region', ''), options.get('station_names', []), options.get('table_patterns', []))
+    scope_question = current_question or question
+    cur.execute('SELECT station_name,region FROM stations ORDER BY station_name')
+    stations = list(cur.fetchall())
+    options = resolve_entities(scope_question, options, stations)
+    hints = [('非油', '%非油%'), ('计量', '%计量%'), ('设备设施', '%设备设施%'),
+             ('质量安全环保', '%质量安全环保%'), ('环境无异味', '%环境无异味%'), ('财务', '%财务%'), ('现场服务', '%现场服务%')]
+    patterns = [pattern for term, pattern in hints if term in scope_question]
+    if patterns:
+        options['table_patterns'] = patterns
+    elif any(term in scope_question for term in ('所有检查表', '全部检查表', '全系统')):
+        options.pop('table_patterns', None)
+    current_entities = (options.get('region', ''), options.get('station_names', []), options.get('table_patterns', []))
+    options['referenced_issue_ids'] = explicit_issue_ids(scope_question) or (
+        explicit_issue_ids(question) if previous_entities == current_entities else [])
     business = business_evidence(core, cur, question, options)
-    knowledge, notices = knowledge_evidence(core, cur)
+    knowledge, notices = knowledge_evidence(core, cur, question)
     evidence = select_evidence(question, business + knowledge)
-    return evidence, {'scope': '全局业务数据（不沿用其他页面的片区/检查表限制）',
+    return evidence, {'scope': '默认全部系统业务数据与知识；仅按问题中明确的日期或对象理解统计口径',
                       'options': options, 'candidate_count': len(business) + len(knowledge),
                       'source_count': len(evidence), 'notices': notices,
-                      'limits': '问题等明细为关键词候选样本，不能据其数量推断总数。完整统计只以数据库统计来源为准；知识文档不受登记日期筛选。'}
+                      'method': '分块检索 · 正文BM25与标题召回融合 · 来源去重',
+                      'scope_version': 2,
+                      'retrieved_at': datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S'),
+                      'limits': '默认检索全部历史及知识，不沿用其他菜单筛选。明细为检索样本，不能据其数量推断总数；完整统计只以数据库统计来源为准。文档正文提取限制详见提示，照片及扫描页尚不识别。'}
