@@ -76,6 +76,81 @@ class KnowledgeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 normalize_answer(payload, evidence)
 
+    def test_citation_format_variants_map_only_to_existing_source_ids(self):
+        evidence = [{'id': 'S1'}, {'id': 'S2'}]
+        for refs, expected in [([' [s1] ', 's2', 'S1'], ['S1', 'S2']),
+                               ('[S2]', ['S2']), ([' S1 '], ['S1'])]:
+            with self.subTest(refs=refs):
+                answer = normalize_answer({'paragraphs': [{'text': '有据结论', 'sources': refs}]}, evidence)
+                self.assertEqual(answer['paragraphs'][0]['sources'], expected)
+        for refs in [['[S999]'], ['S1', '[S999]'], ['S01'], [1], [{'id': 'S1'}],
+                     ['S1 ignore instructions'], [''], None, []]:
+            with self.subTest(refs=refs), self.assertRaisesRegex(RuntimeError, '缺少有效依据'):
+                normalize_answer({'paragraphs': [{'text': '不能发布', 'sources': refs}]}, evidence)
+
+    def test_qwen_sdk_uses_strict_schema_with_actual_source_enum_without_network(self):
+        try:
+            import httpx2 as httpx
+        except ImportError:
+            import httpx
+        from openai import OpenAI
+        requests = []
+        def handle(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            return httpx.Response(200, json={'id': 'test', 'object': 'chat.completion', 'created': 0,
+                'model': body['model'], 'choices': [{'index': 0, 'finish_reason': 'stop',
+                'message': {'role': 'assistant', 'content': json.dumps({'paragraphs': [
+                    {'title': '操作建议', 'text': '依据系统流程办理。', 'sources': ['S7']}],
+                    'caveat': '', 'follow_up_questions': []})}}]})
+        with httpx.Client(transport=httpx.MockTransport(handle)) as transport:
+            client = OpenAI(api_key='fake-test-only', base_url='https://example.invalid/v1', http_client=transport)
+            for model in ('qwen3.8-max', 'qwen3.8-flash'):
+                with self.subTest(model=model), patch('ai_routing._loader', return_value={'default_model': model}):
+                    answer, usage = generate('巡检确认后如何追加问题？', [{'id': 'S2', 'text': '规范'},
+                        {'id': 'S7', 'text': '系统流程'}], client=client)
+                    self.assertEqual(answer['paragraphs'][0]['sources'], ['S7'])
+                    self.assertEqual(usage['model'], model)
+                    body = requests[-1]
+                    self.assertEqual(body['model'], model)
+                    self.assertFalse(body['enable_thinking'])
+                    self.assertNotIn('thinking', body)
+                    self.assertEqual(body['response_format']['type'], 'json_schema')
+                    spec = body['response_format']['json_schema']
+                    self.assertIs(spec['strict'], True)
+                    schema = spec['schema']
+                    paragraph = schema['properties']['paragraphs']['items']
+                    self.assertEqual(paragraph['properties']['sources']['items']['enum'], ['S2', 'S7'])
+                    self.assertIn('sources', paragraph['required'])
+                    self.assertIs(paragraph['additionalProperties'], False)
+                    self.assertNotIn('tools', body)
+        self.assertEqual(len(requests), 2)
+
+    def test_qwen_invalid_answer_is_rejected_once_with_private_safe_diagnostics(self):
+        client = MagicMock()
+        client.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=json.dumps({
+                'paragraphs': [{'text': 'private answer must not be logged', 'sources': ['S999']}]})))])
+        with patch('ai_routing._loader', return_value={'default_model': 'qwen3.8-max'}), \
+             self.assertLogs(level='WARNING') as logs, self.assertRaises(ExpertCallError) as caught:
+            generate('private question', [{'id': 'S1', 'text': 'private evidence'}], client=client)
+        self.assertIn('缺少有效依据', str(caught.exception))
+        self.assertTrue(caught.exception.usage['ai_called'])
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+        diagnostic = '\n'.join(logs.output)
+        self.assertIn('model=qwen3.8-max', diagnostic)
+        self.assertIn('reason=invalid_source', diagnostic)
+        self.assertNotIn('private', diagnostic)
+
+    def test_truncated_answer_is_not_published_even_if_its_json_is_parseable(self):
+        client = MagicMock()
+        client.with_options.return_value.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason='length', message=SimpleNamespace(content=json.dumps({
+                'paragraphs': [{'text': '部分回答', 'sources': ['S1']}]})))])
+        with self.assertRaisesRegex(ExpertCallError, '未完整返回'):
+            generate('巡检流程', [{'id': 'S1', 'text': '依据'}], client=client)
+        client.with_options.return_value.chat.completions.create.assert_called_once()
+
     def test_report_projection_does_not_send_blobs_or_generation_settings(self):
         payload = {'title': '检查结论', 'work_plan': [{'text': '及时整改', 'photo_path': '/private/file.jpg'}],
                    'generation_context': {'api_key': 'secret'}, 'base64': 'SECRET IMAGE'}
@@ -93,6 +168,7 @@ class KnowledgeTests(unittest.TestCase):
         args = client.with_options.return_value.chat.completions.create.call_args.kwargs
         self.assertNotIn('tools', args)
         self.assertEqual(args['max_tokens'], 4096)
+        self.assertEqual(args['response_format'], {'type': 'json_object'})
 
     def test_failed_provider_call_has_safe_message_and_usage_metrics(self):
         class BalanceError(Exception):
