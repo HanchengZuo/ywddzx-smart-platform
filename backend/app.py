@@ -30509,7 +30509,7 @@ def normalize_issue_list_filters(source):
     }
 
 
-def build_issue_list_visibility_scope(cur, user):
+def build_issue_list_visibility_scope(cur, user, *, include_pending_area=False):
     where_clauses = []
     params = []
     can_view_all = can_view_all_inspection_issues(cur, user) or can_view_region_inspection_issues(cur, user)
@@ -30540,7 +30540,9 @@ def build_issue_list_visibility_scope(cur, user):
         "limit_issue_station_region_scope",
     ):
         where_clauses.append("FALSE")
-    append_pending_audit_issue_visibility_filter(user, where_clauses)
+    # Only the operations cockpit opts area accounts into pre-audit observations.
+    if not (include_pending_area and user.get("role") == "area_account"):
+        append_pending_audit_issue_visibility_filter(user, where_clauses)
     return where_clauses, params
 
 
