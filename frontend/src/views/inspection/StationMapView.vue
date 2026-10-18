@@ -32,6 +32,7 @@
       <div class="map-toolbar">
         <div class="map-toolbar-left">
           <span class="map-toolbar-title">站点分布图</span>
+          <span class="map-toolbar-description">空间分布与站点动态</span>
         </div>
         <div class="map-toolbar-right">
           <button class="btn btn-secondary" type="button" @click="toggleAutoRotate">
@@ -154,6 +155,7 @@
                   <div class="event-feed-time">{{ event.time }}</div>
                 </div>
               </button>
+              <p v-if="!displayedEventFeed.length" class="event-feed-empty">暂无站点动态，新的事件将在这里更新。</p>
             </div>
           </div>
         </div>
@@ -1402,7 +1404,7 @@ onBeforeUnmount(() => {
 }
 
 .summary-card {
-  padding: 22px;
+  padding: 18px 22px;
 }
 
 .summary-label {
@@ -1439,6 +1441,16 @@ onBeforeUnmount(() => {
   padding: 16px;
 }
 
+.map-toolbar-left {
+  display: grid;
+  gap: 5px;
+}
+
+.map-toolbar-description {
+  color: #7890a4;
+  font-size: 12px;
+}
+
 .map-toolbar {
   display: flex;
   align-items: center;
@@ -1449,7 +1461,7 @@ onBeforeUnmount(() => {
 }
 
 .map-toolbar-title {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 800;
   color: #334155;
 }
@@ -1466,6 +1478,11 @@ onBeforeUnmount(() => {
 }
 
 .map-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 288px;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: 'map stats' 'map events';
+  height: clamp(740px, 78dvh, 1120px);
   width: 100%;
   position: relative;
   overflow: hidden;
@@ -1480,6 +1497,7 @@ onBeforeUnmount(() => {
 }
 
 .map-frame.fullscreen {
+  display: block;
   width: 100vw;
   height: 100vh;
   padding: 16px;
@@ -1601,10 +1619,12 @@ onBeforeUnmount(() => {
 }
 
 .map-container {
+  grid-area: map;
+  min-width: 0;
   width: 100%;
-  height: calc(100vh - 380px);
-  min-height: 620px;
-  border-radius: 20px;
+  height: 100%;
+  min-height: 0;
+  border-radius: 20px 0 0 20px;
   overflow: hidden;
   background: rgba(15, 23, 42, 0.18);
 }
@@ -1663,6 +1683,84 @@ onBeforeUnmount(() => {
 .map-frame.fullscreen .map-container {
   height: calc(100vh - 32px);
   min-height: auto;
+  border-radius: 20px;
+}
+
+.map-frame:not(.fullscreen) .map-overlay-right,
+.map-frame:not(.fullscreen) .map-overlay-bottom-right {
+  position: relative;
+  inset: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  border-left: 1px solid #304b65;
+  background: #0d1d30;
+}
+
+.map-frame:not(.fullscreen) .map-overlay-right {
+  grid-area: stats;
+  padding-bottom: 0;
+}
+
+.map-frame:not(.fullscreen) .map-overlay-bottom-right {
+  grid-area: events;
+  pointer-events: auto;
+}
+
+.map-frame:not(.fullscreen) .map-overlay-right .glass-panel {
+  padding: 0 0 16px;
+  border: 0;
+  border-bottom: 1px solid #304b65;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  backdrop-filter: none;
+}
+
+.map-frame:not(.fullscreen) .overlay-chip-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.map-frame:not(.fullscreen) .overlay-chip:first-child {
+  grid-column: 1 / -1;
+}
+
+.map-frame:not(.fullscreen) .overlay-chip {
+  border-radius: 8px;
+  font-size: 11px;
+  padding: 8px 4px;
+}
+
+.map-frame:not(.fullscreen) .event-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.map-frame:not(.fullscreen) .event-panel-header {
+  flex-shrink: 0;
+}
+
+.map-frame:not(.fullscreen) .event-feed-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #426080 transparent;
+}
+
+.event-feed-empty {
+  color: #9cb3cc;
+  font-size: 12px;
+  line-height: 1.8;
 }
 
 @keyframes mapLoadingSpin {
@@ -1741,6 +1839,7 @@ onBeforeUnmount(() => {
 }
 
 .event-feed-button {
+  pointer-events: auto;
   width: 100%;
   text-align: left;
   border: 1px solid rgba(96, 165, 250, 0.10);
@@ -2392,11 +2491,24 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1200px) {
   .summary-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summary-card {
+    padding: 16px;
+  }
+
+  .map-frame:not(.fullscreen) {
+    grid-template-columns: minmax(0, 1fr) 240px;
   }
 }
 
 @media (max-width: 900px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
   .station-issue-dialog-backdrop {
     padding: 10px;
   }
