@@ -95,6 +95,7 @@ import {
 const props = defineProps({
   url: { type: String, required: true },
   title: { type: String, default: '图片预览' },
+  target: { type: [String, Object], default: null },
 })
 const emit = defineEmits(['close'])
 const overlay = ref(null),
@@ -254,7 +255,7 @@ function handleKeydown(event) {
   }
 }
 async function updateFullscreenTarget() {
-  teleportTarget.value = document.fullscreenElement || 'body'
+  teleportTarget.value = props.target || document.fullscreenElement || 'body'
   await nextTick()
   if (disposed) return
   measureViewport()

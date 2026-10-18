@@ -17,10 +17,17 @@ export function createManualPreviewCache(fetchBlob, urls = URL) {
           return entry.url
         })
         .catch((error) => {
-          entries.delete(id)
+          if (entries.get(id) === entry) entries.delete(id)
           throw error
         })
       return entry.promise
+    },
+    invalidate(id) {
+      const entry = entries.get(id)
+      if (!entry) return
+      entry.controller.abort()
+      if (entry.url) urls.revokeObjectURL(entry.url)
+      entries.delete(id)
     },
     dispose() {
       disposed = true
@@ -32,3 +39,5 @@ export function createManualPreviewCache(fetchBlob, urls = URL) {
     },
   }
 }
+
+export const HELP_IMAGE_CACHE = Symbol('help-image-cache')

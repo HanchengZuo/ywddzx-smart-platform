@@ -21,6 +21,12 @@
           <li v-for="(text, n) in block.items" :key="n">{{ text }}</li>
         </ul>
         <aside v-else-if="block.type === 'note'" class="article-note">{{ block.text }}</aside>
+        <HelpInlineImage
+          v-else-if="block.type === 'image'"
+          :asset="images.find((asset) => asset.id === block.assetId) || null"
+          :caption="block.caption"
+          :width="block.width"
+        />
         <p v-else>{{ block.text }}</p>
       </template>
     </article>
@@ -29,7 +35,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { parseHelpBody } from '@/utils/helpContent'
-const props = defineProps({ body: { type: String, default: '' } })
+import HelpInlineImage from './HelpInlineImage.vue'
+const props = defineProps({
+  body: { type: String, default: '' },
+  images: { type: Array, default: () => [] },
+})
 const article = ref(null)
 const blocks = computed(() => parseHelpBody(props.body))
 const headings = computed(() => blocks.value.filter((item) => item.type === 'heading'))

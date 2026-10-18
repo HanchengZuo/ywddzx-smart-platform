@@ -136,11 +136,33 @@ test('manual SFC compiles with real bindings, mobile layout and common pan/zoom 
     }).errors,
     [],
   )
-  assert.match(source, /InspectionPhotoPreview/)
-  assert.match(source, /version === previewVersion/)
+  assert.match(source, /HelpArticleBody/)
+  assert.match(source, /provide\(HELP_IMAGE_CACHE, cache\)/)
   assert.match(source, /cache.dispose\(\)/)
-  assert.match(source, /downloadController\?\.abort\(\)/)
+  assert.ok(!source.includes('查看流程图'))
+  assert.ok(!source.includes('参考附件'))
   assert.match(source, /max-width: 760px/)
   assert.ok(!source.includes('v-html'))
   assert.ok(!source.includes('auth_token'))
+})
+
+test('invalidating a pending figure cannot let its late rejection erase the new request', async () => {
+  const waiting = [],
+    revoked = []
+  const cache = createManualPreviewCache(() => new Promise((resolve) => waiting.push(resolve)), {
+    createObjectURL: () => 'blob:valid',
+    revokeObjectURL: (url) => revoked.push(url),
+  })
+  const stale = cache.load('one', '/one')
+  await Promise.resolve()
+  cache.invalidate('one')
+  const current = cache.load('one', '/one')
+  await Promise.resolve()
+  waiting[0](png())
+  await assert.rejects(stale, { name: 'AbortError' })
+  assert.equal(cache.load('one', '/one'), current)
+  waiting[1](png())
+  assert.equal(await current, 'blob:valid')
+  cache.dispose()
+  assert.deepEqual(revoked, ['blob:valid'])
 })

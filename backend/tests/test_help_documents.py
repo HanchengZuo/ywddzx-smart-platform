@@ -39,7 +39,7 @@ class HelpPermissionTests(unittest.TestCase):
         cur.execute.assert_not_called()
 
     def test_server_rejects_invalid_content_and_arbitrary_attachment_paths(self):
-        for data in [None, {**content(), 'title': ''}, {**content(), 'body': 'x' * 16001},
+        for data in [None, {**content(), 'title': ''}, {**content(), 'body': 'x' * 20001},
                      {**content(), 'tags': 'x'}, {**content(), 'attachments': ['../../secret']},
                      {**content(), 'category': 'x\x00y'}]:
             with self.assertRaises(ValueError):

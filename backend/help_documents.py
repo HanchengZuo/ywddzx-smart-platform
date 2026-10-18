@@ -4,6 +4,7 @@ import uuid
 
 from psycopg2.extras import Json
 from system_manual import DOCUMENTS
+from help_image_content import inline_content, image_nodes
 
 PERMISSION = 'edit_help_documents'
 ATTACHMENT_IDS = {item['id'] for item in DOCUMENTS}
@@ -18,7 +19,7 @@ def normalize_content(data):
         raise ValueError('请填写帮助文档内容。')
     result = {}
     for key, name, low, high in [('title', '标题', 2, 100), ('category', '分类', 2, 40),
-                                  ('summary', '摘要', 0, 300), ('body', '正文', 2, 16000)]:
+                                  ('summary', '摘要', 0, 300), ('body', '正文', 2, 20000)]:
         value = data.get(key, '')
         if not isinstance(value, str) or not low <= len(value.strip()) <= high or '\x00' in value:
             raise ValueError(f'{name}应为{low}至{high}字。')
@@ -31,6 +32,10 @@ def normalize_content(data):
     if not isinstance(attachments, list) or len(attachments) > len(ATTACHMENT_IDS) or any(not isinstance(item, str) or item not in ATTACHMENT_IDS for item in attachments):
         raise ValueError('请选择现有的参考附件。')
     result['attachments'] = list(dict.fromkeys(attachments))
+    result = inline_content(result)
+    image_nodes(result['body'])
+    if len(result['body']) > 20000:
+        raise ValueError('正文与图片内容合计不能超过20000字。')
     return result
 
 
@@ -40,8 +45,8 @@ def stamp(value):
 
 def serialize(row, workspace=False):
     return {'id': row['id'], 'revision': row['revision'],
-            'content': (row.get('draft') or row.get('published')) if workspace else row.get('published'),
-            'published_content': row.get('published') if workspace else None,
+            'content': inline_content((row.get('draft') or row.get('published')) if workspace else row.get('published')),
+            'published_content': inline_content(row.get('published')) if workspace else None,
             'has_draft': row.get('draft') is not None if workspace else False,
             'archived': row['archived'],
             'updated_by': row['updated_by_name'] if workspace else row['published_by_name'],

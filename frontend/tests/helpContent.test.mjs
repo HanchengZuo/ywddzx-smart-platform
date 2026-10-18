@@ -7,6 +7,8 @@ import {
   filterHelpArticles,
   blankHelpContent,
   helpStatus,
+  serializeHelpBlocks,
+  inlineLegacyImages,
 } from '../src/utils/helpContent.js'
 
 test('help paragraphs, steps, lists and notes retain text without evaluating HTML or URLs', () => {
@@ -47,7 +49,47 @@ test('article search covers actual body, intersects category, and distinguishes 
   assert.deepEqual(second.tags, [])
 })
 
-for (const filename of ['HelpArticleBody', 'HelpDocumentEditor']) {
+test('images round-trip at their text position with caption and responsive width', () => {
+  const blocks = [
+    { type: 'paragraph', text: '先填写申诉理由' },
+    {
+      type: 'image',
+      assetId: 'issue-appeal-workflow',
+      caption: '流程图："申诉" <安全文本>',
+      width: 75,
+    },
+    { type: 'paragraph', text: '然后在申诉空间查看进度' },
+  ]
+  const parsed = parseHelpBody(serializeHelpBlocks(blocks))
+  assert.deepEqual(
+    parsed.map((block) => block.type),
+    ['paragraph', 'image', 'paragraph'],
+  )
+  assert.equal(parsed[1].assetId, 'issue-appeal-workflow')
+  assert.equal(parsed[1].caption, blocks[1].caption)
+  assert.equal(parsed[1].width, 75)
+  assert.equal(parsed[2].text, blocks[2].text)
+})
+
+test('old image references become actual inline nodes once, without mutating the source', () => {
+  const content = { body: '正文', attachments: ['inspection-workflow'] }
+  const images = [{ id: 'inspection-workflow', title: '完整流程图' }]
+  const body = inlineLegacyImages(content, images)
+  assert.equal(parseHelpBody(body).filter((block) => block.type === 'image').length, 1)
+  assert.equal(inlineLegacyImages({ body, attachments: content.attachments }, images), body)
+  assert.equal(content.body, '正文')
+  assert.equal(
+    parseHelpBody('::help-image {"id":"https://evil.example","width":100}')[0].type,
+    'paragraph',
+  )
+})
+
+for (const filename of [
+  'HelpArticleBody',
+  'HelpDocumentEditor',
+  'HelpBodyEditor',
+  'HelpInlineImage',
+]) {
   test(filename + ' compiles with safe text rendering and actual bindings', () => {
     const source = readFileSync(
       new URL(`../src/components/${filename}.vue`, import.meta.url),
@@ -71,6 +113,14 @@ for (const filename of ['HelpArticleBody', 'HelpDocumentEditor']) {
       assert.match(source, /save\('draft'\)/)
       assert.match(source, /showModal\(\)/)
       assert.match(source, /onBeforeRouteLeave/)
+      assert.match(source, /HelpBodyEditor/)
+      assert.ok(!source.includes('参考流程附件'))
+    }
+    if (filename === 'HelpInlineImage') {
+      assert.match(source, /height: auto/)
+      assert.match(source, /InspectionPhotoPreview/)
+      assert.match(source, /closest\('dialog\[open\]'\)/)
+      assert.ok(!source.includes('max-height:'))
     }
   })
 }
