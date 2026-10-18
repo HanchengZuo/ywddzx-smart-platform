@@ -2,29 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
-import {
-  createManualPreviewCache,
-  filterManualDocuments,
-  formatManualSize,
-} from '../src/utils/manualLibrary.js'
+import { createManualPreviewCache } from '../src/utils/manualLibrary.js'
 import { PAGE_VISIBILITY_GROUPS } from '../src/config/pageVisibilityCatalog.js'
 
-const source = readFileSync(new URL('../src/views/SystemManualView.vue', import.meta.url), 'utf8')
+const source = readFileSync(new URL('../src/views/HelpDocumentsView.vue', import.meta.url), 'utf8')
 const png = () => new Blob(['fake-png'], { type: 'image/png' })
-
-test('manual searches titles, descriptions, categories and tags without mutating original list', () => {
-  const documents = [
-    { title: '巡检流程', category: '流程', description: '确认到整改', tags: ['PDF', '审核'] },
-    { title: '申诉说明', category: '申诉', description: '片区终审', tags: ['时限'] },
-  ]
-  assert.equal(filterManualDocuments(documents, '').length, 2)
-  assert.deepEqual(filterManualDocuments(documents, 'pdf 审核'), [documents[0]])
-  assert.deepEqual(filterManualDocuments(documents, '申诉 时限'), [documents[1]])
-  assert.deepEqual(filterManualDocuments(documents, '无关'), [])
-  assert.equal(documents.length, 2)
-  assert.equal(formatManualSize(81348), '79 KB')
-  assert.equal(formatManualSize(1782579), '1.7 MB')
-})
 
 test('preview cache shares pending requests, caches switches and revokes all object URLs on exit', async () => {
   const fetched = [],
@@ -94,7 +76,7 @@ test('manual is a signed-in common menu without role or individual permission ga
   const common = PAGE_VISIBILITY_GROUPS.find((group) => group.key === 'common')
   assert.deepEqual(
     common.pages.map((page) => page.path),
-    ['/system-manual', '/feedback'],
+    ['/help-documents', '/feedback'],
   )
   const router = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
   const accessBody = router
@@ -119,17 +101,26 @@ test('manual is a signed-in common menu without role or individual permission ga
     'quality',
     'unknown',
   ]) {
-    assert.equal(canAccess('/system-manual', role, {}), true)
+    assert.equal(canAccess('/help-documents', role, {}), true)
   }
-  assert.match(router, /SystemManualView.vue/)
-  const fallbackBody = router.split('const resolveFallbackPath = ')[1].split('\n\nconst verifyStoredAuthToken')[0]
-  const fallback = new Function('isSupervisorRole', 'operationsPages', 'canAccessPath', `return (${fallbackBody})`)(
-    () => false, [], canAccess,
+  assert.match(router, /HelpDocumentsView.vue/)
+  assert.match(router, /redirect: to => \(\{ path: '\/help-documents', query: to.query \}\)/)
+  const fallbackBody = router
+    .split('const resolveFallbackPath = ')[1]
+    .split('\n\nconst verifyStoredAuthToken')[0]
+  const fallback = new Function(
+    'isSupervisorRole',
+    'operationsPages',
+    'canAccessPath',
+    `return (${fallbackBody})`,
+  )(() => false, [], canAccess)
+  assert.equal(
+    fallback('reader', {}, (path) => path === '/help-documents'),
+    '/help-documents',
   )
-  assert.equal(fallback('reader', {}, (path) => path === '/system-manual'), '/system-manual')
   const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
-  assert.match(app, /canViewSystemManual.value \|\| canViewFeedback.value/)
-  assert.ok(app.indexOf("go('/system-manual')") < app.indexOf("go('/feedback')"))
+  assert.match(app, /canViewHelpDocuments.value \|\| canViewFeedback.value/)
+  assert.ok(app.indexOf("go('/help-documents')") < app.indexOf("go('/feedback')"))
 })
 
 test('manual SFC compiles with real bindings, mobile layout and common pan/zoom component', () => {
@@ -139,7 +130,7 @@ test('manual SFC compiles with real bindings, mobile layout and common pan/zoom 
   assert.deepEqual(
     compileTemplate({
       source: descriptor.template.content,
-      filename: 'SystemManualView.vue',
+      filename: 'HelpDocumentsView.vue',
       id: 'system-manual',
       compilerOptions: { bindingMetadata: script.bindings },
     }).errors,
@@ -147,7 +138,7 @@ test('manual SFC compiles with real bindings, mobile layout and common pan/zoom 
   )
   assert.match(source, /InspectionPhotoPreview/)
   assert.match(source, /version === previewVersion/)
-  assert.match(source, /previewCache.dispose\(\)/)
+  assert.match(source, /cache.dispose\(\)/)
   assert.match(source, /downloadController\?\.abort\(\)/)
   assert.match(source, /max-width: 760px/)
   assert.ok(!source.includes('v-html'))

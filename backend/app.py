@@ -1047,6 +1047,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "edit_help_documents",
+        "name": "编辑帮助文档",
+        "category": "帮助文档",
+        "description": "新增和编辑使用说明，保存草稿、发布、下架及查看维护记录；所有用户默认可阅读已发布内容。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "manage_ai_models",
         "name": "管理大模型配置",
         "category": "大模型管理",
@@ -5920,9 +5927,10 @@ def apply_role_permission_updates(cur, role, permissions, actor_user_id):
         normalized_role,
     )
     if not is_root_user(get_user_by_id(cur, actor_user_id)):
-        previous = build_role_effective_permissions(cur, normalized_role).get('review_quality_appeals', False)
-        if bool(normalized_permissions.get('review_quality_appeals')) != bool(previous):
-            raise PermissionError('只有root可以分配或撤销质安部申诉终审权限。')
+        previous = build_role_effective_permissions(cur, normalized_role)
+        for key, label in [('review_quality_appeals', '质安部申诉终审权限'), ('edit_help_documents', '帮助文档编辑权限')]:
+            if bool(normalized_permissions.get(key)) != bool(previous.get(key)):
+                raise PermissionError(f'只有root可以分配或撤销{label}。')
     cur.execute("DELETE FROM role_permissions WHERE role = %s;", (normalized_role,))
     for permission_key, is_allowed in normalized_permissions.items():
         cur.execute(
@@ -38421,6 +38429,9 @@ register_expert_qa(app, globals())
 
 from system_manual import register_system_manual
 register_system_manual(app)
+
+from help_document_http import register_help_documents
+register_help_documents(app, connect=get_db_connection, has_permission=has_permission)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

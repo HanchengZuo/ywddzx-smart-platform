@@ -1,18 +1,3 @@
-export const filterManualDocuments = (documents, query) => {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  return documents.filter((item) => {
-    const text = [item.title, item.category, item.description, ...(item.tags || [])]
-      .join(' ')
-      .toLocaleLowerCase()
-    return terms.every((term) => text.includes(term))
-  })
-}
-
-export const formatManualSize = (bytes) =>
-  bytes >= 1024 * 1024
-    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(bytes / 1024))} KB`
-
 export function createManualPreviewCache(fetchBlob, urls = URL) {
   const entries = new Map()
   let disposed = false
