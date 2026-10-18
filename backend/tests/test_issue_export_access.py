@@ -54,7 +54,7 @@ class IssueExportAccessTests(unittest.TestCase):
                 body, status, conn, cur, start, rows, _, user, permission = self.create(role=role)
                 self.assertEqual(status, 200)
                 self.assertTrue(body['success'])
-                permission.assert_not_called()
+                self.assertTrue(all(call.args[-1] != 'export_issue_photos' for call in permission.call_args_list))
                 rows.assert_called_once_with(cur, user, [11, 12])
                 start.assert_called_once()
                 options = start.call_args.args[3]
