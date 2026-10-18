@@ -64,9 +64,7 @@
         <div v-else-if="!filtered.length" class="empty">
           <strong>没有找到相关文档</strong>
           <p>可更换关键词，或选择全部分类。</p>
-          <button type="button" @click="clearFilters">
-            清空筛选
-          </button>
+          <button type="button" @click="clearFilters">清空筛选</button>
         </div>
         <div class="feedback-link">
           <strong>仍然没有解决？</strong>
@@ -118,56 +116,19 @@
         <div v-if="workspace && active.archived" class="draft-notice">
           这篇文档已下架，普通用户看不到。重新发布或上架后恢复可见。
         </div>
-        <div class="article-content"><HelpArticleBody :body="readingContent.body" /></div>
-        <section v-if="articleAttachments.length" class="references" aria-label="参考附件">
-          <h4>参考流程图</h4>
-          <p>用于辅助理解完整流程；涉及办理时限、照片要求等，以系统当前配置与实际页面为准。</p>
-          <article v-for="asset in articleAttachments" :key="asset.id" class="reference-card">
-            <div class="reference-head">
-              <div>
-                <span>{{ asset.format }}</span
-                ><strong>{{ asset.title }}</strong>
-              </div>
-              <div>
-                <button type="button" @click="openAttachment(asset)">
-                  {{ expandedAsset?.id === asset.id ? '收起预览' : '查看流程图' }}</button
-                ><button type="button" :disabled="downloading" @click="download(asset)">
-                  下载原件
-                </button>
-              </div>
-            </div>
-            <div v-if="expandedAsset?.id === asset.id" class="attachment-preview">
-              <p v-if="previewError" role="alert">
-                {{ previewError }}
-                <button type="button" @click="retryAttachment(asset)">重试</button>
-              </p>
-              <p v-else-if="!previewReady" role="status">正在加载高清预览…</p>
-              <button
-                v-if="previewUrl && !previewError"
-                class="preview-image"
-                type="button"
-                :disabled="!previewReady"
-                @click="zoom = true"
-              >
-                <img
-                  :key="previewUrl"
-                  :src="previewUrl"
-                  :alt="asset.title"
-                  @load="imageLoaded"
-                  @error="imageFailed"
-                /></button
-              ><button
-                v-if="previewReady && !previewError"
-                class="expand-image"
-                type="button"
-                @click="zoom = true"
-              >
-                放大阅读 · 支持缩放和拖动
-              </button>
-            </div>
-          </article>
-        </section>
-        <details v-if="workspace" :key="`${active.id}:${active.revision}`" class="history" @toggle="loadHistory">
+        <div class="article-content">
+          <HelpArticleBody
+            :key="`${active.id}:${showPublished}`"
+            :body="readingContent.body"
+            :images="images"
+          />
+        </div>
+        <details
+          v-if="workspace"
+          :key="`${active.id}:${active.revision}`"
+          class="history"
+          @toggle="loadHistory"
+        >
           <summary>维护记录</summary>
           <p v-if="historyError" role="alert">{{ historyError }}</p>
           <p v-else-if="!history.length">暂无人工维护记录。</p>
@@ -190,32 +151,25 @@
       v-if="editing"
       :key="editorItem?.id || 'new'"
       :item="editorItem"
-      :attachments="attachments"
+      :images="images"
       :categories="categories"
       @close="editing = false"
       @saved="saved"
     />
-    <InspectionPhotoPreview
-      v-if="zoom && previewReady && previewUrl"
-      :url="previewUrl"
-      :title="expandedAsset?.title || '参考流程图'"
-      @close="zoom = false"
-    />
   </div>
 </template>
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import HelpArticleBody from '@/components/HelpArticleBody.vue'
 import HelpDocumentEditor from '@/components/HelpDocumentEditor.vue'
-import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
-import { createManualPreviewCache } from '@/utils/manualLibrary'
+import { createManualPreviewCache, HELP_IMAGE_CACHE } from '@/utils/manualLibrary'
 import { filterHelpArticles, helpStatus } from '@/utils/helpContent'
 const route = useRoute(),
   router = useRouter()
 const items = ref([]),
-  attachments = ref([]),
+  images = ref([]),
   selectedId = ref(''),
   keyword = ref(''),
   category = ref('')
@@ -228,12 +182,6 @@ const editing = ref(false),
   editorItem = ref(null),
   changing = ref(false),
   showPublished = ref(false)
-const expandedAsset = ref(null),
-  previewReady = ref(false),
-  previewError = ref(''),
-  previewUrl = ref(''),
-  zoom = ref(false),
-  downloading = ref(false)
 const history = ref([]),
   historyError = ref('')
 const active = computed(() => items.value.find((item) => item.id === selectedId.value))
@@ -241,9 +189,6 @@ const readingContent = computed(() =>
   showPublished.value && active.value?.published_content
     ? active.value.published_content
     : active.value?.content,
-)
-const articleAttachments = computed(() =>
-  attachments.value.filter((item) => readingContent.value?.attachments.includes(item.id)),
 )
 const categories = computed(() => [...new Set(items.value.map((item) => item.content.category))])
 const filtered = computed(() => filterHelpArticles(items.value, keyword.value, category.value))
@@ -259,14 +204,12 @@ function clearFilters() {
 }
 let disposed = false,
   requestVersion = 0,
-  previewVersion = 0,
   controller,
-  historyController,
-  downloadController
-const urls = new Map()
+  historyController
 const fetchBlob = async (url, { signal }) =>
   (await axios.get(url, { signal, responseType: 'blob' })).data
-let cache = createManualPreviewCache(fetchBlob)
+const cache = createManualPreviewCache(fetchBlob)
+provide(HELP_IMAGE_CACHE, cache)
 const formatTime = (value) =>
   value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
 async function load(preferred = '') {
@@ -284,7 +227,7 @@ async function load(preferred = '') {
     if (disposed || version !== requestVersion) return
     resetReading()
     items.value = data.items
-    attachments.value = data.attachments
+    images.value = data.attachments
     canEdit.value = data.can_edit
     const id = preferred || selectedId.value || route.query.document
     selectedId.value = data.items.some((item) => item.id === id) ? id : data.items[0]?.id || ''
@@ -347,73 +290,9 @@ async function setAvailability(action) {
 }
 function resetReading() {
   showPublished.value = false
-  expandedAsset.value = null
-  previewUrl.value = ''
-  previewReady.value = false
-  zoom.value = false
-  previewVersion++
   history.value = []
   historyError.value = ''
   historyController?.abort()
-}
-async function openAttachment(asset, force = false) {
-  if (expandedAsset.value?.id === asset.id && !force) {
-    expandedAsset.value = null
-    previewVersion++
-    return
-  }
-  const version = ++previewVersion
-  expandedAsset.value = asset
-  previewUrl.value = ''
-  previewReady.value = false
-  previewError.value = ''
-  zoom.value = false
-  try {
-    const url = await cache.load(asset.id, asset.preview_url)
-    if (!disposed && version === previewVersion) previewUrl.value = url
-  } catch (failure) {
-    if (!disposed && version === previewVersion && !axios.isCancel(failure))
-      previewError.value = '预览暂不可用，也可以下载原件查看。'
-  }
-}
-function retryAttachment(asset) {
-  cache.dispose()
-  cache = createManualPreviewCache(fetchBlob)
-  openAttachment(asset, true)
-}
-function imageLoaded(event) {
-  if (event.target.getAttribute('src') === previewUrl.value) previewReady.value = true
-}
-function imageFailed(event) {
-  if (event.target.getAttribute('src') === previewUrl.value) previewError.value = '图片读取失败。'
-}
-async function download(asset) {
-  if (downloading.value) return
-  downloading.value = true
-  downloadController = new AbortController()
-  try {
-    const { data } = await axios.get(asset.download_url, {
-      responseType: 'blob',
-      signal: downloadController.signal,
-    })
-    if (disposed) return
-    const url = URL.createObjectURL(data),
-      timer = setTimeout(() => {
-        URL.revokeObjectURL(url)
-        urls.delete(url)
-      }, 60000)
-    urls.set(url, timer)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = asset.filename
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-  } catch (failure) {
-    if (!disposed && !axios.isCancel(failure)) error.value = '附件下载失败，请稍后重试。'
-  } finally {
-    if (!disposed) downloading.value = false
-  }
 }
 async function loadHistory(event) {
   if (!event.target.open || !active.value) return
@@ -431,11 +310,6 @@ async function loadHistory(event) {
   }
 }
 watch(selectedId, resetReading)
-watch(showPublished, () => {
-  expandedAsset.value = null
-  zoom.value = false
-  previewVersion++
-})
 watch(
   () => route.query.document,
   (id) => {
@@ -446,15 +320,9 @@ onMounted(load)
 onBeforeUnmount(() => {
   disposed = true
   requestVersion++
-  previewVersion++
   controller?.abort()
   historyController?.abort()
-  downloadController?.abort()
   cache.dispose()
-  for (const [url, timer] of urls) {
-    clearTimeout(timer)
-    URL.revokeObjectURL(url)
-  }
 })
 </script>
 <style scoped>
@@ -727,89 +595,6 @@ button:disabled {
   font: inherit;
   color: var(--blue);
   cursor: pointer;
-}
-.references {
-  margin-top: 30px;
-  padding-top: 20px;
-  border-top: 1px solid #e4ebf2;
-}
-.references h4 {
-  margin: 0;
-  font-size: 15px;
-}
-.references > p {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.8;
-}
-.reference-card {
-  border: 1px solid #dfe7ef;
-  border-radius: 12px;
-  margin-top: 12px;
-  overflow: hidden;
-}
-.reference-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 14px 16px;
-}
-.reference-head > div {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.reference-head span {
-  background: #edf3f9;
-  color: #66829b;
-  padding: 5px 7px;
-  border-radius: 4px;
-  font-size: 10px;
-}
-.reference-head strong {
-  font-size: 13px;
-}
-.reference-head button,
-.expand-image,
-.attachment-preview > p button {
-  font: inherit;
-  font-size: 12px;
-  border: 0;
-  background: none;
-  color: var(--blue);
-  cursor: pointer;
-  padding: 6px 0;
-}
-.attachment-preview {
-  padding: 14px;
-  background: #edf1f6;
-  text-align: center;
-  position: relative;
-}
-.attachment-preview > p {
-  font-size: 13px;
-  color: var(--muted);
-}
-.preview-image {
-  padding: 0;
-  border: 0;
-  background: #fff;
-  display: block;
-  max-height: 460px;
-  overflow: auto;
-  width: 100%;
-  cursor: zoom-in;
-}
-.preview-image img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.expand-image {
-  margin-top: 10px;
 }
 .history {
   margin-top: 25px;

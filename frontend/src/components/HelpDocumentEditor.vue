@@ -53,33 +53,13 @@
             {{ preview ? '继续编辑' : '预览阅读效果' }}
           </button>
         </div>
-        <div v-if="!preview" class="writing-tools">
-          <button type="button" @click="insert('## 小节标题\n')">添加小节</button
-          ><button type="button" @click="insert('1. 第一步\n2. 第二步\n')">添加步骤</button
-          ><button type="button" @click="insert('> 注意事项\n')">添加提示</button>
-        </div>
-        <HelpArticleBody v-if="preview" class="editor-preview" :body="content.body" />
-        <textarea
-          v-else
-          ref="bodyInput"
-          v-model="content.body"
-          class="body-input"
-          rows="14"
-          required
-          minlength="2"
-          maxlength="16000"
-          aria-label="帮助文档正文"
-          placeholder="说明适用人群、操作入口、步骤与注意事项。可使用上方按钮插入小节、步骤和提示。"
+        <HelpArticleBody
+          v-if="preview"
+          class="editor-preview"
+          :body="content.body"
+          :images="images"
         />
-        <fieldset>
-          <legend>参考流程附件（可选）</legend>
-          <label v-for="attachment in attachments" :key="attachment.id"
-            ><input v-model="content.attachments" type="checkbox" :value="attachment.id" />{{
-              attachment.title
-            }}
-            · {{ attachment.format }}</label
-          >
-        </fieldset>
+        <HelpBodyEditor v-else v-model="content.body" :images="images" />
         <p v-if="item" class="last-saved">
           当前版本 {{ item.revision }} · 最后维护：{{ item.updated_by || '系统预置' }}
           {{ formatTime(item.updated_at) }}
@@ -98,23 +78,25 @@
   </Teleport>
 </template>
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import axios from 'axios'
 import HelpArticleBody from './HelpArticleBody.vue'
-import { blankHelpContent } from '@/utils/helpContent'
+import HelpBodyEditor from './HelpBodyEditor.vue'
+import { blankHelpContent, inlineLegacyImages } from '@/utils/helpContent'
 const props = defineProps({
   item: { type: Object, default: null },
-  attachments: { type: Array, default: () => [] },
+  images: { type: Array, default: () => [] },
   categories: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['close', 'saved'])
 const dialog = ref(null),
-  bodyInput = ref(null),
   preview = ref(false),
   error = ref(''),
   saving = ref('')
 const content = reactive(JSON.parse(JSON.stringify(props.item?.content || blankHelpContent())))
+content.body = inlineLegacyImages(content, props.images)
+content.attachments = []
 const tagText = ref(content.tags.join('、'))
 const initial = JSON.stringify(content)
 let disposed = false
@@ -132,16 +114,6 @@ function close() {
   if (saving.value) return
   if (dirty() && !window.confirm('尚有未保存的修改，确定离开编辑吗？')) return
   emit('close')
-}
-async function insert(text) {
-  const input = bodyInput.value
-  const start = input?.selectionStart ?? content.body.length,
-    end = input?.selectionEnd ?? start
-  const prefix = start > 0 && content.body[start - 1] !== '\n' ? '\n' : ''
-  content.body = content.body.slice(0, start) + prefix + text + content.body.slice(end)
-  await nextTick()
-  input?.focus()
-  input?.setSelectionRange(start + prefix.length, start + prefix.length + text.length)
 }
 async function save(action) {
   if (saving.value) return
@@ -265,40 +237,12 @@ textarea {
   font: inherit;
   font-size: 14px;
 }
-.writing-tools {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 12px 0;
-}
-.writing-tools button {
-  font-size: 12px;
-}
-.body-input {
-  margin-top: 12px;
-  line-height: 1.9;
-  resize: vertical;
-}
 .editor-preview {
   padding: 22px;
   border: 1px solid #dce6ee;
   border-radius: 10px;
   min-height: 220px;
   margin: 14px 0;
-}
-fieldset {
-  border: 1px solid #dde7ef;
-  border-radius: 10px;
-  margin: 18px 0;
-  padding: 14px;
-}
-legend {
-  font-size: 13px;
-}
-fieldset label {
-  flex-direction: row;
-  align-items: center;
-  margin: 8px 0;
 }
 .last-saved {
   font-size: 12px;
