@@ -265,7 +265,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.2.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.3.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -38418,6 +38418,9 @@ register_ai_model_management(app, connect=get_db_connection, require_management_
 
 from expert_qa import register_expert_qa
 register_expert_qa(app, globals())
+
+from system_manual import register_system_manual
+register_system_manual(app)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

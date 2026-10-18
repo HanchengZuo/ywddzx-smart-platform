@@ -136,6 +136,10 @@ const routes = [
     component: () => import('../views/inspection/AppealsView.vue')
   },
   {
+    path: '/system-manual',
+    component: () => import('../views/SystemManualView.vue')
+  },
+  {
     path: '/feedback',
     component: () => import('../views/Feedback.vue')
   }
@@ -149,6 +153,7 @@ const router = createRouter({
 const hasPermission = (role, permissions, key) => role === 'root' || Boolean(permissions[key])
 
 const canAccessPath = (path, role, permissions) => {
+  if (path === '/system-manual') return true
   if (path === '/inspection/appeals') return true
   if (role === 'root') return true
   if (path === '/management/page-visibility') return false
@@ -240,7 +245,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
   }
   if (isSupervisorRole(role)) candidates.push('/inspection/my-issues')
-  candidates.push('/feedback')
+  candidates.push('/feedback', '/system-manual')
 
   return candidates.find((path) => canAccessPath(path, role, permissions) && isPathVisible(path)) || '/feedback'
 }

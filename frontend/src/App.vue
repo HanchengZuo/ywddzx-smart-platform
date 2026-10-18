@@ -323,6 +323,11 @@
 
       <div v-if="canViewCommonSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
+        <button v-if="canViewSystemManual" class="nav-item" :class="{ active: isActive('/system-manual'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/system-manual')" :title="sidebarCollapsed ? '系统说明书' : ''">
+          <span class="nav-item-icon">册</span>
+          <span v-if="!sidebarCollapsed">系统说明书</span>
+        </button>
         <button v-if="canViewFeedback" class="nav-item" :class="{ active: isActive('/feedback'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/feedback')" :title="sidebarCollapsed ? '系统反馈' : ''">
           <span class="nav-item-icon feedback-nav-icon">
@@ -1022,7 +1027,8 @@ const canViewAssessmentSection = computed(() => (
 ))
 const canViewVehicle = computed(() => (isRoot.value || isSupervisor.value) && isPageVisible('/vehicle'))
 const canViewFeedback = computed(() => isPageVisible('/feedback'))
-const canViewCommonSection = computed(() => canViewFeedback.value)
+const canViewSystemManual = computed(() => isPageVisible('/system-manual'))
+const canViewCommonSection = computed(() => canViewSystemManual.value || canViewFeedback.value)
 const canManageUsers = computed(() => isRoot.value && isPageVisible('/management/users'))
 const canManageSecurity = computed(() => hasPermissionKey('manage_security') && isPageVisible('/management/security'))
 const canManageStations = computed(() => hasPermissionKey('manage_stations') && isPageVisible('/management/stations'))
@@ -1816,7 +1822,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
   if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')
-  candidates.push('/feedback')
+  candidates.push('/feedback', '/system-manual')
   return candidates.find((path) => isPageVisible(path)) || (role === 'root' ? '/management/page-visibility' : '/feedback')
 }
 
