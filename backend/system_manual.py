@@ -44,7 +44,7 @@ def register_system_manual(app):
             try:
                 item['file_size'] = (ASSET_ROOT / document['original']).stat().st_size
             except OSError:
-                return jsonify(success=False, error='说明书文件暂不可用，请稍后重试。'), 503
+                return jsonify(success=False, error='帮助文档附件暂不可用，请稍后重试。'), 503
             base = '/api/system-manual/documents/' + document['id']
             item.update(preview_url=base + '/preview', download_url=base + '/original?download=1')
             items.append(item)
@@ -59,10 +59,10 @@ def register_system_manual(app):
             return denied
         document = next((item for item in DOCUMENTS if item['id'] == document_id), None)
         if document is None or variant not in ('original', 'preview'):
-            return jsonify(success=False, error='说明书文件不存在。'), 404
+            return jsonify(success=False, error='帮助文档附件不存在。'), 404
         path = ASSET_ROOT / document[variant]
         if not path.is_file():
-            return jsonify(success=False, error='说明书文件暂不可用，请稍后重试。'), 503
+            return jsonify(success=False, error='帮助文档附件暂不可用，请稍后重试。'), 503
         response = send_file(path, mimetype=document['mimetype'] if variant == 'original' else 'image/png',
                              as_attachment=variant == 'original' and request.args.get('download') == '1',
                              download_name=document['filename'] if variant == 'original' else document['id'] + '.png',

@@ -131,10 +131,10 @@ export const PAGE_VISIBILITY_GROUPS = [
     description: '所有用户可用的公共页面',
     pages: [
       {
-        key: '/system-manual',
-        path: '/system-manual',
-        title: '系统说明书',
-        description: '所有登录用户可查阅流程说明、放大阅读并下载原件。'
+        key: '/help-documents',
+        path: '/help-documents',
+        title: '帮助文档',
+        description: '所有用户可阅读使用指南，获得编辑权限的用户可维护内容。'
       },
       {
         key: '/feedback',
