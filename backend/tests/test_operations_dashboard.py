@@ -50,6 +50,26 @@ class OperationsTest(unittest.TestCase):
         self.assertEqual(params[-4:], ["x' OR TRUE --", "x' OR TRUE --", 0, 0])
         core.build_issue_list_visibility_scope.assert_called_once()
 
+    def test_pre_audit_exception_requires_explicit_cockpit_opt_in_and_area_role(self):
+        with ExitStack() as stack:
+            for name, result in [('can_view_all_inspection_issues',True),
+                                 ('can_view_own_inspection_issues',False),
+                                 ('append_inspection_table_scope_filter',True),
+                                 ('append_station_region_scope_filter',True)]:
+                stack.enter_context(patch.object(core_app,name,return_value=result))
+            for role in ('area_account','station_manager','finance','supervisor'):
+                user={'id':18,'role':role}
+                normal,_=core_app.build_issue_list_visibility_scope(MagicMock(),user)
+                cockpit,_=core_app.build_issue_list_visibility_scope(MagicMock(),user,include_pending_area=True)
+                self.assertEqual(any('audit_status' in clause for clause in normal),
+                                 role in ('area_account','station_manager'))
+                self.assertEqual(any('audit_status' in clause for clause in cockpit),role=='station_manager')
+        core=SimpleNamespace(build_issue_list_visibility_scope=MagicMock(return_value=([],[])))
+        user={'id':18,'role':'area_account'}
+        cursor=MagicMock()
+        issue_cte(core,cursor,user,{'date_from':'2020-01-01','date_to':'2020-01-31'})
+        core.build_issue_list_visibility_scope.assert_called_once_with(cursor,user,include_pending_area=True)
+
     def test_station_scope_validates_and_binds_ids_without_widening_visibility(self):
         self.assertEqual(selected_station({}), 0)
         self.assertEqual(selected_station({'station_id':'12'}), 12)
@@ -264,16 +284,80 @@ class OperationsDatabaseTest(unittest.TestCase):
         for row in result['units']:
             self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,region=row['region']))['total'],row['registered'])
 
-    def test_pending_visibility_is_preserved_for_area_and_station_roles(self):
+    def test_station_pending_visibility_is_preserved(self):
         self.cur.execute("UPDATE issues SET audit_status='pending',status='待整改'")
         self.core.build_issue_list_visibility_scope=lambda *args:(["COALESCE(i.audit_status,'pending')<>'pending'"],[])
-        for role in ('area_account','station_manager'):
-            result=dashboard(self.core,self.cur,{'id':18,'role':role},'overview',self.source)
-            self.assertEqual(result['summary']['total'],0)
-            self.assertEqual(result['ages'],[])
-            self.assertEqual(result['tables'],[])
-            self.assertEqual(result['highlight_summary']['count'],1)
-            self.assertEqual(details(self.core,self.cur,self.user,dict(self.source,phase='待审核'))['total'],0)
+        user={'id':18,'role':'station_manager'}
+        result=dashboard(self.core,self.cur,user,'overview',self.source)
+        self.assertEqual(result['summary']['total'],0)
+        self.assertEqual(result['ages'],[])
+        self.assertEqual(result['tables'],[])
+        self.assertEqual(result['highlight_summary']['count'],1)
+        self.assertEqual(details(self.core,self.cur,user,dict(self.source,phase='待审核'))['total'],0)
+
+    def test_area_cockpit_pending_data_keeps_real_region_and_table_boundaries(self):
+        self.cur.execute("UPDATE issues SET audit_status='pending',status='待整改'")
+        self.cur.execute("UPDATE issues SET audit_status=NULL WHERE id=4")
+        self.cur.execute('ALTER TABLE inspection_tables ADD COLUMN is_active bool DEFAULT TRUE')
+        area={'id':18,'role':'area_account'}
+        with ExitStack() as stack:
+            for name, result in [('get_permission_overrides',{}), ('get_role_permission_overrides',{}),
+                                 ('get_user_inspection_table_scope_overrides',[]),
+                                 ('get_role_inspection_table_scope_overrides',[]),
+                                 ('get_role_station_region_scope_overrides',[])]:
+                stack.enter_context(patch.object(core_app,name,return_value=result))
+            region=stack.enter_context(patch.object(core_app,'get_user_station_region_scope_overrides',return_value=['浦东']))
+            result=dashboard(core_app,self.cur,area,'overview',self.source)
+            self.assertEqual(result['summary']['total'],10)
+            self.assertEqual(result['summary']['pending_audit'],10)
+            self.assertEqual(result['summary']['valid'],0)
+            self.assertEqual(result['records']['records'],4)
+            self.assertEqual(result['records']['stations'],2)
+            self.assertEqual(result['highlight_summary']['pending'],0)
+            self.assertEqual(result['regions'],['浦东'])
+            self.assertEqual(sum(row['registered'] for row in result['trend']),10)
+            for panel in ('tables','standards','stations','ages','modes'):
+                self.assertEqual(sum(row['count'] for row in result[panel]),10,panel)
+            pending=details(core_app,self.cur,area,dict(self.source,phase='待审核'))
+            self.assertEqual(pending['total'],10)
+            self.assertEqual({row['id'] for row in pending['rows']},set(range(1,12))-{10})
+            for params in ({'region':'宝静'},{'station_id':2},{'region':"浦东' OR TRUE --"}):
+                source=dict(self.source,**params)
+                denied=dashboard(core_app,self.cur,area,'overview',source)
+                self.assertEqual(denied['summary']['total'],0)
+                self.assertEqual(denied['records']['records'],0)
+                self.assertEqual(details(core_app,self.cur,area,source)['total'],0)
+            # The ordinary issue list/export scope and inspection visibility still hide pending data.
+            for user in (area,{'id':18,'role':'station_manager','station_id':1}):
+                where,params=core_app.build_issue_list_visibility_scope(self.cur,user)
+                self.cur.execute('SELECT COUNT(*) AS count FROM issues i JOIN inspections ins ON ins.id=i.inspection_id '
+                                 'JOIN stations s ON s.id=i.station_id WHERE '+' AND '.join(where),params)
+                self.assertEqual(self.cur.fetchone()['count'],0)
+                record_where=[]
+                core_app.append_pending_audit_inspection_visibility_filter(user,record_where)
+                self.assertTrue(record_where)
+            # A cockpit URL flag cannot opt station accounts into this area-only exception.
+            station=dashboard(core_app,self.cur,{'id':18,'role':'station_manager','station_id':1},
+                              'overview',dict(self.source,include_pending_area='1'))
+            self.assertEqual(station['summary']['total'],0)
+            with patch.object(core_app,'get_permission_overrides',return_value={
+                    'limit_issue_inspection_table_scope':True,'limit_record_inspection_table_scope':True}), \
+                 patch.object(core_app,'get_user_inspection_table_scope_overrides',return_value=[1]):
+                limited=dashboard(core_app,self.cur,area,'overview',self.source)
+                self.assertEqual(limited['summary']['total'],9)
+                self.assertEqual(limited['records']['records'],3)
+                self.assertEqual(details(core_app,self.cur,area,dict(self.source,table_id=2))['total'],0)
+            with patch.object(core_app,'can_view_all_inspection_records',return_value=False), \
+                 patch.object(core_app,'can_view_region_inspection_records',return_value=False), \
+                 patch.object(core_app,'can_view_own_inspection_records',return_value=False):
+                no_records=dashboard(core_app,self.cur,area,'overview',self.source)
+                self.assertIsNone(no_records['records'])
+                self.assertEqual(no_records['summary']['pending_audit'],10)
+            region.return_value=[]
+            empty=dashboard(core_app,self.cur,area,'overview',self.source)
+            self.assertEqual(empty['summary']['total'],0)
+            self.assertEqual(empty['records']['records'],0)
+            self.assertEqual(empty['scope_options'],[])
 
     def test_empty_bounds_and_pagination(self):
         self.cur.execute('''INSERT INTO issues SELECT 100+n,1,1,1,10,9000,NULL,'规范',NULL,'分页','2020-01-31 23:59:59','approved','待整改'

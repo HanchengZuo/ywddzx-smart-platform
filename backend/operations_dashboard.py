@@ -41,10 +41,13 @@ def selected_station(source):
 def issue_cte(core, cur, user, source):
     start, end = parse_period(source)
     station = selected_station(source)
-    where, params = core.build_issue_list_visibility_scope(cur, user)
+    if user.get('role') == 'area_account':
+        where, params = core.build_issue_list_visibility_scope(cur, user, include_pending_area=True)
+    else:
+        where, params = core.build_issue_list_visibility_scope(cur, user)
     where += ['i.created_at >= %s::date', 'i.created_at < %s::date']
     params += [start, end + timedelta(days=1)]
-    # These predicates are the same as the issue list, including pending-audit visibility.
+    # Keep business scope intact; area accounts may see pending observations only here.
     return '''WITH scoped AS MATERIALIZED (
       SELECT i.id, i.station_id, s.station_name, COALESCE(NULLIF(s.region,''),'未分配片区') AS region,
         i.inspection_table_id, t.table_name,
@@ -88,7 +91,8 @@ def record_summary(core, cur, user, source):
     ):
         if not function(cur, user, where, params, column, key):
             where.append('FALSE')
-    core.append_pending_audit_inspection_visibility_filter(user, where)
+    if user.get('role') != 'area_account':
+        core.append_pending_audit_inspection_visibility_filter(user, where)
     start, end = parse_period(source)
     where += ['ins.inspection_date >= %s', 'ins.inspection_date <= %s']
     params += [start, end]
