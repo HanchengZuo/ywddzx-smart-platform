@@ -809,50 +809,59 @@
         </div>
       </transition>
 
-      <div v-if="exportDialog.visible" class="image-modal">
-        <div class="image-modal-content issue-export-modal">
-          <div class="image-modal-header">
-            <span>导出巡检问题数据</span>
+        <dialog v-if="exportDialog.visible" ref="exportModalRef" class="image-modal-content issue-export-modal"
+          aria-labelledby="issue-export-title" aria-describedby="issue-export-description"
+          @cancel.prevent="closeExportDialog">
+          <header class="export-modal-header">
+            <div class="export-heading">
+              <span class="export-file-mark" aria-hidden="true">XLSX</span>
+              <div>
+                <h3 id="issue-export-title">导出巡检问题数据</h3>
+                <p id="issue-export-description">确认数据范围，选择需要保留的内容</p>
+              </div>
+            </div>
             <button class="close-btn" type="button" :disabled="exportDialog.submitting"
-              @click="closeExportDialog">×</button>
-          </div>
+              aria-label="关闭导出窗口" @click="closeExportDialog">×</button>
+          </header>
 
           <div class="issue-export-body">
-            <div class="export-notice">
-              <div>
-                <strong>导出说明</strong>
-                <p>默认导出当前筛选后的数据，包含问题、整改和复核照片，并按不同检查表拆分为多个 Sheet；外部规范详情会按检查表原字段展开为独立列。所有可导出数据的用户均可附带照片，也可在下方取消照片字段以减少生成时间和文件体积。默认使用兼容模式，避免旧版 Excel 或 WPS 显示 #VALUE!。</p>
-              </div>
-              <span>Excel</span>
-            </div>
-
+            <aside class="export-sidebar" aria-label="导出数据概览">
+            <div class="export-overview-label">本次导出</div>
             <div class="export-summary-grid">
               <div class="export-summary-card primary">
-                <span>准备导出</span>
-                <strong>{{ exportDialog.selectedCount }}</strong>
-                <em>条巡检问题</em>
+                <strong>{{ exportDialog.selectedCount.toLocaleString() }}<small>条问题</small></strong>
+                <em>全部已应用的筛选结果，非仅当前页</em>
               </div>
               <div class="export-summary-card">
-                <span>筛选条件</span>
-                <strong>{{ exportFilterChips.length }}</strong>
-                <em>{{ exportFilterChips.length ? '项已应用' : '当前为全部数据' }}</em>
-              </div>
-              <div class="export-summary-card">
-                <span>保存期限</span>
-                <strong>7天</strong>
-                <em>到期自动清理</em>
+                <span>文件保留 <b>7 天</b></span>
+                <em>生成后可随时回来下载</em>
               </div>
             </div>
 
+            <section class="export-filter-panel">
+              <div class="export-section-title">已应用筛选 <small>{{ exportFilterChips.length }} 项</small></div>
+              <div v-if="exportFilterChips.length" class="export-filter-chips">
+                <span v-for="chip in exportFilterChips" :key="chip.key"><b>{{ chip.label }}</b>{{ chip.value }}</span>
+              </div>
+              <div v-else class="export-empty-filter">未设置筛选条件，将导出当前权限范围内的全部问题。</div>
+            </section>
+
+            <details class="export-notice">
+              <summary>文件内容与兼容性说明</summary>
+              <p>不同检查表分别写入独立工作表。外部规范按检查表原字段展开，内部规范保留ID和详情。照片默认包含，可取消以减少生成时间和文件体积；旧版 Excel、WPS 请优先使用兼容模式，避免出现 #VALUE!。</p>
+            </details>
+            </aside>
+
+            <div class="export-settings">
             <div v-if="hasSelectedExportPhotoField" class="export-photo-mode-panel">
-              <div class="export-section-title">照片写入方式</div>
+              <div class="export-section-title">照片写入方式 <small>已选照片字段时生效</small></div>
               <div class="export-photo-mode-options">
                 <label class="export-photo-mode-option" :class="{ active: exportDialog.photoMode === 'compatible' }">
                   <input v-model="exportDialog.photoMode" type="radio" value="compatible"
                     :disabled="Boolean(exportDialog.taskId)" />
                   <span>
-                    <strong>兼容模式（推荐）</strong>
-                    <em>图片固定在对应单元格范围内并随行列移动、缩放，兼容更多版本的 Excel 和 WPS。</em>
+                    <strong>兼容模式 <i>推荐</i></strong>
+                    <em>图片随单元格移动、缩放，适合不同版本的 Excel 和 WPS。</em>
                   </span>
                 </label>
                 <label class="export-photo-mode-option" :class="{ active: exportDialog.photoMode === 'embedded' }">
@@ -860,30 +869,20 @@
                     :disabled="Boolean(exportDialog.taskId)" />
                   <span>
                     <strong>新版嵌入模式</strong>
-                    <em>使用真正的“置于单元格中”图片，仅建议 Excel 365（2023 年以后）、Excel 2024 或支持该格式的新版 WPS。</em>
+                    <em>真正置于单元格中，仅适合支持该格式的新版 Excel / WPS。</em>
                   </span>
                 </label>
               </div>
-            </div>
-
-            <div class="export-filter-panel">
-              <div class="export-section-title">当前筛选结果</div>
-              <div v-if="exportFilterChips.length" class="export-filter-chips">
-                <span v-for="chip in exportFilterChips" :key="chip.key">{{ chip.label }}：{{ chip.value }}</span>
-              </div>
-              <div v-else class="export-empty-filter">未设置筛选条件，将按当前权限范围导出全部问题数据。</div>
             </div>
 
             <div class="export-field-panel">
               <div class="export-field-panel-head">
                 <div>
                   <div class="export-section-title">导出字段选择</div>
-                  <p>
-                    默认勾选当前账号可导出的全部字段。内部规范和外部规范作为两个整体导出选项；外部规范会在 Excel 中按检查表原字段展开。
-                  </p>
+                  <p>默认全选，取消不需要的字段即可。</p>
                 </div>
                 <div class="export-field-actions">
-                  <span>已选 {{ selectedExportFieldCount }} 项</span>
+                  <span>已选 {{ selectedExportFieldCount }} / {{ exportFieldOptions.length }}</span>
                   <button class="btn btn-secondary btn-sm" type="button" :disabled="Boolean(exportDialog.taskId)"
                     @click="setAllExportFields(true)">一键全选</button>
                   <button class="btn btn-secondary btn-sm" type="button" :disabled="Boolean(exportDialog.taskId)"
@@ -893,10 +892,10 @@
 
               <div class="export-field-groups">
                 <section v-for="group in exportFieldGroups" :key="group.title" class="export-field-group">
-                  <h4>{{ group.title }}</h4>
+                  <h4>{{ group.title }}<span>{{ group.options.filter(option => exportDialog.includeFields[option.key]).length }} / {{ group.options.length }}</span></h4>
                   <div class="export-field-options">
                     <label v-for="option in group.options" :key="option.key" class="export-field-option"
-                      :class="{ disabled: !canSelectExportField(option), photo: option.photo }">
+                      :class="{ disabled: !canSelectExportField(option), photo: option.photo, selected: exportDialog.includeFields[option.key] }">
                       <input v-model="exportDialog.includeFields[option.key]" type="checkbox"
                         :disabled="!canSelectExportField(option)" />
                       <span>{{ option.label }}</span>
@@ -907,7 +906,7 @@
               </div>
             </div>
 
-            <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status">
+            <div v-if="exportDialog.taskId" class="export-task-panel" :class="exportDialog.status" role="status" aria-live="polite">
               <div class="export-task-head">
                 <div>
                   <span>任务状态</span>
@@ -930,9 +929,15 @@
             </div>
 
             <div v-if="exportDialog.error && !exportDialog.taskId" class="form-error">{{ exportDialog.error }}</div>
+            </div>
           </div>
 
-          <div class="issue-edit-actions export-actions">
+          <footer class="export-actions">
+            <div class="export-action-summary" aria-live="polite">
+              <strong>{{ exportDialog.taskId ? exportStatusLabel : `已选 ${selectedExportFieldCount} 项字段` }}</strong>
+              <span>{{ ['pending', 'running'].includes(exportDialog.status) ? '任务在后台生成，关闭窗口不影响导出' : exportDialog.status === 'completed' ? '文件已就绪，可下载或重新配置导出' : hasSelectedExportPhotoField ? '含照片 · ' + (exportDialog.photoMode === 'compatible' ? '兼容模式' : '新版嵌入模式') : '仅导出文字数据' }}</span>
+            </div>
+            <div class="export-action-buttons">
             <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting"
               @click="closeExportDialog">
               关闭
@@ -947,15 +952,15 @@
               @click="submitIssueExportTask">
               {{ exportDialog.submitting || exportDialog.status === 'pending' || exportDialog.status === 'running' ?
                 '生成中...'
-                : '提交导出任务' }}
+                : '生成 Excel' }}
             </button>
             <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
               @click="downloadIssueExport">
               {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
             </button>
-          </div>
-        </div>
-      </div>
+            </div>
+          </footer>
+        </dialog>
 
     <div v-if="editDialog.visible" class="image-modal">
       <div class="image-modal-content issue-edit-modal">
@@ -1644,6 +1649,12 @@ const exportDialog = ref({
   filterSummary: {},
   includeFields: {},
   photoMode: 'compatible'
+})
+const exportModalRef = ref(null)
+watch(() => exportDialog.value.visible, async (visible) => {
+  if (!visible) exportModalRef.value?.close()
+  await nextTick()
+  if (visible && exportModalRef.value && !exportModalRef.value.open) exportModalRef.value.showModal()
 })
 let exportPollTimer = null
 
@@ -6138,35 +6149,131 @@ onBeforeUnmount(() => {
 }
 
 .issue-export-modal {
-  width: min(780px, 100%);
-  max-height: min(88vh, 860px);
-  overflow: auto;
+  width: min(1120px, calc(100vw - 48px));
+  max-width: none;
+  max-height: min(90dvh, 940px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid #dbe4ee;
+  color: #0f172a;
+  font: inherit;
+  box-shadow: 0 28px 100px #0f172a40;
+}
+
+.issue-export-modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.issue-export-modal::backdrop {
+  background: #0f172a80;
+  backdrop-filter: blur(4px);
+}
+
+.export-modal-header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 26px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.export-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.export-file-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 52px;
+  border: 1px solid #a7ddd1;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #e6f7f1, #f4fcf9);
+  color: #087760;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.export-heading h3 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+}
+
+.export-heading p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #64748b;
 }
 
 .issue-export-body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: #f8fafc;
+}
+
+.export-sidebar {
+  min-width: 0;
+  padding: 24px 20px;
+  border-right: 1px solid #e2e8f0;
+  background: linear-gradient(160deg, #eff6fc, #f6fafb 70%);
+}
+
+.export-overview-label {
+  color: #536b83;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.export-settings {
+  min-width: 0;
   padding: 20px;
-  background:
-    radial-gradient(circle at 100% 0%, rgba(20, 184, 166, 0.12), transparent 34%),
-    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
 .export-notice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid #ccfbf1;
-  border-radius: 18px;
-  background: #f0fdfa;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid #dbe4ee;
 }
 
-.export-notice strong,
+.export-notice summary {
+  color: #526a80;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.8;
+  font-weight: 700;
+}
+
 .export-section-title {
-  display: block;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
   color: #0f172a;
   font-size: 14px;
-  font-weight: 950;
+  font-weight: 800;
+}
+
+.export-section-title small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .export-notice p {
@@ -6176,38 +6283,20 @@ onBeforeUnmount(() => {
   line-height: 1.8;
 }
 
-.export-notice>span {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 68px;
-  height: 36px;
-  border-radius: 999px;
-  background: #0f766e;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 950;
-}
-
 .export-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 14px;
+  gap: 16px;
+  margin: 12px 0 24px;
 }
 
 .export-summary-card {
   min-width: 0;
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 18px;
-  background: #fff;
+  padding: 0;
 }
 
 .export-summary-card.primary {
-  border-color: #bfdbfe;
-  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+  padding-bottom: 20px;
+  border-bottom: 1px solid #dbe4ee;
 }
 
 .export-summary-card span,
@@ -6223,26 +6312,46 @@ onBeforeUnmount(() => {
 
 .export-summary-card strong {
   display: block;
-  margin: 6px 0 4px;
-  color: #0f172a;
-  font-size: 28px;
-  font-weight: 950;
+  margin: 0 0 8px;
+  color: #154e78;
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.export-summary-card strong small {
+  margin-left: 8px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.export-summary-card b {
+  color: #334155;
 }
 
 .export-filter-panel,
 .export-field-panel,
 .export-photo-mode-panel,
 .export-task-panel {
-  margin-top: 14px;
+  margin-top: 16px;
   padding: 16px;
   border: 1px solid #dbe4ee;
-  border-radius: 18px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
 }
 
 .export-photo-mode-panel {
-  border-color: #bae6fd;
-  background: linear-gradient(135deg, #f0f9ff 0%, #ffffff 72%);
+  margin-top: 0;
+}
+
+.export-filter-panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .export-photo-mode-options {
@@ -6260,16 +6369,16 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 13px 14px;
   border: 1px solid #dbe4ee;
-  border-radius: 15px;
+  border-radius: 10px;
   background: #fff;
   cursor: pointer;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
 .export-photo-mode-option.active {
-  border-color: #38bdf8;
-  box-shadow: 0 8px 22px rgba(14, 165, 233, 0.12);
-  transform: translateY(-1px);
+  border-color: #5189b8;
+  background: #f2f8ff;
+  box-shadow: inset 0 0 0 1px #5189b8;
 }
 
 .export-photo-mode-option input {
@@ -6292,6 +6401,17 @@ onBeforeUnmount(() => {
   font-weight: 950;
 }
 
+.export-photo-mode-option i {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #087760;
+  background: #ddf3e9;
+  font-size: 10px;
+  font-style: normal;
+}
+
 .export-photo-mode-option em {
   margin-top: 5px;
   color: #64748b;
@@ -6305,21 +6425,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .export-field-panel p {
-  margin: 10px 0 0;
+  margin: 5px 0 0;
   color: #64748b;
   font-size: 13px;
   line-height: 1.8;
-}
-
-.export-field-panel p span {
-  display: block;
-  margin-top: 4px;
-  color: #b45309;
-  font-weight: 900;
 }
 
 .export-field-actions {
@@ -6351,17 +6465,25 @@ onBeforeUnmount(() => {
 }
 
 .export-field-group {
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  background: #f8fafc;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .export-field-group h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0 0 10px;
   color: #0f172a;
   font-size: 13px;
   font-weight: 950;
+}
+
+.export-field-group h4>span {
+  color: #7a8ca0;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .export-field-options {
@@ -6379,17 +6501,31 @@ onBeforeUnmount(() => {
   align-items: start;
   column-gap: 9px;
   row-gap: 4px;
-  min-height: 74px;
-  padding: 12px;
+  min-height: 58px;
+  padding: 10px;
   border: 1px solid #dbe4ee;
-  border-radius: 16px;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
 }
 
-.export-field-option.photo {
-  border-color: #fde68a;
-  background: #fffbeb;
+.export-field-option.selected {
+  border-color: #b6cce2;
+  background: #f6faff;
+}
+
+.export-field-option.photo span::after {
+  content: '照片';
+  margin-left: 5px;
+  color: #167567;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.export-field-option:focus-within,
+.export-photo-mode-option:focus-within {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
 .export-field-option input {
@@ -6410,7 +6546,7 @@ onBeforeUnmount(() => {
 .export-field-option em {
   grid-area: help;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 700;
   line-height: 1.6;
@@ -6422,24 +6558,31 @@ onBeforeUnmount(() => {
 }
 
 .export-filter-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  gap: 10px;
   margin-top: 12px;
 }
 
 .export-filter-chips span {
-  display: inline-flex;
-  align-items: center;
+  display: block;
   max-width: 100%;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
+  padding: 9px 10px;
+  border: 1px solid #dce6f0;
+  border-radius: 8px;
+  background: #ffffffaa;
+  color: #334155;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 500;
+  line-height: 1.65;
   word-break: break-word;
+}
+
+.export-filter-chips b {
+  display: block;
+  margin-bottom: 3px;
+  color: #708298;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .export-empty-filter {
@@ -6511,10 +6654,40 @@ onBeforeUnmount(() => {
 }
 
 .export-actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
   margin: 0;
   padding: 16px 20px;
   border-top: 1px solid #e5e7eb;
   background: #fff;
+}
+
+.export-action-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.export-action-summary strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.export-action-summary span {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.export-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 @keyframes exportProgressFlow {
@@ -7060,6 +7233,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
+  .issue-export-body {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .export-field-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .filter-grid {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
@@ -7354,25 +7535,61 @@ onBeforeUnmount(() => {
   }
 
   .issue-export-modal {
-    max-height: 92vh;
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px;
   }
 
   .issue-export-body {
+    display: block;
+    padding: 0;
+  }
+
+  .export-modal-header {
+    padding: 16px;
+  }
+
+  .export-file-mark {
+    display: none;
+  }
+
+  .export-heading h3 {
+    font-size: 18px;
+  }
+
+  .export-sidebar {
+    padding: 16px;
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .export-settings {
     padding: 14px;
   }
 
-  .export-notice,
   .export-task-head {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .export-notice>span {
-    width: fit-content;
+  .export-summary-grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
   }
 
-  .export-summary-grid {
-    grid-template-columns: 1fr;
+  .export-summary-card.primary {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .export-summary-card strong {
+    font-size: 32px;
+  }
+
+  .export-summary-card em {
+    font-size: 11px;
   }
 
   .export-field-panel-head {
@@ -7384,8 +7601,13 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
+  .export-field-actions .btn {
+    width: auto;
+    min-height: 36px;
+  }
+
   .export-field-options {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .export-photo-mode-options {
@@ -7400,8 +7622,26 @@ onBeforeUnmount(() => {
   }
 
   .export-actions {
+    align-items: stretch;
     flex-direction: column;
+    gap: 10px;
     padding: 14px;
+  }
+
+  .export-action-summary {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .export-action-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .export-action-buttons .btn:last-child:nth-child(3) {
+    grid-column: 1 / -1;
   }
 
   .issue-edit-summary,
