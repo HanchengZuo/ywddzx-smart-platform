@@ -6,6 +6,8 @@ from upload_request import PlatformRequest
 from standard_history import fetch_standard_history, recommend_from_history
 from equipment_report_library import exclusions as equipment_issue_exclusions, save_exclusions as save_equipment_issue_exclusions
 import equipment_report_analysis as equipment_analysis
+import issue_export_cache
+import issue_export_download
 from external_standard_status import disabled_standard_ids, require_active_standards
 from inspection_registration import parse_standard_selections
 from issue_description_filter import (
@@ -52,6 +54,7 @@ from backups.http import BackupTransferEndpoints
 from backups.transfers import BackupTransfers
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import RequestedRangeNotSatisfiable
 from PIL import Image
 from inspection_record_grouping import monthly_record_cte, monthly_record_page_cte
 from ai_utils import (
@@ -265,7 +268,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.3.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.4.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -2661,10 +2664,20 @@ def require_signed_api_token():
         return None
 
     token = extract_bearer_token()
-    if not token:
+    download_grant = (
+        request.cookies.get(issue_export_download.COOKIE_NAME)
+        if request.endpoint == "download_issue_export_task" and request.method in {"GET", "HEAD"}
+        else None
+    )
+    if not token and not download_grant:
         return jsonify({"success": False, "error": "请先登录。"}), 401
 
     try:
+        if not token:
+            identity = issue_export_download.unwrap(
+                app.config["SECRET_KEY"], download_grant, request.view_args["task_id"], current_epoch_seconds()
+            )
+            token = get_auth_serializer().dumps(identity)
         user, payload = verify_auth_token(token)
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 401
@@ -6798,26 +6811,7 @@ def fetch_issue_row_for_response(
 
 
 def ensure_issue_export_schema(cur):
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS issue_export_tasks (
-            task_id TEXT PRIMARY KEY,
-            created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            selected_count INTEGER NOT NULL DEFAULT 0,
-            exported_count INTEGER NOT NULL DEFAULT 0,
-            filter_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
-            export_options JSONB NOT NULL DEFAULT '{}'::jsonb,
-            file_path TEXT,
-            download_filename TEXT,
-            error_message TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL
-        );
-        """
-    )
+    cur.execute(issue_export_cache.BASE_SCHEMA_SQL)
     cur.execute(
         """
         ALTER TABLE issue_export_tasks
@@ -6836,29 +6830,48 @@ def ensure_issue_export_schema(cur):
         ON issue_export_tasks (expires_at);
         """
     )
+    issue_export_cache.ensure_schema(cur)
 
 
 def cleanup_expired_issue_exports(cur):
     ensure_issue_export_schema(cur)
+    # Never unlink shared artifacts while another process is publishing a workbook.
+    cur.execute('SELECT pg_try_advisory_xact_lock(940, 1) AS locked')
+    if not cur.fetchone()['locked']:
+        return
     cur.execute(
         """
-        SELECT file_path
-        FROM issue_export_tasks
-        WHERE expires_at < CURRENT_TIMESTAMP;
+        SELECT DISTINCT expired.file_path
+        FROM issue_export_tasks expired
+        WHERE expired.expires_at < CURRENT_TIMESTAMP
+          AND NOT EXISTS (SELECT 1 FROM issue_export_tasks live
+            WHERE live.file_path=expired.file_path AND live.expires_at>=CURRENT_TIMESTAMP)
+          AND NOT EXISTS (SELECT 1 FROM issue_export_artifacts artifact
+            WHERE artifact.file_path=expired.file_path AND artifact.expires_at>=CURRENT_TIMESTAMP);
         """
     )
     for row in cur.fetchall():
         if row.get("file_path"):
             remove_storage_file(row["file_path"])
     cur.execute("DELETE FROM issue_export_tasks WHERE expires_at < CURRENT_TIMESTAMP;")
+    cur.execute('''DELETE FROM issue_export_artifacts expired WHERE expires_at<CURRENT_TIMESTAMP
+        AND NOT EXISTS (SELECT 1 FROM issue_export_tasks live
+          WHERE live.file_path=expired.file_path AND live.expires_at>=CURRENT_TIMESTAMP)
+        RETURNING file_path''')
+    for row in cur.fetchall():
+        remove_storage_file(row['file_path'])
 
     os.makedirs(ISSUE_EXPORTS_STORAGE_DIR, exist_ok=True)
     cutoff = time.time() - ISSUE_EXPORT_RETENTION_DAYS * 24 * 60 * 60
+    cur.execute('''SELECT file_path FROM issue_export_tasks WHERE expires_at>=CURRENT_TIMESTAMP
+        UNION SELECT file_path FROM issue_export_artifacts WHERE expires_at>=CURRENT_TIMESTAMP''')
+    retained_paths = {row['file_path'] for row in cur.fetchall()}
     for name in os.listdir(ISSUE_EXPORTS_STORAGE_DIR):
         path = os.path.abspath(os.path.join(ISSUE_EXPORTS_STORAGE_DIR, name))
         if os.path.commonpath([os.path.abspath(ISSUE_EXPORTS_STORAGE_DIR), path]) != os.path.abspath(ISSUE_EXPORTS_STORAGE_DIR):
             continue
-        if os.path.isfile(path) and path.lower().endswith(".xlsx") and os.path.getmtime(path) < cutoff:
+        if (f"issue_exports/{name}" not in retained_paths and os.path.isfile(path)
+                and path.lower().endswith(".xlsx") and os.path.getmtime(path) < cutoff):
             try:
                 os.remove(path)
             except OSError:
@@ -6917,6 +6930,8 @@ def normalize_issue_export_filter_summary(raw_summary):
         "issueId",
         "month",
         "date",
+        "dateFrom",
+        "dateTo",
         "region",
         "station",
         "stationManager",
@@ -7031,6 +7046,9 @@ def get_issue_export_task_for_user(cur, task_id, user):
             exported_count,
             filter_summary,
             export_options,
+            cache_key,
+            issue_ids,
+            cache_reused,
             file_path,
             download_filename,
             error_message,
@@ -7039,7 +7057,7 @@ def get_issue_export_task_for_user(cur, task_id, user):
             TO_CHAR(completed_at, 'YYYY-MM-DD HH24:MI') AS completed_at,
             TO_CHAR(expires_at, 'YYYY-MM-DD HH24:MI') AS expires_at
         FROM issue_export_tasks
-        WHERE task_id = %s
+        WHERE task_id = %s AND expires_at > CURRENT_TIMESTAMP
         LIMIT 1;
         """,
         (task_id,),
@@ -7063,6 +7081,7 @@ def serialize_issue_export_task(task):
         "exported_count": int(task.get("exported_count") or 0),
         "filter_summary": task.get("filter_summary") or {},
         "export_options": task.get("export_options") or {},
+        "cache_reused": bool(task.get("cache_reused")),
         "download_filename": task.get("download_filename") or "",
         "download_url": f"/api/issues/export-tasks/{task_id}/download" if status == "completed" else "",
         "file_size_bytes": file_size_bytes,
@@ -14001,6 +14020,7 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
     conn = None
     cur = None
     try:
+        export_options = normalize_issue_export_options(export_options)
         conn = get_db_connection()
         cur = conn.cursor()
         ensure_issue_export_schema(cur)
@@ -14018,18 +14038,29 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
         if not user:
             raise ValueError("导出用户不存在。")
         rows = fetch_issue_export_rows(cur, user, issue_ids)
-        if not rows:
-            raise ValueError("当前筛选结果中没有可导出的数据。")
+        if len({row['id'] for row in rows}) != len(set(issue_ids)):
+            raise PermissionError("导出数据权限或问题记录已变化，请重新筛选后导出。")
         table_field_map = build_issue_export_table_field_map(cur, rows)
+        cache_key = issue_export_cache.fingerprint(rows, export_options, table_field_map, resolve_storage_abs_path)
+        issue_export_cache.lock_artifact(cur, cache_key)
+        artifact = issue_export_cache.find_artifact(cur, cache_key, resolve_storage_abs_path)
+        reused = artifact is not None
 
         now = beijing_now()
         filename = f"巡检问题列表_{now.strftime('%Y%m%d_%H%M%S')}_{task_id[:8]}.xlsx"
-        safe_filename = secure_filename(filename) or f"inspection_issues_{task_id[:8]}.xlsx"
-        if not safe_filename.lower().endswith(".xlsx"):
-            safe_filename = f"inspection_issues_{task_id[:8]}.xlsx"
+        safe_filename = f"{cache_key}.xlsx"
         abs_path = os.path.join(ISSUE_EXPORTS_STORAGE_DIR, safe_filename)
         relative_path = f"issue_exports/{safe_filename}"
-        write_issue_export_xlsx(abs_path, rows, export_options, table_field_map)
+        if not artifact:
+            os.makedirs(ISSUE_EXPORTS_STORAGE_DIR, exist_ok=True)
+            temporary_path = f"{abs_path}.{task_id}.tmp"
+            try:
+                write_issue_export_xlsx(temporary_path, rows, export_options, table_field_map)
+                os.replace(temporary_path, abs_path)
+            finally:
+                if os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+            artifact = issue_export_cache.store_artifact(cur, cache_key, relative_path, len(rows))
         cur.execute(
             """
             UPDATE issue_export_tasks
@@ -14037,11 +14068,14 @@ def run_issue_export_task(task_id, issue_ids, user_id, export_options=None):
                 exported_count = %s,
                 file_path = %s,
                 download_filename = %s,
+                cache_key = %s,
+                cache_reused = %s,
+                expires_at = %s,
                 updated_at = CURRENT_TIMESTAMP,
                 completed_at = CURRENT_TIMESTAMP
             WHERE task_id = %s;
             """,
-            (len(rows), relative_path, filename, task_id),
+            (len(rows), artifact['file_path'], filename, cache_key, reused, artifact['expires_at'], task_id),
         )
         conn.commit()
     except Exception as exc:
@@ -34565,6 +34599,14 @@ def create_issue_export_task():
         visible_issue_rows = fetch_issue_export_rows(cur, user, issue_ids)
         if len({row["id"] for row in visible_issue_rows}) != len(set(issue_ids)):
             raise PermissionError("导出数据中包含当前账号无权查看的问题，请刷新列表后重新选择。")
+        if should_hide_inspector_contact_info(cur, user):
+            export_options['include_fields']['inspector'] = False
+            export_options['include_fields']['inspector_phone'] = False
+        if not selected_issue_export_field_keys(export_options):
+            raise ValueError("请至少选择一个当前账号可导出的字段。")
+        table_fields = build_issue_export_table_field_map(cur, visible_issue_rows)
+        cache_key = issue_export_cache.fingerprint(visible_issue_rows, export_options, table_fields, resolve_storage_abs_path)
+        artifact = issue_export_cache.find_artifact(cur, cache_key, resolve_storage_abs_path)
 
         task_id = uuid.uuid4().hex
         now = beijing_now()
@@ -34580,9 +34622,16 @@ def create_issue_export_task():
                 filter_summary,
                 export_options,
                 download_filename,
-                expires_at
+                expires_at,
+                completed_at,
+                cache_key,
+                issue_ids,
+                cache_reused,
+                file_path
             )
-            VALUES (%s, %s, 'pending', %s, 0, %s::jsonb, %s::jsonb, %s, CURRENT_TIMESTAMP + INTERVAL '7 days')
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s,
+                COALESCE(%s::timestamp,CURRENT_TIMESTAMP + INTERVAL '7 days'),
+                CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END, %s, %s::jsonb, %s, %s)
             RETURNING
                 task_id,
                 created_by,
@@ -34591,6 +34640,7 @@ def create_issue_export_task():
                 exported_count,
                 filter_summary,
                 export_options,
+                cache_reused,
                 file_path,
                 download_filename,
                 error_message,
@@ -34602,19 +34652,28 @@ def create_issue_export_task():
             (
                 task_id,
                 user["id"],
+                'completed' if artifact else 'pending',
                 len(issue_ids),
+                len(issue_ids) if artifact else 0,
                 json.dumps(filter_summary, ensure_ascii=False),
                 json.dumps(export_options, ensure_ascii=False),
                 download_filename,
+                artifact['expires_at'] if artifact else None,
+                artifact is not None,
+                cache_key,
+                json.dumps(sorted(set(issue_ids))),
+                artifact is not None,
+                artifact['file_path'] if artifact else None,
             ),
         )
         task = cur.fetchone()
         conn.commit()
-        start_issue_export_task(task_id, issue_ids, user["id"], export_options)
+        if not artifact:
+            start_issue_export_task(task_id, issue_ids, user["id"], export_options)
         return jsonify(
             {
                 "success": True,
-                "message": "导出任务已提交，系统正在后台生成 Excel 文件。",
+                "message": "已复用相同数据的 Excel 文件，可直接下载。" if artifact else "导出任务已提交，系统正在后台生成 Excel 文件。",
                 "task": serialize_issue_export_task(task),
             }
         )
@@ -34643,8 +34702,6 @@ def get_issue_export_task(task_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        ensure_issue_export_schema(cur)
-        cleanup_expired_issue_exports(cur)
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
@@ -34667,6 +34724,57 @@ def get_issue_export_task(task_id):
         close_db_resources(cur, conn)
 
 
+def require_issue_export_download_access(cur, task, user):
+    if task['status'] != 'completed':
+        raise ValueError('导出文件尚未生成完成。')
+    ids = task.get('issue_ids')
+    if ids:
+        where, params = build_issue_list_visibility_scope(cur, user)
+        where.append('i.id = ANY(%s)')
+        params.append(ids)
+        cur.execute('''SELECT i.id FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
+            JOIN stations s ON s.id=i.station_id WHERE ''' + ' AND '.join(where), params)
+        if {row['id'] for row in cur.fetchall()} != set(ids):
+            raise PermissionError('当前账号的数据权限或问题记录已变化，请重新筛选后导出。')
+        fields = (task.get('export_options') or {}).get('include_fields') or {}
+        if (fields.get('inspector') or fields.get('inspector_phone')) and should_hide_inspector_contact_info(cur, user):
+            raise PermissionError('当前账号不能下载含检查人信息的历史文件，请重新导出。')
+    path = resolve_storage_abs_path(task.get('file_path'))
+    if not path or not os.path.isfile(path):
+        raise LookupError('导出文件不存在或已过期。')
+    return path
+
+
+@app.route("/api/issues/export-tasks/<task_id>/download-link", methods=['POST'])
+def prepare_issue_export_download(task_id):
+    conn = cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        user = get_user_by_id(cur, get_authenticated_request_user_id())
+        if not user:
+            raise PermissionError('请先登录。')
+        task = get_issue_export_task_for_user(cur, task_id, user)
+        require_issue_export_download_access(cur, task, user)
+        grant = issue_export_download.mint(app.config['SECRET_KEY'], g.auth_payload, task_id, current_epoch_seconds())
+        response = jsonify(success=True, download_url=issue_export_download.cookie_path(task_id))
+        response.set_cookie(issue_export_download.COOKIE_NAME, grant, max_age=issue_export_download.GRANT_SECONDS,
+                            httponly=True, secure=is_request_secure(), samesite='Strict',
+                            path=issue_export_download.cookie_path(task_id))
+        return response
+    except PermissionError as exc:
+        return jsonify(success=False, error=str(exc)), 403
+    except LookupError as exc:
+        return jsonify(success=False, error=str(exc)), 404
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception:
+        logging.exception('Issue export download authorization failed')
+        return jsonify(success=False, error='暂时无法准备下载，请稍后重试。'), 500
+    finally:
+        close_db_resources(cur, conn)
+
+
 @app.route("/api/issues/export-tasks/<task_id>/download")
 def download_issue_export_task(task_id):
     user_id = get_authenticated_request_user_id(request.args.get("user_id"))
@@ -34676,31 +34784,27 @@ def download_issue_export_task(task_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        ensure_issue_export_schema(cur)
-        cleanup_expired_issue_exports(cur)
         user = get_user_by_id(cur, user_id)
         if not user:
             return jsonify({"success": False, "error": "用户不存在。"}), 404
         task = get_issue_export_task_for_user(cur, task_id, user)
-        conn.commit()
-
-        if task["status"] != "completed":
-            return jsonify({"success": False, "error": "导出文件尚未生成完成。"}), 400
-        if not task.get("file_path"):
-            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
-
-        abs_path = resolve_storage_abs_path(task["file_path"])
-        if not abs_path or not os.path.isfile(abs_path):
-            return jsonify({"success": False, "error": "导出文件不存在或已过期。"}), 404
+        abs_path = require_issue_export_download_access(cur, task, user)
 
         response = send_file(
             abs_path,
             as_attachment=True,
             download_name=task.get("download_filename") or f"inspection_issues_{task_id[:8]}.xlsx",
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            conditional=True,
         )
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Accept-Ranges"] = "bytes"
+        response.headers["X-Accel-Buffering"] = "yes"
         return response
+    except RequestedRangeNotSatisfiable:
+        raise
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     except PermissionError as exc:
         if conn:
             conn.rollback()

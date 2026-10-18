@@ -833,7 +833,7 @@
                 <em>全部已应用的筛选结果，非仅当前页</em>
               </div>
               <div class="export-summary-card">
-                <span>文件保留 <b>7 天</b></span>
+                <span>文件最多保留 <b>7 天</b></span>
                 <em>生成后可随时回来下载</em>
               </div>
             </div>
@@ -919,6 +919,7 @@
                 <div class="export-progress-bar" :style="{ width: exportProgressWidth }"></div>
               </div>
               <p v-if="exportDialog.status === 'completed'">
+                <strong v-if="exportDialog.cacheReused">已复用相同数据与选项的历史文件，无需重复生成。</strong>
                 Excel 文件已生成，共导出 {{ exportDialog.exportedCount }} 条数据，可以直接下载。
                 <template v-if="exportDialog.fileSizeLabel"> 文件大小：{{ exportDialog.fileSizeLabel }}。</template>
               </p>
@@ -928,7 +929,8 @@
               <p v-else>系统正在后台整理数据并生成 Excel，数据量较大时请稍候。</p>
             </div>
 
-            <div v-if="exportDialog.error && !exportDialog.taskId" class="form-error">{{ exportDialog.error }}</div>
+            <div v-if="exportDialog.error && (!exportDialog.taskId || exportDialog.status === 'completed')" class="form-error" role="alert">{{ exportDialog.error }}</div>
+            <p v-if="exportDownloadNotice" class="export-download-notice" role="status">{{ exportDownloadNotice }}</p>
             </div>
           </div>
 
@@ -956,7 +958,7 @@
             </button>
             <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
               @click="downloadIssueExport">
-              {{ exportDialog.downloading ? '下载中...' : '下载Excel文件' }}
+              {{ exportDialog.downloading ? '准备下载...' : '下载Excel文件' }}
             </button>
             </div>
           </footer>
@@ -1363,6 +1365,7 @@ import {
 } from '@/utils/issueAudit'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 import { descriptionFilterError } from '@/utils/issueDescriptionFilter'
+import { issueExportFilterChips, beginIssueExportDownload } from '@/utils/issueExport'
 
 const currentMonthValue = () => {
   const now = new Date()
@@ -1651,6 +1654,7 @@ const exportDialog = ref({
   photoMode: 'compatible'
 })
 const exportModalRef = ref(null)
+const exportDownloadNotice = ref('')
 watch(() => exportDialog.value.visible, async (visible) => {
   if (!visible) exportModalRef.value?.close()
   await nextTick()
@@ -1709,28 +1713,6 @@ const exportFieldGroups = [
 const exportFieldOptions = exportFieldGroups.flatMap((group) => group.options)
 const exportPhotoFieldKeys = ['issue_photo', 'rectification_photo', 'review_photo']
 
-const exportFilterLabels = {
-  issueId: '问题ID',
-  month: '检查月度',
-  dateFrom: '检查开始日期',
-  dateTo: '检查结束日期',
-  region: '站点所属地',
-  station: '站点名称',
-  stationManager: '站点负责人',
-  inspector: '检查人员',
-  inspectionTableName: '检查表',
-  standardId: '外部规范ID',
-  standardDetail: '规范详情',
-  standardTags: '规范标签',
-  issueDescription: '问题描述',
-  rectificationResult: '站经理整改结果',
-  reviewResult: '督导组复核结果',
-  status: '问题状态',
-  excellent: '优秀问题',
-  auditStatus: '审核结论',
-  auditState: '审核状态'
-}
-
 const normalizedKeyword = (value) => String(value || '').toLowerCase()
 const uniqueSortedOptions = (values) => {
   return [...new Set(values.map((item) => String(item || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
@@ -1770,23 +1752,7 @@ const issueFilterDraftDirty = computed(() => (
   filterSummaryFields.value.some((item) => item.changed)
 ))
 
-const formatExportFilterValue = (key, value) => {
-  if (key === 'excellent') {
-    if (value === 'starred') return '★'
-    if (value === 'unstarred') return '☆'
-  }
-  return value
-}
-
-const exportFilterChips = computed(() => {
-  return Object.entries(exportDialog.value.filterSummary || {})
-    .filter(([, value]) => String(value || '').trim())
-    .map(([key, value]) => ({
-      key,
-      label: exportFilterLabels[key] || key,
-      value: formatExportFilterValue(key, value)
-    }))
-})
+const exportFilterChips = computed(() => issueExportFilterChips(exportDialog.value.filterSummary))
 
 const exportStatusLabel = computed(() => {
   const labels = {
@@ -2566,6 +2532,7 @@ const invertExportFields = () => {
 
 const resetExportDialogForCurrentFilters = () => {
   stopExportPolling()
+  exportDownloadNotice.value = ''
   exportDialog.value = {
     visible: true,
     submitting: false,
@@ -2626,6 +2593,7 @@ const applyExportTask = (task = {}) => {
   exportDialog.value.includeFields = normalizeExportFieldOptions(task.export_options)
   exportDialog.value.photoMode = task.export_options?.photo_mode === 'embedded' ? 'embedded' : 'compatible'
   exportDialog.value.error = task.error_message || ''
+  exportDialog.value.cacheReused = Boolean(task.cache_reused)
 }
 
 const pollIssueExportTask = async () => {
@@ -2680,7 +2648,11 @@ const submitIssueExportTask = async () => {
       }
     })
     applyExportTask(response.data?.task || {})
-    startExportPolling()
+    if (exportDialog.value.status === 'completed') {
+      showActionMessage('已复用历史 Excel 文件，可以直接下载。', 'success')
+    } else {
+      startExportPolling()
+    }
   } catch (error) {
     exportDialog.value.error = error?.response?.data?.error || '导出任务提交失败。'
     exportDialog.value.status = 'failed'
@@ -2693,20 +2665,13 @@ const downloadIssueExport = async () => {
   if (!exportDialog.value.taskId) return
   try {
     exportDialog.value.downloading = true
-    const response = await axios.get(`/api/issues/export-tasks/${exportDialog.value.taskId}/download`, {
-      params: { user_id: localStorage.getItem('user_id') || '' },
-      responseType: 'blob'
-    })
-    const blobUrl = window.URL.createObjectURL(new Blob([response.data], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }))
-    const link = document.createElement('a')
-    link.href = blobUrl
-    link.download = exportDialog.value.fileName || `巡检问题列表_${exportDialog.value.taskId.slice(0, 8)}.xlsx`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.URL.revokeObjectURL(blobUrl)
+    exportDialog.value.error = ''
+    exportDownloadNotice.value = ''
+    const taskId = exportDialog.value.taskId
+    const response = await axios.post(`/api/issues/export-tasks/${taskId}/download-link`)
+    beginIssueExportDownload(taskId, response.data.download_url, exportDialog.value.fileName, document, window.location.origin)
+    exportDownloadNotice.value = '已交给浏览器下载。请在浏览器下载列表查看实时进度；已开始的下载不受关闭本页面影响。'
+    showActionMessage('已开始下载，请查看浏览器下载列表。', 'success')
   } catch (error) {
     exportDialog.value.error = error?.response?.data?.error || '导出文件下载失败。'
   } finally {
@@ -6651,6 +6616,16 @@ onBeforeUnmount(() => {
 .export-error-text {
   color: #b91c1c !important;
   font-weight: 900;
+}
+
+.export-download-notice {
+  padding: 12px 14px;
+  border: 1px solid #b9dfd3;
+  border-radius: 10px;
+  background: #eefaf5;
+  color: #16624f;
+  font-size: 13px;
+  line-height: 1.8;
 }
 
 .export-actions {
