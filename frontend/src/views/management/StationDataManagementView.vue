@@ -161,6 +161,16 @@
                     <option value="充电站">充电站</option>
                   </select>
                 </label>
+                <label class="form-field">
+                  <span>是否纳入现场巡检计划</span>
+                  <select v-model="form.include_offline_plan"><option :value="true">是</option><option :value="false">否</option></select>
+                  <small>选否后，现场排班地图不再覆盖本站，也不能新增纳入现场计划。</small>
+                </label>
+                <label class="form-field">
+                  <span>是否纳入视频巡检计划</span>
+                  <select v-model="form.include_online_plan"><option :value="true">是</option><option :value="false">否</option></select>
+                  <small>选否后，视频排班地图不再覆盖本站，也不能新增纳入视频计划。</small>
+                </label>
               </div>
             </div>
 
@@ -352,6 +362,8 @@
                   <th>站点登录用户名</th>
                   <th>所属片区/归属地</th>
                   <th>站点类型</th>
+                  <th>纳入现场计划</th>
+                  <th>纳入视频计划</th>
                   <th>资产类型</th>
                   <th>是否并表</th>
                   <th>是否上线3.0</th>
@@ -368,10 +380,10 @@
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="16" class="empty-cell">正在加载站点数据...</td>
+                  <td colspan="18" class="empty-cell">正在加载站点数据...</td>
                 </tr>
                 <tr v-else-if="!filteredStations.length">
-                  <td colspan="16" class="empty-cell">暂无匹配的站点数据。</td>
+                  <td colspan="18" class="empty-cell">暂无匹配的站点数据。</td>
                 </tr>
                 <tr v-for="station in pagedStations" :key="station.id" :class="{ active: editingId === station.id }">
                   <td>
@@ -388,6 +400,8 @@
                   </td>
                   <td>{{ station.region || '-' }}</td>
                   <td>{{ station.station_type || '-' }}</td>
+                  <td>{{ station.include_offline_plan === false ? '否' : '是' }}</td>
+                  <td>{{ station.include_online_plan === false ? '否' : '是' }}</td>
                   <td>{{ normalizeAssetType(station.asset_type) }}</td>
                   <td>{{ station.is_consolidated || '否' }}</td>
                   <td>{{ station.online_3_status || '未上线' }}</td>
@@ -450,6 +464,8 @@
                 </div>
 
                 <div class="mobile-info-grid">
+                  <div><span>纳入现场计划</span><strong>{{ station.include_offline_plan === false ? '否' : '是' }}</strong></div>
+                  <div><span>纳入视频计划</span><strong>{{ station.include_online_plan === false ? '否' : '是' }}</strong></div>
                   <div>
                     <span>HOS编码</span>
                     <strong>{{ station.hos_station_code || '-' }}</strong>
@@ -587,6 +603,8 @@ const filters = reactive({
 })
 
 const createEmptyForm = () => ({
+  include_offline_plan: true,
+  include_online_plan: true,
   station_name: '',
   region: '',
   address: '',
@@ -613,7 +631,9 @@ const stationExportFieldGroups = [
       { key: 'station_usernames', label: '站点登录用户名', help: '绑定本站的站点账号' },
       { key: 'region', label: '所属片区/归属地', help: '站点所属片区或归属地' },
       { key: 'address', label: '站点地址', help: '站点详细地址' },
-      { key: 'hos_station_code', label: 'HOS编码', help: '站点唯一业务编码' }
+      { key: 'hos_station_code', label: 'HOS编码', help: '站点唯一业务编码' },
+      { key: 'include_offline_plan', label: '是否纳入现场巡检计划', help: '现场排班覆盖与新增计划纳入资格' },
+      { key: 'include_online_plan', label: '是否纳入视频巡检计划', help: '视频排班覆盖与新增计划纳入资格' }
     ]
   },
   {
@@ -808,6 +828,8 @@ const resetFilters = () => {
 }
 
 const normalizeStationForForm = (station) => ({
+  include_offline_plan: station.include_offline_plan !== false,
+  include_online_plan: station.include_online_plan !== false,
   station_name: station.station_name || '',
   region: station.region || '',
   address: station.address || '',

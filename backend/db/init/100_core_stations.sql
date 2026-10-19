@@ -8,6 +8,8 @@ CREATE TABLE stations (
     id SERIAL PRIMARY KEY,                                                  -- 站点ID，主键，自增
     station_name TEXT UNIQUE NOT NULL,                                      -- 站点名称，唯一
     region TEXT,                                                            -- 所属片区/归属地，例如：宝静片区、闵普徐片区
+    include_offline_plan BOOLEAN NOT NULL DEFAULT TRUE,                      -- 是否纳入现场巡检计划
+    include_online_plan BOOLEAN NOT NULL DEFAULT TRUE,                       -- 是否纳入视频巡检计划
     address TEXT,                                                           -- 站点地址
     longitude NUMERIC(10, 6),                                               -- 经度
     latitude NUMERIC(10, 6),                                                -- 纬度

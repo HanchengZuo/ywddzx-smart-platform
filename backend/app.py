@@ -121,6 +121,10 @@ from auth_rate_limit import (
     consume_public_auth_budget,
     record_password_login_failure,
 )
+from station_plan_eligibility import (
+    SCHEMA_SQL as STATION_PLAN_SCHEMA_SQL,
+    enrollment_value, enrollment_error, require_plan_enrollment,
+)
 
 try:
     from qcloud_cos import CosConfig, CosS3Client
@@ -268,7 +272,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.5.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.6.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -15743,6 +15747,8 @@ def ensure_station_management_columns(cur):
     if STATION_MANAGEMENT_SCHEMA_READY:
         return
 
+    cur.execute(STATION_PLAN_SCHEMA_SQL)
+
     cur.execute(
         """
         ALTER TABLE stations
@@ -15914,6 +15920,10 @@ def build_station_payload(data):
         "is_consolidated": is_consolidated,
         "online_3_status": online_3_status,
         "monitoring_status": monitoring_status,
+        "include_offline_plan": enrollment_value(data, "include_offline_plan"),
+        "include_online_plan": enrollment_value(data, "include_online_plan"),
+        "include_offline_plan_provided": "include_offline_plan" in data,
+        "include_online_plan_provided": "include_online_plan" in data,
         "hos_station_code": normalize_hos_station_code(data.get("hos_station_code")),
         "landline_phone": normalize_text(data.get("landline_phone"), 40) or None,
         "status": status,
@@ -15922,6 +15932,8 @@ def build_station_payload(data):
 
 
 STATION_DATA_EXPORT_FIELDS = [
+    {"key": "include_offline_plan", "label": "是否纳入现场巡检计划", "width": 26},
+    {"key": "include_online_plan", "label": "是否纳入视频巡检计划", "width": 26},
     {"key": "station_name", "label": "站点名称", "width": 24},
     {"key": "station_usernames", "label": "站点登录用户名", "width": 22},
     {"key": "region", "label": "所属片区/归属地", "width": 22},
@@ -16002,6 +16014,8 @@ def fetch_station_export_rows(cur, station_ids=None):
             COALESCE(s.is_consolidated, '否') AS is_consolidated,
             COALESCE(s.online_3_status, '未上线') AS online_3_status,
             COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
+            s.include_offline_plan,
+            s.include_online_plan,
             s.hos_station_code,
             s.landline_phone,
             COALESCE(s.status, '营业中') AS status,
@@ -16065,6 +16079,8 @@ def build_station_data_export_workbook(rows, selected_field_keys):
             cell.border = thin_border
             cell.alignment = text_alignment if field_key in {"address", "station_usernames"} else center_alignment
             value = row.get(field_key)
+            if field_key in {"include_offline_plan", "include_online_plan"}:
+                value = "否" if value is False else "是"
             cell.value = "" if value is None else str(value)
 
     if selected_field_keys:
@@ -17117,7 +17133,9 @@ def build_plan_assignment_catalog_context(cur):
             station_name,
             COALESCE(region, '') AS region,
             COALESCE(hos_station_code, '') AS hos_station_code,
-            COALESCE(monitoring_status, '运行中') AS monitoring_status
+            COALESCE(monitoring_status, '运行中') AS monitoring_status,
+            include_offline_plan,
+            include_online_plan
         FROM stations
         ORDER BY station_name ASC, id ASC;
         """
@@ -17153,6 +17171,8 @@ def build_plan_assignment_catalog_context(cur):
                 "region": row["region"],
                 "hos_station_code": row["hos_station_code"],
                 "monitoring_status": row["monitoring_status"],
+                "include_offline_plan": row["include_offline_plan"],
+                "include_online_plan": row["include_online_plan"],
             }
             for row in station_rows
         ],
@@ -17513,6 +17533,7 @@ def resolve_plan_assignment_preview_rows(cur, user, parsed_rows):
                 "station_name": station_row["station_name"] if station_row else "",
                 "station_region": station_row["region"] if station_row else "",
                 "monitoring_status": station_row["monitoring_status"] if station_row else "",
+                "enrollment_message": enrollment_error(station_row, normalize_checklist_mode(selected_plan.get("checklist_mode"))) if station_row and selected_plan else "",
                 "inspector_ids": [item["id"] for item in matched_inspectors],
                 "inspectors": [
                     {
@@ -17574,6 +17595,11 @@ def resolve_plan_assignment_preview_rows(cur, user, parsed_rows):
             row["previous_inspector_ids"] = []
             row["previous_completion_status"] = "pending"
             row["completed_at"] = ""
+
+        if row.get("enrollment_message") and not row["previous_is_included"]:
+            row["status"] = "error"
+            row["can_apply"] = False
+            row["message"] = row["enrollment_message"]
 
         if not row.get("can_apply"):
             merged_rows.append(row)
@@ -17662,10 +17688,12 @@ def validate_plan_assignment_apply_row(cur, user, row, target_date):
             id,
             station_name,
             COALESCE(region, '') AS region,
-            COALESCE(monitoring_status, '运行中') AS monitoring_status
+            COALESCE(monitoring_status, '运行中') AS monitoring_status,
+            include_offline_plan,
+            include_online_plan
         FROM stations
         WHERE id = %s
-        LIMIT 1;
+        LIMIT 1 FOR SHARE;
         """,
         (station_id,),
     )
@@ -17681,6 +17709,8 @@ def validate_plan_assignment_apply_row(cur, user, row, target_date):
         raise PermissionError("当前账号无权维护某个片区站点计划。")
     if normalize_checklist_mode(plan_config.get("checklist_mode")) == "online" and station.get("monitoring_status") == "未运行":
         raise ValueError(f"【{station['station_name']}】监控未运行，不能分配视频检查任务。")
+
+    require_plan_enrollment(cur, station, normalize_checklist_mode(plan_config.get("checklist_mode")), plan_config_id)
 
     cur.execute(
         """
@@ -17943,6 +17973,8 @@ def get_inspection_plan_config_detail(plan_config_id):
                 s.region,
                 s.address,
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
+                s.include_offline_plan,
+                s.include_online_plan,
                 psi.is_included,
                 psi.assigned_inspector_id,
                 COALESCE(assigned_group.assigned_inspector_ids, '[]'::jsonb) AS assigned_inspector_ids,
@@ -18157,9 +18189,11 @@ def save_inspection_plan_config_stations(plan_config_id):
                 SELECT
                     id,
                     station_name,
-                    COALESCE(monitoring_status, '运行中') AS monitoring_status
+                    COALESCE(monitoring_status, '运行中') AS monitoring_status,
+                    include_offline_plan,
+                    include_online_plan
                 FROM stations
-                WHERE id = ANY(%s);
+                WHERE id = ANY(%s) ORDER BY id FOR SHARE;
                 """,
                 (station_ids,),
             )
@@ -18179,6 +18213,10 @@ def save_inspection_plan_config_stations(plan_config_id):
                     ),
                     400,
                 )
+
+        for item in normalized_items:
+            if item["is_included"]:
+                require_plan_enrollment(cur, station_map[item["station_id"]], normalize_checklist_mode(config_row.get("checklist_mode")), plan_config_id)
 
         is_online_plan = normalize_checklist_mode(config_row.get("checklist_mode")) == "online"
         blocked_station_names = [
@@ -22845,7 +22883,9 @@ def get_stations():
                     id,
                     station_name,
                     region,
-                    COALESCE(monitoring_status, '运行中') AS monitoring_status
+                    COALESCE(monitoring_status, '运行中') AS monitoring_status,
+                    include_offline_plan,
+                    include_online_plan
                 FROM stations
                 ORDER BY id;
                 """
@@ -22871,6 +22911,8 @@ def get_stations():
                 COALESCE(s.is_consolidated, '否') AS is_consolidated,
                 COALESCE(s.online_3_status, '未上线') AS online_3_status,
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
+                s.include_offline_plan,
+                s.include_online_plan,
                 s.hos_station_code,
                 s.landline_phone,
                 s.status,
@@ -26172,6 +26214,8 @@ def get_management_stations():
                 COALESCE(s.is_consolidated, '否') AS is_consolidated,
                 COALESCE(s.online_3_status, '未上线') AS online_3_status,
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
+                s.include_offline_plan,
+                s.include_online_plan,
                 s.hos_station_code,
                 s.landline_phone,
                 s.status,
@@ -26249,6 +26293,8 @@ def export_management_stations():
                 COALESCE(is_consolidated, '否') AS is_consolidated,
                 COALESCE(online_3_status, '未上线') AS online_3_status,
                 COALESCE(monitoring_status, '运行中') AS monitoring_status,
+                include_offline_plan,
+                include_online_plan,
                 hos_station_code,
                 landline_phone,
                 COALESCE(status, '营业中') AS status,
@@ -26371,6 +26417,8 @@ def import_management_stations():
                         is_consolidated,
                         online_3_status,
                         monitoring_status,
+                        include_offline_plan,
+                        include_online_plan,
                         hos_station_code,
                         landline_phone,
                         status,
@@ -26392,6 +26440,8 @@ def import_management_stations():
                         %(is_consolidated)s,
                         %(online_3_status)s,
                         %(monitoring_status)s,
+                        %(include_offline_plan)s,
+                        %(include_online_plan)s,
                         %(hos_station_code)s,
                         %(landline_phone)s,
                         %(status)s,
@@ -26413,6 +26463,8 @@ def import_management_stations():
                         is_consolidated = EXCLUDED.is_consolidated,
                         online_3_status = EXCLUDED.online_3_status,
                         monitoring_status = EXCLUDED.monitoring_status,
+                        include_offline_plan = CASE WHEN %(include_offline_plan_provided)s THEN EXCLUDED.include_offline_plan ELSE stations.include_offline_plan END,
+                        include_online_plan = CASE WHEN %(include_online_plan_provided)s THEN EXCLUDED.include_online_plan ELSE stations.include_online_plan END,
                         hos_station_code = EXCLUDED.hos_station_code,
                         landline_phone = EXCLUDED.landline_phone,
                         status = EXCLUDED.status,
@@ -26437,6 +26489,8 @@ def import_management_stations():
                         is_consolidated,
                         online_3_status,
                         monitoring_status,
+                        include_offline_plan,
+                        include_online_plan,
                         hos_station_code,
                         landline_phone,
                         status,
@@ -26457,6 +26511,8 @@ def import_management_stations():
                         %(is_consolidated)s,
                         %(online_3_status)s,
                         %(monitoring_status)s,
+                        %(include_offline_plan)s,
+                        %(include_online_plan)s,
                         %(hos_station_code)s,
                         %(landline_phone)s,
                         %(status)s,
@@ -26477,6 +26533,8 @@ def import_management_stations():
                         is_consolidated = EXCLUDED.is_consolidated,
                         online_3_status = EXCLUDED.online_3_status,
                         monitoring_status = EXCLUDED.monitoring_status,
+                        include_offline_plan = CASE WHEN %(include_offline_plan_provided)s THEN EXCLUDED.include_offline_plan ELSE stations.include_offline_plan END,
+                        include_online_plan = CASE WHEN %(include_online_plan_provided)s THEN EXCLUDED.include_online_plan ELSE stations.include_online_plan END,
                         hos_station_code = EXCLUDED.hos_station_code,
                         landline_phone = EXCLUDED.landline_phone,
                         status = EXCLUDED.status,
@@ -26657,6 +26715,8 @@ def create_management_station():
                 is_consolidated,
                 online_3_status,
                 monitoring_status,
+                include_offline_plan,
+                include_online_plan,
                 hos_station_code,
                 landline_phone,
                 status,
@@ -26677,6 +26737,8 @@ def create_management_station():
                 %(is_consolidated)s,
                 %(online_3_status)s,
                 %(monitoring_status)s,
+                %(include_offline_plan)s,
+                %(include_online_plan)s,
                 %(hos_station_code)s,
                 %(landline_phone)s,
                 %(status)s,
@@ -26743,6 +26805,8 @@ def update_management_station(station_id):
                 is_consolidated = %(is_consolidated)s,
                 online_3_status = %(online_3_status)s,
                 monitoring_status = %(monitoring_status)s,
+                include_offline_plan = CASE WHEN %(include_offline_plan_provided)s THEN %(include_offline_plan)s ELSE include_offline_plan END,
+                include_online_plan = CASE WHEN %(include_online_plan_provided)s THEN %(include_online_plan)s ELSE include_online_plan END,
                 hos_station_code = %(hos_station_code)s,
                 landline_phone = %(landline_phone)s,
                 status = %(status)s,
@@ -28899,6 +28963,8 @@ def get_inspection_plan_overview():
                 s.region,
                 s.address,
                 COALESCE(s.monitoring_status, '运行中') AS monitoring_status,
+                s.include_offline_plan,
+                s.include_online_plan,
                 psi.is_included,
                 psi.assigned_inspector_id,
                 COALESCE(assigned_group.assigned_inspector_ids, '[]'::jsonb) AS assigned_inspector_ids,

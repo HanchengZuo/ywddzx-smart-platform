@@ -1509,6 +1509,7 @@
                                     <div v-if="isStationMonitoringBlocked(station)" class="table-sub warning-text">
                                         无监控，视频检查不可纳入
                                     </div>
+                                    <div v-if="enrollmentNote(station)" class="table-sub warning-text">{{ enrollmentNote(station) }}</div>
                                 </td>
                                 <td>
                                     <div v-if="canAssignPlanInspectors" class="inspector-multi-assign"
@@ -1597,6 +1598,7 @@
                                     <span>监控状态</span>
                                     <strong>无监控，视频检查不可纳入计划</strong>
                                 </div>
+                                <div v-if="enrollmentNote(station)" class="mobile-card-row mobile-card-row-full warning-text"><strong>{{ enrollmentNote(station) }}</strong></div>
                             </div>
 
                             <label v-if="isPlanManager" class="mobile-plan-toggle"
@@ -1720,6 +1722,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { getStoredAuthToken, isUsableAuthToken, notifyAuthSessionExpired } from '@/utils/authSession'
+import { stationPlanEnrollmentMessage, stationPlanEnrollmentBlocked } from '@/utils/stationPlanEligibility'
 
 const currentRole = localStorage.getItem('user_role') || ''
 const currentUsername = localStorage.getItem('username') || ''
@@ -2858,8 +2861,11 @@ const isStationMonitoringBlocked = (station) => {
 }
 
 const isStationPlanToggleDisabled = (station) => {
-    return Boolean(isStationMonitoringBlocked(station) && !station?.planned)
+    return Boolean((isStationMonitoringBlocked(station) || enrollmentBlocked(station)) && !station?.planned)
 }
+const enrollmentMode = () => isDetailOnlinePlan.value ? 'online' : 'offline'
+const enrollmentNote = (station) => stationPlanEnrollmentMessage(station, enrollmentMode())
+const enrollmentBlocked = (station) => stationPlanEnrollmentBlocked(station, enrollmentMode())
 
 const filteredDetailRows = computed(() => {
     let rows = detailDialog.value.rows || []
@@ -3003,6 +3009,10 @@ const toggleDoneFilter = (value) => {
 const toggleStationPlan = (station) => {
     if (!isPlanManager || station.done) return
     const nextPlanned = !station.planned
+    if (nextPlanned && enrollmentBlocked(station)) {
+        window.alert(enrollmentNote(station))
+        return
+    }
     if (nextPlanned && isStationMonitoringBlocked(station)) {
         window.alert('该站点没有监控，目前是建立视频检查任务，无法勾选该站点。')
         return
@@ -3016,17 +3026,17 @@ const toggleStationPlan = (station) => {
 
 const markAllPlanned = () => {
     if (!isPlanManager) return
-    let skippedMonitoringCount = 0
+    let skippedCount = 0
     detailDialog.value.rows = detailDialog.value.rows.map((item) => {
         if (item.done) return { ...item }
-        if (isStationMonitoringBlocked(item)) {
-            skippedMonitoringCount += 1
+        if (isStationMonitoringBlocked(item) || enrollmentBlocked(item)) {
+            skippedCount += 1
             return { ...item, planned: false, assignedInspectorId: '', assignedInspectorIds: [] }
         }
         return { ...item, planned: true }
     })
-    if (skippedMonitoringCount > 0) {
-        window.alert(`已自动纳入可安排站点；${skippedMonitoringCount} 个站点监控未运行，视频检查任务无法纳入。`)
+    if (skippedCount > 0) {
+        window.alert(`已自动纳入可安排站点；已跳过 ${skippedCount} 个未启用对应巡检计划或视频监控未运行的站点。`)
     }
 }
 
@@ -3190,6 +3200,9 @@ const fetchAllStationsCatalog = async () => {
                 name: item.station_name || item.name,
                 area: item.region || item.area || '-',
                 monitoringStatus: item.monitoring_status || '运行中',
+                include_offline_plan: item.include_offline_plan !== false,
+                include_online_plan: item.include_online_plan !== false,
+                originallyIncluded: false,
                 planned: false,
                 done: false,
                 doneDate: '-',
@@ -3301,6 +3314,9 @@ const mapOverviewStationRow = (item) => ({
     name: item.station_name,
     area: item.region || '-',
     monitoringStatus: item.monitoring_status || '运行中',
+    include_offline_plan: item.include_offline_plan !== false,
+    include_online_plan: item.include_online_plan !== false,
+    originallyIncluded: Boolean(item.is_included),
     planned: Boolean(item.is_included),
     done: item.completion_status === 'completed',
     doneDate: item.completed_at || '-',

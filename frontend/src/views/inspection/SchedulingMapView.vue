@@ -27,7 +27,7 @@
       </div>
 
       <section class="coverage-stats" aria-label="巡检覆盖统计" :aria-busy="loading">
-        <article><span>可见站点</span><strong>{{ result ? summary.total : '—' }}<small>座</small></strong><p>{{ region || '全部可见片区' }}</p></article>
+        <article><span>纳入覆盖站点</span><strong>{{ result ? summary.total : '—' }}<small>座</small></strong><p>{{ region || '全部可见片区' }}</p></article>
         <article class="checked"><span>已检查站点</span><strong>{{ result ? summary.checked : '—' }}<small>座</small></strong><p>已从地图销项</p></article>
         <article class="remaining"><span>待安排检查</span><strong>{{ result ? summary.remaining : '—' }}<small>座</small></strong><p>地图仅保留未检查站点</p></article>
         <article class="progress-card"><div><span>本周期覆盖率</span><strong>{{ result ? rate : '—' }}<small>%</small></strong><p>{{ result ? summary.checked + ' / ' + summary.total + ' 座' : '正在核对巡检记录' }}</p></div><i class="coverage-ring" :style="{ '--coverage':rate + '%' }" aria-hidden="true"></i></article>
@@ -45,7 +45,7 @@
       </header>
       <p v-if="loading && pendingChange" class="sync-notice" role="status"><i aria-hidden="true"></i>正在切换至 {{ requestedLabel }}，下方暂时保留上一周期结果。</p>
       <p v-if="!result.has_tables" class="coverage-callout">当前账号可见范围内没有此类型的检查表，暂不判断站点覆盖情况。请联系管理员核对巡检记录的检查表范围。</p>
-      <p v-else-if="!summary.total" class="coverage-callout">当前范围没有可见站点，请核对账号的巡检记录站点、片区范围。</p>
+      <p v-else-if="!summary.total" class="coverage-callout">当前范围没有启用对应巡检计划的可见站点，请核对站点计划纳入设置及账号数据范围。</p>
       <p v-else-if="summary.remaining === 0" class="coverage-callout complete">本周期当前范围内的站点均已有对应类型巡检记录，已全部从地图销项。</p>
       <p v-if="summary.missing_coordinates" class="coverage-callout">{{ summary.missing_coordinates }} 座待检查站点缺少有效坐标，未绘制图钉；仍计入待检查数量并保留在清单中。</p>
 
@@ -78,8 +78,9 @@
     <details class="methodology surface">
       <summary><span>统计口径与数据说明</span><small>巡检记录为准 · 不受审核状态影响</small></summary>
       <p>数据以巡检记录的“巡检日期”为准，而非问题登记或审核日期。现场检查表按自然季度覆盖，视频检查表按自然月覆盖；类型取自检查表的现场/视频属性。</p>
+      <p>仅统计站点基础档案中已启用对应巡检计划的站点。关闭现场或视频计划纳入后，本站不再进入对应类型的覆盖总数、待检查清单和地图。</p>
       <p>同一站点在所选周期内，只要存在任意一张对应类型检查表的巡检记录即视为已检查，不要求完成所有检查表。不受问题有无、审核结果、检查完成确认或站经理签名状态影响，零问题记录同样计数。</p>
-      <p>沿用当前账号巡检记录的站点、片区及检查表数据范围，但不隐藏未审核记录。所有可见站点均纳入，包含停业站点；缺少坐标不会被遗漏。覆盖率按站点去重，不能作为检查表逐表完成率、整改完成率或考核结论。</p>
+      <p>沿用当前账号巡检记录的站点、片区及检查表数据范围，但不隐藏未审核记录。在已启用对应巡检计划的可见站点中，包含停业站点；缺少坐标不会被遗漏。覆盖率按站点去重，不能作为检查表逐表完成率、整改完成率或考核结论。</p>
       <p>更改检查类型、年份或季度／月份后自动更新；快速切换会合并请求，已查看周期在当前页面内短时缓存30秒。页面可见且联网时每分钟自动核对，后台或断网时暂停；失败后会延长重试间隔，恢复连接或返回页面时自动检查。数据以标注的核对时间为准。</p>
       <p>片区和关键词在本页即时筛选，不增加数据库查询；关键词不改变上方片区覆盖统计。更新内容不变时保持地图位置；本页面不绘制区域圈，只提供排班参考，不会自动派工、删除记录或修改巡检计划。</p>
     </details>
