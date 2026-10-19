@@ -25,6 +25,18 @@ test('scheduling map keeps station names and region filtering without region ove
   assert.doesNotMatch(page, /region_points|region-points|蓝色片区/)
 })
 
+test('period controls automatically query without action buttons, retain old results and clean up polling', () => {
+  const page = readFileSync(new URL('../src/views/inspection/SchedulingMapView.vue', import.meta.url), 'utf8')
+  const canvas = readFileSync(new URL('../src/components/SchedulingMapCanvas.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(page, /查看未检查站点|更新当前周期覆盖|reloadApplied|@submit|refresh-indicator/)
+  assert.match(page, /watch\(requestedKey,.*loader.select/)
+  assert.match(page, /当前保留/)
+  assert.match(page, /loader.dispose\(\)/)
+  assert.match(page, /polling.dispose\(\)/)
+  assert.match(page, /removeEventListener\('visibilitychange', syncAutoRefresh\)/)
+  assert.match(canvas, /if \(fittedKey !== props.viewportKey\)/)
+})
+
 test('Beijing date defaults correctly across UTC year and quarter boundaries', () => {
   assert.deepEqual(currentCoveragePeriod(new Date('2026-12-31T16:01:00Z')), { mode:'offline',year:2027,quarter:1,month:1 })
   assert.equal(currentCoveragePeriod(new Date('2026-09-30T16:00:00Z')).quarter, 4)
