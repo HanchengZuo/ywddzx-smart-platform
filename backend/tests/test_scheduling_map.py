@@ -102,6 +102,8 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
             (1,'甲站','浦东','甲路',121.5,31.2,'营业'),(2,'乙站','浦东','乙路',121.6,31.3,'营业'),
             (3,'丙站','宝静','丙路',121.4,31.4,'停业'),(4,'无坐标站',NULL,NULL,NULL,NULL,'营业'),
             (5,'零坐标站','浦东',NULL,0,0,'营业'),(6,'非法坐标站','宝静',NULL,200,30,'营业');
+          ALTER TABLE stations ADD COLUMN include_offline_plan boolean NOT NULL DEFAULT true;
+          ALTER TABLE stations ADD COLUMN include_online_plan boolean NOT NULL DEFAULT true;
           INSERT INTO inspection_tables VALUES(1,'offline'),(2,'offline'),(3,'online');
           INSERT INTO inspections VALUES
             (1,1,1,'2026-10-01','待签名确认','未确认'),(2,1,2,'2026-10-02','待签名确认','未确认'),
@@ -133,6 +135,21 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
         self.assertNotIn(2, [s['station_id'] for s in result['stations']])
         self.assertIn(1, [s['station_id'] for s in result['stations']])
         self.assertEqual(self.result({'mode': 'online', 'year': '2026', 'month': '11'})['summary']['checked'], 0)
+
+    def test_enrollment_switches_filter_denominator_regions_and_pins_independently(self):
+        self.cur.execute('UPDATE stations SET include_offline_plan=false WHERE id IN (1,3)')
+        self.cur.execute('UPDATE stations SET include_online_plan=false WHERE id IN (2,4)')
+        offline = self.result()
+        self.assertEqual(offline['summary'], dict(total=4, checked=0, remaining=4, missing_coordinates=3))
+        self.assertEqual({row['station_id'] for row in offline['stations']}, {2,4,5,6})
+        self.assertEqual(sum(row['total'] for row in offline['regions']), 4)
+        online = self.result({'mode': 'online', 'year': '2026', 'month': '10'})
+        self.assertEqual(online['summary']['total'], 4)
+        self.assertEqual({row['station_id'] for row in online['stations']}, {1,3,5,6})
+        self.cur.execute('UPDATE stations SET include_offline_plan=false')
+        self.assertEqual(self.result()['summary']['total'], 0)
+        self.assertEqual(self.result()['stations'], [])
+        self.assertEqual(self.result({'mode': 'online', 'year': '2026', 'month': '10'})['summary']['total'], 4)
 
     def test_period_edges_and_deleted_records(self):
         self.assertEqual(self.result()['summary']['checked'], 1)

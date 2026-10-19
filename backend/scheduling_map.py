@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import g, jsonify, request
+from station_plan_eligibility import plan_field
 
 
 PERMISSION = 'view_scheduling_map'
@@ -43,6 +44,7 @@ def period(source, today=None):
 
 def coverage(cur, chosen, start, end, station_scope, table_scope):
     station_where, station_params = station_scope
+    station_where = [*station_where, f's.{plan_field(chosen["mode"])} = TRUE']
     table_where, table_params = table_scope
     cur.execute('''WITH eligible_tables AS MATERIALIZED (
         SELECT t.id FROM inspection_tables t WHERE t.checklist_mode=%s AND ''' + ' AND '.join(table_where or ['TRUE']) + '''
