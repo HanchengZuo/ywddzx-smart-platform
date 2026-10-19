@@ -644,6 +644,8 @@ flowchart LR
 
 ## 本地运行与验证
 
+本地开发环境的 `/api/version` 直接读取前端 `package.json`（Docker 只读挂载），随前端版本更新，无需手动配置 `APP_FRONTEND_VERSION`，避免旧版本配置造成反复提示刷新。仅 `APP_ENV=development` 使用此行为；生产环境继续使用 `deploy.sh` 从前端构建版本设置的 `APP_FRONTEND_VERSION`，不读取开发版本文件。
+
 后端首批渐进式重构仅拆分手动备份传输的 HTTP 适配与任务编排，保持原接口、权限、锁与事务顺序，不修改自动调度或业务版本。依赖审阅、隔离验证方式及已知多 worker 并发风险见 [首批重构说明](docs/backend-refactor-batch-1.md)。
 
 第二批提取备份配置规范化与时间计算，JSON 读写、接口和调度仍保留在 `app.py`，不改变频率算法、保存/清理顺序或锁。边界、兼容契约及验证结果见 [第二批重构说明](docs/backend-refactor-batch-2.md)。

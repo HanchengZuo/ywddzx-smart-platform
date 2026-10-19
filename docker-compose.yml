@@ -31,7 +31,8 @@ services:
       COS_REGION: ${COS_REGION}
       COS_BUCKET: ${COS_BUCKET}
       COS_USE_INTERNAL: ${COS_USE_INTERNAL:-false}
-      APP_FRONTEND_VERSION: ${APP_FRONTEND_VERSION:-9.5.0}
+      APP_FRONTEND_VERSION: ${APP_FRONTEND_VERSION:-}
+      APP_FRONTEND_PACKAGE_PATH: /app/frontend-package.json
       QUALITY_DEADLINE_SCAN_MINUTES: ${QUALITY_DEADLINE_SCAN_MINUTES:-180}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
       WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-http://localhost:5173}
@@ -51,6 +52,7 @@ services:
     volumes:
       - ./storage:/app/storage
       - ./storage/report_fonts:/usr/local/share/fonts/report-fonts:ro
+      - ./frontend/package.json:/app/frontend-package.json:ro
     depends_on:
       - db
 
