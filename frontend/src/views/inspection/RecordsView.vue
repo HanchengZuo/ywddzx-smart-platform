@@ -1609,7 +1609,7 @@ const deleteInspectionRecord = async (record) => {
   if (!record?.id || deletingInspectionId.value) return
 
   const confirmed = window.confirm(
-    `确定删除【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】这条巡检记录吗？\n\n删除后会同步删除本记录下的所有巡检问题，并重新计算关联巡检计划完成状态。此操作不可恢复。`
+    `确定删除【${record.station || '当前站点'}｜${record.inspection_table_name || '当前检查表'}】这条巡检记录吗？\n\n删除后会同步删除本记录下的所有巡检问题，排班表将按剩余记录显示检查情况。此操作不可恢复。`
   )
   if (!confirmed) return
 

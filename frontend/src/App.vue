@@ -144,15 +144,6 @@
     <header class="mobile-topbar">
       <button class="mobile-menu-btn" type="button" @click="toggleMobileMenu">☰</button>
       <div class="mobile-topbar-title">{{ sidebarTitle }}</div>
-      <div v-if="planAssignmentPendingCount > 0" class="mobile-plan-todo-chip">
-        待办 {{ planAssignmentPendingDisplay }}
-        <div class="mobile-plan-todo-popover">
-          <div v-for="item in planAssignmentPendingItems.slice(0, 6)" :key="`mobile-plan-task-${item.id}`" class="plan-todo-item">
-            <strong>{{ item.station_name }}</strong>
-            <span>{{ item.inspection_table_name }} · {{ item.period_key }}</span>
-          </div>
-        </div>
-      </div>
       <div class="mobile-resource-chip" :class="serverResourceHealthClass" :title="serverResourceTooltip">
         <span class="server-resource-dot"></span>
         {{ mobileServerResourceLabel }}
@@ -467,29 +458,6 @@
               </span>
             </div>
           </div>
-          <div v-if="planAssignmentPendingCount > 0" class="header-plan-todo">
-            <div class="header-plan-todo-trigger">
-              <span>待办任务</span>
-              <strong>{{ planAssignmentPendingDisplay }}</strong>
-            </div>
-            <div class="header-plan-todo-popover">
-              <div class="plan-todo-popover-head">
-                <strong>我的未完成巡检任务</strong>
-                <span>{{ planAssignmentPendingCount }} 项</span>
-              </div>
-              <div class="plan-todo-list">
-                <div v-for="item in planAssignmentPendingItems.slice(0, 8)" :key="`plan-task-${item.id}`" class="plan-todo-item">
-                  <div>
-                    <strong>{{ item.station_name }}</strong>
-                    <span>{{ item.region || '未分配片区' }} · {{ item.checklist_mode_label }}</span>
-                  </div>
-                  <p>{{ item.inspection_table_name }}</p>
-                  <em>{{ item.coverage_type_label }} · {{ item.period_key }}</em>
-                </div>
-              </div>
-              <button class="plan-todo-link" type="button" @click="go('/inspection/plan')">进入巡检计划</button>
-            </div>
-          </div>
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
@@ -800,7 +768,6 @@ const idleActivityThrottleMs = 1000
 const sessionWarningThresholdSeconds = 10 * 60
 const INSPECTION_SIGN_PENDING_REFRESH_EVENT = 'inspection-sign-pending-refresh'
 const MY_PENDING_RECTIFICATION_REFRESH_EVENT = 'my-pending-rectification-refresh'
-const PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT = 'plan-assignment-pending-refresh'
 const BIRTHDAY_BLESSING_PREVIEW_EVENT = 'birthday-blessing-preview'
 const idleActivityEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'input']
 const floatingModalCloseButtonSelector = [
@@ -865,8 +832,6 @@ const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
 const appealNotificationCount = ref(0)
-const planAssignmentPendingCount = ref(0)
-const planAssignmentPendingItems = ref([])
 let notificationSummaryTimer = null
 let notificationSummaryInFlight = null
 let notificationSummaryFetchedAt = 0
@@ -1107,10 +1072,6 @@ const inspectionSignPendingDisplay = computed(() => {
 })
 const myPendingRectificationDisplay = computed(() => {
   const count = Number(myPendingRectificationCount.value) || 0
-  return count > 99 ? '99+' : String(count)
-})
-const planAssignmentPendingDisplay = computed(() => {
-  const count = Number(planAssignmentPendingCount.value) || 0
   return count > 99 ? '99+' : String(count)
 })
 const formatResourcePercent = (value) => {
@@ -1514,8 +1475,6 @@ const resetNotificationCounts = () => {
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
   appealNotificationCount.value = 0
-  planAssignmentPendingCount.value = 0
-  planAssignmentPendingItems.value = []
   notificationSummaryFetchedAt = 0
 }
 
@@ -1524,10 +1483,6 @@ const applyNotificationSummary = (payload = {}) => {
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
   appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
-  planAssignmentPendingCount.value = Number(payload.plan_assignment_pending_count || 0)
-  planAssignmentPendingItems.value = Array.isArray(payload.plan_assignment_pending_items)
-    ? payload.plan_assignment_pending_items
-    : []
 }
 
 const markFeedbackRead = async ({ force = false } = {}) => {
@@ -1669,9 +1624,6 @@ const handleMyPendingRectificationRefresh = () => {
 }
 
 
-const handlePlanAssignmentPendingRefresh = () => {
-  refreshNotificationSummary({ force: true })
-}
 
 watch(presentationKind, (kind, previousKind) => {
   if (!kind && !previousKind) return
@@ -1714,7 +1666,6 @@ onMounted(() => {
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
-  window.addEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.addEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.addEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
   idleActivityEvents.forEach((eventName) => {
@@ -1753,7 +1704,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
-  window.removeEventListener(PLAN_ASSIGNMENT_PENDING_REFRESH_EVENT, handlePlanAssignmentPendingRefresh)
   window.removeEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.removeEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
   idleActivityEvents.forEach((eventName) => {
@@ -1804,7 +1754,7 @@ const resolveHomePath = (user) => {
   if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) {
     candidates.push('/inspection/records')
   }
-  if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
+  if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
   if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
   if (
     permissions.view_all_certificates ||
@@ -4217,150 +4167,21 @@ textarea:focus {
   background: #94a3b8;
 }
 
-.header-plan-todo {
-  position: relative;
-  flex-shrink: 0;
-  z-index: 1;
-}
 
-.header-plan-todo-trigger {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 11px;
-  border-radius: 15px;
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
-  color: #9a3412;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: default;
-}
 
-.header-plan-todo-trigger strong {
-  min-width: 24px;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #ea580c;
-  color: #fff;
-  font-size: 12px;
-}
 
-.header-plan-todo-popover,
-.mobile-plan-todo-popover {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 10px);
-  z-index: 970;
-  width: min(360px, calc(100vw - 24px));
-  padding: 14px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid #fed7aa;
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: all 0.16s ease;
-}
 
-.header-plan-todo:hover .header-plan-todo-popover,
-.mobile-plan-todo-chip:hover .mobile-plan-todo-popover,
-.mobile-plan-todo-chip:focus-within .mobile-plan-todo-popover {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-}
 
-.plan-todo-popover-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #ffedd5;
-}
 
-.plan-todo-popover-head strong {
-  color: #0f172a;
-  font-size: 14px;
-}
 
-.plan-todo-popover-head span {
-  color: #c2410c;
-  font-size: 12px;
-  font-weight: 900;
-}
 
-.plan-todo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: min(360px, 54vh);
-  overflow: auto;
-  padding: 12px 2px 0;
-}
 
-.plan-todo-item {
-  padding: 11px 12px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(255, 247, 237, 0.98), rgba(255, 255, 255, 0.98));
-  border: 1px solid rgba(251, 146, 60, 0.22);
-  box-shadow: 0 10px 24px rgba(154, 52, 18, 0.07);
-}
 
-.plan-todo-item div {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
 
-.plan-todo-item strong {
-  min-width: 0;
-  color: #0f172a;
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.plan-todo-item span,
-.plan-todo-item p,
-.plan-todo-item em {
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.6;
-}
 
-.plan-todo-item p {
-  margin: 6px 0 0;
-  color: #334155;
-  font-weight: 800;
-}
 
-.plan-todo-item em {
-  display: block;
-  margin-top: 4px;
-  font-style: normal;
-}
 
-.plan-todo-link {
-  width: 100%;
-  height: 38px;
-  margin-top: 12px;
-  border: 0;
-  border-radius: 13px;
-  background: linear-gradient(135deg, #ea580c, #f97316);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
 
 .header-user-card {
   display: flex;
@@ -5124,20 +4945,6 @@ textarea:focus {
     text-overflow: ellipsis;
   }
 
-  .mobile-plan-todo-chip {
-    position: relative;
-    flex-shrink: 0;
-    min-height: 34px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 10px;
-    border-radius: 999px;
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
-    color: #c2410c;
-    font-size: 12px;
-    font-weight: 900;
-  }
 
   .mobile-resource-chip {
     min-height: 34px;
@@ -5176,18 +4983,7 @@ textarea:focus {
     color: #991b1b;
   }
 
-  .mobile-plan-todo-popover {
-    top: calc(100% + 8px);
-    right: -54px;
-    width: min(310px, calc(100vw - 18px));
-    padding: 10px;
-  }
 
-  .mobile-plan-todo-popover .plan-todo-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
 
   .mobile-menu-btn,
   .mobile-logout-btn {

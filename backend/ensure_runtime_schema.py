@@ -222,6 +222,13 @@ def main():
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='stations' AND is_nullable='NO' AND data_type='boolean'")
                 if not {'include_offline_plan', 'include_online_plan'}.issubset({row[0] for row in cur.fetchall()}):
                     raise RuntimeError('Station plan enrollment migration missing')
+                for table, required in (
+                    ('inspection_schedule_cells', {'mode', 'year', 'period_number', 'station_id', 'column_key', 'inspector_ids', 'revision', 'updated_by', 'updated_at'}),
+                    ('inspection_schedule_events', {'station_id', 'before_ids', 'after_ids', 'actor_id', 'actor_name', 'created_at'}),
+                ):
+                    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s", (table,))
+                    if not required.issubset({row[0] for row in cur.fetchall()}):
+                        raise RuntimeError(f'Inspection schedule migration missing: {table}')
         print(
             "Runtime schema ready: "
             f"database={database_name}, schema={schema_name}, "

@@ -72,7 +72,7 @@ export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'scheduling',
     title: '排班系统',
-    description: '巡检覆盖排班地图与巡检计划、派工和完成情况',
+    description: '巡检覆盖排班地图与现场季度、视频月度排班表',
     pages: schedulingMenuPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description }))
   },
   {

@@ -188,10 +188,11 @@ def business_evidence(core, cur, question, options):
     if options.get('station_names'):
         region_where.append('s.station_name=ANY(%s)')
         region_params.append(options['station_names'])
-    for row in recall(cur, '''SELECT psi.id,pc.period_key,pc.coverage_type,t.table_name,s.station_name,s.region,
-        psi.completion_status,psi.note FROM inspection_plan_station_items psi JOIN inspection_plan_configs pc ON pc.id=psi.plan_config_id
-        JOIN stations s ON s.id=psi.station_id JOIN inspection_tables t ON t.id=pc.inspection_table_id''',
-        ['pc.period_key','t.table_name','s.station_name','psi.note'], question, region_where + ['psi.is_included=TRUE'], region_params):
+    for row in recall(cur, '''SELECT concat(c.mode,':',c.year,':',c.period_number,':',c.station_id,':',c.column_key) AS id,
+        concat(c.year,'年',c.period_number,CASE WHEN c.mode='offline' THEN '季度' ELSE '月' END) AS period_key,
+        c.mode,c.column_key,c.inspector_ids,c.updated_at,s.station_name,s.region
+        FROM inspection_schedule_cells c JOIN stations s ON s.id=c.station_id''',
+        ['c.year::text','c.column_key','s.station_name','s.region'], question, region_where, region_params):
         result.append(source('plan:' + str(row['id']), '巡检计划', row['station_name'] + ' · ' + row['period_key'], json.dumps(row, ensure_ascii=False, default=str), '/inspection/plan'))
     for row in recall(cur, '''SELECT c.id,c.certificate_name,c.certificate_type,c.expiry_date,c.remark,s.station_name,s.region
         FROM station_certificates c JOIN stations s ON s.id=c.station_id''',

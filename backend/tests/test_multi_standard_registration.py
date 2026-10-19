@@ -132,7 +132,6 @@ class RegistrationDatabaseTests(unittest.TestCase):
             patch.object(api, 'require_active_standards'),
             patch.object(api, 'build_issue_list_visibility_scope', return_value=([], [])),
             patch.object(api, 'create_inspection_record', side_effect=create),
-            patch.object(api, 'mark_related_plan_items_completed'),
             patch.object(api, 'STORAGE_ROOT', self.folder.name),
             patch.object(api, 'ISSUES_STORAGE_DIR', os.path.join(self.folder.name, 'issues')),
         ]

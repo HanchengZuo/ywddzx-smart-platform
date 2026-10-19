@@ -31,7 +31,7 @@ test('scheduling appears after inspection, with each existing URL listed exactly
   assert.equal(PAGE_VISIBILITY_GROUPS[index + 2].key, 'ai')
   assert.deepEqual(group.pages.map(page => page.path), schedulingMenuPages.map(page => page.path))
   assert.deepEqual(schedulingMenuPages.map(page => [page.title, page.permission]), [
-    ['排班地图', 'view_scheduling_map'], ['巡检计划', 'view_inspection_plans'],
+    ['排班地图', 'view_scheduling_map'], ['巡检计划', 'view_inspection_schedule'],
   ])
   assert.equal(new Set(PAGE_VISIBILITY_PAGES.map(page => page.path)).size, PAGE_VISIBILITY_PAGES.length)
   assert.ok(!operationsMenuPages.some(page => page.key === 'scheduling-map'))
@@ -47,7 +47,7 @@ test('real sidebar template renders only authorized pages and hides empty schedu
   assert.match(map, /排班系统/)
   assert.match(map, /排班地图/)
   assert.doesNotMatch(map, /巡检计划/)
-  const plan = await menu({ permissions: { view_inspection_plans: true } })
+  const plan = await menu({ permissions: { view_inspection_schedule: true } })
   assert.match(plan, /巡检计划/)
   assert.match(plan, /class="nav-item active"/)
   assert.doesNotMatch(plan, /排班地图/)

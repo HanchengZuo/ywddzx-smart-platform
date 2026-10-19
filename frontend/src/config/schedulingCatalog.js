@@ -10,9 +10,9 @@ export const schedulingMenuPages = [
   {
     key: 'inspection-plan',
     path: '/inspection/plan',
-    permission: 'view_inspection_plans',
+    permission: 'view_inspection_schedule',
     title: '巡检计划',
     icon: '计',
-    description: '查看巡检计划、派工和完成情况。',
+    description: '现场按季度、视频按月，在排班表分配检查人并查看逐表检查记录。',
   },
 ]
