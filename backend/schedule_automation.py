@@ -52,7 +52,7 @@ def balanced_allocation(people, demands, loads):
     return result
 
 
-def proposal(cur, actor, day, station_scope, table_scope):
+def proposal(cur, actor, day):
     require_workday(cur, day)
     people = available_people(cur, day)
     eligible = [p for p in people if p['id'] and p['available'] is True and not p['planned_modes'] and not p['actual_modes']]
@@ -61,7 +61,7 @@ def proposal(cur, actor, day, station_scope, table_scope):
     for mode in ('offline', 'online'):
         chosen, start, end = period(dict(mode=mode, year=day.year, **({'quarter': quarter} if mode == 'offline' else {'month': day.month})))
         periods[mode] = (chosen, start, end)
-        board = read_board(cur, chosen, start, end, station_scope, table_scope)
+        board = read_board(cur, chosen, start, end)
         demands[mode] = []
         for row in board['rows']:
             cells = [dict(station_id=row['station_id'], column_key=c['key'], revision=row['cells'][c['key']]['revision'], label=c['label'])
@@ -77,7 +77,7 @@ def proposal(cur, actor, day, station_scope, table_scope):
                   for p in people if p not in eligible]), periods
 
 
-def register_schedule_automation(app, *, connect, has_permission, scope):
+def register_schedule_automation(app, *, connect, has_permission):
     @app.post('/api/inspection-schedule/auto')
     def auto_schedule():
         actor = getattr(g, 'current_user', None)
@@ -93,8 +93,7 @@ def register_schedule_automation(app, *, connect, has_permission, scope):
             day = day_value(data.get('day', today().isoformat()))
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             if data['action'] == 'confirm': lock_schedule(cur)
-            station_scope, table_scope = scope(cur, actor)
-            result, periods = proposal(cur, actor, day, station_scope, table_scope)
+            result, periods = proposal(cur, actor, day)
             if data['action'] == 'confirm':
                 if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
                 if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')
@@ -103,7 +102,7 @@ def register_schedule_automation(app, *, connect, has_permission, scope):
                     chosen, start, end = periods[group['mode']]
                     for cell in group['cells']:
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
-                          inspector_ids=[group['person']['id']], scheduled_date=day.isoformat()), chosen, start, end, station_scope, table_scope, cache)
+                          inspector_ids=[group['person']['id']], scheduled_date=day.isoformat()), chosen, start, end, cache)
                 conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'

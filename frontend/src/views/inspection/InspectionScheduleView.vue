@@ -8,7 +8,7 @@
       </div>
       <div class="head-actions">
         <AutomaticSchedule v-if="allowed" @scheduled="onScheduled" /><span class="access-label">{{
-          allowed ? '查看与编辑独立授权' : '需要查看权限'
+          allowed ? '全局共享 · 独立编辑授权' : '需要查看权限'
         }}</span>
       </div>
     </header>
@@ -20,7 +20,7 @@
           >黄色为本周期已有巡检记录，不论是否审核，均锁定为实际检查人。<span
             class="legend planned"
           ></span
-          >蓝色为已安排；无记录时可调整，保存日期和检查人后同步个人待办。
+          >琥珀色为现场已排班，蓝色为视频已排班；无记录时可调整，保存后同步个人待办。
         </p>
       </div>
       <p v-if="dispatchNotice" class="dispatch-notice" role="status">{{ dispatchNotice }}</p>
@@ -61,13 +61,13 @@
       <details class="schedule-help surface">
         <summary>统计口径与使用说明</summary>
         <p>
-          现场以自然季度覆盖六张检查表，不包含年度覆盖的计量现场检查。视频以自然月覆盖安全、计量、现场三张检查表。两张表各用独立的固定站点名单和顺序；只显示账号范围内、且在站点档案中已纳入对应计划的站点。
+          现场以自然季度覆盖六张检查表，不包含年度覆盖的计量现场检查。视频以自然月覆盖安全、计量、现场三张检查表。两张表各用独立的固定站点名单和顺序，只显示在站点档案中已纳入对应计划的站点。获授权用户均查看同一份完整排班，不按账号片区、站点或检查表范围过滤。
         </p>
         <p>
           黄色表示已有巡检记录，并非问题已审核、已整改或检查人已完成流程确认；零问题记录同样计数。多人参与按人员去重，可点击单元格查看全部姓名。删除或移走记录后，若已无对应记录，单元格回到原保存排班或待排班状态。
         </p>
         <p>
-          未启用、缺失、重复定义或不在权限范围内的检查表列不可安排。选择计划工作日后，只能安排人员档期中明确有空且当天没有另一种检查的人员。未补日期的历史排班仍保留，但不会猜测日期生成待办；调整并保存后生效。排班全局共享，保存操作人与时间，批量更新整批校验；多选支持按格、按站或按列，切换筛选清空勾选，避免误改隐藏项目。
+          未启用、缺失或重复定义的检查表列不可安排。选择计划工作日后，只能安排人员档期中明确有空且当天没有另一种检查的人员。未补日期的历史排班仍保留，但不会猜测日期生成待办；调整并保存后生效。排班全局共享，保存操作人与时间，批量更新整批校验；多选支持按格、按站或按列，切换筛选清空勾选，避免误改隐藏项目。
         </p>
         <p>
           今日一键排班先预览再确认，按本自然季度的现场、视频站点任务组尽量平衡，每人当天自动安排一个站点，不覆盖已有安排。个人待办包括今日和逾期任务，同站同表有本周期巡检记录即自动完成，不依赖审核或录入人；没有完成记录不会因跨天或跨周期自动销项。提前检查和跨周期补做也可完成，实际执行人以记录为准。
@@ -162,17 +162,26 @@ const allowed =
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  background: linear-gradient(125deg, #f4f9ff, #fff 65%);
+  background:
+    radial-gradient(ellipse at 90% 0, #296d87 0, transparent 55%),
+    linear-gradient(115deg, #102e4c, #194763);
+  color: #fff;
+  border-color: #173f5d;
+  border-bottom: 4px solid #e7ae42;
 }
 .kicker {
   font-size: 11px;
   letter-spacing: 1px;
-  color: #2769a0;
+  color: #9bd6e2;
   font-weight: 750;
 }
 h2 {
   margin: 10px 0;
   font-size: 30px;
+  letter-spacing: 2px;
+}
+.schedule-page-head p {
+  color: #c2d5e4;
 }
 p {
   margin: 8px 0 0;
@@ -183,10 +192,10 @@ p {
 .access-label {
   flex-shrink: 0;
   padding: 8px 12px;
-  border: 1px solid #dbe6f4;
+  border: 1px solid #ffffff3b;
   border-radius: 9px;
-  color: #4b6c8c;
-  background: #f7faff;
+  color: #d3e8f2;
+  background: #ffffff12;
   font-size: 12px;
 }
 .head-actions {
@@ -206,6 +215,7 @@ p {
 }
 .schedule-guide {
   padding: 16px 22px;
+  border-left: 4px solid #1c738d;
 }
 .schedule-guide strong {
   font-size: 14px;
@@ -239,10 +249,10 @@ p {
   cursor: pointer;
 }
 .schedule-tabs button[aria-selected='true'] {
-  border-color: #bed5ef;
-  background: #eaf3ff;
-  color: #215c9e;
-  box-shadow: inset 0 -2px #397bc1;
+  border-color: #1e6786;
+  background: #1e6786;
+  color: #fff;
+  box-shadow: 0 3px 8px #16476420;
 }
 .schedule-tabs button:focus-visible {
   outline: 2px solid #397bc1;
@@ -292,10 +302,11 @@ p {
   margin-left: 0;
 }
 .done {
-  background: #f1c75b;
+  background: #ecc142;
 }
 .planned {
-  background: #74a7e5;
+  width: 20px;
+  background: linear-gradient(90deg, #d89d38 0 50%, #3175d1 50%);
 }
 .schedule-help summary {
   cursor: pointer;

@@ -4,24 +4,41 @@
       <div>
         <span class="kicker">排班系统 / STAFF AVAILABILITY</span>
         <h2>人员档期</h2>
-        <p>先确认谁有空，再安排巡检；历史工作方式由巡检记录自动呈现。</p>
+        <p>谁有空、谁在现场、谁做视频，一眼看清本周安排。</p>
       </div>
-      <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
+      <div class="head-meta">
+        <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
+        <small>工作日排班 · 全局共享</small>
+      </div>
     </header>
-    <section class="surface">
+    <section class="surface staff-board">
       <div class="week-controls">
         <div class="week-picker">
-          <button type="button" @click="moveWeek(-7)">上一周</button
-          ><label>查看日期<input v-model="week" type="date" aria-label="人员档期查看日期" /></label
-          ><button type="button" @click="moveWeek(7)">下一周</button
-          ><button type="button" @click="week = shanghaiToday()">本周</button>
+          <button type="button" aria-label="查看上一周" @click="moveWeek(-7)">← 上一周</button>
+          <label>查看日期<input v-model="week" type="date" aria-label="人员档期查看日期" /></label>
+          <button type="button" aria-label="查看下一周" @click="moveWeek(7)">下一周 →</button>
+          <button type="button" class="this-week" @click="week = shanghaiToday()">本周</button>
         </div>
-        <span class="legend"
-          ><i class="free"></i>有空 <i class="busy"></i>没空 <i class="unknown"></i>未确认</span
+        <div class="week-caption">
+          <strong>{{ weekCaption }}</strong>
+          <small>{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
+        </div>
+      </div>
+      <div v-if="board" class="staff-stats" aria-label="本周档期概况">
+        <div v-for="item in summaryItems" :key="item.key" :class="'stat-' + item.key">
+          <span>{{ item.label }}</span
+          ><strong>{{ stats[item.key] }}</strong
+          ><small>{{ item.hint }}</small>
+        </div>
+      </div>
+      <div class="legend" aria-label="档期颜色说明">
+        <span v-for="item in legendItems" :key="item.key" :class="'tone-' + item.key"
+          ><i></i>{{ item.label }}</span
         >
+        <small>“已排班”为计划，“实绩”为实际巡检记录</small>
       </div>
       <p class="help">
-        仅展示官方工作日，包含调休上班的周六、周日。未确认有空不参与派工；没空原因最多4个字。过去日期只读，显示实际现场或视频巡检（不要求审核）。
+        仅展示官方工作日（含调休上班日）。绿色有空才可派工，红色没空可备注4字以内原因；灰色未确认不参与派工。过去日期只读，现场和视频实绩不要求审核。
       </p>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
@@ -38,39 +55,12 @@
         {{ error }} <button v-if="!blocked" type="button" @click="load">重试</button>
       </div>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-      <div v-if="board?.can_edit" class="batch-bar">
-        <label
-          ><input
-            type="checkbox"
-            :checked="selectedPeople.length === board.people.length"
-            @change="
-              selectedPeople = $event.target.checked ? board.people.map((p) => p.display_name) : []
-            "
-          />
-          全选人员</label
-        >
-        <label
-          ><input
-            type="checkbox"
-            :checked="futureDays.length > 0 && selectedDays.length === futureDays.length"
-            :disabled="!futureDays.length"
-            @change="selectedDays = $event.target.checked ? futureDays.map((d) => d.day) : []"
-          />
-          本周可编辑工作日</label
-        >
-        <span>已选 {{ selectedPeople.length }} 人 × {{ selectedDays.length }} 天</span>
-        <button
-          class="primary"
-          type="button"
-          :disabled="!canBatch || loading || !!error"
-          @click="openBatch"
-        >
-          批量设置档期
-        </button>
-      </div>
       <p v-if="loading && !board" role="status" class="empty">正在读取人员档期…</p>
       <div v-else-if="board?.days.length" class="staff-grid" :aria-busy="loading">
         <table>
+          <caption class="sr-only">
+            人员工作日档期。逐个单元格设置，无批量操作。
+          </caption>
           <colgroup>
             <col class="name-col" />
             <col class="position-col" />
@@ -86,59 +76,44 @@
                 scope="col"
                 :class="{ today: day.day === board.today }"
               >
-                <label
-                  ><input
-                    v-if="board.can_edit && day.day >= board.today"
-                    v-model="selectedDays"
-                    type="checkbox"
-                    :value="day.day"
-                    :aria-label="'选择' + day.day"
-                  /><b>{{ day.day.slice(5) }}</b
-                  ><small
-                    >{{ day.weekday }}{{ day.day === board.today ? ' · 今天' : '' }}</small
-                  ></label
-                >
+                <b>{{ day.day.slice(5).replace('-', ' / ') }}</b>
+                <small>{{ day.weekday }}<em v-if="day.day === board.today">今天</em></small>
               </th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="person in board.people" :key="person.display_name">
               <th scope="row" class="person-name">
-                <label
-                  ><input
-                    v-if="board.can_edit"
-                    v-model="selectedPeople"
-                    type="checkbox"
-                    :value="person.display_name"
-                  /><span
-                    >{{ person.display_name }}<small v-if="!person.id">待匹配账号</small></span
-                  ></label
-                >
+                <span>{{ person.display_name }}<small v-if="!person.id">待匹配账号</small></span>
               </th>
-              <td class="position">{{ person.position }}</td>
+              <td class="position">
+                <span :class="{ manager: person.position === '管理人员' }">{{
+                  person.position
+                }}</span>
+              </td>
               <td
                 v-for="day in board.days"
                 :key="day.day"
                 class="day-cell"
-                :class="cellClass(person.cells[day.day], day.day)"
+                :class="{ 'today-cell': day.day === board.today }"
               >
                 <button
                   type="button"
+                  class="staff-cell"
+                  :class="[
+                    'tone-' + state(person, day).tone,
+                    { 'is-actual': state(person, day).stage === '实绩' },
+                  ]"
                   :disabled="loading || !!error"
                   :aria-label="
-                    person.display_name +
-                    '，' +
-                    day.day +
-                    '，' +
-                    label(person.cells[day.day], day.day)
+                    person.display_name + '，' + day.day + '，' + state(person, day).label
                   "
                   @click="openCell(person, day)"
                 >
                   <small class="mobile-date">{{ day.day.slice(5) }} {{ day.weekday }}</small>
-                  <b>{{ label(person.cells[day.day], day.day) }}</b>
-                  <small v-if="person.cells[day.day].reason">{{
-                    person.cells[day.day].reason
-                  }}</small>
+                  <span class="cell-stage"><i></i>{{ state(person, day).stage }}</span>
+                  <b>{{ state(person, day).label }}</b>
+                  <small class="cell-detail">{{ state(person, day).detail || '—' }}</small>
                 </button>
               </td>
             </tr>
@@ -147,36 +122,43 @@
       </div>
       <p v-else-if="board" class="empty">此周没有已发布的工作日。</p>
       <footer class="staff-footer">
-        人员按指定名单顺序展示；档期、排班由所有获授权用户共享，修改会记录操作人。已派工日期若要标记没空，须先改派或取消任务。
+        <strong>逐格维护 · 修改留痕</strong>
+        <span>档期与排班由所有获授权用户共享。已派工日期若要标记没空，须先改派或取消任务。</span>
       </footer>
     </section>
-    <Teleport to="body"
-      ><dialog
+    <Teleport to="body">
+      <dialog
         ref="dialog"
         class="staff-dialog"
         aria-labelledby="staff-edit-title"
         @cancel.prevent="close"
         @click="backdrop"
+        @close="selection = null"
       >
-        <template v-if="edits.length"
-          ><header>
+        <template v-if="selection">
+          <header>
             <div>
-              <small>人员档期</small>
-              <h3 id="staff-edit-title">
-                {{
-                  edits.length === 1
-                    ? edits[0].person_name + ' · ' + edits[0].day
-                    : '批量设置 ' + edits.length + ' 个档期'
-                }}
-              </h3>
+              <small>人员档期 / {{ editable ? '设置单日安排' : '查看档期' }}</small>
+              <h3 id="staff-edit-title">{{ selection.person_name }} · {{ selection.day }}</h3>
             </div>
             <button type="button" :disabled="saving" aria-label="关闭档期设置" @click="close">
               ×
             </button>
           </header>
           <div class="dialog-body">
+            <div
+              v-if="selectionState"
+              class="current-arrangement"
+              :class="'tone-' + selectionState.tone"
+            >
+              <strong>{{ selectionState.label }}</strong
+              ><span
+                >{{ selectionState.stage }} ·
+                {{ selectionState.detail || '此日没有实际巡检记录' }}</span
+              >
+            </div>
             <template v-if="editable">
-              <div class="status-picker">
+              <div class="status-picker" aria-label="选择当天档期">
                 <button
                   type="button"
                   :aria-pressed="available"
@@ -184,15 +166,16 @@
                   :disabled="saving"
                   @click="available = true"
                 >
-                  有空 · 可排班</button
-                ><button
+                  <b>有空</b><small>允许安排巡检</small>
+                </button>
+                <button
                   type="button"
                   :aria-pressed="!available"
                   class="busy"
                   :disabled="saving"
                   @click="available = false"
                 >
-                  没空 · 不派工
+                  <b>没空</b><small>当天不参与派工</small>
                 </button>
               </div>
               <label v-if="!available" class="reason"
@@ -202,10 +185,14 @@
                   maxlength="4"
                   placeholder="如：休假、培训、出差"
               /></label>
-              <p>保存将统一应用到选中档期；已有排班、版本变化或任何一格校验失败时，整批不保存。</p>
+              <p class="edit-hint">
+                仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
+              </p>
             </template>
-            <p v-else>此日期只读。历史现场、视频巡检来自当日实际记录，不会改写档期。</p>
-            <p v-if="savedMeta">{{ savedMeta }}</p>
+            <p v-else class="edit-hint">
+              此日期只读。历史现场、视频巡检来自当日实际记录，不会改写档期。
+            </p>
+            <p v-if="savedMeta" class="saved-meta">{{ savedMeta }}</p>
             <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
           </div>
           <footer>
@@ -221,15 +208,20 @@
             </button>
           </footer>
         </template>
-      </dialog></Teleport
-    >
+      </dialog>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
 import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { offsetDay, shanghaiToday } from '@/utils/staffScheduling'
+import {
+  offsetDay,
+  shanghaiToday,
+  staffCellPresentation,
+  staffWeekSummary,
+} from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 const week = ref(shanghaiToday()),
   board = ref(null),
@@ -237,10 +229,9 @@ const week = ref(shanghaiToday()),
   saving = ref(false)
 const error = ref(''),
   notice = ref(''),
-  blocked = ref(false),
-  selectedPeople = ref([]),
-  selectedDays = ref([])
-const edits = ref([]),
+  blocked = ref(false)
+const selection = ref(null),
+  selectionState = ref(null),
   available = ref(true),
   reason = ref(''),
   savedMeta = ref(''),
@@ -252,28 +243,25 @@ let controller,
   serial = 0,
   disposed = false,
   timer
-const futureDays = computed(() =>
-  (board.value?.days || []).filter((d) => d.day >= board.value.today),
-)
-const canBatch = computed(() => selectedPeople.value.length && selectedDays.value.length)
-function cellClass(cell, day) {
-  return cell.actual_modes.length
-    ? 'actual'
-    : day < board.value.today
-      ? 'past'
-      : cell.available === true
-        ? 'free'
-        : cell.available === false
-          ? 'busy'
-          : 'unknown'
-}
-function label(cell, day) {
-  if (cell.actual_modes.length)
-    return cell.actual_modes
-      .map((v) => (v.mode === 'offline' ? '现场巡检' : '视频巡检'))
-      .join(' / ')
-  if (day < board.value.today) return '无巡检记录'
-  return cell.available === true ? '有空' : cell.available === false ? '没空' : '未确认'
+const summaryItems = [
+  { key: 'free', label: '有空待排', hint: '今天起 · 人次' },
+  { key: 'busy', label: '没空', hint: '今天起 · 人次' },
+  { key: 'unknown', label: '未确认', hint: '今天起 · 人次' },
+  { key: 'offline', label: '现场巡检', hint: '本周计划 / 实绩 · 人次' },
+  { key: 'online', label: '视频巡检', hint: '本周计划 / 实绩 · 人次' },
+]
+const legendItems = [
+  { key: 'free', label: '有空' },
+  { key: 'busy', label: '没空' },
+  { key: 'unknown', label: '未确认' },
+  { key: 'offline', label: '现场' },
+  { key: 'online', label: '视频' },
+  { key: 'mixed', label: '现场 + 视频' },
+]
+const stats = computed(() => staffWeekSummary(board.value))
+const weekCaption = computed(() => (board.value ? board.value.week + ' 起的一周' : '工作日档期'))
+function state(person, day) {
+  return staffCellPresentation(person.cells[day.day], day.day, board.value.today)
 }
 async function load() {
   if (blocked.value || disposed) return
@@ -290,9 +278,6 @@ async function load() {
     if (ticket !== serial || disposed) return
     board.value = data
     error.value = ''
-    selectedDays.value = selectedDays.value.filter(
-      (day) => data.days.some((d) => d.day === day) && day >= data.today,
-    )
   } catch (err) {
     if (ticket !== serial || disposed || err.code === 'ERR_CANCELED') return
     error.value = err.response?.data?.error || '档期读取失败，请重试。'
@@ -310,50 +295,26 @@ function moveWeek(offset) {
     offset,
   )
 }
-async function showEditor(cells, allow, meta = '') {
-  edits.value = cells
-  available.value = true
-  reason.value = ''
-  savedMeta.value = meta
-  editable.value = allow
+async function openCell(person, day) {
+  const value = person.cells[day.day]
+  selection.value = { person_name: person.display_name, day: day.day, revision: value.revision }
+  selectionState.value = state(person, day)
+  available.value = value.available !== false
+  reason.value = value.reason
+  savedMeta.value = value.updated_at
+    ? person.display_name + '的档期由' + value.updated_by_name + '于' + value.updated_at + '保存'
+    : '此档期尚未设置。'
+  editable.value = board.value.can_edit && day.day >= board.value.today
   saveError.value = ''
   conflict.value = false
-  if (cells.length === 1) {
-    const value = board.value.people.find((p) => p.display_name === cells[0].person_name).cells[
-      cells[0].day
-    ]
-    available.value = value.available !== false
-    reason.value = value.reason
-  }
+  polling.pause()
   await nextTick()
-  dialog.value.showModal()
-}
-function openCell(person, day) {
-  const value = person.cells[day.day]
-  showEditor(
-    [{ person_name: person.display_name, day: day.day, revision: value.revision }],
-    board.value.can_edit && day.day >= board.value.today,
-    value.updated_at ? `${value.updated_by_name} · ${value.updated_at} 保存` : '此档期尚未设置。',
-  )
-}
-function openBatch() {
-  const cells = []
-  for (const person of board.value.people.filter((p) =>
-    selectedPeople.value.includes(p.display_name),
-  )) {
-    for (const day of futureDays.value.filter((d) => selectedDays.value.includes(d.day)))
-      cells.push({
-        person_name: person.display_name,
-        day: day.day,
-        revision: person.cells[day.day].revision,
-      })
-  }
-  if (cells.length) showEditor(cells, true)
+  if (!disposed) dialog.value.showModal()
 }
 function close() {
   if (!saving.value) {
     dialog.value?.close()
-    edits.value = []
+    selection.value = null
     polling.start()
   }
 }
@@ -370,18 +331,18 @@ function backdrop(event) {
   }
 }
 async function save() {
-  if (saving.value || !editable.value || conflict.value) return
+  if (saving.value || !editable.value || conflict.value || !selection.value) return
   saving.value = true
   saveError.value = ''
   try {
     await axios.put(
       '/api/staff-availability',
-      { cells: edits.value, available: available.value, reason: reason.value },
+      { cells: [selection.value], available: available.value, reason: reason.value },
       { timeout: 30000 },
     )
     if (disposed) return
     dialog.value.close()
-    edits.value = []
+    selection.value = null
     notice.value = '档期已保存，可在巡检排班选择有空人员。'
     await load()
   } catch (err) {
@@ -416,7 +377,7 @@ watch(week, () => {
   controller?.abort()
   clearTimeout(timer)
   board.value = null
-  selectedDays.value = []
+  notice.value = ''
   timer = setTimeout(load, 180)
 })
 onMounted(() => {
@@ -445,52 +406,69 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 18px;
   min-width: 0;
-  color: #203a54;
+  color: #18344f;
   container-type: inline-size;
 }
 .surface {
   background: #fff;
-  border: 1px solid #dbe5ef;
-  border-radius: 20px;
-  box-shadow: 0 12px 30px #18324c08;
+  border: 1px solid #cbd9e7;
+  border-radius: 18px;
+  box-shadow: 0 8px 28px #102b4510;
 }
 .staff-head {
-  padding: 24px;
+  padding: 26px 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  background: linear-gradient(125deg, #f4f9ff, #fff 65%);
+  gap: 20px;
+  background:
+    radial-gradient(ellipse at 90% 0, #296d87 0, transparent 55%),
+    linear-gradient(115deg, #102e4c, #194763);
+  border-color: #173f5d;
+  color: #fff;
+  border-bottom: 4px solid #e7ae42;
 }
 .kicker {
-  font-size: 11px;
-  letter-spacing: 1px;
-  color: #2769a0;
-  font-weight: 750;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #9bd6e2;
+  font-weight: 700;
 }
 h2 {
   font-size: 30px;
   margin: 10px 0;
+  letter-spacing: 2px;
 }
-p {
+.staff-head p {
+  margin: 0;
+  color: #c2d5e4;
   font-size: 13px;
   line-height: 1.8;
-  color: #6b7e93;
+}
+.head-meta {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
+  flex-shrink: 0;
 }
 .access {
-  padding: 8px 12px;
-  background: #f1f6fc;
-  border-radius: 8px;
+  padding: 8px 14px;
+  background: #ffffff12;
+  border: 1px solid #ffffff3b;
+  border-radius: 7px;
   font-size: 12px;
-  white-space: nowrap;
+}
+.head-meta small {
+  color: #abc7db;
+  font-size: 11px;
 }
 .week-controls {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
   flex-wrap: wrap;
-  padding: 20px 22px 4px;
+  padding: 22px;
 }
 .week-picker {
   display: flex;
@@ -503,270 +481,394 @@ p {
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  color: #51687e;
 }
-.help,
+.week-caption {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+  font-size: 13px;
+}
+.week-caption small {
+  font-size: 11px;
+  color: #627a90;
+}
+.staff-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 22px 18px;
+  border: 1px solid #d7e2ed;
+  border-radius: 10px;
+}
+.staff-stats > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 14px 16px;
+  border-top: 3px solid var(--stat-color, #64748b);
+  border-right: 1px solid #dce5ee;
+}
+.staff-stats > div:first-child {
+  border-radius: 10px 0 0 0;
+}
+.staff-stats > div:last-child {
+  border-right: 0;
+  border-radius: 0 10px 0 0;
+}
+.staff-stats span {
+  align-self: center;
+  font-size: 12px;
+  color: #415c75;
+}
+.staff-stats strong {
+  font-size: 25px;
+  color: var(--stat-color);
+  font-variant-numeric: tabular-nums;
+}
+.staff-stats small {
+  grid-column: 1 / -1;
+  color: #6b8196;
+  font-size: 10px;
+}
+.stat-free {
+  --stat-color: #137b54;
+}
+.stat-busy {
+  --stat-color: #c03c43;
+}
+.stat-unknown {
+  --stat-color: #697c92;
+}
+.stat-offline {
+  --stat-color: #ac6314;
+}
+.stat-online {
+  --stat-color: #2468c4;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 0 22px;
+  padding: 12px 0;
+  border-block: 1px solid #e0e7f0;
+}
+.legend > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #456078;
+  background: none;
+}
+.legend i {
+  height: 10px;
+  width: 10px;
+  border-radius: 3px;
+  background: var(--tone);
+}
+.legend > small {
+  margin-left: auto;
+  color: #6b8196;
+  font-size: 10px;
+}
+.tone-free {
+  --tone: #16845c;
+  --tone-bg: #dff2e7;
+  --tone-ink: #12653f;
+  --tone-line: #a4d9bd;
+}
+.tone-busy {
+  --tone: #d14650;
+  --tone-bg: #fbe4e6;
+  --tone-ink: #a52c38;
+  --tone-line: #edb4bb;
+}
+.tone-unknown {
+  --tone: #8b9db1;
+  --tone-bg: #eef2f7;
+  --tone-ink: #566d83;
+  --tone-line: #d5dfe9;
+}
+.tone-offline {
+  --tone: #c7811a;
+  --tone-bg: #ffedc9;
+  --tone-ink: #895013;
+  --tone-line: #e4bd70;
+}
+.tone-online {
+  --tone: #3175d1;
+  --tone-bg: #deebff;
+  --tone-ink: #2056a3;
+  --tone-line: #a7c7f1;
+}
+.tone-mixed {
+  --tone: #0e8494;
+  --tone-bg: #d7f0f2;
+  --tone-ink: #11636c;
+  --tone-line: #91cfd7;
+}
+.tone-past {
+  --tone: #a6b4c1;
+  --tone-bg: #f7f9fb;
+  --tone-ink: #8394a3;
+  --tone-line: #e5eaf0;
+}
+.help {
+  margin: 12px 22px;
+  color: #60778d;
+  font-size: 12px;
+  line-height: 1.9;
+}
 .warning,
 .error,
 .notice {
   margin: 12px 22px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.8;
 }
 .warning {
-  color: #a57126;
-  background: #fff7e7;
-  padding: 10px 12px;
-  border-radius: 9px;
+  color: #926121;
+  background: #fff5df;
+  border-left: 3px solid #d69c36;
 }
 .error {
-  color: #b14838;
-  background: #fff1ed;
-  padding: 10px 12px;
-  border-radius: 9px;
+  color: #b23442;
+  background: #ffedf0;
 }
 .notice {
-  color: #287755;
-}
-.legend {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: #6b7e93;
-}
-.legend i {
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-  margin-left: 8px;
-}
-.free {
-  background: #e8f7ef;
-  color: #23734f;
-}
-.busy {
-  background: #fff0ee;
-  color: #b7463a;
-}
-.unknown {
-  background: #f0f3f7;
-  color: #7f8fa1;
-}
-.legend .free {
-  background: #5db38b;
-}
-.legend .busy {
-  background: #d8796d;
-}
-.legend .unknown {
-  background: #b7c2ce;
-}
-.batch-bar {
-  padding: 12px 22px;
-  background: #f7faff;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  border-block: 1px solid #e0e8f2;
-  font-size: 12px;
-}
-.batch-bar label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.batch-bar > span {
-  color: #7488a0;
-  margin-left: auto;
+  color: #166849;
+  background: #e8f5ec;
+  border-left: 3px solid #2d966b;
 }
 .staff-grid table {
   width: 100%;
   border-spacing: 0;
   table-layout: fixed;
-  border-collapse: separate;
   font-size: 12px;
 }
 .name-col {
-  width: 142px;
+  width: 124px;
 }
 .position-col {
-  width: 84px;
+  width: 90px;
 }
 th,
 td {
-  border-bottom: 1px solid #e1e8f0;
-  border-right: 1px solid #e1e8f0;
+  border-bottom: 1px solid #dce5ee;
+  border-right: 1px solid #dce5ee;
   text-align: center;
   padding: 0;
+}
+tr > :last-child {
+  border-right: 0;
 }
 thead th {
   position: sticky;
   top: var(--staff-sticky-top);
   z-index: 2;
-  height: 64px;
-  background: #edf3fa;
-  color: #42617e;
+  height: 68px;
+  background: #173c59;
+  color: #fff;
+  font-size: 12px;
+  border-color: #31526c;
+  box-shadow: 0 2px 0 #1c6680;
 }
-thead label {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 5px;
+thead th b {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
 }
 thead small {
-  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #b7cede;
+  font-size: 10px;
   font-weight: 400;
-  color: #7b8ea3;
+}
+thead em {
+  color: #fff;
+  background: #247e96;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-style: normal;
 }
 thead .today {
-  background: #ddebf9;
+  background: #155c72;
+  box-shadow:
+    inset 0 3px #5ac8cf,
+    0 2px #1c6680;
 }
 .person-name {
-  padding: 10px 14px;
+  padding: 14px;
   text-align: left;
-  font-weight: 650;
-  background: #fcfdff;
-}
-.person-name label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  font-weight: 700;
+  background: #f5f8fc;
+  font-size: 13px;
 }
 .person-name small {
   display: block;
-  color: #ba8270;
+  color: #a06b3b;
   font-weight: 400;
   font-size: 10px;
-  margin-top: 4px;
+  margin-top: 5px;
 }
 .position {
-  color: #7a8fa3;
+  background: #fafcfe;
 }
-.day-cell button {
-  width: 100%;
-  min-height: 53px;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  color: inherit;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  font: inherit;
-  cursor: pointer;
-  padding: 7px 4px;
-}
-.day-cell button b {
-  font-weight: 600;
-}
-.day-cell small {
+.position span {
+  display: inline-block;
+  padding: 4px 6px;
+  background: #edf2f8;
+  color: #63758c;
+  border: 1px solid #dce5ee;
+  border-radius: 5px;
   font-size: 10px;
 }
-.day-cell button:hover {
-  box-shadow: inset 0 0 0 2px #86afd5;
+.position .manager {
+  color: #224f79;
+  background: #e5eef8;
+  border-color: #bfcee2;
 }
-.past {
-  color: #94a3b5;
-  background: #fafbfd;
+.day-cell {
+  padding: 6px;
+  background: #fff;
 }
-.actual {
-  color: #28689c;
-  background: #eaf3ff;
+.today-cell {
+  background: #f0f8fb;
+}
+.staff-cell {
+  width: 100%;
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--tone-line);
+  border-left: 4px solid var(--tone);
+  border-radius: 7px;
+  color: var(--tone-ink);
+  background: var(--tone-bg);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    box-shadow 140ms ease,
+    border-color 140ms ease;
+}
+.staff-cell b {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.cell-stage {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  opacity: 0.85;
+}
+.cell-stage i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+.cell-detail {
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+.staff-cell:hover:not(:disabled) {
+  border-color: var(--tone);
+  box-shadow: 0 2px 8px #14334c16;
+}
+.staff-cell:focus-visible {
+  outline: 2px solid #206d9c;
+  outline-offset: 2px;
+}
+.staff-cell:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.staff-cell.is-actual {
+  border-top: 2px solid var(--tone);
+}
+tbody tr:hover .person-name {
+  background: #e8eff7;
 }
 .mobile-date {
   display: none;
 }
 .staff-footer {
   padding: 16px 22px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
   font-size: 11px;
-  color: #8596aa;
   line-height: 1.8;
+  color: #697e92;
+}
+.staff-footer strong {
+  color: #315a79;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 .empty {
   text-align: center;
-  padding: 50px 16px;
-}
-button,
-input {
-  font: inherit;
-}
-button {
-  border: 1px solid #d6e1ed;
-  border-radius: 8px;
-  padding: 8px 12px;
-  background: #fff;
-  color: #4b6782;
-  cursor: pointer;
-  font-size: 12px;
-}
-input[type='date'],
-.reason input {
-  border: 1px solid #d6e1ed;
-  border-radius: 8px;
-  padding: 8px;
-  min-width: 0;
-  background: #fff;
-  color: #345574;
-}
-input[type='checkbox'] {
-  accent-color: #2866b5;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.primary {
-  background: #2866b5;
-  color: #fff;
-  border-color: #2866b5;
-}
-button:focus-visible,
-input:focus-visible {
-  outline: 2px solid #70a1d6;
-  outline-offset: 2px;
+  padding: 50px 20px;
+  color: #6d8398;
+  font-size: 13px;
 }
 .staff-dialog {
-  width: min(580px, calc(100vw - 24px));
+  width: min(540px, calc(100vw - 24px));
+  max-width: none;
   max-height: calc(100dvh - 24px);
   padding: 0;
-  border: 1px solid #d6e1ed;
-  border-radius: 18px;
-  color: #203a54;
   margin: auto;
-  box-shadow: 0 24px 80px #18324c44;
-}
-.staff-dialog::backdrop {
-  background: #182c4b66;
-  backdrop-filter: blur(4px);
+  border: 1px solid #cbd8e5;
+  border-radius: 16px;
+  color: #1c3b55;
+  box-shadow: 0 24px 80px #0d263b55;
 }
 .staff-dialog[open] {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
-.staff-dialog header,
-.staff-dialog footer {
-  flex-shrink: 0;
-}
-.dialog-body {
-  min-height: 0;
-  overflow: auto;
-}
-@media (max-width: 900px) {
-  .staff-page {
-    --staff-sticky-top: -16px;
-  }
+.staff-dialog::backdrop {
+  background: #102b4866;
+  backdrop-filter: blur(4px);
 }
 .staff-dialog header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 22px;
-  border-bottom: 1px solid #e2eaf3;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px;
+  background: #163c58;
+  color: #fff;
+  flex-shrink: 0;
+  border-bottom: 3px solid #e7ae42;
 }
 .staff-dialog header small {
-  color: #7b8da3;
+  font-size: 10px;
+  color: #acd0df;
+  letter-spacing: 1px;
 }
 .staff-dialog h3 {
   margin: 8px 0 0;
@@ -774,6 +876,25 @@ input:focus-visible {
 }
 .dialog-body {
   padding: 22px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.current-arrangement {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  color: var(--tone-ink);
+  background: var(--tone-bg);
+  border-left: 4px solid var(--tone);
+  border-radius: 7px;
+  margin-bottom: 18px;
+}
+.current-arrangement strong {
+  font-size: 13px;
+}
+.current-arrangement span {
+  font-size: 11px;
 }
 .status-picker {
   display: flex;
@@ -781,40 +902,175 @@ input:focus-visible {
 }
 .status-picker button {
   flex: 1;
-  padding: 16px 8px;
-  border: 2px solid transparent;
+  display: grid;
+  gap: 6px;
+  padding: 18px 10px;
+  border: 2px solid #dce4ed;
+  text-align: center;
+}
+.status-picker b {
+  font-size: 17px;
+}
+.status-picker small {
+  font-size: 10px;
+}
+.status-picker .free {
+  color: #176447;
+  background: #e6f5ec;
+}
+.status-picker .busy {
+  color: #ac3340;
+  background: #fce9ec;
 }
 .status-picker button[aria-pressed='true'] {
   border-color: currentColor;
-  font-weight: 700;
+  box-shadow: inset 0 -3px currentColor;
 }
 .reason {
   display: grid;
   gap: 8px;
-  font-size: 13px;
   margin-top: 18px;
+  font-size: 12px;
+  color: #4c667e;
+}
+.edit-hint,
+.saved-meta {
+  font-size: 11px;
+  color: #667d92;
+  line-height: 1.8;
+  margin: 14px 0 0;
+}
+.saved-meta {
+  padding-top: 12px;
+  border-top: 1px dashed #d8e3ed;
 }
 .staff-dialog footer {
-  padding: 16px 22px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  border-top: 1px solid #e2eaf3;
+  padding: 16px 22px;
+  border-top: 1px solid #dce5ee;
+  flex-shrink: 0;
+  background: #f7faff;
 }
 .dialog-body .error {
   margin: 12px 0 0;
 }
-@container (max-width:760px) {
+button {
+  border: 1px solid #cddae8;
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: #fff;
+  color: #365775;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+button:focus-visible {
+  outline: 2px solid #277aa4;
+  outline-offset: 2px;
+}
+button.primary,
+button.this-week {
+  background: #1e6786;
+  color: #fff;
+  border-color: #1e6786;
+}
+.staff-dialog header button {
+  color: #d7e9f1;
+  background: #ffffff0f;
+  border-color: #ffffff33;
+}
+input {
+  min-width: 0;
+  border: 1px solid #c7d6e5;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: #22415a;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .staff-cell {
+    transition: none;
+  }
+}
+@media (max-width: 900px) {
+  .staff-page {
+    --staff-sticky-top: 42px;
+  }
+}
+@container (max-width: 1000px) {
+  .staff-cell {
+    padding: 8px;
+    min-height: 78px;
+  }
+  .cell-detail {
+    font-size: 9px;
+  }
+  .staff-stats > div {
+    padding: 12px 10px;
+  }
+  .name-col {
+    width: 104px;
+  }
+  .position-col {
+    width: 76px;
+  }
+}
+@container (max-width: 760px) {
   .staff-head {
-    padding: 18px;
+    padding: 20px;
     align-items: flex-start;
-    flex-direction: column;
+  }
+  .head-meta small {
+    display: none;
   }
   h2 {
     font-size: 26px;
   }
+  .staff-head p {
+    font-size: 12px;
+  }
   .week-controls {
-    padding: 16px 16px 0;
+    padding: 16px;
+    gap: 14px;
+  }
+  .week-caption {
+    text-align: left;
+  }
+  .week-picker {
+    gap: 6px;
+  }
+  .week-picker label {
+    flex-wrap: wrap;
+  }
+  .week-picker button {
+    padding: 9px;
+    font-size: 11px;
+  }
+  .staff-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-inline: 16px;
+  }
+  .staff-stats > div {
+    border-bottom: 1px solid #dce5ee;
+  }
+  .staff-stats strong {
+    font-size: 22px;
+  }
+  .legend {
+    margin-inline: 16px;
+    gap: 10px 14px;
+  }
+  .legend > small {
+    margin-left: 0;
+    width: 100%;
   }
   .help,
   .warning,
@@ -822,13 +1078,9 @@ input:focus-visible {
   .notice {
     margin: 12px 16px;
   }
-  .batch-bar {
-    padding: 12px 16px;
-    gap: 12px;
-  }
   .staff-grid {
     padding: 12px;
-    background: #f5f8fc;
+    background: #eef3f8;
   }
   .staff-grid table,
   .staff-grid tbody {
@@ -846,13 +1098,14 @@ input:focus-visible {
   }
   .staff-grid tr {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    background: #e1e8f0;
-    gap: 1px;
-    border: 1px solid #dbe4f0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #cddae6;
     border-radius: 12px;
-    overflow: clip;
     margin-bottom: 12px;
+    box-shadow: 0 3px 8px #18324c08;
   }
   .staff-grid th,
   .staff-grid td {
@@ -861,22 +1114,50 @@ input:focus-visible {
   }
   .person-name,
   .position {
-    padding: 14px;
+    padding: 2px 2px 6px;
     background: #fff;
   }
   .position {
     text-align: right;
   }
-  .day-cell button {
-    min-height: 84px;
+  .day-cell,
+  .today-cell {
+    padding: 0;
+    background: none;
+  }
+  .staff-cell {
+    min-height: 104px;
   }
   .mobile-date {
     display: block;
     font-size: 10px;
-    color: #8797a9;
+    line-height: 1.4;
   }
   .access {
-    font-size: 11px;
+    font-size: 10px;
+    padding: 7px 9px;
+  }
+  .staff-footer {
+    padding: 16px;
+  }
+}
+@container (max-width: 380px) {
+  .staff-head {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .head-meta {
+    justify-items: start;
+  }
+  .staff-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .week-picker label {
+    order: -1;
+    width: 100%;
+  }
+  .week-picker input {
+    flex: 1;
   }
 }
 </style>

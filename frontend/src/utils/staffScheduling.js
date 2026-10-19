@@ -32,6 +32,50 @@ export function availabilityLabel(person, mode) {
   if (!personCanSchedule(person, mode)) return '已安排另一种检查'
   return '有空'
 }
+export function staffCellPresentation(cell, day, today) {
+  const actual = cell.actual_modes || []
+  const modes = [
+    ...new Set(
+      actual.length
+        ? actual.map((item) => item.mode)
+        : day >= today
+          ? cell.planned_modes || []
+          : [],
+    ),
+  ]
+  if (modes.length) {
+    const tone = modes.length > 1 ? 'mixed' : modes[0]
+    const name = tone === 'mixed' ? '现场 / 视频' : tone === 'offline' ? '现场巡检' : '视频巡检'
+    return {
+      tone,
+      stage: actual.length ? '实绩' : '已排班',
+      label: name,
+      detail: actual.length
+        ? `已记录 ${actual.reduce((sum, item) => sum + Number(item.count || 0), 0)} 张检查表`
+        : '已安排 · 等待巡检记录',
+    }
+  }
+  if (day < today) return { tone: 'past', stage: '历史', label: '无巡检记录', detail: '' }
+  if (cell.available === true)
+    return { tone: 'free', stage: '可排班', label: '有空', detail: '可选择此人派工' }
+  if (cell.available === false)
+    return { tone: 'busy', stage: '不派工', label: '没空', detail: cell.reason || '未填写原因' }
+  return { tone: 'unknown', stage: '待确认', label: '未确认', detail: '请逐格确认档期' }
+}
+export function staffWeekSummary(board) {
+  const result = { free: 0, busy: 0, unknown: 0, offline: 0, online: 0 }
+  if (!board) return result
+  for (const person of board.people) {
+    for (const { day } of board.days) {
+      const cell = person.cells[day]
+      const state = staffCellPresentation(cell, day, board.today)
+      if (['free', 'busy', 'unknown'].includes(state.tone)) result[state.tone]++
+      if (state.tone === 'mixed' || state.tone === 'offline') result.offline++
+      if (state.tone === 'mixed' || state.tone === 'online') result.online++
+    }
+  }
+  return result
+}
 export function taskGroups(tasks) {
   const groups = new Map()
   for (const task of tasks) {

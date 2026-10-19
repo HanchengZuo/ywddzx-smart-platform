@@ -39,7 +39,7 @@ class BalanceTests(unittest.TestCase):
     def test_authentication_precedes_database_for_all_new_routes(self):
         app = Flask(__name__); connect = MagicMock()
         register_staff_availability(app, connect=connect, has_permission=lambda *_: True)
-        register_schedule_automation(app, connect=connect, has_permission=lambda *_: True, scope=lambda *_: (([], []), ([], [])))
+        register_schedule_automation(app, connect=connect, has_permission=lambda *_: True)
         register_schedule_tasks(app, connect=connect)
         for path, method in [('/api/staff-availability', 'get'), ('/api/staff-availability', 'put'), ('/api/inspection-schedule/auto', 'post'), ('/api/my-schedule-tasks', 'get')]:
             self.assertEqual(getattr(app.test_client(), method)(path).status_code, 401)
@@ -60,8 +60,7 @@ class StaffDatabaseTests(unittest.TestCase):
         self.permissions.update({VIEW, EDIT})
         app = self.client.application
         register_staff_availability(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions)
-        register_schedule_automation(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions,
-                                     scope=lambda *_: (self.station_scope, self.table_scope))
+        register_schedule_automation(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions)
         register_schedule_tasks(app, connect=self.connect)
 
     def availability(self, name='步雪琼', day='2026-10-19', available=True, **extra):
@@ -102,9 +101,11 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(person['cells']['2026-10-19']['reason'], '外出培训')
         self.assertEqual(person['cells']['2026-10-19']['updated_by_name'], '步雪琼')
 
-    def test_bulk_availability_and_schedule_are_atomic_and_versioned(self):
+    def test_availability_is_single_cell_only_and_schedule_bulk_stays_atomic(self):
         body = dict(available=True, cells=[dict(person_name='步雪琼', day='2026-10-19', revision=0), dict(person_name='孔德辰', day='2026-10-20', revision=0)])
-        self.assertEqual(self.client.put('/api/staff-availability', json=body).status_code, 409)
+        response = self.client.put('/api/staff-availability', json=body)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('每次只能保存一个单元格', response.json['error'])
         self.cur.execute("SELECT 1 FROM staff_availability WHERE day='2026-10-19'")
         self.assertIsNone(self.cur.fetchone())
         edits = [dict(station_id=1, column_key='odor', revision=0), dict(station_id=2, column_key='finance', revision=9)]
@@ -120,6 +121,45 @@ class StaffDatabaseTests(unittest.TestCase):
         with self.assertLogs(level='ERROR'):
             self.assertEqual(self.save(station_id=3).status_code, 500)
         self.assertEqual(self.counts()['cells'], 2)
+
+    def test_single_availability_save_is_versioned_and_rolls_back_on_audit_failure(self):
+        self.assertEqual(self.availability(available=False, reason='出差').status_code, 200)
+        response = self.client.put('/api/staff-availability', json=dict(available=True,
+            cells=[dict(person_name='步雪琼', day='2026-10-19', revision=0)]))
+        self.assertEqual(response.status_code, 409)
+        self.cur.execute("SELECT available,reason FROM staff_availability WHERE person_name='步雪琼' AND day='2026-10-19'")
+        self.assertEqual(dict(self.cur.fetchone()), dict(available=False, reason='出差'))
+        self.cur.execute('ALTER TABLE staff_availability_events ADD CHECK(false) NOT VALID'); self.admin.commit()
+        with self.assertLogs(level='ERROR'):
+            self.assertEqual(self.availability(available=True).status_code, 500)
+        self.cur.execute("SELECT available,reason FROM staff_availability WHERE person_name='步雪琼' AND day='2026-10-19'")
+        self.assertEqual(dict(self.cur.fetchone()), dict(available=False, reason='出差'))
+
+    def test_staff_board_separates_saved_modes_from_actual_records_and_cancellation_removes_plan(self):
+        self.assertEqual(self.save(inspector_ids=[2]).status_code, 200)
+        person = self.client.get('/api/staff-availability?week=2026-10-19').json['people'][0]
+        self.assertEqual(person['cells']['2026-10-20']['planned_modes'], ['offline'])
+        self.assertEqual(person['cells']['2026-10-20']['actual_modes'], [])
+        self.record(day='2026-10-19', inspector=2, table=7)
+        person = self.client.get('/api/staff-availability?week=2026-10-19').json['people'][0]
+        self.assertEqual(person['cells']['2026-10-19']['planned_modes'], [])
+        self.assertEqual(person['cells']['2026-10-19']['actual_modes'], [dict(mode='online', count=1)])
+        self.assertEqual(self.save(inspector_ids=[], revision=1).status_code, 200)
+        person = self.client.get('/api/staff-availability?week=2026-10-19').json['people'][0]
+        self.assertEqual(person['cells']['2026-10-20']['planned_modes'], [])
+
+    def test_automatic_schedule_uses_the_same_full_board_for_authorized_area_users(self):
+        self.availability(); self.availability(name='孔德辰')
+        before = self.client.post('/api/inspection-schedule/auto', json=dict(action='preview', day='2026-10-19')).json
+        self.actor = dict(id=4, username='area', real_name='片区用户', role='area_account', station_id=2)
+        response = self.client.post('/api/inspection-schedule/auto', json=dict(action='preview', day='2026-10-19'))
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['groups'], before['groups'])
+        self.assertEqual(response.json['available_count'], before['available_count'])
+        self.assertEqual(self.counts(), dict(cells=0, tasks=0))
+        response = self.client.post('/api/inspection-schedule/auto', json=dict(action='confirm', day='2026-10-19', token=response.json['token']))
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(self.counts()['cells'], before['cell_count'])
 
     def test_availability_and_cross_mode_cannot_be_bypassed_and_shared_lock_serializes(self):
         self.assertEqual(self.save(scheduled_date='2026-10-19').status_code, 409)

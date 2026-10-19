@@ -41,6 +41,8 @@ class ScheduleTest(unittest.TestCase):
             self.assertEqual(core.role_default_permission(role, VIEW_PERMISSION), role == 'root')
             self.assertEqual(core.role_default_permission(role, EDIT_PERMISSION), role == 'root')
         self.assertEqual(core.PERMISSION_DEPENDENCIES[EDIT_PERMISSION], VIEW_PERMISSION)
+        self.assertEqual({item['key'] for item in core.PERMISSION_CATALOG if item['category'] == '巡检排班'},
+                         {VIEW_PERMISSION, EDIT_PERMISSION})
         self.assertFalse(any('/api/inspection-plan-' in rule.rule for rule in core.app.url_map.iter_rules()))
         self.assertFalse(hasattr(core, 'mark_related_plan_items_completed'))
 
@@ -49,8 +51,7 @@ class ScheduleTest(unittest.TestCase):
         connect = MagicMock()
         actor = None
         app.before_request(lambda: setattr(g, 'current_user', actor))
-        register_inspection_schedule(app, connect=connect, has_permission=lambda *_: True,
-                                     scope=lambda *_: (([], []), ([], [])))
+        register_inspection_schedule(app, connect=connect, has_permission=lambda *_: True)
         client = app.test_client()
         self.assertEqual(client.get('/api/inspection-schedule?user_id=1').status_code, 401)
         connect.assert_not_called()
@@ -97,13 +98,10 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.admin.commit()
         self.actor = dict(id=2, username='staff', real_name='步雪琼', role='supervisor')
         self.permissions = {VIEW_PERMISSION, EDIT_PERMISSION}
-        self.station_scope = ([], [])
-        self.table_scope = ([], [])
         app = Flask(__name__)
         app.before_request(lambda: setattr(g, 'current_user', self.actor))
         register_inspection_schedule(app, connect=self.connect,
-            has_permission=lambda _, actor, key: key in self.permissions,
-            scope=lambda *_: (self.station_scope, self.table_scope))
+            has_permission=lambda _, actor, key: key in self.permissions)
         self.client = app.test_client()
         self.query = dict(mode='offline', year=2026, quarter=4)
 
@@ -189,15 +187,17 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(self.board(dict(mode='online', year=2026, month=10))['summary']['completed'], 1)
         self.assertEqual(self.board(dict(mode='online', year=2026, month=11))['summary']['completed'], 1)
 
-    def test_scopes_station_switches_tables_and_inspector_roles_are_revalidated(self):
-        self.station_scope = (['s.region=%s'], ['浦东片区'])
-        self.table_scope = (['t.id=%s'], [1])
-        board = self.board()
-        self.assertEqual([row['station_id'] for row in board['rows']], [2])
-        self.assertEqual([c['key'] for c in board['columns'] if c['table_id']], ['odor'])
-        self.assertEqual(self.save().status_code, 403)
-        self.assertEqual(self.save(station_id=2, column_key='finance').status_code, 403)
-        self.station_scope = ([], []); self.table_scope = ([], [])
+    def test_authorized_roles_share_the_full_board_and_can_edit_outside_their_own_region(self):
+        for role in ('area_account', 'station_manager', 'quality_safety', 'finance'):
+            self.actor = dict(id=4, username='scoped', real_name='授权用户', role=role, station_id=2,
+                              inspection_table_scope_ids=[2], station_region_scope_values=['浦东片区'])
+            board = self.board()
+            self.assertEqual([row['station_id'] for row in board['rows']], [1,3,2])
+            self.assertEqual(len([c for c in board['columns'] if c['table_id']]), 6)
+        self.assertEqual(self.save(inspector_ids=[2]).status_code, 200)
+        self.assertEqual(self.save(station_id=2, column_key='finance', inspector_ids=[2]).status_code, 200)
+
+    def test_station_switches_tables_and_inspector_roles_are_revalidated(self):
         for overrides, status in [({'station_id': 4}, 403), ({'station_id': 5}, 403),
             ({'inspector_ids': [1]},400), ({'inspector_ids': [4]},400), ({'inspector_ids': [999]},400),
             ({'inspector_ids': [True]},400), ({'revision': True},400), ({'column_key':'measurement'},400), ({'column_key':[]},400)]:
@@ -213,7 +213,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         conn = self.connect(); other = self.connect()
         try:
             with conn.cursor() as cur:
-                save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[2],scheduled_date='2026-10-20',revision=0), chosen,start,end,([],[]),([],[]))
+                save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[2],scheduled_date='2026-10-20',revision=0), chosen,start,end)
             with other.cursor() as cur:
                 cur.execute("SET LOCAL lock_timeout='100ms'")
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
@@ -221,7 +221,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 other.rollback()
                 cur.execute("SET LOCAL lock_timeout='100ms'")
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
-                    save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[3],scheduled_date='2026-10-20',revision=0), chosen,start,end,([],[]),([],[]))
+                    save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[3],scheduled_date='2026-10-20',revision=0), chosen,start,end)
                 other.rollback(); conn.commit()
             self.assertEqual(self.save(inspector_ids=[3]).status_code, 409)
         finally:

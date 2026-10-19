@@ -65,8 +65,8 @@ export function directoryPageNumbers(page, total) {
 }
 
 const scopeKinds = {
-  limit_issue_inspection_table_scope: 'tables', limit_record_inspection_table_scope: 'tables', limit_plan_inspection_table_scope: 'tables',
-  limit_issue_station_region_scope: 'regions', limit_record_station_region_scope: 'regions', limit_plan_station_region_scope: 'regions', limit_certificate_station_region_scope: 'regions',
+  limit_issue_inspection_table_scope: 'tables', limit_record_inspection_table_scope: 'tables',
+  limit_issue_station_region_scope: 'regions', limit_record_station_region_scope: 'regions', limit_certificate_station_region_scope: 'regions',
   view_own_inspection_issues: 'station', view_own_inspection_records: 'station', view_own_certificates: 'station',
 }
 
