@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { coverageQuery, currentCoveragePeriod, stationCoordinates, filterUncoveredStations } from '../src/utils/schedulingCoverage.js'
 import { operationsMenuPages } from '../src/config/operationsCatalog.js'
-import { buildRegionAreas } from '../src/utils/schedulingRegions.js'
 import { amapStationLabel } from '../src/utils/amapSdk.js'
 
 test('both maps share literal station labels directly above pins with white halo', () => {
@@ -17,41 +16,13 @@ test('both maps share literal station labels directly above pins with white halo
   }
 })
 
-function insideConvex(point, path) {
-  return path.every((a, index) => {
-    const b = path[(index + 1) % path.length]
-    return (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0]) >= -1e-10
-  })
-}
-test('region outlines include every station and a visible buffer, including singleton and collinear sets', () => {
-  for (const coordinates of [
-    [[121.5,31.2]], [[121.5,31.2],[121.5,31.2]],
-    [[121.5,31.2],[121.6,31.3]], [[121.5,31.2],[121.6,31.3],[121.7,31.4]],
-    [[121.5,31.2],[121.6,31.2],[121.6,31.3],[121.5,31.3],[121.55,31.25]],
-  ]) {
-    const [{ path,center }] = buildRegionAreas([{ region:'浦东',coordinates }])
-    assert.ok(path.length >= 16)
-    assert.ok(coordinates.every(point => insideConvex(point, path)))
-    assert.ok(insideConvex(center, path))
-    assert.ok(path.flat().every(Number.isFinite))
-    assert.ok(Math.min(...path.map(point => point[0])) < Math.min(...coordinates.map(point => point[0])))
-    assert.ok(Math.max(...path.map(point => point[1])) > Math.max(...coordinates.map(point => point[1])))
-  }
-})
-test('regions stay separate, ignore missing region/coordinates and never mutate source geometry', () => {
-  const groups = [
-    { region:'浦东',coordinates:[[121.5,31.2],[null,null],[181,31],['121.6','31.3']] },
-    { region:'宝静',coordinates:[[121.4,31.4]] },
-    { region:'未填写片区',coordinates:[[121.1,31.1]] },
-    { region:'',coordinates:[[121.1,31.1]] },
-    { region:'空片区',coordinates:[] },
-  ]
-  const before = JSON.stringify(groups)
-  const result = buildRegionAreas(groups)
-  assert.equal(result.length, 2)
-  assert.equal(JSON.stringify(groups), before)
-  assert.deepEqual(result, buildRegionAreas([...groups].reverse()))
-  assert.deepEqual(buildRegionAreas(null), [])
+test('scheduling map keeps station names and region filtering without region overlays or controls', () => {
+  const canvas = readFileSync(new URL('../src/components/SchedulingMapCanvas.vue', import.meta.url), 'utf8')
+  const page = readFileSync(new URL('../src/views/inspection/SchedulingMapView.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(canvas, /sdk\.Polygon|regionPoints|片区区划|showRegions/)
+  assert.match(canvas, /const positions = located.value.map\(stationCoordinates\)/)
+  assert.match(page, /<select v-model="region">/)
+  assert.doesNotMatch(page, /region_points|region-points|蓝色片区/)
 })
 
 test('Beijing date defaults correctly across UTC year and quarter boundaries', () => {

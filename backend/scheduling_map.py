@@ -71,9 +71,6 @@ def coverage(cur, chosen, start, end, station_scope, table_scope):
             COUNT(*) FILTER(WHERE NOT checked) AS remaining,
             COUNT(*) FILTER(WHERE NOT checked AND NOT has_coordinates) AS missing_coordinates
           FROM evaluated GROUP BY region) r),
-        'region_points',(SELECT COALESCE(json_agg(r ORDER BY region),'[]') FROM (
-          SELECT region,json_agg(json_build_array(longitude,latitude) ORDER BY station_id) AS coordinates
-          FROM evaluated WHERE has_coordinates GROUP BY region) r),
         'stations',(SELECT COALESCE(json_agg(r ORDER BY region,station_name,station_id),'[]') FROM (
           SELECT station_id,station_name,region,address,longitude,latitude,status,has_coordinates
           FROM evaluated WHERE NOT checked) r)

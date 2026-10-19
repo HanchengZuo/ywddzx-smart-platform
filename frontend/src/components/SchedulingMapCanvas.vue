@@ -3,7 +3,6 @@
     <header class="coverage-map-toolbar">
       <div><span class="pin-key" aria-hidden="true"></span><strong>未检查站点</strong><small>{{ located.length }} 座已定位</small></div>
       <div>
-        <button class="map-tool region-tool" :class="{ active:showRegions }" type="button" :aria-pressed="showRegions" :disabled="!mapReady" @click="showRegions = !showRegions"><i aria-hidden="true"></i>片区区划</button>
         <button class="map-tool" type="button" :disabled="!mapReady" @click="fit">显示全部图钉</button>
         <button class="map-tool primary" type="button" :disabled="!canFullscreen" @click="toggleFullscreen">{{ fullscreen ? '退出全屏' : '全屏地图' }}</button>
       </div>
@@ -20,7 +19,7 @@
       <div v-else-if="mapReady && !located.length" class="coverage-map-empty" role="status">
         当前视图没有可定位的待检查站点
       </div>
-      <p class="coverage-map-caption">图钉仅显示未检查站点<span v-if="showRegions"> · 蓝色为片区站点分布示意，非行政边界</span></p>
+      <p class="coverage-map-caption">图钉仅显示未检查站点 · 点击图钉查看站点</p>
     </div>
   </section>
 </template>
@@ -29,9 +28,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { loadAmapSdk, SHANGHAI_CENTER, amapPinIcon, amapStationLabel } from '@/utils/amapSdk'
 import { stationCoordinates } from '@/utils/schedulingCoverage'
-import { buildRegionAreas } from '@/utils/schedulingRegions'
 
-const props = defineProps({ stations: { type: Array, default: () => [] }, regionPoints: { type: Array, default: () => [] }, selectedId: { type: [String, Number], default: '' } })
+const props = defineProps({ stations: { type: Array, default: () => [] }, selectedId: { type: [String, Number], default: '' } })
 const emit = defineEmits(['select'])
 const frame = ref(null)
 const canvas = ref(null)
@@ -40,15 +38,12 @@ const error = ref('')
 const mapReady = ref(false)
 const fullscreen = ref(false)
 const fullscreenError = ref('')
-const showRegions = ref(true)
-const areas = computed(() => buildRegionAreas(props.regionPoints))
 const canFullscreen = typeof document !== 'undefined' && Boolean(document.documentElement.requestFullscreen)
 const located = computed(() => props.stations.filter(station => stationCoordinates(station)))
 let map = null
 let sdk = null
 let layer = null
 let markers = []
-let regionOverlays = []
 let info = null
 let disposed = false
 let observer = null
@@ -63,7 +58,7 @@ function clearMarkers() {
 
 function fit() {
   if (!map) return
-  const positions = [...located.value.map(stationCoordinates), ...(showRegions.value ? areas.value.flatMap(area => area.path) : [])]
+  const positions = located.value.map(stationCoordinates)
   if (positions.length === 1) map.setZoomAndCenter(13, positions[0], true)
   else if (positions.length) {
     // LabelsLayer pins are not ordinary map overlays; fit their coordinates explicitly.
@@ -72,27 +67,6 @@ function fit() {
     map.setBounds(new sdk.Bounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]), true, [65, 45, 70, 45])
   }
   else map.setZoomAndCenter(10.8, SHANGHAI_CENTER, true)
-}
-
-function clearRegions() {
-  if (regionOverlays.length) map?.remove(regionOverlays)
-  regionOverlays = []
-}
-
-function renderRegions() {
-  if (!map) return
-  clearRegions()
-  if (showRegions.value) {
-    regionOverlays = areas.value.flatMap(area => {
-      const label = document.createElement('div')
-      label.textContent = area.region
-      label.style.cssText = `padding:5px 10px;border:1px solid ${area.color}88;border-radius:7px;background:#fffffff0;color:${area.color};font-size:13px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 2px 10px #1e40af14;`
-      return [new sdk.Polygon({ path:area.path,fillColor:area.color,fillOpacity:.12,strokeColor:area.color,
-        strokeOpacity:.7,strokeWeight:2,zIndex:30,bubble:true,draggable:false }),
-      new sdk.Marker({ position:area.center,content:label,anchor:'center',offset:new sdk.Pixel(0,18),zIndex:60,bubble:true,clickable:false })]
-    })
-    map.add(regionOverlays)
-  }
 }
 
 function focus(station) {
@@ -157,12 +131,10 @@ async function initialize() {
     if (disposed || !canvas.value) return
     map = new sdk.Map(canvas.value, { center: SHANGHAI_CENTER, zoom: 10.8, resizeEnable: true, animateEnable: false })
     mapReady.value = true
-    renderRegions()
     renderMarkers()
   } catch (cause) {
     if (!disposed) {
       clearMarkers()
-      clearRegions()
       map?.destroy()
       map = null
       mapReady.value = false
@@ -189,8 +161,6 @@ function fullscreenChanged() {
   nextTick(resize)
 }
 watch(() => props.stations, renderMarkers)
-watch(areas, () => { renderRegions(); fit() })
-watch(showRegions, renderRegions)
 watch(() => props.selectedId, id => {
   const station = located.value.find(item => String(item.station_id) === String(id))
   if (station) focus(station)
@@ -207,7 +177,6 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(resizeFrame)
   document.removeEventListener('fullscreenchange', fullscreenChanged)
   clearMarkers()
-  clearRegions()
   info?.close()
   map?.destroy()
   map = null
@@ -226,10 +195,6 @@ onBeforeUnmount(() => {
 .pin-key { width:10px; height:10px; border-radius:50%; background:#d97706; box-shadow:0 0 0 4px #fef3c7; margin-right:3px; }
 .map-tool { min-height:36px; padding:7px 12px; border:1px solid #d4e1ec; border-radius:8px; background:#fff; color:#395972; font:inherit; font-size:12px; cursor:pointer; }
 .map-tool.primary { color:#fff; border-color:#176e9c; background:#176e9c; }
-.region-tool { display:flex; align-items:center; gap:7px; }
-.region-tool i { width:12px; height:10px; border:1px solid #8a9fb0; border-radius:3px; background:#e7edf2; }
-.region-tool.active { color:#2563eb; border-color:#bdd5fa; background:#eff6ff; }
-.region-tool.active i { border-color:#3b82f6; background:#bfdbfe; }
 .map-tool:disabled { cursor:not-allowed; opacity:.5; }
 .map-tool:focus-visible { outline:2px solid #168ec4; outline-offset:3px; }
 .coverage-map-body { position:relative; flex:1; min-height:420px; }

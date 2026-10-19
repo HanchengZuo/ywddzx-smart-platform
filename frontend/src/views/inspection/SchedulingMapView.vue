@@ -43,7 +43,7 @@
           <span>匹配 {{ visibleStations.length }} 座待检查站点</span>
         </div>
         <div class="map-list-grid">
-          <SchedulingMapCanvas ref="coverageMap" :stations="visibleStations" :region-points="visibleRegionPoints" :selected-id="selectedId" @select="selectedId = $event" />
+          <SchedulingMapCanvas ref="coverageMap" :stations="visibleStations" :selected-id="selectedId" @select="selectedId = $event" />
           <aside class="station-list-panel" aria-label="待检查站点清单">
             <header><h4>待检查清单</h4><span>{{ visibleStations.length }} 座</span></header>
             <div class="station-list">
@@ -66,7 +66,6 @@
       <p>数据以巡检记录的“巡检日期”为准，而非问题登记或审核日期。现场检查表按自然季度覆盖，视频检查表按自然月覆盖；类型取自检查表的现场/视频属性。</p>
       <p>同一站点在所选周期内，只要存在任意一张对应类型检查表的巡检记录即视为已检查，不要求完成所有检查表。不受问题有无、审核结果、检查完成确认或站经理签名状态影响，零问题记录同样计数；记录被删除后会在下次查询中重新判断。</p>
       <p>沿用当前账号巡检记录的站点、片区及检查表数据范围，但不隐藏未审核记录。所有可见站点均纳入，包含停业站点；缺少坐标不会被遗漏。覆盖率按站点去重，不能作为检查表逐表完成率、整改完成率或考核结论。</p>
-      <p>蓝色片区区划根据该片区所有可见站点的有效坐标生成包围范围，边缘适当留白，仅为业务片区站点分布示意，不是高德行政边界；不同片区的范围可能重叠。已检查站点不显示图钉，但仍用于保持片区范围稳定。未设置片区或无有效坐标时不生成区划；可使用“片区区划”开关隐藏区域。</p>
       <p>数据按查询时刻读取；新增记录后可点击“更新当前周期覆盖”。关键词只筛选待检查清单与图钉，不改变上方的片区覆盖统计。本页面只提供排班参考，不会自动派工、删除记录或修改巡检计划。</p>
     </details>
   </div>
@@ -96,7 +95,6 @@ let sequence = 0
 const summary = computed(() => result.value?.regions.find(item => item.region === region.value) || result.value?.summary || { total:0,checked:0,remaining:0,missing_coordinates:0 })
 const rate = computed(() => summary.value.total ? Math.round(summary.value.checked / summary.value.total * 1000) / 10 : 0)
 const visibleStations = computed(() => filterUncoveredStations(result.value?.stations || [], region.value, keyword.value))
-const visibleRegionPoints = computed(() => (result.value?.region_points || []).filter(item => !region.value || item.region === region.value))
 const dirty = computed(() => {
   if (!result.value) return false
   try { return JSON.stringify(coverageQuery(draft.value)) !== JSON.stringify(coverageQuery(result.value.period)) } catch { return true }

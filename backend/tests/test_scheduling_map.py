@@ -126,10 +126,6 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
         self.assertEqual(len(result['regions']), 3)
         self.assertIn('未填写片区', [r['region'] for r in result['regions']])
         self.assertEqual(next(r for r in result['regions'] if r['region'] == '浦东')['checked'], 1)
-        self.assertEqual(result['region_points'], [
-            {'region': '宝静', 'coordinates': [[121.4, 31.4]]},
-            {'region': '浦东', 'coordinates': [[121.5, 31.2], [121.6, 31.3]]},
-        ])
 
     def test_video_uses_selected_month_and_not_offline_records(self):
         result = self.result({'mode': 'online', 'year': '2026', 'month': '10'})
@@ -139,20 +135,17 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
         self.assertEqual(self.result({'mode': 'online', 'year': '2026', 'month': '11'})['summary']['checked'], 0)
 
     def test_period_edges_and_deleted_records(self):
-        region_points = self.result()['region_points']
         self.assertEqual(self.result()['summary']['checked'], 1)
         self.cur.execute("INSERT INTO inspections VALUES(6,3,1,'2026-12-31',NULL,NULL)")
         self.assertEqual(self.result()['summary']['checked'], 2)
         self.cur.execute('DELETE FROM inspections WHERE station_id=1')
         self.assertEqual(self.result()['summary']['checked'], 1)
         self.assertIn(1, [s['station_id'] for s in self.result()['stations']])
-        self.assertEqual(self.result()['region_points'], region_points)
 
     def test_scope_applies_to_denominator_coverage_and_pins(self):
         result = self.result(stations=(['s.region=%s'], ['浦东']), tables=(['t.id=%s'], [2]))
         self.assertEqual(result['summary'], dict(total=3, checked=1, remaining=2, missing_coordinates=1))
         self.assertTrue(all(s['region'] == '浦东' for s in result['stations']))
-        self.assertEqual([r['region'] for r in result['region_points']], ['浦东'])
         result = self.result(stations=(['s.id=%s'], [3]))
         self.assertEqual(result['stations'][0]['status'], '停业')
         self.assertEqual(result['summary']['remaining'], 1)
@@ -162,19 +155,18 @@ class SchedulingMapDatabaseTest(unittest.TestCase):
         self.assertFalse(result['has_tables'])
         self.assertEqual(result['summary']['total'], 0)
         self.assertEqual(result['stations'], [])
-        self.assertEqual(result['region_points'], [])
         self.assertEqual(self.result(stations=(['FALSE'], []))['summary']['total'], 0)
 
     def test_fully_covered_has_no_pins(self):
         result = self.result(stations=(['s.id=%s'], [1]))
         self.assertEqual(result['summary'], dict(total=1, checked=1, remaining=0, missing_coordinates=0))
         self.assertEqual(result['stations'], [])
-        self.assertEqual(result['region_points'], [{'region': '浦东', 'coordinates': [[121.5, 31.2]]}])
 
-    def test_region_coordinates_remain_in_the_same_station_data_scope(self):
+    def test_response_only_includes_uncovered_station_coordinates_without_region_geometry(self):
         result = self.result(stations=(['s.id=%s'], [2]))
-        self.assertEqual(result['region_points'], [{'region': '浦东', 'coordinates': [[121.6, 31.3]]}])
-        self.assertEqual(self.result(stations=(['FALSE'], []))['region_points'], [])
+        self.assertNotIn('region_points', result)
+        self.assertEqual([row['station_id'] for row in result['stations']], [2])
+        self.assertEqual(self.result(stations=(['FALSE'], []))['stations'], [])
 
     def test_real_scope_builder_preserves_own_region_and_table_limits(self):
         for permissions, user, regions, table_ids, expected in [
