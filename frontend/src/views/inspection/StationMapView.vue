@@ -271,7 +271,7 @@ import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPresentationMode } from '../../utils/presentationSession'
-import { loadAmapSdk as loadAmapScript, SHANGHAI_CENTER, amapPinIcon as getLabelMarkerIcon } from '@/utils/amapSdk'
+import { loadAmapSdk as loadAmapScript, SHANGHAI_CENTER, amapPinIcon as getLabelMarkerIcon, amapStationLabel } from '@/utils/amapSdk'
 
 const mapContainer = ref(null)
 const mapFrameRef = ref(null)
@@ -1109,19 +1109,7 @@ const renderLabelMarkers = async (options = {}) => {
         size: [30, 36],
         anchor: 'bottom-center'
       },
-      text: {
-        content: String(station.station_name || ''),
-        direction: 'top',
-        offset: [0, -4],
-        style: {
-          fontSize: 12,
-          fontWeight: '600',
-          fillColor: '#0f172a',
-          strokeColor: '#ffffff',
-          strokeWidth: 3,
-          padding: [2, 4]
-        }
-      }
+      text: amapStationLabel(station.station_name)
     })
     marker.on('click', () => {
       pauseAutoRotate()
