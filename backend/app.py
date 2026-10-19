@@ -1,5 +1,6 @@
 from flask import Flask, abort, g, has_request_context, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
+from frontend_version import development_frontend_version
 from roles import PRIVILEGED_ROLES, is_supervisor_role
 from user_permission_config import merge_personal_permissions, replace_personal_permissions
 from upload_request import PlatformRequest
@@ -272,7 +273,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.6.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION") or "9.6.0")
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -18471,7 +18472,8 @@ def health():
 
 @app.route("/api/version")
 def get_frontend_version():
-    response = jsonify({"version": FRONTEND_APP_VERSION})
+    version = normalize_frontend_app_version(development_frontend_version(FRONTEND_APP_VERSION))
+    response = jsonify({"version": version})
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
