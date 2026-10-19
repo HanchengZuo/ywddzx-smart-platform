@@ -1,5 +1,10 @@
 <template>
-  <section class="schedule-panel" :aria-label="title">
+  <section
+    :id="'schedule-panel-' + mode"
+    class="schedule-panel"
+    role="tabpanel"
+    :aria-labelledby="'schedule-tab-' + mode"
+  >
     <header class="panel-head">
       <div class="panel-identity">
         <span class="mode-icon" :class="mode">{{ mode === 'offline' ? '季' : '月' }}</span>
@@ -84,12 +89,7 @@
       </button>
     </div>
     <div v-if="notice" class="panel-notice" role="status">{{ notice }}</div>
-    <div
-      class="matrix-scroll"
-      tabindex="0"
-      :aria-label="title + '排班表，可横向及纵向滚动'"
-      :aria-busy="loading"
-    >
+    <div class="matrix-content" :aria-busy="loading">
       <table class="schedule-matrix" :class="mode">
         <caption class="sr-only">
           {{
@@ -138,6 +138,7 @@
           <tr
             v-for="row in rows"
             :key="row.station_id"
+            class="station-row"
             :class="{ 'region-start': row.sequence === 1 || regionStarts.has(row.station_id) }"
           >
             <td class="fixed-index">{{ row.sequence }}</td>
@@ -161,6 +162,7 @@
                 :aria-label="`${row.station_name}，${column.label}，${scheduleStatusLabels[row.cells[column.key].status]}${inspectorPreview(row.cells[column.key]) ? '，' + inspectorPreview(row.cells[column.key]) : ''}`"
                 @click="openCell(row, column)"
               >
+                <span class="mobile-column-label" aria-hidden="true">{{ column.label }}</span>
                 <span class="cell-names">{{
                   inspectorPreview(row.cells[column.key]) ||
                   (row.cells[column.key].status === 'completed'
@@ -321,7 +323,17 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  ref,
+  useId,
+  watch,
+} from 'vue'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { coverageQuery, currentCoveragePeriod } from '@/utils/schedulingCoverage'
 import {
@@ -356,6 +368,8 @@ const saveError = ref(''),
 const dialogId = 'schedule-cell-' + useId()
 let controller,
   disposed = false,
+  active = false,
+  lastSyncedAt = 0,
   serial = 0,
   switchTimer,
   trigger
@@ -416,7 +430,7 @@ const clearFilters = () => {
 }
 
 async function loadBoard() {
-  if (disposed || blocked.value || !online.value) return
+  if (disposed || !active || blocked.value || !online.value) return
   const ticket = ++serial
   controller?.abort()
   controller = new AbortController()
@@ -434,6 +448,7 @@ async function loadBoard() {
       notice.value = '原站点已不在当前可见计划名单内，已关闭编辑，请核对站点档案。'
     }
     error.value = ''
+    lastSyncedAt = Date.now()
     updatedTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     if (region.value && !regions.value.includes(region.value)) region.value = ''
     return true
@@ -563,11 +578,12 @@ async function saveSelection() {
 }
 const polling = createAdaptivePolling({
   task: loadBoard,
-  canRun: () => !disposed && !document.hidden && online.value && !blocked.value && !saving.value,
+  canRun: () =>
+    active && !disposed && !document.hidden && online.value && !blocked.value && !saving.value,
 })
 function visibilityChanged() {
   online.value = navigator.onLine
-  if (document.hidden || !online.value) polling.pause()
+  if (!active || document.hidden || !online.value) polling.pause()
   else polling.start({ immediate: true })
 }
 watch(
@@ -586,11 +602,26 @@ watch(
   },
 )
 onMounted(() => {
-  loadBoard().catch(() => {})
-  polling.start()
   document.addEventListener('visibilitychange', visibilityChanged)
   window.addEventListener('online', visibilityChanged)
   window.addEventListener('offline', visibilityChanged)
+})
+onActivated(() => {
+  active = true
+  online.value = navigator.onLine
+  if (!board.value || error.value || Date.now() - lastSyncedAt >= 60000) {
+    loadBoard().catch(() => {})
+  }
+  polling.start()
+})
+onDeactivated(() => {
+  active = false
+  serial++
+  controller?.abort()
+  clearTimeout(switchTimer)
+  loading.value = false
+  polling.pause()
+  closeCell(true)
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -610,7 +641,10 @@ onBeforeUnmount(() => {
   background: #fff;
   border: 1px solid #dbe5ef;
   border-radius: 20px;
-  overflow: hidden;
+  min-width: 0;
+  scroll-margin-top: calc(
+    var(--schedule-mobile-topbar, 0px) + var(--schedule-switcher-height, 76px) + 12px
+  );
   box-shadow: 0 12px 30px #18324c08;
   color: #203a54;
 }
@@ -621,6 +655,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 22px 24px;
   border-bottom: 1px solid #e7edf4;
+  border-radius: 20px 20px 0 0;
 }
 .panel-identity {
   display: flex;
@@ -720,32 +755,24 @@ input[type='search'] {
   font-size: 12px;
   color: #71849a;
 }
-.matrix-scroll {
-  max-height: 620px;
-  max-height: min(66vh, 720px);
-  overflow: auto;
+.matrix-content {
   border-block: 1px solid #dce5f0;
-  scrollbar-gutter: stable;
-  scroll-padding: 48px 0 0 310px;
 }
 .schedule-matrix {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
   table-layout: fixed;
-  min-width: 1160px;
-}
-.schedule-matrix.online {
-  min-width: 780px;
+  overflow-wrap: anywhere;
 }
 .index-col {
-  width: 52px;
+  width: 44px;
 }
 .region-col {
-  width: 100px;
+  width: 78px;
 }
 .station-col {
-  width: 158px;
+  width: 130px;
 }
 .check-col {
   width: auto;
@@ -754,7 +781,7 @@ input[type='search'] {
 .schedule-matrix td {
   border-bottom: 1px solid #e1e8f0;
   border-right: 1px solid #e1e8f0;
-  height: 66px;
+  height: 56px;
   padding: 0;
   text-align: center;
   font-size: 12px;
@@ -763,13 +790,14 @@ input[type='search'] {
 }
 .schedule-matrix thead th {
   position: sticky;
-  top: 0;
+  top: calc(var(--schedule-sticky-top, 0px) + var(--schedule-switcher-height, 76px));
   z-index: 3;
   height: 48px;
   padding: 8px;
   background: #edf3fa;
   color: #42617e;
   font-weight: 750;
+  box-shadow: 0 2px #d7e2ef;
 }
 .schedule-matrix thead small {
   display: block;
@@ -781,24 +809,20 @@ input[type='search'] {
 .schedule-matrix .fixed-index,
 .schedule-matrix .fixed-region,
 .schedule-matrix .fixed-station {
-  position: sticky;
-  z-index: 2;
   background: #fcfdff;
 }
 .schedule-matrix .fixed-index {
-  left: 0;
   color: #7a8b9e;
+  font-variant-numeric: tabular-nums;
 }
 .schedule-matrix .fixed-region {
-  left: 52px;
   padding: 8px;
+  color: #687f98;
 }
 .schedule-matrix .fixed-station {
-  left: 152px;
   padding: 8px 12px;
   text-align: left;
   font-weight: 650;
-  box-shadow: 3px 0 5px #18324c08;
 }
 .schedule-matrix thead .fixed-index,
 .schedule-matrix thead .fixed-region,
@@ -809,15 +833,23 @@ input[type='search'] {
 .schedule-matrix .region-start > * {
   border-top: 2px solid #becfe1;
 }
+.station-row:hover > .fixed-index,
+.station-row:hover > .fixed-region,
+.station-row:hover > .fixed-station {
+  background: #edf4fc;
+}
+.mobile-column-label {
+  display: none;
+}
 .cell-button {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   width: 100%;
-  min-height: 65px;
-  padding: 9px 7px;
+  min-height: 55px;
+  padding: 8px 5px;
   border: 0;
   background: transparent;
   color: #42617e;
@@ -1073,8 +1105,7 @@ button:disabled {
 }
 button:focus-visible,
 input:focus-visible,
-select:focus-visible,
-.matrix-scroll:focus-visible {
+select:focus-visible {
   outline: 2px solid #70a1d6;
   outline-offset: 2px;
 }
@@ -1128,7 +1159,7 @@ select:focus-visible,
   overflow: hidden;
   clip-path: inset(50%);
 }
-@media (max-width: 760px) {
+@container (max-width: 760px) {
   .panel-head {
     align-items: stretch;
     flex-direction: column;
@@ -1163,37 +1194,82 @@ select:focus-visible,
     flex: 1;
     min-width: 0;
   }
-  .matrix-scroll {
-    max-height: 65vh;
-    scroll-padding-left: 234px;
+  .matrix-content {
+    padding: 12px;
+    background: #f4f7fb;
   }
-  .schedule-matrix {
-    min-width: 1030px;
+  .schedule-matrix,
+  .schedule-matrix tbody {
+    display: block;
   }
-  .index-col {
-    width: 38px;
+  .schedule-matrix colgroup {
+    display: none;
   }
-  .region-col {
-    width: 76px;
+  .schedule-matrix thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
-  .station-col {
-    width: 120px;
+  .schedule-matrix .station-row {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 1px;
+    border: 1px solid #d7e1ee;
+    border-radius: 12px;
+    overflow: clip;
+    background: #e1e8f0;
+    margin-bottom: 12px;
   }
-  .check-col {
-    width: auto;
+  .schedule-matrix .station-row:last-child {
+    margin-bottom: 0;
+  }
+  .schedule-matrix .station-row > * {
+    height: auto;
+    border: 0;
+    min-width: 0;
+  }
+  .schedule-matrix .region-start {
+    border-top: 3px solid #a8bfdc;
+  }
+  .schedule-matrix .fixed-index {
+    grid-column: span 1;
+    padding: 12px 4px;
   }
   .schedule-matrix .fixed-region {
-    left: 38px;
+    grid-column: span 2;
+    padding: 12px 4px;
   }
   .schedule-matrix .fixed-station {
-    left: 114px;
+    grid-column: span 3;
+    padding: 12px 8px;
   }
-  .schedule-matrix.online {
-    min-width: 630px;
+  .schedule-matrix .matrix-cell {
+    grid-column: span 3;
+  }
+  .mobile-column-label {
+    display: block;
+    color: #71849a;
+    font-size: 10px;
+    font-weight: 650;
+    margin-bottom: 3px;
+  }
+  .cell-button {
+    min-height: 82px;
+    padding: 10px 8px;
+  }
+  .schedule-matrix .empty-cell {
+    display: block;
   }
   .panel-footer {
     padding: 12px 16px;
   }
+  h3 {
+    font-size: 18px;
+  }
+}
+@media (max-width: 760px) {
   .cell-dialog-head,
   .cell-dialog-body,
   .cell-dialog-footer {
@@ -1206,9 +1282,6 @@ select:focus-visible,
     width: calc(100vw - 16px);
     max-height: calc(100dvh - 16px);
     border-radius: 15px;
-  }
-  h3 {
-    font-size: 18px;
   }
 }
 </style>
