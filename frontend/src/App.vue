@@ -484,6 +484,7 @@
       </header>
 
       <main class="content">
+        <ScheduleTaskInbox v-if="!authState.mustChangePassword && scheduleTaskPendingCount > 0" :key="authState.userId" :count="scheduleTaskPendingCount" @count="scheduleTaskPendingCount = $event" />
         <router-view v-if="!authState.mustChangePassword" />
       </main>
     </div>
@@ -640,6 +641,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
 import { schedulingMenuPages } from './config/schedulingCatalog'
+import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
@@ -831,6 +833,7 @@ const birthdaySparkles = Array.from({ length: 26 }, (_, index) => index + 1)
 const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
+const scheduleTaskPendingCount = ref(0)
 const appealNotificationCount = ref(0)
 let notificationSummaryTimer = null
 let notificationSummaryInFlight = null
@@ -1474,6 +1477,7 @@ const resetNotificationCounts = () => {
   feedbackUnreadCount.value = 0
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
+  scheduleTaskPendingCount.value = 0
   appealNotificationCount.value = 0
   notificationSummaryFetchedAt = 0
 }
@@ -1482,6 +1486,7 @@ const applyNotificationSummary = (payload = {}) => {
   feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
+  scheduleTaskPendingCount.value = Number(payload.schedule_task_pending_count || 0)
   appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
 }
 
@@ -1745,6 +1750,7 @@ const resolveHomePath = (user) => {
   operationsPages.forEach(page => { if (role === 'root' || permissions[page.permission]) candidates.push(page.path) })
   if (role === 'root' || permissions.view_station_map) candidates.push('/inspection/station-map')
   if (role === 'root' || permissions.view_scheduling_map) candidates.push('/inspection/scheduling-map')
+  if (role === 'root' || permissions.view_staff_availability) candidates.push('/inspection/staff-availability')
   if (permissions.submit_inspections) candidates.push('/inspection/register')
   if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
   if (permissions.view_checklist_originals) candidates.push('/inspection/checklist-originals')

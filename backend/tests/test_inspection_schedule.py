@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import unittest
 import uuid
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from flask import Flask, g
@@ -68,28 +69,33 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
+        for module in ('schedule_common', 'staff_availability', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation'):
+            clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         self.schema = 'schedule_' + uuid.uuid4().hex
         self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)
         self.cur = self.admin.cursor()
         self.cur.execute(f'CREATE SCHEMA {self.schema}; SET search_path TO {self.schema}')
         self.cur.execute('''CREATE TABLE users(id int PRIMARY KEY,username text,real_name text,role text,account_status text);
-          INSERT INTO users VALUES(1,'root','管理','root','active'),(2,'staff','甲检查人','supervisor','active'),
-            (3,'lead','乙管理人','supervisor_manager','active'),(4,'finance','财务人员','finance','active');
+          INSERT INTO users VALUES(1,'root','管理','root','active'),(2,'staff','步雪琼','supervisor','active'),
+            (3,'lead','孔德辰','supervisor_manager','active'),(4,'finance','财务人员','finance','active');
           CREATE TABLE stations(id int PRIMARY KEY,region text,station_name text,
             include_offline_plan boolean DEFAULT true,include_online_plan boolean DEFAULT true);
           INSERT INTO stations(id,region,station_name) VALUES(1,'松金片区','沈浦泾南'),(2,'浦东片区','国郃'),
             (3,'松金片区','泗砖'),(4,'松金片区','新站'),(5,'松金片区','金朝');
           UPDATE stations SET include_offline_plan=false WHERE id=5;
           CREATE TABLE inspection_tables(id serial PRIMARY KEY,table_name text,checklist_mode text,is_active boolean DEFAULT true);
-          CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date);
+          CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP);
           CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending');
         ''')
         for mode, columns in COLUMNS.items():
             for _, _, name in columns:
                 self.cur.execute('INSERT INTO inspection_tables(table_name,checklist_mode) VALUES(%s,%s)', (name, mode))
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/515_inspection_schedule.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/520_staff_scheduling.sql').read_text())
+        self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')
+        self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('步雪琼','2026-10-20',true,1,1),('孔德辰','2026-10-20',true,1,1)")
         self.admin.commit()
-        self.actor = dict(id=2, username='staff', real_name='甲检查人', role='supervisor')
+        self.actor = dict(id=2, username='staff', real_name='步雪琼', role='supervisor')
         self.permissions = {VIEW_PERMISSION, EDIT_PERMISSION}
         self.station_scope = ([], [])
         self.table_scope = ([], [])
@@ -119,7 +125,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
 
     def save(self, **overrides):
         return self.client.put('/api/inspection-schedule', json={**self.query, 'station_id': 1,
-            'column_key': 'odor', 'inspector_ids': [2, 3], 'revision': 0, 'user_id': 1, **overrides})
+            'column_key': 'odor', 'inspector_ids': [2, 3], 'scheduled_date':'2026-10-20', 'revision': 0, 'user_id': 1, **overrides})
 
     def record(self, station=1, table=1, inspector=3, day='2026-10-01'):
         self.cur.execute('INSERT INTO inspections(station_id,inspection_table_id,inspector_id,inspection_date) VALUES(%s,%s,%s,%s) RETURNING id', (station, table, inspector, day))
@@ -143,7 +149,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         cell = self.board()['rows'][0]['cells']['odor']
         self.assertEqual(cell['status'], 'assigned')
         self.assertEqual({p['id'] for p in cell['assignees']}, {2,3})
-        self.assertEqual(cell['updated_by_name'], '甲检查人')
+        self.assertEqual(cell['updated_by_name'], '步雪琼')
         self.assertEqual(self.save(revision=1, inspector_ids=[]).json['revision'], 2)
         self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'], 'unassigned')
         self.assertEqual(self.save(revision=0).status_code, 409)
@@ -207,7 +213,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         conn = self.connect(); other = self.connect()
         try:
             with conn.cursor() as cur:
-                save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[2],revision=0), chosen,start,end,([],[]),([],[]))
+                save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[2],scheduled_date='2026-10-20',revision=0), chosen,start,end,([],[]),([],[]))
             with other.cursor() as cur:
                 cur.execute("SET LOCAL lock_timeout='100ms'")
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
@@ -215,7 +221,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 other.rollback()
                 cur.execute("SET LOCAL lock_timeout='100ms'")
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
-                    save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[3],revision=0), chosen,start,end,([],[]),([],[]))
+                    save_cell(cur, self.actor, dict(station_id=1,column_key='odor',inspector_ids=[3],scheduled_date='2026-10-20',revision=0), chosen,start,end,([],[]),([],[]))
                 other.rollback(); conn.commit()
             self.assertEqual(self.save(inspector_ids=[3]).status_code, 409)
         finally:

@@ -31,7 +31,7 @@ test('scheduling appears after inspection, with each existing URL listed exactly
   assert.equal(PAGE_VISIBILITY_GROUPS[index + 2].key, 'ai')
   assert.deepEqual(group.pages.map(page => page.path), schedulingMenuPages.map(page => page.path))
   assert.deepEqual(schedulingMenuPages.map(page => [page.title, page.permission]), [
-    ['排班地图', 'view_scheduling_map'], ['巡检计划', 'view_inspection_schedule'],
+    ['排班地图', 'view_scheduling_map'], ['人员档期', 'view_staff_availability'], ['巡检排班', 'view_inspection_schedule'],
   ])
   assert.equal(new Set(PAGE_VISIBILITY_PAGES.map(page => page.path)).size, PAGE_VISIBILITY_PAGES.length)
   assert.ok(!operationsMenuPages.some(page => page.key === 'scheduling-map'))
@@ -42,34 +42,35 @@ test('scheduling appears after inspection, with each existing URL listed exactly
 })
 
 test('real sidebar template renders only authorized pages and hides empty scheduling group', async () => {
-  assert.doesNotMatch(await menu(), /排班系统|排班地图|巡检计划|<button/)
+  assert.doesNotMatch(await menu(), /排班系统|排班地图|巡检排班|人员档期|<button/)
   const map = await menu({ permissions: { view_scheduling_map: true } })
   assert.match(map, /排班系统/)
   assert.match(map, /排班地图/)
-  assert.doesNotMatch(map, /巡检计划/)
+  assert.doesNotMatch(map, /巡检排班|人员档期/)
   const plan = await menu({ permissions: { view_inspection_schedule: true } })
-  assert.match(plan, /巡检计划/)
+  assert.match(plan, /巡检排班/)
   assert.match(plan, /class="nav-item active"/)
   assert.doesNotMatch(plan, /排班地图/)
   const root = await menu({ role: 'root' })
   assert.match(root, /排班地图/)
-  assert.match(root, /巡检计划/)
-  assert.equal((root.match(/<button /g) || []).length, 2)
+  assert.match(root, /巡检排班/)
+  assert.match(root, /人员档期/)
+  assert.equal((root.match(/<button /g) || []).length, 3)
 })
 
 test('page visibility still wins and collapsed navigation retains accessible titles', async () => {
-  const hidden = await menu({ role: 'root', hidden: ['/inspection/scheduling-map', '/inspection/plan'] })
+  const hidden = await menu({ role: 'root', hidden: ['/inspection/scheduling-map', '/inspection/staff-availability', '/inspection/plan'] })
   assert.doesNotMatch(hidden, /排班系统|<button/)
   const collapsed = await menu({ role: 'root', collapsed: true, hidden: ['/inspection/scheduling-map'] })
   assert.doesNotMatch(collapsed, /排班系统|排班地图/)
-  assert.match(collapsed, /title="巡检计划"/)
+  assert.match(collapsed, /title="巡检排班"/)
   assert.match(collapsed, /nav-item-icon/)
 })
 
 test('user and role permission editors inherit the same new menu order', () => {
-  const groups = ['AI报告生成', '巡检计划', '排班地图', '站点证照有效期管理'].map(category => ({ category, items: [] }))
+  const groups = ['AI报告生成', '巡检排班', '人员档期', '排班地图', '站点证照有效期管理'].map(category => ({ category, items: [] }))
   assert.deepEqual(sortPermissionGroups(groups).map(group => group.category), [
-    '站点证照有效期管理', '排班地图', '巡检计划', 'AI报告生成',
+    '站点证照有效期管理', '排班地图', '人员档期', '巡检排班', 'AI报告生成',
   ])
 })
 

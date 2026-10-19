@@ -61,7 +61,7 @@ test('cached panels pause and abort when inactive; returning reuses fresh data a
   const context = vm.createContext({
     active: false, online: { value: true }, navigator: { onLine: true },
     board: { value: null }, error: { value: '' }, loading: { value: true },
-    lastSyncedAt: 1000, serial: 0, switchTimer: 7,
+    lastSyncedAt: 1000, serial: 0, switchTimer: 7, peopleSerial: 0, peopleController: null,
     Date: { now: () => 2000 }, clearTimeout: () => {},
     controller: { abort: () => calls.abort++ },
     polling: { start: () => calls.start++, pause: () => calls.pause++ },
@@ -98,7 +98,7 @@ test('inactive panels cannot poll, including after network and visibility events
   let options
   const context = vm.createContext({
     active: false, disposed: false, document: { hidden: false },
-    online: { value: true }, blocked: { value: false }, saving: { value: false },
+    online: { value: true }, blocked: { value: false }, saving: { value: false }, dialog: { value: null },
     loadBoard: () => {}, createAdaptivePolling: (value) => { options = value },
   })
   vm.runInContext(
@@ -119,9 +119,9 @@ test('inactive panels cannot poll, including after network and visibility events
 
 test('schedule has one active cached panel, all rows in page flow, and responsive cards without table scrollers', () => {
   const page = readFileSync(new URL('../src/views/inspection/InspectionScheduleView.vue', import.meta.url), 'utf8')
-  assert.match(page, /<KeepAlive>/)
+  assert.match(page, /<KeepAlive :max="2">/)
   assert.equal((page.match(/<InspectionSchedulePanel\b/g) || []).length, 1)
-  assert.match(page, /:key="activeMode" :mode="activeMode"/)
+  assert.match(page, /:key="activeMode \+ ':' \+ refreshKey" :mode="activeMode"/)
   assert.match(page, /role="tablist"/)
   assert.match(panelSource, /role="tabpanel"/)
   assert.match(panelSource, /v-for="row in rows"/)

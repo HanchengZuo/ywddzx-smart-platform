@@ -9,13 +9,12 @@ from inspection_schedule_catalog import COLUMNS, normalized_region, roster_posit
 from roles import SUPERVISOR_ROLES
 from scheduling_map import period
 from station_plan_eligibility import plan_field
+from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
+from staff_availability import available_people, roster_people, validate_people
+from inspection_schedule_tasks import dispatch_tasks
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
-
-
-class ScheduleConflict(ValueError):
-    pass
 
 
 def person(row):
@@ -92,9 +91,8 @@ def read_board(cur, chosen, start, end, station_scope, table_scope):
     saved_ids = sorted({int(uid) for row in saved.values() for uid in row['inspector_ids']})
     cur.execute('SELECT id,username,real_name,role FROM users WHERE id=ANY(%s)', (saved_ids,))
     people = {row['id']: person(row) for row in cur.fetchall()}
-    cur.execute('''SELECT id,username,real_name,role FROM users WHERE role=ANY(%s)
-      AND COALESCE(account_status,'active')='active' ORDER BY role,real_name,username,id''', (list(SUPERVISOR_ROLES),))
-    inspectors = [person(row) for row in cur.fetchall()]
+    roster = roster_people(cur)
+    inspectors = [p for p in roster if p['id']]
     rows = []
     summary = dict(completed=0, assigned=0, unassigned=0)
     for station in stations:
@@ -111,10 +109,13 @@ def read_board(cur, chosen, start, end, station_scope, table_scope):
                 completed_inspectors=sorted(record.get('inspectors', []), key=lambda user: (user['display_name'], user['id'])),
                 record_count=record.get('record_count', 0), last_inspection_date=record.get('last_inspection_date'),
                 revision=existing.get('revision', 0), updated_by_name=existing.get('updated_by_name', ''),
-                updated_at=existing.get('saved_at', ''))
+                updated_at=existing.get('saved_at', ''),
+                scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None)
         rows.append(dict(station_id=station['id'], station_name=station['station_name'],
                          region=normalized_region(station['region']), sequence=station['sequence'], cells=cells))
-    return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary)
+    return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,
+                today=today().isoformat(), workdays=working_days(cur, start, end),
+                unmatched_people=[p['display_name'] for p in roster if not p['id']])
 
 
 def integer(value, label, minimum=1):
@@ -123,7 +124,7 @@ def integer(value, label, minimum=1):
     return value
 
 
-def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope):
+def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope, availability_cache=None):
     station_id = integer(data.get('station_id'), '站点')
     key = data.get('column_key')
     if not isinstance(key, str) or key not in {entry[0] for entry in COLUMNS[chosen['mode']]}:
@@ -133,6 +134,11 @@ def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope):
     if not isinstance(ids, list) or len(ids) > 100:
         raise ValueError('请选择督导组检查人，最多100人。')
     ids = sorted({integer(value, '检查人') for value in ids})
+    day = day_value(data.get('scheduled_date')) if ids else None
+    if day:
+        if not start <= day < end: raise ValueError('计划日期必须位于所选季度或月份内。')
+        require_workday(cur, day)
+    lock_schedule(cur)
     cell_key = (chosen['mode'], chosen['year'], period_number(chosen), station_id, key)
     # Cross-worker serialization plus a revision check avoids lost updates and ABA on clears.
     cur.execute('SELECT pg_advisory_xact_lock(9701,hashtext(%s))', (json.dumps(cell_key),))
@@ -144,9 +150,9 @@ def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope):
         raise PermissionError('检查表未启用、定义不唯一或不在账号可编辑范围内。')
     if record_cells(cur, [station_id], [column['table_id']], start, end):
         raise ScheduleConflict('该站点本周期已有此检查表的巡检记录，单元格已完成，不能再分配。')
-    cur.execute('''SELECT inspector_ids,revision FROM inspection_schedule_cells
+    cur.execute('''SELECT inspector_ids,revision,scheduled_date FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
-    existing = cur.fetchone() or dict(inspector_ids=[], revision=0)
+    existing = cur.fetchone() or dict(inspector_ids=[], revision=0, scheduled_date=None)
     if existing['revision'] != revision:
         raise ScheduleConflict('该单元格已被其他用户修改，请刷新最新排班后再调整。')
     if ids:
@@ -154,20 +160,24 @@ def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope):
           AND COALESCE(account_status,'active')='active' ORDER BY id FOR SHARE''', (ids, list(SUPERVISOR_ROLES)))
         if {row['id'] for row in cur.fetchall()} != set(ids):
             raise ValueError('只能选择当前启用的督导组管理人员或督导组组员，请重新选择。')
-    if existing['inspector_ids'] == ids:
+        if availability_cache is not None and day not in availability_cache:
+            availability_cache[day] = {p['id']: p for p in available_people(cur, day) if p['id']}
+        validate_people(cur, ids, day, chosen['mode'], availability_cache.get(day) if availability_cache is not None else None)
+    if existing['inspector_ids'] == ids and existing['scheduled_date'] == day:
         return existing['revision']
     cur.execute('''INSERT INTO inspection_schedule_cells
-        (mode,year,period_number,station_id,column_key,inspector_ids,revision,updated_by)
-      VALUES (%s,%s,%s,%s,%s,%s,1,%s) ON CONFLICT (mode,year,period_number,station_id,column_key)
+        (mode,year,period_number,station_id,column_key,inspector_ids,revision,updated_by,scheduled_date)
+      VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s) ON CONFLICT (mode,year,period_number,station_id,column_key)
       DO UPDATE SET inspector_ids=EXCLUDED.inspector_ids,revision=inspection_schedule_cells.revision+1,
-        updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP RETURNING revision''',
-                (*cell_key, json.dumps(ids), actor['id']))
+        updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP,scheduled_date=EXCLUDED.scheduled_date RETURNING revision''',
+                (*cell_key, json.dumps(ids), actor['id'], day))
     saved_revision = cur.fetchone()['revision']
     cur.execute('''INSERT INTO inspection_schedule_events
-      (mode,year,period_number,station_id,station_name,column_key,before_ids,after_ids,actor_id,actor_name)
-      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+      (mode,year,period_number,station_id,station_name,column_key,before_ids,after_ids,actor_id,actor_name,before_date,after_date)
+      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
       (chosen['mode'], chosen['year'], period_number(chosen), station_id, stations[0]['station_name'], key,
-       json.dumps(existing['inspector_ids']), json.dumps(ids), actor['id'], person(actor)['display_name']))
+       json.dumps(existing['inspector_ids']), json.dumps(ids), actor['id'], person(actor)['display_name'], existing['scheduled_date'], day))
+    dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start)
     return saved_revision
 
 
@@ -182,7 +192,7 @@ def register_inspection_schedule(app, *, connect, has_permission, scope):
             conn = connect()
             cur = conn.cursor()
             if not has_permission(cur, actor, VIEW_PERMISSION):
-                raise PermissionError('当前账号无权查看巡检计划。')
+                raise PermissionError('当前账号无权查看巡检排班。')
             can_edit = has_permission(cur, actor, EDIT_PERMISSION)
             if request.method == 'PUT' and not can_edit:
                 raise PermissionError('当前账号只有查看权限，不能编辑排班。')
@@ -192,10 +202,23 @@ def register_inspection_schedule(app, *, connect, has_permission, scope):
             chosen, start, end = period(data)
             station_scope, table_scope = scope(cur, actor)
             cur.execute("SET LOCAL statement_timeout = '10s'")
+            cur.execute("SET LOCAL lock_timeout = '3s'")
             if request.method == 'PUT':
-                revision = save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope)
+                edits = data.get('cells')
+                if edits is None:
+                    edits = [dict(station_id=data.get('station_id'), column_key=data.get('column_key'), revision=data.get('revision'))]
+                if not isinstance(edits, list) or not 1 <= len(edits) <= 1000:
+                    raise ValueError('请选择1至1000个排班单元格。')
+                seen, versions, availability_cache = set(), [], {}
+                for edit in edits:
+                    if not isinstance(edit, dict) or set(edit) - {'station_id', 'column_key', 'revision'}:
+                        raise ValueError('排班单元格不合法。')
+                    cell_key = (integer(edit.get('station_id'), '站点'), str(edit.get('column_key')))
+                    if cell_key in seen: raise ValueError('不能重复选择同一排班单元格。')
+                    seen.add(cell_key)
+                    versions.append(save_cell(cur, actor, {**data, **edit}, chosen, start, end, station_scope, table_scope, availability_cache))
                 conn.commit()
-                result = dict(revision=revision, message='排班已保存，暂不推送待办任务。')
+                result = dict(revision=versions[0], saved_count=len(versions), message='排班已保存，已同步检查人的巡检待办。')
             else:
                 result = read_board(cur, chosen, start, end, station_scope, table_scope)
             response = jsonify(success=True, can_edit=can_edit, **result)
@@ -216,3 +239,24 @@ def register_inspection_schedule(app, *, connect, has_permission, scope):
                 cur.close()
             if conn:
                 conn.close()
+
+    @app.get('/api/inspection-schedule/available-people')
+    def schedule_available_people():
+        actor = getattr(g, 'current_user', None)
+        if not actor: return jsonify(success=False, error='请先登录。'), 401
+        conn = cur = None
+        try:
+            conn = connect(); cur = conn.cursor()
+            if not has_permission(cur, actor, VIEW_PERMISSION): raise PermissionError('当前账号无权查看巡检排班。')
+            day = day_value(request.args.get('day')); require_workday(cur, day)
+            response = jsonify(success=True, day=day.isoformat(), people=available_people(cur, day))
+            response.headers['Cache-Control'] = 'private, no-store'
+            return response
+        except (ValueError, PermissionError) as exc:
+            return jsonify(success=False, error=str(exc)), 403 if isinstance(exc, PermissionError) else 400
+        except Exception:
+            logging.exception('Available schedule people failed')
+            return jsonify(success=False, error='人员档期暂时无法读取。'), 500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()
