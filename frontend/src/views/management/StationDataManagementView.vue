@@ -31,17 +31,17 @@
 
     <template v-else>
       <transition name="toast-fade">
-        <div v-if="message.text" :class="['message-toast', message.type]">{{ message.text }}</div>
+        <div v-if="message.text" :class="['message-toast', message.type]" role="status">{{ message.text }}</div>
       </transition>
 
-      <div v-if="stationExportDialog.visible" class="station-export-backdrop">
-        <div class="station-export-modal card-surface">
-          <div class="station-export-header">
+      <Teleport to="body">
+        <dialog ref="exportDialogRef" class="station-export-modal card-surface" aria-labelledby="station-export-title" @cancel.prevent="closeStationExportDialog" @close="stationExportDialog.visible = false" @click="closeExportBackdrop">
+          <div class="station-export-dialog-header">
             <div>
               <div class="section-kicker">站点数据导出</div>
-              <h3>选择需要导出的字段</h3>
+              <h3 id="station-export-title">选择需要导出的字段</h3>
             </div>
-            <button class="close-btn" type="button" :disabled="exportingData" @click="closeStationExportDialog">×</button>
+            <button class="close-btn" type="button" aria-label="关闭导出弹窗" :disabled="exportingData" @click="closeStationExportDialog">×</button>
           </div>
 
           <div class="station-export-body">
@@ -111,24 +111,25 @@
               {{ exportingData ? '生成中...' : '生成并下载 Excel' }}
             </button>
           </div>
-        </div>
-      </div>
+        </dialog>
+      </Teleport>
 
       <div class="management-stack">
-        <section ref="formCardRef" class="card-surface form-card" :class="{ editing: editingId }">
-          <div class="section-head compact">
+        <Teleport to="body">
+        <dialog ref="stationEditorDialog" class="station-editor-dialog" aria-labelledby="station-editor-title" @cancel.prevent="requestCloseEditor" @close="editorClosed" @click="closeEditorBackdrop">
+        <form class="form-card" novalidate :aria-busy="saving" @submit.prevent="saveStation">
+          <header class="station-editor-header">
             <div>
               <div class="section-kicker">{{ editingId ? '编辑站点' : '新增站点' }}</div>
-              <h3>{{ editingId ? '维护站点主数据' : '录入新站点' }}</h3>
-              <p v-if="editingId" class="editing-target">
-                <span>正在编辑</span>
-                <strong>{{ form.station_name }}</strong>
-              </p>
+              <h3 id="station-editor-title">{{ editingId ? form.station_name || '维护站点档案' : '录入新站点' }}</h3>
+              <p>分组维护站点档案，标记 * 的项目为必填项。</p>
             </div>
-          </div>
-
-          <div class="form-sections">
-            <div class="form-section">
+            <button class="close-btn" type="button" aria-label="关闭站点编辑弹窗" :disabled="saving" @click="requestCloseEditor">×</button>
+          </header>
+          <nav class="editor-section-nav" aria-label="站点档案分组"><button type="button" @click="scrollToSection('station-basic-section')">01 基础档案</button><button type="button" @click="scrollToSection('station-contact-section')">02 地址与联系人</button><button type="button" @click="scrollToSection('station-business-section')">03 经营属性</button></nav>
+          <div ref="editorBodyRef" class="form-sections editor-scroll-body">
+            <fieldset :disabled="saving" class="editor-fieldset">
+            <section id="station-basic-section" class="form-section">
               <div class="form-section-title">
                 <span class="section-index">01</span>
                 <div>
@@ -139,18 +140,19 @@
 
               <div class="form-section-grid">
                 <label class="form-field span-2">
-                  <span>站点名称</span>
-                  <input v-model.trim="form.station_name" type="text" placeholder="请输入站点名称" />
+                  <span>站点名称 <i class="required-mark">*</i></span>
+                  <input ref="stationNameRef" v-model.trim="form.station_name" required type="text" placeholder="请输入站点名称" />
                 </label>
 
                 <label class="form-field">
                   <span>所属片区/归属地</span>
-                  <input v-model.trim="form.region" type="text" placeholder="例如：宝静片区" />
+                  <input v-model.trim="form.region" type="text" list="station-region-options" placeholder="选择已有片区或输入新归属地" />
+                  <datalist id="station-region-options"><option v-for="region in regionOptions" :key="region" :value="region" /></datalist>
                 </label>
 
                 <label class="form-field">
-                  <span>HOS编码</span>
-                  <input v-model.trim="form.hos_station_code" type="text" placeholder="例如：PQ04" />
+                  <span>HOS编码 <i class="required-mark">*</i></span>
+                  <input ref="hosCodeRef" v-model.trim="form.hos_station_code" required type="text" placeholder="例如：PQ04" />
                   <small>站点唯一标识，用于防止重复添加。</small>
                 </label>
 
@@ -172,9 +174,9 @@
                   <small>选否后，视频排班地图不再覆盖本站，也不能新增纳入视频计划。</small>
                 </label>
               </div>
-            </div>
+            </section>
 
-            <div class="form-section">
+            <section id="station-contact-section" class="form-section">
               <div class="form-section-title">
                 <span class="section-index">02</span>
                 <div>
@@ -214,9 +216,9 @@
                   <input v-model.trim="form.landline_phone" type="text" placeholder="例如：021-67220331" />
                 </label>
               </div>
-            </div>
+            </section>
 
-            <div class="form-section">
+            <section id="station-business-section" class="form-section">
               <div class="form-section-title">
                 <span class="section-index">03</span>
                 <div>
@@ -270,16 +272,16 @@
                 <div class="form-field operating-field span-2">
                   <span>营运时间</span>
                   <div class="operating-control">
-                    <select v-model="operatingMode">
+                    <select v-model="operatingMode" aria-label="营业模式">
                       <option value="24小时">24小时营业</option>
                       <option value="custom">固定时段营业</option>
                     </select>
                     <template v-if="operatingMode === 'custom'">
-                      <select v-model="operatingStart">
+                      <select v-model="operatingStart" aria-label="开始营业时间">
                         <option v-for="time in timeOptions" :key="`start-${time}`" :value="time">{{ time }}</option>
                       </select>
                       <span class="time-separator">至</span>
-                      <select v-model="operatingEnd">
+                      <select v-model="operatingEnd" aria-label="结束营业时间">
                         <option v-for="time in timeOptions" :key="`end-${time}`" :value="time">{{ time }}</option>
                       </select>
                     </template>
@@ -287,109 +289,73 @@
                   <small>系统统一保存为：{{ form.operating_hours }}</small>
                 </div>
               </div>
-            </div>
+            </section>
+            </fieldset>
           </div>
+          <footer class="station-editor-footer">
+            <p v-if="formError" class="form-error" role="alert">{{ formError }}</p>
+            <div class="form-actions"><span>{{ hasUnsavedChanges ? '有未保存的修改' : '关闭弹窗不会修改已有数据' }}</span><button class="btn btn-secondary" type="button" :disabled="saving" @click="requestCloseEditor">取消</button><button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? '保存中...' : editingId ? '保存修改' : '保存站点' }}</button></div>
+          </footer>
+        </form>
+        </dialog>
+        </Teleport>
 
-          <div v-if="formError" class="form-error">{{ formError }}</div>
-
-          <div class="form-actions">
-            <button class="btn btn-secondary" type="button" @click="resetForm({ scrollToForm: true })">
-              {{ editingId ? '放弃修改' : '清空' }}
-            </button>
-            <button class="btn btn-primary" type="button" :disabled="saving" @click="saveStation">
-              {{ saving ? '保存中...' : editingId ? '保存修改' : '保存站点' }}
-            </button>
-          </div>
-        </section>
-
-        <section ref="tableCardRef" class="card-surface table-card">
+        <section class="card-surface table-card">
           <div class="section-head">
             <div>
-              <div class="section-kicker">站点清单</div>
-              <h3>共 {{ filteredStations.length }} 个站点</h3>
+              <div class="section-kicker">基础数据目录</div>
+              <h3>站点清单 <span class="directory-total">{{ stations.length }}</span></h3>
+              <p class="directory-hint">集中查找与维护站点；新增、编辑在弹窗中完成，无需离开清单。</p>
             </div>
+            <button ref="createButtonRef" class="btn btn-primary create-station-button" type="button" :disabled="loading || importing || saving" @click="startCreate">+ 新增站点</button>
           </div>
-
+          <div class="directory-metrics" aria-label="站点档案概况"><span><strong>{{ stationMetrics.active }}</strong> 个营业中</span><span><strong>{{ stationMetrics.offline }}</strong> 个纳入现场计划</span><span><strong>{{ stationMetrics.online }}</strong> 个纳入视频计划</span><span><strong>{{ stationMetrics.missingCoordinates }}</strong> 个缺少有效坐标</span></div>
+          <section class="station-filter-panel" aria-label="站点筛选">
           <div class="filter-bar">
-            <label class="filter-field keyword-field">
+            <label class="filter-field keyword-field" :data-filter-state="filters.keyword ? 'set' : 'empty'">
               <span>关键词</span>
-              <input v-model.trim="filters.keyword" type="text" placeholder="站点名称、地址、负责人、HOS编码、登录用户名" />
+              <input v-model.trim="filters.keyword" type="search" placeholder="站名、HOS编码、账号、地址或联系人" />
             </label>
-
-            <label class="filter-field">
-              <span>所属片区</span>
-              <select v-model="filters.region">
-                <option value="">全部片区</option>
-                <option v-for="region in regionOptions" :key="region" :value="region">{{ region }}</option>
-              </select>
-            </label>
-
-            <label class="filter-field">
-              <span>站点类型</span>
-              <select v-model="filters.station_type">
-                <option value="">全部类型</option>
-                <option value="油站">油站</option>
-                <option value="充电站">充电站</option>
-              </select>
-            </label>
-
-            <label class="filter-field">
-              <span>站点状态</span>
-              <select v-model="filters.status">
-                <option value="">全部状态</option>
-                <option value="营业中">营业中</option>
-                <option value="停业">停业</option>
-              </select>
-            </label>
-
-            <label class="filter-field">
-              <span>监控状态</span>
-              <select v-model="filters.monitoring_status">
-                <option value="">全部监控</option>
-                <option value="运行中">运行中</option>
-                <option value="未运行">未运行</option>
-              </select>
-            </label>
-
-            <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
+            <label v-for="field in primaryFilters" :key="field.key" class="filter-field" :data-filter-state="filters[field.key] ? 'set' : 'empty'"><span>{{ field.label }}</span><select v-model="filters[field.key]" :aria-label="field.label"><option value="">不限</option><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
           </div>
+          <div class="filter-panel-tools"><span>{{ selectedFilterCount ? `已设置 ${selectedFilterCount} 项筛选条件` : '所有条件均不限，可直接搜索或展开更多筛选' }}</span><div><button class="filter-more-button" type="button" :class="{ selected: advancedFilterCount }" :aria-expanded="advancedFiltersOpen" aria-controls="station-advanced-filters" @click="advancedFiltersOpen = !advancedFiltersOpen">{{ advancedFiltersOpen ? '收起筛选' : '更多筛选' }}<b v-if="advancedFilterCount">{{ advancedFilterCount }}</b><span aria-hidden="true">{{ advancedFiltersOpen ? '⌃' : '⌄' }}</span></button><button class="filter-reset-button" type="button" :disabled="!selectedFilterCount" @click="resetFilters">重置筛选</button></div></div>
+          <div v-if="advancedFiltersOpen" id="station-advanced-filters" class="advanced-filter-grid"><label v-for="field in advancedFilters" :key="field.key" class="filter-field" :data-filter-state="filters[field.key] ? 'set' : 'empty'"><span>{{ field.label }}</span><select v-model="filters[field.key]" :aria-label="field.label"><option value="">不限</option><option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option></select></label></div>
+          </section>
+          <FilterSummary v-if="selectedFilterCount" :fields="filterSummary" />
+          <div class="directory-results"><p role="status">{{ loading ? '正在读取站点清单…' : `找到 ${filteredStations.length} 个站点` }}<span v-if="selectedFilterCount"> / 全部 {{ stations.length }} 个</span></p><label>排序<select v-model="sortOrder" aria-label="排序"><option value="default">默认站点顺序</option><option value="name">按站点名称</option><option value="updated">最近更新优先</option></select></label></div>
+          <div v-if="loadError" class="load-error" role="alert"><span>{{ loadError }}{{ stations.length ? ' 当前保留上次读取的数据。' : '' }}</span><button class="btn btn-secondary btn-sm" type="button" :disabled="loading" @click="fetchStations">重试</button></div>
 
-          <div class="table-wrap">
+          <div class="table-wrap" tabindex="0" aria-label="站点清单，可横向滚动">
             <table class="station-table">
               <thead>
                 <tr>
                   <th>站点名称</th>
-                  <th>站点登录用户名</th>
-                  <th>所属片区/归属地</th>
-                  <th>站点类型</th>
-                  <th>纳入现场计划</th>
-                  <th>纳入视频计划</th>
-                  <th>资产类型</th>
-                  <th>是否并表</th>
-                  <th>是否上线3.0</th>
-                  <th>监控状态</th>
-                  <th>HOS编码</th>
-                  <th>固定电话</th>
-                  <th>站点状态</th>
-                  <th>营运时间</th>
-                  <th>负责人</th>
-                  <th>创建时间</th>
-                  <th>更新时间</th>
+                  <th>片区与类型</th>
+                  <th>巡检计划</th>
+                  <th>经营与监控</th>
+                  <th>负责人 / 联系方式</th>
+                  <th>站点账号</th>
+                  <th>维护时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="loading">
-                  <td colspan="18" class="empty-cell">正在加载站点数据...</td>
+                <tr v-if="loading && !stations.length">
+                  <td colspan="8" class="empty-cell">正在加载站点数据...</td>
                 </tr>
-                <tr v-else-if="!filteredStations.length">
-                  <td colspan="18" class="empty-cell">暂无匹配的站点数据。</td>
+                <tr v-else-if="!filteredStations.length && !loadError">
+                  <td colspan="8" class="empty-cell"><strong>{{ selectedFilterCount ? '没有匹配的站点' : '暂无站点档案' }}</strong><p>{{ selectedFilterCount ? '试试调整筛选条件或使用更短的关键词。' : '点击“新增站点”开始维护基础档案。' }}</p><button v-if="selectedFilterCount" class="btn btn-secondary btn-sm" type="button" @click="resetFilters">清除筛选</button></td>
                 </tr>
                 <tr v-for="station in pagedStations" :key="station.id" :class="{ active: editingId === station.id }">
                   <td>
                     <div class="table-title">{{ station.station_name }}</div>
+                    <div class="table-sub station-code">HOS {{ station.hos_station_code || '未填写' }} <span>· ID {{ station.id }}</span></div>
                     <div class="table-sub">{{ station.address || '-' }}</div>
                   </td>
+                  <td><strong class="cell-main">{{ station.region || '未设置片区' }}</strong><div class="table-sub">{{ station.station_type || '-' }} · {{ normalizeAssetType(station.asset_type) }}</div></td>
+                  <td><div class="plan-scope-tags"><span :class="{ excluded: station.include_offline_plan === false }">现场 <b>{{ station.include_offline_plan === false ? '否' : '是' }}</b></span><span :class="{ excluded: station.include_online_plan === false }">视频 <b>{{ station.include_online_plan === false ? '否' : '是' }}</b></span></div></td>
+                  <td><div class="business-tags"><span class="status-pill" :class="{ closed: station.status === '停业' }">{{ station.status || '未填写状态' }}</span><span class="status-pill monitor" :class="{ offline: station.monitoring_status === '未运行' }">监控{{ station.monitoring_status || '运行中' }}</span></div><div class="table-sub">{{ station.online_3_status || '未上线' }} · {{ station.operating_hours || '24小时' }}</div><div class="table-sub">并表：{{ station.is_consolidated || '否' }}</div></td>
+                  <td><strong class="cell-main">{{ station.station_manager_name || '未填写负责人' }}</strong><div class="table-sub">{{ station.station_manager_phone || '未填写手机号' }}</div><div v-if="station.landline_phone" class="table-sub">固话 {{ station.landline_phone }}</div></td>
                   <td>
                     <div v-if="getStationUsernames(station).length" class="username-chip-list">
                       <span v-for="username in getStationUsernames(station)" :key="`${station.id}-${username}`" class="username-chip">
@@ -398,31 +364,10 @@
                     </div>
                     <span v-else class="table-sub muted">未绑定</span>
                   </td>
-                  <td>{{ station.region || '-' }}</td>
-                  <td>{{ station.station_type || '-' }}</td>
-                  <td>{{ station.include_offline_plan === false ? '否' : '是' }}</td>
-                  <td>{{ station.include_online_plan === false ? '否' : '是' }}</td>
-                  <td>{{ normalizeAssetType(station.asset_type) }}</td>
-                  <td>{{ station.is_consolidated || '否' }}</td>
-                  <td>{{ station.online_3_status || '未上线' }}</td>
-                  <td>
-                    <span class="status-pill monitor" :class="{ offline: station.monitoring_status === '未运行' }">
-                      {{ station.monitoring_status || '运行中' }}
-                    </span>
-                  </td>
-                  <td>{{ station.hos_station_code || '-' }}</td>
-                  <td>{{ station.landline_phone || '-' }}</td>
-                  <td>{{ station.status || '-' }}</td>
-                  <td>{{ station.operating_hours || '-' }}</td>
-                  <td>
-                    <div>{{ station.station_manager_name || '-' }}</div>
-                    <div class="table-sub">{{ station.station_manager_phone || '-' }}</div>
-                  </td>
-                  <td>{{ station.created_at || '-' }}</td>
-                  <td>{{ station.updated_at || '-' }}</td>
+                  <td class="cell-times"><span>更新 {{ station.updated_at || '未记录' }}</span><small>创建 {{ station.created_at || '未记录' }}</small></td>
                   <td>
                     <div class="row-actions">
-                      <button class="btn btn-secondary btn-sm" type="button" @click="startEdit(station)">编辑</button>
+                      <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || saving" @click="startEdit(station)">编辑</button>
                       <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                         :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                         @click="resetStationPassword(station)">
@@ -440,8 +385,8 @@
           </div>
 
           <div class="mobile-station-list">
-            <div v-if="loading" class="mobile-empty-card">正在加载站点数据...</div>
-            <div v-else-if="!filteredStations.length" class="mobile-empty-card">暂无匹配的站点数据。</div>
+            <div v-if="loading && !stations.length" class="mobile-empty-card">正在加载站点数据...</div>
+            <div v-else-if="!filteredStations.length && !loadError" class="mobile-empty-card"><strong>暂无匹配的站点数据</strong><p>调整筛选条件，或点击新增站点。</p><button v-if="selectedFilterCount" class="btn btn-secondary" type="button" @click="resetFilters">清除筛选</button></div>
             <template v-else>
               <article v-for="station in pagedStations" :key="`mobile-${station.id}`" class="mobile-station-card"
                 :class="{ active: editingId === station.id }">
@@ -449,10 +394,14 @@
                   <div>
                     <h4>{{ station.station_name }}</h4>
                     <p>{{ station.region || '未设置片区' }} · {{ station.station_type || '未设置类型' }}</p>
+                    <p>HOS {{ station.hos_station_code || '未填写' }}</p>
                   </div>
                   <span class="status-pill" :class="{ closed: station.status === '停业' }">{{ station.status || '-' }}</span>
                 </div>
 
+                <div class="plan-scope-tags"><span :class="{ excluded: station.include_offline_plan === false }">现场计划 <b>{{ station.include_offline_plan === false ? '否' : '是' }}</b></span><span :class="{ excluded: station.include_online_plan === false }">视频计划 <b>{{ station.include_online_plan === false ? '否' : '是' }}</b></span></div>
+                <div class="mobile-contact-row"><span>负责人</span><strong>{{ station.station_manager_name || '未填写' }}</strong><em>{{ station.station_manager_phone || '-' }}</em></div>
+                <details class="station-more-details"><summary>账号与更多档案信息</summary>
                 <div class="mobile-account-block">
                   <span>站点登录用户名</span>
                   <div v-if="getStationUsernames(station).length" class="username-chip-list">
@@ -464,8 +413,6 @@
                 </div>
 
                 <div class="mobile-info-grid">
-                  <div><span>纳入现场计划</span><strong>{{ station.include_offline_plan === false ? '否' : '是' }}</strong></div>
-                  <div><span>纳入视频计划</span><strong>{{ station.include_online_plan === false ? '否' : '是' }}</strong></div>
                   <div>
                     <span>HOS编码</span>
                     <strong>{{ station.hos_station_code || '-' }}</strong>
@@ -496,11 +443,8 @@
                   </div>
                 </div>
 
-                <div class="mobile-contact-row">
-                  <span>负责人</span>
-                  <strong>{{ station.station_manager_name || '-' }}</strong>
-                  <em>{{ station.station_manager_phone || '-' }}</em>
-                </div>
+                <div class="mobile-meta-row"><span>坐标</span><span>{{ station.longitude ?? '-' }}, {{ station.latitude ?? '-' }}</span></div>
+                </details>
 
                 <p class="mobile-address">{{ station.address || '未填写站点地址' }}</p>
 
@@ -510,7 +454,7 @@
                 </div>
 
                 <div class="mobile-card-actions">
-                  <button class="btn btn-secondary btn-sm" type="button" @click="startEdit(station)">编辑</button>
+                  <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || saving" @click="startEdit(station)">编辑</button>
                   <button v-if="canResetStationPassword" class="btn btn-warning btn-sm" type="button"
                     :disabled="resettingStationId === station.id || !getStationUsernames(station).length"
                     @click="resetStationPassword(station)">
@@ -540,7 +484,7 @@
                 @click="currentPage -= 1">
                 上一页
               </button>
-              <span class="page-indicator">{{ currentPage }} / {{ totalPages }}</span>
+              <button v-for="number in pageNumbers" :key="number" class="btn btn-secondary btn-sm page-number" :class="{ selected: currentPage === number }" type="button" :aria-label="`第 ${number} 页`" :aria-current="currentPage === number ? 'page' : undefined" @click="currentPage = number">{{ number }}</button>
               <button class="btn btn-secondary btn-sm" type="button" :disabled="currentPage === totalPages"
                 @click="currentPage += 1">
                 下一页
@@ -556,15 +500,16 @@
 <script setup>
 import axios from 'axios'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import FilterSummary from '@/components/FilterSummary.vue'
+import { directoryPageNumbers } from '@/utils/userDirectory'
+import { createStationFilters, filterStationDirectory, stationAssetType, stationFilterDefinitions, stationFilterSummary, stationUsernames } from '@/utils/stationDirectory'
+import { stationCoordinates } from '@/utils/schedulingCoverage'
 
 const currentUserId = localStorage.getItem('user_id') || ''
 const currentRole = localStorage.getItem('user_role') || ''
-let localPermissions = {}
-try {
-  localPermissions = JSON.parse(localStorage.getItem('permissions') || '{}')
-} catch (error) {
-  localPermissions = {}
-}
+const localPermissions = (() => {
+  try { return JSON.parse(localStorage.getItem('permissions') || '{}') || {} } catch { return {} }
+})()
 const hasPermission = currentRole === 'root' || Boolean(localPermissions.manage_stations)
 const canResetStationPassword = currentRole === 'root' || Boolean(localPermissions.reset_station_account_password)
 
@@ -580,8 +525,19 @@ const editingId = ref(null)
 const formError = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
-const formCardRef = ref(null)
-const tableCardRef = ref(null)
+const stationEditorDialog = ref(null)
+const exportDialogRef = ref(null)
+const editorBodyRef = ref(null)
+const stationNameRef = ref(null)
+const hosCodeRef = ref(null)
+const createButtonRef = ref(null)
+const editorOpen = ref(false)
+const originalSnapshot = ref('')
+const advancedFiltersOpen = ref(false)
+const sortOrder = ref('default')
+const loadError = ref('')
+let editorTrigger = null
+let disposed = false
 const operatingMode = ref('24小时')
 const operatingStart = ref('06:00')
 const operatingEnd = ref('22:00')
@@ -594,13 +550,7 @@ const stationExportDialog = reactive({
   error: ''
 })
 let messageTimer = null
-const filters = reactive({
-  keyword: '',
-  region: '',
-  station_type: '',
-  status: '',
-  monitoring_status: ''
-})
+const filters = reactive(createStationFilters())
 
 const createEmptyForm = () => ({
   include_offline_plan: true,
@@ -680,17 +630,8 @@ const timeOptions = Array.from({ length: 48 }, (_, index) => {
   return `${hour}:${minute}`
 })
 
-const normalizeAssetType = (assetType) => {
-  if (['股权', '控股', '参股'].some((keyword) => String(assetType || '').includes(keyword))) return '股权'
-  return assetType || '-'
-}
-
-const getStationUsernames = (station) => {
-  return String(station?.station_usernames || '')
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
+const normalizeAssetType = stationAssetType
+const getStationUsernames = stationUsernames
 
 const regionOptions = computed(() => {
   return Array.from(new Set(stations.value.map((station) => station.region).filter(Boolean))).sort((a, b) =>
@@ -698,27 +639,18 @@ const regionOptions = computed(() => {
   )
 })
 
-const filteredStations = computed(() => {
-  const keyword = filters.keyword.toLowerCase()
-  return stations.value.filter((station) => {
-    const text = [
-      station.station_name,
-      station.region,
-      station.address,
-      station.station_manager_name,
-      station.station_manager_phone,
-      station.hos_station_code,
-      station.landline_phone,
-      station.station_usernames
-    ].join(' ').toLowerCase()
-    const matchesKeyword = !keyword || text.includes(keyword)
-    const matchesRegion = !filters.region || station.region === filters.region
-    const matchesType = !filters.station_type || station.station_type === filters.station_type
-    const matchesStatus = !filters.status || station.status === filters.status
-    const matchesMonitoring = !filters.monitoring_status || (station.monitoring_status || '运行中') === filters.monitoring_status
-    return matchesKeyword && matchesRegion && matchesType && matchesStatus && matchesMonitoring
-  })
-})
+const filteredStations = computed(() => filterStationDirectory(stations.value, filters, sortOrder.value))
+const primaryFilters = computed(() => stationFilterDefinitions.slice(1, 4).map(field => field.key === 'region'
+  ? { ...field, options: regionOptions.value.map(value => ({ value, label: value })) } : field))
+const advancedFilters = stationFilterDefinitions.slice(4)
+const filterSummary = computed(() => stationFilterSummary(filters))
+const selectedFilterCount = computed(() => filterSummary.value.filter(field => field.value).length)
+const advancedFilterCount = computed(() => advancedFilters.filter(field => filters[field.key]).length)
+const stationMetrics = computed(() => ({ active: stations.value.filter(station => station.status === '营业中').length,
+  offline: stations.value.filter(station => station.include_offline_plan !== false).length,
+  online: stations.value.filter(station => station.include_online_plan !== false).length,
+  missingCoordinates: stations.value.filter(station => !stationCoordinates(station)).length,
+}))
 
 const getOperatingHoursValue = () => {
   if (operatingMode.value === '24小时') return '24小时'
@@ -778,6 +710,7 @@ const pagedStations = computed(() => {
 })
 const pageStart = computed(() => (filteredStations.value.length ? (currentPage.value - 1) * pageSize.value + 1 : 0))
 const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredStations.value.length))
+const pageNumbers = computed(() => directoryPageNumbers(currentPage.value, totalPages.value))
 const selectedStationExportFieldKeys = computed(() => (
   stationExportFieldOptions
     .filter((option) => Boolean(stationExportSelection[option.key]))
@@ -807,24 +740,10 @@ const resetForm = (options = {}) => {
   editingId.value = null
   formError.value = ''
   if (!options.keepMessage) setMessage('')
-  if (options.scrollToForm) {
-    nextTick(() => {
-      formCardRef.value?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      })
-    })
-  }
 }
 
 const resetFilters = () => {
-  Object.assign(filters, {
-    keyword: '',
-    region: '',
-    station_type: '',
-    status: '',
-    monitoring_status: ''
-  })
+  Object.assign(filters, createStationFilters())
 }
 
 const normalizeStationForForm = (station) => ({
@@ -849,25 +768,80 @@ const normalizeStationForForm = (station) => ({
 })
 
 const startEdit = (station) => {
+  if (!hasPermission || saving.value || loading.value) return
+  editorTrigger = document.activeElement
   editingId.value = station.id
   formError.value = ''
   const normalizedStation = normalizeStationForForm(station)
   Object.assign(form, normalizedStation)
   applyOperatingHoursToControls(normalizedStation.operating_hours)
-  setMessage(`已进入【${station.station_name}】编辑状态，请在维护站点主数据模块修改后保存。`, 'info')
-  nextTick(() => {
-    formCardRef.value?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    })
-  })
+  originalSnapshot.value = formSnapshot()
+  editorOpen.value = true
 }
 
+const formSnapshot = () => JSON.stringify({ ...form, operating_hours: getOperatingHoursValue() })
+const hasUnsavedChanges = computed(() => editorOpen.value && originalSnapshot.value !== formSnapshot())
+const startCreate = () => {
+  if (!hasPermission || saving.value || loading.value) return
+  editorTrigger = document.activeElement
+  resetForm()
+  originalSnapshot.value = formSnapshot()
+  editorOpen.value = true
+}
+const requestCloseEditor = () => {
+  if (saving.value) return
+  if (hasUnsavedChanges.value && !window.confirm('当前修改尚未保存，确定放弃并关闭吗？')) return
+  editorOpen.value = false
+}
+const restoreEditorFocus = () => {
+  if (disposed || editorOpen.value) return
+  const active = document.activeElement
+  if (active && active !== document.body && !stationEditorDialog.value?.contains(active)) return
+  const target = editorTrigger?.isConnected ? editorTrigger : createButtonRef.value
+  if (!target?.matches(':disabled')) target?.focus({ preventScroll: true })
+}
+const editorClosed = async () => {
+  if (disposed || stationEditorDialog.value?.open) return
+  editorOpen.value = false
+  editingId.value = null
+  await nextTick()
+  restoreEditorFocus()
+}
+const outsideDialog = (event, dialog) => {
+  if (event.target !== dialog) return false
+  const bounds = dialog.getBoundingClientRect()
+  return event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom
+}
+const closeEditorBackdrop = event => { if (outsideDialog(event, stationEditorDialog.value)) requestCloseEditor() }
+const closeExportBackdrop = event => { if (outsideDialog(event, exportDialogRef.value)) closeStationExportDialog() }
+const scrollToSection = id => {
+  const body = editorBodyRef.value
+  const section = body?.querySelector('#' + id)
+  if (section) body.scrollTo({ top: section.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop - 16,
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+}
+watch(editorOpen, async open => {
+  await nextTick()
+  if (disposed || editorOpen.value !== open) return
+  if (open && !stationEditorDialog.value?.open) {
+    stationEditorDialog.value?.showModal()
+    if (editorBodyRef.value) editorBodyRef.value.scrollTop = 0
+    stationNameRef.value?.focus({ preventScroll: true })
+  } else if (!open) stationEditorDialog.value?.close()
+})
+watch(() => stationExportDialog.visible, async open => {
+  await nextTick()
+  if (disposed || stationExportDialog.visible !== open) return
+  if (open && !exportDialogRef.value?.open) exportDialogRef.value?.showModal()
+  if (!open) exportDialogRef.value?.close()
+})
+
 const fetchStations = async () => {
-  if (!hasPermission) return
+  if (!hasPermission) return false
 
   try {
     loading.value = true
+    loadError.value = ''
     const response = await axios.get('/api/management/stations', {
       params: {
         user_id: currentUserId,
@@ -876,8 +850,10 @@ const fetchStations = async () => {
     })
     stations.value = response.data?.stations || []
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
+    return true
   } catch (error) {
-    setMessage(error?.response?.data?.error || '站点数据加载失败。', 'error')
+    loadError.value = error?.response?.data?.error || '站点数据加载失败。'
+    return false
   } finally {
     loading.value = false
   }
@@ -906,7 +882,7 @@ const getResponseErrorMessage = async (error, fallback) => {
       const text = await data.text()
       const payload = JSON.parse(text || '{}')
       return payload.error || payload.message || fallback
-    } catch (_error) {
+    } catch {
       return fallback
     }
   }
@@ -1081,12 +1057,17 @@ const validateForm = () => {
 }
 
 const saveStation = async () => {
+  if (!hasPermission || saving.value || !editorOpen.value) return
   formError.value = validateForm()
-  if (formError.value) return
+  if (formError.value) {
+    if (!form.station_name) stationNameRef.value?.focus()
+    else if (!form.hos_station_code) hosCodeRef.value?.focus()
+    return
+  }
 
   try {
     saving.value = true
-    const isEditing = Boolean(editingId.value)
+    const stationId = editingId.value
     const payload = {
       ...form,
       user_id: currentUserId
@@ -1095,28 +1076,17 @@ const saveStation = async () => {
       ? await axios.put(`/api/management/stations/${editingId.value}`, payload)
       : await axios.post('/api/management/stations', payload)
 
-    setMessage(response.data?.message || '站点已保存。', 'success')
-    const savedId = response.data?.id || editingId.value
-    await fetchStations()
-    if (isEditing) {
-      nextTick(() => {
-        tableCardRef.value?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        })
-      })
-      return
-    }
-    if (savedId) {
-      const savedRow = stations.value.find((item) => String(item.id) === String(savedId))
-      if (savedRow) startEdit(savedRow)
-    } else {
-      resetForm({ keepMessage: true })
-    }
+    const savedId = response.data?.id || stationId
+    editorOpen.value = false
+    const refreshed = await fetchStations()
+    const excluded = refreshed && savedId && !filteredStations.value.some(station => String(station.id) === String(savedId))
+    setMessage(!refreshed ? '站点已保存，清单暂未更新，请稍后重试刷新。' : excluded ? '站点已保存；当前筛选不包含该站点。' : response.data?.message || '站点已保存。', refreshed ? 'success' : 'info')
   } catch (error) {
     formError.value = error?.response?.data?.error || '站点保存失败。'
   } finally {
     saving.value = false
+    await nextTick()
+    restoreEditorFocus()
   }
 }
 
@@ -1142,10 +1112,10 @@ const deleteStation = async (station) => {
 }
 
 watch(
-  () => [filters.keyword, filters.region, filters.station_type, filters.status, pageSize.value],
+  [filters, sortOrder, pageSize],
   () => {
     currentPage.value = 1
-  }
+  }, { deep: true, flush: 'sync' }
 )
 
 watch([operatingMode, operatingStart, operatingEnd], () => {
@@ -1159,6 +1129,9 @@ watch(totalPages, (value) => {
 onMounted(fetchStations)
 
 onBeforeUnmount(() => {
+  disposed = true
+  stationEditorDialog.value?.close()
+  exportDialogRef.value?.close()
   if (messageTimer) {
     clearTimeout(messageTimer)
     messageTimer = null
@@ -1232,7 +1205,9 @@ onBeforeUnmount(() => {
 }
 
 .row-actions {
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .management-stack {
@@ -1241,65 +1216,194 @@ onBeforeUnmount(() => {
   gap: 20px;
 }
 
-.table-card,
-.form-card {
+.table-card {
   padding: 20px;
 }
 
 .section-head {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   margin-bottom: 16px;
 }
 
-.section-head.compact {
-  margin-bottom: 18px;
-}
-
-.form-card.editing {
-  border-color: #bfdbfe;
-  box-shadow: 0 18px 40px rgba(37, 99, 235, 0.12);
-}
-
-.editing-target {
+.section-head h3 {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 10px;
-  margin: 8px 0 0;
+  font-size: 22px;
 }
 
-.editing-target > span {
-  color: #64748b;
+.directory-total {
+  padding: 3px 9px;
+  border-radius: 8px;
+  background: #e8f0ff;
+  color: #2457ac;
   font-size: 14px;
-  font-weight: 900;
 }
 
-.editing-target > strong {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
-  border: 1px solid #bfdbfe;
-  color: #1d4ed8;
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12);
-  font-size: 15px;
-  font-weight: 950;
+.directory-hint {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.create-station-button {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.directory-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding: 12px 0 18px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.directory-metrics strong {
+  color: #24486e;
+  font-size: 17px;
+  margin-right: 4px;
+}
+
+.station-filter-panel {
+  padding: 16px;
+  border: 1px solid #dfe7f0;
+  border-radius: 16px;
+  background: linear-gradient(120deg, #f6f9fd, #fcfdff);
+}
+
+.station-filter-panel + :deep(.filter-summary) {
+  margin-top: 12px;
 }
 
 .filter-bar {
   display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(150px, 0.7fr)) auto;
+  grid-template-columns: minmax(250px, 1.7fr) repeat(3, minmax(120px, 1fr));
   gap: 12px;
   align-items: end;
-  margin-bottom: 16px;
-  padding: 14px;
-  border-radius: 18px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+}
+
+.advanced-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 16px;
+  margin-top: 12px;
+  border-top: 1px dashed #d5e0ed;
+}
+
+.filter-field {
+  min-width: 0;
+}
+
+.filter-field[data-filter-state='set'] > span {
+  color: #1d4ed8;
+}
+
+.filter-field[data-filter-state='set'] input,
+.filter-field[data-filter-state='set'] select {
+  background: #eff6ff;
+  border-color: #93b8ed;
+  box-shadow: inset 3px 0 #3b82f6;
+}
+
+.filter-panel-tools,
+.filter-panel-tools > div,
+.directory-results {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filter-panel-tools {
+  margin-top: 14px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.filter-more-button,
+.filter-reset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: #475569;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.filter-more-button.selected {
+  border-color: #93b8ed;
+  color: #1d4ed8;
+}
+
+.filter-more-button b {
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #dbeafe;
+  font-size: 11px;
+}
+
+.filter-reset-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.directory-results {
+  padding: 18px 0 12px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.directory-results p {
+  margin: 0;
+  font-weight: 700;
+}
+
+.directory-results p span {
+  color: #64748b;
+  font-weight: 400;
+}
+
+.directory-results label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.directory-results select {
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  padding: 7px;
+  color: #334155;
+  background: #fff;
+}
+
+.load-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff5f5;
+  color: #b91c1c;
+  font-size: 13px;
 }
 
 .filter-field,
@@ -1334,7 +1438,7 @@ onBeforeUnmount(() => {
 }
 
 .station-table {
-  min-width: 1780px;
+  min-width: 1240px;
   width: 100%;
   border-collapse: collapse;
 }
@@ -1354,6 +1458,82 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+  background: #f5f8fc;
+}
+
+.station-table td {
+  background: #fff;
+}
+
+.station-table tr:hover td {
+  background: #f8fbff;
+}
+
+.station-table th:first-child,
+.station-table td:first-child {
+  min-width: 210px;
+  max-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.station-table th:last-child,
+.station-table td:last-child {
+  position: sticky;
+  right: 0;
+  min-width: 110px;
+  box-shadow: -5px 0 9px -8px #64748b;
+}
+
+.station-code span {
+  color: #94a3b8;
+}
+
+.cell-main {
+  font-weight: 650;
+}
+
+.cell-times span,
+.cell-times small {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.plan-scope-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.station-table .plan-scope-tags {
+  flex-direction: column;
+}
+
+.plan-scope-tags > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #c3e4df;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #f0faf7;
+  color: #287065;
+  font-size: 12px;
+}
+
+.plan-scope-tags > span.excluded {
+  background: #f5f6f8;
+  border-color: #dbe0e8;
+  color: #64748b;
+}
+
+.business-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
 .station-table tr.active td {
@@ -1439,6 +1619,29 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.station-more-details {
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f9fbfe;
+}
+
+.station-more-details summary {
+  color: #476584;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.station-more-details[open] summary {
+  margin-bottom: 12px;
+}
+
+.station-more-details .mobile-info-grid,
+.station-more-details .mobile-meta-row {
+  margin-top: 12px;
 }
 
 .mobile-card-head {
@@ -1571,6 +1774,22 @@ onBeforeUnmount(() => {
   padding: 22px 12px;
 }
 
+.empty-cell p {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.station-table .empty-cell {
+  padding: 32px;
+  text-align: center;
+}
+
+.page-number.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .pagination-bar {
   margin-top: 16px;
   display: flex;
@@ -1599,6 +1818,130 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.station-editor-dialog {
+  width: min(920px, calc(100vw - 40px));
+  height: min(880px, calc(100dvh - 40px));
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #d5e1ef;
+  border-radius: 22px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 28px 90px #102a4f44;
+}
+
+.station-editor-dialog::backdrop,
+.station-export-modal::backdrop {
+  background: #0f244766;
+  backdrop-filter: blur(4px);
+}
+
+.station-editor-dialog .form-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.station-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  background: linear-gradient(125deg, #f0f6ff, #fff 75%);
+}
+
+.station-editor-header .section-kicker {
+  margin-bottom: 8px;
+  padding: 0;
+  background: transparent;
+}
+
+.station-editor-header h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 24px;
+}
+
+.station-editor-header p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.editor-section-nav {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 0 24px 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.editor-section-nav button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid #dbe5f0;
+  border-radius: 8px;
+  background: #f8faff;
+  color: #3e6089;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor-scroll-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px;
+}
+
+.editor-fieldset {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.station-editor-header,
+.station-editor-footer {
+  flex-shrink: 0;
+}
+
+.station-editor-footer {
+  padding: 14px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.station-editor-footer .form-actions {
+  margin: 0;
+}
+
+.station-editor-footer .form-actions > span {
+  flex: 1;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.station-editor-footer .form-error {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+}
+
+.required-mark {
+  color: #dc2626;
+  font-style: normal;
 }
 
 .form-section {
@@ -1645,7 +1988,7 @@ onBeforeUnmount(() => {
 
 .form-section-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1653,6 +1996,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .form-field.span-2 {
@@ -1686,12 +2030,12 @@ onBeforeUnmount(() => {
 
 .operating-control {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(110px, 0.8fr) auto minmax(110px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 10px;
   align-items: center;
 }
 
-.operating-control select:first-child:last-child {
+.operating-control select:first-child {
   grid-column: 1 / -1;
 }
 
@@ -1704,8 +2048,8 @@ onBeforeUnmount(() => {
 .message-toast {
   position: fixed;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  top: 90px;
+  transform: translateX(-50%);
   width: min(calc(100vw - 32px), 440px);
   z-index: 1500;
   padding: 12px 14px;
@@ -1716,7 +2060,7 @@ onBeforeUnmount(() => {
   text-align: center;
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(10px);
-  animation: toast-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .message-toast.error {
@@ -1745,18 +2089,7 @@ onBeforeUnmount(() => {
 .toast-fade-enter-from,
 .toast-fade-leave-to {
   opacity: 0;
-  transform: translate(-50%, calc(-50% + 12px));
-}
-
-@keyframes toast-pulse {
-  0%,
-  100% {
-    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.16);
-  }
-
-  50% {
-    box-shadow: 0 22px 44px rgba(37, 99, 235, 0.22);
-  }
+  transform: translate(-50%, 10px);
 }
 
 .form-error {
@@ -1837,6 +2170,19 @@ label.btn {
   opacity: 0.6;
 }
 
+button:focus-visible,
+summary:focus-visible,
+.table-wrap:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #93b8ed;
+  outline-offset: 1px;
+}
+
 .file-action {
   position: relative;
   height: 38px;
@@ -1863,6 +2209,15 @@ label.btn {
   font-size: 28px;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.close-btn:hover:not(:disabled) {
+  background: #eef3f9;
+  color: #1e40af;
 }
 
 .close-btn:disabled {
@@ -1870,46 +2225,42 @@ label.btn {
   opacity: 0.55;
 }
 
-.station-export-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 22px;
-  background: rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(8px);
-}
-
 .station-export-modal {
-  width: min(860px, 100%);
-  max-height: min(88vh, 880px);
-  display: flex;
+  width: min(860px, calc(100vw - 40px));
+  max-width: none;
+  max-height: min(90dvh, 880px);
+  margin: auto;
+  padding: 0;
   flex-direction: column;
   overflow: hidden;
 }
 
-.station-export-header,
+.station-export-modal[open] {
+  display: flex;
+}
+
+.station-export-dialog-header,
 .station-export-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   padding: 18px 20px;
+  flex-shrink: 0;
 }
 
-.station-export-header {
+.station-export-dialog-header {
   border-bottom: 1px solid #e2e8f0;
 }
 
-.station-export-header h3 {
+.station-export-dialog-header h3 {
   margin: 0;
   color: #0f172a;
   font-size: 22px;
 }
 
 .station-export-body {
+  min-height: 0;
   overflow: auto;
   padding: 20px;
   background:
@@ -2152,7 +2503,7 @@ label.btn {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .form-section-grid {
+  .advanced-filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -2184,16 +2535,12 @@ label.btn {
     width: 100%;
   }
 
-  .table-card,
-  .form-card {
+  .table-card {
     padding: 16px;
     border-radius: 20px;
   }
 
-  .section-head,
-  .form-section-title,
-  .pagination-bar,
-  .pagination-actions {
+  .pagination-bar {
     flex-direction: column;
     align-items: stretch;
   }
@@ -2206,8 +2553,105 @@ label.btn {
   }
 
   .filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .keyword-field {
+    grid-column: 1 / -1;
+  }
+
+  .station-filter-panel {
     padding: 12px;
+  }
+
+  .directory-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding-top: 0;
+  }
+
+  .directory-metrics span {
+    padding: 8px;
+    border-radius: 8px;
+    background: #f5f8fc;
+  }
+
+  .section-head h3 {
+    font-size: 19px;
+  }
+
+  .directory-hint {
+    font-size: 12px;
+  }
+
+  .create-station-button {
+    margin-left: auto;
+  }
+
+  .filter-panel-tools > span {
+    width: 100%;
+  }
+
+  .filter-panel-tools > div {
+    width: 100%;
+  }
+
+  .station-editor-dialog,
+  .station-export-modal {
+    width: calc(100vw - 16px);
     border-radius: 16px;
+  }
+
+  .station-editor-dialog {
+    height: calc(100dvh - 16px);
+  }
+
+  .station-editor-header {
+    padding: 16px;
+  }
+
+  .station-editor-header h3 {
+    font-size: 21px;
+  }
+
+  .editor-section-nav {
+    gap: 4px;
+    padding: 0 12px 12px;
+  }
+
+  .editor-section-nav button {
+    flex: 1;
+    padding: 6px 4px;
+    min-height: 40px;
+    font-size: 11px;
+  }
+
+  .editor-scroll-body {
+    padding: 14px 12px;
+  }
+
+  .station-editor-footer {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .station-editor-footer .form-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .station-editor-footer .form-actions > span {
+    grid-column: 1 / -1;
+  }
+
+  .station-editor-footer .btn,
+  .mobile-card-actions .btn {
+    min-height: 44px;
+  }
+
+  .form-field input,
+  .form-field select {
+    font-size: 16px;
   }
 
   .form-section {
@@ -2217,10 +2661,6 @@ label.btn {
 
   .form-field.span-2 {
     grid-column: auto;
-  }
-
-  .operating-control {
-    grid-template-columns: 1fr;
   }
 
   .time-separator {
@@ -2238,35 +2678,41 @@ label.btn {
   }
 
   .pagination-actions {
+    flex-wrap: wrap;
     gap: 8px;
+    justify-content: flex-end;
   }
 
   .page-size-field {
     justify-content: space-between;
   }
 
-  .pagination-actions .btn,
-  .pagination-actions .page-size-field,
-  .pagination-actions .page-indicator {
-    width: 100%;
+  .pagination-actions .btn {
+    min-height: 40px;
   }
 
-  .form-actions {
+  .pagination-actions .page-size-field {
+    flex-basis: 100%;
+  }
+
+  .mobile-card-actions {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .station-export-backdrop {
-    align-items: flex-end;
-    padding: 10px;
+  .mobile-card-head > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .mobile-meta-row {
+    font-size: 11px;
   }
 
   .station-export-modal {
-    max-height: 92vh;
-    border-radius: 22px;
+    max-height: calc(100dvh - 16px);
   }
 
-  .station-export-header,
   .station-export-actions,
   .export-field-panel-head,
   .export-notice {
@@ -2276,7 +2722,7 @@ label.btn {
 
   .station-export-actions {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 2fr;
   }
 
   .export-field-actions {
@@ -2290,13 +2736,20 @@ label.btn {
 }
 
 @media (max-width: 420px) {
-  .header-actions,
   .mobile-info-grid {
     grid-template-columns: 1fr;
   }
 
   .mobile-card-head {
     align-items: flex-start;
+  }
+
+  .advanced-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-head {
+    grid-template-columns: 1fr;
   }
 }
 </style>
