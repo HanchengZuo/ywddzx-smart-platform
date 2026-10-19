@@ -3,10 +3,14 @@
     <header class="schedule-page-head surface">
       <div>
         <span class="kicker">排班系统 / INSPECTION SCHEDULE</span>
-        <h2>巡检计划</h2>
+        <h2>巡检排班</h2>
         <p>按站点、按检查表安排检查人，巡检记录自动反映实际检查情况。</p>
       </div>
-      <span class="access-label">{{ allowed ? '查看与编辑独立授权' : '需要查看权限' }}</span>
+      <div class="head-actions">
+        <AutomaticSchedule v-if="allowed" @scheduled="onScheduled" /><span class="access-label">{{
+          allowed ? '查看与编辑独立授权' : '需要查看权限'
+        }}</span>
+      </div>
     </header>
     <template v-if="allowed">
       <div class="schedule-guide surface">
@@ -16,9 +20,10 @@
           >黄色为本周期已有巡检记录，不论是否审核，均锁定为实际检查人。<span
             class="legend planned"
           ></span
-          >蓝色为手动安排；无记录时才可调整，暂不推送待办任务。
+          >蓝色为已安排；无记录时可调整，保存日期和检查人后同步个人待办。
         </p>
       </div>
+      <p v-if="dispatchNotice" class="dispatch-notice" role="status">{{ dispatchNotice }}</p>
       <nav ref="switcher" class="schedule-switcher surface" aria-label="排班类型">
         <div role="tablist" aria-label="选择检查排班类型" class="schedule-tabs">
           <button
@@ -50,8 +55,8 @@
           </button>
         </div>
       </nav>
-      <KeepAlive>
-        <InspectionSchedulePanel :key="activeMode" :mode="activeMode" />
+      <KeepAlive :max="2">
+        <InspectionSchedulePanel :key="activeMode + ':' + refreshKey" :mode="activeMode" />
       </KeepAlive>
       <details class="schedule-help surface">
         <summary>统计口径与使用说明</summary>
@@ -62,17 +67,28 @@
           黄色表示已有巡检记录，并非问题已审核、已整改或检查人已完成流程确认；零问题记录同样计数。多人参与按人员去重，可点击单元格查看全部姓名。删除或移走记录后，若已无对应记录，单元格回到原保存排班或待排班状态。
         </p>
         <p>
-          未启用、缺失、重复定义或不在权限范围内的检查表列不可安排。排班选择范围仅为启用的督导组管理人员和督导组组员。排班全局共享，保存记录操作人、时间及修改历史；多人同时修改同一格会提示冲突，不静默覆盖。当前展示的排班表在页面可见、联网时每分钟核对实绩，切换周期自动加载；另一类排班暂停请求，切换回来保留周期和筛选。
+          未启用、缺失、重复定义或不在权限范围内的检查表列不可安排。选择计划工作日后，只能安排人员档期中明确有空且当天没有另一种检查的人员。未补日期的历史排班仍保留，但不会猜测日期生成待办；调整并保存后生效。排班全局共享，保存操作人与时间，批量更新整批校验；多选支持按格、按站或按列，切换筛选清空勾选，避免误改隐藏项目。
+        </p>
+        <p>
+          今日一键排班先预览再确认，按本自然季度的现场、视频站点任务组尽量平衡，每人当天自动安排一个站点，不覆盖已有安排。个人待办包括今日和逾期任务，同站同表有本周期巡检记录即自动完成，不依赖审核或录入人；没有完成记录不会因跨天或跨周期自动销项。提前检查和跨周期补做也可完成，实际执行人以记录为准。
         </p>
       </details>
     </template>
-    <div v-else class="surface denied">当前账号无权查看巡检计划，请联系Root分配查看权限。</div>
+    <div v-else class="surface denied">当前账号无权查看巡检排班，请联系Root分配查看权限。</div>
   </div>
 </template>
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import InspectionSchedulePanel from '@/components/InspectionSchedulePanel.vue'
+import AutomaticSchedule from '@/components/AutomaticSchedule.vue'
+const refreshKey = ref(0),
+  dispatchNotice = ref('')
+function onScheduled(data) {
+  refreshKey.value++
+  activeMode.value = 'offline'
+  dispatchNotice.value = `${data.day} 已安排 ${data.groups.length} 个站点任务组、${data.cell_count} 个单元格，已同步个人待办。`
+}
 const modes = [
   { key: 'offline', label: '现场检查排班', period: '按季度' },
   { key: 'online', label: '视频检查排班', period: '按月份' },
@@ -172,6 +188,21 @@ p {
   color: #4b6c8c;
   background: #f7faff;
   font-size: 12px;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dispatch-notice {
+  margin: 0;
+  padding: 12px 18px;
+  background: #eaf7f0;
+  border: 1px solid #cae7d7;
+  border-radius: 10px;
+  color: #307651;
 }
 .schedule-guide {
   padding: 16px 22px;

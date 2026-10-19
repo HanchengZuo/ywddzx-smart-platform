@@ -52,6 +52,10 @@ const routes = [
     component: () => import('../views/inspection/SchedulingMapView.vue')
   },
   {
+    path: '/inspection/staff-availability',
+    component: () => import('../views/inspection/StaffAvailabilityView.vue')
+  },
+  {
     path: '/inspection/records',
     component: () => import('../views/inspection/RecordsView.vue')
   },
@@ -176,6 +180,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path.startsWith('/management')) return false
   if (path === '/inspection/station-map') return hasPermission(role, permissions, 'view_station_map')
   if (path === '/inspection/scheduling-map') return hasPermission(role, permissions, 'view_scheduling_map')
+  if (path === '/inspection/staff-availability') return hasPermission(role, permissions, 'view_staff_availability')
   const operationsPage = operationsPages.find(page => page.path === path)
   if (operationsPage) return hasPermission(role, permissions, operationsPage.permission)
   if (path === '/inspection/register') return hasPermission(role, permissions, 'submit_inspections')
@@ -228,6 +233,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   operationsPages.forEach(page => { if (permissions[page.permission]) candidates.push(page.path) })
   if (permissions.view_station_map) candidates.push('/inspection/station-map')
   if (permissions.view_scheduling_map) candidates.push('/inspection/scheduling-map')
+  if (permissions.view_staff_availability) candidates.push('/inspection/staff-availability')
   if (permissions.submit_inspections) candidates.push('/inspection/register')
   if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
   if (permissions.view_checklist_originals) candidates.push('/inspection/checklist-originals')

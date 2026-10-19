@@ -337,6 +337,7 @@ import RegistrationDuplicateDialog from '@/components/RegistrationDuplicateDialo
 import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
+import { useRoute } from 'vue-router'
 import { pinyin } from 'pinyin-pro'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import {
@@ -363,6 +364,7 @@ import {
 } from '@/utils/localDraft'
 
 const currentRole = localStorage.getItem('user_role') || ''
+const route = useRoute()
 const localPermissions = (() => {
   try {
     return JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -1371,6 +1373,7 @@ const handleSubmit = async () => {
       }
     }
     resetForm(true)
+    if (endpoint === '/api/inspection-register') window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     showSubmitToast(response.data.message || '提交成功。', 'success')
   } catch (error) {
     showSubmitToast(error?.response?.data?.error || '提交失败，请稍后重试。', 'error')
@@ -1428,6 +1431,18 @@ watch(
   { deep: true }
 )
 
+async function applyScheduleTask() {
+  if (!route.query.schedule_task || !registerDraftReady) return
+  const station = stations.value.find(item => String(item.id) === String(route.query.station_id))
+  const table = inspectionTables.value.find(item => String(item.id) === String(route.query.inspection_table_id))
+  if (!station || !table) { showSubmitToast('任务站点或检查表不在当前登记权限范围，请联系管理员。', 'error'); return }
+  if (!isRegisterDraftEmpty(buildRegisterDraftData()) && !window.confirm('当前登记内容尚未提交，是否放弃并转到巡检任务站点？')) return
+  resetForm()
+  form.value.stationId = station.id; stationSearch.value = station.station_name
+  form.value.inspectionTableId = String(table.id); tableSearch.value = table.table_name
+  showSubmitToast(`已选择${station.station_name}，任务检查表为${table.table_name}。请按实际情况登记，有问题时引用对应规范。`, 'success')
+}
+watch(() => route.query.schedule_task, () => { if (registerDraftReady) applyScheduleTask() })
 onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
@@ -1441,6 +1456,7 @@ onMounted(async () => {
   applyRememberedStation()
   await restoreRegisterDraft()
   registerDraftReady = true
+  await applyScheduleTask()
 
   if (stationResult.status === 'rejected') {
     showSubmitToast(getRequestErrorMessage(stationResult.reason, '站点数据加载失败，请稍后重试。'), 'error')

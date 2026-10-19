@@ -76,6 +76,45 @@
         清除筛选</button
       ><span>{{ rows.length }} 个站点</span>
     </div>
+    <div v-if="board?.can_edit" class="bulk-toolbar">
+      <button
+        type="button"
+        class="secondary-button"
+        :aria-pressed="multiSelect"
+        :disabled="loading || !!error"
+        @click="toggleMulti"
+      >
+        {{ multiSelect ? '退出多选' : '多选排班' }}
+      </button>
+      <template v-if="multiSelect"
+        ><span
+          >已选 <b>{{ selectedCells.length }}</b> 格；可按整站、整列勾选</span
+        ><button
+          type="button"
+          class="primary-button"
+          :disabled="!selectedCells.length || loading || !!error"
+          @click="openBulk(false)"
+        >
+          统一安排</button
+        ><button
+          v-if="clipboard"
+          type="button"
+          class="secondary-button"
+          :disabled="!selectedCells.length || loading || !!error"
+          @click="openBulk(true)"
+        >
+          粘贴安排</button
+        ><button
+          v-if="selectedCells.length"
+          type="button"
+          class="text-button"
+          @click="selectedCells = []"
+        >
+          清空选择
+        </button></template
+      >
+      <span v-else>重复派同一人？开启多选后一次安排多个单元格。</span>
+    </div>
     <div v-if="error" class="panel-error" role="alert">
       {{ error
       }}<button
@@ -117,6 +156,15 @@
               :title="column.full_name"
             >
               {{ column.label }}<small v-if="!column.table_id">未启用或不可见</small>
+              <button
+                v-else-if="multiSelect"
+                type="button"
+                class="column-select"
+                :aria-label="'选择全部' + column.label"
+                @click="selectColumn(column)"
+              >
+                选列
+              </button>
             </th>
           </tr>
         </thead>
@@ -143,7 +191,17 @@
           >
             <td class="fixed-index">{{ row.sequence }}</td>
             <td class="fixed-region">{{ row.region }}</td>
-            <th scope="row" class="fixed-station">{{ row.station_name }}</th>
+            <th scope="row" class="fixed-station">
+              <label class="station-choice"
+                ><input
+                  v-if="multiSelect"
+                  type="checkbox"
+                  :checked="rowSelected(row)"
+                  :aria-label="'选择' + row.station_name + '全部可编辑项'"
+                  @change="selectRow(row)"
+                />{{ row.station_name }}</label
+              >
+            </th>
             <td
               v-for="column in board.columns"
               :key="column.key"
@@ -152,15 +210,20 @@
               <button
                 type="button"
                 class="cell-button"
+                :class="{ selected: multiSelect && selectedCells.includes(cellKey(row, column)) }"
+                :aria-pressed="
+                  multiSelect ? selectedCells.includes(cellKey(row, column)) : undefined
+                "
                 :disabled="
                   loading ||
                   !online ||
                   !!error ||
                   blocked ||
-                  row.cells[column.key].status === 'unavailable'
+                  row.cells[column.key].status === 'unavailable' ||
+                  (multiSelect && row.cells[column.key].status === 'completed')
                 "
                 :aria-label="`${row.station_name}，${column.label}，${scheduleStatusLabels[row.cells[column.key].status]}${inspectorPreview(row.cells[column.key]) ? '，' + inspectorPreview(row.cells[column.key]) : ''}`"
-                @click="openCell(row, column)"
+                @click="multiSelect ? toggleCell(row, column) : openCell(row, column)"
               >
                 <span class="mobile-column-label" aria-hidden="true">{{ column.label }}</span>
                 <span class="cell-names">{{
@@ -176,7 +239,8 @@
                 <small v-if="row.cells[column.key].status === 'completed'"
                   >已检查 · {{ row.cells[column.key].last_inspection_date }}</small
                 ><small v-else-if="row.cells[column.key].status === 'assigned'"
-                  >已排班{{ canEdit ? ' · 点击调整' : '' }}</small
+                  >{{ row.cells[column.key].scheduled_date || '待补计划日期'
+                  }}{{ canEdit ? ' · 调整' : '' }}</small
                 >
               </button>
             </td>
@@ -203,7 +267,13 @@
               <span class="dialog-kicker"
                 >{{ board?.period.label }} · {{ selection.column.label }}</span
               >
-              <h3 :id="dialogId">{{ selection.row.region }} · {{ selection.row.station_name }}</h3>
+              <h3 :id="dialogId">
+                {{
+                  bulkEdits.length
+                    ? '批量安排 ' + bulkEdits.length + ' 个单元格'
+                    : selection.row.region + ' · ' + selection.row.station_name
+                }}
+              </h3>
             </div>
             <button
               type="button"
@@ -228,7 +298,7 @@
                 ><span v-if="!currentCell.completed_inspectors.length">未记录检查人</span>
               </div>
             </div>
-            <div class="saved-info">
+            <div v-if="!bulkEdits.length" class="saved-info">
               <span>{{ currentCell.status === 'completed' ? '原排班人员' : '当前保存排班' }}</span
               ><strong>{{
                 currentCell.assignees.map((person) => person.display_name).join('、') || '尚未分配'
@@ -238,18 +308,44 @@
               >
             </div>
             <template v-if="scheduleCellEditable(currentCell, canEdit)">
+              <p v-if="bulkEdits.length" class="readonly-note">
+                统一更新所选单元格的日期和检查人；任一格已完成、档期变化或存在并发修改时，整批不保存。
+              </p>
+              <label class="search-people"
+                >计划日期<select
+                  v-model="plannedDate"
+                  :disabled="saving || conflict"
+                  aria-label="排班计划日期"
+                  @change="loadPeople"
+                >
+                  <option value="">请选择工作日</option>
+                  <option v-for="day in dateOptions" :key="day.day" :value="day.day">
+                    {{ day.day }} {{ day.weekday }}
+                  </option>
+                </select></label
+              >
+              <p v-if="!dateOptions.length" class="dialog-error">
+                当前周期没有已发布的未来工作日，只能取消已有排班，不能新派工。
+              </p>
+              <p v-if="peopleLoading" class="readonly-note" role="status">
+                正在核对所选日期的人员档期…
+              </p>
+              <p v-if="peopleError" class="dialog-error" role="alert">{{ peopleError }}</p>
               <label class="search-people"
                 >选择检查人<input
                   v-model.trim="peopleKeyword"
                   type="search"
                   placeholder="搜索姓名或用户名"
                   aria-label="搜索检查人"
-                  :disabled="saving || conflict"
+                  :disabled="saving || conflict || peopleLoading"
               /></label>
               <p class="selection-count">
                 已选择 {{ selectedIds.length }} 人，可多选；清空后保存即取消排班。
               </p>
-              <fieldset :disabled="saving || conflict" class="people-options">
+              <fieldset
+                :disabled="saving || conflict || peopleLoading || !!peopleError"
+                class="people-options"
+              >
                 <section v-for="group in peopleGroups" :key="group.role">
                   <h4>
                     {{ group.label }} <span>{{ group.people.length }}</span>
@@ -259,9 +355,16 @@
                     :key="person.id"
                     class="person-option"
                     :class="{ selected: selectedIds.includes(person.id) }"
-                    ><input v-model="selectedIds" type="checkbox" :value="person.id" /><span
+                    ><input
+                      v-model="selectedIds"
+                      type="checkbox"
+                      :value="person.id"
+                      :disabled="!personCanSchedule(person, mode)"
+                    /><span
                       ><b>{{ person.display_name }}</b
-                      ><small>{{ person.username }}</small></span
+                      ><small
+                        >{{ person.username }} · {{ availabilityLabel(person, mode) }}</small
+                      ></span
                     ><em v-if="selectedIds.includes(person.id)">已选</em></label
                   >
                 </section>
@@ -270,7 +373,7 @@
                 </p>
               </fieldset>
               <p v-if="unavailableSelected.length" class="dialog-error">
-                原排班包含已停用或非督导组账号：{{
+                所选人员当前不可派工：{{
                   unavailableSelected.map((person) => person.display_name).join('、')
                 }}。<button
                   type="button"
@@ -293,9 +396,22 @@
           <footer class="cell-dialog-footer">
             <p v-if="saveError" class="dialog-error" role="alert">{{ saveError }}</p>
             <div>
-              <span>只保存此单元格，暂不推送待办</span
+              <span>保存后同步个人巡检待办</span
               ><button type="button" class="secondary-button" :disabled="saving" @click="closeCell">
                 关闭</button
+              ><button
+                v-if="
+                  !bulkEdits.length &&
+                  currentCell.status === 'assigned' &&
+                  currentCell.assignees.length &&
+                  canEdit
+                "
+                type="button"
+                class="secondary-button"
+                :disabled="saving || changed"
+                @click="copyArrangement"
+              >
+                复制此安排</button
               ><button
                 v-if="conflict && currentCell.status !== 'completed'"
                 type="button"
@@ -303,12 +419,18 @@
                 :disabled="loading"
                 @click="reloadSelection"
               >
-                载入最新排班</button
+                {{ bulkEdits.length ? '关闭并重新选择' : '载入最新排班' }}</button
               ><button
                 v-else-if="scheduleCellEditable(currentCell, canEdit)"
                 type="button"
                 class="primary-button"
-                :disabled="saving || loading || !changed || !!unavailableSelected.length"
+                :disabled="
+                  saving ||
+                  loading ||
+                  !changed ||
+                  !!unavailableSelected.length ||
+                  (selectedIds.length > 0 && (peopleLoading || !!peopleError || !plannedDate))
+                "
                 @click="saveSelection"
               >
                 {{ saving ? '保存中…' : '保存排班' }}
@@ -336,6 +458,7 @@ import {
 } from 'vue'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { coverageQuery, currentCoveragePeriod } from '@/utils/schedulingCoverage'
+import { cellKey, personCanSchedule, availabilityLabel } from '@/utils/staffScheduling'
 import {
   filterScheduleRows,
   inspectorPreview,
@@ -366,6 +489,19 @@ const dialog = ref(null),
 const saveError = ref(''),
   conflict = ref(false)
 const dialogId = 'schedule-cell-' + useId()
+const multiSelect = ref(false),
+  selectedCells = ref([]),
+  bulkEdits = ref([]),
+  clipboard = ref(null)
+const plannedDate = ref(''),
+  availablePeople = ref([]),
+  peopleLoading = ref(false),
+  peopleError = ref('')
+let peopleController,
+  peopleSerial = 0
+const dateOptions = computed(() =>
+  (board.value?.workdays || []).filter((day) => day.day >= board.value.today),
+)
 let controller,
   disposed = false,
   active = false,
@@ -389,11 +525,12 @@ const regionStarts = computed(
         .map((row) => row.station_id),
     ),
 )
-const currentCell = computed(
-  () =>
-    board.value?.rows.find((row) => row.station_id === selection.value?.row.station_id)?.cells[
-      selection.value?.column.key
-    ],
+const currentCell = computed(() =>
+  bulkEdits.value.length
+    ? { status: 'assigned', assignees: [], revision: 0 }
+    : board.value?.rows.find((row) => row.station_id === selection.value?.row.station_id)?.cells[
+        selection.value?.column.key
+      ],
 )
 const peopleGroups = computed(() =>
   [
@@ -401,7 +538,7 @@ const peopleGroups = computed(() =>
     { role: 'supervisor', label: '督导组组员' },
   ].map((group) => ({
     ...group,
-    people: (board.value?.inspectors || []).filter(
+    people: availablePeople.value.filter(
       (person) =>
         person.role === group.role &&
         [person.display_name, person.username]
@@ -412,17 +549,143 @@ const peopleGroups = computed(() =>
   })),
 )
 const unavailableSelected = computed(() =>
-  (currentCell.value?.assignees || []).filter(
-    (person) =>
-      selectedIds.value.includes(person.id) &&
-      !board.value?.inspectors.some((option) => option.id === person.id),
-  ),
+  peopleLoading.value || peopleError.value
+    ? []
+    : selectedIds.value
+        .map(
+          (id) =>
+            availablePeople.value.find((p) => p.id === id) ||
+            board.value?.inspectors.find((p) => p.id === id) || { id, display_name: '原账号' },
+        )
+        .filter((p) => !personCanSchedule(p, props.mode)),
 )
-const changed = computed(
-  () =>
-    JSON.stringify([...selectedIds.value].sort((a, b) => a - b)) !==
-    JSON.stringify([...(selection.value?.originalIds || [])].sort((a, b) => a - b)),
-)
+const changed = computed(() => {
+  const selected = JSON.stringify([...selectedIds.value].sort((a, b) => a - b))
+  if (bulkEdits.value.length)
+    return bulkEdits.value.some((edit) => {
+      const cell = board.value?.rows.find((row) => row.station_id === edit.station_id)?.cells[
+        edit.column_key
+      ]
+      return (
+        JSON.stringify((cell?.assignees || []).map((p) => p.id).sort((a, b) => a - b)) !==
+          selected ||
+        (selectedIds.value.length > 0 && cell?.scheduled_date !== plannedDate.value)
+      )
+    })
+  return (
+    selected !== JSON.stringify([...(selection.value?.originalIds || [])].sort((a, b) => a - b)) ||
+    (selectedIds.value.length > 0 && plannedDate.value !== selection.value?.originalDate)
+  )
+})
+function toggleMulti() {
+  multiSelect.value = !multiSelect.value
+  selectedCells.value = []
+}
+function toggleCell(row, column) {
+  if (!scheduleCellEditable(row.cells[column.key], canEdit.value)) return
+  const key = cellKey(row, column)
+  selectedCells.value = selectedCells.value.includes(key)
+    ? selectedCells.value.filter((v) => v !== key)
+    : [...selectedCells.value, key]
+}
+function editableRowKeys(row) {
+  return board.value.columns
+    .filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
+    .map((c) => cellKey(row, c))
+}
+function rowSelected(row) {
+  const keys = editableRowKeys(row)
+  return keys.length > 0 && keys.every((key) => selectedCells.value.includes(key))
+}
+function selectKeys(keys) {
+  if (keys.every((key) => selectedCells.value.includes(key)))
+    selectedCells.value = selectedCells.value.filter((v) => !keys.includes(v))
+  else selectedCells.value = [...new Set([...selectedCells.value, ...keys])]
+}
+function selectRow(row) {
+  selectKeys(editableRowKeys(row))
+}
+function selectColumn(column) {
+  selectKeys(
+    rows.value
+      .filter((row) => scheduleCellEditable(row.cells[column.key], canEdit.value))
+      .map((row) => cellKey(row, column)),
+  )
+}
+async function openBulk(paste = false) {
+  const cells = []
+  for (const row of rows.value)
+    for (const column of board.value.columns) {
+      if (
+        selectedCells.value.includes(cellKey(row, column)) &&
+        scheduleCellEditable(row.cells[column.key], canEdit.value)
+      )
+        cells.push({
+          station_id: row.station_id,
+          column_key: column.key,
+          revision: row.cells[column.key].revision,
+        })
+    }
+  if (!cells.length) return
+  trigger = document.activeElement
+  bulkEdits.value = cells
+  selection.value = {
+    row: board.value.rows.find((row) => row.station_id === cells[0].station_id),
+    column: board.value.columns.find((c) => c.key === cells[0].column_key),
+    originalIds: [],
+  }
+  selectedIds.value = paste ? [...clipboard.value.ids] : []
+  plannedDate.value =
+    paste && dateOptions.value.some((day) => day.day === clipboard.value.day)
+      ? clipboard.value.day
+      : dateOptions.value[0]?.day || ''
+  saveError.value = ''
+  conflict.value = false
+  peopleKeyword.value = ''
+  await nextTick()
+  dialog.value.showModal()
+  loadPeople()
+}
+async function copyArrangement() {
+  clipboard.value = {
+    ids: currentCell.value.assignees.map((p) => p.id),
+    day: currentCell.value.scheduled_date,
+  }
+  await closeCell(true)
+  multiSelect.value = true
+  selectedCells.value = []
+  notice.value = '已复制检查人和日期。请选择目标单元格，再点击“粘贴安排”；保存前会再次核对档期。'
+}
+async function loadPeople() {
+  const ticket = ++peopleSerial
+  peopleController?.abort()
+  availablePeople.value = []
+  peopleError.value = ''
+  if (
+    !selection.value ||
+    !plannedDate.value ||
+    !canEdit.value ||
+    currentCell.value?.status === 'completed'
+  ) {
+    peopleLoading.value = false
+    return
+  }
+  peopleController = new AbortController()
+  peopleLoading.value = true
+  try {
+    const { data } = await axios.get('/api/inspection-schedule/available-people', {
+      params: { day: plannedDate.value },
+      signal: peopleController.signal,
+      timeout: 15000,
+    })
+    if (ticket === peopleSerial && !disposed) availablePeople.value = data.people
+  } catch (err) {
+    if (ticket === peopleSerial && !disposed && err.code !== 'ERR_CANCELED')
+      peopleError.value = err.response?.data?.error || '档期核对失败，请重新选择日期重试。'
+  } finally {
+    if (ticket === peopleSerial) peopleLoading.value = false
+  }
+}
 const clearFilters = () => {
   keyword.value = ''
   region.value = ''
@@ -443,6 +706,10 @@ async function loadBoard() {
     })
     if (disposed || ticket !== serial) return
     board.value = response.data
+    if (!board.value.can_edit) {
+      multiSelect.value = false
+      selectedCells.value = []
+    }
     if (selection.value && !currentCell.value) {
       closeCell(true)
       notice.value = '原站点已不在当前可见计划名单内，已关闭编辑，请核对站点档案。'
@@ -477,6 +744,10 @@ function copySelection() {
   selectedIds.value = currentCell.value.assignees.map((person) => person.id)
   selection.value.originalIds = [...selectedIds.value]
   selection.value.revision = currentCell.value.revision
+  selection.value.originalDate = currentCell.value.scheduled_date
+  plannedDate.value = dateOptions.value.some((day) => day.day === currentCell.value.scheduled_date)
+    ? currentCell.value.scheduled_date
+    : dateOptions.value[0]?.day || ''
   saveError.value = ''
   conflict.value = false
 }
@@ -490,9 +761,11 @@ async function openCell(row, column) {
   )
     return
   trigger = document.activeElement
+  bulkEdits.value = []
   selection.value = { row, column }
   peopleKeyword.value = ''
   copySelection()
+  loadPeople()
   await nextTick()
   if (!disposed && selection.value && !dialog.value.open) dialog.value.showModal()
 }
@@ -506,7 +779,12 @@ async function closeCell(force = false) {
   )
     return
   dialog.value?.close()
+  peopleSerial++
+  peopleController?.abort()
+  peopleLoading.value = false
   selection.value = null
+  bulkEdits.value = []
+  polling.start()
   await nextTick()
   if (!disposed && trigger?.isConnected) trigger.focus({ preventScroll: true })
 }
@@ -522,8 +800,18 @@ function onBackdrop(event) {
     closeCell()
 }
 async function reloadSelection() {
+  if (bulkEdits.value.length) {
+    await closeCell(true)
+    await retryBoard()
+    selectedCells.value = []
+    notice.value = '已载入最新排班，请重新选择需要批量调整的单元格。'
+    return
+  }
   try {
-    if (await loadBoard()) copySelection()
+    if (await loadBoard()) {
+      copySelection()
+      loadPeople()
+    }
   } catch {
     /* Error remains in the panel. */
   }
@@ -534,7 +822,12 @@ async function saveSelection() {
     saving.value ||
     loading.value ||
     !changed.value ||
-    conflict.value
+    conflict.value ||
+    (selectedIds.value.length &&
+      (peopleLoading.value ||
+        peopleError.value ||
+        !plannedDate.value ||
+        unavailableSelected.value.length))
   )
     return
   saving.value = true
@@ -548,11 +841,15 @@ async function saveSelection() {
         column_key: selection.value.column.key,
         inspector_ids: selectedIds.value,
         revision: selection.value.revision,
+        scheduled_date: plannedDate.value,
+        ...(bulkEdits.value.length ? { cells: bulkEdits.value } : {}),
       },
-      { timeout: 15000 },
+      { timeout: 60000 },
     )
     if (disposed) return
-    notice.value = '排班已保存，暂不推送检查人待办。'
+    notice.value = '排班已保存，已同步检查人的巡检待办。'
+    selectedCells.value = []
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     await closeCell(true)
     await loadBoard()
   } catch (err) {
@@ -579,7 +876,13 @@ async function saveSelection() {
 const polling = createAdaptivePolling({
   task: loadBoard,
   canRun: () =>
-    active && !disposed && !document.hidden && online.value && !blocked.value && !saving.value,
+    active &&
+    !disposed &&
+    !document.hidden &&
+    online.value &&
+    !blocked.value &&
+    !saving.value &&
+    !dialog.value?.open,
 })
 function visibilityChanged() {
   online.value = navigator.onLine
@@ -592,6 +895,8 @@ watch(
     serial++
     controller?.abort()
     board.value = null
+    selectedCells.value = []
+    clipboard.value = null
     error.value = ''
     notice.value = ''
     loading.value = online.value
@@ -601,6 +906,9 @@ watch(
     }, 180)
   },
 )
+watch([keyword, region, state], () => {
+  selectedCells.value = []
+})
 onMounted(() => {
   document.addEventListener('visibilitychange', visibilityChanged)
   window.addEventListener('online', visibilityChanged)
@@ -618,6 +926,8 @@ onDeactivated(() => {
   active = false
   serial++
   controller?.abort()
+  peopleSerial++
+  peopleController?.abort()
   clearTimeout(switchTimer)
   loading.value = false
   polling.pause()
@@ -627,6 +937,8 @@ onBeforeUnmount(() => {
   disposed = true
   serial++
   controller?.abort()
+  peopleSerial++
+  peopleController?.abort()
   clearTimeout(switchTimer)
   polling.dispose()
   dialog.value?.close()
@@ -754,6 +1066,49 @@ input[type='search'] {
   margin-left: auto;
   font-size: 12px;
   color: #71849a;
+}
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 24px;
+  background: #f2f7fd;
+  border-top: 1px solid #e0e9f4;
+  font-size: 12px;
+  color: #6c829c;
+}
+.bulk-toolbar .primary-button,
+.bulk-toolbar .secondary-button {
+  min-height: 34px;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+.station-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.station-choice input {
+  margin: 0;
+  accent-color: #2866b5;
+  flex-shrink: 0;
+}
+.column-select {
+  display: block;
+  margin: 5px auto 0;
+  border: 1px solid #c6d9ec;
+  border-radius: 5px;
+  padding: 2px 8px;
+  background: #fff;
+  color: #47739f;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.cell-button.selected {
+  box-shadow: inset 0 0 0 2px #2866b5;
+  background: #dcecff;
 }
 .matrix-content {
   border-block: 1px solid #dce5f0;
@@ -1041,6 +1396,11 @@ input[type='search'] {
   border-color: #85b0e2;
   background: #f0f6ff;
 }
+.person-option:has(input:disabled) {
+  background: #f7f8fa;
+  color: #8c9aaa;
+  cursor: not-allowed;
+}
 .person-option input {
   width: 17px;
   height: 17px;
@@ -1160,6 +1520,9 @@ select:focus-visible {
   clip-path: inset(50%);
 }
 @container (max-width: 760px) {
+  .bulk-toolbar {
+    padding: 12px 16px;
+  }
   .panel-head {
     align-items: stretch;
     flex-direction: column;

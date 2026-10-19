@@ -784,6 +784,10 @@ PERMISSION_CATALOG = [
         "description": "按现场季度或视频月度查看未覆盖站点，沿用巡检记录的数据范围，不受问题审核状态影响。",
         "defaults": {"root": True},
     },
+    {"key": "view_staff_availability", "name": "查看页面", "category": "人员档期",
+     "description": "查看固定人员名单的官方工作日档期及历史巡检方式。", "defaults": {"root": True}},
+    {"key": "edit_staff_availability", "name": "编辑档期", "category": "人员档期",
+     "description": "设置未来工作日有空或没空及四字内原因；需同时具备查看权限。", "defaults": {"root": True}},
     {
         "key": "view_expert_qa",
         "name": "查看页面并提问",
@@ -929,7 +933,7 @@ PERMISSION_CATALOG = [
     {
         "key": "view_inspection_schedule",
         "name": "查看页面",
-        "category": "巡检计划",
+        "category": "巡检排班",
         "description": "查看现场季度与视频月度排班表，默认仅Root可访问。",
         "defaults": {"root": True},
     },
@@ -950,22 +954,22 @@ PERMISSION_CATALOG = [
     {
         "key": "limit_plan_inspection_table_scope",
         "name": "限定检查表范围",
-        "category": "巡检计划",
-        "description": "启用后，巡检计划只显示选定检查表的计划数据。",
+        "category": "巡检排班",
+        "description": "启用后，巡检排班只显示选定检查表的数据。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
     },
     {
         "key": "limit_plan_station_region_scope",
         "name": "查看片区站点数据",
-        "category": "巡检计划",
-        "description": "只统计和展示选定片区/归属地内站点的巡检计划。",
+        "category": "巡检排班",
+        "description": "只统计和展示选定片区/归属地内站点的巡检排班。",
         "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
         "key": "edit_inspection_schedule",
         "name": "编辑排班",
-        "category": "巡检计划",
-        "description": "在可见范围内为尚未检查的单元格选择督导组检查人；需同时具备查看页面权限。",
+        "category": "巡检排班",
+        "description": "在可见范围内选择有空检查人，单格、批量或自动排班，并发送巡检待办；需同时具备查看页面权限。",
         "defaults": {"root": True},
     },
     {
@@ -1133,6 +1137,7 @@ PERMISSION_DEPENDENCIES = {
     "reset_station_account_password": "manage_stations",
     "generate_inspection_reports": "view_inspection_reports",
     "edit_inspection_schedule": "view_inspection_schedule",
+    "edit_staff_availability": "view_staff_availability",
 }
 PERMISSION_ANY_DEPENDENCIES = {
     "edit_inspection_issues": (
@@ -1210,6 +1215,8 @@ FEEDBACK_MODULE_OPTIONS = {
     "巡检规范库",
     "检查表原件库",
     "巡检计划",
+    "巡检排班",
+    "人员档期",
     "考核系统",
     "证照管理",
     "车辆管理系统",
@@ -16581,6 +16588,8 @@ def get_notification_summary():
         inspection_sign_pending_count = get_inspection_sign_pending_count_for_user(cur, current_user)
         my_pending_rectification_count = get_my_pending_rectification_count_for_user(cur, current_user)
         appeal_counts = appeal_notification_counts(cur, current_user, globals())
+        from inspection_schedule_tasks import task_count
+        schedule_task_pending_count = task_count(cur, current_user['id'])
         conn.commit()
         return jsonify(
             {
@@ -16589,6 +16598,7 @@ def get_notification_summary():
                 "inspection_sign_pending_count": inspection_sign_pending_count,
                 "my_pending_rectification_count": my_pending_rectification_count,
                 "appeal_notification_count": appeal_counts['total'],
+                "schedule_task_pending_count": schedule_task_pending_count,
             }
         )
     except Exception as e:
@@ -35424,6 +35434,12 @@ def inspection_schedule_scope(cur, user):
 
 
 register_inspection_schedule(app, connect=get_db_connection, has_permission=has_permission, scope=inspection_schedule_scope)
+from staff_availability import register_staff_availability
+from schedule_automation import register_schedule_automation
+from inspection_schedule_tasks import register_schedule_tasks
+register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
+register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission, scope=inspection_schedule_scope)
+register_schedule_tasks(app, connect=get_db_connection)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)
 

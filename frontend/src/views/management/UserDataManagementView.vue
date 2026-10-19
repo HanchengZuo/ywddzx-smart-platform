@@ -718,10 +718,10 @@ const inspectionScopeConfigs = {
     title: '巡检记录检查表范围',
     description: '启用后，只限制巡检记录能看到哪些检查表的记录。'
   },
-  '巡检计划': {
+  '巡检排班': {
     permissionKey: 'limit_plan_inspection_table_scope',
-    title: '巡检计划检查表范围',
-    description: '启用后，只限制巡检计划能看到哪些检查表的计划。'
+    title: '巡检排班检查表范围',
+    description: '启用后，只限制巡检排班能看到哪些检查表。'
   }
 }
 
@@ -736,10 +736,10 @@ const stationRegionScopeConfigs = {
     title: '巡检记录片区站点范围',
     description: '选择“查看片区站点数据”后，在这里指定可查看哪些片区/归属地的站点记录。'
   },
-  '巡检计划': {
+  '巡检排班': {
     permissionKey: 'limit_plan_station_region_scope',
-    title: '巡检计划片区站点范围',
-    description: '选择“查看片区站点数据”后，只统计和展示选定片区/归属地内站点的巡检计划。'
+    title: '巡检排班片区站点范围',
+    description: '选择“查看片区站点数据”后，只统计和展示选定片区/归属地内站点的巡检排班。'
   },
   '站点证照有效期管理': {
     permissionKey: 'limit_certificate_station_region_scope',
@@ -796,7 +796,7 @@ const scopedPermissionLayouts = {
     scopeKeys: ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records', 'limit_record_inspection_table_scope'],
     actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
   },
-  '巡检计划': {
+  '巡检排班': {
     scopeKeys: ['view_inspection_schedule', 'limit_plan_inspection_table_scope', 'limit_plan_station_region_scope'],
     actionKeys: ['edit_inspection_schedule']
   },

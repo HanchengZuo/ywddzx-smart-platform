@@ -1,0 +1,120 @@
+"""Deterministic, review-before-save balancing. No AI calls or daily background jobs."""
+import hashlib
+import json
+import logging
+from collections import defaultdict
+from flask import g, jsonify, request
+from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, save_cell
+from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
+from scheduling_map import period
+from staff_availability import available_people
+
+
+def workload(cur, ids, start, end):
+    cur.execute('''WITH participants AS (
+      SELECT id AS inspection_id,inspector_id FROM inspections WHERE inspection_date >= %s AND inspection_date < %s
+      UNION SELECT i.inspection_id,i.inspector_id FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
+        WHERE ins.inspection_date >= %s AND ins.inspection_date < %s
+    ), units AS (
+      SELECT p.inspector_id AS uid,t.checklist_mode AS mode,ins.inspection_date AS day,ins.station_id
+      FROM participants p JOIN inspections ins ON ins.id=p.inspection_id
+      JOIN inspection_tables t ON t.id=ins.inspection_table_id
+      WHERE p.inspector_id=ANY(%s) AND t.checklist_mode IN ('offline','online') AND ins.inspection_date<=%s
+      UNION
+      SELECT task.user_id,task.mode,task.scheduled_date,task.station_id FROM inspection_schedule_tasks task
+      WHERE task.user_id=ANY(%s) AND task.status='pending' AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
+        AND task.scheduled_date >= %s AND task.scheduled_date < %s
+      AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.station_id=task.station_id
+        AND ins.inspection_table_id=task.table_id
+        AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
+    ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), ids, start, end, today()))
+    result = {uid: dict(offline=0, online=0) for uid in ids}
+    for r in cur.fetchall(): result[r['uid']][r['mode']] = r['n']
+    return result
+
+
+def balanced_allocation(people, demands, loads):
+    """One person/day/station bundle; prefer their underrepresented quarterly mode."""
+    queues = {mode: list(demands.get(mode, [])) for mode in ('offline', 'online')}
+    total = {mode: sum(loads.get(p['id'], {}).get(mode, 0) for p in people) for mode in queues}
+    result = []
+    for p in sorted(people, key=lambda p: (sum(loads.get(p['id'], {}).values()), p['sequence'])):
+        before = dict(loads.get(p['id'], dict(offline=0, online=0)))
+        choices = [mode for mode, groups in queues.items() if groups]
+        if not choices: break
+        def score(mode):
+            diff = before['offline'] - before['online'] + (1 if mode == 'offline' else -1)
+            return (abs(diff), total[mode], 0 if mode == 'offline' else 1)
+        mode = min(choices, key=score)
+        group = queues[mode].pop(0)
+        after = dict(before); after[mode] += 1; total[mode] += 1
+        result.append(dict(**group, mode=mode, person=p, before=before, after=after))
+    return result
+
+
+def proposal(cur, actor, day, station_scope, table_scope):
+    require_workday(cur, day)
+    people = available_people(cur, day)
+    eligible = [p for p in people if p['id'] and p['available'] is True and not p['planned_modes'] and not p['actual_modes']]
+    demands, periods = {}, {}
+    quarter = (day.month - 1) // 3 + 1
+    for mode in ('offline', 'online'):
+        chosen, start, end = period(dict(mode=mode, year=day.year, **({'quarter': quarter} if mode == 'offline' else {'month': day.month})))
+        periods[mode] = (chosen, start, end)
+        board = read_board(cur, chosen, start, end, station_scope, table_scope)
+        demands[mode] = []
+        for row in board['rows']:
+            cells = [dict(station_id=row['station_id'], column_key=c['key'], revision=row['cells'][c['key']]['revision'], label=c['label'])
+                     for c in board['columns'] if row['cells'][c['key']]['status'] == 'unassigned']
+            if cells: demands[mode].append(dict(station_id=row['station_id'], station_name=row['station_name'], region=row['region'], cells=cells))
+    _, start, end = periods['offline']
+    loads = workload(cur, [p['id'] for p in eligible], start, end)
+    groups = balanced_allocation(eligible, demands, loads)
+    token = hashlib.sha256(json.dumps(dict(actor=actor['id'], day=day.isoformat(), groups=groups), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
+        available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
+        excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else '当天已有安排或实绩' if p['planned_modes'] or p['actual_modes'] else p['reason'] or '未确认有空')
+                  for p in people if p not in eligible]), periods
+
+
+def register_schedule_automation(app, *, connect, has_permission, scope):
+    @app.post('/api/inspection-schedule/auto')
+    def auto_schedule():
+        actor = getattr(g, 'current_user', None)
+        if not actor: return jsonify(success=False, error='请先登录。'), 401
+        conn = cur = None
+        try:
+            conn = connect(); cur = conn.cursor()
+            if not has_permission(cur, actor, VIEW_PERMISSION) or not has_permission(cur, actor, EDIT_PERMISSION):
+                raise PermissionError('当前账号不能自动排班。')
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm'):
+                raise ValueError('请选择预览或确认排班。')
+            day = day_value(data.get('day', today().isoformat()))
+            cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
+            if data['action'] == 'confirm': lock_schedule(cur)
+            station_scope, table_scope = scope(cur, actor)
+            result, periods = proposal(cur, actor, day, station_scope, table_scope)
+            if data['action'] == 'confirm':
+                if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
+                if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')
+                cache = {}
+                for group in result['groups']:
+                    chosen, start, end = periods[group['mode']]
+                    for cell in group['cells']:
+                        save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
+                          inspector_ids=[group['person']['id']], scheduled_date=day.isoformat()), chosen, start, end, station_scope, table_scope, cache)
+                conn.commit()
+            response = jsonify(success=True, **result)
+            response.headers['Cache-Control'] = 'private, no-store'
+            return response
+        except (ValueError, PermissionError) as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False, error=str(exc)), 409 if isinstance(exc, ScheduleConflict) else 403 if isinstance(exc, PermissionError) else 400
+        except Exception:
+            if conn: conn.rollback()
+            logging.exception('Automatic scheduling failed')
+            return jsonify(success=False, error='自动排班暂时无法处理，请稍后重试。'), 500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()

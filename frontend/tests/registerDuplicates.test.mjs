@@ -10,7 +10,7 @@ const duplicate = (token = 'signed') => ({ response: { status: 409, data: {
   code: 'duplicate_registration', confirmation_token: token, duplicates: [{ description: '接地锈蚀' }]
 } } })
 function setup(responses, confirmations = [true], mode = 'yes') {
-  const requests = [], toasts = []
+  const requests = [], toasts = [], notifications = []
   let reset = 0, dialogs = 0
   const context = {
     submitting: { value: false }, normalizedHasIssue: { value: mode },
@@ -21,6 +21,7 @@ function setup(responses, confirmations = [true], mode = 'yes') {
     showSubmitToast: (...args) => toasts.push(args), resetForm: () => reset++,
     buildRegistrationSelections: () => [{ standard_id: '9000' }],
     submitMessageTimer: null, submitMessage: { value: '' }, FormData,
+    Event: class { constructor(type) { this.type = type } }, window: { dispatchEvent: event => notifications.push(event.type) },
     confirmDuplicateRegistration: async () => { dialogs++; return confirmations.shift() },
     axios: { post: async (url, data) => {
       requests.push({ url, token: data.get('duplicate_confirmation'), description: data.get('description') })
@@ -30,7 +31,7 @@ function setup(responses, confirmations = [true], mode = 'yes') {
     } }
   }
   return { submit: runInNewContext(`${handler}; handleSubmit`, context), requests, toasts, context,
-    reset: () => reset, dialogs: () => dialogs }
+    notifications, reset: () => reset, dialogs: () => dialogs }
 }
 const success = { data: { message: '登记成功' } }
 test('cancel duplicate preserves draft and releases submit state without retry', async () => {
@@ -69,6 +70,7 @@ test('highlight and no-issue registration retain their original endpoints', asyn
     await state.submit()
     assert.equal(state.requests[0].url, mode === 'highlight' ? '/api/highlights' : '/api/inspection-register')
     assert.equal(state.dialogs(), 0)
+    assert.deepEqual(state.notifications, mode === 'highlight' ? [] : ['inspection-sign-pending-refresh'])
   }
 })
 test('duplicate dialog compiles and supports Escape, focus and mobile scrolling', () => {
