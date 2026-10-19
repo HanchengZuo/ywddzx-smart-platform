@@ -1,16 +1,17 @@
 import { operationsMenuPages } from './operationsCatalog.js'
+import { schedulingMenuPages } from './schedulingCatalog.js'
 
 export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'map',
     title: '运营系统',
-    description: '运营驾驶舱、站点地图、排班地图和专家问答',
+    description: '运营驾驶舱、站点地图和专家问答',
     pages: operationsMenuPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description }))
   },
   {
     key: 'inspection',
     title: '巡检系统',
-    description: '巡检登记、规范、问题、记录、计划和证照页面',
+    description: '巡检登记、规范、问题、记录和证照页面',
     pages: [
       {
         key: '/inspection/register',
@@ -55,12 +56,6 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '查看巡检记录、问题明细和巡检流程状态。'
       },
       {
-        key: '/inspection/plan',
-        path: '/inspection/plan',
-        title: '巡检计划',
-        description: '查看巡检计划、派工和完成情况。'
-      },
-      {
         key: '/inspection/certificates',
         path: '/inspection/certificates',
         title: '证照管理',
@@ -73,6 +68,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '所有用户可访问，按数据范围查看站点申诉；片区初审、授权质安部终审。'
       }
     ]
+  },
+  {
+    key: 'scheduling',
+    title: '排班系统',
+    description: '巡检覆盖排班地图与巡检计划、派工和完成情况',
+    pages: schedulingMenuPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description }))
   },
   {
     key: 'ai',

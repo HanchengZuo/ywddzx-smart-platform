@@ -257,13 +257,6 @@
           <span v-if="!sidebarCollapsed">我的待复核问题</span>
         </button>
 
-        <button v-if="canViewInspectionPlans" class="nav-item"
-          :class="{ active: isActive('/inspection/plan'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/inspection/plan')" :title="sidebarCollapsed ? '巡检计划' : ''">
-          <span class="nav-item-icon">计</span>
-          <span v-if="!sidebarCollapsed">巡检计划</span>
-        </button>
-
         <button v-if="canViewCertificates" class="nav-item"
           :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
@@ -277,6 +270,15 @@
             <span v-if="appealNotificationCount > 0" class="feedback-unread-badge">{{ appealNotificationCount }}</span>
           </span>
           <span v-if="!sidebarCollapsed">申诉空间</span>
+        </button>
+      </div>
+
+      <div v-if="visibleSchedulingPages.length" class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">排班系统</div>
+        <button v-for="page in visibleSchedulingPages" :key="page.key" class="nav-item"
+          :class="{ active: isActive(page.path), collapsed: sidebarCollapsed }" type="button"
+          @click="go(page.path)" :title="sidebarCollapsed ? page.title : ''">
+          <span class="nav-item-icon">{{ page.icon }}</span><span v-if="!sidebarCollapsed">{{ page.title }}</span>
         </button>
       </div>
 
@@ -669,6 +671,7 @@ import axios from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
+import { schedulingMenuPages } from './config/schedulingCatalog'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
 import AccountSwitcherModal from './components/AccountSwitcherModal.vue'
@@ -975,6 +978,7 @@ const isAreaAccount = computed(() => authState.role === 'area_account')
 const hasPermissionKey = (key) => authState.role === 'root' || Boolean(localPermissions.value[key])
 const isPageVisible = (path) => pageVisibilitySettings.value[path] !== false
 const visibleOperationsPages = computed(() => operationsMenuPages.filter(page => hasPermissionKey(page.permission) && isPageVisible(page.path)))
+const visibleSchedulingPages = computed(() => schedulingMenuPages.filter(page => hasPermissionKey(page.permission) && isPageVisible(page.path)))
 const canSubmitInspections = computed(() => hasPermissionKey('submit_inspections') && isPageVisible('/inspection/register'))
 const canViewInspectionStandards = computed(() => hasPermissionKey('view_inspection_standards') && isPageVisible('/inspection/standards'))
 const canViewChecklistOriginals = computed(() => hasPermissionKey('view_checklist_originals') && isPageVisible('/inspection/checklist-originals'))
@@ -992,7 +996,6 @@ const canViewRecords = computed(() => (
   Boolean(localPermissions.value.view_own_inspection_records)
 ) && isPageVisible('/inspection/records'))
 const canViewHighlights = computed(() => (isRoot.value || ['view_all_inspection_issues', 'limit_issue_station_region_scope', 'view_own_inspection_issues', 'submit_inspections'].some(key => localPermissions.value[key])) && isPageVisible('/inspection/highlights'))
-const canViewInspectionPlans = computed(() => hasPermissionKey('view_inspection_plans') && isPageVisible('/inspection/plan'))
 const canViewInspectionReports = computed(() => hasPermissionKey('view_inspection_reports') && isPageVisible('/inspection/reports'))
 const canViewCertificates = computed(() => (
   isRoot.value ||
@@ -1013,7 +1016,6 @@ const canViewInspectionSection = computed(() => (
   canViewIssues.value ||
   canViewHighlights.value ||
   canViewRecords.value ||
-  canViewInspectionPlans.value ||
   canViewInspectionReports.value ||
   canViewCertificates.value
 ))
