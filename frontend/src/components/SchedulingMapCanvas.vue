@@ -29,7 +29,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { loadAmapSdk, SHANGHAI_CENTER, amapPinIcon, amapStationLabel } from '@/utils/amapSdk'
 import { stationCoordinates } from '@/utils/schedulingCoverage'
 
-const props = defineProps({ stations: { type: Array, default: () => [] }, selectedId: { type: [String, Number], default: '' } })
+const props = defineProps({ stations: { type: Array, default: () => [] }, viewportKey: { type:String, default:'' }, selectedId: { type: [String, Number], default: '' } })
 const emit = defineEmits(['select'])
 const frame = ref(null)
 const canvas = ref(null)
@@ -48,6 +48,7 @@ let info = null
 let disposed = false
 let observer = null
 let resizeFrame = 0
+let fittedKey = null
 
 function clearMarkers() {
   info?.close()
@@ -119,7 +120,10 @@ function renderMarkers() {
     })
     map.add(markers)
   }
-  fit()
+  if (fittedKey !== props.viewportKey) {
+    fit()
+    fittedKey = props.viewportKey
+  }
 }
 
 async function initialize() {
@@ -130,6 +134,7 @@ async function initialize() {
     sdk = await loadAmapSdk()
     if (disposed || !canvas.value) return
     map = new sdk.Map(canvas.value, { center: SHANGHAI_CENTER, zoom: 10.8, resizeEnable: true, animateEnable: false })
+    fittedKey = null
     mapReady.value = true
     renderMarkers()
   } catch (cause) {
@@ -160,7 +165,7 @@ function fullscreenChanged() {
   fullscreen.value = document.fullscreenElement === frame.value
   nextTick(resize)
 }
-watch(() => props.stations, renderMarkers)
+watch([() => props.stations, () => props.viewportKey], renderMarkers)
 watch(() => props.selectedId, id => {
   const station = located.value.find(item => String(item.station_id) === String(id))
   if (station) focus(station)
@@ -184,7 +189,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.coverage-map { display:flex; flex-direction:column; min-width:0; min-height:660px; height:100%; overflow:hidden; border:1px solid #cddce8; border-radius:18px; background:#e8eff4; }
+.coverage-map { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; overflow:hidden; border:1px solid #cddce8; border-radius:14px; background:#e8eff4; }
 .coverage-map.fullscreen { height:100dvh; min-height:0; border:0; border-radius:0; }
 .coverage-map.fullscreen .coverage-map-body { min-height:0; }
 .fullscreen-error { margin:0; padding:10px 16px; background:#fffbeb; color:#926a24; font-size:12px; }
@@ -197,7 +202,7 @@ onBeforeUnmount(() => {
 .map-tool.primary { color:#fff; border-color:#176e9c; background:#176e9c; }
 .map-tool:disabled { cursor:not-allowed; opacity:.5; }
 .map-tool:focus-visible { outline:2px solid #168ec4; outline-offset:3px; }
-.coverage-map-body { position:relative; flex:1; min-height:420px; }
+.coverage-map-body { position:relative; flex:1; min-height:0; }
 .coverage-map-canvas { position:absolute; inset:0; }
 .coverage-map-state { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; padding:24px; color:#294f68; text-align:center; background:radial-gradient(ellipse at 30% 25%,#e3eef4,#eff4f8); }
 .coverage-map-state p { max-width:340px; margin:0; font-size:13px; line-height:1.8; }
@@ -205,6 +210,7 @@ onBeforeUnmount(() => {
 .coverage-map-caption { position:absolute; left:14px; bottom:12px; max-width:calc(100% - 28px); margin:0; padding:8px 11px; border:1px solid #ffffffc9; border-radius:8px; color:#36556b; background:#fffffff0; font-size:11px; line-height:1.7; pointer-events:none; }
 .coverage-map-empty { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); padding:12px 16px; border-radius:10px; background:#fffffff5; color:#416177; font-size:13px; text-align:center; box-shadow:0 5px 24px #123b581a; pointer-events:none; }
 @keyframes coverage-spin { to { transform:rotate(360deg); } }
-@media(max-width:900px) { .coverage-map { height:550px; min-height:0; } .coverage-map.fullscreen { height:100dvh; } .coverage-map-toolbar { padding:12px; } }
+@media(max-width:900px) { .coverage-map { height:520px; min-height:0; } .coverage-map.fullscreen { height:100dvh; } .coverage-map-toolbar { padding:12px; } }
+@media(max-width:600px) { .map-tool { min-height:44px; } }
 @media(prefers-reduced-motion:reduce) { .loading-ring { animation:none; } }
 </style>
