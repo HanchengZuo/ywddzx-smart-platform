@@ -203,11 +203,10 @@ test('cockpit and expert share one permission with guarded redirects from retire
 test('expert menu follows station map with unchanged independent access checks', () => {
   assert.deepEqual(
     operationsMenuPages.map((page) => page.title),
-    ['运营驾驶舱', '站点地图', '排班地图', '专家问答'],
+    ['运营驾驶舱', '站点地图', '专家问答'],
   )
   assert.equal(operationsMenuPages[1].permission, 'view_station_map')
-  assert.equal(operationsMenuPages[2].permission, 'view_scheduling_map')
-  assert.equal(operationsMenuPages[3].permission, 'view_expert_qa')
+  assert.equal(operationsMenuPages[2].permission, 'view_expert_qa')
   assert.deepEqual(
     PAGE_VISIBILITY_GROUPS[0].pages.map((page) => page.path),
     operationsMenuPages.map((page) => page.path),

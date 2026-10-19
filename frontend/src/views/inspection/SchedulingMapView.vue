@@ -3,7 +3,7 @@
     <section class="coverage-console surface" aria-label="检查类型与统计周期">
       <header class="scheduling-header">
         <div class="heading-copy">
-          <span class="page-kicker">运营系统 / 巡检覆盖</span>
+          <span class="page-kicker">排班系统 / 巡检覆盖</span>
           <h2>排班地图<span>把下一站，安排得更清楚</span></h2>
         </div>
         <div class="sync-status" :class="{ busy:loading, warning:error || !online }" role="status" aria-live="polite">

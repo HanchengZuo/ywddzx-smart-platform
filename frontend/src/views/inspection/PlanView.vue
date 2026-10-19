@@ -14,7 +14,7 @@
 
         <div class="page-header card-surface">
             <div>
-                <div class="page-kicker">巡检计划</div>
+                <div class="page-kicker">排班系统 / 巡检计划</div>
                 <h2>巡检计划</h2>
             </div>
             <div class="header-actions">

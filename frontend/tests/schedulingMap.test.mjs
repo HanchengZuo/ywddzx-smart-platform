@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { coverageQuery, currentCoveragePeriod, stationCoordinates, filterUncoveredStations } from '../src/utils/schedulingCoverage.js'
-import { operationsMenuPages } from '../src/config/operationsCatalog.js'
+import { schedulingMenuPages } from '../src/config/schedulingCatalog.js'
 import { amapStationLabel } from '../src/utils/amapSdk.js'
 
 test('both maps share literal station labels directly above pins with white halo', () => {
@@ -59,10 +59,9 @@ test('local region and keyword filters do not mutate the server coverage result'
   assert.deepEqual(filterUncoveredStations(rows, '嘉青', '甲站'), [])
   assert.equal(rows.length, 2)
 })
-test('menu is below station map and has an independent view permission', () => {
-  const index = operationsMenuPages.findIndex(page => page.key === 'station-map')
-  assert.equal(operationsMenuPages[index + 1].permission, 'view_scheduling_map')
-  assert.equal(operationsMenuPages[index + 1].path, '/inspection/scheduling-map')
+test('scheduling map retains its independent permission and URL in the scheduling group', () => {
+  assert.equal(schedulingMenuPages[0].permission, 'view_scheduling_map')
+  assert.equal(schedulingMenuPages[0].path, '/inspection/scheduling-map')
 })
 for (const path of ['components/SchedulingMapCanvas.vue','views/inspection/SchedulingMapView.vue','views/inspection/StationMapView.vue']) {
   test(`actual map component compiles: ${path}`, () => {
