@@ -681,7 +681,8 @@ const dependentPermissionMap = {
   edit_own_certificates: 'view_own_certificates',
   adjust_station_scores: 'view_station_scores',
   reset_station_account_password: 'manage_stations',
-  generate_inspection_reports: 'view_inspection_reports'
+  generate_inspection_reports: 'view_inspection_reports',
+  edit_inspection_schedule: 'view_inspection_schedule'
 }
 
 const anyDependentPermissionMap = {
@@ -796,8 +797,8 @@ const scopedPermissionLayouts = {
     actionKeys: ['delete_inspection_records', 'reset_inspection_signature']
   },
   '巡检计划': {
-    scopeKeys: ['view_inspection_plans', 'limit_plan_inspection_table_scope', 'limit_plan_station_region_scope'],
-    actionKeys: ['manage_inspection_plans']
+    scopeKeys: ['view_inspection_schedule', 'limit_plan_inspection_table_scope', 'limit_plan_station_region_scope'],
+    actionKeys: ['edit_inspection_schedule']
   },
   '站点证照有效期管理': {
     scopeKeys: ['view_own_certificates', 'limit_certificate_station_region_scope', 'view_all_certificates'],

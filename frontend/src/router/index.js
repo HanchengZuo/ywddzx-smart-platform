@@ -57,7 +57,7 @@ const routes = [
   },
   {
     path: '/inspection/plan',
-    component: () => import('../views/inspection/PlanView.vue')
+    component: () => import('../views/inspection/InspectionScheduleView.vue')
   },
   {
     path: '/inspection/reports',
@@ -196,7 +196,7 @@ const canAccessPath = (path, role, permissions) => {
       permissions.view_own_inspection_records
     )
   }
-  if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_plans')
+  if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_schedule')
   if (path === '/inspection/reports') return hasPermission(role, permissions, 'view_inspection_reports')
   if (path === '/inspection/certificates') {
     return Boolean(
@@ -237,7 +237,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.view_all_inspection_records || permissions.limit_record_station_region_scope || permissions.view_own_inspection_records) {
     candidates.push('/inspection/records')
   }
-  if (permissions.view_inspection_plans) candidates.push('/inspection/plan')
+  if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
   if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     candidates.push('/inspection/certificates')
