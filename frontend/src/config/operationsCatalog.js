@@ -27,5 +27,13 @@ export const operationsMenuPages = [
     icon: '图',
     description: '查看站点分布、站点状态和地图事件流。',
   },
+  {
+    key: 'scheduling-map',
+    path: '/inspection/scheduling-map',
+    permission: 'view_scheduling_map',
+    title: '排班地图',
+    icon: '排',
+    description: '现场按季度、视频按月，快速查找没有巡检记录的站点。',
+  },
   ...operationsPages.slice(1),
 ]

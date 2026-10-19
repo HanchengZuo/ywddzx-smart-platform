@@ -271,9 +271,7 @@ import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { setPresentationMode } from '../../utils/presentationSession'
-
-const AMAP_KEY = '9f35886b6810874b8578ab8dd3d2525e'
-const SHANGHAI_CENTER = [121.4737, 31.2304]
+import { loadAmapSdk as loadAmapScript, SHANGHAI_CENTER, amapPinIcon as getLabelMarkerIcon } from '@/utils/amapSdk'
 
 const mapContainer = ref(null)
 const mapFrameRef = ref(null)
@@ -333,7 +331,6 @@ try {
 const hasPermission = computed(() => currentRole.value === 'root' || Boolean(localPermissions.view_station_map))
 
 let mapInstance = null
-let mapScriptPromise = null
 let markers = []
 let labelsLayer = null
 let infoWindowInstance = null
@@ -596,33 +593,6 @@ const sumPendingIssueCount = (field) => {
 const pendingRectificationIssueCount = computed(() => sumPendingIssueCount('pending_rectification_count'))
 
 const pendingReviewIssueCount = computed(() => sumPendingIssueCount('pending_review_count'))
-
-const loadAmapScript = () => {
-  if (window.AMap) {
-    return Promise.resolve(window.AMap)
-  }
-
-  if (mapScriptPromise) {
-    return mapScriptPromise
-  }
-
-  mapScriptPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = `https://webapi.amap.com/maps?v=2.0&key=${AMAP_KEY}`
-    script.async = true
-    script.onload = () => {
-      if (window.AMap) {
-        resolve(window.AMap)
-      } else {
-        reject(new Error('高德地图加载失败'))
-      }
-    }
-    script.onerror = () => reject(new Error('高德地图脚本加载失败'))
-    document.head.appendChild(script)
-  })
-
-  return mapScriptPromise
-}
 
 const syncAutoRotateTarget = () => {
   if (!autoRotateTarget.value) return
@@ -1092,16 +1062,6 @@ const renderDomMarkers = async (options = {}) => {
   if (options.fitView && positions.length > 1) {
     mapInstance.setFitView(markers, false, [80, 80, 80, 80])
   }
-}
-
-const markerIconCache = new Map()
-
-const getLabelMarkerIcon = (color) => {
-  if (markerIconCache.has(color)) return markerIconCache.get(color)
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="36" viewBox="0 0 30 36"><path d="M15 1C7.82 1 2 6.82 2 14c0 9.25 13 21 13 21s13-11.75 13-21C28 6.82 22.18 1 15 1z" fill="${color}" stroke="white" stroke-width="2"/><circle cx="15" cy="14" r="5" fill="white" fill-opacity=".92"/></svg>`
-  const icon = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
-  markerIconCache.set(color, icon)
-  return icon
 }
 
 const renderLabelMarkers = async (options = {}) => {
