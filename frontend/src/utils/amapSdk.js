@@ -34,3 +34,11 @@ export function amapPinIcon(color) {
   }
   return icons.get(color)
 }
+
+export function amapStationLabel(name) {
+  return {
+    content: String(name || ''), direction: 'top', offset: [0, -4],
+    style: { fontSize: 12, fontWeight: '600', fillColor: '#0f172a',
+      strokeColor: '#ffffff', strokeWidth: 3, padding: [2, 4] },
+  }
+}
