@@ -49,17 +49,23 @@ def available_people(cur, day):
     people = roster_people(cur)
     cur.execute('SELECT person_name,available,reason,revision FROM staff_availability WHERE day=%s', (day,))
     values = {row['person_name']: row for row in cur.fetchall()}
-    cur.execute('''SELECT mode,inspector_ids FROM inspection_schedule_cells
-      WHERE scheduled_date=%s AND inspector_ids<>'[]'::jsonb''', (day,))
-    planned = defaultdict(set)
-    for row in cur.fetchall():
-        for uid in row['inspector_ids']: planned[uid].add(row['mode'])
+    planned = planned_work(cur, day, day + timedelta(days=1))
     actual = daily_modes(cur, [p['id'] for p in people if p['id']], day, day + timedelta(days=1))
     for p in people:
         value = values.get(p['display_name'], {})
         p.update(available=value.get('available'), reason=value.get('reason', ''), revision=value.get('revision', 0),
-                 planned_modes=sorted(planned[p['id']]), actual_modes=actual.get((p['id'], day.isoformat()), []))
+                 planned_modes=planned.get((p['id'], day.isoformat()), []), actual_modes=actual.get((p['id'], day.isoformat()), []))
     return people
+
+
+def planned_work(cur, start, end):
+    cur.execute('''SELECT scheduled_date::text AS day,mode,inspector_ids FROM inspection_schedule_cells
+      WHERE scheduled_date >= %s AND scheduled_date < %s AND inspector_ids<>'[]'::jsonb''', (start, end))
+    planned = defaultdict(set)
+    for row in cur.fetchall():
+        for uid in row['inspector_ids']:
+            planned[(uid, row['day'])].add(row['mode'])
+    return {key: sorted(modes) for key, modes in planned.items()}
 
 
 def validate_people(cur, ids, day, mode, people=None):
@@ -76,8 +82,8 @@ def validate_people(cur, ids, day, mode, people=None):
 
 def save_availability(cur, actor, data):
     edits = data.get('cells')
-    if not isinstance(edits, list) or not 1 <= len(edits) <= 182:
-        raise ValueError('请选择1至182个人员档期单元格。')
+    if not isinstance(edits, list) or len(edits) != 1:
+        raise ValueError('请逐个设置人员档期，每次只能保存一个单元格。')
     available = data.get('available')
     reason = data.get('reason', '')
     if type(available) is not bool or not isinstance(reason, str) or len(reason.strip()) > 4:
@@ -85,29 +91,28 @@ def save_availability(cur, actor, data):
     reason = '' if available else reason.strip()
     lock_schedule(cur)
     people = {p['display_name']: p for p in roster_people(cur)}
-    seen = set()
-    for edit in edits:
-        if not isinstance(edit, dict): raise ValueError('档期单元格不合法。')
-        name, revision = edit.get('person_name'), edit.get('revision')
-        day = day_value(edit.get('day'))
-        if name not in people or type(revision) is not int or revision < 0 or (name, day) in seen:
-            raise ValueError('人员或版本不合法，且不能重复选择单元格。')
-        seen.add((name, day)); require_workday(cur, day)
-        cur.execute('SELECT available,reason,revision FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
-        previous = cur.fetchone() or dict(available=None, reason='', revision=0)
-        if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
-        if not available and people[name]['id']:
-            cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
-              AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
-            if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
-        if previous['available'] == available and previous['reason'] == reason: continue
-        cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by)
-          VALUES(%s,%s,%s,%s,1,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
-          reason=EXCLUDED.reason,revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
-                    (name, day, available, reason, actor['id']))
-        cur.execute('''INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_id,actor_name)
-          VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason)),
-          actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
+    edit = edits[0]
+    if not isinstance(edit, dict): raise ValueError('档期单元格不合法。')
+    name, revision = edit.get('person_name'), edit.get('revision')
+    day = day_value(edit.get('day'))
+    if not isinstance(name, str) or name not in people or type(revision) is not int or revision < 0:
+        raise ValueError('人员或版本不合法。')
+    require_workday(cur, day)
+    cur.execute('SELECT available,reason,revision FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
+    previous = cur.fetchone() or dict(available=None, reason='', revision=0)
+    if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
+    if not available and people[name]['id']:
+        cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
+          AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
+        if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
+    if previous['available'] == available and previous['reason'] == reason: return
+    cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by)
+      VALUES(%s,%s,%s,%s,1,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
+      reason=EXCLUDED.reason,revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
+                (name, day, available, reason, actor['id']))
+    cur.execute('''INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_id,actor_name)
+      VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason)),
+      actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
 
 
 def staff_board(cur, week):
@@ -120,6 +125,7 @@ def staff_board(cur, week):
       to_char(a.updated_at,'YYYY-MM-DD HH24:MI') AS saved_at FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
+    planned = planned_work(cur, start, end)
     actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], start, min(end, today() + timedelta(days=1)))
     for p in people:
         p['cells'] = {}
@@ -127,6 +133,7 @@ def staff_board(cur, week):
             v = saved.get((p['display_name'], d['day']), {})
             p['cells'][d['day']] = dict(available=v.get('available'), reason=v.get('reason', ''),
                 revision=v.get('revision', 0), updated_by_name=v.get('updated_by_name', ''), updated_at=v.get('saved_at', ''),
+                planned_modes=planned.get((p['id'], d['day']), []),
                 actual_modes=[mode for uid in p['history_ids'] for mode in actual.get((uid, d['day']), [])])
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people)
 

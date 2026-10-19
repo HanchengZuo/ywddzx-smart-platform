@@ -935,7 +935,7 @@ PERMISSION_CATALOG = [
         "key": "view_inspection_schedule",
         "name": "查看页面",
         "category": "巡检排班",
-        "description": "查看现场季度与视频月度排班表，默认仅Root可访问。",
+        "description": "查看完整的现场季度与视频月度排班表，不按账号片区、站点或检查表限制数据。默认仅Root可访问。",
         "defaults": {"root": True},
     },
     {
@@ -953,24 +953,10 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
-        "key": "limit_plan_inspection_table_scope",
-        "name": "限定检查表范围",
-        "category": "巡检排班",
-        "description": "启用后，巡检排班只显示选定检查表的数据。",
-        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": True},
-    },
-    {
-        "key": "limit_plan_station_region_scope",
-        "name": "查看片区站点数据",
-        "category": "巡检排班",
-        "description": "只统计和展示选定片区/归属地内站点的巡检排班。",
-        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
-    },
-    {
         "key": "edit_inspection_schedule",
         "name": "编辑排班",
         "category": "巡检排班",
-        "description": "在可见范围内选择有空检查人，单格、批量或自动排班，并发送巡检待办；需同时具备查看页面权限。",
+        "description": "为完整排班表选择有空检查人，单格、批量或自动排班，并发送巡检待办；需同时具备查看页面权限。",
         "defaults": {"root": True},
     },
     {
@@ -35424,23 +35410,12 @@ register_scheduling_map(app, connect=get_db_connection, has_permission=has_permi
 from inspection_schedule import register_inspection_schedule
 
 
-def inspection_schedule_scope(cur, user):
-    station_where, station_params, table_where, table_params = [], [], [], []
-    if not append_station_region_scope_filter(cur, user, station_where, station_params,
-            's.region', 'limit_plan_station_region_scope'):
-        station_where.append('FALSE')
-    if not append_inspection_table_scope_filter(cur, user, table_where, table_params,
-            't.id', 'limit_plan_inspection_table_scope'):
-        table_where.append('FALSE')
-    return (station_where, station_params), (table_where, table_params)
-
-
-register_inspection_schedule(app, connect=get_db_connection, has_permission=has_permission, scope=inspection_schedule_scope)
+register_inspection_schedule(app, connect=get_db_connection, has_permission=has_permission)
 from staff_availability import register_staff_availability
 from schedule_automation import register_schedule_automation
 from inspection_schedule_tasks import register_schedule_tasks
 register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
-register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission, scope=inspection_schedule_scope)
+register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission)
 register_schedule_tasks(app, connect=get_db_connection)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)

@@ -2,6 +2,7 @@
   <section
     :id="'schedule-panel-' + mode"
     class="schedule-panel"
+    :class="mode"
     role="tabpanel"
     :aria-labelledby="'schedule-tab-' + mode"
   >
@@ -60,7 +61,7 @@
         :aria-label="title + '搜索站点'"
         placeholder="搜索站点名称"
       /><select v-model="region" :aria-label="title + '片区'">
-        <option value="">全部可见片区</option>
+        <option value="">全部片区</option>
         <option v-for="value in regions" :key="value" :value="value">{{ value }}</option></select
       ><select v-model="state" :aria-label="title + '排班状态'">
         <option value="">全部状态</option>
@@ -155,7 +156,7 @@
               scope="col"
               :title="column.full_name"
             >
-              {{ column.label }}<small v-if="!column.table_id">未启用或不可见</small>
+              {{ column.label }}<small v-if="!column.table_id">未启用或定义异常</small>
               <button
                 v-else-if="multiSelect"
                 type="button"
@@ -179,7 +180,7 @@
                   ? '暂时无法读取，请重试。'
                   : keyword || region || state
                     ? '没有匹配的站点，请调整筛选条件。'
-                    : '当前范围没有纳入本计划的可见名单站点。'
+                    : '当前没有纳入本计划的名单站点。'
               }}
             </td>
           </tr>
@@ -950,8 +951,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .schedule-panel {
+  --mode-ink: #8a5015;
+  --mode-fill: #ffedc9;
+  --mode-border: #dca54d;
   background: #fff;
-  border: 1px solid #dbe5ef;
+  border: 1px solid #cbd9e7;
   border-radius: 20px;
   min-width: 0;
   scroll-margin-top: calc(
@@ -959,6 +963,11 @@ onBeforeUnmount(() => {
   );
   box-shadow: 0 12px 30px #18324c08;
   color: #203a54;
+}
+.schedule-panel.online {
+  --mode-ink: #2056a3;
+  --mode-fill: #deebff;
+  --mode-border: #77a3e1;
 }
 .panel-head {
   display: flex;
@@ -968,6 +977,8 @@ onBeforeUnmount(() => {
   padding: 22px 24px;
   border-bottom: 1px solid #e7edf4;
   border-radius: 20px 20px 0 0;
+  background: linear-gradient(110deg, #f0f5fa, #fff);
+  border-top: 3px solid var(--mode-border);
 }
 .panel-identity {
   display: flex;
@@ -980,13 +991,13 @@ onBeforeUnmount(() => {
   width: 44px;
   height: 44px;
   border-radius: 13px;
-  background: #eaf1ff;
-  color: #2a63b4;
+  background: #ffedc9;
+  color: #8a5015;
   font-weight: 800;
 }
 .mode-icon.online {
-  background: #e6f5f3;
-  color: #29786e;
+  background: #deebff;
+  color: #2056a3;
 }
 h3 {
   margin: 0;
@@ -1039,6 +1050,23 @@ input[type='search'] {
   margin-right: 4px;
   font-size: 21px;
   color: #345a81;
+}
+.board-stats > span {
+  padding: 7px 12px;
+  border-radius: 7px;
+  background: #eef3f8;
+  border-left: 3px solid #899cb1;
+}
+.board-stats > span:first-child {
+  background: #fff1b8;
+  border-color: #d2a322;
+}
+.board-stats > span:nth-child(2) {
+  background: var(--mode-fill);
+  border-color: var(--mode-border);
+}
+.board-stats > span:nth-child(2) b {
+  color: var(--mode-ink);
 }
 .board-stats small {
   color: #94a1b2;
@@ -1149,16 +1177,17 @@ input[type='search'] {
   z-index: 3;
   height: 48px;
   padding: 8px;
-  background: #edf3fa;
-  color: #42617e;
+  background: #173c59;
+  color: #fff;
   font-weight: 750;
-  box-shadow: 0 2px #d7e2ef;
+  box-shadow: 0 2px #1c6680;
+  border-color: #31526c;
 }
 .schedule-matrix thead small {
   display: block;
   margin-top: 4px;
   font-size: 10px;
-  color: #8c9bad;
+  color: #c8d9e7;
   font-weight: 400;
 }
 .schedule-matrix .fixed-index,
@@ -1183,7 +1212,8 @@ input[type='search'] {
 .schedule-matrix thead .fixed-region,
 .schedule-matrix thead .fixed-station {
   z-index: 5;
-  background: #e8f0fa;
+  background: #14334d;
+  color: #d5e3ee;
 }
 .schedule-matrix .region-start > * {
   border-top: 2px solid #becfe1;
@@ -1228,20 +1258,31 @@ input[type='search'] {
   opacity: 0.65;
 }
 .schedule-matrix .completed {
-  background: #fff2be;
+  background: #ffeb99;
 }
 .completed .cell-button {
   color: #7d5a15;
 }
 .completed .cell-button small {
-  color: #ad8943;
+  color: #825f18;
 }
 .schedule-matrix .assigned {
-  background: #edf5ff;
+  background: var(--mode-fill);
+  box-shadow: inset 3px 0 var(--mode-border);
 }
 .assigned .cell-names {
-  color: #285fa4;
-  font-weight: 650;
+  color: var(--mode-ink);
+  font-weight: 750;
+}
+.assigned .cell-button small {
+  color: var(--mode-ink);
+}
+.schedule-matrix .unassigned {
+  background: #f7f9fc;
+}
+.completed .mobile-column-label,
+.assigned .mobile-column-label {
+  color: inherit;
 }
 .schedule-matrix .unavailable {
   background: repeating-linear-gradient(-45deg, #fafbfd, #fafbfd 5px, #f1f4f7 5px, #f1f4f7 6px);

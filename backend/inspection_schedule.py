@@ -26,13 +26,11 @@ def period_number(chosen):
     return chosen['quarter' if chosen['mode'] == 'offline' else 'month']
 
 
-def table_columns(cur, mode, table_scope, lock=False):
-    clauses, params = table_scope
+def table_columns(cur, mode, lock=False):
     names = [entry[2] for entry in COLUMNS[mode]]
     cur.execute('''SELECT t.id,t.table_name FROM inspection_tables t
-        WHERE t.checklist_mode=%s AND t.is_active=TRUE AND t.table_name=ANY(%s) AND ''' +
-                ' AND '.join(clauses or ['TRUE']) + (' FOR SHARE OF t' if lock else ''),
-                [mode, names, *params])
+        WHERE t.checklist_mode=%s AND t.is_active=TRUE AND t.table_name=ANY(%s)''' +
+                (' FOR SHARE OF t' if lock else ''), [mode, names])
     by_name = defaultdict(list)
     for row in cur.fetchall():
         by_name[row['table_name']].append(row['id'])
@@ -42,10 +40,9 @@ def table_columns(cur, mode, table_scope, lock=False):
             for key, label, name in COLUMNS[mode]]
 
 
-def scoped_stations(cur, chosen, station_scope, station_id=None, lock=False):
-    clauses, params = station_scope
-    clauses = [*clauses, f's.{plan_field(chosen["mode"])}=TRUE']
-    params = list(params)
+def eligible_stations(cur, chosen, station_id=None, lock=False):
+    clauses = [f's.{plan_field(chosen["mode"])}=TRUE']
+    params = []
     if station_id is not None:
         clauses.append('s.id=%s')
         params.append(station_id)
@@ -77,9 +74,9 @@ def record_cells(cur, station_ids, table_ids, start, end):
     return {(row['station_id'], row['inspection_table_id']): dict(row) for row in cur.fetchall()}
 
 
-def read_board(cur, chosen, start, end, station_scope, table_scope):
-    columns = table_columns(cur, chosen['mode'], table_scope)
-    stations = scoped_stations(cur, chosen, station_scope)
+def read_board(cur, chosen, start, end):
+    columns = table_columns(cur, chosen['mode'])
+    stations = eligible_stations(cur, chosen)
     station_ids = [row['id'] for row in stations]
     complete = record_cells(cur, station_ids, [col['table_id'] for col in columns if col['table_id']], start, end)
     cur.execute('''SELECT c.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
@@ -124,7 +121,7 @@ def integer(value, label, minimum=1):
     return value
 
 
-def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope, availability_cache=None):
+def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     station_id = integer(data.get('station_id'), '站点')
     key = data.get('column_key')
     if not isinstance(key, str) or key not in {entry[0] for entry in COLUMNS[chosen['mode']]}:
@@ -142,12 +139,12 @@ def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope, 
     cell_key = (chosen['mode'], chosen['year'], period_number(chosen), station_id, key)
     # Cross-worker serialization plus a revision check avoids lost updates and ABA on clears.
     cur.execute('SELECT pg_advisory_xact_lock(9701,hashtext(%s))', (json.dumps(cell_key),))
-    stations = scoped_stations(cur, chosen, station_scope, station_id, lock=True)
+    stations = eligible_stations(cur, chosen, station_id, lock=True)
     if len(stations) != 1:
-        raise PermissionError('本站不在可编辑名单、账号范围内，或已关闭对应计划纳入。')
-    column = next(col for col in table_columns(cur, chosen['mode'], table_scope, lock=True) if col['key'] == key)
+        raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
+    column = next(col for col in table_columns(cur, chosen['mode'], lock=True) if col['key'] == key)
     if not column['table_id']:
-        raise PermissionError('检查表未启用、定义不唯一或不在账号可编辑范围内。')
+        raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     if record_cells(cur, [station_id], [column['table_id']], start, end):
         raise ScheduleConflict('该站点本周期已有此检查表的巡检记录，单元格已完成，不能再分配。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date FROM inspection_schedule_cells
@@ -181,7 +178,7 @@ def save_cell(cur, actor, data, chosen, start, end, station_scope, table_scope, 
     return saved_revision
 
 
-def register_inspection_schedule(app, *, connect, has_permission, scope):
+def register_inspection_schedule(app, *, connect, has_permission):
     @app.route('/api/inspection-schedule', methods=['GET', 'PUT'])
     def inspection_schedule_board():
         actor = getattr(g, 'current_user', None)
@@ -200,7 +197,6 @@ def register_inspection_schedule(app, *, connect, has_permission, scope):
             if data is None or not hasattr(data, 'get'):
                 raise ValueError('请提交有效的排班数据。')
             chosen, start, end = period(data)
-            station_scope, table_scope = scope(cur, actor)
             cur.execute("SET LOCAL statement_timeout = '10s'")
             cur.execute("SET LOCAL lock_timeout = '3s'")
             if request.method == 'PUT':
@@ -216,11 +212,11 @@ def register_inspection_schedule(app, *, connect, has_permission, scope):
                     cell_key = (integer(edit.get('station_id'), '站点'), str(edit.get('column_key')))
                     if cell_key in seen: raise ValueError('不能重复选择同一排班单元格。')
                     seen.add(cell_key)
-                    versions.append(save_cell(cur, actor, {**data, **edit}, chosen, start, end, station_scope, table_scope, availability_cache))
+                    versions.append(save_cell(cur, actor, {**data, **edit}, chosen, start, end, availability_cache))
                 conn.commit()
                 result = dict(revision=versions[0], saved_count=len(versions), message='排班已保存，已同步检查人的巡检待办。')
             else:
-                result = read_board(cur, chosen, start, end, station_scope, table_scope)
+                result = read_board(cur, chosen, start, end)
             response = jsonify(success=True, can_edit=can_edit, **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
