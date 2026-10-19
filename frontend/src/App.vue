@@ -1792,6 +1792,7 @@ const resolveHomePath = (user) => {
   if (role === 'station_manager') candidates.push('/inspection/my-issues')
   operationsPages.forEach(page => { if (role === 'root' || permissions[page.permission]) candidates.push(page.path) })
   if (role === 'root' || permissions.view_station_map) candidates.push('/inspection/station-map')
+  if (role === 'root' || permissions.view_scheduling_map) candidates.push('/inspection/scheduling-map')
   if (permissions.submit_inspections) candidates.push('/inspection/register')
   if (permissions.view_inspection_standards) candidates.push('/inspection/standards')
   if (permissions.view_checklist_originals) candidates.push('/inspection/checklist-originals')

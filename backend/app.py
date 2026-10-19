@@ -268,7 +268,7 @@ def normalize_frontend_app_version(value):
     return f"{base_version}.{patch}" if patch > 0 else base_version
 
 
-FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.4.0"))
+FRONTEND_APP_VERSION = normalize_frontend_app_version(os.environ.get("APP_FRONTEND_VERSION", "9.5.0"))
 FRONTEND_VERSION_EXPIRED_CODE = "FRONTEND_VERSION_EXPIRED"
 FRONTEND_VERSION_EXPIRED_MESSAGE = "页面版本已过期，请刷新页面后继续使用"
 DISPLAY_REMOVED_STATION_PHRASE = "\u52a0\u6cb9\u7ad9"
@@ -773,6 +773,13 @@ PERMISSION_CATALOG = [
         "category": "站点地图",
         "description": "访问运营系统的站点地图页面。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
+    },
+    {
+        "key": "view_scheduling_map",
+        "name": "查看页面",
+        "category": "排班地图",
+        "description": "按现场季度或视频月度查看未覆盖站点，沿用巡检记录的数据范围，不受问题审核状态影响。",
+        "defaults": {"root": True},
     },
     {
         "key": "view_expert_qa",
@@ -38527,6 +38534,29 @@ from highlights import register_highlights
 register_highlights(app, globals())
 from operations_dashboard import register_operations
 register_operations(app, globals())
+from scheduling_map import register_scheduling_map
+
+
+def scheduling_map_scope(cur, user):
+    permissions = get_effective_permissions(cur, user)
+    station_where, station_params = [], []
+    table_where, table_params = [], []
+    if not (permissions.get('view_all_inspection_records') or permissions.get('limit_record_station_region_scope')):
+        if permissions.get('view_own_inspection_records') and user.get('station_id'):
+            station_where.append('s.id=%s')
+            station_params.append(user['station_id'])
+        else:
+            station_where.append('FALSE')
+    if not append_station_region_scope_filter(cur, user, station_where, station_params,
+            's.region', 'limit_record_station_region_scope', permissions):
+        station_where.append('FALSE')
+    if not append_inspection_table_scope_filter(cur, user, table_where, table_params,
+            't.id', 'limit_record_inspection_table_scope', permissions):
+        table_where.append('FALSE')
+    return (station_where, station_params), (table_where, table_params)
+
+
+register_scheduling_map(app, connect=get_db_connection, has_permission=has_permission, scope=scheduling_map_scope)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)
 
