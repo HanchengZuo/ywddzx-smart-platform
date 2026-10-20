@@ -5,10 +5,11 @@ from collections import defaultdict
 from datetime import timedelta
 from flask import g, jsonify, request
 from roles import SUPERVISOR_ROLES
+from staff_daily_teams import team_days, team_members
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
 
-STAFF = [(name, '管理人员' if index < 6 or index in (22, 23) else '大学生') for index, name in enumerate(
-    '步雪琼 孔德辰 赵之龙 吕泽昆 韩叙 杨昊淞 陈中磊 程镇林 葛心玉 侯明敖 姜傲云 吕雪儿 彭思宇 束紫荆 王涛 王昕怡 王子玥 徐晃 徐佳仪 袁姝慧 赵萌 左翰承 芦斌 孙慧佳 魏九发 宋辞'.split())]
+STAFF = ([(name, '管理人员') for name in '步雪琼 孔德辰 赵之龙 吕泽昆 韩叙 杨昊淞 芦斌'.split()]
+         + [(name, '大学生') for name in '陈中磊 程镇林 葛心玉 侯明敖 姜傲云 吕雪儿 彭思宇 束紫荆 王涛 王昕怡 王子玥 徐晃 徐佳仪 袁姝慧 赵萌 左翰承 魏九发 宋辞'.split()])
 VIEW = 'view_staff_availability'
 EDIT = 'edit_staff_availability'
 
@@ -50,11 +51,16 @@ def available_people(cur, day):
     cur.execute('SELECT person_name,available,reason,revision FROM staff_availability WHERE day=%s', (day,))
     values = {row['person_name']: row for row in cur.fetchall()}
     planned = planned_work(cur, day, day + timedelta(days=1))
+    teams = team_members(team_days(cur, day, day + timedelta(days=1)))
     actual = daily_modes(cur, [p['id'] for p in people if p['id']], day, day + timedelta(days=1))
     for p in people:
         value = values.get(p['display_name'], {})
+        assigned = teams.get((p['id'], day.isoformat()))
+        station_modes = planned.get((p['id'], day.isoformat()), [])
         p.update(available=value.get('available'), reason=value.get('reason', ''), revision=value.get('revision', 0),
-                 planned_modes=planned.get((p['id'], day.isoformat()), []), actual_modes=actual.get((p['id'], day.isoformat()), []))
+                 station_modes=station_modes, daily_assignment=assigned,
+                 planned_modes=sorted(set(station_modes) | ({assigned['mode']} if assigned else set())),
+                 actual_modes=actual.get((p['id'], day.isoformat()), []))
     return people
 
 
@@ -84,7 +90,17 @@ def save_availability(cur, actor, data):
     edits = data.get('cells')
     if not isinstance(edits, list) or len(edits) != 1:
         raise ValueError('请逐个设置人员档期，每次只能保存一个单元格。')
-    available = data.get('available')
+    edits_day = day_value(edits[0].get('day')) if isinstance(edits[0], dict) else None
+    historical = edits_day is not None and edits_day < today()
+    history_status = data.get('history_status')
+    if historical:
+        if history_status not in ('offline', 'online', 'busy', 'auto'):
+            raise ValueError('历史日期请选择现场巡检、视频巡检、没空或恢复自动记录。')
+        available = history_status != 'busy'
+        history_status = None if history_status == 'auto' else history_status
+    else:
+        if history_status is not None: raise ValueError('今天及未来日期只能设置有空或没空。')
+        available = data.get('available')
     reason = data.get('reason', '')
     if type(available) is not bool or not isinstance(reason, str) or len(reason.strip()) > 4:
         raise ValueError('请选择有空或没空；原因最多4个字。')
@@ -97,21 +113,23 @@ def save_availability(cur, actor, data):
     day = day_value(edit.get('day'))
     if not isinstance(name, str) or name not in people or type(revision) is not int or revision < 0:
         raise ValueError('人员或版本不合法。')
-    require_workday(cur, day)
-    cur.execute('SELECT available,reason,revision FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
-    previous = cur.fetchone() or dict(available=None, reason='', revision=0)
+    require_workday(cur, day, allow_past=historical)
+    cur.execute('SELECT available,reason,revision,history_status FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
+    previous = cur.fetchone() or dict(available=None, reason='', revision=0, history_status=None)
     if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
-    if not available and people[name]['id']:
+    if not historical and not available and people[name]['id']:
         cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
           AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
         if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
-    if previous['available'] == available and previous['reason'] == reason: return
-    cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by)
-      VALUES(%s,%s,%s,%s,1,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
-      reason=EXCLUDED.reason,revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
-                (name, day, available, reason, actor['id']))
+        assigned = team_members(team_days(cur, day, day + timedelta(days=1))).get((people[name]['id'], day.isoformat()))
+        if assigned: raise ScheduleConflict('此人已加入今日巡检分组，请先撤销今日分组再修改没空。')
+    if previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status: return
+    cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status)
+      VALUES(%s,%s,%s,%s,1,%s,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
+      reason=EXCLUDED.reason,history_status=EXCLUDED.history_status,revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
+                (name, day, available, reason, actor['id'], history_status))
     cur.execute('''INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_id,actor_name)
-      VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason)),
+      VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason, history_status=history_status)),
       actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
 
 
@@ -126,16 +144,22 @@ def staff_board(cur, week):
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
     planned = planned_work(cur, start, end)
+    teams = team_days(cur, start, end)
+    members = team_members(teams)
     actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], start, min(end, today() + timedelta(days=1)))
     for p in people:
         p['cells'] = {}
         for d in days:
             v = saved.get((p['display_name'], d['day']), {})
+            assigned = members.get((p['id'], d['day']))
+            modes = set(planned.get((p['id'], d['day']), [])) | ({assigned['mode']} if assigned else set())
             p['cells'][d['day']] = dict(available=v.get('available'), reason=v.get('reason', ''),
+                history_status=v.get('history_status'), daily_assignment=assigned,
                 revision=v.get('revision', 0), updated_by_name=v.get('updated_by_name', ''), updated_at=v.get('saved_at', ''),
-                planned_modes=planned.get((p['id'], d['day']), []),
+                planned_modes=sorted(modes),
                 actual_modes=[mode for uid in p['history_ids'] for mode in actual.get((uid, d['day']), [])])
-    return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people)
+    return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
+                daily_teams=list(teams.values()))
 
 
 def register_staff_availability(app, *, connect, has_permission):

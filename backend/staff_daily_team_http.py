@@ -1,0 +1,88 @@
+"""Two-stage daily personnel allocation; does not invent station/checklist tasks."""
+import hashlib
+import json
+import logging
+import re
+import secrets
+from datetime import timedelta
+from flask import g, jsonify, request
+from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
+from staff_availability import STAFF, VIEW, EDIT, available_people
+from staff_daily_teams import group_assignments, random_teams, save_teams, team_days
+
+
+def context(cur, day):
+    people = available_people(cur, day)
+    saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
+    cur.execute('SELECT working FROM quality_work_calendar WHERE day=%s', (day,))
+    calendar = cur.fetchone()
+    eligible = [p for p in people if p['id'] and p['available'] is True]
+    return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
+                revision=saved.get('revision', 0), groups=group_assignments(saved.get('assignments', [])),
+                updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
+                excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else p['reason'] or '未确认有空')
+                          for p in people if p not in eligible])
+
+
+def register_staff_daily_teams(app, *, connect, has_permission):
+    @app.route('/api/staff-availability/today-inspection', methods=['GET', 'POST'])
+    def daily_team_endpoint():
+        actor = getattr(g, 'current_user', None)
+        if not actor: return jsonify(success=False, error='请先登录。'), 401
+        conn = cur = None
+        try:
+            conn = connect(); cur = conn.cursor()
+            cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
+            if not has_permission(cur, actor, VIEW): raise PermissionError('当前账号无权查看人员档期。')
+            can_edit = has_permission(cur, actor, EDIT)
+            day = today()
+            if request.method == 'GET':
+                result = context(cur, day)
+            else:
+                if not can_edit: raise PermissionError('当前账号不能安排今日巡检。')
+                data = request.get_json(silent=True)
+                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'cancel'):
+                    raise ValueError('请选择预览、确认或撤销今日分组。')
+                if day_value(data.get('day')) != day:
+                    raise ScheduleConflict('日期已变化，请重新打开今日巡检安排。')
+                if data['action'] != 'preview':
+                    lock_schedule(cur)
+                    cur.execute('SELECT id FROM users WHERE TRIM(real_name)=ANY(%s) ORDER BY id FOR SHARE', ([name for name, _ in STAFF],))
+                    cur.fetchall()
+                result = context(cur, day)
+                if type(data.get('revision')) is not int or data['revision'] != result['revision']:
+                    raise ScheduleConflict('今日分组已被修改，请重新载入后安排。')
+                if data['action'] == 'cancel':
+                    before = [p for group in result['groups'] for p in group['members']]
+                    if not before: raise ScheduleConflict('今日分组已撤销，请重新载入。')
+                    result['revision'] = save_teams(cur, actor, day, [], before)
+                    result['groups'] = []
+                    conn.commit()
+                else:
+                    require_workday(cur, day)
+                    seed = data.get('seed') or secrets.token_hex(16)
+                    if not isinstance(seed, str) or not re.fullmatch('[0-9a-f]{32}', seed):
+                        raise ValueError('随机预览标识不合法，请重新预览。')
+                    if not result['people']: raise ValueError('今天没有已确认有空且匹配账号的人员。')
+                    assignments = random_teams(result['people'], data.get('manager_modes'), seed)
+                    evidence = dict(actor=actor['id'], context=result, assignments=assignments, seed=seed)
+                    token = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+                    if data['action'] == 'confirm':
+                        if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
+                        before = [p for group in result['groups'] for p in group['members']]
+                        result['revision'] = save_teams(cur, actor, day, assignments, before)
+                        conn.commit()
+                    result.update(groups=group_assignments(assignments), token=token, seed=seed)
+            response = jsonify(success=True, can_edit=can_edit, **result)
+            response.headers['Cache-Control'] = 'private, no-store'
+            return response
+        except (ValueError, PermissionError) as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False, error=str(exc)), 409 if isinstance(exc, ScheduleConflict) else 403 if isinstance(exc, PermissionError) else 400
+        except Exception:
+            if conn: conn.rollback()
+            logging.exception('Daily staff team request failed')
+            return jsonify(success=False, error='今日巡检安排暂时无法处理，请稍后重试。'), 500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()

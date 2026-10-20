@@ -3,11 +3,13 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
+from datetime import timedelta
 from flask import g, jsonify, request
 from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, save_cell
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from scheduling_map import period
 from staff_availability import available_people
+from staff_daily_teams import group_assignments, team_days
 
 
 def workload(cur, ids, start, end):
@@ -55,7 +57,7 @@ def balanced_allocation(people, demands, loads):
 def proposal(cur, actor, day):
     require_workday(cur, day)
     people = available_people(cur, day)
-    eligible = [p for p in people if p['id'] and p['available'] is True and not p['planned_modes'] and not p['actual_modes']]
+    eligible = [p for p in people if p['id'] and p['available'] is True and not p['station_modes'] and not p['actual_modes']]
     demands, periods = {}, {}
     quarter = (day.month - 1) // 3 + 1
     for mode in ('offline', 'online'):
@@ -69,7 +71,19 @@ def proposal(cur, actor, day):
             if cells: demands[mode].append(dict(station_id=row['station_id'], station_name=row['station_name'], region=row['region'], cells=cells))
     _, start, end = periods['offline']
     loads = workload(cur, [p['id'] for p in eligible], start, end)
-    groups = balanced_allocation(eligible, demands, loads)
+    groups = []
+    eligible_by_id = {p['id']: p for p in eligible}
+    # Keep a saved leader/student team together when converting personnel plans to station tasks.
+    saved_team = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
+    for team in group_assignments(saved_team.get('assignments', [])):
+        ids = [p['id'] for p in team['members']]
+        if not all(uid in eligible_by_id for uid in ids) or not demands[team['mode']]: continue
+        group = demands[team['mode']].pop(0)
+        representative = eligible_by_id[team['leader_id'] or ids[0]]
+        before = dict(loads[representative['id']]); after = dict(before); after[team['mode']] += 1
+        groups.append(dict(**group, mode=team['mode'], person=representative, before=before, after=after,
+                           inspector_ids=ids, group_name=team['name'], team_members=team['members']))
+    groups += balanced_allocation([p for p in eligible if not p['daily_assignment']], demands, loads)
     token = hashlib.sha256(json.dumps(dict(actor=actor['id'], day=day.isoformat(), groups=groups), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
@@ -102,7 +116,7 @@ def register_schedule_automation(app, *, connect, has_permission):
                     chosen, start, end = periods[group['mode']]
                     for cell in group['cells']:
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
-                          inspector_ids=[group['person']['id']], scheduled_date=day.isoformat()), chosen, start, end, cache)
+                          inspector_ids=group.get('inspector_ids', [group['person']['id']]), scheduled_date=day.isoformat()), chosen, start, end, cache)
                 conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'
