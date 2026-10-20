@@ -142,7 +142,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
         raise ValueError('请选择督导组检查人，最多100人。')
     ids = sorted({integer(value, '检查人') for value in ids})
     if chosen['mode'] == 'online' and len(ids) > 1:
-        raise ValueError('视频检查每个单元格只能安排一位检查人。')
+        raise ValueError('视频检查每个站点只能安排一位检查人。')
     day = day_value(data.get('scheduled_date')) if ids else None
     if day:
         if not start <= day < end: raise ValueError('计划日期必须位于所选季度或月份内。')
@@ -193,7 +193,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     return saved_revision
 
 
-def validate_edits(cur, edits, chosen, start, end, *, whole_rows=False):
+def validate_edits(cur, edits, chosen, start, end):
     if not isinstance(edits, list) or not 1 <= len(edits) <= 1000:
         raise ValueError('请选择1至1000个排班单元格。')
     by_station = defaultdict(set)
@@ -207,13 +207,12 @@ def validate_edits(cur, edits, chosen, start, end, *, whole_rows=False):
         integer(edit.get('revision'), '版本', 0)
         if key in by_station[sid]: raise ValueError('不能重复选择同一排班单元格。')
         by_station[sid].add(key)
-    if whole_rows or chosen['mode'] == 'offline':
-        columns = table_columns(cur, chosen['mode'])
-        actual = record_cells(cur, list(by_station), [c['table_id'] for c in columns if c['table_id']], start, end)
-        for sid, keys in by_station.items():
-            expected = {c['key'] for c in columns if c['table_id'] and (sid, c['table_id']) not in actual}
-            if keys != expected:
-                raise ScheduleConflict('请按站点整行安排所有尚未检查的检查表，已完成的实际记录保持不变。')
+    columns = table_columns(cur, chosen['mode'])
+    actual = record_cells(cur, list(by_station), [c['table_id'] for c in columns if c['table_id']], start, end)
+    for sid, keys in by_station.items():
+        expected = {c['key'] for c in columns if c['table_id'] and (sid, c['table_id']) not in actual}
+        if keys != expected:
+            raise ScheduleConflict('请按站点整行安排所有尚未检查的检查表，已完成的实际记录保持不变。')
 
 
 def apply_edits(cur, actor, data, chosen, start, end):
@@ -222,7 +221,7 @@ def apply_edits(cur, actor, data, chosen, start, end):
     if edits is None:
         edits = [dict(station_id=data.get('station_id'), column_key=data.get('column_key'), revision=data.get('revision'))]
     lock_schedule(cur)
-    validate_edits(cur, edits, chosen, start, end, whole_rows=isinstance(edits, list) and len(edits) > 1 and not data.get('source'))
+    validate_edits(cur, edits, chosen, start, end)
     source = data.get('source')
     cache = {}
     if source is not None:
@@ -231,8 +230,6 @@ def apply_edits(cur, actor, data, chosen, start, end):
         validate_edits(cur, source['cells'], chosen, start, end)
         if len({e['station_id'] for e in source['cells']}) != 1 or len({e['station_id'] for e in edits}) != 1:
             raise ValueError('一次拖拽只能从一个站点改派到一个站点。')
-        if chosen['mode']=='online' and (len(source['cells'])!=1 or len(edits)!=1):
-            raise ValueError('视频拖拽一次只能移动一个单元格。')
         ids = data.get('inspector_ids')
         if not isinstance(ids, list) or not ids or len(ids)>100 or any(type(uid) is not int or uid<1 for uid in ids):
             raise ValueError('待选区检查人不合法，请重新拖入。')

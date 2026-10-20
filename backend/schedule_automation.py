@@ -8,7 +8,7 @@ from flask import g, jsonify, request
 from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, save_cell
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from scheduling_map import period
-from staff_availability import available_people
+from staff_availability import available_people, excluded_reason
 from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, length
 
@@ -123,7 +123,7 @@ def proposal(cur, actor, day, options=None):
         offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
         warnings=warnings, route_method='按站点坐标聚类和2-opt优化往返直线距离，不含道路、过江通道和实时路况；出行前请核对导航。',
         available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
-        excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else '当天已有安排或实绩' if p['planned_modes'] or p['actual_modes'] else p['reason'] or '未确认有空')
+        excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or '当天已有站点安排或巡检实绩')
                   for p in people if p not in eligible]), periods
 
 

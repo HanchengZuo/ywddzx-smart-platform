@@ -74,10 +74,11 @@ test('personal inbox lives in desktop and mobile headers, not the page body', ()
 function dispatchHarness(mode = 'offline', fail = false) {
   const item = {id: 17, revision: 2, key: 'shelf:17', name: '外勤甲组'}
   const calls = []
+  const keys = mode === 'offline' ? ['a','b','c','d','e','f'] : ['a','b','c']
   const context = vm.createContext({
     dragged: {value: null}, shelf: {value: [item]}, pickedShelf: {value: item.key},
     canEdit: {value: true}, loading: {value: false}, shelfSaving: {value: false}, saving: {value: false},
-    props: {mode}, board: {value: {columns: ['a','b','c','d','e','f'].map(key => ({key})), board_token: 'server-token'}},
+    props: {mode}, board: {value: {columns: keys.map(key => ({key})), board_token: 'server-token'}},
     draft: {value: {}}, scheduleCellEditable: c => c.status !== 'completed', coverageQuery: () => ({mode}),
     serial: 0, controller: undefined, polling: {pause() {}, start() {}}, disposed: false,
     selectedCells: {value: ['old']}, error: {value: ''}, updatedTime: {value: ''}, lastSyncedAt: 0,
@@ -92,7 +93,7 @@ function dispatchHarness(mode = 'offline', fail = false) {
   })
   const script = source('components/InspectionSchedulePanel.vue')
   vm.runInContext(script.slice(script.indexOf('function targetCells'), script.indexOf('async function openBulk')), context)
-  const row = {station_id: 2, station_name: '乙站', cells: Object.fromEntries(['a','b','c','d','e','f'].map(key => [key,{status: 'assigned',revision:3,assignees:[{id:2,display_name:'甲'}],plan_team:{name:'甲组'}}]))}
+  const row = {station_id: 2, station_name: '乙站', cells: Object.fromEntries(keys.map(key => [key,{status: 'assigned',revision:3,assignees:[{id:2,display_name:'甲'}],plan_team:{name:'甲组'}}]))}
   return {context, calls, row, item}
 }
 
@@ -124,16 +125,27 @@ test('dragging any field cell into shelf submits entire row even if first cell h
   assert.equal(context.shelfOpen.value, true)
 })
 
-test('video drop targets one cell; clear sends server board token, not filtered rows', async () => {
+test('video drop targets all three columns; clear sends server board token, not filtered rows', async () => {
   const {context,calls,row} = dispatchHarness('online')
   await context.dropOn(row,{key:'c'})
-  assert.equal(calls[0].body.cells.length, 1)
-  assert.equal(calls[0].body.cells[0].column_key, 'c')
+  assert.equal(calls[0].body.cells.length, 3)
+  assert.deepEqual(Array.from(calls[0].body.cells,c=>c.column_key),['a','b','c'])
   context.board.value.board_token = 'latest'
   await context.clearToday()
   assert.equal(calls[2].body.action, 'clear_today')
   assert.equal(calls[2].body.board_token, 'latest')
   assert.equal(calls[2].body.cells, undefined)
+})
+
+test('video row drag skips only immutable completed columns', async () => {
+  const {context,calls,row} = dispatchHarness('online')
+  row.cells.a.status = 'completed'
+  const data = new Map()
+  const event = {preventDefault(){},dataTransfer:{setData:(k,v)=>data.set(k,v),getData:k=>data.get(k)}}
+  context.startAssignmentDrag(event,row)
+  await context.stageDragged(event)
+  assert.equal(calls[0].body.action,'park')
+  assert.deepEqual(Array.from(calls[0].body.cells,c=>c.column_key),['b','c'])
 })
 
 test('failed dispatch reconciles rather than inventing or deleting a shelf card', async () => {

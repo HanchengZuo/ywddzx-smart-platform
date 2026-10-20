@@ -14,6 +14,17 @@ VIEW = 'view_staff_availability'
 EDIT = 'edit_staff_availability'
 
 
+def excluded_reason(person):
+    """Shared availability wording for personnel grouping and station dispatch."""
+    reasons = []
+    if person['available'] is False:
+        reasons.append('没空' + (f"（{person['reason']}）" if person['reason'] else ''))
+    elif person['available'] is None:
+        reasons.append('未确认有空或没空')
+    if not person['id']: reasons.append('账号未唯一匹配')
+    return '；'.join(reasons)
+
+
 def roster_people(cur):
     cur.execute('''SELECT id,username,real_name,role,COALESCE(account_status,'active') AS account_status
       FROM users WHERE TRIM(real_name)=ANY(%s) ORDER BY id''', ([name for name, _ in STAFF],))
