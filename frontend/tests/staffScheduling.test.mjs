@@ -10,7 +10,7 @@ import {
   personCanSchedule,
   availabilityLabel,
   staffCellPresentation,
-  staffWeekSummary,
+  staffTodaySummary,
   taskGroups,
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
@@ -104,7 +104,7 @@ test('availability and inspection modes have distinct semantic tones, with actua
     'past plans must not masquerade as actual inspections',
   )
 })
-test('weekly counters count person-days, excluding past availability and never double-counting actual/plan', () => {
+test('today counters exclude every other day and never double-count actual and planned work', () => {
   const cell = { available: true, actual_modes: [], planned_modes: [] }
   const days = ['2026-10-16', '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23']
   const cells = [
@@ -126,8 +126,14 @@ test('weekly counters count person-days, excluding past availability and never d
     days: days.map((day) => ({ day })),
     people: [{ cells: Object.fromEntries(days.map((day, i) => [day, cells[i]])) }],
   }
-  assert.deepEqual(staffWeekSummary(board), { free: 1, busy: 1, unknown: 1, offline: 2, online: 1 })
-  assert.deepEqual(staffWeekSummary(null), { free: 0, busy: 0, unknown: 0, offline: 0, online: 0 })
+  assert.deepEqual(staffTodaySummary(board), { free: 1, busy: 0, unknown: 0, offline: 0, online: 0 })
+  board.people = cells.map(value => ({cells: {[board.today]: value}}))
+  assert.deepEqual(staffTodaySummary(board), { free: 2, busy: 1, unknown: 1, offline: 2, online: 1 })
+  assert.deepEqual(staffTodaySummary(null), { free: 0, busy: 0, unknown: 0, offline: 0, online: 0 })
+})
+test('browsing a historical week still displays the server-owned today counts', () => {
+  const today_summary = { free: 7, busy: 3, unknown: 1, offline: 8, online: 6 }
+  assert.deepEqual(staffTodaySummary({today_summary, today: '2026-10-19', people: [{cells: {'2026-10-12': {available: true}}}]}), today_summary)
 })
 test('staff editing always resets to the clicked individual cell and saves exactly one person-day', async () => {
   const source = readFileSync(

@@ -9,7 +9,17 @@ from flask import g, jsonify, request
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from staff_availability import STAFF, VIEW, EDIT, available_people
 from inspection_schedule import sync_field_team_plans
-from staff_daily_teams import group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
+from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
+
+
+def excluded_reason(person):
+    reasons = []
+    if person['available'] is False:
+        reasons.append('没空' + (f"（{person['reason']}）" if person['reason'] else ''))
+    elif person['available'] is None:
+        reasons.append('未确认有空或没空')
+    if not person['id']: reasons.append('账号未唯一匹配')
+    return '；'.join(reasons)
 
 
 def context(cur, day):
@@ -23,7 +33,7 @@ def context(cur, day):
                 unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
                 revision=saved.get('revision', 0), groups=group_assignments(saved.get('assignments', [])),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
-                excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else p['reason'] or '未确认有空')
+                excluded=[dict(name=p['display_name'], reason=excluded_reason(p))
                           for p in people if p not in eligible])
 
 
@@ -85,6 +95,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     token = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
                     if data['action'] == 'confirm':
                         if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
+                        assignments = adjust_preview(result['people'], assignments, data.get('student_leaders', {}))
                         validate_dispatched_teams(cur, day, assignments)
                         before = [p for group in result['groups'] for p in group['members']]
                         result['revision'] = save_teams(cur, actor, day, assignments, before)

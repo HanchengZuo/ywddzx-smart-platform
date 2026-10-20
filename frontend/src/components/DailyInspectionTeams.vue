@@ -36,7 +36,7 @@
           <details
             v-if="editable && context.working"
             class="manager-step"
-            :open="!context.groups.length || !!preview"
+            :open="!displayGroups.length"
           >
             <summary class="step-heading">
               <b>01</b>
@@ -94,7 +94,7 @@
                 <strong>{{ preview ? '待确认的分组预览' : '已保存的今日分组' }}</strong
                 ><small>{{
                   preview
-                    ? '仅预览，确认后才保存；不会覆盖站点派工或真实巡检记录'
+                    ? '可拖动大学生调整分组，点击确认安排后统一保存'
                     : context.updated_at
                       ? context.updated_by_name + ' · ' + context.updated_at + ' 保存'
                       : '今日尚未安排分组'
@@ -107,7 +107,7 @@
                 :key="group.name"
                 :class="[group.mode, { 'drop-active': draggingStudent || selectedStudent }]"
                 @dragover.prevent
-                @drop.prevent="dropStudent(group)"
+                @drop.prevent="dropStudent(group, $event)"
               >
                 <header>
                   <strong>{{ group.name }}</strong
@@ -118,13 +118,19 @@
                     v-for="person in group.members"
                     :key="person.id"
                     type="button"
-                    :draggable="editable && !preview && !saving && person.position === '大学生'"
-                    :disabled="!editable || !!preview || saving || person.position !== '大学生'"
+                    :draggable="editable && !loading && !saving && person.position === '大学生'"
+                    :disabled="!editable || loading || saving || person.position !== '大学生'"
                     :aria-label="
                       person.display_name +
                       (person.position === '大学生' ? '，点击或拖动调整分组' : '，管理人员固定带队')
                     "
-                    :class="{ leader: person.id === group.leader_id }"
+                    :class="{
+                      leader: person.id === group.leader_id,
+                      selected: selectedStudent === person.id,
+                    }"
+                    :aria-pressed="
+                      person.position === '大学生' ? selectedStudent === person.id : undefined
+                    "
                     @dragstart="startStudentDrag($event, person)"
                     @dragend="draggingStudent = null"
                     @click="selectedStudent = selectedStudent === person.id ? null : person.id"
@@ -134,7 +140,7 @@
                   </button>
                 </div>
                 <button
-                  v-if="selectedStudent && !preview"
+                  v-if="selectedStudent"
                   type="button"
                   class="move-here"
                   :disabled="saving"
@@ -144,21 +150,19 @@
                 </button>
               </article>
             </div>
-            <p
-              v-if="editable && !preview && displayGroups.length"
-              class="method move-help"
-              role="status"
-            >
+            <p v-if="editable && displayGroups.length" class="method move-help" role="status">
               {{
                 saving
                   ? '正在保存分组调整…'
-                  : '拖动大学生姓名到其他组即可保存；手机或键盘可先点姓名，再点目标组“移至”。外勤组换人同步未检查的站点计划及待办；已派站人员跨现场/视频调组前需先撤销原派站。'
+                  : preview
+                    ? '拖动大学生姓名到其他组调整预览；手机或键盘可先点姓名，再点目标组“移至”。调整暂不保存，确认安排后统一生效；人工调整不强制各组人数相同。'
+                    : '拖动大学生姓名到其他组即可保存；手机或键盘可先点姓名，再点目标组“移至”。外勤组换人同步未检查的站点计划及待办；已派站人员跨现场/视频调组前需先撤销原派站。'
               }}
               <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
                 取消选择
               </button>
             </p>
-            <p v-else class="empty">
+            <p v-else-if="!displayGroups.length" class="empty">
               {{
                 editable ? '完成上方管理人员分工后，点击平均随机分组。' : '今日暂未保存巡检分组。'
               }}
@@ -204,6 +208,7 @@
 <script setup>
 import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { movePreviewStudent } from '@/utils/dailyTeamPreview'
 const props = defineProps({ canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['saved', 'opened', 'closed'])
 const dialog = ref(null),
@@ -230,29 +235,53 @@ const ready = computed(
 )
 const displayGroups = computed(() => {
   const groups = preview.value?.groups || context.value?.groups || []
-  return editable.value &&
-    !preview.value &&
-    groups.length &&
-    !groups.some((g) => g.mode === 'online')
+  return editable.value && groups.length && !groups.some((g) => g.mode === 'online')
     ? [...groups, { name: '内勤视频组', mode: 'online', leader_id: null, members: [] }]
     : groups
 })
 const draggingStudent = ref(null),
   selectedStudent = ref(null)
 function startStudentDrag(event, person) {
-  if (!editable.value || preview.value || saving.value || person.position !== '大学生') {
+  if (!editable.value || loading.value || saving.value || person.position !== '大学生') {
     event.preventDefault()
     return
   }
   draggingStudent.value = person.id
   event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('application/x-inspection-student', String(person.id))
   event.dataTransfer.setData('text/plain', person.display_name)
 }
-async function dropStudent(group) {
-  const studentId = draggingStudent.value || selectedStudent.value
-  if (!studentId || !editable.value || preview.value || saving.value) return
+async function dropStudent(group, event) {
+  const studentId =
+    draggingStudent.value ||
+    Number(event?.dataTransfer?.getData('application/x-inspection-student')) ||
+    selectedStudent.value
+  if (
+    !Number.isInteger(studentId) ||
+    studentId < 1 ||
+    !editable.value ||
+    loading.value ||
+    saving.value
+  )
+    return
   const source = displayGroups.value.find((g) => g.members.some((p) => p.id === studentId))
+  if (!source) return
   if (source?.name === group.name) {
+    draggingStudent.value = selectedStudent.value = null
+    return
+  }
+  if (preview.value) {
+    try {
+      preview.value = movePreviewStudent(
+        preview.value,
+        context.value.people,
+        studentId,
+        group.leader_id,
+      )
+      error.value = ''
+    } catch (err) {
+      error.value = err.message
+    }
     draggingStudent.value = selectedStudent.value = null
     return
   }
@@ -295,6 +324,7 @@ function lockedMode(person) {
 }
 function invalidate() {
   preview.value = null
+  draggingStudent.value = selectedStudent.value = null
   cancelPrompt.value = false
   error.value = ''
 }
@@ -341,6 +371,7 @@ async function createPreview() {
   loading.value = true
   error.value = ''
   preview.value = null
+  draggingStudent.value = selectedStudent.value = null
   cancelPrompt.value = false
   try {
     const { data } = await axios.post(
@@ -376,6 +407,7 @@ async function submit(action) {
         manager_modes: managerModes.value,
         seed: preview.value?.seed,
         token: preview.value?.token,
+        ...(action === 'confirm' ? { student_leaders: preview.value?.student_leaders || {} } : {}),
       },
       { timeout: 30000 },
     )
@@ -632,6 +664,11 @@ select {
   border-color: #d6af5d;
   color: #895013;
   font-weight: 750;
+}
+.member-tags > button.selected {
+  outline: 2px solid #2375a7;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px #d8edf6;
 }
 .member-tags > button:not(:disabled) {
   cursor: grab;

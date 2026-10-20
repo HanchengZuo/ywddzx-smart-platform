@@ -71,18 +71,17 @@ export function staffCellPresentation(cell, day, today) {
     return { tone: 'busy', stage: '不派工', label: '没空', detail: cell.reason || '未填写原因' }
   return { tone: 'unknown', stage: '待确认', label: '未确认', detail: '请逐格确认档期' }
 }
-export function staffWeekSummary(board) {
+export function staffTodaySummary(board) {
   const result = { free: 0, busy: 0, unknown: 0, offline: 0, online: 0 }
   if (!board) return result
+  if (board.today_summary) return { ...result, ...board.today_summary }
   for (const person of board.people) {
-    for (const { day } of board.days) {
-      const cell = person.cells[day]
-      const state = staffCellPresentation(cell, day, board.today)
-      if (day >= board.today && ['free', 'busy', 'unknown'].includes(state.tone))
-        result[state.tone]++
-      if (state.tone === 'mixed' || state.tone === 'offline') result.offline++
-      if (state.tone === 'mixed' || state.tone === 'online') result.online++
-    }
+    const cell = person.cells[board.today]
+    if (!cell) continue
+    const state = staffCellPresentation(cell, board.today, board.today)
+    if (['free', 'busy', 'unknown'].includes(state.tone)) result[state.tone]++
+    if (state.tone === 'mixed' || state.tone === 'offline') result.offline++
+    if (state.tone === 'mixed' || state.tone === 'online') result.online++
   }
   return result
 }

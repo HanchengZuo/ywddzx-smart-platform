@@ -6,8 +6,8 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from flask import Flask
-from staff_daily_teams import random_teams
-from staff_daily_team_http import register_staff_daily_teams
+from staff_daily_teams import adjust_preview, random_teams
+from staff_daily_team_http import excluded_reason, register_staff_daily_teams
 from tests import test_staff_scheduling as staff_tests
 from staff_availability import EDIT, VIEW, STAFF
 
@@ -49,6 +49,28 @@ class DailyTeamAlgorithmTests(unittest.TestCase):
         self.assertEqual(app.test_client().get('/api/staff-availability/today-inspection').status_code,401)
         self.assertEqual(app.test_client().post('/api/staff-availability/today-inspection').status_code,401)
         connect.assert_not_called()
+
+    def test_excluded_reasons_distinguish_busy_unknown_and_account_binding(self):
+        person = dict(id=1, available=False, reason='')
+        self.assertEqual(excluded_reason(person), '没空')
+        self.assertEqual(excluded_reason({**person,'reason':'培训'}), '没空（培训）')
+        self.assertEqual(excluded_reason({**person,'available':None}), '未确认有空或没空')
+        self.assertEqual(excluded_reason({**person,'id':None,'available':True}), '账号未唯一匹配')
+        self.assertEqual(excluded_reason({**person,'id':None}), '没空；账号未唯一匹配')
+
+    def test_preview_choices_only_move_students_to_existing_field_leaders_or_video(self):
+        people = [dict(p,available=True) for p in self.people(4)]
+        base = random_teams(people,{'1':'offline','2':'offline','3':'online'},'preview')
+        student = next(p for p in base if p['position']=='大学生' and p['mode']=='offline')
+        target = 1 if student['leader_id']!=1 else 2
+        adjusted = adjust_preview(people,base,{str(student['id']):target})
+        self.assertEqual(next(p for p in adjusted if p['id']==student['id'])['leader_id'],target)
+        video = adjust_preview(people,adjusted,{str(student['id']):None})
+        self.assertEqual(next(p for p in video if p['id']==student['id'])['mode'],'online')
+        self.assertEqual({p['id'] for p in adjusted},{p['id'] for p in base})
+        self.assertEqual(next(p for p in base if p['id']==student['id'])['leader_id'],student['leader_id'])
+        for bad in (None,[],{str(student['id']):True},{'1':2},{str(student['id']):3},{str(student['id']):999},{'0'+str(student['id']):2}):
+            with self.assertRaises(ValueError): adjust_preview(people,base,bad)
 
 
 @unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')
@@ -142,6 +164,46 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn('韩叙', response.json['error'])
         self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
+
+    def test_preview_adjustments_save_only_on_confirm_and_retain_server_owned_participants(self):
+        preview = self.post().json
+        student = next(p for group in preview['groups'] if group['mode']=='offline' for p in group['members'] if p['position']=='大学生')
+        leader = 2 if student['leader_id']!=2 else 3
+        self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
+        payload = dict(seed=preview['seed'],token=preview['token'])
+        for choices in ({'2':None},{str(student['id']):6},{str(student['id']):True},[],'invalid'):
+            self.assertEqual(self.post('confirm',**payload,student_leaders=choices).status_code,400)
+        self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
+        result = self.post('confirm',**payload,student_leaders={str(student['id']):leader},user_id=1)
+        self.assertEqual(result.status_code,200,result.json)
+        actual = [p for group in result.json['groups'] for p in group['members']]
+        self.assertEqual(next(p for p in actual if p['id']==student['id'])['leader_id'],leader)
+        expected_ids = {p['id'] for group in preview['groups'] for p in group['members']}
+        self.assertEqual({p['id'] for p in actual},expected_ids)
+        self.cur.execute('SELECT actor_id,after_value FROM staff_daily_team_events')
+        event = self.cur.fetchone()
+        self.assertEqual(event['actor_id'],2)
+        self.assertEqual({p['id'] for p in event['after_value']},expected_ids)
+        self.assertEqual(self.post('confirm',**payload,student_leaders={str(student['id']):None}).status_code,409)
+
+    def test_adjusted_preview_still_rechecks_availability_and_rolls_back_on_audit_failure(self):
+        preview = self.post().json
+        student = next(p for group in preview['groups'] for p in group['members'] if p['position']=='大学生')
+        payload = dict(seed=preview['seed'],token=preview['token'],student_leaders={str(student['id']):None})
+        self.cur.execute('ALTER TABLE staff_daily_team_events ADD CHECK(false) NOT VALID'); self.admin.commit()
+        with self.assertLogs(level='ERROR'):
+            self.assertEqual(self.post('confirm',**payload).status_code,500)
+        self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
+        self.availability(name=student['display_name'],available=False)
+        self.assertEqual(self.post('confirm',**payload).status_code,409)
+
+    def test_excluded_busy_label_is_returned_without_misleading_unconfirmed_wording(self):
+        self.availability(name='步雪琼',available=False)
+        self.availability(name='孔德辰',available=False,reason='出差')
+        response = self.client.get('/api/staff-availability/today-inspection')
+        people = {p['name']:p['reason'] for p in response.json['excluded']}
+        self.assertEqual(people['步雪琼'],'没空')
+        self.assertEqual(people['孔德辰'],'没空（出差）')
 
     def test_concurrent_confirmations_only_commit_once(self):
         preview=self.post().json

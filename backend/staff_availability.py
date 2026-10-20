@@ -74,6 +74,22 @@ def planned_work(cur, start, end):
     return {key: sorted(modes) for key, modes in planned.items()}
 
 
+def today_summary(cur, day):
+    """Today's person counts stay independent of the week being browsed."""
+    people = available_people(cur, day)
+    actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], day, day + timedelta(days=1))
+    counts = dict(free=0, busy=0, unknown=0, offline=0, online=0)
+    for person in people:
+        records = [row for uid in person['history_ids'] for row in actual.get((uid, day.isoformat()), [])]
+        modes = {row['mode'] for row in records} if records else set(person['planned_modes'])
+        if modes:
+            for mode in modes: counts[mode] += 1
+        else:
+            key = 'free' if person['available'] is True else 'busy' if person['available'] is False else 'unknown'
+            counts[key] += 1
+    return counts
+
+
 def validate_people(cur, ids, day, mode, people=None):
     people = people if people is not None else {p['id']: p for p in available_people(cur, day) if p['id']}
     for uid in ids:
@@ -170,6 +186,7 @@ def staff_board(cur, week):
                 field_group_names=sorted(group_names),
                 actual_modes=[mode for uid in p['history_ids'] for mode in actual.get((uid, d['day']), [])])
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
+                today_summary=today_summary(cur, today()),
                 daily_teams=list(teams.values()))
 
 

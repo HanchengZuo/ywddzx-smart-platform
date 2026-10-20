@@ -18,7 +18,7 @@ test('student drag submits server-owned student/leader IDs and refreshes only af
   const calls = []
   const context = vm.createContext({
     draggingStudent: { value: 10 }, selectedStudent: { value: null }, editable: { value: true },
-    preview: { value: null }, saving: { value: false }, error: { value: '' },
+    preview: { value: null }, saving: { value: false }, loading: {value:false}, error: { value: '' },
     context: { value: { day: '2026-10-20', revision: 4 } },
     displayGroups: { value: [{ name: '外勤甲组', members: [{ id: 10 }] }] },
     axios: { post: async (url, body) => { calls.push({url,body}); return {data: {day: '2026-10-20', revision: 5}} } },
@@ -42,7 +42,7 @@ test('rejected student move never emits a successful save and retains the server
   const calls = []
   const context = vm.createContext({
     draggingStudent: {value: 10}, selectedStudent: {value: null}, editable: {value: true},
-    preview: {value: null}, saving: {value: false}, error: {value: ''},
+    preview: {value: null}, saving: {value: false}, loading: {value:false}, error: {value: ''},
     context: {value: {day: '2026-10-20', revision: 1}},
     displayGroups: {value: [{name: '外勤甲组', members: [{id: 10}]}]},
     axios: {post: async () => { throw {response: {status: 409, data: {error: '已有站点派工'}}} }},

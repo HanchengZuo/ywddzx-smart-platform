@@ -31,7 +31,7 @@
           <small>{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
         </div>
       </div>
-      <div v-if="board" class="staff-stats" aria-label="本周档期概况">
+      <div v-if="board" class="staff-stats" :aria-label="'今日档期概况 · ' + board.today">
         <div v-for="item in summaryItems" :key="item.key" :class="'stat-' + item.key">
           <span>{{ item.label }}</span
           ><strong>{{ stats[item.key] }}</strong
@@ -256,7 +256,7 @@ import {
   offsetDay,
   shanghaiToday,
   staffCellPresentation,
-  staffWeekSummary,
+  staffTodaySummary,
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
@@ -299,11 +299,11 @@ let controller,
   disposed = false,
   timer
 const summaryItems = [
-  { key: 'free', label: '有空待排', hint: '今天起 · 人次' },
-  { key: 'busy', label: '没空', hint: '今天起 · 人次' },
-  { key: 'unknown', label: '未确认', hint: '今天起 · 人次' },
-  { key: 'offline', label: '现场巡检', hint: '本周计划 / 实绩 · 人次' },
-  { key: 'online', label: '视频巡检', hint: '本周计划 / 实绩 · 人次' },
+  { key: 'free', label: '有空待排', hint: '今日有空未安排 · 人' },
+  { key: 'busy', label: '没空', hint: '今日没空 · 人' },
+  { key: 'unknown', label: '未确认', hint: '今日待确认 · 人' },
+  { key: 'offline', label: '现场巡检', hint: '今日计划 / 实绩 · 人' },
+  { key: 'online', label: '视频巡检', hint: '今日计划 / 实绩 · 人' },
 ]
 const legendItems = [
   { key: 'free', label: '有空' },
@@ -313,7 +313,7 @@ const legendItems = [
   { key: 'online', label: '视频' },
   { key: 'mixed', label: '现场 + 视频' },
 ]
-const stats = computed(() => staffWeekSummary(board.value))
+const stats = computed(() => staffTodaySummary(board.value))
 const weekCaption = computed(() => (board.value ? board.value.week + ' 起的一周' : '工作日档期'))
 function state(person, day) {
   return staffCellPresentation(person.cells[day.day], day.day, board.value.today)
