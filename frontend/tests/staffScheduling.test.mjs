@@ -163,6 +163,7 @@ test('staff editing always resets to the clicked individual cell and saves exact
     conflict: { value: false },
     saving: { value: false },
     notice: { value: '' },
+    historyStatus: { value: 'auto' }, originalRecords: { value: '' }, historical: { value: false },
     board: { value: { can_edit: true, today: '2026-10-19' } },
     disposed: false,
     nextTick: async () => {},
@@ -204,16 +205,35 @@ test('staff editing always resets to the clicked individual cell and saves exact
   assert.equal(payload.available, true)
   assert.equal(reloads, 1)
   assert.equal(opens, 2)
+  context.historical.value = true
+  context.historyStatus.value = 'online'
+  context.selection.value = { person_name: '步雪琼', day: '2026-10-16', revision: 0 }
+  await context.save()
+  assert.equal(payload.history_status, 'online')
+  assert.equal(Object.hasOwn(payload, 'available'), false)
+  assert.equal(reloads, 2)
+  context.historical.value = false
   await context.openCell(person, { day: '2026-10-20' })
   context.board.value.can_edit = false
   await context.openCell(person, { day: '2026-10-19' })
   assert.equal(context.editable.value, false)
   await context.save()
-  assert.equal(reloads, 1, 'read-only dialogs cannot save')
+  assert.equal(reloads, 2, 'read-only dialogs cannot save')
   assert.doesNotMatch(
     source,
     /selectedPeople|selectedDays|openBatch|canBatch|type="checkbox"|批量设置档期/,
   )
+})
+test('manual history takes precedence only in staff display, with explicit provenance and no fabricated issue counts', () => {
+  const cell = { history_status: 'online', reason: '', actual_modes: [{ mode: 'offline', count: 4 }], planned_modes: [] }
+  const state = staffCellPresentation(cell, '2026-10-16', '2026-10-20')
+  assert.equal(state.tone, 'online')
+  assert.equal(state.stage, '人工补录')
+  assert.match(state.detail, /保留原始巡检数据/)
+  assert.equal(cell.actual_modes[0].mode, 'offline')
+  assert.equal(staffCellPresentation({ ...cell, history_status: 'busy', reason: '培训' }, '2026-10-16', '2026-10-20').detail, '培训')
+  assert.equal(staffCellPresentation({ ...cell, history_status: null }, '2026-10-16', '2026-10-20').stage, '实绩')
+  assert.equal(staffCellPresentation({ ...cell, actual_modes: [] }, '2026-10-20', '2026-10-20').tone, 'unknown', 'manual history cannot override current-day availability')
 })
 test('real selection handlers support individual, row and visible-column selection, never completed cells', () => {
   const source = readFileSync(
@@ -259,6 +279,7 @@ test('real selection handlers support individual, row and visible-column selecti
 })
 for (const filename of [
   'components/AutomaticSchedule.vue',
+  'components/DailyInspectionTeams.vue',
   'components/ScheduleTaskInbox.vue',
   'components/InspectionSchedulePanel.vue',
   'views/inspection/StaffAvailabilityView.vue',

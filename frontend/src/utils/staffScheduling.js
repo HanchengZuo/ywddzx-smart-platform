@@ -33,6 +33,15 @@ export function availabilityLabel(person, mode) {
   return '有空'
 }
 export function staffCellPresentation(cell, day, today) {
+  if (day < today && cell.history_status) {
+    const tone = cell.history_status === 'busy' ? 'busy' : cell.history_status
+    return {
+      tone,
+      stage: '人工补录',
+      label: tone === 'busy' ? '没空' : tone === 'offline' ? '现场巡检' : '视频巡检',
+      detail: tone === 'busy' ? cell.reason || '未填写原因' : '人工记录 · 保留原始巡检数据',
+    }
+  }
   const actual = cell.actual_modes || []
   const modes = [
     ...new Set(
@@ -52,7 +61,7 @@ export function staffCellPresentation(cell, day, today) {
       label: name,
       detail: actual.length
         ? `已记录 ${actual.reduce((sum, item) => sum + Number(item.count || 0), 0)} 张检查表`
-        : '已安排 · 等待巡检记录',
+        : cell.daily_assignment?.group_name || '已安排 · 等待巡检记录',
     }
   }
   if (day < today) return { tone: 'past', stage: '历史', label: '无巡检记录', detail: '' }
@@ -69,7 +78,8 @@ export function staffWeekSummary(board) {
     for (const { day } of board.days) {
       const cell = person.cells[day]
       const state = staffCellPresentation(cell, day, board.today)
-      if (['free', 'busy', 'unknown'].includes(state.tone)) result[state.tone]++
+      if (day >= board.today && ['free', 'busy', 'unknown'].includes(state.tone))
+        result[state.tone]++
       if (state.tone === 'mixed' || state.tone === 'offline') result.offline++
       if (state.tone === 'mixed' || state.tone === 'online') result.online++
     }

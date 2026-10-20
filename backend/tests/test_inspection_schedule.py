@@ -70,7 +70,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
-        for module in ('schedule_common', 'staff_availability', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation'):
+        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         self.schema = 'schedule_' + uuid.uuid4().hex
         self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)
@@ -93,6 +93,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
                 self.cur.execute('INSERT INTO inspection_tables(table_name,checklist_mode) VALUES(%s,%s)', (name, mode))
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/515_inspection_schedule.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/520_staff_scheduling.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/525_staff_daily_teams.sql').read_text())
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')
         self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('步雪琼','2026-10-20',true,1,1),('孔德辰','2026-10-20',true,1,1)")
         self.admin.commit()

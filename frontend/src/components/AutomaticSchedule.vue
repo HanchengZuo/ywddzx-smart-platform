@@ -39,11 +39,14 @@
           <div v-if="preview.groups.length" class="proposal-list">
             <article v-for="group in preview.groups" :key="group.person.id">
               <div class="proposal-person">
-                <strong>{{ group.person.display_name }}</strong
+                <strong>{{ group.group_name || group.person.display_name }}</strong
                 ><span :class="group.mode">{{
                   group.mode === 'offline' ? '现场巡检' : '视频巡检'
                 }}</span>
               </div>
+              <p v-if="group.team_members">
+                {{ group.team_members.map((p) => p.display_name).join('、') }}
+              </p>
               <b>{{ group.region }} · {{ group.station_name }}</b>
               <p>{{ group.cells.map((c) => c.label).join('、') }}</p>
               <small

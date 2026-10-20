@@ -34,12 +34,12 @@ def working_days(cur, start, end):
                  source=row['source']) for row in cur.fetchall() if row['working']]
 
 
-def require_workday(cur, day):
+def require_workday(cur, day, *, allow_past=False):
     cur.execute('SELECT working FROM quality_work_calendar WHERE day=%s', (day,))
     row = cur.fetchone()
     if not row:
         raise ValueError('该日期的官方工作日历尚未发布或未同步，暂不能排班。')
     if not row['working']:
         raise ValueError('请选择工作日（含法定调休工作日）。')
-    if day < today():
+    if not allow_past and day < today():
         raise ValueError('过去日期仅查看实绩，不能新增或修改档期与排班。')

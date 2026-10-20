@@ -14,9 +14,12 @@ from inspection_schedule_tasks import register_schedule_tasks, task_count
 
 class BalanceTests(unittest.TestCase):
     def test_ordered_roster_and_balanced_initial_day_then_rotation(self):
-        self.assertEqual(len(STAFF), 26)
+        self.assertEqual(len(STAFF), 25)
         self.assertEqual(STAFF[0], ('步雪琼', '管理人员'))
-        self.assertEqual(STAFF[22:24], [('芦斌', '管理人员'), ('孙慧佳', '管理人员')])
+        self.assertEqual(STAFF[6], ('芦斌', '管理人员'))
+        self.assertTrue(all(position == '管理人员' for _, position in STAFF[:7]))
+        self.assertTrue(all(position == '大学生' for _, position in STAFF[7:]))
+        self.assertNotIn('孙慧佳', [name for name, _ in STAFF])
         people = [dict(id=i, sequence=i) for i in range(1, 27)]
         demands = {mode: [dict(station_id=i, cells=[1, 2]) for i in range(40)] for mode in ('offline', 'online')}
         loads = {p['id']: dict(offline=0, online=0) for p in people}

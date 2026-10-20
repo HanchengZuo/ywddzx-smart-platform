@@ -7,6 +7,13 @@
         <p>谁有空、谁在现场、谁做视频，一眼看清本周安排。</p>
       </div>
       <div class="head-meta">
+        <DailyInspectionTeams
+          v-if="board"
+          :can-edit="board.can_edit"
+          @opened="teamsOpened"
+          @closed="teamsClosed"
+          @saved="onTeamsSaved"
+        />
         <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
         <small>工作日排班 · 全局共享</small>
       </div>
@@ -38,7 +45,7 @@
         <small>“已排班”为计划，“实绩”为实际巡检记录</small>
       </div>
       <p class="help">
-        仅展示官方工作日（含调休上班日）。绿色有空才可派工，红色没空可备注4字以内原因；灰色未确认不参与派工。过去日期只读，现场和视频实绩不要求审核。
+        仅展示官方工作日（含调休上班日）。今天和未来设置有空、没空；历史日期可补录现场巡检、视频巡检或没空原因，明确标记人工记录，不改动原始巡检记录。今日分组按有空人员预览确认。
       </p>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
@@ -81,8 +88,13 @@
               </th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-for="person in board.people" :key="person.display_name">
+          <tbody v-for="group in staffGroups" :key="group.label">
+            <tr class="staff-divider">
+              <th :colspan="board.days.length + 2" scope="rowgroup">
+                {{ group.label }}<span>{{ group.people.length }} 人</span>
+              </th>
+            </tr>
+            <tr v-for="person in group.people" :key="person.display_name" class="staff-person-row">
               <th scope="row" class="person-name">
                 <span>{{ person.display_name }}<small v-if="!person.id">待匹配账号</small></span>
               </th>
@@ -123,7 +135,9 @@
       <p v-else-if="board" class="empty">此周没有已发布的工作日。</p>
       <footer class="staff-footer">
         <strong>逐格维护 · 修改留痕</strong>
-        <span>档期与排班由所有获授权用户共享。已派工日期若要标记没空，须先改派或取消任务。</span>
+        <span
+          >档期与排班由所有获授权用户共享。历史补录保留来源；今天已有站点派工或人员分组，须先取消对应安排，才能标记没空。</span
+        >
       </footer>
     </section>
     <Teleport to="body">
@@ -158,7 +172,21 @@
               >
             </div>
             <template v-if="editable">
-              <div class="status-picker" aria-label="选择当天档期">
+              <div v-if="historical" class="status-picker history-picker" aria-label="补录历史档期">
+                <button
+                  v-for="item in historyOptions"
+                  :key="item.value"
+                  type="button"
+                  :class="item.value"
+                  :aria-pressed="historyStatus === item.value"
+                  :disabled="saving"
+                  @click="historyStatus = item.value"
+                >
+                  <b>{{ item.label }}</b
+                  ><small>{{ item.hint }}</small>
+                </button>
+              </div>
+              <div v-else class="status-picker" aria-label="选择当天档期">
                 <button
                   type="button"
                   :aria-pressed="available"
@@ -178,20 +206,22 @@
                   <b>没空</b><small>当天不参与派工</small>
                 </button>
               </div>
-              <label v-if="!available" class="reason"
+              <label v-if="historical ? historyStatus === 'busy' : !available" class="reason"
                 >原因（选填，最多4字）<input
                   v-model="reason"
                   :disabled="saving"
                   maxlength="4"
                   placeholder="如：休假、培训、出差"
               /></label>
-              <p class="edit-hint">
+              <p v-if="historical" class="edit-hint">
+                历史补录仅修改此人的档期显示，不会新增、删除或修改实际巡检记录。选择“自动记录”可恢复按原始巡检记录展示。
+              </p>
+              <p v-else class="edit-hint">
                 仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
               </p>
             </template>
-            <p v-else class="edit-hint">
-              此日期只读。历史现场、视频巡检来自当日实际记录，不会改写档期。
-            </p>
+            <p v-else class="edit-hint">当前账号只有查看权限，不能修改档期。</p>
+            <p v-if="originalRecords" class="edit-hint">原始巡检记录：{{ originalRecords }}</p>
             <p v-if="savedMeta" class="saved-meta">{{ savedMeta }}</p>
             <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
           </div>
@@ -223,6 +253,7 @@ import {
   staffWeekSummary,
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
+import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
 const week = ref(shanghaiToday()),
   board = ref(null),
   loading = ref(false),
@@ -236,6 +267,24 @@ const selection = ref(null),
   reason = ref(''),
   savedMeta = ref(''),
   editable = ref(false)
+const historyStatus = ref('auto'),
+  originalRecords = ref(''),
+  teamsOpen = ref(false)
+const historical = computed(() =>
+  Boolean(selection.value && selection.value.day < (board.value?.today || shanghaiToday())),
+)
+const staffGroups = computed(() =>
+  ['管理人员', '大学生'].map((label) => ({
+    label,
+    people: (board.value?.people || []).filter((p) => p.position === label),
+  })),
+)
+const historyOptions = [
+  { value: 'offline', label: '现场巡检', hint: '人工补录' },
+  { value: 'online', label: '视频巡检', hint: '人工补录' },
+  { value: 'busy', label: '没空', hint: '可填写原因' },
+  { value: 'auto', label: '自动记录', hint: '恢复原始巡检记录' },
+]
 const dialog = ref(null),
   saveError = ref(''),
   conflict = ref(false)
@@ -301,10 +350,14 @@ async function openCell(person, day) {
   selectionState.value = state(person, day)
   available.value = value.available !== false
   reason.value = value.reason
+  historyStatus.value = value.history_status || 'auto'
+  originalRecords.value = (value.actual_modes || [])
+    .map((m) => (m.mode === 'offline' ? '现场' : '视频') + m.count + '张检查表')
+    .join('、')
   savedMeta.value = value.updated_at
     ? person.display_name + '的档期由' + value.updated_by_name + '于' + value.updated_at + '保存'
     : '此档期尚未设置。'
-  editable.value = board.value.can_edit && day.day >= board.value.today
+  editable.value = board.value.can_edit
   saveError.value = ''
   conflict.value = false
   polling.pause()
@@ -337,13 +390,22 @@ async function save() {
   try {
     await axios.put(
       '/api/staff-availability',
-      { cells: [selection.value], available: available.value, reason: reason.value },
+      {
+        cells: [selection.value],
+        ...(historical.value
+          ? { history_status: historyStatus.value }
+          : { available: available.value }),
+        reason: reason.value,
+      },
       { timeout: 30000 },
     )
     if (disposed) return
+    const wasHistorical = historical.value
     dialog.value.close()
     selection.value = null
-    notice.value = '档期已保存，可在巡检排班选择有空人员。'
+    notice.value = wasHistorical
+      ? '历史档期已保存，原始巡检记录保持不变。'
+      : '档期已保存，可在巡检排班选择有空人员。'
     await load()
   } catch (err) {
     if (!disposed) {
@@ -358,6 +420,23 @@ async function save() {
     polling.start()
   }
 }
+async function onTeamsSaved(data) {
+  week.value = data.day
+  await nextTick()
+  clearTimeout(timer)
+  await load()
+  notice.value = data.cancelled
+    ? '今日人员分组已撤销，已有站点派工和巡检记录未修改。'
+    : '今日巡检分组已保存，可在表格查看各人的带队分组。'
+}
+function teamsOpened() {
+  teamsOpen.value = true
+  polling.pause()
+}
+function teamsClosed() {
+  teamsOpen.value = false
+  polling.start()
+}
 const polling = createAdaptivePolling({
   task: load,
   canRun: () =>
@@ -366,6 +445,7 @@ const polling = createAdaptivePolling({
     navigator.onLine &&
     !saving.value &&
     !blocked.value &&
+    !teamsOpen.value &&
     !dialog.value?.open,
 })
 function visibility() {
@@ -736,6 +816,43 @@ thead .today {
   color: #224f79;
   background: #e5eef8;
   border-color: #bfcee2;
+}
+.staff-divider th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #1a5273;
+  background: #dfeaf3;
+  border-top: 3px solid #3c7895;
+  border-bottom: 1px solid #bdd1e0;
+}
+.staff-divider span {
+  margin-left: 10px;
+  font-size: 10px;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: #557992;
+}
+.status-picker.history-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.history-picker .offline {
+  color: #895013;
+  background: #fff1d3;
+}
+.history-picker .online {
+  color: #2056a3;
+  background: #e6efff;
+}
+.history-picker .busy {
+  color: #ac3340;
+  background: #fce9ec;
+}
+.history-picker .auto {
+  color: #5a7086;
+  background: #eef3f8;
 }
 .day-cell {
   padding: 6px;
@@ -1111,6 +1228,21 @@ input {
   .staff-grid td {
     border: 0;
     min-width: 0;
+  }
+  .staff-grid .staff-divider {
+    display: block;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    border-radius: 0;
+    margin: 12px 0;
+  }
+  .staff-grid .staff-divider th {
+    display: block;
+    padding: 10px 6px;
+    background: none;
+    border-bottom: 2px solid #8db0c7;
   }
   .person-name,
   .position {

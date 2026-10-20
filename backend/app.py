@@ -35415,6 +35415,8 @@ from staff_availability import register_staff_availability
 from schedule_automation import register_schedule_automation
 from inspection_schedule_tasks import register_schedule_tasks
 register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
+from staff_daily_team_http import register_staff_daily_teams
+register_staff_daily_teams(app, connect=get_db_connection, has_permission=has_permission)
 register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission)
 register_schedule_tasks(app, connect=get_db_connection)
 from ai_model_http import register_ai_model_management
