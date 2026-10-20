@@ -7,7 +7,16 @@
         <p>谁有空、谁在现场、谁做视频，一眼看清本周安排。</p>
       </div>
       <div class="head-meta">
-        <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
+        <div class="head-actions">
+          <DailyInspectionTeams
+            v-if="board"
+            :can-edit="board.can_edit"
+            @opened="teamsOpened"
+            @closed="teamsClosed"
+            @saved="onTeamsSaved"
+          />
+          <span class="access">{{ board?.can_edit ? '可维护档期' : '只读查看' }}</span>
+        </div>
         <small>工作日排班 · 全局共享</small>
       </div>
     </header>
@@ -19,18 +28,9 @@
           <button type="button" aria-label="查看下一周" @click="moveWeek(7)">下一周 →</button>
           <button type="button" class="this-week" @click="week = shanghaiToday()">本周</button>
         </div>
-        <div class="week-actions">
-          <div class="week-caption">
-            <strong>{{ weekCaption }}</strong>
-            <small>{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
-          </div>
-          <DailyInspectionTeams
-            v-if="board"
-            :can-edit="board.can_edit"
-            @opened="teamsOpened"
-            @closed="teamsClosed"
-            @saved="onTeamsSaved"
-          />
+        <div class="week-caption">
+          <strong>{{ weekCaption }}</strong>
+          <small>{{ board?.days.length || 0 }} 个工作日 · 点击单个档期查看或设置</small>
         </div>
       </div>
       <div v-if="board" class="staff-stats" :aria-label="'今日档期概况 · ' + board.today">
@@ -580,6 +580,12 @@ h2 {
   justify-items: end;
   flex-shrink: 0;
 }
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
 .access {
   padding: 8px 14px;
   background: #ffffff12;
@@ -617,14 +623,6 @@ h2 {
   gap: 6px;
   text-align: right;
   font-size: 13px;
-}
-.week-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-left: auto;
 }
 .week-caption small {
   font-size: 11px;
@@ -1200,6 +1198,7 @@ input {
 @container (max-width: 760px) {
   .staff-head {
     padding: 20px;
+    flex-direction: column;
     align-items: flex-start;
   }
   .head-meta small {
@@ -1217,11 +1216,6 @@ input {
   }
   .week-caption {
     text-align: left;
-  }
-  .week-actions {
-    width: 100%;
-    margin-left: 0;
-    justify-content: space-between;
   }
   .week-picker {
     gap: 6px;

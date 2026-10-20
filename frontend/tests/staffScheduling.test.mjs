@@ -17,12 +17,12 @@ import {
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
 
-test('daily grouping action belongs to the table date toolbar, not the page title', () => {
+test('daily grouping action sits immediately left of the header access label, not in the date toolbar', () => {
   const source = readFileSync(new URL('../src/views/inspection/StaffAvailabilityView.vue',import.meta.url),'utf8')
   const {descriptor}=parse(source)
   const template=descriptor.template.content
-  assert.doesNotMatch(template.slice(template.indexOf('<header'),template.indexOf('</header>')),/DailyInspectionTeams/)
-  assert.match(template.slice(template.indexOf('class="week-controls"'),template.indexOf('class="staff-stats"')),/class="week-actions"[\s\S]*<DailyInspectionTeams[\s\S]*@saved="onTeamsSaved"/)
+  assert.match(template.slice(template.indexOf('<header'),template.indexOf('</header>')),/class="head-actions"[\s\S]*<DailyInspectionTeams[\s\S]*@saved="onTeamsSaved"\s*\/>\s*<span class="access">/)
+  assert.doesNotMatch(template.slice(template.indexOf('class="week-controls"'),template.indexOf('class="staff-stats"')),/DailyInspectionTeams/)
   assert.equal((template.match(/<DailyInspectionTeams/g)||[]).length,1)
 })
 
