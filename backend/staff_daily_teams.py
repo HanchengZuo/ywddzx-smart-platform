@@ -70,6 +70,19 @@ def validate_dispatched_teams(cur, day, assignments):
             raise ScheduleConflict('外勤组已派站点，请先撤销相关站点安排，再调整成员或重新分组。')
 
 
+def adjust_preview(people, assignments, student_leaders):
+    """Apply only student/leader choices to a server-rebuilt, verified preview."""
+    if not isinstance(student_leaders, dict) or len(student_leaders) > len(people):
+        raise ValueError('预览调组数据不合法，请重新预览。')
+    for key, leader in sorted(student_leaders.items()):
+        if not isinstance(key, str) or not key.isascii() or not key.isdecimal() or str(int(key)) != key:
+            raise ValueError('预览中的学生编号不合法。')
+        if leader is not None and (type(leader) is not int or leader < 1):
+            raise ValueError('请选择外勤带队组或内勤视频组。')
+        assignments = move_student(people, assignments, int(key), leader)
+    return assignments
+
+
 def random_teams(people, manager_modes, seed):
     """Managers are explicit; student split and team sizes differ by at most one when feasible."""
     managers = [p for p in people if p['position'] == '管理人员']

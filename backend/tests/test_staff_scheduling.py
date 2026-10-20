@@ -104,6 +104,22 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(person['cells']['2026-10-19']['reason'], '外出培训')
         self.assertEqual(person['cells']['2026-10-19']['updated_by_name'], '步雪琼')
 
+    def test_today_indicators_do_not_change_with_viewed_week_or_count_other_dates(self):
+        self.availability(name='步雪琼')
+        self.availability(name='孔德辰')
+        self.availability(name='赵之龙',available=False,reason='培训')
+        self.availability(name='陈中磊',day='2026-10-20',available=False)
+        self.record(inspector=2,day='2026-10-16')
+        for _ in range(3): self.record(inspector=3,day='2026-10-19')
+        expected = dict(free=1,busy=1,unknown=22,offline=1,online=0)
+        for week in ('2026-10-12','2026-10-19','2026-10-26'):
+            response = self.client.get('/api/staff-availability',query_string=dict(week=week))
+            self.assertEqual(response.status_code,200,response.json)
+            self.assertEqual(response.json['today_summary'],expected)
+        self.record(inspector=2,table=7,day='2026-10-19')
+        response = self.client.get('/api/staff-availability?week=2026-10-19')
+        self.assertEqual(response.json['today_summary'],dict(free=0,busy=1,unknown=22,offline=1,online=1))
+
     def test_availability_is_single_cell_only_and_schedule_bulk_stays_atomic(self):
         body = dict(available=True, cells=[dict(person_name='步雪琼', day='2026-10-19', revision=0), dict(person_name='孔德辰', day='2026-10-20', revision=0)])
         response = self.client.put('/api/staff-availability', json=body)
