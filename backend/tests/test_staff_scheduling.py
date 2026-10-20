@@ -184,7 +184,8 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(self.save(scheduled_date='2026-10-19').status_code, 409)
         self.assertEqual(self.save().status_code, 200)
         response = self.client.put('/api/inspection-schedule', json=dict(mode='online', year=2026, month=10,
-            station_id=1, column_key='safety', inspector_ids=[2], scheduled_date='2026-10-20', revision=0))
+            station_id=1, column_key='safety', inspector_ids=[2], scheduled_date='2026-10-20', revision=0,
+            cells=[dict(station_id=1,column_key=k,revision=0) for k,_,_ in schedule_tests.COLUMNS['online']]))
         self.assertEqual(response.status_code, 409, response.json)
         conn = self.connect(); other = self.connect()
         try:
@@ -235,6 +236,9 @@ class StaffDatabaseTests(unittest.TestCase):
         def video_save(**overrides):
             return self.client.put('/api/inspection-schedule',json=dict(mode='online',year=2026,month=10,station_id=1,column_key='safety',inspector_ids=[2],scheduled_date='2026-10-20',revision=0,**overrides))
         self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
+        # These two actual records are locked; the remaining row consists of safety only.
+        self.record(day='2026-10-01',table=8)
+        self.record(day='2026-10-01',table=9)
         self.assertEqual(video_save().status_code, 200)
         self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0, 'future task is not due yet')
         with patch('inspection_schedule_tasks.today', return_value=date(2026, 10, 23)):
@@ -244,12 +248,28 @@ class StaffDatabaseTests(unittest.TestCase):
             self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
             record = self.record(day='2026-10-21', inspector=4, table=7)  # A different colleague can satisfy coverage.
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
+
             self.cur.execute('DELETE FROM inspections WHERE id=%s', (record,)); self.admin.commit()
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
         with patch('inspection_schedule_tasks.today', return_value=date(2027, 1, 6)):
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
             self.record(day='2027-01-05', inspector=2,table=7)
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
+
+    def test_auto_exclusions_share_busy_unknown_and_existing_work_reasons(self):
+        self.availability(name='步雪琼',available=False)
+        self.availability(name='孔德辰',available=False,reason='出差')
+        preview = self.client.post('/api/inspection-schedule/auto',json=dict(action='preview',day='2026-10-19'))
+        self.assertEqual(preview.status_code,200,preview.json)
+        reasons = {p['name']:p['reason'] for p in preview.json['excluded']}
+        self.assertEqual(reasons['步雪琼'],'没空')
+        self.assertEqual(reasons['孔德辰'],'没空（出差）')
+        self.assertIn('未确认有空或没空',reasons['陈中磊'])
+        self.availability(name='步雪琼',available=True)
+        self.record(inspector=2,day='2026-10-19')
+        preview = self.client.post('/api/inspection-schedule/auto',json=dict(action='preview',day='2026-10-19'))
+        reasons = {p['name']:p['reason'] for p in preview.json['excluded']}
+        self.assertEqual(reasons['步雪琼'],'当天已有站点安排或巡检实绩')
 
     def test_reassignment_cancels_old_task_with_audit_and_new_task_is_personal(self):
         self.save(inspector_ids=[2])

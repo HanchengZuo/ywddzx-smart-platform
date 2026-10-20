@@ -7,19 +7,9 @@ import secrets
 from datetime import timedelta
 from flask import g, jsonify, request
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
-from staff_availability import STAFF, VIEW, EDIT, available_people
+from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason
 from inspection_schedule import sync_field_team_plans
 from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
-
-
-def excluded_reason(person):
-    reasons = []
-    if person['available'] is False:
-        reasons.append('没空' + (f"（{person['reason']}）" if person['reason'] else ''))
-    elif person['available'] is None:
-        reasons.append('未确认有空或没空')
-    if not person['id']: reasons.append('账号未唯一匹配')
-    return '；'.join(reasons)
 
 
 def context(cur, day):

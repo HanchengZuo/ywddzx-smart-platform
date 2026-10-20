@@ -56,6 +56,8 @@ class DispatchDatabaseTests(unittest.TestCase):
     def video(self, **extra):
         body=dict(mode='online',year=2026,month=10,station_id=1,column_key='safety',inspector_ids=[2],scheduled_date='2026-10-20',revision=0)
         body.update(extra)
+        if 'cells' not in body:
+            body['cells'] = [dict(station_id=body['station_id'],column_key=k,revision=body['revision']) for k,_,_ in COLUMNS['online']]
         return self.client.put('/api/inspection-schedule',json=body)
 
     def row_cells(self, sid, revision=0, skip=()):
@@ -122,15 +124,15 @@ class DispatchDatabaseTests(unittest.TestCase):
         self.cur.execute('SELECT 1 FROM inspection_schedule_cells'); self.assertIsNone(self.cur.fetchone())
         self.assertEqual(self.video(cells=123).status_code,400)
 
-    def test_video_shelf_moves_one_cell_and_rejects_malformed_source(self):
+    def test_legacy_transfer_api_also_moves_the_whole_video_row(self):
         self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
         self.assertEqual(self.video().status_code,200)
-        source=dict(cells=[dict(station_id=1,column_key='safety',revision=1)])
+        source=dict(cells=[dict(station_id=1,column_key=k,revision=1) for k,_,_ in COLUMNS['online']])
         result=self.video(station_id=2,source=source)
         self.assertEqual(result.status_code,200,result.json)
         self.cur.execute('SELECT station_id,inspector_ids FROM inspection_schedule_cells ORDER BY station_id')
-        self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(station_id=1,inspector_ids=[]),dict(station_id=2,inspector_ids=[2])])
-        self.assertEqual(self.video(source=source,inspector_ids=None).status_code,400)
+        self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(station_id=1,inspector_ids=[])]*3+[dict(station_id=2,inspector_ids=[2])]*3)
+        self.assertEqual(self.video(source=dict(cells=source['cells'][:1]),inspector_ids=None).status_code,409)
 
     def test_field_expires_next_day_without_creating_actual_records_video_remains(self):
         self.save()

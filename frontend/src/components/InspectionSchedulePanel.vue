@@ -129,7 +129,7 @@
       <span v-else>{{
         mode === 'offline'
           ? '整站安排一个外勤组，实际检查结果独立保留。'
-          : '每格一人；多选时按站点整行安排。'
+          : '每站一人，安全、计量、现场整行统一安排。'
       }}</span>
       <button type="button" class="secondary-button" @click="openShelf">
         调度待选区（{{ shelf.length }}）
@@ -208,7 +208,7 @@
             class="station-row"
             :class="{ 'region-start': row.sequence === 1 || regionStarts.has(row.station_id) }"
             @dragover.prevent
-            @drop.prevent="mode === 'offline' && dropOn(row, null, $event)"
+            @drop.prevent="dropOn(row, $event)"
           >
             <td class="fixed-index">{{ row.sequence }}</td>
             <td class="fixed-region">{{ row.region }}</td>
@@ -228,7 +228,7 @@
               :key="column.key"
               :class="['matrix-cell', row.cells[column.key].status]"
               @dragover.prevent
-              @drop.stop.prevent="dropOn(row, column, $event)"
+              @drop.stop.prevent="dropOn(row, $event)"
             >
               <button
                 type="button"
@@ -236,7 +236,7 @@
                 :draggable="
                   canEdit && row.cells[column.key].status === 'assigned' && !loading && !shelfSaving
                 "
-                @dragstart="startAssignmentDrag($event, row, column)"
+                @dragstart="startAssignmentDrag($event, row)"
                 @dragend="dragged = null"
                 :class="{ selected: multiSelect && selectedCells.includes(cellKey(row, column)) }"
                 :aria-pressed="
@@ -298,7 +298,7 @@
         canEdit
           ? mode === 'offline'
             ? '点击任一未检查格安排整行外勤组'
-            : '点击单元格安排一位检查人'
+            : '点击任一未检查格安排整站一位检查人'
           : '当前为只读查看'
       }}</span>
     </footer>
@@ -311,14 +311,12 @@
       <header>
         <div>
           <strong>调度待选区</strong
-          ><small>{{ mode === 'offline' ? '外勤组 · 整站改派' : '视频 · 单格单人' }}</small>
+          ><small>{{ mode === 'offline' ? '外勤组 · 整站改派' : '视频 · 整站同人改派' }}</small>
         </div>
         <button type="button" aria-label="收起调度待选区" @click="shelfOpen = false">×</button>
       </header>
       <p>
-        从表格拖入此处暂存，再拖到目标{{
-          mode === 'offline' ? '站点行' : '单元格'
-        }}。移入即撤下原计划，拖回即直接保存；也可点选卡片再点目标位置。待选安排全局共享，刷新仍保留。
+        从任一计划格拖入此处，整站未检查项一起撤下；拖回目标站整行直接保存。也可点选卡片再点目标位置。已检查记录不变，待选安排全局共享，刷新仍保留。
       </p>
       <div
         v-for="item in shelf"
@@ -336,20 +334,13 @@
         @keydown.space.self.prevent="pickedShelf = pickedShelf === item.key ? null : item.key"
       >
         <strong>{{ item.name }}</strong
-        ><small
-          >{{ item.day }} · {{ item.sourceName || '新增安排'
-          }}<template v-if="mode === 'online'">
-            · {{ board.columns.find((c) => c.key === item.source_column_key)?.label }}</template
-          ></small
-        >
+        ><small>{{ item.day }} · {{ item.sourceName || '新增安排' }}</small>
         <button type="button" aria-label="移除待选安排" @click.stop="removeShelf(item.key)">
           ×
         </button>
       </div>
       <p v-if="!shelf.length">
-        将任一已排班单元格拖到这里，{{
-          mode === 'offline' ? '整行现场计划' : '该格视频计划'
-        }}会直接移入待选区。
+        将任一已排班格拖到这里，整行{{ mode === 'offline' ? '现场' : '视频' }}计划会一起移入待选区。
       </p>
       <button v-if="pickedShelf" type="button" @click="pickedShelf = null">取消选中卡片</button>
       <span v-if="shelfSaving" role="status">正在原子保存改派…</span>
@@ -372,9 +363,7 @@
               <h3 :id="dialogId">
                 {{
                   bulkEdits.length
-                    ? mode === 'offline'
-                      ? '整站排班 · ' + new Set(bulkEdits.map((e) => e.station_id)).size + ' 个站点'
-                      : '批量安排 ' + bulkEdits.length + ' 个单元格'
+                    ? '整站排班 · ' + new Set(bulkEdits.map((e) => e.station_id)).size + ' 个站点'
                     : selection.row.region + ' · ' + selection.row.station_name
                 }}
               </h3>
@@ -447,7 +436,7 @@
                 {{
                   mode === 'offline'
                     ? '选择完整外勤组，应用至所选站点全部未检查项。'
-                    : '每格只可选择一人。'
+                    : '选择一位检查人，统一安排所选站点安全、计量、现场的未检查项。'
                 }}
                 清空后保存即取消计划，实际记录不变。
               </p>
@@ -569,12 +558,7 @@
                 加入调度待选区
               </button>
               <button
-                v-if="
-                  !bulkEdits.length &&
-                  currentCell.status === 'assigned' &&
-                  currentCell.assignees.length &&
-                  canEdit
-                "
+                v-if="stageableSelection"
                 type="button"
                 class="secondary-button"
                 :disabled="saving || changed"
@@ -779,7 +763,7 @@ const stageableSelection = computed(() => {
   if (!canEdit.value || !selection.value) return false
   if (bulkEdits.value.length && new Set(bulkEdits.value.map((e) => e.station_id)).size !== 1)
     return false
-  return !!planPayload(selection.value.row, selection.value.column)
+  return !!planPayload(selection.value.row)
 })
 const hasTodayPlans = computed(() =>
   (board.value?.rows || []).some((row) =>
@@ -788,21 +772,18 @@ const hasTodayPlans = computed(() =>
     ),
   ),
 )
-function targetCells(row, column) {
-  const columns =
-    props.mode === 'offline'
-      ? board.value.columns.filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
-      : column && scheduleCellEditable(row.cells[column.key], canEdit.value)
-        ? [column]
-        : []
+function targetCells(row) {
+  const columns = board.value.columns.filter((c) =>
+    scheduleCellEditable(row.cells[c.key], canEdit.value),
+  )
   return columns.map((c) => ({
     station_id: row.station_id,
     column_key: c.key,
     revision: row.cells[c.key].revision,
   }))
 }
-function planPayload(row, column) {
-  const cells = targetCells(row, column)
+function planPayload(row) {
+  const cells = targetCells(row)
   const first = cells.map((c) => row.cells[c.column_key]).find((c) => c.status === 'assigned')
   if (!first) return null
   return {
@@ -814,18 +795,18 @@ function planPayload(row, column) {
 function openShelf() {
   shelfOpen.value = true
 }
-async function stageAssignment(row, column) {
-  const item = planPayload(row, column)
+async function stageAssignment(row) {
+  const item = planPayload(row)
   if (item) await runDispatch('park', { cells: item.cells })
 }
 async function stageCurrentSelection() {
   if (!selection.value) return
-  const { row, column } = selection.value
+  const { row } = selection.value
   await closeCell(true)
-  await stageAssignment(row, column)
+  await stageAssignment(row)
 }
-function startAssignmentDrag(event, row, column) {
-  const item = canEdit.value && !loading.value && !shelfSaving.value && planPayload(row, column)
+function startAssignmentDrag(event, row) {
+  const item = canEdit.value && !loading.value && !shelfSaving.value && planPayload(row)
   if (!item) {
     event.preventDefault()
     return
@@ -863,14 +844,14 @@ async function removeShelf(key) {
   if (!item || !window.confirm('移除这条待选安排？不会恢复原站点派工，调度历史仍会保留。')) return
   if (item) await runDispatch('discard', { shelf_id: item.id, revision: item.revision })
 }
-async function dropOn(row, column, event) {
+async function dropOn(row, event) {
   const item = dragPayload(event) || shelf.value.find((s) => s.key === pickedShelf.value)
   if (!item) return
   if (item.kind === 'plan') {
     notice.value = '请先将计划拖入调度待选区，再选择目标站点。'
     return
   }
-  const cells = targetCells(row, column)
+  const cells = targetCells(row)
   if (cells.length)
     await runDispatch('place', { shelf_id: item.id, revision: item.revision, cells })
 }
@@ -946,13 +927,13 @@ async function openBulk(paste = false) {
 }
 async function copyArrangement() {
   clipboard.value = {
-    ids: currentCell.value.assignees.map((p) => p.id),
-    day: currentCell.value.scheduled_date,
+    ids: [...selectedIds.value],
+    day: plannedDate.value,
   }
   await closeCell(true)
   multiSelect.value = true
   selectedCells.value = []
-  notice.value = '已复制检查人和日期。请选择目标单元格，再点击“粘贴安排”；保存前会再次核对档期。'
+  notice.value = '已复制检查人和日期。请选择目标站点行，再点击“粘贴安排”；保存前会再次核对档期。'
 }
 async function loadPeople() {
   const ticket = ++peopleSerial
@@ -1057,7 +1038,7 @@ function copySelection() {
 }
 async function openCell(row, column) {
   if (pickedShelf.value) {
-    await dropOn(row, column)
+    await dropOn(row)
     return
   }
   if (
@@ -1074,7 +1055,7 @@ async function openCell(row, column) {
   selection.value = { row, column }
   peopleKeyword.value = ''
   copySelection()
-  if (props.mode === 'offline' && scheduleCellEditable(row.cells[column.key], canEdit.value)) {
+  if (scheduleCellEditable(row.cells[column.key], canEdit.value)) {
     bulkEdits.value = board.value.columns
       .filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
       .map((c) => ({

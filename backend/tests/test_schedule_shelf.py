@@ -38,6 +38,9 @@ class ShelfDatabaseTests(unittest.TestCase):
     def dispatch(self, action, query=None, **extra):
         return self.client.post('/api/inspection-schedule/dispatch', json={**(query or self.query), 'action': action, **extra})
 
+    def video_cells(self, sid, revision=0, skip=()):
+        return [dict(station_id=sid,column_key=k,revision=revision) for k in ('safety','measurement','service') if k not in skip]
+
     def park(self, sid=1, revision=1, skip=()):
         response = self.dispatch('park', cells=self.row_cells(sid, revision, skip))
         self.assertEqual(response.status_code, 200, response.json)
@@ -87,20 +90,26 @@ class ShelfDatabaseTests(unittest.TestCase):
         self.assertEqual(self.place(item).status_code, 200)
         self.cur.execute('SELECT id FROM inspections'); self.assertEqual(self.cur.fetchone()['id'], record)
 
-    def test_video_only_moves_one_cell_and_cannot_be_placed_as_field(self):
+    def test_video_moves_whole_row_and_cannot_be_placed_as_field(self):
         self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
         self.assertEqual(self.video().status_code, 200)
         query = dict(mode='online', year=2026, month=10)
-        response = self.dispatch('park', query, cells=[dict(station_id=1, column_key='safety', revision=1)])
+        self.assertEqual(self.dispatch('park',query,cells=self.video_cells(1,1)[:1]).status_code,409)
+        response = self.dispatch('park', query, cells=self.video_cells(1,1))
         self.assertEqual(response.status_code, 200, response.json)
         item = response.json['board']['shelf'][0]
+        self.assertEqual(len(response.json['board']['shelf']),1)
+        self.assertEqual(item['source_column_key'],'row')
+        self.assertTrue(all(c['status']=='unassigned' for c in response.json['board']['rows'][0]['cells'].values()))
         self.assertEqual(self.place(item).status_code, 409)
+        self.assertEqual(self.dispatch('place',query,shelf_id=item['id'],revision=1,cells=self.video_cells(2)[:1]).status_code,409)
         response = self.dispatch('place', query, shelf_id=item['id'], revision=1,
-                                 cells=[dict(station_id=2, column_key='safety', revision=0)])
+                                 cells=self.video_cells(2))
         self.assertEqual(response.status_code, 200, response.json)
         cells = next(r for r in response.json['board']['rows'] if r['station_id'] == 2)['cells']
-        self.assertEqual(cells['safety']['assignees'][0]['id'], 2)
-        self.assertTrue(all(c['status'] == 'unassigned' for key,c in cells.items() if key != 'safety'))
+        self.assertTrue(all(c['assignees'][0]['id']==2 for c in cells.values()))
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE mode='online' AND status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],3)
 
     def test_clear_today_mode_date_actual_and_stale_board_boundaries(self):
         self.save()
@@ -131,7 +140,8 @@ class ShelfDatabaseTests(unittest.TestCase):
         with patch('inspection_schedule_dispatch.today', return_value=date(2026,10,20)):
             response = self.dispatch('clear_today', query, board_token=token)
         self.assertEqual(response.status_code, 200, response.json)
-        self.assertEqual(response.json['cleared_count'], 1)
+        self.assertEqual(response.json['cleared_count'], 3)
+        self.assertEqual(response.json['parked_count'], 1)
         self.assertTrue(all(c['status'] == 'assigned' for c in self.board()['rows'][0]['cells'].values()))
 
     def test_permissions_and_malformed_requests_do_not_write(self):
@@ -204,6 +214,57 @@ class ShelfDatabaseTests(unittest.TestCase):
         board = self.client.get('/api/staff-availability?week=2026-10-19').json
         cell = board['people'][0]['cells']['2026-10-20']
         self.assertEqual(cell['field_group_names'], ['外勤步雪琼组'])
+
+    def test_video_partial_actual_preserved_and_full_row_conflict_rolls_back(self):
+        self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
+        self.video()
+        original = self.record(table=7,inspector=3)
+        query = dict(mode='online',year=2026,month=10)
+        parked = self.dispatch('park',query,cells=self.video_cells(1,1,skip=('safety',)))
+        self.assertEqual(parked.status_code,200,parked.json)
+        card = parked.json['board']['shelf'][0]
+        self.assertEqual(parked.json['board']['rows'][0]['cells']['safety']['status'],'completed')
+        self.cur.execute("ALTER TABLE inspection_schedule_events ADD CHECK(column_key<>'service') NOT VALID");self.admin.commit()
+        with self.assertLogs(level='ERROR'):
+            response = self.dispatch('place',query,shelf_id=card['id'],revision=card['revision'],cells=self.video_cells(2))
+        self.assertEqual(response.status_code,500)
+        self.assertEqual(self.board(query)['shelf'],[card])
+        self.cur.execute('SELECT 1 FROM inspection_schedule_cells WHERE station_id=2');self.assertIsNone(self.cur.fetchone())
+        self.cur.execute('SELECT id FROM inspections');self.assertEqual(self.cur.fetchone()['id'],original)
+
+    def test_video_legacy_shelf_upgrade_keeps_audit_and_does_not_merge_different_people(self):
+        for key,uid,day in [('safety',2,'2026-10-20'),('measurement',2,'2026-10-20'),('service',2,'2026-10-20'),('safety',3,'2026-10-20'),('safety',2,'2026-10-21')]:
+            self.cur.execute('''INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,
+              source_station_id,source_station_name,source_column_key,created_by,updated_by)
+              VALUES('online',%s,%s::jsonb,'检查人',1,'沈浦泾南',%s,2,2)''',(day,f'[{uid}]',key))
+        self.cur.execute("""INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,
+          source_station_id,source_station_name,source_column_key) VALUES('offline','2026-10-20','[2]','外勤组',1,'沈浦泾南','row')""")
+        self.admin.commit()
+        sql=(Path(__file__).resolve().parents[1]/'db/init/540_video_schedule_rows.sql').read_text()
+        self.cur.execute(sql);self.cur.execute(sql);self.admin.commit()
+        cards=self.board(dict(mode='online',year=2026,month=10))['shelf']
+        self.assertEqual(len(cards),3)
+        self.assertTrue(all(c['source_column_key']=='row' for c in cards))
+        self.assertEqual({tuple(c['ids']) for c in cards},{(2,),(3,)})
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_shelf_events WHERE action='row_upgrade' AND actor_name='系统升级'")
+        self.assertEqual(self.cur.fetchone()['n'],5)
+        self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_shelf');self.assertEqual(self.cur.fetchone()['n'],6)
+        self.assertEqual(len(self.board()['shelf']),1,'field cards are untouched')
+
+    def test_concurrent_video_row_placements_only_one_target_wins(self):
+        self.cur.execute('DELETE FROM staff_daily_teams');self.admin.commit()
+        self.video()
+        query=dict(mode='online',year=2026,month=10)
+        parked=self.dispatch('park',query,cells=self.video_cells(1,1))
+        self.assertEqual(parked.status_code,200,parked.json)
+        card=parked.json['board']['shelf'][0]
+        def place(sid):
+            return self.client.application.test_client().post('/api/inspection-schedule/dispatch',json={
+                **query,'action':'place','shelf_id':card['id'],'revision':card['revision'],'cells':self.video_cells(sid)}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(place,[2,5])),[200,409])
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE mode='online' AND status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],3)
 
 
 @unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')

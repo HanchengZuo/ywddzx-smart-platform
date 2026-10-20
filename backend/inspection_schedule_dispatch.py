@@ -29,7 +29,7 @@ def park_saved(cur,actor,chosen,start,end,selected,*,clear=True,action='parked')
         if cell['assignees']:
             if not cell['scheduled_date']:
                 raise ValueError('旧排班缺少计划日期，请先补齐日期后再调度。')
-            key=(row['station_id'], 'row' if chosen['mode']=='offline' else edit['column_key'],
+            key=(row['station_id'], 'row',
                  cell['scheduled_date'], tuple(sorted(p['id'] for p in cell['assignees'])))
             buckets[key].append(cell)
     cards=[]
@@ -50,8 +50,8 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
     if action in ('park','place'):
         edits=data.get('cells')
         validate_edits(cur,edits,chosen,start,end)
-        if len({e['station_id'] for e in edits})!=1 or (chosen['mode']=='online' and len(edits)!=1):
-            raise ValueError('现场一次调度一整站，视频一次调度一个单元格。')
+        if len({e['station_id'] for e in edits})!=1:
+            raise ValueError('一次只能调度一个站点的整行未检查项。')
         selected=checked_cells(board,edits)
     if action=='park':
         if not any(c['assignees'] for _,_,c in selected):
@@ -76,7 +76,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
                           'scheduled_date':saved['scheduled_date'].isoformat()},chosen,start,end,cache)
             cur.execute('''UPDATE inspection_schedule_shelf SET status='assigned',revision=revision+1,
               target_station_id=%s,target_column_key=%s,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s''',
-              (edits[0]['station_id'],'row' if chosen['mode']=='offline' else edits[0]['column_key'],actor['id'],sid))
+              (edits[0]['station_id'],'row',actor['id'],sid))
             event(cur,actor,sid,'assigned',dict(station_id=edits[0]['station_id'],inspector_ids=saved['inspector_ids'],displaced_ids=displaced))
             return dict(parked_count=len(displaced),message='已直接安排到目标站点，个人待办已同步。')
         cur.execute("UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(actor['id'],sid))

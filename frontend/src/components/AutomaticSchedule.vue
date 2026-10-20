@@ -18,7 +18,7 @@
       <div class="auto-body">
         <p class="method">
           {{ day }} ·
-          仅选择档期明确有空、今天没有站点安排或实绩的人员。现场按已保存外勤组整行派站，视频每格一人，不覆盖已有计划。
+          仅选择档期明确有空、今天没有站点安排或实绩的人员。现场按已保存外勤组整行派站，视频每站一人统一完成安全、计量、现场，不覆盖已有计划。
         </p>
         <p class="method">
           现场从{{
@@ -59,21 +59,29 @@
             ><small>{{ preview.quarter }}平衡口径</small>
           </div>
           <div v-if="preview.groups.length" class="proposal-list">
-            <article v-for="group in preview.groups" :key="group.mode + ':' + group.station_id">
+            <article v-for="group in proposalGroups" :key="group.key">
               <div class="proposal-person">
                 <strong>{{ group.group_name || group.person.display_name }}</strong
-                ><span :class="group.mode">{{
-                  group.mode === 'offline' ? '现场巡检' : '视频巡检'
-                }}</span>
+                ><span :class="group.mode"
+                  >{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }} ·
+                  {{ group.stations.length }}站</span
+                >
               </div>
               <p v-if="group.team_members">
                 {{ group.team_members.map((p) => p.display_name).join('、') }}
               </p>
-              <b>{{ group.region }} · {{ group.station_name }}</b>
-              <p>{{ group.cells.map((c) => c.label).join('、') }}</p>
+              <ol
+                class="proposal-stations"
+                :aria-label="(group.group_name || group.person.display_name) + '负责的站点'"
+              >
+                <li v-for="station in group.stations" :key="station.station_id">
+                  <b>{{ station.region }} · {{ station.station_name }}</b>
+                  <p>{{ station.cells.map((c) => c.label).join('、') }}</p>
+                  <small v-if="group.mode === 'offline'">{{ station.address }}</small>
+                </li>
+              </ol>
               <p v-if="group.mode === 'offline'">
-                路线第 {{ group.route_order }} 站 · 本组往返直线距离约
-                {{ group.route_km }} km<br />{{ group.address }}
+                本组往返直线距离约 {{ group.route_km }} km · 站点按建议路线排序
               </p>
               <small
                 >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
@@ -110,8 +118,9 @@
 </template>
 <script setup>
 import axios from 'axios'
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { shanghaiToday } from '@/utils/staffScheduling'
+import { groupScheduleProposals } from '@/utils/scheduleProposals'
 const SCHEDULE_ORIGIN = '上海市浦东新区世纪大道1200号'
 const emit = defineEmits(['scheduled'])
 let permissions = {}
@@ -132,6 +141,7 @@ const dialog = ref(null),
   day = ref(shanghaiToday())
 const offlineCount = ref(2),
   onlineCount = ref(3)
+const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
 let controller,
   disposed = false,
   serial = 0
@@ -344,6 +354,24 @@ h3 {
   padding: 16px;
   border: 1px solid #dce6f1;
   border-radius: 12px;
+}
+.proposal-stations {
+  display: grid;
+  gap: 10px;
+  padding: 0 0 0 24px;
+  margin: 12px 0;
+}
+.proposal-stations li {
+  padding: 7px 8px;
+  background: #f4f8fc;
+  border-radius: 6px;
+}
+.proposal-stations li::marker {
+  color: #467bad;
+  font-weight: 700;
+}
+.proposal-stations p {
+  margin: 4px 0;
 }
 .proposal-person {
   display: flex;
