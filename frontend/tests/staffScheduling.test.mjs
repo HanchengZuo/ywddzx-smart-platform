@@ -17,6 +17,15 @@ import {
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
 
+test('daily grouping action belongs to the table date toolbar, not the page title', () => {
+  const source = readFileSync(new URL('../src/views/inspection/StaffAvailabilityView.vue',import.meta.url),'utf8')
+  const {descriptor}=parse(source)
+  const template=descriptor.template.content
+  assert.doesNotMatch(template.slice(template.indexOf('<header'),template.indexOf('</header>')),/DailyInspectionTeams/)
+  assert.match(template.slice(template.indexOf('class="week-controls"'),template.indexOf('class="staff-stats"')),/class="week-actions"[\s\S]*<DailyInspectionTeams[\s\S]*@saved="onTeamsSaved"/)
+  assert.equal((template.match(/<DailyInspectionTeams/g)||[]).length,1)
+})
+
 test('current-user highlighting matches account IDs, never names, and distinguishes plan and actual', () => {
   assert.equal(isCurrentPerson({id:2,display_name:'重名'},'2'),true)
   assert.equal(isCurrentPerson({id:3,display_name:'重名'},2),false)
