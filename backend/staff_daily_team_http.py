@@ -18,7 +18,9 @@ def context(cur, day):
     cur.execute('SELECT working FROM quality_work_calendar WHERE day=%s', (day,))
     calendar = cur.fetchone()
     eligible = [p for p in people if p['id'] and p['available'] is True]
+    unconfirmed = [p['display_name'] for p in people if p['available'] is None]
     return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
+                unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
                 revision=saved.get('revision', 0), groups=group_assignments(saved.get('assignments', [])),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
                 excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else p['reason'] or '未确认有空')
@@ -72,6 +74,8 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     conn.commit()
                 else:
                     require_workday(cur, day)
+                    if result['unconfirmed']:
+                        raise ScheduleConflict('今日人员档期尚未全部确认，请先为以下人员选择有空或没空：'+'、'.join(result['unconfirmed']))
                     seed = data.get('seed') or secrets.token_hex(16)
                     if not isinstance(seed, str) or not re.fullmatch('[0-9a-f]{32}', seed):
                         raise ValueError('随机预览标识不合法，请重新预览。')

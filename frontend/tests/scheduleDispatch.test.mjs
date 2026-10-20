@@ -71,31 +71,86 @@ test('personal inbox lives in desktop and mobile headers, not the page body', ()
   assert.match(app, /scheduleAgenda.value = payload.schedule_agenda/)
 })
 
-test('moving onto an assigned station parks the displaced team so two teams can swap without stale source data', async () => {
-  const a = {key: 'a', ids: [2], day: '2026-10-20', name: '甲组', sourceName: '甲站', cells: [{station_id: 1, column_key: 'a', revision: 1}]}
-  const b = {key: 'b', ids: [3], day: '2026-10-20', name: '乙组', sourceName: '乙站', cells: [{station_id: 2, column_key: 'a', revision: 1}]}
-  const shelf = {value: [a, b]}, picked = {value: 'a'}, calls = []
+function dispatchHarness(mode = 'offline', fail = false) {
+  const item = {id: 17, revision: 2, key: 'shelf:17', name: '外勤甲组'}
+  const calls = []
   const context = vm.createContext({
-    dragged: {value: null}, shelf, pickedShelf: picked, canEdit: {value: true}, loading: {value: false}, shelfSaving: {value: false},
-    props: {mode: 'online'}, board: {value: {columns: [{key: 'a'}]}}, draft: {value: {}},
-    scheduleCellEditable: () => true, coverageQuery: () => ({mode: 'online'}),
-    shelfItem: row => row.station_id === 2 ? b : null,
-    sameIds: (a, b) => JSON.stringify(a) === JSON.stringify(b),
-    window: {confirm: () => true, dispatchEvent: () => {}}, Event: class {},
-    axios: {put: async (_, data) => calls.push(data)},
-    removeShelf: key => {shelf.value = shelf.value.filter(s => s.key !== key); if (picked.value === key) picked.value = null},
-    shelfOpen: {value: true}, notice: {value: ''}, loadBoard: async () => {}, retryBoard: async () => {},
+    dragged: {value: null}, shelf: {value: [item]}, pickedShelf: {value: item.key},
+    canEdit: {value: true}, loading: {value: false}, shelfSaving: {value: false}, saving: {value: false},
+    props: {mode}, board: {value: {columns: ['a','b','c','d','e','f'].map(key => ({key})), board_token: 'server-token'}},
+    draft: {value: {}}, scheduleCellEditable: c => c.status !== 'completed', coverageQuery: () => ({mode}),
+    serial: 0, controller: undefined, polling: {pause() {}, start() {}}, disposed: false,
+    selectedCells: {value: ['old']}, error: {value: ''}, updatedTime: {value: ''}, lastSyncedAt: 0,
+    shelfOpen: {value: false}, notice: {value: ''},
+    window: {confirm() { throw Error('drop must not confirm') }, dispatchEvent: () => calls.push('notify')}, Event: class {},
+    axios: {post: async (url, body) => {
+      calls.push({url,body})
+      if (fail) throw {response: {status: 409, data: {error: '计划已变化'}}}
+      return {data: {message: '保存成功',board: {rows: ['server-owned'],shelf: [{id: 18, key: 'shelf:18',name:'被替换组'}]}}}
+    }},
+    retryBoard: async () => calls.push('reconcile'),
   })
   const script = source('components/InspectionSchedulePanel.vue')
-  vm.runInContext(script.slice(script.indexOf('async function dropOn'),script.indexOf('async function openBulk')), context)
-  await context.dropOn({station_id: 2, station_name: '乙站', cells: {a: {status: 'assigned', revision: 1}}}, {key: 'a', label: '安全'})
-  assert.equal(calls[0].source.cells[0].station_id, 1)
-  assert.equal(shelf.value.length, 1)
-  assert.equal(shelf.value[0].name, '乙组')
-  assert.equal(shelf.value[0].cells.length, 0, 'displaced plan has no stale source to clear')
-  picked.value = shelf.value[0].key
-  await context.dropOn({station_id: 1, station_name: '甲站', cells: {a: {status: 'unassigned', revision: 2}}}, {key: 'a', label: '安全'})
-  assert.equal(calls[1].source, undefined)
-  assert.equal(calls[1].inspector_ids[0], 3)
-  assert.equal(shelf.value.length, 0)
+  vm.runInContext(script.slice(script.indexOf('function targetCells'), script.indexOf('async function openBulk')), context)
+  const row = {station_id: 2, station_name: '乙站', cells: Object.fromEntries(['a','b','c','d','e','f'].map(key => [key,{status: 'assigned',revision:3,assignees:[{id:2,display_name:'甲'}],plan_team:{name:'甲组'}}]))}
+  return {context, calls, row, item}
+}
+
+test('field drop fills whole unfinished row without confirmation and renders authoritative board/shelf immediately', async () => {
+  const {context,calls,row} = dispatchHarness()
+  row.cells.a.status = 'completed'
+  await context.dropOn(row, {key: 'c'})
+  assert.equal(calls[0].url, '/api/inspection-schedule/dispatch')
+  assert.equal(calls[0].body.action, 'place')
+  assert.equal(calls[0].body.shelf_id, 17)
+  assert.equal(calls[0].body.cells.length, 5)
+  assert.ok(calls[0].body.cells.every(c => c.station_id === 2 && c.column_key !== 'a'))
+  assert.equal(context.board.value.rows[0], 'server-owned')
+  assert.equal(context.shelf.value[0].name, '被替换组')
+  assert.equal(context.pickedShelf.value, null)
+  assert.equal(context.shelfSaving.value, false)
+})
+
+test('dragging any field cell into shelf submits entire row even if first cell has no assignment', async () => {
+  const {context,calls,row} = dispatchHarness()
+  row.cells.a.status = 'unassigned'; row.cells.a.assignees = []
+  const data = new Map()
+  const event = {preventDefault() {},dataTransfer:{setData:(k,v) => data.set(k,v),getData:k => data.get(k)}}
+  context.startAssignmentDrag(event,row,{key:'d'})
+  context.dragged.value = null // Browser dragend/re-render must not lose the payload.
+  await context.stageDragged(event)
+  assert.equal(calls[0].body.action, 'park')
+  assert.equal(calls[0].body.cells.length, 6)
+  assert.equal(context.shelfOpen.value, true)
+})
+
+test('video drop targets one cell; clear sends server board token, not filtered rows', async () => {
+  const {context,calls,row} = dispatchHarness('online')
+  await context.dropOn(row,{key:'c'})
+  assert.equal(calls[0].body.cells.length, 1)
+  assert.equal(calls[0].body.cells[0].column_key, 'c')
+  context.board.value.board_token = 'latest'
+  await context.clearToday()
+  assert.equal(calls[2].body.action, 'clear_today')
+  assert.equal(calls[2].body.board_token, 'latest')
+  assert.equal(calls[2].body.cells, undefined)
+})
+
+test('failed dispatch reconciles rather than inventing or deleting a shelf card', async () => {
+  const {context,calls,row,item} = dispatchHarness('offline',true)
+  await context.dropOn(row,{key:'a'})
+  assert.equal(context.shelf.value[0], item)
+  assert.equal(context.notice.value, '计划已变化')
+  assert.equal(calls[1], 'reconcile')
+  assert.equal(context.shelfSaving.value, false)
+})
+
+test('daily grouping remains disabled while any roster member is unconfirmed', () => {
+  const script = source('components/DailyInspectionTeams.vue')
+  const context = vm.createContext({computed: fn => ({get value() {return fn()}}),
+    context: {value: {working:true,unconfirmed:['甲'],people:[{}]}}, managers:{value:[{id:2}]},managerModes:{value:{2:'offline'}}})
+  vm.runInContext(script.slice(script.indexOf('const ready ='),script.indexOf('const displayGroups ='))+';globalThis.result=ready',context)
+  assert.equal(context.result.value,false)
+  context.context.value.unconfirmed=[]
+  assert.equal(context.result.value,true)
 })

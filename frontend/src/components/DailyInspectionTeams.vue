@@ -23,11 +23,15 @@
       </header>
       <div class="team-body">
         <p class="method">
-          只选今天明确有空且账号匹配的人员。先确定管理人员分工，再随机均分大学生，并均衡分配现场带队小组。此处保存人员分组，具体站点与检查表仍在巡检排班安排；站点一键派工会保持小组成员同行。
+          全员先确认今日有空或没空，再安排明确有空且账号匹配的人员。先确定管理人员分工，再随机均分大学生，并均衡分配现场带队小组。此处保存人员分组，具体站点与检查表仍在巡检排班安排；站点一键派工会保持小组成员同行。
         </p>
         <p v-if="loading" role="status" class="empty">正在核对今日档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <template v-if="context">
+          <p v-if="context.unconfirmed?.length" class="warning" role="status">
+            今日档期已确认 {{ context.confirmed_count }}/{{ context.total_count }} 人。请先为
+            {{ context.unconfirmed.join('、') }} 选择有空或没空，全部确认后才能一键安排。
+          </p>
           <p v-if="!context.working" class="warning">今天不是已发布的工作日，不能新安排巡检。</p>
           <details
             v-if="editable && context.working"
@@ -188,7 +192,7 @@
           v-if="editable"
           type="button"
           class="primary"
-          :disabled="!preview || loading || saving"
+          :disabled="!preview || !ready || loading || saving"
           @click="confirm"
         >
           {{ saving ? '保存中…' : '确认安排' }}
@@ -220,6 +224,7 @@ const students = computed(() =>
 const ready = computed(
   () =>
     context.value?.working &&
+    context.value.unconfirmed?.length === 0 &&
     context.value.people.length &&
     managers.value.every((p) => managerModes.value[p.id]),
 )

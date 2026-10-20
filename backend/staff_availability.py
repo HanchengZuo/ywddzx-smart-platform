@@ -144,6 +144,14 @@ def staff_board(cur, week):
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
     planned = planned_work(cur, start, end)
+    field_groups = defaultdict(set)
+    cur.execute('''SELECT scheduled_date::text AS day,inspector_ids,plan_team->>'name' AS name
+      FROM inspection_schedule_cells WHERE mode='offline' AND scheduled_date>=%s AND scheduled_date<%s
+      AND jsonb_typeof(plan_team)='object' ''', (start, end))
+    for plan in cur.fetchall():
+        if plan['name']:
+            for uid in plan['inspector_ids']:
+                field_groups[(uid, plan['day'])].add(plan['name'])
     teams = team_days(cur, start, end)
     members = team_members(teams)
     actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], start, min(end, today() + timedelta(days=1)))
@@ -153,10 +161,13 @@ def staff_board(cur, week):
             v = saved.get((p['display_name'], d['day']), {})
             assigned = members.get((p['id'], d['day']))
             modes = set(planned.get((p['id'], d['day']), [])) | ({assigned['mode']} if assigned else set())
+            group_names = set(field_groups.get((p['id'], d['day']), []))
+            if assigned and assigned['mode'] == 'offline': group_names.add(assigned['group_name'])
             p['cells'][d['day']] = dict(available=v.get('available'), reason=v.get('reason', ''),
                 history_status=v.get('history_status'), daily_assignment=assigned,
                 revision=v.get('revision', 0), updated_by_name=v.get('updated_by_name', ''), updated_at=v.get('saved_at', ''),
                 planned_modes=sorted(modes),
+                field_group_names=sorted(group_names),
                 actual_modes=[mode for uid in p['history_ids'] for mode in actual.get((uid, d['day']), [])])
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
                 daily_teams=list(teams.values()))

@@ -45,7 +45,7 @@
         <small>“已排班”为计划，“实绩”为实际巡检记录</small>
       </div>
       <p class="help">
-        仅展示官方工作日（含调休上班日）。今天和未来设置有空、没空；历史日期可补录现场巡检、视频巡检或没空原因，明确标记人工记录，不改动原始巡检记录。今日分组按有空人员预览确认。
+        仅展示官方工作日（含调休上班日）。今天和未来设置有空、没空；历史日期可补录现场巡检、视频巡检或没空原因，明确标记人工记录，不改动原始巡检记录。今日全员确认有空或没空后，才能预览分组。
       </p>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
@@ -125,6 +125,12 @@
                   <small class="mobile-date">{{ day.day.slice(5) }} {{ day.weekday }}</small>
                   <span class="cell-stage"><i></i>{{ state(person, day).stage }}</span>
                   <b>{{ state(person, day).label }}</b>
+                  <small
+                    v-if="person.cells[day.day].field_group_names?.length"
+                    class="field-group-label"
+                  >
+                    {{ person.cells[day.day].field_group_names.join('、') }}
+                  </small>
                   <small class="cell-detail">{{ state(person, day).detail || '—' }}</small>
                 </button>
               </td>
@@ -481,6 +487,18 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.field-group-label {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid #d6982e;
+  border-radius: 5px;
+  background: #fff0c6;
+  color: #764509;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
 .staff-page {
   --staff-sticky-top: -24px;
   display: grid;
