@@ -132,12 +132,12 @@
           : '每站一人，安全、计量、现场整行统一安排。'
       }}</span>
       <button type="button" class="secondary-button" @click="openShelf">
-        调度待选区（{{ shelf.length }}）
+        今日调度待选区（{{ shelf.length }}）
       </button>
       <button
         type="button"
         class="secondary-button"
-        :disabled="loading || shelfSaving || !hasTodayPlans || !canEdit"
+        :disabled="loading || shelfSaving || (!hasTodayPlans && !shelf.length) || !canEdit"
         @click="clearToday"
       >
         一键清空今日{{ mode === 'offline' ? '现场' : '视频' }}排班
@@ -226,7 +226,11 @@
             <td
               v-for="column in board.columns"
               :key="column.key"
-              :class="['matrix-cell', row.cells[column.key].status]"
+              :class="[
+                'matrix-cell',
+                row.cells[column.key].status,
+                { 'is-self': !!scheduleSelfRole(row.cells[column.key], board.current_user_id) },
+              ]"
               @dragover.prevent
               @drop.stop.prevent="dropOn(row, $event)"
             >
@@ -255,6 +259,11 @@
                 @click="multiSelect ? selectRow(row) : openCell(row, column)"
               >
                 <span class="mobile-column-label" aria-hidden="true">{{ column.label }}</span>
+                <span
+                  v-if="scheduleSelfRole(row.cells[column.key], board.current_user_id)"
+                  class="self-badge"
+                  >{{ scheduleSelfRole(row.cells[column.key], board.current_user_id) }}</span
+                >
                 <span class="cell-names">{{
                   (mode === 'offline' && row.cells[column.key].status === 'assigned'
                     ? row.cells[column.key].plan_team?.name
@@ -310,13 +319,13 @@
     >
       <header>
         <div>
-          <strong>调度待选区</strong
+          <strong>今日调度待选区</strong
           ><small>{{ mode === 'offline' ? '外勤组 · 整站改派' : '视频 · 整站同人改派' }}</small>
         </div>
-        <button type="button" aria-label="收起调度待选区" @click="shelfOpen = false">×</button>
+        <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
       </header>
       <p>
-        从任一计划格拖入此处，整站未检查项一起撤下；拖回目标站整行直接保存。也可点选卡片再点目标位置。已检查记录不变，待选安排全局共享，刷新仍保留。
+        仅调度今日计划：拖入后整站未检查项一起撤下，拖回目标站整行直接保存，也可点选卡片再点目标位置。今日全局共享，跨日自动清空；一键清空今日排班也会清空本区，调度留痕和实际检查记录保留。
       </p>
       <div
         v-for="item in shelf"
@@ -555,7 +564,7 @@
                 :disabled="saving || changed"
                 @click="stageCurrentSelection"
               >
-                加入调度待选区
+                加入今日调度待选区
               </button>
               <button
                 v-if="stageableSelection"
@@ -611,7 +620,12 @@ import {
 } from 'vue'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { coverageQuery, currentCoveragePeriod } from '@/utils/schedulingCoverage'
-import { cellKey, personCanSchedule, availabilityLabel } from '@/utils/staffScheduling'
+import {
+  cellKey,
+  personCanSchedule,
+  availabilityLabel,
+  scheduleSelfRole,
+} from '@/utils/staffScheduling'
 import {
   filterScheduleRows,
   inspectorPreview,
@@ -786,6 +800,14 @@ function planPayload(row) {
   const cells = targetCells(row)
   const first = cells.map((c) => row.cells[c.column_key]).find((c) => c.status === 'assigned')
   if (!first) return null
+  if (
+    cells.some(
+      (c) =>
+        row.cells[c.column_key].assignees.length &&
+        row.cells[c.column_key].scheduled_date !== board.value.today,
+    )
+  )
+    return null
   return {
     kind: 'plan',
     cells,
@@ -848,7 +870,7 @@ async function dropOn(row, event) {
   const item = dragPayload(event) || shelf.value.find((s) => s.key === pickedShelf.value)
   if (!item) return
   if (item.kind === 'plan') {
-    notice.value = '请先将计划拖入调度待选区，再选择目标站点。'
+    notice.value = '请先将今日计划拖入今日调度待选区，再选择目标站点。'
     return
   }
   const cells = targetCells(row)
@@ -1252,6 +1274,21 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.matrix-cell.is-self .cell-button {
+  outline: 2px solid #12858a;
+  outline-offset: -3px;
+}
+.self-badge {
+  display: inline-block;
+  align-self: center;
+  max-width: 100%;
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: #c9f2eb;
+  color: #075e63;
+  font-size: 10px;
+  line-height: 1.5;
+}
 .assigned .cell-button[draggable='true'] {
   cursor: grab;
 }

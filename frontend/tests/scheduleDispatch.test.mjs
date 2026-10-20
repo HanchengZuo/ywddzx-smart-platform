@@ -78,7 +78,7 @@ function dispatchHarness(mode = 'offline', fail = false) {
   const context = vm.createContext({
     dragged: {value: null}, shelf: {value: [item]}, pickedShelf: {value: item.key},
     canEdit: {value: true}, loading: {value: false}, shelfSaving: {value: false}, saving: {value: false},
-    props: {mode}, board: {value: {columns: keys.map(key => ({key})), board_token: 'server-token'}},
+    props: {mode}, board: {value: {columns: keys.map(key => ({key})), board_token: 'server-token',today:'2026-10-20'}},
     draft: {value: {}}, scheduleCellEditable: c => c.status !== 'completed', coverageQuery: () => ({mode}),
     serial: 0, controller: undefined, polling: {pause() {}, start() {}}, disposed: false,
     selectedCells: {value: ['old']}, error: {value: ''}, updatedTime: {value: ''}, lastSyncedAt: 0,
@@ -93,7 +93,7 @@ function dispatchHarness(mode = 'offline', fail = false) {
   })
   const script = source('components/InspectionSchedulePanel.vue')
   vm.runInContext(script.slice(script.indexOf('function targetCells'), script.indexOf('async function openBulk')), context)
-  const row = {station_id: 2, station_name: '乙站', cells: Object.fromEntries(keys.map(key => [key,{status: 'assigned',revision:3,assignees:[{id:2,display_name:'甲'}],plan_team:{name:'甲组'}}]))}
+  const row = {station_id: 2, station_name: '乙站', cells: Object.fromEntries(keys.map(key => [key,{status: 'assigned',revision:3,scheduled_date:'2026-10-20',assignees:[{id:2,display_name:'甲'}],plan_team:{name:'甲组'}}]))}
   return {context, calls, row, item}
 }
 
@@ -146,6 +146,19 @@ test('video row drag skips only immutable completed columns', async () => {
   await context.stageDragged(event)
   assert.equal(calls[0].body.action,'park')
   assert.deepEqual(Array.from(calls[0].body.cells,c=>c.column_key),['b','c'])
+})
+
+test('today shelf refuses to drag a future or mixed-day row, without clearing any cells', () => {
+  for (const mode of ['offline','online']) {
+    const {context,calls,row} = dispatchHarness(mode)
+    row.cells.b.scheduled_date = '2026-10-21'
+    let prevented = false
+    context.startAssignmentDrag({preventDefault() {prevented=true}},row)
+    assert.equal(prevented,true)
+    assert.equal(context.dragged.value,null)
+    assert.equal(calls.length,0)
+    assert.equal(row.cells.a.assignees.length,1)
+  }
 })
 
 test('failed dispatch reconciles rather than inventing or deleting a shelf card', async () => {

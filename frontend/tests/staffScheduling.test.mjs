@@ -12,8 +12,34 @@ import {
   staffCellPresentation,
   staffTodaySummary,
   taskGroups,
+  isCurrentPerson,
+  scheduleSelfRole,
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
+
+test('current-user highlighting matches account IDs, never names, and distinguishes plan and actual', () => {
+  assert.equal(isCurrentPerson({id:2,display_name:'重名'},'2'),true)
+  assert.equal(isCurrentPerson({id:3,display_name:'重名'},2),false)
+  assert.equal(isCurrentPerson({id:null},null),false)
+  assert.equal(scheduleSelfRole({assignees:[{id:2}],completed_inspectors:[{id:3}]},2),'我的计划')
+  assert.equal(scheduleSelfRole({assignees:[{id:3}],completed_inspectors:[{id:2}]},2),'我的实绩')
+  assert.equal(scheduleSelfRole({assignees:[{id:2}],completed_inspectors:[{id:2}]},2),'我的计划及实绩')
+  assert.equal(scheduleSelfRole({assignees:[{id:3}],completed_inspectors:[]},2),'')
+  assert.equal(scheduleSelfRole(null,2),'')
+})
+
+test('inbox opening automatically reconciles tasks; only video can navigate to registration', async () => {
+  const source = readFileSync(new URL('../src/components/ScheduleTaskInbox.vue',import.meta.url),'utf8')
+  let loads=0,starts=0,opens=0
+  const context=vm.createContext({dialog:{value:{showModal(){opens++}}},load(){loads++},polling:{start(){starts++}}})
+  vm.runInContext(source.slice(source.indexOf('function open()'),source.indexOf('function close()')),context)
+  context.open()
+  assert.deepEqual([loads,starts,opens],[1,1,1])
+  const template=source.slice(0,source.indexOf('<script setup>'))
+  assert.match(template,/v-if="canRegister && task.mode === 'online'/)
+  assert.doesNotMatch(template,/<footer>|核对完成情况/)
+  assert.match(template,/currentAgenda.field_team.members/)
+})
 
 test('Shanghai dates and week navigation remain correct across UTC and year boundaries', () => {
   assert.equal(shanghaiToday(new Date('2026-12-31T17:00:00Z')), '2027-01-01')

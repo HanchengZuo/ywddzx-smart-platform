@@ -15,7 +15,7 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from staff_availability import available_people, roster_people, validate_people
 from inspection_schedule_tasks import dispatch_tasks
 from staff_daily_teams import field_team, group_assignments, team_days
-from schedule_shelf_store import shelf_items, refresh_field_shelf
+from schedule_shelf_store import shelf_items, refresh_field_shelf, expire_shelf
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
@@ -118,9 +118,12 @@ def read_board(cur, chosen, start, end):
                          longitude=float(station['longitude']) if station.get('longitude') is not None else None,
                          latitude=float(station['latitude']) if station.get('latitude') is not None else None,
                          region=normalized_region(station['region']), sequence=station['sequence'], cells=cells))
-    token=hashlib.sha256(json.dumps([(r['station_id'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows]).encode()).hexdigest()
+    shelf = shelf_items(cur,chosen['mode'],start,end)
+    evidence = dict(rows=[(r['station_id'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
+                    shelf=[(s['id'],s['revision']) for s in shelf], day=today().isoformat())
+    token=hashlib.sha256(json.dumps(evidence).encode()).hexdigest()
     return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,
-                shelf=shelf_items(cur,chosen['mode'],start,end), board_token=token,
+                shelf=shelf, board_token=token,
                 today=today().isoformat(), workdays=working_days(cur, start, end),
                 unmatched_people=[p['display_name'] for p in roster if not p['id']])
 
@@ -296,8 +299,10 @@ def register_inspection_schedule(app, *, connect, has_permission):
                 result = apply_edits(cur, actor, data, chosen, start, end)
                 conn.commit()
             else:
+                expire_shelf(cur)
                 result = read_board(cur, chosen, start, end)
-            response = jsonify(success=True, can_edit=can_edit, **result)
+                conn.commit()
+            response = jsonify(success=True, can_edit=can_edit, current_user_id=actor['id'], **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
         except (ValueError, PermissionError) as exc:

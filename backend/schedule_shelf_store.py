@@ -1,14 +1,42 @@
 """Durable waiting assignments and their audit trail. No HTTP or app imports."""
 import json
+from schedule_common import today
 
 
 def shelf_items(cur, mode, start, end):
+    day = today()
+    if not start <= day < end:
+        return []
     cur.execute('''SELECT id,revision,mode,scheduled_date::text AS day,inspector_ids AS ids,
       plan_team,name,source_station_name AS "sourceName",source_station_id,source_column_key,
       to_char(updated_at,'YYYY-MM-DD HH24:MI:SS') AS updated_at
       FROM inspection_schedule_shelf WHERE mode=%s AND status='waiting'
-        AND scheduled_date>=%s AND scheduled_date<%s ORDER BY scheduled_date,id''', (mode,start,end))
+        AND scheduled_date=%s ORDER BY id''', (mode,day))
     return [dict(row,key=f"shelf:{row['id']}") for row in cur.fetchall()]
+
+
+def expire_shelf(cur, *, already_locked=False):
+    """Lazy daily cleanup; reads never wait behind an ongoing dispatch."""
+    if not already_locked:
+        cur.execute('SELECT pg_try_advisory_xact_lock(9801,1) AS acquired')
+        if not cur.fetchone()['acquired']:
+            return
+    cur.execute('''UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,
+      updated_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE status='waiting' AND scheduled_date<>%s
+      RETURNING id,scheduled_date,name''', (today(),))
+    for row in cur.fetchall():
+        event(cur, dict(id=None, real_name='系统自动清理'), row['id'], 'expired',
+              dict(day=row['scheduled_date'].isoformat(), name=row['name'], reason='非当日待选安排自动清理'))
+
+
+def clear_today_shelf(cur, actor, mode):
+    cur.execute('''UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,
+      updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE status='waiting' AND mode=%s AND scheduled_date=%s
+      RETURNING id,name,inspector_ids''', (actor['id'],mode,today()))
+    rows = cur.fetchall()
+    for row in rows:
+        event(cur, actor, row['id'], 'cleared_today', dict(name=row['name'], inspector_ids=row['inspector_ids']))
+    return len(rows)
 
 
 def event(cur, actor, shelf_id, action, details):

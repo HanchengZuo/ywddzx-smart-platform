@@ -48,12 +48,17 @@ def personal_agenda(cur, user_id):
       LEFT JOIN staff_daily_teams d ON d.day=%s WHERE u.id=%s''', (today(), today(), user_id))
     row = cur.fetchone() or {}
     assignment = next((p for p in row.get('assignments') or [] if p['id'] == user_id), None)
+    field_team = None
+    if assignment and assignment['mode'] == 'offline':
+        members = [p for p in row['assignments'] if p['mode'] == 'offline' and p['leader_id'] == assignment['leader_id']]
+        field_team = dict(name=assignment['group_name'],leader_id=assignment['leader_id'],
+                          members=[dict(id=p['id'],display_name=p['display_name'],position=p['position']) for p in members])
     cur.execute('''SELECT mode,COUNT(*) AS n,COUNT(*) FILTER(WHERE scheduled_date<%s) AS overdue
       FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s
       AND (mode='online' OR scheduled_date=%s) GROUP BY mode''', (today(), user_id, today(), today()))
     counts = {r['mode']: dict(count=r['n'], overdue=r['overdue']) for r in cur.fetchall()}
     return dict(day=today().isoformat(), available=row.get('available'), reason=row.get('reason') or '',
-                assignment=assignment, offline=counts.get('offline', dict(count=0, overdue=0)),
+                assignment=assignment, field_team=field_team, offline=counts.get('offline', dict(count=0, overdue=0)),
                 online=counts.get('online', dict(count=0, overdue=0)))
 
 

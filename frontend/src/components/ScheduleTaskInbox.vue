@@ -22,7 +22,22 @@
             我的巡检待办 <span>{{ total }}</span>
           </h3>
         </div>
-        <button type="button" aria-label="关闭巡检待办" @click="close">×</button>
+        <button
+          type="button"
+          class="inbox-close"
+          aria-label="关闭巡检待办"
+          title="关闭"
+          @click="close"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="m6 6 12 12M18 6 6 18"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
       </header>
       <div class="tasks-body">
         <p class="method">
@@ -35,6 +50,19 @@
             <b class="field">现场 {{ currentAgenda?.offline?.count || 0 }} 项</b
             ><b>视频 {{ currentAgenda?.online?.count || 0 }} 项</b
             ><b class="late">其中历史未完成 {{ currentAgenda?.online?.overdue || 0 }} 项</b>
+          </div>
+        </section>
+        <section v-if="currentAgenda?.field_team" class="crew-card" aria-label="今日外勤小组成员">
+          <div>
+            <small>今日同行</small><strong>{{ currentAgenda.field_team.name }}</strong>
+          </div>
+          <div class="crew-members">
+            <span v-for="person in currentAgenda.field_team.members" :key="person.id">
+              {{ person.display_name
+              }}<small>{{
+                person.id === currentAgenda.field_team.leader_id ? '带队' : '组员'
+              }}</small>
+            </span>
           </div>
         </section>
         <nav class="task-tabs" aria-label="待办分类">
@@ -50,43 +78,44 @@
         </nav>
         <p v-if="loading && !tasks.length" class="empty" role="status">正在核对巡检任务…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <article v-for="group in groups" :key="group.key" class="task-group">
-          <div class="task-heading">
-            <span :class="group.mode">{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }}</span
-            ><strong>{{ group.station_name }}</strong
-            ><small :class="{ overdue: group.scheduled_date < today }"
-              >{{ group.scheduled_date }} ·
-              {{
-                group.scheduled_date < today
-                  ? '历史未完成'
-                  : group.mode === 'offline'
-                    ? '今日行程 · 次日归档'
-                    : '今天安排'
-              }}</small
-            >
-          </div>
-          <div v-for="task in group.tasks" :key="task.id" class="task-item">
-            <span>{{ task.table_name }}</span
-            ><button
-              v-if="canRegister && task.station_id && task.table_id"
-              type="button"
-              @click="register(task)"
-            >
-              前往登记 →
-            </button>
-          </div>
-        </article>
+        <div class="task-cards">
+          <article v-for="group in groups" :key="group.key" class="task-group" :class="group.mode">
+            <div class="task-heading">
+              <span :class="group.mode">{{
+                group.mode === 'offline' ? '现场巡检' : '视频巡检'
+              }}</span
+              ><strong>{{ group.station_name }}</strong
+              ><small :class="{ overdue: group.scheduled_date < today }"
+                >{{ group.scheduled_date }} ·
+                {{
+                  group.scheduled_date < today
+                    ? '历史未完成'
+                    : group.mode === 'offline'
+                      ? '今日行程 · 次日归档'
+                      : '今天安排'
+                }}</small
+              >
+            </div>
+            <div v-for="task in group.tasks" :key="task.id" class="task-item">
+              <span>{{ task.table_name }}</span
+              ><button
+                v-if="canRegister && task.mode === 'online' && task.station_id && task.table_id"
+                type="button"
+                @click="register(task)"
+              >
+                前往登记 →
+              </button>
+            </div>
+          </article>
+        </div>
         <p v-if="!loading && !groups.length" class="empty">当前分类没有巡检待办。</p>
         <p v-if="total > tasks.length" class="method">
           当前显示最早的{{ tasks.length }}项，完成后继续展示剩余任务。
         </p>
-        <p v-if="!canRegister" class="error">当前账号没有巡检登记权限，请联系管理员处理。</p>
+        <p v-if="!canRegister && groups.some((group) => group.mode === 'online')" class="error">
+          当前账号没有巡检登记权限，请联系管理员处理。
+        </p>
       </div>
-      <footer>
-        <span>{{ synced ? '最近核对 ' + synced : '可见时自动核对完成情况' }}</span
-        ><button type="button" :disabled="loading" @click="load">核对完成情况</button
-        ><button type="button" @click="close">关闭</button>
-      </footer>
     </dialog></Teleport
   >
 </template>
@@ -109,8 +138,7 @@ const router = useRouter(),
   total = ref(props.count),
   today = ref(''),
   loading = ref(false),
-  error = ref(''),
-  synced = ref('')
+  error = ref('')
 const loadedAgenda = ref(null),
   activeTab = ref('all')
 const currentAgenda = computed(() => loadedAgenda.value || props.agenda)
@@ -168,7 +196,6 @@ async function load() {
     today.value = data.today
     loadedAgenda.value = data.agenda || null
     error.value = ''
-    synced.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     emit('count', data.count)
   } catch (err) {
     if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
@@ -238,6 +265,81 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.tasks-dialog .inbox-close {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  background: #edf3f9;
+  color: #476581;
+  flex-shrink: 0;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.inbox-close:hover {
+  background: #dbe8f5;
+  color: #214e78;
+}
+.crew-card {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid #ead5ac;
+  border-radius: 12px;
+  background: linear-gradient(115deg, #fff6e5, #fffcf6);
+}
+.crew-card > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.crew-card > div > small {
+  font-size: 11px;
+  color: #987b49;
+}
+.crew-card strong {
+  font-size: 14px;
+  color: #805d26;
+}
+.crew-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.crew-members > span {
+  background: white;
+  border: 1px solid #eddfc5;
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.crew-members small {
+  margin-left: 5px;
+  color: #a28b65;
+  font-size: 10px;
+}
+.task-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.task-group.online {
+  grid-column: 1 / -1;
+}
+.task-group.offline .task-heading {
+  background: #fff6e7;
+}
+.task-group.offline .task-heading small {
+  flex-basis: 100%;
+  margin-left: 0;
+}
+.task-group.offline .task-item {
+  padding: 8px 12px;
+}
 .task-banner.compact {
   padding: 6px 8px;
   gap: 0;
@@ -356,7 +458,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .tasks-dialog {
-  width: min(800px, calc(100vw - 24px));
+  width: min(960px, calc(100vw - 24px));
   max-height: calc(100dvh - 32px);
   padding: 0;
   border: 1px solid #d6e1ed;
@@ -410,7 +512,8 @@ h3 span {
 .task-group {
   border: 1px solid #dce7f2;
   border-radius: 12px;
-  margin-bottom: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .task-heading {
   display: flex;
@@ -490,23 +593,9 @@ button:focus-visible {
   outline: 2px solid #70a1d6;
   outline-offset: 2px;
 }
-footer {
-  padding: 16px 24px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-top: 1px solid #dfe8f2;
-  flex-shrink: 0;
-}
-footer span {
-  flex: 1;
-  font-size: 11px;
-  color: #8b9db0;
-}
 @media (max-width: 600px) {
   header,
-  .tasks-body,
-  footer {
+  .tasks-body {
     padding: 16px;
   }
   .task-banner {
@@ -524,11 +613,8 @@ footer span {
     max-height: calc(100dvh - 16px);
     border-radius: 15px;
   }
-  footer {
-    flex-wrap: wrap;
-  }
-  footer span {
-    flex-basis: 100%;
+  .task-cards {
+    grid-template-columns: minmax(0, 1fr);
   }
   .task-heading small {
     margin-left: 0;

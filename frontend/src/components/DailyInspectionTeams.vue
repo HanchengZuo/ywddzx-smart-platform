@@ -177,21 +177,10 @@
               >{{ person.name }} · {{ person.reason }}</span
             >
           </details>
-          <p v-if="cancelPrompt" class="warning">
-            撤销仅清空今日人员分组，不会取消已有站点派工或删除巡检记录。确定继续？
-          </p>
         </template>
       </div>
       <footer>
-        <button
-          v-if="editable && context?.groups.length"
-          type="button"
-          class="danger"
-          :disabled="saving || loading"
-          @click="cancelTeams"
-        >
-          {{ cancelPrompt ? '确认撤销今日分组' : '撤销今日分组' }}</button
-        ><span></span><button type="button" :disabled="saving" @click="close">关闭</button
+        <span></span><button type="button" :disabled="saving" @click="close">关闭</button
         ><button
           v-if="editable"
           type="button"
@@ -217,8 +206,7 @@ const dialog = ref(null),
   managerModes = ref({}),
   loading = ref(false),
   saving = ref(false),
-  error = ref(''),
-  cancelPrompt = ref(false)
+  error = ref('')
 const editable = computed(() => props.canEdit && context.value?.can_edit)
 const managers = computed(() =>
   (context.value?.people || []).filter((p) => p.position === '管理人员'),
@@ -325,7 +313,6 @@ function lockedMode(person) {
 function invalidate() {
   preview.value = null
   draggingStudent.value = selectedStudent.value = null
-  cancelPrompt.value = false
   error.value = ''
 }
 async function open() {
@@ -333,7 +320,6 @@ async function open() {
   context.value = null
   preview.value = null
   error.value = ''
-  cancelPrompt.value = false
   dialog.value.showModal()
   emit('opened')
   await load()
@@ -372,7 +358,6 @@ async function createPreview() {
   error.value = ''
   preview.value = null
   draggingStudent.value = selectedStudent.value = null
-  cancelPrompt.value = false
   try {
     const { data } = await axios.post(
       '/api/staff-availability/today-inspection',
@@ -414,12 +399,11 @@ async function submit(action) {
     if (!disposed) {
       dialog.value.close()
       emit('closed')
-      emit('saved', { ...data, cancelled: action === 'cancel' })
+      emit('saved', data)
     }
   } catch (err) {
     if (!disposed) {
       preview.value = null
-      cancelPrompt.value = false
       error.value =
         (err.response?.data?.error || '保存结果未能确认，请关闭后重新核对。') +
         ' 请重新打开或重新预览后操作。'
@@ -430,12 +414,6 @@ async function submit(action) {
 }
 function confirm() {
   submit('confirm')
-}
-function cancelTeams() {
-  if (!cancelPrompt.value) {
-    cancelPrompt.value = true
-    preview.value = null
-  } else submit('cancel')
 }
 function close() {
   if (saving.value) return
@@ -738,10 +716,6 @@ footer {
 }
 footer > span {
   flex: 1;
-}
-.danger {
-  color: #ac3340;
-  border-color: #e6bac2;
 }
 @media (max-width: 600px) {
   .team-dialog {

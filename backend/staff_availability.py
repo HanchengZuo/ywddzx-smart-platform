@@ -149,7 +149,7 @@ def save_availability(cur, actor, data):
           AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
         if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
         assigned = team_members(team_days(cur, day, day + timedelta(days=1))).get((people[name]['id'], day.isoformat()))
-        if assigned: raise ScheduleConflict('此人已加入今日巡检分组，请先撤销今日分组再修改没空。')
+        if assigned: raise ScheduleConflict('此人已加入今日巡检分组，不能直接标记没空；请调整分组安排后再保存。')
     if previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status: return
     cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status)
       VALUES(%s,%s,%s,%s,1,%s,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
@@ -220,7 +220,7 @@ def register_staff_availability(app, *, connect, has_permission):
                 result = dict(message='人员档期已保存。')
             else:
                 result = staff_board(cur, day_value(request.args.get('week', today().isoformat())))
-            response = jsonify(success=True, can_edit=can_edit, **result)
+            response = jsonify(success=True, can_edit=can_edit, current_user_id=actor['id'], **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
         except (ValueError, PermissionError) as exc:

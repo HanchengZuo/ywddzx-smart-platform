@@ -94,9 +94,19 @@
                 {{ group.label }}<span>{{ group.people.length }} 人</span>
               </th>
             </tr>
-            <tr v-for="person in group.people" :key="person.display_name" class="staff-person-row">
+            <tr
+              v-for="person in group.people"
+              :key="person.display_name"
+              class="staff-person-row"
+              :class="{ 'is-self': isCurrentPerson(person, board.current_user_id) }"
+            >
               <th scope="row" class="person-name">
-                <span>{{ person.display_name }}<small v-if="!person.id">待匹配账号</small></span>
+                <span
+                  >{{ person.display_name
+                  }}<em v-if="isCurrentPerson(person, board.current_user_id)" class="self-badge"
+                    >本人</em
+                  ><small v-if="!person.id">待匹配账号</small></span
+                >
               </th>
               <td class="position">
                 <span :class="{ manager: person.position === '管理人员' }">{{
@@ -115,6 +125,7 @@
                   :class="[
                     'tone-' + state(person, day).tone,
                     { 'is-actual': state(person, day).stage === '实绩' },
+                    { 'is-self': isCurrentPerson(person, board.current_user_id) },
                   ]"
                   :disabled="loading || !!error"
                   :aria-label="
@@ -142,7 +153,7 @@
       <footer class="staff-footer">
         <strong>逐格维护 · 修改留痕</strong>
         <span
-          >档期与排班由所有获授权用户共享。历史补录保留来源；今天已有站点派工或人员分组，须先取消对应安排，才能标记没空。</span
+          >档期与排班由所有获授权用户共享。历史补录保留来源；已有派工或分组的人员不能直接标记没空，以免与已确认的安排冲突。</span
         >
       </footer>
     </section>
@@ -257,6 +268,7 @@ import {
   shanghaiToday,
   staffCellPresentation,
   staffTodaySummary,
+  isCurrentPerson,
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
@@ -431,9 +443,7 @@ async function onTeamsSaved(data) {
   await nextTick()
   clearTimeout(timer)
   await load()
-  notice.value = data.cancelled
-    ? '今日人员分组已撤销，已有站点派工和巡检记录未修改。'
-    : '今日巡检分组已保存，可在表格查看各人的带队分组。'
+  notice.value = '今日巡检分组已保存，可在表格查看各人的带队分组。'
 }
 function teamsOpened() {
   teamsOpen.value = true
@@ -487,6 +497,25 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.self-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: #075e63;
+  background: #c9f2eb;
+  font-size: 10px;
+  font-style: normal;
+  white-space: nowrap;
+}
+.staff-person-row.is-self .person-name {
+  box-shadow: inset 4px 0 #12858a;
+  background: #e8f7f4;
+}
+.staff-cell.is-self {
+  outline: 2px solid #12858a;
+  outline-offset: -3px;
+}
 .field-group-label {
   display: block;
   width: fit-content;

@@ -17,6 +17,14 @@ export function offsetDay(day, offset) {
 export function cellKey(row, column) {
   return `${row.station_id}:${column.key}`
 }
+export function isCurrentPerson(person, userId) {
+  return Number(userId) > 0 && Number(person?.id) === Number(userId)
+}
+export function scheduleSelfRole(cell, userId) {
+  const planned = cell?.assignees?.some((p) => isCurrentPerson(p, userId))
+  const actual = cell?.completed_inspectors?.some((p) => isCurrentPerson(p, userId))
+  return planned && actual ? '我的计划及实绩' : actual ? '我的实绩' : planned ? '我的计划' : ''
+}
 export function personCanSchedule(person, mode) {
   return (
     person.id &&
