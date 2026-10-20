@@ -12,6 +12,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from inspection_schedule import register_inspection_schedule, save_cell, VIEW_PERMISSION, EDIT_PERMISSION
+from inspection_schedule_dispatch import register_schedule_dispatch
 from inspection_schedule_catalog import COLUMNS, roster, roster_position
 from scheduling_map import period
 
@@ -70,7 +71,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
-        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation'):
+        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         self.schema = 'schedule_' + uuid.uuid4().hex
         self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)
@@ -96,6 +97,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/520_staff_scheduling.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/525_staff_daily_teams.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/530_schedule_dispatch.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/535_schedule_shelf.sql').read_text())
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')
         self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('步雪琼','2026-10-20',true,1,1),('孔德辰','2026-10-20',true,1,1)")
         self.cur.execute('INSERT INTO staff_daily_teams(day,assignments,revision,updated_by) VALUES(%s,%s,1,1)',
@@ -106,6 +108,8 @@ class ScheduleDatabaseTest(unittest.TestCase):
         app = Flask(__name__)
         app.before_request(lambda: setattr(g, 'current_user', self.actor))
         register_inspection_schedule(app, connect=self.connect,
+            has_permission=lambda _, actor, key: key in self.permissions)
+        register_schedule_dispatch(app, connect=self.connect,
             has_permission=lambda _, actor, key: key in self.permissions)
         self.client = app.test_client()
         self.query = dict(mode='offline', year=2026, quarter=4)

@@ -9,7 +9,7 @@ from flask import Flask
 from staff_daily_teams import random_teams
 from staff_daily_team_http import register_staff_daily_teams
 from tests import test_staff_scheduling as staff_tests
-from staff_availability import EDIT, VIEW
+from staff_availability import EDIT, VIEW, STAFF
 
 
 class DailyTeamAlgorithmTests(unittest.TestCase):
@@ -71,6 +71,9 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.admin.commit()
         for name in ['步雪琼','孔德辰','芦斌',*names]:
             self.assertEqual(self.availability(name=name).status_code,200)
+        for name, _ in STAFF:
+            if name not in ['步雪琼','孔德辰','芦斌',*names]:
+                self.assertEqual(self.availability(name=name, available=False).status_code,200)
         self.body=dict(day='2026-10-19',revision=0,manager_modes={'2':'offline','3':'offline','6':'online'})
 
     def post(self, action='preview', **extra):
@@ -123,6 +126,21 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         with self.assertLogs(level='ERROR'):
             result=self.post('confirm',token=preview['token'],seed=preview['seed'])
         self.assertEqual(result.status_code,500)
+        self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
+
+    def test_all_people_must_confirm_and_confirmation_rechecks_unknown(self):
+        context = self.client.get('/api/staff-availability/today-inspection').json
+        self.assertEqual((context['confirmed_count'], context['total_count']), (25, 25))
+        preview = self.post().json
+        self.cur.execute("DELETE FROM staff_availability WHERE person_name='韩叙' AND day='2026-10-19'")
+        self.admin.commit()
+        context = self.client.get('/api/staff-availability/today-inspection').json
+        self.assertEqual(context['unconfirmed'], ['韩叙'])
+        self.assertEqual(context['confirmed_count'], 24)
+        self.assertEqual(self.post().status_code, 409)
+        response = self.post('confirm', token=preview['token'], seed=preview['seed'])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('韩叙', response.json['error'])
         self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
 
     def test_concurrent_confirmations_only_commit_once(self):

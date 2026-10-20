@@ -16,17 +16,29 @@
       </div>
       <div class="period-controls">
         <label
-          >年份<select v-model.number="draft.year" :aria-label="title + '年份'">
+          >年份<select
+            v-model.number="draft.year"
+            :disabled="shelfSaving"
+            :aria-label="title + '年份'"
+          >
             <option v-for="year in years" :key="year" :value="year">{{ year }}年</option>
           </select></label
         ><label v-if="mode === 'offline'"
-          >季度<select v-model.number="draft.quarter" aria-label="现场检查季度">
+          >季度<select
+            v-model.number="draft.quarter"
+            :disabled="shelfSaving"
+            aria-label="现场检查季度"
+          >
             <option v-for="quarter in 4" :key="quarter" :value="quarter">
               第{{ quarter }}季度
             </option>
           </select></label
         ><label v-else
-          >月份<select v-model.number="draft.month" aria-label="视频检查月份">
+          >月份<select
+            v-model.number="draft.month"
+            :disabled="shelfSaving"
+            aria-label="视频检查月份"
+          >
             <option v-for="month in 12" :key="month" :value="month">{{ month }}月</option>
           </select></label
         >
@@ -82,7 +94,7 @@
         type="button"
         class="secondary-button"
         :aria-pressed="multiSelect"
-        :disabled="loading || !!error"
+        :disabled="loading || shelfSaving || !!error"
         @click="toggleMulti"
       >
         {{ multiSelect ? '退出多选' : '多选排班' }}
@@ -93,7 +105,7 @@
         ><button
           type="button"
           class="primary-button"
-          :disabled="!selectedCells.length || loading || !!error"
+          :disabled="!selectedCells.length || loading || shelfSaving || !!error"
           @click="openBulk(false)"
         >
           统一安排</button
@@ -101,7 +113,7 @@
           v-if="clipboard"
           type="button"
           class="secondary-button"
-          :disabled="!selectedCells.length || loading || !!error"
+          :disabled="!selectedCells.length || loading || shelfSaving || !!error"
           @click="openBulk(true)"
         >
           粘贴安排</button
@@ -119,7 +131,17 @@
           ? '整站安排一个外勤组，实际检查结果独立保留。'
           : '每格一人；多选时按站点整行安排。'
       }}</span>
-      <button type="button" class="secondary-button" @click="openShelf">调度待选区</button>
+      <button type="button" class="secondary-button" @click="openShelf">
+        调度待选区（{{ shelf.length }}）
+      </button>
+      <button
+        type="button"
+        class="secondary-button"
+        :disabled="loading || shelfSaving || !hasTodayPlans || !canEdit"
+        @click="clearToday"
+      >
+        一键清空今日{{ mode === 'offline' ? '现场' : '视频' }}排班
+      </button>
     </div>
     <div v-if="error" class="panel-error" role="alert">
       {{ error
@@ -186,7 +208,7 @@
             class="station-row"
             :class="{ 'region-start': row.sequence === 1 || regionStarts.has(row.station_id) }"
             @dragover.prevent
-            @drop.prevent="mode === 'offline' && dropOn(row)"
+            @drop.prevent="mode === 'offline' && dropOn(row, null, $event)"
           >
             <td class="fixed-index">{{ row.sequence }}</td>
             <td class="fixed-region">{{ row.region }}</td>
@@ -200,35 +222,19 @@
                   @change="selectRow(row)"
                 />{{ row.station_name }}</label
               >
-              <button
-                v-if="mode === 'offline' && rowPlan(row)"
-                type="button"
-                class="row-team"
-                :draggable="canEdit && !loading"
-                :disabled="!canEdit || loading"
-                :title="'拖入待选区调整，或点击加入待选区'"
-                @dragstart="startAssignmentDrag($event, row)"
-                @dragend="dragged = null"
-                @click="pickedShelf ? dropOn(row) : stageAssignment(row)"
-              >
-                {{ rowPlan(row).name }}<small>计划 · {{ rowPlan(row).day }}</small>
-              </button>
             </th>
             <td
               v-for="column in board.columns"
               :key="column.key"
               :class="['matrix-cell', row.cells[column.key].status]"
               @dragover.prevent
-              @drop.stop.prevent="dropOn(row, column)"
+              @drop.stop.prevent="dropOn(row, column, $event)"
             >
               <button
                 type="button"
                 class="cell-button"
                 :draggable="
-                  canEdit &&
-                  mode === 'online' &&
-                  row.cells[column.key].status === 'assigned' &&
-                  !loading
+                  canEdit && row.cells[column.key].status === 'assigned' && !loading && !shelfSaving
                 "
                 @dragstart="startAssignmentDrag($event, row, column)"
                 @dragend="dragged = null"
@@ -238,6 +244,7 @@
                 "
                 :disabled="
                   loading ||
+                  shelfSaving ||
                   !online ||
                   !!error ||
                   blocked ||
@@ -311,7 +318,7 @@
       <p>
         从表格拖入此处暂存，再拖到目标{{
           mode === 'offline' ? '站点行' : '单元格'
-        }}。也可点选卡片，再点目标位置派工。仅确认后保存。
+        }}。移入即撤下原计划，拖回即直接保存；也可点选卡片再点目标位置。待选安排全局共享，刷新仍保留。
       </p>
       <div
         v-for="item in shelf"
@@ -329,18 +336,20 @@
         @keydown.space.self.prevent="pickedShelf = pickedShelf === item.key ? null : item.key"
       >
         <strong>{{ item.name }}</strong
-        ><small>{{ item.day }} · {{ item.sourceName || '新增安排' }}</small>
+        ><small
+          >{{ item.day }} · {{ item.sourceName || '新增安排'
+          }}<template v-if="mode === 'online'">
+            · {{ board.columns.find((c) => c.key === item.source_column_key)?.label }}</template
+          ></small
+        >
         <button type="button" aria-label="移除待选安排" @click.stop="removeShelf(item.key)">
           ×
         </button>
       </div>
       <p v-if="!shelf.length">
-        将表格中的{{
-          mode === 'offline' ? '外勤组标签' : '已排班单元格'
-        }}拖到这里，或先在表格中安排后再调度。
-      </p>
-      <p v-if="shelf.some((item) => !item.cells.length)" class="shelf-warning">
-        有已腾出的计划等待重新安排。待选区仅当前页面暂存，请安排完再离开。
+        将任一已排班单元格拖到这里，{{
+          mode === 'offline' ? '整行现场计划' : '该格视频计划'
+        }}会直接移入待选区。
       </p>
       <button v-if="pickedShelf" type="button" @click="pickedShelf = null">取消选中卡片</button>
       <span v-if="shelfSaving" role="status">正在原子保存改派…</span>
@@ -551,7 +560,7 @@
               ><button type="button" class="secondary-button" :disabled="saving" @click="closeCell">
                 关闭</button
               ><button
-                v-if="!bulkEdits.length && currentCell.status === 'assigned' && canEdit"
+                v-if="stageableSelection"
                 type="button"
                 class="secondary-button"
                 :disabled="saving || changed"
@@ -605,7 +614,6 @@
 
 <script setup>
 import axios from 'axios'
-import { onBeforeRouteLeave } from 'vue-router'
 import {
   computed,
   nextTick,
@@ -767,67 +775,57 @@ const shelfOpen = ref(false),
   pickedShelf = ref(null),
   dragged = ref(null),
   shelfSaving = ref(false)
-function rowPlan(row) {
-  const cell = Object.values(row.cells).find((c) => c.status === 'assigned')
-  return cell
-    ? {
-        name: cell.plan_team?.name || cell.assignees.map((p) => p.display_name).join('、'),
-        day: cell.scheduled_date,
-      }
-    : null
-}
-function shelfItem(row, column) {
+const stageableSelection = computed(() => {
+  if (!canEdit.value || !selection.value) return false
+  if (bulkEdits.value.length && new Set(bulkEdits.value.map((e) => e.station_id)).size !== 1)
+    return false
+  return !!planPayload(selection.value.row, selection.value.column)
+})
+const hasTodayPlans = computed(() =>
+  (board.value?.rows || []).some((row) =>
+    Object.values(row.cells).some(
+      (cell) => cell.status === 'assigned' && cell.scheduled_date === board.value.today,
+    ),
+  ),
+)
+function targetCells(row, column) {
   const columns =
     props.mode === 'offline'
       ? board.value.columns.filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
-      : [column]
-  const first = row.cells[columns[0]?.key]
-  if (!first?.assignees.length || !first.scheduled_date || !columns.length) return null
-  if (
-    columns.some(
-      (c) =>
-        !sameIds(
-          row.cells[c.key].assignees.map((p) => p.id),
-          first.assignees.map((p) => p.id),
-        ) || row.cells[c.key].scheduled_date !== first.scheduled_date,
-    )
-  ) {
-    notice.value = '此行存在不同的旧安排，请先统一整行外勤组后再拖拽。'
-    return null
-  }
+      : column && scheduleCellEditable(row.cells[column.key], canEdit.value)
+        ? [column]
+        : []
+  return columns.map((c) => ({
+    station_id: row.station_id,
+    column_key: c.key,
+    revision: row.cells[c.key].revision,
+  }))
+}
+function planPayload(row, column) {
+  const cells = targetCells(row, column)
+  const first = cells.map((c) => row.cells[c.column_key]).find((c) => c.status === 'assigned')
+  if (!first) return null
   return {
-    key: `${props.mode}:${row.station_id}:${column?.key || 'row'}`,
-    ids: first.assignees.map((p) => p.id),
+    kind: 'plan',
+    cells,
     name: first.plan_team?.name || first.assignees.map((p) => p.display_name).join('、'),
-    day: first.scheduled_date,
-    sourceName: row.station_name,
-    cells: columns.map((c) => ({
-      station_id: row.station_id,
-      column_key: c.key,
-      revision: row.cells[c.key].revision,
-    })),
   }
 }
 function openShelf() {
   shelfOpen.value = true
 }
-function stageAssignment(row, column) {
-  const item = shelfItem(row, column)
-  if (!item || !canEdit.value) return
-  shelfOpen.value = true
-  shelf.value = [...shelf.value.filter((s) => s.key !== item.key), item]
+async function stageAssignment(row, column) {
+  const item = planPayload(row, column)
+  if (item) await runDispatch('park', { cells: item.cells })
 }
-function stageCurrentSelection() {
+async function stageCurrentSelection() {
   if (!selection.value) return
-  stageAssignment(selection.value.row, selection.value.column)
-  closeCell(true)
+  const { row, column } = selection.value
+  await closeCell(true)
+  await stageAssignment(row, column)
 }
 function startAssignmentDrag(event, row, column) {
-  if (!canEdit.value) {
-    event.preventDefault()
-    return
-  }
-  const item = shelfItem(row, column)
+  const item = canEdit.value && !loading.value && !shelfSaving.value && planPayload(row, column)
   if (!item) {
     event.preventDefault()
     return
@@ -835,95 +833,81 @@ function startAssignmentDrag(event, row, column) {
   dragged.value = item
   shelfOpen.value = true
   event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('application/x-inspection-dispatch', JSON.stringify(item))
   event.dataTransfer.setData('text/plain', item.name)
 }
 function startShelfDrag(event, item) {
-  dragged.value = item
+  if (shelfSaving.value || loading.value) {
+    event.preventDefault()
+    return
+  }
+  dragged.value = { ...item, kind: 'shelf' }
   event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('application/x-inspection-dispatch', JSON.stringify(dragged.value))
   event.dataTransfer.setData('text/plain', item.name)
 }
-function stageDragged() {
-  if (!dragged.value) return
-  const item = dragged.value
-  shelf.value = [...shelf.value.filter((s) => s.key !== item.key), item]
-  dragged.value = null
+function dragPayload(event) {
+  if (dragged.value) return dragged.value
+  try {
+    return JSON.parse(event?.dataTransfer?.getData('application/x-inspection-dispatch') || 'null')
+  } catch {
+    return null
+  }
 }
-function removeShelf(key, force = false) {
+async function stageDragged(event) {
+  const item = dragPayload(event)
+  if (item?.kind === 'plan') await runDispatch('park', { cells: item.cells })
+}
+async function removeShelf(key) {
   const item = shelf.value.find((s) => s.key === key)
-  if (
-    !force &&
-    item &&
-    !item.cells.length &&
-    !window.confirm('此计划已从原站点腾出。移除卡片不会恢复原派工，确定不再安排吗？')
-  )
-    return
-  shelf.value = shelf.value.filter((s) => s.key !== key)
-  if (pickedShelf.value === key) pickedShelf.value = null
+  if (!item || !window.confirm('移除这条待选安排？不会恢复原站点派工，调度历史仍会保留。')) return
+  if (item) await runDispatch('discard', { shelf_id: item.id, revision: item.revision })
 }
-async function dropOn(row, column) {
-  const item = dragged.value || shelf.value.find((s) => s.key === pickedShelf.value)
-  if (!item || !canEdit.value || loading.value || shelfSaving.value) return
-  const columns =
-    props.mode === 'offline'
-      ? board.value.columns.filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
-      : column && scheduleCellEditable(row.cells[column.key], canEdit.value)
-        ? [column]
-        : []
-  if (
-    !columns.length ||
-    item.cells.some(
-      (c) => c.station_id === row.station_id && columns.some((t) => t.key === c.column_key),
-    )
-  )
+async function dropOn(row, column, event) {
+  const item = dragPayload(event) || shelf.value.find((s) => s.key === pickedShelf.value)
+  if (!item) return
+  if (item.kind === 'plan') {
+    notice.value = '请先将计划拖入调度待选区，再选择目标站点。'
     return
-  const cells = columns.map((c) => ({
-    station_id: row.station_id,
-    column_key: c.key,
-    revision: row.cells[c.key].revision,
-  }))
-  const previous = shelfItem(row, column)
-  const displaced =
-    previous && (!sameIds(previous.ids, item.ids) || previous.day !== item.day) ? previous : null
-  if (
-    !window.confirm(
-      `将${item.name}${item.cells.length ? '从' + item.sourceName + '改派' : '安排'}至${row.station_name}${props.mode === 'offline' ? '整行' : '·' + column.label}？${item.cells.length ? '原位置计划将取消，' : ''}${displaced ? '目标原安排将腾入待选区，供继续调度；' : ''}实际记录不变。`,
-    )
-  )
-    return
+  }
+  const cells = targetCells(row, column)
+  if (cells.length)
+    await runDispatch('place', { shelf_id: item.id, revision: item.revision, cells })
+}
+async function clearToday() {
+  await runDispatch('clear_today', { board_token: board.value.board_token })
+}
+async function runDispatch(action, payload) {
+  if (!canEdit.value || loading.value || shelfSaving.value || saving.value) return
+  serial++
+  controller?.abort()
+  polling.pause()
   shelfSaving.value = true
   try {
-    await axios.put(
-      '/api/inspection-schedule',
-      {
-        ...coverageQuery(draft.value),
-        cells,
-        ...(item.cells.length ? { source: { cells: item.cells } } : {}),
-        inspector_ids: item.ids,
-        scheduled_date: item.day,
-      },
-      { timeout: 60000 },
+    const { data } = await axios.post(
+      '/api/inspection-schedule/dispatch',
+      { ...coverageQuery(draft.value), action, ...payload },
+      { timeout: 120000 },
     )
-    removeShelf(item.key, true)
-    if (displaced) {
-      removeShelf(displaced.key, true)
-      shelf.value.push({
-        ...displaced,
-        key: displaced.key + ':parked',
-        cells: [],
-        sourceName: '原' + row.station_name + ' · 已腾出待安排',
-      })
-      shelfOpen.value = true
-    }
-    notice.value = '改派已保存，原位置和目标位置的个人待办已同步。'
+    if (disposed) return
+    board.value = data.board
+    shelf.value = data.board.shelf || []
+    selectedCells.value = []
+    pickedShelf.value = null
+    error.value = ''
+    notice.value = data.message
+    lastSyncedAt = Date.now()
+    updatedTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    if (action === 'park' || action === 'clear_today') shelfOpen.value = true
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
-    await loadBoard()
   } catch (err) {
+    if (disposed) return
     notice.value = err.response?.data?.error || '无法确认改派结果，请核对最新表格后重试。'
-    if (item.cells.length && err.response?.status === 409) removeShelf(item.key)
     await retryBoard()
   } finally {
     shelfSaving.value = false
     dragged.value = null
+    polling.start()
   }
 }
 async function openBulk(paste = false) {
@@ -1024,6 +1008,8 @@ async function loadBoard() {
     })
     if (disposed || ticket !== serial) return
     board.value = response.data
+    shelf.value = response.data.shelf || []
+    if (!shelf.value.some((item) => item.key === pickedShelf.value)) pickedShelf.value = null
     if (!board.value.can_edit) {
       multiSelect.value = false
       selectedCells.value = []
@@ -1222,33 +1208,9 @@ function visibilityChanged() {
   if (!active || document.hidden || !online.value) polling.pause()
   else polling.start({ immediate: true })
 }
-const hasParked = () => shelf.value.some((item) => !item.cells.length)
-function warnParked(event) {
-  if (!hasParked()) return
-  event.preventDefault()
-  event.returnValue = ''
-}
-onBeforeRouteLeave(
-  () =>
-    !hasParked() ||
-    window.confirm('调度待选区还有已腾出的计划未安排。离开不会自动派工，确定离开吗？'),
-)
-let revertingPeriod = false
 watch(
   () => JSON.stringify(coverageQuery(draft.value)),
-  (next, previous) => {
-    if (revertingPeriod) {
-      revertingPeriod = false
-      return
-    }
-    if (
-      hasParked() &&
-      !window.confirm('待选区还有已腾出的计划未安排。切换周期会清空待选区，确定继续吗？')
-    ) {
-      revertingPeriod = true
-      draft.value = { ...draft.value, ...JSON.parse(previous) }
-      return
-    }
+  () => {
     serial++
     controller?.abort()
     board.value = null
@@ -1273,12 +1235,11 @@ onMounted(() => {
   document.addEventListener('visibilitychange', visibilityChanged)
   window.addEventListener('online', visibilityChanged)
   window.addEventListener('offline', visibilityChanged)
-  window.addEventListener('beforeunload', warnParked)
 })
 onActivated(() => {
   active = true
   online.value = navigator.onLine
-  if (!board.value || error.value || Date.now() - lastSyncedAt >= 60000) {
+  if (!shelfSaving.value && (!board.value || error.value || Date.now() - lastSyncedAt >= 60000)) {
     loadBoard().catch(() => {})
   }
   polling.start()
@@ -1306,28 +1267,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibilityChanged)
   window.removeEventListener('online', visibilityChanged)
   window.removeEventListener('offline', visibilityChanged)
-  window.removeEventListener('beforeunload', warnParked)
 })
 </script>
 
 <style scoped>
-.row-team {
-  display: block;
-  width: 100%;
-  margin-top: 7px;
-  padding: 7px 4px;
-  border: 1px solid #d89a39;
-  border-radius: 7px;
-  color: #865117;
-  background: #fff0cf;
+.assigned .cell-button[draggable='true'] {
   cursor: grab;
-  font: inherit;
-  font-size: 11px;
-}
-.row-team small {
-  display: block;
-  margin-top: 3px;
-  font-size: 9px;
 }
 .original-plan {
   color: #80632d;

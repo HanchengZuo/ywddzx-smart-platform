@@ -60,7 +60,7 @@ test('cached panels pause and abort when inactive; returning reuses fresh data a
   const calls = { load: 0, start: 0, pause: 0, abort: 0, close: 0 }
   const context = vm.createContext({
     active: false, online: { value: true }, navigator: { onLine: true },
-    board: { value: null }, error: { value: '' }, loading: { value: true },
+    board: { value: null }, error: { value: '' }, loading: { value: true }, shelfSaving: {value:false},
     lastSyncedAt: 1000, serial: 0, switchTimer: 7, peopleSerial: 0, peopleController: null,
     Date: { now: () => 2000 }, clearTimeout: () => {},
     controller: { abort: () => calls.abort++ },
@@ -88,6 +88,10 @@ test('cached panels pause and abort when inactive; returning reuses fresh data a
   context.Date.now = () => 61000
   hooks.activate()
   assert.equal(calls.load, 2, 'a board at least one minute old must be checked again')
+  context.shelfSaving.value = true
+  hooks.activate()
+  assert.equal(calls.load, 2, 'reactivating during dispatch must not race an old board response against the save')
+  context.shelfSaving.value = false
   context.Date.now = () => 2000
   context.error.value = 'previous request failed'
   hooks.activate()
