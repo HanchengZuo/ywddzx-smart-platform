@@ -235,7 +235,7 @@ test('manual history takes precedence only in staff display, with explicit prove
   assert.equal(staffCellPresentation({ ...cell, history_status: null }, '2026-10-16', '2026-10-20').stage, '实绩')
   assert.equal(staffCellPresentation({ ...cell, actual_modes: [] }, '2026-10-20', '2026-10-20').tone, 'unknown', 'manual history cannot override current-day availability')
 })
-test('real selection handlers support individual, row and visible-column selection, never completed cells', () => {
+test('multi-selection is row-only and excludes completed cells; no column selection remains', () => {
   const source = readFileSync(
     new URL('../src/components/InspectionSchedulePanel.vue', import.meta.url),
     'utf8',
@@ -258,7 +258,7 @@ test('real selection handlers support individual, row and visible-column selecti
   vm.runInContext(
     source.slice(
       source.indexOf('function toggleMulti()'),
-      source.indexOf('async function openBulk('),
+      source.indexOf('const sameIds'),
     ),
     context,
   )
@@ -266,16 +266,14 @@ test('real selection handlers support individual, row and visible-column selecti
   context.selectRow(row)
   assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
   assert.equal(context.rowSelected(row), true)
-  context.toggleCell(row, columns[1])
+  context.selectRow(second)
+  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a', '2:a', '2:b'])
+  context.selectRow(second)
   assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
-  context.selectColumn(columns[0])
-  assert.equal(context.selectedCells.value.length, 0)
-  context.rows.value = [row, second]
-  context.selectColumn(columns[0])
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a', '2:a'])
+  assert.doesNotMatch(source, /selectColumn|选列|function toggleCell/)
   context.canEdit.value = false
   context.selectRow(second)
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a', '2:a'])
+  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
 })
 for (const filename of [
   'components/AutomaticSchedule.vue',

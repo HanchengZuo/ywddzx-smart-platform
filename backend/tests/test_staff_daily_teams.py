@@ -62,6 +62,7 @@ class DailyTeamDatabaseTests(unittest.TestCase):
 
     def setUp(self):
         staff_tests.StaffDatabaseTests.setUp(self)
+        self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
         register_staff_daily_teams(self.client.application, connect=self.connect, has_permission=lambda _, actor,key:key in self.permissions)
         self.cur.execute("INSERT INTO users VALUES(6,'lu','芦斌','supervisor_manager','active')")
         names=['陈中磊','程镇林','葛心玉','侯明敖','姜傲云','吕雪儿','彭思宇','束紫荆']
@@ -140,7 +141,7 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         result=self.client.post('/api/inspection-schedule/auto',json=dict(action='confirm',day='2026-10-19',token=auto['token']))
         self.assertEqual(result.status_code,200,result.json)
         for group in auto['groups']:
-            expected=next(g for g in saved['groups'] if g['name']==group['group_name'])
+            expected=next(g for g in saved['groups'] if g['name']==group['group_name']) if group['mode']=='offline' else dict(members=[group['person']])
             self.cur.execute('SELECT inspector_ids FROM inspection_schedule_cells WHERE station_id=%s AND mode=%s', (group['station_id'],group['mode']))
             self.assertTrue(all(set(r['inspector_ids'])=={p['id'] for p in expected['members']} for r in self.cur.fetchall()))
 

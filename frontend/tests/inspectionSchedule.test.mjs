@@ -98,7 +98,7 @@ test('inactive panels cannot poll, including after network and visibility events
   let options
   const context = vm.createContext({
     active: false, disposed: false, document: { hidden: false },
-    online: { value: true }, blocked: { value: false }, saving: { value: false }, dialog: { value: null },
+    online: { value: true }, blocked: { value: false }, saving: { value: false }, shelfSaving: { value: false }, dialog: { value: null },
     loadBoard: () => {}, createAdaptivePolling: (value) => { options = value },
   })
   vm.runInContext(
@@ -108,7 +108,7 @@ test('inactive panels cannot poll, including after network and visibility events
   assert.equal(options.canRun(), false)
   context.active = true
   assert.equal(options.canRun(), true)
-  for (const ref of [context.online, context.blocked, context.saving]) {
+  for (const ref of [context.online, context.blocked, context.saving, context.shelfSaving]) {
     ref.value = !ref.value
     assert.equal(options.canRun(), false)
     ref.value = !ref.value
@@ -126,7 +126,7 @@ test('schedule has one active cached panel, all rows in page flow, and responsiv
   assert.match(panelSource, /role="tabpanel"/)
   assert.match(panelSource, /v-for="row in rows"/)
   assert.doesNotMatch(panelSource, /matrix-scroll|min-width: (?:1160|1030|780|630)px/)
-  const layoutStyles = panelSource.slice(panelSource.indexOf('<style scoped>'), panelSource.indexOf('.schedule-cell-dialog {'))
+  const layoutStyles = panelSource.slice(panelSource.indexOf('.schedule-panel {'), panelSource.indexOf('.schedule-cell-dialog {'))
   assert.doesNotMatch(layoutStyles, /overflow: (?:auto|scroll|hidden)|max-height:/)
   assert.match(layoutStyles, /top: calc\(var\(--schedule-sticky-top/)
   assert.match(panelSource, /@container \(max-width: 760px\)/)

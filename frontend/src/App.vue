@@ -144,6 +144,7 @@
     <header class="mobile-topbar">
       <button class="mobile-menu-btn" type="button" @click="toggleMobileMenu">☰</button>
       <div class="mobile-topbar-title">{{ sidebarTitle }}</div>
+      <ScheduleTaskInbox v-if="!authState.mustChangePassword && (isSupervisor || scheduleTaskPendingCount > 0)" :key="'mobile:' + authState.userId" compact :count="scheduleTaskPendingCount" :agenda="scheduleAgenda" @count="scheduleTaskPendingCount = $event" />
       <div class="mobile-resource-chip" :class="serverResourceHealthClass" :title="serverResourceTooltip">
         <span class="server-resource-dot"></span>
         {{ mobileServerResourceLabel }}
@@ -458,6 +459,7 @@
               </span>
             </div>
           </div>
+          <ScheduleTaskInbox v-if="!authState.mustChangePassword && (isSupervisor || scheduleTaskPendingCount > 0)" :key="authState.userId" :count="scheduleTaskPendingCount" :agenda="scheduleAgenda" @count="scheduleTaskPendingCount = $event" />
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
@@ -484,7 +486,6 @@
       </header>
 
       <main class="content">
-        <ScheduleTaskInbox v-if="!authState.mustChangePassword && scheduleTaskPendingCount > 0" :key="authState.userId" :count="scheduleTaskPendingCount" @count="scheduleTaskPendingCount = $event" />
         <router-view v-if="!authState.mustChangePassword" />
       </main>
     </div>
@@ -834,6 +835,7 @@ const feedbackUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
 const scheduleTaskPendingCount = ref(0)
+const scheduleAgenda = ref(null)
 const appealNotificationCount = ref(0)
 let notificationSummaryTimer = null
 let notificationSummaryInFlight = null
@@ -1478,6 +1480,7 @@ const resetNotificationCounts = () => {
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
   scheduleTaskPendingCount.value = 0
+  scheduleAgenda.value = null
   appealNotificationCount.value = 0
   notificationSummaryFetchedAt = 0
 }
@@ -1487,6 +1490,7 @@ const applyNotificationSummary = (payload = {}) => {
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
   scheduleTaskPendingCount.value = Number(payload.schedule_task_pending_count || 0)
+  scheduleAgenda.value = payload.schedule_agenda || null
   appealNotificationCount.value = Number(payload.appeal_notification_count || 0)
 }
 

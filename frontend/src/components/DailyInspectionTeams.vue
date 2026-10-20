@@ -29,8 +29,12 @@
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <template v-if="context">
           <p v-if="!context.working" class="warning">今天不是已发布的工作日，不能新安排巡检。</p>
-          <section v-if="editable && context.working" class="manager-step">
-            <div class="step-heading">
+          <details
+            v-if="editable && context.working"
+            class="manager-step"
+            :open="!context.groups.length || !!preview"
+          >
+            <summary class="step-heading">
               <b>01</b>
               <div>
                 <strong>确定管理人员分工</strong
@@ -39,7 +43,7 @@
                   {{ students.length }} 位大学生</small
                 >
               </div>
-            </div>
+            </summary>
             <div v-for="person in managers" :key="person.id" class="manager-row">
               <div>
                 <strong>{{ person.display_name }}</strong
@@ -78,7 +82,7 @@
             >
               {{ preview ? '重新随机分组' : '平均随机分组' }}
             </button>
-          </section>
+          </details>
           <section class="result-step">
             <div class="step-heading">
               <b>02</b>
@@ -94,22 +98,62 @@
               </div>
             </div>
             <div v-if="displayGroups.length" class="team-groups">
-              <article v-for="group in displayGroups" :key="group.name" :class="group.mode">
+              <article
+                v-for="group in displayGroups"
+                :key="group.name"
+                :class="[group.mode, { 'drop-active': draggingStudent || selectedStudent }]"
+                @dragover.prevent
+                @drop.prevent="dropStudent(group)"
+              >
                 <header>
                   <strong>{{ group.name }}</strong
                   ><span>{{ group.members.length }} 人</span>
                 </header>
                 <div class="member-tags">
-                  <span
+                  <button
                     v-for="person in group.members"
                     :key="person.id"
+                    type="button"
+                    :draggable="editable && !preview && !saving && person.position === '大学生'"
+                    :disabled="!editable || !!preview || saving || person.position !== '大学生'"
+                    :aria-label="
+                      person.display_name +
+                      (person.position === '大学生' ? '，点击或拖动调整分组' : '，管理人员固定带队')
+                    "
                     :class="{ leader: person.id === group.leader_id }"
-                    >{{ person.display_name
-                    }}<small v-if="person.id === group.leader_id">带队</small></span
+                    @dragstart="startStudentDrag($event, person)"
+                    @dragend="draggingStudent = null"
+                    @click="selectedStudent = selectedStudent === person.id ? null : person.id"
                   >
+                    {{ person.display_name
+                    }}<small v-if="person.id === group.leader_id">带队</small>
+                  </button>
                 </div>
+                <button
+                  v-if="selectedStudent && !preview"
+                  type="button"
+                  class="move-here"
+                  :disabled="saving"
+                  @click="dropStudent(group)"
+                >
+                  移至{{ group.name }}
+                </button>
               </article>
             </div>
+            <p
+              v-if="editable && !preview && displayGroups.length"
+              class="method move-help"
+              role="status"
+            >
+              {{
+                saving
+                  ? '正在保存分组调整…'
+                  : '拖动大学生姓名到其他组即可保存；手机或键盘可先点姓名，再点目标组“移至”。外勤组换人同步未检查的站点计划及待办；已派站人员跨现场/视频调组前需先撤销原派站。'
+              }}
+              <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
+                取消选择
+              </button>
+            </p>
             <p v-else class="empty">
               {{
                 editable ? '完成上方管理人员分工后，点击平均随机分组。' : '今日暂未保存巡检分组。'
@@ -179,7 +223,59 @@ const ready = computed(
     context.value.people.length &&
     managers.value.every((p) => managerModes.value[p.id]),
 )
-const displayGroups = computed(() => preview.value?.groups || context.value?.groups || [])
+const displayGroups = computed(() => {
+  const groups = preview.value?.groups || context.value?.groups || []
+  return editable.value &&
+    !preview.value &&
+    groups.length &&
+    !groups.some((g) => g.mode === 'online')
+    ? [...groups, { name: '内勤视频组', mode: 'online', leader_id: null, members: [] }]
+    : groups
+})
+const draggingStudent = ref(null),
+  selectedStudent = ref(null)
+function startStudentDrag(event, person) {
+  if (!editable.value || preview.value || saving.value || person.position !== '大学生') {
+    event.preventDefault()
+    return
+  }
+  draggingStudent.value = person.id
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', person.display_name)
+}
+async function dropStudent(group) {
+  const studentId = draggingStudent.value || selectedStudent.value
+  if (!studentId || !editable.value || preview.value || saving.value) return
+  const source = displayGroups.value.find((g) => g.members.some((p) => p.id === studentId))
+  if (source?.name === group.name) {
+    draggingStudent.value = selectedStudent.value = null
+    return
+  }
+  saving.value = true
+  error.value = ''
+  try {
+    const { data } = await axios.post(
+      '/api/staff-availability/today-inspection',
+      {
+        action: 'move',
+        day: context.value.day,
+        revision: context.value.revision,
+        student_id: studentId,
+        leader_id: group.leader_id,
+      },
+      { timeout: 30000 },
+    )
+    await load()
+    emit('saved', { ...data, adjusted: true })
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+  } catch (err) {
+    error.value = err.response?.data?.error || '调整结果未确认，请重新打开核对。'
+    await load()
+  } finally {
+    saving.value = false
+    draggingStudent.value = selectedStudent.value = null
+  }
+}
 let controller,
   serial = 0,
   disposed = false
@@ -198,6 +294,7 @@ function invalidate() {
   error.value = ''
 }
 async function open() {
+  selectedStudent.value = draggingStudent.value = null
   context.value = null
   preview.value = null
   error.value = ''
@@ -518,7 +615,7 @@ select {
   flex-wrap: wrap;
   gap: 7px;
 }
-.member-tags > span {
+.member-tags > button {
   border: 1px solid #d7dfe8;
   border-radius: 5px;
   background: #fff;
@@ -530,6 +627,26 @@ select {
   border-color: #d6af5d;
   color: #895013;
   font-weight: 750;
+}
+.member-tags > button:not(:disabled) {
+  cursor: grab;
+  border: 1px solid #bdd4e8;
+}
+.member-tags > button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.drop-active {
+  outline: 2px dashed #8bb4d0;
+  outline-offset: -4px;
+}
+.move-here {
+  margin-top: 12px;
+  background: #e5f1ff;
+  color: #205c91;
+}
+.move-help {
+  margin-top: 12px;
 }
 .member-tags small {
   margin-left: 5px;

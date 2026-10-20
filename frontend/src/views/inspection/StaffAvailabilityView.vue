@@ -421,7 +421,7 @@ async function save() {
   }
 }
 async function onTeamsSaved(data) {
-  week.value = data.day
+  if (!data.adjusted) week.value = data.day
   await nextTick()
   clearTimeout(timer)
   await load()

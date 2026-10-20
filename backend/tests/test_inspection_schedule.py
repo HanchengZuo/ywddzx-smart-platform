@@ -80,7 +80,8 @@ class ScheduleDatabaseTest(unittest.TestCase):
           INSERT INTO users VALUES(1,'root','管理','root','active'),(2,'staff','步雪琼','supervisor','active'),
             (3,'lead','孔德辰','supervisor_manager','active'),(4,'finance','财务人员','finance','active');
           CREATE TABLE stations(id int PRIMARY KEY,region text,station_name text,
-            include_offline_plan boolean DEFAULT true,include_online_plan boolean DEFAULT true);
+            include_offline_plan boolean DEFAULT true,include_online_plan boolean DEFAULT true,
+            address text,longitude numeric DEFAULT 121.5,latitude numeric DEFAULT 31.2);
           INSERT INTO stations(id,region,station_name) VALUES(1,'松金片区','沈浦泾南'),(2,'浦东片区','国郃'),
             (3,'松金片区','泗砖'),(4,'松金片区','新站'),(5,'松金片区','金朝');
           UPDATE stations SET include_offline_plan=false WHERE id=5;
@@ -94,8 +95,11 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/515_inspection_schedule.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/520_staff_scheduling.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/525_staff_daily_teams.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/530_schedule_dispatch.sql').read_text())
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')
         self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('步雪琼','2026-10-20',true,1,1),('孔德辰','2026-10-20',true,1,1)")
+        self.cur.execute('INSERT INTO staff_daily_teams(day,assignments,revision,updated_by) VALUES(%s,%s,1,1)',
+          ('2026-10-20', json.dumps([dict(id=uid,display_name=name,position='管理人员',mode='offline',leader_id=uid,group_name=f'外勤{name}组') for uid,name in [(2,'步雪琼'),(3,'孔德辰')]], ensure_ascii=False)))
         self.admin.commit()
         self.actor = dict(id=2, username='staff', real_name='步雪琼', role='supervisor')
         self.permissions = {VIEW_PERMISSION, EDIT_PERMISSION}
@@ -123,8 +127,12 @@ class ScheduleDatabaseTest(unittest.TestCase):
         return response.json
 
     def save(self, **overrides):
-        return self.client.put('/api/inspection-schedule', json={**self.query, 'station_id': 1,
-            'column_key': 'odor', 'inspector_ids': [2, 3], 'scheduled_date':'2026-10-20', 'revision': 0, 'user_id': 1, **overrides})
+        data = {**self.query, 'station_id': 1, 'column_key': 'odor', 'inspector_ids': [2],
+                'scheduled_date':'2026-10-20', 'revision': 0, 'user_id': 1, **overrides}
+        if data['mode']=='offline' and 'cells' not in data and isinstance(data['column_key'], str) and data['column_key'] in {c[0] for c in COLUMNS['offline']}:
+            # Current UI dispatches a whole row, not the retired arbitrary multi-person cell.
+            data['cells'] = [dict(station_id=data['station_id'],column_key=key,revision=data['revision']) for key,_,_ in COLUMNS['offline']]
+        return self.client.put('/api/inspection-schedule', json=data)
 
     def record(self, station=1, table=1, inspector=3, day='2026-10-01'):
         self.cur.execute('INSERT INTO inspections(station_id,inspection_table_id,inspector_id,inspection_date) VALUES(%s,%s,%s,%s) RETURNING id', (station, table, inspector, day))
@@ -141,13 +149,13 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(self.save().status_code, 200)
         self.cur.execute('SELECT actor_id,before_ids,after_ids FROM inspection_schedule_events')
         event = self.cur.fetchone()
-        self.assertEqual(event, dict(actor_id=2, before_ids=[], after_ids=[2,3]))
+        self.assertEqual(event, dict(actor_id=2, before_ids=[], after_ids=[2]))
 
     def test_save_multi_person_clear_revision_and_rollback_on_audit_failure(self):
         self.assertEqual(self.save().json['revision'], 1)
         cell = self.board()['rows'][0]['cells']['odor']
         self.assertEqual(cell['status'], 'assigned')
-        self.assertEqual({p['id'] for p in cell['assignees']}, {2,3})
+        self.assertEqual({p['id'] for p in cell['assignees']}, {2})
         self.assertEqual(cell['updated_by_name'], '步雪琼')
         self.assertEqual(self.save(revision=1, inspector_ids=[]).json['revision'], 2)
         self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'], 'unassigned')
@@ -207,7 +215,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual({p['id'] for p in self.board()['inspectors']}, {3})
         self.assertEqual(self.save().status_code, 400)
         self.cur.execute('UPDATE inspection_tables SET is_active=false WHERE id=1'); self.admin.commit()
-        self.assertEqual(self.save().status_code, 403)
+        self.assertEqual(self.save().status_code, 409)
 
     def test_transaction_locks_station_and_same_cell_across_connections(self):
         chosen, start, end = period(self.query)
