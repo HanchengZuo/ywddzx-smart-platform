@@ -18,12 +18,34 @@
       <div class="auto-body">
         <p class="method">
           {{ day }} ·
-          仅选择档期明确有空、今天没有安排或实绩的人员。每人自动安排一个站点，同站尚未排班的同类检查表一起派工，不覆盖手动排班。
+          仅选择档期明确有空、今天没有站点安排或实绩的人员。现场按已保存外勤组整行派站，视频每格一人，不覆盖已有计划。
         </p>
         <p class="method">
-          按本自然季度的现场 /
-          视频站点任务组平衡：实际记录与待执行计划合并去重，同站同日多表计一组，优先补足个人较少的一类。日期不同的同站任务仍分别计数；某类无待排项目时服从实际剩余需求。
+          现场从{{
+            SCHEDULE_ORIGIN
+          }}出发，按坐标聚类并优化往返距离；只作顺路参考，不含实时路况、道路和过江通道。缺失坐标的站点不自动派现场任务。视频按本季度工作量优先安排较少者。
         </p>
+        <div class="quota-controls">
+          <label
+            >现场每组站点数<input
+              v-model.number="offlineCount"
+              type="number"
+              min="1"
+              max="10"
+              :disabled="loading || saving"
+              @input="stale = true"
+          /></label>
+          <label
+            >视频每人站点数<input
+              v-model.number="onlineCount"
+              type="number"
+              min="1"
+              max="10"
+              :disabled="loading || saving"
+              @input="stale = true"
+          /></label>
+          <small>调整数量后点击“重新预览”</small>
+        </div>
         <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <template v-if="preview">
@@ -37,7 +59,7 @@
             ><small>{{ preview.quarter }}平衡口径</small>
           </div>
           <div v-if="preview.groups.length" class="proposal-list">
-            <article v-for="group in preview.groups" :key="group.person.id">
+            <article v-for="group in preview.groups" :key="group.mode + ':' + group.station_id">
               <div class="proposal-person">
                 <strong>{{ group.group_name || group.person.display_name }}</strong
                 ><span :class="group.mode">{{
@@ -49,6 +71,10 @@
               </p>
               <b>{{ group.region }} · {{ group.station_name }}</b>
               <p>{{ group.cells.map((c) => c.label).join('、') }}</p>
+              <p v-if="group.mode === 'offline'">
+                路线第 {{ group.route_order }} 站 · 本组往返直线距离约
+                {{ group.route_km }} km<br />{{ group.address }}
+              </p>
               <small
                 >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
                 {{ group.before.online }} → {{ group.after.online }} 组</small
@@ -58,6 +84,7 @@
           <p v-else class="empty">
             没有可以自动安排的组合。请先设置今日人员有空，或核对当前季度 / 月份是否还有待排班项目。
           </p>
+          <p v-for="warning in preview.warnings" :key="warning" class="method">{{ warning }}</p>
           <details v-if="preview.excluded.length" class="excluded">
             <summary>未参与自动派工的人员（{{ preview.excluded.length }}）</summary>
             <p v-for="person in preview.excluded" :key="person.name">
@@ -85,6 +112,7 @@
 import axios from 'axios'
 import { onBeforeUnmount, ref } from 'vue'
 import { shanghaiToday } from '@/utils/staffScheduling'
+const SCHEDULE_ORIGIN = '上海市浦东新区世纪大道1200号'
 const emit = defineEmits(['scheduled'])
 let permissions = {}
 try {
@@ -102,6 +130,8 @@ const dialog = ref(null),
   error = ref(''),
   stale = ref(false),
   day = ref(shanghaiToday())
+const offlineCount = ref(2),
+  onlineCount = ref(3)
 let controller,
   disposed = false,
   serial = 0
@@ -140,7 +170,12 @@ async function createPreview() {
   try {
     const { data } = await axios.post(
       '/api/inspection-schedule/auto',
-      { action: 'preview', day: day.value },
+      {
+        action: 'preview',
+        day: day.value,
+        offline_count: offlineCount.value,
+        online_count: onlineCount.value,
+      },
       { signal: controller.signal, timeout: 60000 },
     )
     if (ticket === serial && !disposed) {
@@ -161,7 +196,13 @@ async function confirm() {
   try {
     const { data } = await axios.post(
       '/api/inspection-schedule/auto',
-      { action: 'confirm', day: day.value, token: preview.value.token },
+      {
+        action: 'confirm',
+        day: day.value,
+        token: preview.value.token,
+        offline_count: offlineCount.value,
+        online_count: onlineCount.value,
+      },
       { timeout: 120000 },
     )
     if (!disposed) {
@@ -186,6 +227,33 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.quota-controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: end;
+  padding: 16px;
+  background: #eef4fa;
+  border-radius: 12px;
+  margin: 14px 0;
+}
+.quota-controls label {
+  display: grid;
+  gap: 8px;
+  color: #3d5e7b;
+  font-size: 12px;
+}
+.quota-controls input {
+  width: 100px;
+  padding: 9px;
+  border: 1px solid #bfd0e1;
+  border-radius: 7px;
+  font: inherit;
+}
+.quota-controls small {
+  font-size: 11px;
+  color: #738aa0;
+}
 .auto-trigger {
   border: 1px solid #2866b5;
   background: #2866b5;

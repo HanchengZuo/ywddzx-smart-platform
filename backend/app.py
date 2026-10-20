@@ -16575,8 +16575,9 @@ def get_notification_summary():
         inspection_sign_pending_count = get_inspection_sign_pending_count_for_user(cur, current_user)
         my_pending_rectification_count = get_my_pending_rectification_count_for_user(cur, current_user)
         appeal_counts = appeal_notification_counts(cur, current_user, globals())
-        from inspection_schedule_tasks import task_count
+        from inspection_schedule_tasks import task_count, personal_agenda
         schedule_task_pending_count = task_count(cur, current_user['id'])
+        schedule_agenda = personal_agenda(cur, current_user['id'])
         conn.commit()
         return jsonify(
             {
@@ -16586,6 +16587,7 @@ def get_notification_summary():
                 "my_pending_rectification_count": my_pending_rectification_count,
                 "appeal_notification_count": appeal_counts['total'],
                 "schedule_task_pending_count": schedule_task_pending_count,
+                "schedule_agenda": schedule_agenda,
             }
         )
     except Exception as e:

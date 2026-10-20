@@ -8,7 +8,8 @@ from datetime import timedelta
 from flask import g, jsonify, request
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from staff_availability import STAFF, VIEW, EDIT, available_people
-from staff_daily_teams import group_assignments, random_teams, save_teams, team_days
+from inspection_schedule import sync_field_team_plans
+from staff_daily_teams import group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
 
 
 def context(cur, day):
@@ -41,7 +42,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
             else:
                 if not can_edit: raise PermissionError('当前账号不能安排今日巡检。')
                 data = request.get_json(silent=True)
-                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'cancel'):
+                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'cancel', 'move'):
                     raise ValueError('请选择预览、确认或撤销今日分组。')
                 if day_value(data.get('day')) != day:
                     raise ScheduleConflict('日期已变化，请重新打开今日巡检安排。')
@@ -52,7 +53,18 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                 result = context(cur, day)
                 if type(data.get('revision')) is not int or data['revision'] != result['revision']:
                     raise ScheduleConflict('今日分组已被修改，请重新载入后安排。')
-                if data['action'] == 'cancel':
+                if data['action'] == 'move':
+                    require_workday(cur, day)
+                    if type(data.get('student_id')) is not int or (data.get('leader_id') is not None and type(data['leader_id']) is not int):
+                        raise ValueError('分组人员不合法。')
+                    before = [p for group in result['groups'] for p in group['members']]
+                    assignments = move_student(result['people'], before, data['student_id'], data.get('leader_id'))
+                    if assignments != before:
+                        result['revision'] = save_teams(cur, actor, day, assignments, before)
+                        sync_field_team_plans(cur, actor, day)
+                        conn.commit()
+                    result['groups'] = group_assignments(assignments)
+                elif data['action'] == 'cancel':
                     before = [p for group in result['groups'] for p in group['members']]
                     if not before: raise ScheduleConflict('今日分组已撤销，请重新载入。')
                     result['revision'] = save_teams(cur, actor, day, [], before)
@@ -69,6 +81,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     token = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
                     if data['action'] == 'confirm':
                         if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
+                        validate_dispatched_teams(cur, day, assignments)
                         before = [p for group in result['groups'] for p in group['members']]
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                         conn.commit()

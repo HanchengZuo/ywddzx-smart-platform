@@ -1,24 +1,24 @@
 <template>
-  <button type="button" class="task-banner" @click="open">
+  <button type="button" class="task-banner" :class="{ compact }" :title="agendaLabel" @click="open">
     <span class="task-icon">班</span
     ><span
       ><strong
-        >巡检待办 <b>{{ count }}</b></strong
-      ><small>今天的安排与逾期未完成任务；有巡检记录后自动销项</small></span
-    ><em>查看任务 →</em>
+        >今日安排 <b v-if="count" aria-live="polite">{{ count }}</b></strong
+      ><small>{{ agendaLabel }}</small></span
+    >
   </button>
   <Teleport to="body"
     ><dialog
       ref="dialog"
       class="tasks-dialog"
-      aria-labelledby="schedule-inbox-title"
+      :aria-labelledby="titleId"
       @cancel.prevent="close"
       @click="backdrop"
     >
       <header>
         <div>
           <small>MY INSPECTION TASKS</small>
-          <h3 id="schedule-inbox-title">
+          <h3 :id="titleId">
             我的巡检待办 <span>{{ total }}</span>
           </h3>
         </div>
@@ -26,8 +26,28 @@
       </header>
       <div class="tasks-body">
         <p class="method">
-        按计划日期、站点分组。同站同表产生本周期的巡检记录即自动完成，不要求审核，也不限制录入人；提前或跨周期补做也可完成。实际执行人仍以记录为准。未完成不会因日期过期而消失，重新派工或取消会留痕。
+          现场为当日行程，次日自动归档，不要求生成记录销项；视频任务需同站同表有巡检记录才完成，不要求审核，历史未完成项持续保留。实际执行人与计划分别留存。
         </p>
+        <section class="agenda-card">
+          <span>{{ currentAgenda?.day || today }} · 我的档期</span
+          ><strong>{{ agendaLabel }}</strong>
+          <div>
+            <b class="field">现场 {{ currentAgenda?.offline?.count || 0 }} 项</b
+            ><b>视频 {{ currentAgenda?.online?.count || 0 }} 项</b
+            ><b class="late">其中历史未完成 {{ currentAgenda?.online?.overdue || 0 }} 项</b>
+          </div>
+        </section>
+        <nav class="task-tabs" aria-label="待办分类">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            type="button"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
+          >
+            {{ tab.name }}
+          </button>
+        </nav>
         <p v-if="loading && !tasks.length" class="empty" role="status">正在核对巡检任务…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <article v-for="group in groups" :key="group.key" class="task-group">
@@ -36,7 +56,13 @@
             ><strong>{{ group.station_name }}</strong
             ><small :class="{ overdue: group.scheduled_date < today }"
               >{{ group.scheduled_date }} ·
-              {{ group.scheduled_date < today ? '逾期未完成' : '今天安排' }}</small
+              {{
+                group.scheduled_date < today
+                  ? '历史未完成'
+                  : group.mode === 'offline'
+                    ? '今日行程 · 次日归档'
+                    : '今天安排'
+              }}</small
             >
           </div>
           <div v-for="task in group.tasks" :key="task.id" class="task-item">
@@ -50,7 +76,7 @@
             </button>
           </div>
         </article>
-        <p v-if="!loading && !total" class="empty">所有巡检待办已完成。</p>
+        <p v-if="!loading && !groups.length" class="empty">当前分类没有巡检待办。</p>
         <p v-if="total > tasks.length" class="method">
           当前显示最早的{{ tasks.length }}项，完成后继续展示剩余任务。
         </p>
@@ -66,12 +92,17 @@
 </template>
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { taskGroups } from '@/utils/staffScheduling'
-const props = defineProps({ count: { type: Number, required: true } })
+const props = defineProps({
+  compact: { type: Boolean, default: false },
+  count: { type: Number, required: true },
+  agenda: { type: Object, default: null },
+})
 const emit = defineEmits(['count'])
+const titleId = 'schedule-inbox-' + useId()
 const router = useRouter(),
   dialog = ref(null),
   tasks = ref([]),
@@ -80,7 +111,35 @@ const router = useRouter(),
   loading = ref(false),
   error = ref(''),
   synced = ref('')
-const groups = computed(() => taskGroups(tasks.value))
+const loadedAgenda = ref(null),
+  activeTab = ref('all')
+const currentAgenda = computed(() => loadedAgenda.value || props.agenda)
+const agendaLabel = computed(() => {
+  const agenda = currentAgenda.value
+  if (agenda?.assignment) return agenda.assignment.group_name
+  return agenda?.available === false
+    ? '没空 · ' + (agenda.reason || '未填原因')
+    : agenda?.available === true
+      ? '今日有空 · 等待安排'
+      : '档期未确认'
+})
+const tabs = [
+  { key: 'all', name: '全部' },
+  { key: 'offline', name: '今日现场' },
+  { key: 'online', name: '今日视频' },
+  { key: 'overdue', name: '历史视频未完成' },
+]
+const groups = computed(() =>
+  taskGroups(
+    tasks.value.filter(
+      (task) =>
+        activeTab.value === 'all' ||
+        (activeTab.value === 'overdue'
+          ? task.mode === 'online' && task.scheduled_date < today.value
+          : task.mode === activeTab.value && task.scheduled_date === today.value),
+    ),
+  ),
+)
 let permissions = {}
 try {
   permissions = JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -107,6 +166,7 @@ async function load() {
     tasks.value = data.tasks
     total.value = data.count
     today.value = data.today
+    loadedAgenda.value = data.agenda || null
     error.value = ''
     synced.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     emit('count', data.count)
@@ -132,6 +192,7 @@ function close() {
   loading.value = false
   polling.pause()
   dialog.value?.close()
+  loadedAgenda.value = null
 }
 function backdrop(event) {
   if (event.target === dialog.value) {
@@ -177,13 +238,30 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.task-banner.compact {
+  padding: 6px 8px;
+  gap: 0;
+  min-height: 34px;
+  flex-shrink: 0;
+}
+.task-banner.compact .task-icon,
+.task-banner.compact small {
+  display: none;
+}
+.task-banner.compact strong {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.compact strong b {
+  margin-left: 3px;
+  padding: 2px 4px;
+}
 .task-banner {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 100%;
-  margin-bottom: 14px;
-  padding: 12px 16px;
+  max-width: 240px;
+  padding: 9px 12px;
   border: 1px solid #c7dbef;
   border-radius: 12px;
   background: linear-gradient(110deg, #edf5ff, #fbfdff);
@@ -191,6 +269,60 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: pointer;
   font: inherit;
+}
+.agenda-card {
+  padding: 16px;
+  border: 1px solid #ccdeeb;
+  border-radius: 12px;
+  background: #f1f7fc;
+  margin-bottom: 16px;
+}
+.agenda-card > span {
+  display: block;
+  font-size: 11px;
+  color: #65809a;
+}
+.agenda-card > strong {
+  display: block;
+  margin: 8px 0 14px;
+  color: #234e73;
+}
+.agenda-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agenda-card b {
+  padding: 6px 8px;
+  background: #dbeaff;
+  color: #2d6597;
+  font-size: 11px;
+  border-radius: 6px;
+}
+.agenda-card .field {
+  background: #ffedca;
+  color: #9a651d;
+}
+.agenda-card .late {
+  background: #ffe4df;
+  color: #ae5338;
+}
+.task-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 16px;
+}
+.task-tabs .active {
+  background: #235f96;
+  color: white;
+  border-color: #235f96;
+}
+.task-banner small {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .task-icon {
   display: grid;
@@ -207,8 +339,8 @@ onBeforeUnmount(() => {
 .task-banner b {
   margin-left: 8px;
   padding: 2px 6px;
-  background: #fff0e4;
-  color: #b27125;
+  background: #c64f40;
+  color: #fff;
   border-radius: 5px;
 }
 .task-banner small {
@@ -404,6 +536,19 @@ footer span {
   }
   .task-item {
     align-items: flex-start;
+  }
+}
+@media (min-width: 769px) and (max-width: 1500px) {
+  .task-banner {
+    gap: 7px;
+    padding: 8px;
+  }
+  .task-banner small {
+    display: none;
+  }
+  .task-icon {
+    width: 28px;
+    height: 28px;
   }
 }
 </style>

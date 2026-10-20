@@ -111,19 +111,19 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertIn('每次只能保存一个单元格', response.json['error'])
         self.cur.execute("SELECT 1 FROM staff_availability WHERE day='2026-10-19'")
         self.assertIsNone(self.cur.fetchone())
-        edits = [dict(station_id=1, column_key='odor', revision=0), dict(station_id=2, column_key='finance', revision=9)]
+        edits = [dict(station_id=sid, column_key=key, revision=9 if sid==2 else 0) for sid in (1,2) for key,_,_ in schedule_tests.COLUMNS['offline']]
         self.assertEqual(self.save(cells=edits).status_code, 409)
         self.assertEqual(self.counts(), dict(cells=0, tasks=0))
-        edits[1]['revision'] = 0
+        for edit in edits: edit['revision'] = 0
         response = self.save(cells=edits)
         self.assertEqual(response.status_code, 200, response.json)
-        self.assertEqual(response.json['saved_count'], 2)
-        self.assertEqual(self.counts(), dict(cells=2, tasks=4))
+        self.assertEqual(response.json['saved_count'], 12)
+        self.assertEqual(self.counts(), dict(cells=12, tasks=12))
         self.assertEqual(self.availability(day='2026-10-20', available=False).status_code, 409)
         self.cur.execute('ALTER TABLE inspection_schedule_tasks ADD CHECK(false) NOT VALID'); self.admin.commit()
         with self.assertLogs(level='ERROR'):
             self.assertEqual(self.save(station_id=3).status_code, 500)
-        self.assertEqual(self.counts()['cells'], 2)
+        self.assertEqual(self.counts()['cells'], 12)
 
     def test_single_availability_save_is_versioned_and_rolls_back_on_audit_failure(self):
         self.assertEqual(self.availability(available=False, reason='出差').status_code, 200)
@@ -149,7 +149,7 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(person['cells']['2026-10-19']['actual_modes'], [dict(mode='online', count=1)])
         self.assertEqual(self.save(inspector_ids=[], revision=1).status_code, 200)
         person = self.client.get('/api/staff-availability?week=2026-10-19').json['people'][0]
-        self.assertEqual(person['cells']['2026-10-20']['planned_modes'], [])
+        self.assertEqual(person['cells']['2026-10-20']['planned_modes'], ['offline'], 'daily team remains separate from station cancellation')
 
     def test_automatic_schedule_uses_the_same_full_board_for_authorized_area_users(self):
         self.availability(); self.availability(name='孔德辰')
@@ -201,7 +201,7 @@ class StaffDatabaseTests(unittest.TestCase):
         response = self.client.post('/api/inspection-schedule/auto', json=dict(action='preview', day='2026-10-19'))
         self.assertEqual(response.status_code, 200, response.json)
         preview = response.json
-        self.assertEqual({g['mode'] for g in preview['groups']}, {'offline', 'online'})
+        self.assertEqual({g['mode'] for g in preview['groups']}, {'online'}, 'no saved field team today: only video is allowed')
         self.assertEqual(self.counts(), dict(cells=0, tasks=0))
         self.assertEqual(self.availability(available=False).status_code, 200)
         self.assertEqual(self.client.post('/api/inspection-schedule/auto', json=dict(action='confirm', day='2026-10-19', token=preview['token'])).status_code, 409)
@@ -216,20 +216,23 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(self.counts()['cells'], preview['cell_count'])
 
     def test_tasks_persist_overdue_complete_unreviewed_and_reopen_after_record_delete(self):
-        self.assertEqual(self.save(inspector_ids=[2, 3]).status_code, 200)
+        def video_save(**overrides):
+            return self.client.put('/api/inspection-schedule',json=dict(mode='online',year=2026,month=10,station_id=1,column_key='safety',inspector_ids=[2],scheduled_date='2026-10-20',revision=0,**overrides))
+        self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
+        self.assertEqual(video_save().status_code, 200)
         self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0, 'future task is not due yet')
         with patch('inspection_schedule_tasks.today', return_value=date(2026, 10, 23)):
             response = self.client.get('/api/my-schedule-tasks?user_id=3')
             self.assertEqual(response.json['count'], 1)
             self.assertEqual(response.json['tasks'][0]['scheduled_date'], '2026-10-20')
             self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
-            record = self.record(day='2026-10-21', inspector=4)  # A different colleague can satisfy coverage.
+            record = self.record(day='2026-10-21', inspector=4, table=7)  # A different colleague can satisfy coverage.
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
             self.cur.execute('DELETE FROM inspections WHERE id=%s', (record,)); self.admin.commit()
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
         with patch('inspection_schedule_tasks.today', return_value=date(2027, 1, 6)):
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
-            self.record(day='2027-01-05', inspector=2)
+            self.record(day='2027-01-05', inspector=2,table=7)
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
 
     def test_reassignment_cancels_old_task_with_audit_and_new_task_is_personal(self):
@@ -239,9 +242,9 @@ class StaffDatabaseTests(unittest.TestCase):
         with patch('inspection_schedule_tasks.today', return_value=date(2026, 10, 20)):
             self.assertEqual(self.client.get('/api/my-schedule-tasks?user_id=3').json['count'], 0)
             self.actor = dict(id=3, username='lead', real_name='孔德辰', role='supervisor_manager')
-            self.assertEqual(self.client.get('/api/my-schedule-tasks?user_id=2').json['count'], 1)
+            self.assertEqual(self.client.get('/api/my-schedule-tasks?user_id=2').json['count'], 6)
         self.cur.execute('SELECT status FROM inspection_schedule_tasks ORDER BY id')
-        self.assertEqual([r['status'] for r in self.cur.fetchall()], ['cancelled', 'pending'])
+        self.assertEqual([r['status'] for r in self.cur.fetchall()], ['cancelled']*6 + ['pending']*6)
         self.cur.execute('SELECT before_ids,after_ids,before_date,after_date FROM inspection_schedule_events ORDER BY id DESC LIMIT 1')
         event = self.cur.fetchone()
         self.assertEqual((event['before_ids'], event['after_ids']), ([2], [3]))
@@ -262,7 +265,7 @@ class StaffDatabaseTests(unittest.TestCase):
             with reader.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout='300ms'")
                 with patch('inspection_schedule_tasks.today', return_value=date(2026,10,20)):
-                    self.assertEqual(task_count(cur, 2), 1)
+                    self.assertEqual(task_count(cur, 2), 6)
         finally: writer.close(); reader.close()
 
     def test_reassign_after_deleted_completion_does_not_resurrect_duplicate_pending_tasks(self):
@@ -275,6 +278,6 @@ class StaffDatabaseTests(unittest.TestCase):
         with patch('inspection_schedule_tasks.today', return_value=date(2026,10,20)):
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
             self.actor = dict(id=3,username='lead',real_name='孔德辰',role='supervisor_manager')
-            self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
+            self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 6)
         self.cur.execute("SELECT status FROM inspection_schedule_tasks ORDER BY id")
-        self.assertEqual([r['status'] for r in self.cur.fetchall()], ['cancelled','pending'])
+        self.assertEqual([r['status'] for r in self.cur.fetchall()], ['cancelled']*6+['pending']*6)

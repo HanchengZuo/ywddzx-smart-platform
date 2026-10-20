@@ -10,6 +10,7 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from scheduling_map import period
 from staff_availability import available_people
 from staff_daily_teams import group_assignments, team_days
+from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, length
 
 
 def workload(cur, ids, start, end):
@@ -26,10 +27,11 @@ def workload(cur, ids, start, end):
       SELECT task.user_id,task.mode,task.scheduled_date,task.station_id FROM inspection_schedule_tasks task
       WHERE task.user_id=ANY(%s) AND task.status='pending' AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
         AND task.scheduled_date >= %s AND task.scheduled_date < %s
+        AND (task.mode='online' OR task.scheduled_date>=%s)
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.station_id=task.station_id
         AND ins.inspection_table_id=task.table_id
         AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
-    ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), ids, start, end, today()))
+    ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), ids, start, end, today(), today()))
     result = {uid: dict(offline=0, online=0) for uid in ids}
     for r in cur.fetchall(): result[r['uid']][r['mode']] = r['n']
     return result
@@ -54,8 +56,15 @@ def balanced_allocation(people, demands, loads):
     return result
 
 
-def proposal(cur, actor, day):
+def proposal(cur, actor, day, options=None):
     require_workday(cur, day)
+    if day != today(): raise ValueError('一键排班只安排今天，请刷新日期。')
+    options = options or {}
+    quotas = {mode: options.get(key, default) for mode, key, default in
+              [('offline', 'offline_count', 2), ('online', 'online_count', 3)]}
+    if any(type(v) is not int or not 1 <= v <= 10 for v in quotas.values()):
+        raise ValueError('每组或每人的站点数量请设置为1至10。')
+    origin = ORIGIN_POINT
     people = available_people(cur, day)
     eligible = [p for p in people if p['id'] and p['available'] is True and not p['station_modes'] and not p['actual_modes']]
     demands, periods = {}, {}
@@ -68,24 +77,51 @@ def proposal(cur, actor, day):
         for row in board['rows']:
             cells = [dict(station_id=row['station_id'], column_key=c['key'], revision=row['cells'][c['key']]['revision'], label=c['label'])
                      for c in board['columns'] if row['cells'][c['key']]['status'] == 'unassigned']
-            if cells: demands[mode].append(dict(station_id=row['station_id'], station_name=row['station_name'], region=row['region'], cells=cells))
+            if cells and not any(c['status']=='assigned' for c in row['cells'].values()):
+                demands[mode].append(dict(station_id=row['station_id'], station_name=row['station_name'],
+                  region=row['region'], address=row['address'], longitude=row['longitude'], latitude=row['latitude'], cells=cells))
     _, start, end = periods['offline']
     loads = workload(cur, [p['id'] for p in eligible], start, end)
     groups = []
     eligible_by_id = {p['id']: p for p in eligible}
     # Keep a saved leader/student team together when converting personnel plans to station tasks.
     saved_team = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
+    field_teams = []
     for team in group_assignments(saved_team.get('assignments', [])):
         ids = [p['id'] for p in team['members']]
-        if not all(uid in eligible_by_id for uid in ids) or not demands[team['mode']]: continue
-        group = demands[team['mode']].pop(0)
-        representative = eligible_by_id[team['leader_id'] or ids[0]]
-        before = dict(loads[representative['id']]); after = dict(before); after[team['mode']] += 1
-        groups.append(dict(**group, mode=team['mode'], person=representative, before=before, after=after,
-                           inspector_ids=ids, group_name=team['name'], team_members=team['members']))
-    groups += balanced_allocation([p for p in eligible if not p['daily_assignment']], demands, loads)
-    token = hashlib.sha256(json.dumps(dict(actor=actor['id'], day=day.isoformat(), groups=groups), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if team['mode'] == 'offline' and all(uid in eligible_by_id for uid in ids): field_teams.append(team)
+    field_teams.sort(key=lambda t: (loads[t['leader_id']]['offline'], t['leader_id']))
+    warnings = []
+    missing = [s['station_name'] for s in demands['offline'] if not coordinate(s)]
+    if missing: warnings.append('以下站点缺少有效坐标，未自动派现场路线：'+'、'.join(missing))
+    if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整外勤组安排。')
+    routes = field_routes(demands['offline'], len(field_teams), quotas['offline'], origin)
+    for team, route in zip(field_teams, routes):
+        representative = eligible_by_id[team['leader_id']]
+        before = dict(loads[representative['id']])
+        for index, station in enumerate(route):
+            after = dict(before); after['offline'] += 1
+            groups.append(dict(**station, mode='offline', person=representative, before=before, after=after,
+                inspector_ids=[p['id'] for p in team['members']], group_name=team['name'], team_members=team['members'],
+                route_order=index+1, route_km=round(length(route, origin), 1)))
+            before = after
+    video_people = [p for p in eligible if not p['daily_assignment'] or p['daily_assignment']['mode']=='online']
+    video_people.sort(key=lambda p: (loads[p['id']]['online'], p['sequence']))
+    # Round robin shares scarce remaining stations before giving anyone a second station.
+    for _ in range(quotas['online']):
+        for p in video_people:
+            if not demands['online']: break
+            station = demands['online'].pop(0)
+            before = dict(loads[p['id']]); after = dict(before); after['online'] += 1
+            groups.append(dict(**station, mode='online', person=p, before=before, after=after,
+                               inspector_ids=[p['id']], group_name=p['display_name']))
+            loads[p['id']] = after
+    evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, origin=origin,
+                    team_revision=saved_team.get('revision', 0))
+    token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
+        offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
+        warnings=warnings, route_method='按站点坐标聚类和2-opt优化往返直线距离，不含道路、过江通道和实时路况；出行前请核对导航。',
         available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
         excluded=[dict(name=p['display_name'], reason='账号未唯一匹配' if not p['id'] else '当天已有安排或实绩' if p['planned_modes'] or p['actual_modes'] else p['reason'] or '未确认有空')
                   for p in people if p not in eligible]), periods
@@ -107,7 +143,7 @@ def register_schedule_automation(app, *, connect, has_permission):
             day = day_value(data.get('day', today().isoformat()))
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             if data['action'] == 'confirm': lock_schedule(cur)
-            result, periods = proposal(cur, actor, day)
+            result, periods = proposal(cur, actor, day, data)
             if data['action'] == 'confirm':
                 if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
                 if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')

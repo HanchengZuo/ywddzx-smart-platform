@@ -9,8 +9,11 @@ def sync_tasks(cur, user_id):
     cur.execute('SELECT pg_try_advisory_xact_lock(9801,1) AS acquired')
     if not cur.fetchone()['acquired']:
         return  # A dispatch is in progress; the next notification refresh reconciles it.
+    # Field dispatch is a day plan, not a record-completion obligation. Keep its audit history.
+    cur.execute('''UPDATE inspection_schedule_tasks SET status='expired',expired_at=CURRENT_TIMESTAMP
+      WHERE user_id=%s AND mode='offline' AND status IN ('pending','completed') AND scheduled_date<%s''', (user_id, today()))
     cur.execute('''UPDATE inspection_schedule_tasks task SET status='pending',completed_at=NULL,completion_inspection_id=NULL
-      WHERE user_id=%s AND status='completed' AND NOT EXISTS (
+      WHERE user_id=%s AND mode='online' AND status='completed' AND NOT EXISTS (
         SELECT 1 FROM inspections ins WHERE ins.id=task.completion_inspection_id
         AND ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
         AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
@@ -26,7 +29,7 @@ def sync_tasks(cur, user_id):
       JOIN inspections ins ON ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
         AND ins.inspection_date >= task.period_start
         AND ins.inspection_date <= %s
-      WHERE task.user_id=%s AND task.status='pending'
+      WHERE task.user_id=%s AND task.mode='online' AND task.status='pending'
       GROUP BY task.id
     ) UPDATE inspection_schedule_tasks task SET status='completed',completion_inspection_id=matches.inspection_id,
       completed_at=CURRENT_TIMESTAMP FROM matches WHERE task.id=matches.id AND task.status='pending' ''', (today(), user_id))
@@ -34,8 +37,24 @@ def sync_tasks(cur, user_id):
 
 def task_count(cur, user_id):
     sync_tasks(cur, user_id)
-    cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s", (user_id, today()))
+    cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s AND (mode='online' OR scheduled_date=%s)", (user_id, today(), today()))
     return int(cur.fetchone()['n'])
+
+
+def personal_agenda(cur, user_id):
+    # Self-only data, independent of schedule administration privileges.
+    cur.execute('''SELECT u.real_name,a.available,a.reason,d.assignments FROM users u
+      LEFT JOIN staff_availability a ON a.person_name=TRIM(u.real_name) AND a.day=%s
+      LEFT JOIN staff_daily_teams d ON d.day=%s WHERE u.id=%s''', (today(), today(), user_id))
+    row = cur.fetchone() or {}
+    assignment = next((p for p in row.get('assignments') or [] if p['id'] == user_id), None)
+    cur.execute('''SELECT mode,COUNT(*) AS n,COUNT(*) FILTER(WHERE scheduled_date<%s) AS overdue
+      FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s
+      AND (mode='online' OR scheduled_date=%s) GROUP BY mode''', (today(), user_id, today(), today()))
+    counts = {r['mode']: dict(count=r['n'], overdue=r['overdue']) for r in cur.fetchall()}
+    return dict(day=today().isoformat(), available=row.get('available'), reason=row.get('reason') or '',
+                assignment=assignment, offline=counts.get('offline', dict(count=0, overdue=0)),
+                online=counts.get('online', dict(count=0, overdue=0)))
 
 
 def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start):
@@ -74,10 +93,12 @@ def register_schedule_tasks(app, *, connect):
             cur.execute('''SELECT id,mode,station_id,station_name,table_id,table_name,
               scheduled_date::text,status,completion_inspection_id
               FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s
-              ORDER BY scheduled_date,mode,station_name,id LIMIT 500''', (actor['id'], today()))
+                AND (mode='online' OR scheduled_date=%s)
+              ORDER BY scheduled_date,mode,station_name,id LIMIT 500''', (actor['id'], today(), today()))
             rows = [dict(row) for row in cur.fetchall()]
+            agenda = personal_agenda(cur, actor['id'])
             conn.commit()
-            response = jsonify(success=True, today=today().isoformat(), count=count, tasks=rows)
+            response = jsonify(success=True, today=today().isoformat(), count=count, tasks=rows, agenda=agenda)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
         except Exception:

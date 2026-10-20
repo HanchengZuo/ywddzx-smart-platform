@@ -2,6 +2,8 @@
 import json
 import random
 from collections import defaultdict
+from datetime import timedelta
+from schedule_common import ScheduleConflict
 
 
 def team_days(cur, start, end):
@@ -25,6 +27,47 @@ def group_assignments(assignments):
             groups[key] = dict(name=key, mode=assignment['mode'], leader_id=assignment['leader_id'], members=[])
         groups[key]['members'].append(assignment)
     return list(groups.values())
+
+
+def field_team(cur, day, ids):
+    saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
+    for group in group_assignments(saved.get('assignments', [])):
+        if group['mode'] == 'offline' and group['leader_id'] and set(ids) == {p['id'] for p in group['members']}:
+            return dict(name=group['name'], leader_id=group['leader_id'], day=day.isoformat(),
+                        revision=saved['revision'], members=group['members'])
+    raise ValueError('现场排班必须选择该日期已保存的完整外勤组，请先在人员档期安排分组。')
+
+
+def move_student(people, before, student_id, leader_id):
+    """Only students move; managers and the saved roster are never supplied by the client."""
+    result = [dict(p) for p in before]
+    person = next((p for p in result if p['id'] == student_id and p['position'] == '大学生'), None)
+    eligible = next((p for p in people if p['id'] == student_id and p['available'] is True), None)
+    if not person or not eligible:
+        raise ValueError('只能移动今日有空且已分组的大学生。')
+    leader = next((p for p in result if p['id'] == leader_id and p['position'] == '管理人员'
+                   and p['mode'] == 'offline' and p['leader_id'] == p['id']), None)
+    if leader_id is not None and (not leader or not any(p['id']==leader_id and p['available'] is True for p in people)):
+        raise ValueError('请选择已保存的外勤带队组或内勤视频组。')
+    if person['leader_id'] == leader_id and person['mode'] == ('offline' if leader else 'online'):
+        return result
+    mode = 'offline' if leader else 'online'
+    if eligible.get('station_modes') and (mode != 'offline' or set(eligible['station_modes']) != {'offline'}):
+        raise ScheduleConflict('该学生已有站点派工，跨现场/视频调组前请先撤销其原站点安排。')
+    if {m['mode'] for m in eligible.get('actual_modes', [])} - {mode}:
+        raise ScheduleConflict('该学生已有另一种巡检实绩，不能改到此组。')
+    person.update(mode=mode, leader_id=leader_id, group_name=leader['group_name'] if leader else '内勤视频组')
+    return result
+
+
+def validate_dispatched_teams(cur, day, assignments):
+    groups = {g['leader_id']: {p['id'] for p in g['members']} for g in group_assignments(assignments) if g['mode']=='offline'}
+    cur.execute("""SELECT DISTINCT plan_team FROM inspection_schedule_cells WHERE mode='offline'
+      AND scheduled_date=%s AND inspector_ids<>'[]'::jsonb AND jsonb_typeof(plan_team)='object'""", (day,))
+    for row in cur.fetchall():
+        team = row['plan_team']
+        if groups.get(team['leader_id']) != {p['id'] for p in team['members']}:
+            raise ScheduleConflict('外勤组已派站点，请先撤销相关站点安排，再调整成员或重新分组。')
 
 
 def random_teams(people, manager_modes, seed):
