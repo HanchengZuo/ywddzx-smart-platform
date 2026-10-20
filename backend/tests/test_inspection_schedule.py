@@ -71,7 +71,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
-        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch'):
+        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         self.schema = 'schedule_' + uuid.uuid4().hex
         self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)

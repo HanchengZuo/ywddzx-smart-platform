@@ -24,7 +24,12 @@ class AuthenticationTests(unittest.TestCase):
 
 @unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')
 class ShelfDatabaseTests(unittest.TestCase):
-    setUp = staff_tests.StaffDatabaseTests.setUp
+    def setUp(self):
+        staff_tests.StaffDatabaseTests.setUp(self)
+        for module in ('schedule_common','staff_availability','staff_daily_team_http','inspection_schedule',
+                       'inspection_schedule_tasks','schedule_automation','inspection_schedule_dispatch','schedule_shelf_store'):
+            clock = patch(module+'.today',return_value=date(2026,10,20))
+            clock.start(); self.addCleanup(clock.stop)
     setUp_base = staff_tests.StaffDatabaseTests.setUp_base
     connect = staff_tests.StaffDatabaseTests.connect
     tearDown = staff_tests.StaffDatabaseTests.tearDown
@@ -124,7 +129,7 @@ class ShelfDatabaseTests(unittest.TestCase):
             response = self.dispatch('clear_today', board_token=token)
             self.assertEqual(response.status_code, 200, response.json)
             self.assertEqual(response.json['cleared_count'], 11)
-            self.assertEqual(len(response.json['board']['shelf']), 2)
+            self.assertEqual(response.json['board']['shelf'], [])
             self.assertEqual(self.dispatch('clear_today', board_token=token).status_code, 409)
         self.cur.execute("SELECT inspector_ids FROM inspection_schedule_cells WHERE station_id=3")
         self.assertTrue(all(r['inspector_ids'] == [2] for r in self.cur.fetchall()))
@@ -141,7 +146,8 @@ class ShelfDatabaseTests(unittest.TestCase):
             response = self.dispatch('clear_today', query, board_token=token)
         self.assertEqual(response.status_code, 200, response.json)
         self.assertEqual(response.json['cleared_count'], 3)
-        self.assertEqual(response.json['parked_count'], 1)
+        self.assertEqual(response.json['parked_count'], 0)
+        self.assertEqual(response.json['board']['shelf'], [])
         self.assertTrue(all(c['status'] == 'assigned' for c in self.board()['rows'][0]['cells'].values()))
 
     def test_permissions_and_malformed_requests_do_not_write(self):
@@ -243,13 +249,83 @@ class ShelfDatabaseTests(unittest.TestCase):
         sql=(Path(__file__).resolve().parents[1]/'db/init/540_video_schedule_rows.sql').read_text()
         self.cur.execute(sql);self.cur.execute(sql);self.admin.commit()
         cards=self.board(dict(mode='online',year=2026,month=10))['shelf']
-        self.assertEqual(len(cards),3)
+        self.assertEqual(len(cards),2)
         self.assertTrue(all(c['source_column_key']=='row' for c in cards))
         self.assertEqual({tuple(c['ids']) for c in cards},{(2,),(3,)})
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_shelf_events WHERE action='row_upgrade' AND actor_name='系统升级'")
         self.assertEqual(self.cur.fetchone()['n'],5)
         self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_shelf');self.assertEqual(self.cur.fetchone()['n'],6)
         self.assertEqual(len(self.board()['shelf']),1,'field cards are untouched')
+
+    def test_clear_today_also_discards_shelf_only_and_preserves_other_mode(self):
+        self.save(); item = self.park()
+        self.cur.execute("INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,source_station_name,source_column_key) VALUES('online','2026-10-20','[3]','视频人员','金朝','row')")
+        self.admin.commit()
+        board = self.board()
+        response = self.dispatch('clear_today',board_token=board['board_token'])
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.json['cleared_count'],0)
+        self.assertEqual(response.json['discarded_count'],1)
+        self.assertEqual(response.json['board']['shelf'],[])
+        self.assertEqual(len(self.board(dict(mode='online',year=2026,month=10))['shelf']),1)
+        self.cur.execute('SELECT status FROM inspection_schedule_shelf WHERE id=%s',(item['id'],))
+        self.assertEqual(self.cur.fetchone()['status'],'discarded')
+        self.cur.execute("SELECT actor_id,action FROM inspection_schedule_shelf_events ORDER BY id DESC LIMIT 1")
+        self.assertEqual(dict(self.cur.fetchone()),dict(actor_id=2,action='cleared_today'))
+
+    def test_expiration_is_audited_nonblocking_and_cannot_place_old_or_future_cards(self):
+        self.save(); item = self.park()
+        self.cur.execute("UPDATE inspection_schedule_shelf SET scheduled_date='2026-10-19' WHERE id=%s",(item['id'],))
+        self.cur.execute("INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,source_station_name,source_column_key) VALUES('online','2026-10-21','[3]','旧未来待选','金朝','row')")
+        self.admin.commit()
+        blocker = self.connect(); lock = blocker.cursor()
+        try:
+            lock.execute('SELECT pg_advisory_xact_lock(9801,1)')
+            self.assertEqual(self.board()['shelf'],[],'old cards hidden even while cleanup cannot acquire lock')
+            self.cur.execute('SELECT status FROM inspection_schedule_shelf WHERE id=%s',(item['id'],))
+            self.assertEqual(self.cur.fetchone()['status'],'waiting')
+        finally:
+            blocker.rollback(); lock.close(); blocker.close()
+        self.assertEqual(self.board()['shelf'],[])
+        self.cur.execute("SELECT actor_id,actor_name FROM inspection_schedule_shelf_events WHERE action='expired'")
+        self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(actor_id=None,actor_name='系统自动清理')]*2)
+        self.assertEqual(self.place(item).status_code,409)
+        self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_shelf')
+        self.assertEqual(self.cur.fetchone()['n'],2,'history is archived, not deleted')
+
+    def test_future_plan_cannot_be_parked_and_clear_rejects_new_shelf_revision(self):
+        self.save()
+        self.cur.execute("UPDATE inspection_schedule_cells SET scheduled_date='2026-10-21'")
+        self.admin.commit()
+        self.assertEqual(self.dispatch('park',cells=self.row_cells(1,1)).status_code,409)
+        self.cur.execute("UPDATE inspection_schedule_cells SET scheduled_date='2026-10-20'")
+        self.admin.commit()
+        item = self.park()
+        board = self.board()
+        self.cur.execute('UPDATE inspection_schedule_shelf SET revision=revision+1 WHERE id=%s',(item['id'],))
+        self.admin.commit()
+        self.assertEqual(self.dispatch('clear_today',board_token=board['board_token']).status_code,409)
+        self.assertEqual(len(self.board()['shelf']),1)
+
+    def test_clear_shelf_audit_failure_rolls_back_cells_tasks_and_cards(self):
+        self.save(); self.save(station_id=2); item = self.park()
+        board = self.board()
+        self.cur.execute("ALTER TABLE inspection_schedule_shelf_events ADD CHECK(action<>'cleared_today') NOT VALID")
+        self.admin.commit()
+        with self.assertLogs(level='ERROR'):
+            self.assertEqual(self.dispatch('clear_today',board_token=board['board_token']).status_code,500)
+        self.assertEqual(self.board()['shelf'],[item])
+        row = next(r for r in self.board()['rows'] if r['station_id']==2)
+        self.assertTrue(all(c['status']=='assigned' for c in row['cells'].values()))
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],6)
+
+    def test_highlight_identity_comes_from_authenticated_actor_not_query(self):
+        self.assertEqual(self.client.get('/api/inspection-schedule',query_string={**self.query,'user_id':1}).json['current_user_id'],2)
+        self.assertEqual(self.client.get('/api/staff-availability?user_id=1').json['current_user_id'],2)
+        self.save()
+        response = self.dispatch('park',cells=self.row_cells(1,1),user_id=1)
+        self.assertEqual(response.json['board']['current_user_id'],2)
 
     def test_concurrent_video_row_placements_only_one_target_wins(self):
         self.cur.execute('DELETE FROM staff_daily_teams');self.admin.commit()

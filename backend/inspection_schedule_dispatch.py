@@ -6,7 +6,7 @@ from flask import g, jsonify, request
 from inspection_schedule import (VIEW_PERMISSION, EDIT_PERMISSION, integer, read_board,
                                   save_cell, validate_edits)
 from schedule_common import ScheduleConflict, lock_schedule, today
-from schedule_shelf_store import event, park_item
+from schedule_shelf_store import event, park_item, expire_shelf, clear_today_shelf
 from scheduling_map import period
 
 
@@ -29,6 +29,8 @@ def park_saved(cur,actor,chosen,start,end,selected,*,clear=True,action='parked')
         if cell['assignees']:
             if not cell['scheduled_date']:
                 raise ValueError('旧排班缺少计划日期，请先补齐日期后再调度。')
+            if cell['scheduled_date'] != today().isoformat():
+                raise ScheduleConflict('今日调度待选区仅可调度今日计划，其他日期请直接编辑整行排班。')
             key=(row['station_id'], 'row',
                  cell['scheduled_date'], tuple(sorted(p['id'] for p in cell['assignees'])))
             buckets[key].append(cell)
@@ -45,6 +47,7 @@ def park_saved(cur,actor,chosen,start,end,selected,*,clear=True,action='parked')
 
 def apply_dispatch(cur,actor,data,chosen,start,end):
     lock_schedule(cur)
+    expire_shelf(cur, already_locked=True)
     board=read_board(cur,chosen,start,end)
     action=data.get('action')
     if action in ('park','place'):
@@ -63,8 +66,8 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         version=integer(data.get('revision'),'待选版本')
         cur.execute('SELECT * FROM inspection_schedule_shelf WHERE id=%s FOR UPDATE',(sid,))
         saved=cur.fetchone()
-        if not saved or saved['mode']!=chosen['mode'] or not start<=saved['scheduled_date']<end:
-            raise ScheduleConflict('待选安排不属于当前周期，请载入最新待选区。')
+        if not saved or saved['mode']!=chosen['mode'] or saved['scheduled_date']!=today() or not start<=today()<end:
+            raise ScheduleConflict('待选安排不是当前模式的今日安排，请载入今日调度待选区。')
         if saved['status']!='waiting' or saved['revision']!=version:
             raise ScheduleConflict('这条待选安排已被其他用户处理，请查看最新排班。')
         if action=='place':
@@ -91,8 +94,11 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
             for key,cell in row['cells'].items():
                 if cell['status']=='assigned' and cell['scheduled_date']==today().isoformat():
                     selected.append((dict(station_id=row['station_id'],column_key=key,revision=cell['revision']),row,cell))
-        cards=park_saved(cur,actor,chosen,start,end,selected)
-        return dict(parked_count=len(cards),cleared_count=len(selected),message=f'今日计划已移入待选区（{len(cards)}项），实际检查及其他日期安排保持不变。')
+        for edit,_,_ in selected:
+            save_cell(cur,actor,{**edit,'inspector_ids':[]},chosen,start,end)
+        discarded = clear_today_shelf(cur,actor,chosen['mode'])
+        return dict(parked_count=0,cleared_count=len(selected),discarded_count=discarded,
+                    message=f'已清空今日排班 {len(selected)} 格和今日待选安排 {discarded} 项，实际检查及其他日期安排保持不变。')
     raise ValueError('请选择移入待选区、安排、移除或清空今日排班。')
 
 
@@ -111,7 +117,7 @@ def register_schedule_dispatch(app,*,connect,has_permission):
             chosen,start,end=period(data)
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             result=apply_dispatch(cur,actor,data,chosen,start,end)
-            result['board']=dict(read_board(cur,chosen,start,end),can_edit=True)
+            result['board']=dict(read_board(cur,chosen,start,end),can_edit=True,current_user_id=actor['id'])
             conn.commit()
             response=jsonify(success=True,**result)
             response.headers['Cache-Control']='private, no-store'

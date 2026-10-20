@@ -107,7 +107,7 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.assertEqual(result.status_code,200,result.json)
         return result
 
-    def test_shared_save_cancel_audit_idempotence_and_station_auto_keeps_teams_together(self):
+    def test_shared_save_rejects_removed_cancel_and_station_auto_keeps_teams_together(self):
         preview=self.post().json
         self.cur.execute('SELECT count(*) AS n FROM staff_daily_teams'); self.assertEqual(self.cur.fetchone()['n'],0)
         result=self.confirm()
@@ -121,10 +121,17 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.assertEqual(set(group['inspector_ids']),{p['id'] for p in expected['members']})
         self.assertEqual(self.availability(available=False).status_code,409)
         response=self.post('cancel',revision=1)
-        self.assertEqual(response.status_code,200,response.json)
-        self.assertEqual(self.availability(available=False).status_code,200)
+        self.assertEqual(response.status_code,400,response.json)
+        self.assertEqual(self.availability(available=False).status_code,409)
         self.cur.execute('SELECT actor_id,after_value FROM staff_daily_team_events ORDER BY id')
-        rows=self.cur.fetchall(); self.assertEqual(len(rows),2); self.assertEqual(rows[-1]['after_value'],[]); self.assertEqual(rows[-1]['actor_id'],2)
+        rows=self.cur.fetchall(); self.assertEqual(len(rows),1); self.assertTrue(rows[-1]['after_value']); self.assertEqual(rows[-1]['actor_id'],2)
+        agenda = self.client.get('/api/my-schedule-tasks?user_id=3').json['agenda']
+        self.assertEqual(agenda['field_team']['name'],'外勤步雪琼组')
+        self.assertEqual({p['id'] for p in agenda['field_team']['members']},{p['id'] for p in expected['members']})
+        self.actor = dict(id=3,username='lead',role='supervisor_manager')
+        other = self.client.get('/api/my-schedule-tasks?user_id=2').json['agenda']['field_team']
+        self.assertEqual(other['leader_id'],3)
+        self.assertNotIn(2,[p['id'] for p in other['members']])
 
     def test_permissions_date_and_context_changes_block_confirmation(self):
         self.permissions.discard(EDIT)

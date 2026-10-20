@@ -44,8 +44,8 @@ def register_staff_daily_teams(app, *, connect, has_permission):
             else:
                 if not can_edit: raise PermissionError('当前账号不能安排今日巡检。')
                 data = request.get_json(silent=True)
-                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'cancel', 'move'):
-                    raise ValueError('请选择预览、确认或撤销今日分组。')
+                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'move'):
+                    raise ValueError('请选择预览、确认或调整今日分组。')
                 if day_value(data.get('day')) != day:
                     raise ScheduleConflict('日期已变化，请重新打开今日巡检安排。')
                 if data['action'] != 'preview':
@@ -66,12 +66,6 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         sync_field_team_plans(cur, actor, day)
                         conn.commit()
                     result['groups'] = group_assignments(assignments)
-                elif data['action'] == 'cancel':
-                    before = [p for group in result['groups'] for p in group['members']]
-                    if not before: raise ScheduleConflict('今日分组已撤销，请重新载入。')
-                    result['revision'] = save_teams(cur, actor, day, [], before)
-                    result['groups'] = []
-                    conn.commit()
                 else:
                     require_workday(cur, day)
                     if result['unconfirmed']:
