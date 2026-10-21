@@ -1,13 +1,16 @@
 <template>
-  <div class="report-page">
+  <div class="report-page report-studio">
     <section class="report-hero card-surface">
-      <div>
+      <div class="studio-hero-copy">
         <div class="page-kicker">AI REPORT STUDIO</div>
         <h2>报告生成</h2>
-        <p>每种报告展示最后生成成功的成稿；面板保留最新保存设置，重新生成后更新报告。</p>
+        <p>从巡检数据到正式报告，在一个工作台完成。查看成稿不会自动生成报告。</p>
+        <div class="studio-hero-meta"><span>报告与配置全局共享</span><span>保留最后一次成功成稿</span></div>
       </div>
       <div class="report-month-control">
-        <button v-if="hasReport && !isQualityMeasurementReport && !hasIssueLibrary" type="button" class="btn btn-outline" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看文字汇总' : '返回PPT预览' }}</button>
+        <span :class="['studio-status', { running: loading, pending: hasSavedReportChanges || templateUnavailable, ready: hasReport && !loading && !hasSavedReportChanges && !templateUnavailable }]" role="status"><i aria-hidden="true"></i>{{ loading ? activeJob ? '报告生成中' : '正在读取报告' : templateUnavailable ? '模板待配置' : hasSavedReportChanges ? '设置有更新，待重新生成' : hasReport ? '当前成稿可查看与导出' : '等待生成首份报告' }}</span>
+        <div class="studio-hero-actions">
+        <button v-if="hasReport && !isQualityMeasurementReport && !hasIssueLibrary" type="button" class="btn btn-outline studio-html-toggle" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看HTML报告' : '返回PPT预览' }}</button>
         <button
           type="button"
           class="export-ppt-btn"
@@ -18,44 +21,54 @@
           <span class="ppt-file-mark">P</span>
           {{ exportBusy ? `PPT生成中 ${exportTask?.progress || 0}%` : '导出PPT' }}
         </button>
+        </div>
         <small v-if="!canGenerateReports" class="report-readonly-note">
           当前账号可查看、分类和选择问题；新建或覆盖时间段报告需由管理员分配生成权限。
         </small>
       </div>
     </section>
 
-    <section class="report-type-panel card-surface">
+    <nav class="studio-workflow" aria-label="报告工作流程快捷导航">
+      <button type="button" @click="focusReportSection('report-studio-types')"><b>01</b><span><strong>选择报告</strong><small>{{ currentReportType.name }}</small></span><i aria-hidden="true">↗</i></button>
+      <button type="button" @click="focusReportSection('report-studio-period')"><b>02</b><span><strong>准备数据</strong><small>{{ reportDateFrom || '选择日期' }} 至 {{ reportDateTo || '选择日期' }}</small></span><i aria-hidden="true">↗</i></button>
+      <button type="button" @click="focusReportSection('report-studio-output')"><b>03</b><span><strong>预览与导出</strong><small>{{ loading ? activeJob ? '后台生成任务进行中' : '正在读取成稿' : hasReport ? '查看最后生成成功的报告' : '生成后在此查看成稿' }}</small></span><i aria-hidden="true">↗</i></button>
+    </nav>
+
+    <section id="report-studio-types" tabindex="-1" aria-labelledby="report-studio-types-title" class="report-type-panel card-surface">
       <div class="report-type-panel-head">
         <div>
-          <span>报告类型</span>
-          <h3>选择本次需要生成的报告</h3>
+          <span>REPORT TYPE / 报告类型</span>
+          <h3 id="report-studio-types-title">选择需要制作的报告</h3>
         </div>
-        <small>不同报告独立关联检查表和报告模板</small>
+        <small>{{ reportTypes.length }} 类业务报告 · 独立模板与配置</small>
       </div>
       <div class="report-type-grid">
         <button
-          v-for="item in reportTypes"
+          v-for="(item, index) in reportTypes"
           :key="item.key"
           type="button"
           :class="['report-type-card', { active: selectedReportType === item.key, pending: !item.template_ready }]"
+          :aria-pressed="selectedReportType === item.key"
           @click="selectReportType(item.key)"
         >
-          <span class="report-type-status">{{ item.template_ready ? '模板已配置' : '模板待配置' }}</span>
+          <span class="studio-type-top"><span class="studio-type-number">{{ String(index + 1).padStart(2, '0') }}</span><span class="report-type-status">{{ item.template_ready ? '模板已配置' : '模板待配置' }}</span></span>
           <strong>{{ item.name }}</strong>
           <p>{{ item.description }}</p>
           <div class="report-type-sources">
             <span>关联检查表</span>
             <em v-for="tableName in item.target_tables" :key="`${item.key}-${tableName}`">{{ tableName }}</em>
           </div>
+          <span class="studio-type-footer"><span>{{ (item.target_tables || []).length }} 张关联检查表</span><b>{{ selectedReportType === item.key ? '当前报告 ✓' : '选择此报告 →' }}</b></span>
         </button>
       </div>
+      <div class="studio-selected-sources"><span>当前关联检查表</span><div><em v-for="tableName in currentReportType.target_tables" :key="tableName">{{ tableName }}</em></div><small>切换类型不会触发生成</small></div>
     </section>
 
-    <section class="report-period-workspace card-surface">
+    <section id="report-studio-period" tabindex="-1" aria-labelledby="report-studio-period-title" class="report-period-workspace card-surface">
       <div class="report-period-editor">
         <div class="period-editor-title">
-          <span>REPORT DATE RANGE</span>
-          <h3>本次报告数据日期范围</h3>
+          <span>REPORT DATE RANGE / 数据范围</span>
+          <h3 id="report-studio-period-title">本次报告数据日期范围</h3>
           <p>日期调整自动保存，不会调用 AI；点击重新生成后，按最新保存设置更新下方成稿。</p>
         </div>
         <div class="period-editor-fields">
@@ -97,9 +110,11 @@
             v-for="item in reportHistory"
             :key="item.task_id"
             class="report-history-item"
+            :data-status="item.status"
           >
-            <span>{{ item.requested_by_name }} · {{ item.requested_at }}</span>
-            <small>{{ formatGenerationStatus(item.status) }} · {{ item.date_from }} 至 {{ item.date_to }}</small>
+            <div class="studio-history-row"><strong>{{ item.requested_by_name }}</strong><span>{{ formatGenerationStatus(item.status) }}</span></div>
+            <time>{{ item.requested_at }}</time>
+            <small>{{ item.date_from }} 至 {{ item.date_to }}</small>
           </article>
         </div>
         <div v-else class="report-history-empty">当前报告类型还没有生成操作记录。</div>
@@ -112,7 +127,7 @@
       />
     </section>
 
-    <section v-if="(isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface">
+    <section v-if="(isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface" :data-report="selectedReportType">
       <header class="report-config-heading">
         <div><span>REPORT CONFIGURATION</span><h3>{{ currentReportType.name }} · 专属配置</h3><p>所有用户共享最新保存设置；保存不调用 AI，重新生成后应用到报告。</p></div>
         <span class="shared-config-badge">全局共享</span>
@@ -341,6 +356,11 @@
 
     <div v-if="error" class="state-card error">{{ error }}</div>
 
+    <header id="report-studio-output" tabindex="-1" class="studio-output-heading">
+      <div><span class="studio-output-number" aria-hidden="true">03</span><div><h3>报告成稿</h3><p>{{ hasReport ? `最后成功生成于 ${reportGeneratedAt}` : '生成完成后，将在这里展示报告与预览' }}</p></div></div>
+      <div class="studio-output-actions"><span>{{ templateUnavailable ? '模板待配置' : loading ? activeJob ? '后台处理中' : '正在读取' : hasReport ? reportDisplayMode === 'ppt' ? 'PPT 同源预览' : 'HTML 报告' : '尚无成稿' }}</span><button type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button></div>
+    </header>
+
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
       <div class="template-placeholder-mark">AI</div>
       <div>
@@ -361,18 +381,18 @@
       <div class="ai-generation-content">
         <div class="ai-generation-kicker">
           <span class="live-dot"></span>
-          后台 AI 生成任务
+          {{ activeJob ? '后台 AI 生成任务' : '读取工作台' }}
         </div>
-        <h3>{{ generationStageMessage }}</h3>
-        <p>系统正在汇总巡检数据并处理分析内容，已有 AI 结果会自动复用。可以放心切换页面，后台任务不会中断。</p>
-        <div class="ai-progress-head">
+        <h3>{{ activeJob ? generationStageMessage : '正在读取报告与已保存配置' }}</h3>
+        <p>{{ activeJob ? '系统正在汇总巡检数据并处理分析内容，已有 AI 结果会自动复用。可以放心切换页面，后台任务不会中断。' : '正在载入最后一次成功成稿与共享设置，此操作不会重新生成报告或调用 AI。' }}</p>
+        <div v-if="activeJob" class="ai-progress-head">
           <span>{{ currentReportType.name }}</span>
           <strong>{{ generationProgress }}%</strong>
         </div>
-        <div class="ai-progress-track">
+        <div v-if="activeJob" class="ai-progress-track">
           <span :style="{ width: `${generationProgress}%` }"></span>
         </div>
-        <div class="ai-stage-list">
+        <div v-if="activeJob" class="ai-stage-list">
           <span :class="{ done: generationProgress >= 12 }">读取数据</span>
           <span :class="{ done: generationProgress >= 38 }">汇总统计</span>
           <span :class="{ done: generationProgress >= 52 }">AI分析</span>
@@ -4395,6 +4415,12 @@ const loadReportTypes = async () => {
   } catch {
     reportTypes.value = DEFAULT_REPORT_TYPES
   }
+}
+
+function focusReportSection(id) {
+  const section = document.getElementById(id)
+  section?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
+  section?.focus({ preventScroll: true })
 }
 
 onMounted(async () => {
@@ -12603,3 +12629,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+<style scoped src="../../styles/reportStudio.css"></style>
