@@ -2,7 +2,30 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
-import { routingKey, groupAiScenes } from '../src/utils/aiModelSettings.js'
+import { routingKey, groupAiScenes, aiModelDisplayName } from '../src/utils/aiModelSettings.js'
+
+test('Flash current IDs and saved historical aliases use one version-independent display name', () => {
+  for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'DeepSeek-V4-Flash']) {
+    assert.equal(aiModelDisplayName(model), 'DeepSeek-Flash')
+  }
+  for (const model of ['deepseek-v4-pro', 'qwen3.8-max', 'glm-5.3', 'mimo-v2.6-pro']) {
+    assert.equal(aiModelDisplayName(model), model)
+  }
+  assert.equal(aiModelDisplayName(null), '')
+})
+
+for (const file of ['views/management/AiUsageManagementView.vue', 'views/operations/ExpertQaView.vue', 'components/ReportGenerationLog.vue']) {
+  test(`${file} compiles with shared model display for new and historical records`, () => {
+    const path = new URL('../src/' + file, import.meta.url)
+    const { descriptor, errors } = parse(readFileSync(path, 'utf8'))
+    assert.deepEqual(errors, [])
+    const script = compileScript(descriptor, { id: 'model-display-test' })
+    assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: path.pathname,
+      id: 'model-display-test', compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
+    assert.match(script.content, /aiModelDisplayName/)
+    assert.match(descriptor.template.content, /aiModelDisplayName\(/)
+  })
+}
 
 test('routing comparison ignores order but distinguishes explicit model selection from inheritance', () => {
   const a = { default_model: 'a', overrides: { one: 'b', two: 'c' }, revision: 1 }

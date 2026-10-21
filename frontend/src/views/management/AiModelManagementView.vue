@@ -58,7 +58,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import axios from 'axios'
-import { routingKey, groupAiScenes } from '@/utils/aiModelSettings'
+import { routingKey, groupAiScenes, aiModelDisplayName } from '@/utils/aiModelSettings'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -75,7 +75,7 @@ const draft = reactive({ default_model: '', overrides: {} })
 const dirty = computed(() => routingKey(draft) !== routingKey(settings.value))
 const groups = computed(() => groupAiScenes(scenarios.value, keyword.value))
 const providerModels = (id) => models.value.filter((model) => model.provider === id)
-const modelName = (id) => models.value.find((model) => model.id === id)?.name || id
+const modelName = (id) => models.value.find((model) => model.id === id)?.name || aiModelDisplayName(id)
 const formatTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
 const resetDraft = () => { draft.default_model = settings.value.default_model; draft.overrides = { ...settings.value.overrides } }
 const selectScene = (id, model) => {

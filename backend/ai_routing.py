@@ -14,7 +14,7 @@ PROVIDERS = {
 }
 MODELS = {
     'deepseek-v4-pro': ('deepseek', 'DeepSeek-V4-Pro'),
-    'deepseek-v4-flash': ('deepseek', 'DeepSeek-V4-Flash'),
+    'deepseek-flash': ('deepseek', 'DeepSeek-Flash'),
     'glm-5.3': ('zhipu', 'GLM-5.3'),
     'glm-5.3-flash': ('zhipu', 'GLM-5.3-Flash'),
     'glm-5.3-flashx': ('zhipu', 'GLM-5.3-FlashX'),
@@ -23,6 +23,10 @@ MODELS = {
     'mimo-v2.6-pro': ('mimo', 'MiMo-V2.6-Pro'),
     'mimo-v2.6-flash': ('mimo', 'MiMo-V2.6-Flash'),
     'mimo-v2.6-pro-ultraspeed': ('mimo', 'MiMo-V2.6-Pro-UltraSpeed'),
+}
+MODEL_ALIASES = {
+    'deepseek-v4-flash': 'deepseek-flash',
+    'deepseek-v4-flash-vision-exp': 'deepseek-flash',
 }
 SCENARIOS = {
     'standard_recommendation': ('巡检登记', 'AI引用规范', '本地检索后由模型排序候选规范；可靠历史命中不调用模型。'),
@@ -51,7 +55,27 @@ def configure_routing(loader):
     _loader = loader
 
 
+def canonical_model(model):
+    """Accept retired IDs in saved settings without exposing duplicate catalog entries."""
+    return MODEL_ALIASES.get(model, model) if isinstance(model, str) else model
+
+
+def model_aliases(model):
+    canonical = canonical_model(model)
+    return [canonical, *(alias for alias, target in MODEL_ALIASES.items() if target == canonical)]
+
+
+def normalize_model_settings(settings):
+    result = dict(settings)
+    if 'default_model' in result:
+        result['default_model'] = canonical_model(result['default_model'])
+    if isinstance(result.get('overrides'), dict):
+        result['overrides'] = {scene: canonical_model(model) for scene, model in result['overrides'].items()}
+    return result
+
+
 def model_info(model):
+    model = canonical_model(model)
     provider, label = MODELS[model]
     info = dict(PROVIDERS[provider], provider=provider, model=model, label=label)
     if provider == 'qwen':
@@ -66,7 +90,7 @@ def resolve_model(scenario):
         config = _loader() if _loader else {}
     except Exception:
         raise RuntimeError('大模型配置暂时不可用，请检查数据库迁移或联系管理员。') from None
-    model = (config.get('overrides') or {}).get(scenario) or config.get('default_model') or DEFAULT_MODEL
+    model = canonical_model((config.get('overrides') or {}).get(scenario) or config.get('default_model') or DEFAULT_MODEL)
     if not isinstance(model, str) or model not in MODELS:
         raise RuntimeError('AI模型配置无效，请联系管理员。')
     return model
@@ -117,6 +141,7 @@ def get_ai_client():
 
 def completion_options(model, options):
     """Translate provider-only parameters without changing messages or output schema."""
+    model = canonical_model(model)
     result = dict(options, model=model)
     body = dict(result.get('extra_body') or {})
     thinking = body.pop('thinking', {}).get('type', 'disabled') == 'enabled'

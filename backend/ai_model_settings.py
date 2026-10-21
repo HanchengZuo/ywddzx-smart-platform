@@ -1,6 +1,6 @@
 """Shared routing settings and transactional change history. Never stores API keys."""
 from psycopg2.extras import Json
-from ai_routing import MODELS, PROVIDERS, SCENARIOS, model_info
+from ai_routing import MODELS, PROVIDERS, SCENARIOS, model_info, normalize_model_settings
 
 
 class SettingsConflict(ValueError):
@@ -13,12 +13,13 @@ def read_settings(cur, lock=False):
     row = cur.fetchone()
     if not row:
         raise RuntimeError('大模型配置尚未初始化，请执行数据库迁移。')
-    return dict(row)
+    return normalize_model_settings(row)
 
 
 def save_settings(cur, data, user):
     if not isinstance(data, dict) or type(data.get('revision')) is not int:
         raise ValueError('请先读取最新模型配置。')
+    data = normalize_model_settings(data)
     mode = data.get('mode', 'settings')
     model = data.get('default_model')
     overrides = {} if mode == 'all' else data.get('overrides')

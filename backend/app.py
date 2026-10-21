@@ -72,6 +72,7 @@ from ai_utils import (
     generate_standard_recommendations,
 )
 from ai_usage import get_ai_pricing_table, AI_USAGE_PRICING
+from ai_routing import canonical_model, model_aliases
 from report_workspace import get_report_workspace, save_report_workspace, list_report_generation_requests
 from report_ai_memory import (
     begin_report_ai_memory,
@@ -5473,7 +5474,7 @@ def record_ai_usage_log(
 ):
     ensure_ai_usage_schema(cur)
     usage = (ai_result or {}).get("usage") or {}
-    model = str(usage.get("model") or "deepseek-v4-pro").strip() or "deepseek-v4-pro"
+    model = canonical_model(str(usage.get("model") or "deepseek-v4-pro").strip() or "deepseek-v4-pro")
     base_url = str(usage.get("base_url") or "https://api.deepseek.com").strip()
     message = str((ai_result or {}).get("message") or "")[:500]
     user = user or {}
@@ -5556,8 +5557,8 @@ def serialize_ai_usage_row(row):
         "role": row["role"],
         "usage_module": row["usage_module"],
         "usage_action": row["usage_action"],
-        "model": row["model"],
-        "pricing_known": row["model"] in AI_USAGE_PRICING,
+        "model": canonical_model(row["model"]),
+        "pricing_known": canonical_model(row["model"]) in AI_USAGE_PRICING,
         "base_url": row["base_url"],
         "ai_called": bool(row["ai_called"]),
         "ai_generated": bool(row["ai_generated"]),
@@ -23268,8 +23269,8 @@ def get_management_ai_usage():
             params.append(usage_module)
 
         if model:
-            where_clauses.append("model = %s")
-            params.append(model)
+            where_clauses.append("model = ANY(%s)")
+            params.append(model_aliases(model))
 
         if status == "success":
             where_clauses.append("success = TRUE")
@@ -23356,7 +23357,7 @@ def get_management_ai_usage():
             ORDER BY model ASC;
             """
         )
-        models = [row["model"] for row in cur.fetchall()]
+        models = sorted({canonical_model(row["model"]) for row in cur.fetchall()})
         conn.commit()
 
         return jsonify(
