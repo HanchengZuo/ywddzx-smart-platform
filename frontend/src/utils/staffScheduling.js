@@ -41,24 +41,28 @@ export function availabilityLabel(person, mode) {
   return '有空'
 }
 export function staffCellPresentation(cell, day, today) {
+  const actual = cell.actual_modes || []
+  const actualDetail = actual
+    .map((item) => `${item.mode === 'offline' ? '现场' : '视频'} ${item.count} 张检查表`)
+    .join(' · ')
   if (cell.available === false || (day < today && cell.history_status === 'busy'))
     return {
       tone: 'busy',
       stage: day < today ? '原始档期' : '不派工',
       label: '没空',
-      detail: cell.reason || '未填写原因',
+      detail: (cell.reason || '未填写原因') + (actualDetail ? ` · 实绩：${actualDetail}` : ''),
     }
   const work = cell.dispatch || {}
   if (work.total) {
-    const tone = work.modes.length > 1 ? 'mixed' : work.modes[0]
+    const modes = actual.length ? actual.map((item) => item.mode) : work.modes
+    const tone = modes.length > 1 ? 'mixed' : modes[0]
     return {
       tone,
-      stage: work.completed ? '实绩' : '已派工',
+      stage: actual.length || work.completed ? '实绩' : '已派工',
       label: tone === 'mixed' ? '现场 / 视频' : tone === 'offline' ? '现场巡检' : '视频巡检',
-      detail: `已完成 ${work.completed}/${work.total} 项 · ${work.station_completed}/${work.station_total} 站`,
+      detail: `${actualDetail ? actualDetail + ' · ' : ''}已完成 ${work.completed}/${work.total} 项 · ${work.station_completed}/${work.station_total} 站`,
     }
   }
-  const actual = cell.actual_modes || []
   if (day < today && cell.history_status && !actual.length) {
     const tone = cell.history_status === 'busy' ? 'busy' : cell.history_status
     return {
@@ -79,7 +83,7 @@ export function staffCellPresentation(cell, day, today) {
       stage: actual.length ? '实绩' : '已排班',
       label: name,
       detail: actual.length
-        ? `已记录 ${actual.reduce((sum, item) => sum + Number(item.count || 0), 0)} 张检查表`
+        ? actualDetail
         : cell.daily_assignment?.group_name || '已安排 · 等待巡检记录',
     }
   }

@@ -7,6 +7,7 @@ from flask import g, jsonify, request
 from roles import SUPERVISOR_ROLES
 from staff_daily_teams import team_days, team_members
 from staff_schedule_history import dispatch_history, personal_records, cell_read_only_reason
+from staff_actuals import actuals_window, assert_actuals_window, merge_actual_modes
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
 
 STAFF = ([(name, '管理人员') for name in '步雪琼 孔德辰 赵之龙 吕泽昆 韩叙 杨昊淞 芦斌'.split()]
@@ -64,30 +65,35 @@ def roster_people(cur):
     return result
 
 
-def daily_modes(cur, ids, start, end):
-    if not ids: return {}
-    cur.execute('''WITH participants AS (
+def daily_modes(cur, ids, start, end, *, include_ids=False):
+    if not ids or start>=end: return {}
+    evidence = ',array_agg(DISTINCT ins.id) AS record_ids' if include_ids else ''
+    cur.execute(f'''WITH participants AS (
       SELECT id AS inspection_id,inspector_id FROM inspections WHERE inspection_date >= %s AND inspection_date < %s
       UNION SELECT issue.inspection_id,issue.inspector_id FROM issues issue JOIN inspections ins ON ins.id=issue.inspection_id
         WHERE ins.inspection_date >= %s AND ins.inspection_date < %s
-    ) SELECT p.inspector_id,ins.inspection_date::text AS day,t.checklist_mode AS mode,COUNT(DISTINCT ins.id) AS n
+    ) SELECT p.inspector_id,ins.inspection_date::text AS day,t.checklist_mode AS mode,COUNT(DISTINCT ins.id) AS n{evidence}
       FROM participants p JOIN inspections ins ON ins.id=p.inspection_id
       JOIN inspection_tables t ON t.id=ins.inspection_table_id
       WHERE p.inspector_id=ANY(%s) AND t.checklist_mode IN ('offline','online')
       GROUP BY p.inspector_id,ins.inspection_date,t.checklist_mode''', (start, end, start, end, ids))
     result = defaultdict(list)
-    for row in cur.fetchall(): result[(row['inspector_id'], row['day'])].append(dict(mode=row['mode'], count=row['n']))
+    for row in cur.fetchall():
+        value = dict(mode=row['mode'],count=row['n'])
+        if include_ids: value['record_ids'] = row['record_ids']
+        result[(row['inspector_id'], row['day'])].append(value)
     return result
 
 
-def available_people(cur, day):
+def available_people(cur, day, *, window=None):
     if day == today(): ensure_today_availability(cur)
     people = roster_people(cur)
     cur.execute('SELECT person_name,available,reason,revision,is_default FROM staff_availability WHERE day=%s', (day,))
     values = {row['person_name']: row for row in cur.fetchall()}
     planned = planned_work(cur, day, day + timedelta(days=1))
     teams = team_members(team_days(cur, day, day + timedelta(days=1)))
-    actual = daily_modes(cur, [p['id'] for p in people if p['id']], day, day + timedelta(days=1))
+    window = window or actuals_window(today())
+    actual = daily_modes(cur, [p['id'] for p in people if p['id']], day, min(day+timedelta(days=1),window.as_of+timedelta(days=1)))
     for p in people:
         value = values.get(p['display_name'], {})
         assigned = teams.get((p['id'], day.isoformat()))
@@ -110,13 +116,21 @@ def planned_work(cur, start, end):
     return {key: sorted(modes) for key, modes in planned.items()}
 
 
-def today_summary(cur, day):
+def today_summary(cur, day, *, window=None, actual=None, history=None):
     """Today's person counts stay independent of the week being browsed."""
-    people = available_people(cur, day)
-    actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], day, day + timedelta(days=1))
+    window = window or actuals_window(today())
+    people = available_people(cur,day,window=window)
+    ids = [uid for p in people for uid in p['history_ids']]
+    if actual is None:
+        actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True)
+    if history is None:
+        history = dispatch_history(cur,ids,day,day+timedelta(days=1),window.today,
+                                   defer_day=window.today if window.as_of<window.today else None)
     counts = dict(free=0, busy=0, unknown=0, offline=0, online=0)
     for person in people:
         records = [row for uid in person['history_ids'] for row in actual.get((uid, day.isoformat()), [])]
+        work = next((history[(uid,day.isoformat())]['summary'] for uid in person['history_ids'] if (uid,day.isoformat()) in history),{})
+        records = merge_actual_modes(records,work)
         modes = {row['mode'] for row in records} if records else set(person['planned_modes'])
         if modes:
             for mode in modes: counts[mode] += 1
@@ -169,7 +183,8 @@ def save_availability(cur, actor, data):
     cur.execute('SELECT available,reason,revision,history_status,is_default FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
     previous = cur.fetchone() or dict(available=None, reason='', revision=0, history_status=None)
     if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
-    cell = single_staff_cell(cur,people[name],day,previous)
+    window = actuals_window(today())
+    cell = single_staff_cell(cur,people[name],day,previous,window=window)
     if cell['read_only_reason']:
         raise ScheduleConflict(cell['read_only_reason'])
     if not historical and not available and people[name]['id']:
@@ -188,25 +203,30 @@ def save_availability(cur, actor, data):
     cur.execute('''INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_id,actor_name)
       VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason, history_status=history_status,is_default=False)),
       actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
+    assert_actuals_window(window,today())
 
 
-def staff_cell(day, saved, assigned, direct_actual, history):
+def staff_cell(day, saved, assigned, direct_actual, history, *, window=None):
+    window = window or actuals_window(today())
     work = history.get('summary', {})
-    actual = work.get('actual_modes', []) if work.get('total') else direct_actual
+    actual = merge_actual_modes(direct_actual if day<=window.as_of else [],work)
     groups = set(work.get('group_names', []))
     if assigned and assigned['mode'] == 'offline': groups.add(assigned['group_name'])
     value = dict(available=effective_availability(saved,day),is_default=saved.get('is_default',day == today()),reason=saved.get('reason',''),
         history_status=saved.get('history_status'),daily_assignment=assigned,
         revision=saved.get('revision',0),updated_by_name=saved.get('updated_by_name',''),updated_at=saved.get('saved_at',''),
         planned_modes=sorted(set(work.get('modes',[])) | ({assigned['mode']} if assigned else set())),
-        field_group_names=sorted(groups),actual_modes=actual,dispatch=work,
-        has_actual=bool(direct_actual or work.get('has_actual')))
+        field_group_names=sorted(groups),actual_modes=actual,
+        dispatch={k:v for k,v in work.items() if k!='_actual_record_ids'},
+        actuals_pending=day==window.today and window.as_of<window.today,
+        has_actual=bool(actual))
     value['read_only_reason'] = cell_read_only_reason(value,day,today())
     value['read_only'] = bool(value['read_only_reason'])
     return value
 
 
-def single_staff_cell(cur, person, day, saved=None, *, details=False):
+def single_staff_cell(cur, person, day, saved=None, *, details=False, window=None):
+    window = window or actuals_window(today())
     if saved is None:
         if day == today(): ensure_today_availability(cur)
         cur.execute('''SELECT a.*,CASE WHEN a.is_default THEN '系统默认' ELSE
@@ -215,16 +235,18 @@ def single_staff_cell(cur, person, day, saved=None, *, details=False):
           FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by WHERE person_name=%s AND day=%s''', (person['display_name'],day))
         saved = cur.fetchone() or {}
     ids = person['history_ids']
-    history = dispatch_history(cur,ids,day,day+timedelta(days=1),today(),details=details)
+    history = dispatch_history(cur,ids,day,day+timedelta(days=1),window.today,details=details,
+                               defer_day=window.today if window.as_of<window.today else None)
     work = next(iter(history.values()),{})
     teams = team_members(team_days(cur,day,day+timedelta(days=1)))
     assigned = next((teams[(uid,day.isoformat())] for uid in ids if (uid,day.isoformat()) in teams),None)
-    actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),today()+timedelta(days=1)))
-    cell = staff_cell(day,saved,assigned,[r for uid in ids for r in actual.get((uid,day.isoformat()),[])],work)
+    actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True)
+    cell = staff_cell(day,saved,assigned,[r for uid in ids for r in actual.get((uid,day.isoformat()),[])],work,window=window)
     return dict(cell,tasks=work.get('tasks',[])) if details else cell
 
 
 def staff_board(cur, week):
+    window = actuals_window(today())
     ensure_today_availability(cur)
     start = week - timedelta(days=week.weekday()); end = start + timedelta(days=7)
     days = working_days(cur, start, end)
@@ -237,10 +259,11 @@ def staff_board(cur, week):
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
     history_ids = [uid for p in people for uid in p['history_ids']]
-    history = dispatch_history(cur,history_ids,start,end,today())
+    history = dispatch_history(cur,history_ids,start,end,window.today,
+                               defer_day=window.today if window.as_of<window.today else None)
     teams = team_days(cur, start, end)
     members = team_members(teams)
-    actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], start, min(end, today() + timedelta(days=1)))
+    actual = daily_modes(cur,history_ids,start,min(end,window.as_of+timedelta(days=1)),include_ids=True)
     for p in people:
         p['cells'] = {}
         for d in days:
@@ -248,9 +271,10 @@ def staff_board(cur, week):
             assigned = next((members[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in members),None)
             work = next((history[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in history),{})
             p['cells'][d['day']] = staff_cell(day_value(d['day']),v,assigned,
-                [mode for uid in p['history_ids'] for mode in actual.get((uid,d['day']),[])],work)
+                [mode for uid in p['history_ids'] for mode in actual.get((uid,d['day']),[])],work,window=window)
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
-                today_summary=today_summary(cur, today()),
+                today_summary=today_summary(cur,today(),window=window,
+                    **(dict(actual=actual,history=history) if start<=window.today<end else {})),**window.metadata(),
                 daily_teams=list(teams.values()))
 
 
@@ -268,10 +292,11 @@ def register_staff_availability(app, *, connect, has_permission):
             day = day_value(request.args.get('day'))
             person = next((p for p in roster_people(cur) if p['display_name']==name),None)
             if not person: raise ValueError('请选择人员档期名单中的人员。')
-            cell = single_staff_cell(cur,person,day,details=True)
-            records = personal_records(cur,person['history_ids'],day) if day<=today() else []
+            window = actuals_window(today())
+            cell = single_staff_cell(cur,person,day,details=True,window=window)
+            records = personal_records(cur,person['history_ids'],day) if day<=window.as_of else []
             response = jsonify(success=True,person=person,day=day.isoformat(),today=today().isoformat(),
-                can_edit=has_permission(cur,actor,EDIT),cell=cell,records=records)
+                can_edit=has_permission(cur,actor,EDIT),cell=cell,records=records,**window.metadata())
             conn.commit()
             response.headers['Cache-Control']='private, no-store'
             return response

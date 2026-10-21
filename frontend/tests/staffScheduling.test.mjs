@@ -227,6 +227,7 @@ test('staff editing always resets to the clicked individual cell and saves exact
       },
     },
     state: (p, day) => staffCellPresentation(p.cells[day.day], day.day, '2026-10-19'),
+    armActualsRefresh:()=>{},
     staffCellPresentation,
     axios: {
       get: async (_, {params}) => ({data:{can_edit:context.board.value.can_edit,day:params.day,today:'2026-10-19',
@@ -285,7 +286,9 @@ test('real records override manual supplements, while original busy history stay
   assert.match(state.detail, /4 张检查表/)
   assert.equal(staffCellPresentation({...cell,actual_modes:[]},'2026-10-16','2026-10-20').stage,'人工补录')
   assert.equal(cell.actual_modes[0].mode, 'offline')
-  assert.equal(staffCellPresentation({ ...cell, history_status: 'busy', reason: '培训' }, '2026-10-16', '2026-10-20').detail, '培训')
+  const busy = staffCellPresentation({ ...cell, history_status: 'busy', reason: '培训' }, '2026-10-16', '2026-10-20')
+  assert.equal(busy.label,'没空')
+  assert.equal(busy.detail,'培训 · 实绩：现场 4 张检查表')
   assert.equal(staffCellPresentation({ ...cell, history_status: null }, '2026-10-16', '2026-10-20').stage, '实绩')
   assert.equal(staffCellPresentation({ ...cell, actual_modes: [] }, '2026-10-20', '2026-10-20').tone, 'unknown', 'manual history cannot override current-day availability')
 })

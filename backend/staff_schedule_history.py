@@ -12,11 +12,13 @@ def summarize_tasks(tasks):
     current = list(active.values())
     stations = defaultdict(list)
     modes = defaultdict(int)
+    record_ids = defaultdict(set)
     names = set()
     for task in current:
         stations[(task['station_id'],task['station_name'])].append(task)
         if task['record_count']:
             modes[task['mode']] += task['record_count']
+            record_ids[task['mode']].update(task.get('record_ids',[]))
         if task['plan_team']:
             names.add(task['plan_team']['name'])
     completed = sum(bool(t['record_count']) for t in current)
@@ -26,10 +28,11 @@ def summarize_tasks(tasks):
                 percent=round(completed/len(current)*100) if current else 0,
                 has_dispatch=bool(tasks), has_actual=bool(modes),
                 modes=sorted({t['mode'] for t in current}), group_names=sorted(names),
-                actual_modes=[dict(mode=mode,count=count) for mode,count in sorted(modes.items())])
+                _actual_record_ids={mode:sorted(ids) for mode,ids in record_ids.items()},
+                actual_modes=[dict(mode=mode,count=len(record_ids[mode]) or count) for mode,count in sorted(modes.items())])
 
 
-def dispatch_history(cur, user_ids, start, end, as_of, *, details=False):
+def dispatch_history(cur, user_ids, start, end, as_of, *, details=False, defer_day=None):
     if not user_ids:
         return {}
     proof = """jsonb_agg(jsonb_build_object('id',m.id,'day',m.inspection_date::text,
@@ -47,8 +50,10 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False):
       SELECT k.station_id,k.table_id,k.scheduled_date,ins.id,ins.inspection_date,ins.inspector_id
       FROM keys k JOIN inspections ins ON ins.station_id=k.station_id AND ins.inspection_table_id=k.table_id
         AND ins.inspection_date>=k.scheduled_date AND ins.inspection_date<=%s
+        AND (%s::date IS NULL OR k.scheduled_date<>%s OR ins.inspection_date<%s)
     ), coverage AS (
       SELECT m.station_id,m.table_id,m.scheduled_date,COUNT(*) AS record_count,
+        array_agg(DISTINCT m.id) AS record_ids,
         MAX(m.inspection_date)::text AS last_inspection_date,{proof} AS records
       FROM matched m LEFT JOIN users u ON u.id=m.inspector_id
       GROUP BY m.station_id,m.table_id,m.scheduled_date
@@ -58,15 +63,17 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False):
       to_char(task.created_at,'YYYY-MM-DD HH24:MI:SS') AS assigned_at,
       to_char(task.cancelled_at,'YYYY-MM-DD HH24:MI:SS') AS cancelled_at,
       CASE WHEN task.status='cancelled' THEN 0 ELSE COALESCE(c.record_count,0) END AS record_count,
+      CASE WHEN task.status='cancelled' THEN '{{}}' ELSE COALESCE(c.record_ids,'{{}}') END AS record_ids,
       CASE WHEN task.status='cancelled' THEN NULL ELSE c.last_inspection_date END AS last_inspection_date,
       CASE WHEN task.status='cancelled' THEN '[]'::jsonb ELSE COALESCE(c.records,'[]'::jsonb) END AS records
     FROM selected task LEFT JOIN coverage c ON c.station_id=task.station_id AND c.table_id=task.table_id
       AND c.scheduled_date=task.scheduled_date
-    ORDER BY task.id''', (user_ids,start,end,as_of))
+    ORDER BY task.id''', (user_ids,start,end,as_of,defer_day,defer_day,defer_day))
     result = defaultdict(list)
     for row in cur.fetchall():
         result[(row['user_id'],row['day'])].append(dict(row))
-    return {key:dict(summary=summarize_tasks(tasks),tasks=tasks) for key,tasks in result.items()}
+    return {key:dict(summary=summarize_tasks(tasks),tasks=[{k:v for k,v in task.items() if k!='record_ids'} for task in tasks])
+            for key,tasks in result.items()}
 
 
 def personal_records(cur, ids, day):

@@ -9,6 +9,7 @@ from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, sa
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from scheduling_map import period
 from staff_availability import available_people, excluded_reason
+from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, cluster_diameter, regional_coverage, regional_targets
 
@@ -151,6 +152,7 @@ def register_schedule_automation(app, *, connect, has_permission):
             day = day_value(data.get('day', today().isoformat()))
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             if data['action'] == 'confirm': lock_schedule(cur)
+            window = actuals_window(today())
             result, periods = proposal(cur, actor, day, data)
             if data['action'] == 'confirm':
                 if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
@@ -161,6 +163,7 @@ def register_schedule_automation(app, *, connect, has_permission):
                     for cell in group['cells']:
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
                           inspector_ids=group.get('inspector_ids', [group['person']['id']]), scheduled_date=day.isoformat()), chosen, start, end, cache)
+                assert_actuals_window(window,today())
             conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'
