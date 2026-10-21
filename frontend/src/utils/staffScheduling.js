@@ -41,7 +41,25 @@ export function availabilityLabel(person, mode) {
   return '有空'
 }
 export function staffCellPresentation(cell, day, today) {
-  if (day < today && cell.history_status) {
+  if (cell.available === false || (day < today && cell.history_status === 'busy'))
+    return {
+      tone: 'busy',
+      stage: day < today ? '原始档期' : '不派工',
+      label: '没空',
+      detail: cell.reason || '未填写原因',
+    }
+  const work = cell.dispatch || {}
+  if (work.total) {
+    const tone = work.modes.length > 1 ? 'mixed' : work.modes[0]
+    return {
+      tone,
+      stage: work.completed ? '实绩' : '已派工',
+      label: tone === 'mixed' ? '现场 / 视频' : tone === 'offline' ? '现场巡检' : '视频巡检',
+      detail: `已完成 ${work.completed}/${work.total} 项 · ${work.station_completed}/${work.station_total} 站`,
+    }
+  }
+  const actual = cell.actual_modes || []
+  if (day < today && cell.history_status && !actual.length) {
     const tone = cell.history_status === 'busy' ? 'busy' : cell.history_status
     return {
       tone,
@@ -50,15 +68,8 @@ export function staffCellPresentation(cell, day, today) {
       detail: tone === 'busy' ? cell.reason || '未填写原因' : '人工记录 · 保留原始巡检数据',
     }
   }
-  const actual = cell.actual_modes || []
   const modes = [
-    ...new Set(
-      actual.length
-        ? actual.map((item) => item.mode)
-        : day >= today
-          ? cell.planned_modes || []
-          : [],
-    ),
+    ...new Set(actual.length ? actual.map((item) => item.mode) : cell.planned_modes || []),
   ]
   if (modes.length) {
     const tone = modes.length > 1 ? 'mixed' : modes[0]
@@ -72,11 +83,19 @@ export function staffCellPresentation(cell, day, today) {
         : cell.daily_assignment?.group_name || '已安排 · 等待巡检记录',
     }
   }
-  if (day < today) return { tone: 'past', stage: '历史', label: '无巡检记录', detail: '' }
   if (cell.available === true)
-    return { tone: 'free', stage: '可排班', label: '有空', detail: '可选择此人派工' }
-  if (cell.available === false)
-    return { tone: 'busy', stage: '不派工', label: '没空', detail: cell.reason || '未填写原因' }
+    return {
+      tone: 'free',
+      stage: day < today ? '原始档期' : '可排班',
+      label: '有空',
+      detail:
+        day < today
+          ? work.cancelled
+            ? '原派工已撤销，可查看历史'
+            : '当日有空 · 无站点派工'
+          : '可选择此人派工',
+    }
+  if (day < today) return { tone: 'past', stage: '历史', label: '无巡检记录', detail: '' }
   return { tone: 'unknown', stage: '待确认', label: '未确认', detail: '请逐格确认档期' }
 }
 export function staffTodaySummary(board) {

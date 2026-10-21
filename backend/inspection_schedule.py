@@ -188,11 +188,12 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     saved_revision = cur.fetchone()['revision']
     cur.execute('''INSERT INTO inspection_schedule_events
       (mode,year,period_number,station_id,station_name,column_key,before_ids,after_ids,actor_id,actor_name,before_date,after_date,before_team,after_team)
-      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id''',
       (chosen['mode'], chosen['year'], period_number(chosen), station_id, stations[0]['station_name'], key,
        json.dumps(existing['inspector_ids']), json.dumps(ids), actor['id'], person(actor)['display_name'], existing['scheduled_date'], day,
        json.dumps(existing['plan_team'], ensure_ascii=False), json.dumps(team, ensure_ascii=False)))
-    dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start)
+    dispatch_event_id = cur.fetchone()['id']
+    dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start, team, dispatch_event_id)
     return saved_revision
 
 

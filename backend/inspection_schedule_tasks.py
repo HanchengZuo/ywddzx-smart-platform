@@ -62,7 +62,7 @@ def personal_agenda(cur, user_id):
                 online=counts.get('online', dict(count=0, overdue=0)))
 
 
-def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start):
+def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id):
     key = (chosen['mode'], chosen['year'], chosen.get('quarter', chosen.get('month')), station['id'], column['key'])
     cur.execute('''UPDATE inspection_schedule_tasks task SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s AND status='completed'
@@ -71,18 +71,19 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start):
         AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)''', (*key, today()))
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s
-      AND status='pending' AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s)))''', (*key, day, ids))
+      AND status='pending' AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s))
+        OR team_ids<>%s::jsonb OR plan_team IS DISTINCT FROM %s::jsonb)''',
+      (*key, day, ids, json.dumps(ids), json.dumps(team,ensure_ascii=False)))
     if not ids:
         return
-    cur.execute('''UPDATE inspection_schedule_tasks SET team_ids=%s
-      WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s AND status='pending' ''', (json.dumps(ids), *key))
     for uid in ids:
         cur.execute('''INSERT INTO inspection_schedule_tasks(mode,year,period_number,station_id,column_key,
-          station_name,table_id,table_name,user_id,team_ids,scheduled_date,period_start,created_by)
-          SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s WHERE NOT EXISTS (
+          station_name,table_id,table_name,user_id,team_ids,scheduled_date,period_start,created_by,plan_team,dispatch_event_id)
+          SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s WHERE NOT EXISTS (
             SELECT 1 FROM inspection_schedule_tasks WHERE mode=%s AND year=%s AND period_number=%s
             AND station_id=%s AND column_key=%s AND user_id=%s AND status='pending')''',
-          (*key, station['station_name'], column['table_id'], column['full_name'], uid, json.dumps(ids), day, start, actor['id'], *key, uid))
+          (*key, station['station_name'], column['table_id'], column['full_name'], uid, json.dumps(ids), day, start, actor['id'],
+           json.dumps(team,ensure_ascii=False),event_id,*key,uid))
 
 
 def register_schedule_tasks(app, *, connect):
