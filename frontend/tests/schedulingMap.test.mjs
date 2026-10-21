@@ -21,7 +21,7 @@ test('scheduling map keeps station names and region filtering without region ove
   const page = readFileSync(new URL('../src/views/inspection/SchedulingMapView.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(canvas, /sdk\.Polygon|regionPoints|片区区划|showRegions/)
   assert.match(canvas, /const positions = located.value.map\(stationCoordinates\)/)
-  assert.match(page, /<select v-model="region">/)
+  assert.match(page, /<select\b[^>]*\bv-model="region"[^>]*>/)
   assert.doesNotMatch(page, /region_points|region-points|蓝色片区/)
 })
 
