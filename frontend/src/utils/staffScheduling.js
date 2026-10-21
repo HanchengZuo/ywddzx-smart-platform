@@ -93,7 +93,9 @@ export function staffCellPresentation(cell, day, today) {
           ? work.cancelled
             ? '原派工已撤销，可查看历史'
             : '当日有空 · 无站点派工'
-          : '可选择此人派工',
+          : cell.is_default
+            ? '系统默认有空 · 可安排'
+            : '可选择此人派工',
     }
   if (day < today) return { tone: 'past', stage: '历史', label: '无巡检记录', detail: '' }
   return { tone: 'unknown', stage: '待确认', label: '未确认', detail: '请逐格确认档期' }

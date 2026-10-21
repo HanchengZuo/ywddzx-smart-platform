@@ -18,12 +18,10 @@
       <div class="auto-body">
         <p class="method">
           {{ day }} ·
-          仅选择档期明确有空、今天没有站点安排或实绩的人员。现场按已保存外勤组整行派站，视频每站一人统一完成安全、计量、现场，不覆盖已有计划。
+          今日未设置的档期默认有空，已标记没空者不参与。仅选择今天没有站点安排或实绩的人员。现场按已保存外勤组整行派站，视频每站一人统一完成安全、计量、现场，不覆盖已有计划。
         </p>
         <p class="method">
-          现场从{{
-            SCHEDULE_ORIGIN
-          }}出发，按坐标聚类并优化往返距离；只作顺路参考，不含实时路况、道路和过江通道。缺失坐标的站点不自动派现场任务。视频按本季度工作量优先安排较少者。
+          现场先优先补齐季度覆盖率较低的片区，再让同组站点彼此靠近，不再按出发点或往返路线选站。缺失坐标的站点不自动派现场任务。视频按本季度工作量优先安排较少者。
         </p>
         <div class="quota-controls">
           <label
@@ -58,6 +56,28 @@
               ><b>{{ preview.cell_count }}</b> 排班单元格</span
             ><small>{{ preview.quarter }}平衡口径</small>
           </div>
+          <details v-if="preview.regional_coverage?.length" class="coverage-panel">
+            <summary>现场片区覆盖均衡 · 查看本次分配依据</summary>
+            <p>
+              本季度有任一现场检查记录即计覆盖，不依赖审核。今日及未来已有计划仅作预留，不算实绩；在此基础上优先补齐低覆盖片区，再缩小组内站点距离。
+            </p>
+            <div class="coverage-grid">
+              <div
+                v-for="region in preview.regional_coverage"
+                :key="region.region"
+                :class="{ chosen: region.selected }"
+              >
+                <strong>{{ region.region }}</strong
+                ><b title="当前实绩覆盖率 → 含计划预留及本次派工的预计覆盖率"
+                  >{{ region.current_rate }}% → {{ region.projected_rate }}%</b
+                >
+                <small
+                  >已查 {{ region.checked }}/{{ region.total }}站 · 预留 {{ region.reserved }}站 ·
+                  本次 {{ region.selected }}站</small
+                >
+              </div>
+            </div>
+          </details>
           <div v-if="preview.groups.length" class="proposal-list">
             <article v-for="group in proposalGroups" :key="group.key">
               <div class="proposal-person">
@@ -81,7 +101,7 @@
                 </li>
               </ol>
               <p v-if="group.mode === 'offline'">
-                本组往返直线距离约 {{ group.route_km }} km · 站点按建议路线排序
+                组内站点最远直线距离 {{ group.cluster_max_km }} km · 非行车路线
               </p>
               <small
                 >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
@@ -121,7 +141,6 @@ import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { shanghaiToday } from '@/utils/staffScheduling'
 import { groupScheduleProposals } from '@/utils/scheduleProposals'
-const SCHEDULE_ORIGIN = '上海市浦东新区世纪大道1200号'
 const emit = defineEmits(['scheduled'])
 let permissions = {}
 try {
@@ -237,6 +256,45 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.coverage-panel {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid #b7d4df;
+  border-radius: 12px;
+  background: #f3f9fb;
+  color: #31596b;
+}
+.coverage-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.coverage-panel p {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+}
+.coverage-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #dce8ee;
+  border-radius: 8px;
+}
+.coverage-grid > .chosen {
+  border-color: #2d93a9;
+  background: #e8f7f8;
+}
+.coverage-grid b {
+  color: #12647b;
+}
+.coverage-grid small {
+  line-height: 1.5;
+}
 .quota-controls {
   display: flex;
   gap: 16px;

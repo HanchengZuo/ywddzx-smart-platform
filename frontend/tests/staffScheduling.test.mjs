@@ -17,6 +17,17 @@ import {
 } from '../src/utils/staffScheduling.js'
 import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
 
+test('system-default availability is explicit, while busy overrides remain red and future remains unconfirmed', () => {
+  const today='2026-10-21'
+  const free=staffCellPresentation({available:true,is_default:true},today,today)
+  assert.equal(free.tone,'free')
+  assert.equal(free.detail,'系统默认有空 · 可安排')
+  const busy=staffCellPresentation({available:false,is_default:false,reason:'培训'},today,today)
+  assert.equal(busy.tone,'busy')
+  assert.equal(busy.detail,'培训')
+  assert.equal(staffCellPresentation({available:null},'2026-10-22',today).tone,'unknown')
+})
+
 test('daily grouping action sits immediately left of the header access label, not in the date toolbar', () => {
   const source = readFileSync(new URL('../src/views/inspection/StaffAvailabilityView.vue',import.meta.url),'utf8')
   const {descriptor}=parse(source)

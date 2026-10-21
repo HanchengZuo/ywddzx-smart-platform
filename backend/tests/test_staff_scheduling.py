@@ -111,14 +111,14 @@ class StaffDatabaseTests(unittest.TestCase):
         self.availability(name='陈中磊',day='2026-10-20',available=False)
         self.record(inspector=2,day='2026-10-16')
         for _ in range(3): self.record(inspector=3,day='2026-10-19')
-        expected = dict(free=1,busy=1,unknown=22,offline=1,online=0)
+        expected = dict(free=23,busy=1,unknown=0,offline=1,online=0)
         for week in ('2026-10-12','2026-10-19','2026-10-26'):
             response = self.client.get('/api/staff-availability',query_string=dict(week=week))
             self.assertEqual(response.status_code,200,response.json)
             self.assertEqual(response.json['today_summary'],expected)
         self.record(inspector=2,table=7,day='2026-10-19')
         response = self.client.get('/api/staff-availability?week=2026-10-19')
-        self.assertEqual(response.json['today_summary'],dict(free=0,busy=1,unknown=22,offline=1,online=1))
+        self.assertEqual(response.json['today_summary'],dict(free=22,busy=1,unknown=0,offline=1,online=1))
 
     def test_availability_is_single_cell_only_and_schedule_bulk_stays_atomic(self):
         body = dict(available=True, cells=[dict(person_name='步雪琼', day='2026-10-19', revision=0), dict(person_name='孔德辰', day='2026-10-20', revision=0)])
@@ -181,7 +181,7 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(self.counts()['cells'], before['cell_count'])
 
     def test_availability_and_cross_mode_cannot_be_bypassed_and_shared_lock_serializes(self):
-        self.assertEqual(self.save(scheduled_date='2026-10-19').status_code, 409)
+        self.assertEqual(self.save(scheduled_date='2026-10-19').status_code, 400, 'a saved field team is still required')
         self.assertEqual(self.save().status_code, 200)
         response = self.client.put('/api/inspection-schedule', json=dict(mode='online', year=2026, month=10,
             station_id=1, column_key='safety', inspector_ids=[2], scheduled_date='2026-10-20', revision=0,
@@ -264,7 +264,7 @@ class StaffDatabaseTests(unittest.TestCase):
         reasons = {p['name']:p['reason'] for p in preview.json['excluded']}
         self.assertEqual(reasons['步雪琼'],'没空')
         self.assertEqual(reasons['孔德辰'],'没空（出差）')
-        self.assertIn('未确认有空或没空',reasons['陈中磊'])
+        self.assertEqual(reasons['陈中磊'],'账号未唯一匹配')
         self.availability(name='步雪琼',available=True)
         self.record(inspector=2,day='2026-10-19')
         preview = self.client.post('/api/inspection-schedule/auto',json=dict(action='preview',day='2026-10-19'))

@@ -10,7 +10,7 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from scheduling_map import period
 from staff_availability import available_people, excluded_reason
 from staff_daily_teams import group_assignments, team_days
-from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, length
+from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, cluster_diameter, regional_coverage, regional_targets
 
 
 def workload(cur, ids, start, end):
@@ -67,19 +67,23 @@ def proposal(cur, actor, day, options=None):
     origin = ORIGIN_POINT
     people = available_people(cur, day)
     eligible = [p for p in people if p['id'] and p['available'] is True and not p['station_modes'] and not p['actual_modes']]
-    demands, periods = {}, {}
+    demands, periods, board_tokens = {}, {}, {}
+    coverage = []
     quarter = (day.month - 1) // 3 + 1
     for mode in ('offline', 'online'):
         chosen, start, end = period(dict(mode=mode, year=day.year, **({'quarter': quarter} if mode == 'offline' else {'month': day.month})))
         periods[mode] = (chosen, start, end)
         board = read_board(cur, chosen, start, end)
+        board_tokens[mode] = board['board_token']
+        if mode == 'offline': coverage = regional_coverage(board['rows'],day)
         demands[mode] = []
         for row in board['rows']:
             cells = [dict(station_id=row['station_id'], column_key=c['key'], revision=row['cells'][c['key']]['revision'], label=c['label'])
                      for c in board['columns'] if row['cells'][c['key']]['status'] == 'unassigned']
             if cells and not any(c['status']=='assigned' for c in row['cells'].values()):
                 demands[mode].append(dict(station_id=row['station_id'], station_name=row['station_name'],
-                  region=row['region'], address=row['address'], longitude=row['longitude'], latitude=row['latitude'], cells=cells))
+                  region=row['region'], address=row['address'], longitude=row['longitude'], latitude=row['latitude'], cells=cells,
+                  covered=any(c['status']=='completed' for c in row['cells'].values())))
     _, start, end = periods['offline']
     loads = workload(cur, [p['id'] for p in eligible], start, end)
     groups = []
@@ -93,9 +97,11 @@ def proposal(cur, actor, day, options=None):
     field_teams.sort(key=lambda t: (loads[t['leader_id']]['offline'], t['leader_id']))
     warnings = []
     missing = [s['station_name'] for s in demands['offline'] if not coordinate(s)]
-    if missing: warnings.append('以下站点缺少有效坐标，未自动派现场路线：'+'、'.join(missing))
+    if missing: warnings.append('以下站点缺少有效坐标，未自动派现场任务：'+'、'.join(missing))
     if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整外勤组安排。')
-    routes = field_routes(demands['offline'], len(field_teams), quotas['offline'], origin)
+    valid = [s for s in demands['offline'] if coordinate(s)]
+    _,coverage = regional_targets(valid,len(field_teams)*quotas['offline'],coverage)
+    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage)
     for team, route in zip(field_teams, routes):
         representative = eligible_by_id[team['leader_id']]
         before = dict(loads[representative['id']])
@@ -103,7 +109,7 @@ def proposal(cur, actor, day, options=None):
             after = dict(before); after['offline'] += 1
             groups.append(dict(**station, mode='offline', person=representative, before=before, after=after,
                 inspector_ids=[p['id'] for p in team['members']], group_name=team['name'], team_members=team['members'],
-                route_order=index+1, route_km=round(length(route, origin), 1)))
+                route_order=index+1, cluster_max_km=round(cluster_diameter(route),1)))
             before = after
     video_people = [p for p in eligible if not p['daily_assignment'] or p['daily_assignment']['mode']=='online']
     video_people.sort(key=lambda p: (loads[p['id']]['online'], p['sequence']))
@@ -116,12 +122,14 @@ def proposal(cur, actor, day, options=None):
             groups.append(dict(**station, mode='online', person=p, before=before, after=after,
                                inspector_ids=[p['id']], group_name=p['display_name']))
             loads[p['id']] = after
-    evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, origin=origin,
+    evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
+                    board_tokens=board_tokens, algorithm='coverage-compact-v1',
                     team_revision=saved_team.get('revision', 0))
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
-        warnings=warnings, route_method='按站点坐标聚类和2-opt优化往返直线距离，不含道路、过江通道和实时路况；出行前请核对导航。',
+        warnings=warnings, regional_coverage=coverage,
+        route_method='先均衡片区季度站点覆盖率（含今日及未来计划预留），再缩小同组站点之间的直线距离；不以出发点、行车顺路或往返路线选站。',
         available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
         excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or '当天已有站点安排或巡检实绩')
                   for p in people if p not in eligible]), periods
@@ -153,7 +161,7 @@ def register_schedule_automation(app, *, connect, has_permission):
                     for cell in group['cells']:
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
                           inspector_ids=group.get('inspector_ids', [group['person']['id']]), scheduled_date=day.isoformat()), chosen, start, end, cache)
-                conn.commit()
+            conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response

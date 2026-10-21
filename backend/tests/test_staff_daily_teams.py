@@ -157,19 +157,18 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.assertEqual(result.status_code,500)
         self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
 
-    def test_all_people_must_confirm_and_confirmation_rechecks_unknown(self):
+    def test_missing_today_availability_defaults_free_and_old_preview_is_rechecked(self):
         context = self.client.get('/api/staff-availability/today-inspection').json
         self.assertEqual((context['confirmed_count'], context['total_count']), (25, 25))
         preview = self.post().json
         self.cur.execute("DELETE FROM staff_availability WHERE person_name='韩叙' AND day='2026-10-19'")
         self.admin.commit()
         context = self.client.get('/api/staff-availability/today-inspection').json
-        self.assertEqual(context['unconfirmed'], ['韩叙'])
-        self.assertEqual(context['confirmed_count'], 24)
-        self.assertEqual(self.post().status_code, 409)
+        self.assertEqual(context['unconfirmed'], [])
+        self.assertEqual(context['confirmed_count'], 25)
+        self.assertEqual(self.post().status_code, 200)
         response = self.post('confirm', token=preview['token'], seed=preview['seed'])
         self.assertEqual(response.status_code, 409)
-        self.assertIn('韩叙', response.json['error'])
         self.cur.execute('SELECT 1 FROM staff_daily_teams'); self.assertIsNone(self.cur.fetchone())
 
     def test_preview_adjustments_save_only_on_confirm_and_retain_server_owned_participants(self):

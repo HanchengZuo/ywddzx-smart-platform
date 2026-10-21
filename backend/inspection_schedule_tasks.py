@@ -3,6 +3,7 @@ import json
 import logging
 from flask import g, jsonify
 from schedule_common import today
+from staff_availability import STAFF, ensure_today_availability
 
 
 def sync_tasks(cur, user_id):
@@ -47,6 +48,12 @@ def personal_agenda(cur, user_id):
       LEFT JOIN staff_availability a ON a.person_name=TRIM(u.real_name) AND a.day=%s
       LEFT JOIN staff_daily_teams d ON d.day=%s WHERE u.id=%s''', (today(), today(), user_id))
     row = cur.fetchone() or {}
+    if row.get('available') is None and (row.get('real_name') or '').strip() in {name for name,_ in STAFF}:
+        ensure_today_availability(cur,today())
+        # Re-read after the conditional insert: a concurrent explicit busy setting always wins.
+        cur.execute('SELECT available,reason FROM staff_availability WHERE person_name=%s AND day=%s',
+                    (row['real_name'].strip(),today()))
+        row.update(cur.fetchone() or dict(available=True,reason=''))
     assignment = next((p for p in row.get('assignments') or [] if p['id'] == user_id), None)
     field_team = None
     if assignment and assignment['mode'] == 'offline':
