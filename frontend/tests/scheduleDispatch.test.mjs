@@ -55,9 +55,12 @@ test('rejected student move never emits a successful save and retains the server
   assert.equal(context.error.value, '已有站点派工')
 })
 
-test('automatic dispatch uses the fixed origin and local route calculation without online geocoding or paid AI', () => {
+test('automatic dispatch explains coverage balance and interstation distance without online routing or paid AI', () => {
   const script = source('components/AutomaticSchedule.vue')
-  assert.match(script,/上海市浦东新区世纪大道1200号/)
+  assert.match(script,/季度覆盖率较低的片区/)
+  assert.match(script,/regional_coverage/)
+  assert.match(script,/cluster_max_km/)
+  assert.doesNotMatch(script,/route_km|SCHEDULE_ORIGIN|2-opt|建议路线排序/)
   assert.doesNotMatch(script,/AMap|Geocoder|scheduleOrigin|originError|deepseek/i)
   assert.match(script,/offlineCount = ref\(2\)/)
   assert.match(script,/onlineCount = ref\(3\)/)

@@ -64,7 +64,6 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     if assignments != before:
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                         sync_field_team_plans(cur, actor, day)
-                        conn.commit()
                     result['groups'] = group_assignments(assignments)
                 else:
                     require_workday(cur, day)
@@ -83,8 +82,8 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         validate_dispatched_teams(cur, day, assignments)
                         before = [p for group in result['groups'] for p in group['members']]
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
-                        conn.commit()
                     result.update(groups=group_assignments(assignments), token=token, seed=seed)
+            conn.commit()
             response = jsonify(success=True, can_edit=can_edit, **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response

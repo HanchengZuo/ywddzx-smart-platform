@@ -334,6 +334,7 @@ def register_inspection_schedule(app, *, connect, has_permission):
             saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
             response = jsonify(success=True, day=day.isoformat(), people=available_people(cur, day),
                                groups=group_assignments(saved.get('assignments', [])), team_revision=saved.get('revision', 0))
+            conn.commit()
             response.headers['Cache-Control'] = 'private, no-store'
             return response
         except (ValueError, PermissionError) as exc:

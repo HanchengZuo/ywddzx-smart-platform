@@ -11,7 +11,7 @@ from unittest.mock import patch
 from tests import test_staff_daily_teams as team_tests
 from tests import test_staff_scheduling as staff_tests
 from inspection_schedule_catalog import COLUMNS
-from schedule_routes import ORIGIN_POINT, coordinate, distance, field_routes, length, optimized
+from schedule_routes import ORIGIN_POINT, coordinate, distance, field_routes, cluster_diameter
 
 
 class RouteTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(distance((121.5,31.2),(121.5,31.2)), 0)
         self.assertGreater(distance((121.5,31.2),(121.6,31.2)), 9)
 
-    def test_compact_routes_have_quotas_no_duplicates_and_two_opt_never_worsens(self):
+    def test_compact_groups_have_quotas_no_duplicates_and_ignore_departure_point(self):
         origin=(121.5,31.2)
         stations=[dict(station_id=i,longitude=121.2+i*.002,latitude=31.2) for i in range(4)]
         stations += [dict(station_id=i+4,longitude=121.8+i*.002,latitude=31.2) for i in range(4)]
@@ -30,8 +30,8 @@ class RouteTests(unittest.TestCase):
         self.assertEqual([len(r) for r in result],[3,3])
         self.assertEqual(len({s['station_id'] for r in result for s in r}),6)
         self.assertTrue(all(len({s['station_id']<4 for s in r})==1 for r in result))
-        shuffled=[stations[i] for i in [0,7,1,6,2,5]]
-        self.assertLessEqual(length(optimized(shuffled,origin),origin),length(shuffled,origin))
+        self.assertTrue(all(cluster_diameter(group)<1 for group in result))
+        self.assertEqual(result,field_routes(stations,2,3,(122.1,32)))
         self.assertEqual(result,field_routes(stations,2,3,origin))
 
     def test_empty_missing_coordinates_small_demand_and_runtime(self):

@@ -100,6 +100,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/535_schedule_shelf.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/540_video_schedule_rows.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/545_staff_dispatch_history.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/550_staff_default_availability.sql').read_text())
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')
         self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('步雪琼','2026-10-20',true,1,1),('孔德辰','2026-10-20',true,1,1)")
         self.cur.execute('INSERT INTO staff_daily_teams(day,assignments,revision,updated_by) VALUES(%s,%s,1,1)',

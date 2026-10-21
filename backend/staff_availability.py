@@ -15,6 +15,28 @@ VIEW = 'view_staff_availability'
 EDIT = 'edit_staff_availability'
 
 
+def ensure_today_availability(cur, day=None):
+    """Persist missing defaults without waiting behind dispatch or overwriting manual choices."""
+    day = day or today()
+    names = [name for name,_ in STAFF]
+    cur.execute('SELECT COUNT(*) AS n FROM staff_availability WHERE day=%s AND person_name=ANY(%s)', (day,names))
+    if cur.fetchone()['n'] == len(names): return
+    cur.execute('SELECT pg_try_advisory_xact_lock(9801,1) AS locked')
+    if not cur.fetchone()['locked']: return
+    cur.execute('''WITH inserted AS (
+      INSERT INTO staff_availability(person_name,day,available,reason,revision,is_default)
+      SELECT name,%s,TRUE,'',1,TRUE FROM unnest(%s::text[]) AS name
+      ON CONFLICT(person_name,day) DO NOTHING RETURNING person_name,day
+    ) INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_name)
+      SELECT person_name,day,'{"available":null}'::jsonb,
+        '{"available":true,"reason":"","is_default":true}'::jsonb,'系统默认有空' FROM inserted''',
+                (day,names))
+
+
+def effective_availability(saved, day):
+    return saved.get('available', True if day == today() else None)
+
+
 def excluded_reason(person):
     """Shared availability wording for personnel grouping and station dispatch."""
     reasons = []
@@ -59,8 +81,9 @@ def daily_modes(cur, ids, start, end):
 
 
 def available_people(cur, day):
+    if day == today(): ensure_today_availability(cur)
     people = roster_people(cur)
-    cur.execute('SELECT person_name,available,reason,revision FROM staff_availability WHERE day=%s', (day,))
+    cur.execute('SELECT person_name,available,reason,revision,is_default FROM staff_availability WHERE day=%s', (day,))
     values = {row['person_name']: row for row in cur.fetchall()}
     planned = planned_work(cur, day, day + timedelta(days=1))
     teams = team_members(team_days(cur, day, day + timedelta(days=1)))
@@ -69,7 +92,8 @@ def available_people(cur, day):
         value = values.get(p['display_name'], {})
         assigned = teams.get((p['id'], day.isoformat()))
         station_modes = planned.get((p['id'], day.isoformat()), [])
-        p.update(available=value.get('available'), reason=value.get('reason', ''), revision=value.get('revision', 0),
+        p.update(available=effective_availability(value,day), reason=value.get('reason', ''), revision=value.get('revision', 0),
+                 is_default=value.get('is_default',day == today()),
                  station_modes=station_modes, daily_assignment=assigned,
                  planned_modes=sorted(set(station_modes) | ({assigned['mode']} if assigned else set())),
                  actual_modes=actual.get((p['id'], day.isoformat()), []))
@@ -142,7 +166,7 @@ def save_availability(cur, actor, data):
     if not isinstance(name, str) or name not in people or type(revision) is not int or revision < 0:
         raise ValueError('人员或版本不合法。')
     require_workday(cur, day, allow_past=historical)
-    cur.execute('SELECT available,reason,revision,history_status FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
+    cur.execute('SELECT available,reason,revision,history_status,is_default FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
     previous = cur.fetchone() or dict(available=None, reason='', revision=0, history_status=None)
     if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
     cell = single_staff_cell(cur,people[name],day,previous)
@@ -154,13 +178,15 @@ def save_availability(cur, actor, data):
         if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
         assigned = team_members(team_days(cur, day, day + timedelta(days=1))).get((people[name]['id'], day.isoformat()))
         if assigned: raise ScheduleConflict('此人已加入今日巡检分组，不能直接标记没空；请调整分组安排后再保存。')
-    if previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status: return
-    cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status)
-      VALUES(%s,%s,%s,%s,1,%s,%s) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
-      reason=EXCLUDED.reason,history_status=EXCLUDED.history_status,revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
+    if (previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status
+            and not previous.get('is_default')): return
+    cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status,is_default)
+      VALUES(%s,%s,%s,%s,1,%s,%s,FALSE) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
+      reason=EXCLUDED.reason,history_status=EXCLUDED.history_status,is_default=FALSE,
+      revision=staff_availability.revision+1,updated_by=EXCLUDED.updated_by,updated_at=CURRENT_TIMESTAMP''',
                 (name, day, available, reason, actor['id'], history_status))
     cur.execute('''INSERT INTO staff_availability_events(person_name,day,before_value,after_value,actor_id,actor_name)
-      VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason, history_status=history_status)),
+      VALUES(%s,%s,%s,%s,%s,%s)''', (name, day, json.dumps(dict(previous)), json.dumps(dict(available=available, reason=reason, history_status=history_status,is_default=False)),
       actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
 
 
@@ -169,7 +195,7 @@ def staff_cell(day, saved, assigned, direct_actual, history):
     actual = work.get('actual_modes', []) if work.get('total') else direct_actual
     groups = set(work.get('group_names', []))
     if assigned and assigned['mode'] == 'offline': groups.add(assigned['group_name'])
-    value = dict(available=saved.get('available'),reason=saved.get('reason',''),
+    value = dict(available=effective_availability(saved,day),is_default=saved.get('is_default',day == today()),reason=saved.get('reason',''),
         history_status=saved.get('history_status'),daily_assignment=assigned,
         revision=saved.get('revision',0),updated_by_name=saved.get('updated_by_name',''),updated_at=saved.get('saved_at',''),
         planned_modes=sorted(set(work.get('modes',[])) | ({assigned['mode']} if assigned else set())),
@@ -182,7 +208,9 @@ def staff_cell(day, saved, assigned, direct_actual, history):
 
 def single_staff_cell(cur, person, day, saved=None, *, details=False):
     if saved is None:
-        cur.execute('''SELECT a.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
+        if day == today(): ensure_today_availability(cur)
+        cur.execute('''SELECT a.*,CASE WHEN a.is_default THEN '系统默认' ELSE
+          COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') END AS updated_by_name,
           to_char(a.updated_at,'YYYY-MM-DD HH24:MI') AS saved_at
           FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by WHERE person_name=%s AND day=%s''', (person['display_name'],day))
         saved = cur.fetchone() or {}
@@ -197,12 +225,14 @@ def single_staff_cell(cur, person, day, saved=None, *, details=False):
 
 
 def staff_board(cur, week):
+    ensure_today_availability(cur)
     start = week - timedelta(days=week.weekday()); end = start + timedelta(days=7)
     days = working_days(cur, start, end)
     cur.execute('SELECT COUNT(*) AS n FROM quality_work_calendar WHERE day>=%s AND day<%s', (start, end))
     known = cur.fetchone()['n'] == 7
     people = roster_people(cur)
-    cur.execute('''SELECT a.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
+    cur.execute('''SELECT a.*,CASE WHEN a.is_default THEN '系统默认' ELSE
+      COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') END AS updated_by_name,
       to_char(a.updated_at,'YYYY-MM-DD HH24:MI') AS saved_at FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
@@ -242,6 +272,7 @@ def register_staff_availability(app, *, connect, has_permission):
             records = personal_records(cur,person['history_ids'],day) if day<=today() else []
             response = jsonify(success=True,person=person,day=day.isoformat(),today=today().isoformat(),
                 can_edit=has_permission(cur,actor,EDIT),cell=cell,records=records)
+            conn.commit()
             response.headers['Cache-Control']='private, no-store'
             return response
         except (ValueError,PermissionError) as exc:
@@ -271,6 +302,7 @@ def register_staff_availability(app, *, connect, has_permission):
                 result = dict(message='人员档期已保存。')
             else:
                 result = staff_board(cur, day_value(request.args.get('week', today().isoformat())))
+                conn.commit()
             response = jsonify(success=True, can_edit=can_edit, current_user_id=actor['id'], **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response

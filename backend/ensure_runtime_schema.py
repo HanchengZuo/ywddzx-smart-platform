@@ -225,7 +225,7 @@ def main():
                 for table, required in (
                     ('inspection_schedule_cells', {'mode', 'year', 'period_number', 'station_id', 'column_key', 'inspector_ids', 'revision', 'updated_by', 'updated_at', 'scheduled_date', 'plan_team'}),
                     ('inspection_schedule_events', {'station_id', 'before_ids', 'after_ids', 'actor_id', 'actor_name', 'created_at', 'before_team', 'after_team'}),
-                    ('staff_availability', {'person_name', 'day', 'available', 'reason', 'revision', 'updated_by', 'history_status'}),
+                    ('staff_availability', {'person_name', 'day', 'available', 'reason', 'revision', 'updated_by', 'history_status', 'is_default'}),
                     ('staff_daily_teams', {'day', 'assignments', 'revision', 'updated_by'}),
                     ('staff_daily_team_events', {'day', 'before_value', 'after_value', 'actor_id'}),
                     ('inspection_schedule_shelf', {'mode', 'scheduled_date', 'inspector_ids', 'plan_team', 'revision', 'status'}),
