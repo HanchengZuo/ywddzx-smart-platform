@@ -1,5 +1,20 @@
 <template>
   <section class="dispatch-details" aria-label="派工进度与实绩详情">
+    <p v-if="cell.actuals_pending" class="release-note" role="status">
+      当日实绩将在上海时间 17:00
+      后自动核对；现在按原档期和计划排班，不因早间录入记录锁定。巡检记录和任务销项仍实时更新。
+    </p>
+    <div v-if="cell.actual_modes?.length" class="actuals-summary" aria-label="现场与视频实绩">
+      <div v-for="item in cell.actual_modes" :key="item.mode" :class="item.mode">
+        <span>{{ item.mode === 'offline' ? '现场巡检实绩' : '视频巡检实绩' }}</span>
+        <strong>{{ item.count }}<small> 张检查表记录</small></strong>
+      </div>
+      <p>
+        包含原派工对应记录及本人当日录入 /
+        参与记录，按巡检记录去重。两类实绩独立保留，不覆盖原安排。
+      </p>
+    </div>
+    <p v-if="assignment" class="original-assignment">原分组：{{ assignment.group_name }}</p>
     <div v-if="summary.total" class="progress-summary">
       <div>
         <span>检查表完成</span
@@ -63,7 +78,9 @@
           {{
             !task.station_id || !task.table_id
               ? '站点或检查表已删除，原派工信息仍保留。'
-              : '尚未发现对应巡检记录。'
+              : cell.actuals_pending
+                ? '当日记录待 17:00 后统一核对。'
+                : '尚未发现对应巡检记录。'
           }}
         </p>
       </div>
@@ -126,6 +143,56 @@ const groups = computed(() => {
 .dispatch-details {
   margin: 16px 0;
   min-width: 0;
+}
+.release-note {
+  padding: 12px 14px;
+  border: 1px solid #c6ddec;
+  border-radius: 10px;
+  background: #f0f8fd;
+  color: #34657f;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.actuals-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.actuals-summary > div {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dfc79e;
+  border-radius: 10px;
+  background: #fff6e6;
+  color: #835516;
+}
+.actuals-summary > .online {
+  background: #eaf3ff;
+  border-color: #bcd4ed;
+  color: #235e9d;
+}
+.actuals-summary span {
+  display: block;
+  font-size: 12px;
+}
+.actuals-summary strong {
+  display: block;
+  font-size: 24px;
+  margin-top: 6px;
+}
+.actuals-summary small {
+  font-size: 11px;
+  font-weight: 400;
+}
+.actuals-summary > p,
+.original-assignment {
+  width: 100%;
+  margin: 0;
+  color: #597487;
+  font-size: 11px;
+  line-height: 1.8;
 }
 .progress-summary {
   display: grid;

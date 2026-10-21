@@ -8,6 +8,7 @@ from datetime import timedelta
 from flask import g, jsonify, request
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason
+from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
 from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
 
@@ -39,6 +40,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
             if not has_permission(cur, actor, VIEW): raise PermissionError('当前账号无权查看人员档期。')
             can_edit = has_permission(cur, actor, EDIT)
             day = today()
+            window = actuals_window(day)
             if request.method == 'GET':
                 result = context(cur, day)
             else:
@@ -83,6 +85,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         before = [p for group in result['groups'] for p in group['members']]
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                     result.update(groups=group_assignments(assignments), token=token, seed=seed)
+            if request.method == 'POST' and data['action'] != 'preview': assert_actuals_window(window,today())
             conn.commit()
             response = jsonify(success=True, can_edit=can_edit, **result)
             response.headers['Cache-Control'] = 'private, no-store'

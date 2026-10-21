@@ -21,7 +21,7 @@ function detailHarness(get){
     selection:{value:{person_name:'测试',day:'2026-10-20',revision:1}},editable:{value:true},detailSerial:0,detailController:undefined,
     detailLoading:{value:false},detailError:{value:''},detail:{value:null},disposed:false,AbortController,
     axios:{get},staffCellPresentation,selectionState:{value:null},available:{value:false},reason:{value:'旧说明'},
-    historyStatus:{value:'busy'},savedMeta:{value:''},originalRecords:{value:''},
+    historyStatus:{value:'busy'},savedMeta:{value:''},originalRecords:{value:''},armActualsRefresh:()=>{},
   })
   vm.runInContext(source.slice(source.indexOf('async function loadDetail()'),source.indexOf('function close()')),context)
   return context

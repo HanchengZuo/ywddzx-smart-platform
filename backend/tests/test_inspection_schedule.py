@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 import unittest
 import uuid
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import MagicMock, patch
 
 from flask import Flask, g
@@ -73,6 +74,8 @@ class ScheduleDatabaseTest(unittest.TestCase):
             raise RuntimeError('Refusing non-test database')
         for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
+        clock = patch('schedule_common.shanghai_now',return_value=datetime(2026,10,19,18,tzinfo=ZoneInfo('Asia/Shanghai')))
+        clock.start(); self.addCleanup(clock.stop)
         self.schema = 'schedule_' + uuid.uuid4().hex
         self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)
         self.cur = self.admin.cursor()

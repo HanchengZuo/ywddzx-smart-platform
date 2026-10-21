@@ -7,8 +7,12 @@ class ScheduleConflict(ValueError):
     pass
 
 
+def shanghai_now():
+    return datetime.now(ZoneInfo('Asia/Shanghai'))
+
+
 def today():
-    return datetime.now(ZoneInfo('Asia/Shanghai')).date()
+    return shanghai_now().date()
 
 
 def day_value(value):

@@ -55,7 +55,7 @@ class HistoryDatabaseTests(unittest.TestCase):
         cell=self.cell()
         self.assertEqual((cell['dispatch']['completed'],cell['dispatch']['total']),(6,12))
         self.assertEqual((cell['dispatch']['station_completed'],cell['dispatch']['station_total']),(1,2))
-        self.assertEqual(cell['actual_modes'],[dict(mode='offline',count=6)])
+        self.assertEqual(cell['actual_modes'],[dict(mode='offline',count=6),dict(mode='online',count=1)])
         self.assertEqual(cell['field_group_names'],['外勤步雪琼组'])
         self.assertTrue(cell['read_only'])
         detail=self.detail()

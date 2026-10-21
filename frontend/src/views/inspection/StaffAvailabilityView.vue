@@ -44,10 +44,16 @@
         <span v-for="item in legendItems" :key="item.key" :class="'tone-' + item.key"
           ><i></i>{{ item.label }}</span
         >
-        <small>“已排班”为计划，“实绩”为实际巡检记录</small>
+        <small>{{
+          board?.actuals_pending
+            ? '今日按计划排班 · 上海时间 17:00 后展示实绩'
+            : '“已排班”为计划，“实绩”为实际巡检记录'
+        }}</small>
       </div>
       <p class="help">
-        仅展示官方工作日（含调休上班日）。当天未设置的档期自动记为有空，提前设置的没空及原因不变；未来仍可逐格设置。实绩和历史派工只读，点击查看委派站点、检查表与完成进度。历史没空及原因原样保留，仅无派工、无实绩的历史档期可补录。
+        仅展示官方工作日（含调休上班日）。当天未设置默认有空，提前设置的没空及原因不变。上海时间
+        17:00 前按档期和计划排班，不因早间记录锁定；17:00
+        后自动核对实绩，现场与视频同时存在时分别展示，两类都不丢失。原分组与派工保留，实绩和历史派工只读；不影响其他页面实时记录和任务销项。
       </p>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
@@ -145,7 +151,8 @@
                     v-if="person.cells[day.day].field_group_names?.length"
                     class="field-group-label"
                   >
-                    {{ person.cells[day.day].field_group_names.join('、') }}
+                    {{ person.cells[day.day].has_actual ? '原安排：' : ''
+                    }}{{ person.cells[day.day].field_group_names.join('、') }}
                   </small>
                   <small class="cell-detail">{{ state(person, day).detail || '—' }}</small>
                 </button>
@@ -283,6 +290,7 @@ import {
   isCurrentPerson,
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
+import { actualsRefreshDelay } from '@/utils/staffActuals'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
 import StaffDispatchDetails from '@/components/StaffDispatchDetails.vue'
 const week = ref(shanghaiToday()),
@@ -330,7 +338,8 @@ let detailController,
 let controller,
   serial = 0,
   disposed = false,
-  timer
+  timer,
+  actualsTimer
 const summaryItems = [
   { key: 'free', label: '有空待排', hint: '今日有空未安排 · 人' },
   { key: 'busy', label: '没空', hint: '今日没空 · 人' },
@@ -365,6 +374,7 @@ async function load() {
     })
     if (ticket !== serial || disposed) return
     board.value = data
+    armActualsRefresh(data)
     error.value = ''
   } catch (err) {
     if (ticket !== serial || disposed || err.code === 'ERR_CANCELED') return
@@ -382,6 +392,40 @@ function moveWeek(offset) {
     board.value?.week || (/^\d{4}-\d{2}-\d{2}$/.test(week.value) ? week.value : shanghaiToday()),
     offset,
   )
+}
+function armActualsRefresh(data) {
+  clearTimeout(actualsTimer)
+  const delay = actualsRefreshDelay(data)
+  if (!disposed && !blocked.value && delay !== null)
+    actualsTimer = setTimeout(refreshActuals, delay)
+}
+async function refreshActuals() {
+  if (disposed || blocked.value || document.hidden || !navigator.onLine) return
+  if (saving.value) {
+    actualsTimer = setTimeout(refreshActuals, 1000)
+    return
+  }
+  if (dialog.value?.open && selection.value) {
+    const original = selection.value
+    const draft = {
+      revision: original.revision,
+      available: available.value,
+      reason: reason.value,
+      history: historyStatus.value,
+    }
+    await loadDetail()
+    // Keep an unsaved draft only if the same cell is still editable and its saved revision did not change.
+    if (
+      selection.value === original &&
+      editable.value &&
+      selection.value.revision === draft.revision
+    ) {
+      available.value = draft.available
+      reason.value = draft.reason
+      historyStatus.value = draft.history
+    }
+  }
+  await load()
 }
 async function openCell(person, day) {
   const value = person.cells[day.day]
@@ -425,6 +469,7 @@ async function loadDetail() {
     })
     if (disposed || ticket !== detailSerial || !selection.value) return
     detail.value = data
+    armActualsRefresh(data)
     const value = data.cell
     selection.value.revision = value.revision
     selectionState.value = staffCellPresentation(value, data.day, data.today)
@@ -533,7 +578,10 @@ const polling = createAdaptivePolling({
 })
 function visibility() {
   if (document.hidden || !navigator.onLine) polling.pause()
-  else polling.start({ immediate: true })
+  else {
+    if (dialog.value?.open && detail.value?.actuals_pending) refreshActuals()
+    polling.start({ immediate: true })
+  }
 }
 watch(week, () => {
   serial++
@@ -557,6 +605,7 @@ onBeforeUnmount(() => {
   serial++
   controller?.abort()
   clearTimeout(timer)
+  clearTimeout(actualsTimer)
   polling.dispose()
   dialog.value?.close()
   document.removeEventListener('visibilitychange', visibility)
