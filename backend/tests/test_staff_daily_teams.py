@@ -240,15 +240,16 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.json)
         self.assertNotIn(affected['name'],[g.get('group_name') for g in response.json['groups']])
 
-    def test_history_override_is_versioned_and_never_changes_original_records(self):
+    def test_history_with_actual_is_locked_and_only_unrecorded_history_can_be_supplemented(self):
         record=self.record(day='2026-10-16',inspector=2)
         response=self.availability(day='2026-10-16',history_status='online')
-        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.status_code,409,response.json)
         cell=self.client.get('/api/staff-availability?week=2026-10-12').json['people'][0]['cells']['2026-10-16']
-        self.assertEqual(cell['history_status'],'online'); self.assertEqual(cell['actual_modes'],[dict(mode='offline',count=1)])
+        self.assertIsNone(cell['history_status']); self.assertEqual(cell['actual_modes'],[dict(mode='offline',count=1)])
         self.cur.execute('SELECT inspection_table_id FROM inspections WHERE id=%s',(record,)); self.assertEqual(self.cur.fetchone()['inspection_table_id'],1)
-        self.assertEqual(self.availability(day='2026-10-16',history_status='busy',reason='培训').status_code,200)
-        self.assertEqual(self.availability(day='2026-10-16',history_status='auto').status_code,200)
+        self.assertEqual(self.availability(day='2026-10-16',history_status='busy',reason='培训').status_code,409)
+        self.assertEqual(self.availability(name='孔德辰',day='2026-10-16',history_status='online').status_code,200)
+        self.assertEqual(self.availability(name='孔德辰',day='2026-10-16',history_status='auto').status_code,200)
         self.assertEqual(self.availability(history_status='online').status_code,400)
         self.cur.execute('SELECT after_value FROM staff_availability_events WHERE day=%s ORDER BY id DESC LIMIT 1',('2026-10-16',))
         self.assertIsNone(self.cur.fetchone()['after_value']['history_status'])

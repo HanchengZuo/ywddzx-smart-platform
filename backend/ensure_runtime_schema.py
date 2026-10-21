@@ -231,7 +231,7 @@ def main():
                     ('inspection_schedule_shelf', {'mode', 'scheduled_date', 'inspector_ids', 'plan_team', 'revision', 'status'}),
                     ('inspection_schedule_shelf_events', {'shelf_id', 'action', 'details', 'actor_id'}),
                     ('staff_availability_events', {'before_value', 'after_value', 'actor_id'}),
-                    ('inspection_schedule_tasks', {'user_id', 'scheduled_date', 'team_ids', 'status', 'completion_inspection_id', 'expired_at'}),
+                    ('inspection_schedule_tasks', {'user_id', 'scheduled_date', 'team_ids', 'status', 'completion_inspection_id', 'expired_at', 'plan_team', 'dispatch_event_id'}),
                 ):
                     cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s", (table,))
                     if not required.issubset({row[0] for row in cur.fetchall()}):

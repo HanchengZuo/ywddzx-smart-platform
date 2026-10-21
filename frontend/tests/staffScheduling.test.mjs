@@ -133,11 +133,8 @@ test('availability and inspection modes have distinct semantic tones, with actua
     ).tone,
     'mixed',
   )
-  assert.equal(
-    staffCellPresentation({ ...cell, planned_modes: ['offline'] }, '2026-10-16', today).tone,
-    'past',
-    'past plans must not masquerade as actual inspections',
-  )
+  assert.equal(staffCellPresentation({ ...cell, planned_modes: ['offline'] }, '2026-10-16', today).stage,
+    '已排班','past plans remain visible but must not masquerade as actual inspections')
 })
 test('today counters exclude every other day and never double-count actual and planned work', () => {
   const cell = { available: true, actual_modes: [], planned_modes: [] }
@@ -200,6 +197,7 @@ test('staff editing always resets to the clicked individual cell and saves exact
     reason: { value: '' },
     savedMeta: { value: '' },
     editable: { value: false },
+    detail: {value:null},detailLoading:{value:false},detailError:{value:''},detailSerial:0,detailController:undefined,AbortController,
     saveError: { value: '' },
     conflict: { value: false },
     saving: { value: false },
@@ -218,7 +216,10 @@ test('staff editing always resets to the clicked individual cell and saves exact
       },
     },
     state: (p, day) => staffCellPresentation(p.cells[day.day], day.day, '2026-10-19'),
+    staffCellPresentation,
     axios: {
+      get: async (_, {params}) => ({data:{can_edit:context.board.value.can_edit,day:params.day,today:'2026-10-19',
+        cell:person.cells[params.day] || values,records:[]}}),
       put: async (url, body) => {
         assert.equal(url, '/api/staff-availability')
         payload = JSON.parse(JSON.stringify(body))
@@ -265,12 +266,13 @@ test('staff editing always resets to the clicked individual cell and saves exact
     /selectedPeople|selectedDays|openBatch|canBatch|type="checkbox"|批量设置档期/,
   )
 })
-test('manual history takes precedence only in staff display, with explicit provenance and no fabricated issue counts', () => {
+test('real records override manual supplements, while original busy history stays unchanged', () => {
   const cell = { history_status: 'online', reason: '', actual_modes: [{ mode: 'offline', count: 4 }], planned_modes: [] }
   const state = staffCellPresentation(cell, '2026-10-16', '2026-10-20')
-  assert.equal(state.tone, 'online')
-  assert.equal(state.stage, '人工补录')
-  assert.match(state.detail, /保留原始巡检数据/)
+  assert.equal(state.tone, 'offline')
+  assert.equal(state.stage, '实绩')
+  assert.match(state.detail, /4 张检查表/)
+  assert.equal(staffCellPresentation({...cell,actual_modes:[]},'2026-10-16','2026-10-20').stage,'人工补录')
   assert.equal(cell.actual_modes[0].mode, 'offline')
   assert.equal(staffCellPresentation({ ...cell, history_status: 'busy', reason: '培训' }, '2026-10-16', '2026-10-20').detail, '培训')
   assert.equal(staffCellPresentation({ ...cell, history_status: null }, '2026-10-16', '2026-10-20').stage, '实绩')
@@ -320,6 +322,7 @@ for (const filename of [
   'components/AutomaticSchedule.vue',
   'components/DailyInspectionTeams.vue',
   'components/ScheduleTaskInbox.vue',
+  'components/StaffDispatchDetails.vue',
   'components/InspectionSchedulePanel.vue',
   'views/inspection/StaffAvailabilityView.vue',
 ]) {

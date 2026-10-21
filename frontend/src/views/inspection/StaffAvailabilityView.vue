@@ -47,7 +47,7 @@
         <small>“已排班”为计划，“实绩”为实际巡检记录</small>
       </div>
       <p class="help">
-        仅展示官方工作日（含调休上班日）。今天和未来设置有空、没空；历史日期可补录现场巡检、视频巡检或没空原因，明确标记人工记录，不改动原始巡检记录。今日全员确认有空或没空后，才能预览分组。
+        仅展示官方工作日（含调休上班日）。今天和未来设置有空、没空；实绩和历史派工只读，点击查看委派站点、检查表与完成进度。历史没空及原因原样保留。仅无派工、无实绩的历史档期可补录。今日全员确认档期后才能预览分组。
       </p>
       <p v-if="board && !board.calendar_known" class="warning">
         此周官方工作日日历不完整，未发布的日期不会猜测为工作日。请同步法定节假日日历后再安排。
@@ -136,7 +136,10 @@
                   @click="openCell(person, day)"
                 >
                   <small class="mobile-date">{{ day.day.slice(5) }} {{ day.weekday }}</small>
-                  <span class="cell-stage"><i></i>{{ state(person, day).stage }}</span>
+                  <span class="cell-stage"
+                    ><i></i>{{ state(person, day).stage
+                    }}<em v-if="person.cells[day.day].read_only">只读</em></span
+                  >
                   <b>{{ state(person, day).label }}</b>
                   <small
                     v-if="person.cells[day.day].field_group_names?.length"
@@ -179,6 +182,10 @@
             </button>
           </header>
           <div class="dialog-body">
+            <p v-if="detailLoading" class="edit-hint" role="status">正在核对原派工与最新实绩…</p>
+            <p v-if="detailError" class="error" role="alert">
+              {{ detailError }} <button type="button" @click="loadDetail">重新读取详情</button>
+            </p>
             <div
               v-if="selectionState"
               class="current-arrangement"
@@ -190,6 +197,7 @@
                 {{ selectionState.detail || '此日没有实际巡检记录' }}</span
               >
             </div>
+            <StaffDispatchDetails v-if="detail" :cell="detail.cell" :records="detail.records" />
             <template v-if="editable">
               <div v-if="historical" class="status-picker history-picker" aria-label="补录历史档期">
                 <button
@@ -239,7 +247,9 @@
                 仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
               </p>
             </template>
-            <p v-else class="edit-hint">当前账号只有查看权限，不能修改档期。</p>
+            <p v-else-if="detail" class="edit-hint readonly-explanation">
+              {{ detail.cell.read_only_reason || '当前账号只有查看权限，不能修改档期。' }}
+            </p>
             <p v-if="originalRecords" class="edit-hint">原始巡检记录：{{ originalRecords }}</p>
             <p v-if="savedMeta" class="saved-meta">{{ savedMeta }}</p>
             <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
@@ -274,6 +284,7 @@ import {
 } from '@/utils/staffScheduling'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
+import StaffDispatchDetails from '@/components/StaffDispatchDetails.vue'
 const week = ref(shanghaiToday()),
   board = ref(null),
   loading = ref(false),
@@ -291,7 +302,10 @@ const historyStatus = ref('auto'),
   originalRecords = ref(''),
   teamsOpen = ref(false)
 const historical = computed(() =>
-  Boolean(selection.value && selection.value.day < (board.value?.today || shanghaiToday())),
+  Boolean(
+    selection.value &&
+    selection.value.day < (detail.value?.today || board.value?.today || shanghaiToday()),
+  ),
 )
 const staffGroups = computed(() =>
   ['管理人员', '大学生'].map((label) => ({
@@ -308,6 +322,11 @@ const historyOptions = [
 const dialog = ref(null),
   saveError = ref(''),
   conflict = ref(false)
+const detail = ref(null),
+  detailLoading = ref(false),
+  detailError = ref('')
+let detailController,
+  detailSerial = 0
 let controller,
   serial = 0,
   disposed = false,
@@ -377,15 +396,61 @@ async function openCell(person, day) {
   savedMeta.value = value.updated_at
     ? person.display_name + '的档期由' + value.updated_by_name + '于' + value.updated_at + '保存'
     : '此档期尚未设置。'
-  editable.value = board.value.can_edit
+  editable.value = false
+  detail.value = null
+  detailError.value = ''
   saveError.value = ''
   conflict.value = false
   polling.pause()
   await nextTick()
-  if (!disposed) dialog.value.showModal()
+  if (!disposed) {
+    dialog.value.showModal()
+    await loadDetail()
+  }
+}
+async function loadDetail() {
+  if (!selection.value || disposed) return
+  const selected = { ...selection.value },
+    ticket = ++detailSerial
+  detailController?.abort()
+  detailController = new AbortController()
+  detailLoading.value = true
+  editable.value = false
+  detailError.value = ''
+  try {
+    const { data } = await axios.get('/api/staff-availability/detail', {
+      params: { person_name: selected.person_name, day: selected.day },
+      signal: detailController.signal,
+      timeout: 15000,
+    })
+    if (disposed || ticket !== detailSerial || !selection.value) return
+    detail.value = data
+    const value = data.cell
+    selection.value.revision = value.revision
+    selectionState.value = staffCellPresentation(value, data.day, data.today)
+    available.value = value.available !== false
+    reason.value = value.reason
+    historyStatus.value = value.history_status || 'auto'
+    savedMeta.value = value.updated_at
+      ? `${selected.person_name}的档期由${value.updated_by_name}于${value.updated_at}保存`
+      : '此档期尚未设置。'
+    originalRecords.value = ''
+    editable.value = Boolean(
+      data.can_edit && !value.read_only && !value.has_actual && !value.actual_modes?.length,
+    )
+  } catch (err) {
+    if (!disposed && ticket === detailSerial && err.code !== 'ERR_CANCELED')
+      detailError.value = err.response?.data?.error || '无法核对实绩，暂不能调整档期，请重试。'
+  } finally {
+    if (ticket === detailSerial) detailLoading.value = false
+  }
 }
 function close() {
   if (!saving.value) {
+    detailSerial++
+    detailController?.abort()
+    detailLoading.value = false
+    detail.value = null
     dialog.value?.close()
     selection.value = null
     polling.start()
@@ -486,6 +551,8 @@ onMounted(() => {
   window.addEventListener('offline', visibility)
 })
 onBeforeUnmount(() => {
+  detailSerial++
+  detailController?.abort()
   disposed = true
   serial++
   controller?.abort()
@@ -499,6 +566,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.cell-stage em {
+  font-style: normal;
+  font-size: 9px;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.75;
+}
 .self-badge {
   display: inline-block;
   margin-left: 6px;
@@ -1008,7 +1083,7 @@ tbody tr:hover .person-name {
   font-size: 13px;
 }
 .staff-dialog {
-  width: min(540px, calc(100vw - 24px));
+  width: min(680px, calc(100vw - 24px));
   max-width: none;
   max-height: calc(100dvh - 24px);
   padding: 0;

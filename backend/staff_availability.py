@@ -6,6 +6,7 @@ from datetime import timedelta
 from flask import g, jsonify, request
 from roles import SUPERVISOR_ROLES
 from staff_daily_teams import team_days, team_members
+from staff_schedule_history import dispatch_history, personal_records, cell_read_only_reason
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
 
 STAFF = ([(name, '管理人员') for name in '步雪琼 孔德辰 赵之龙 吕泽昆 韩叙 杨昊淞 芦斌'.split()]
@@ -144,6 +145,9 @@ def save_availability(cur, actor, data):
     cur.execute('SELECT available,reason,revision,history_status FROM staff_availability WHERE person_name=%s AND day=%s FOR UPDATE', (name, day))
     previous = cur.fetchone() or dict(available=None, reason='', revision=0, history_status=None)
     if previous['revision'] != revision: raise ScheduleConflict('档期已被其他用户修改，请重新载入后调整。')
+    cell = single_staff_cell(cur,people[name],day,previous)
+    if cell['read_only_reason']:
+        raise ScheduleConflict(cell['read_only_reason'])
     if not historical and not available and people[name]['id']:
         cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
           AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
@@ -160,6 +164,38 @@ def save_availability(cur, actor, data):
       actor['id'], actor.get('real_name') or actor.get('username') or str(actor['id'])))
 
 
+def staff_cell(day, saved, assigned, direct_actual, history):
+    work = history.get('summary', {})
+    actual = work.get('actual_modes', []) if work.get('total') else direct_actual
+    groups = set(work.get('group_names', []))
+    if assigned and assigned['mode'] == 'offline': groups.add(assigned['group_name'])
+    value = dict(available=saved.get('available'),reason=saved.get('reason',''),
+        history_status=saved.get('history_status'),daily_assignment=assigned,
+        revision=saved.get('revision',0),updated_by_name=saved.get('updated_by_name',''),updated_at=saved.get('saved_at',''),
+        planned_modes=sorted(set(work.get('modes',[])) | ({assigned['mode']} if assigned else set())),
+        field_group_names=sorted(groups),actual_modes=actual,dispatch=work,
+        has_actual=bool(direct_actual or work.get('has_actual')))
+    value['read_only_reason'] = cell_read_only_reason(value,day,today())
+    value['read_only'] = bool(value['read_only_reason'])
+    return value
+
+
+def single_staff_cell(cur, person, day, saved=None, *, details=False):
+    if saved is None:
+        cur.execute('''SELECT a.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
+          to_char(a.updated_at,'YYYY-MM-DD HH24:MI') AS saved_at
+          FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by WHERE person_name=%s AND day=%s''', (person['display_name'],day))
+        saved = cur.fetchone() or {}
+    ids = person['history_ids']
+    history = dispatch_history(cur,ids,day,day+timedelta(days=1),today(),details=details)
+    work = next(iter(history.values()),{})
+    teams = team_members(team_days(cur,day,day+timedelta(days=1)))
+    assigned = next((teams[(uid,day.isoformat())] for uid in ids if (uid,day.isoformat()) in teams),None)
+    actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),today()+timedelta(days=1)))
+    cell = staff_cell(day,saved,assigned,[r for uid in ids for r in actual.get((uid,day.isoformat()),[])],work)
+    return dict(cell,tasks=work.get('tasks',[])) if details else cell
+
+
 def staff_board(cur, week):
     start = week - timedelta(days=week.weekday()); end = start + timedelta(days=7)
     days = working_days(cur, start, end)
@@ -170,15 +206,8 @@ def staff_board(cur, week):
       to_char(a.updated_at,'YYYY-MM-DD HH24:MI') AS saved_at FROM staff_availability a LEFT JOIN users u ON u.id=a.updated_by
       WHERE day>=%s AND day<%s''', (start, end))
     saved = {(r['person_name'], r['day'].isoformat()): r for r in cur.fetchall()}
-    planned = planned_work(cur, start, end)
-    field_groups = defaultdict(set)
-    cur.execute('''SELECT scheduled_date::text AS day,inspector_ids,plan_team->>'name' AS name
-      FROM inspection_schedule_cells WHERE mode='offline' AND scheduled_date>=%s AND scheduled_date<%s
-      AND jsonb_typeof(plan_team)='object' ''', (start, end))
-    for plan in cur.fetchall():
-        if plan['name']:
-            for uid in plan['inspector_ids']:
-                field_groups[(uid, plan['day'])].add(plan['name'])
+    history_ids = [uid for p in people for uid in p['history_ids']]
+    history = dispatch_history(cur,history_ids,start,end,today())
     teams = team_days(cur, start, end)
     members = team_members(teams)
     actual = daily_modes(cur, [uid for p in people for uid in p['history_ids']], start, min(end, today() + timedelta(days=1)))
@@ -186,22 +215,44 @@ def staff_board(cur, week):
         p['cells'] = {}
         for d in days:
             v = saved.get((p['display_name'], d['day']), {})
-            assigned = members.get((p['id'], d['day']))
-            modes = set(planned.get((p['id'], d['day']), [])) | ({assigned['mode']} if assigned else set())
-            group_names = set(field_groups.get((p['id'], d['day']), []))
-            if assigned and assigned['mode'] == 'offline': group_names.add(assigned['group_name'])
-            p['cells'][d['day']] = dict(available=v.get('available'), reason=v.get('reason', ''),
-                history_status=v.get('history_status'), daily_assignment=assigned,
-                revision=v.get('revision', 0), updated_by_name=v.get('updated_by_name', ''), updated_at=v.get('saved_at', ''),
-                planned_modes=sorted(modes),
-                field_group_names=sorted(group_names),
-                actual_modes=[mode for uid in p['history_ids'] for mode in actual.get((uid, d['day']), [])])
+            assigned = next((members[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in members),None)
+            work = next((history[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in history),{})
+            p['cells'][d['day']] = staff_cell(day_value(d['day']),v,assigned,
+                [mode for uid in p['history_ids'] for mode in actual.get((uid,d['day']),[])],work)
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
                 today_summary=today_summary(cur, today()),
                 daily_teams=list(teams.values()))
 
 
 def register_staff_availability(app, *, connect, has_permission):
+    @app.get('/api/staff-availability/detail')
+    def staff_availability_detail():
+        actor = getattr(g,'current_user',None)
+        if not actor: return jsonify(success=False,error='请先登录。'),401
+        conn = cur = None
+        try:
+            conn = connect(); cur = conn.cursor()
+            if not has_permission(cur,actor,VIEW): raise PermissionError('当前账号无权查看人员档期。')
+            cur.execute("SET LOCAL statement_timeout='10s'")
+            name = request.args.get('person_name')
+            day = day_value(request.args.get('day'))
+            person = next((p for p in roster_people(cur) if p['display_name']==name),None)
+            if not person: raise ValueError('请选择人员档期名单中的人员。')
+            cell = single_staff_cell(cur,person,day,details=True)
+            records = personal_records(cur,person['history_ids'],day) if day<=today() else []
+            response = jsonify(success=True,person=person,day=day.isoformat(),today=today().isoformat(),
+                can_edit=has_permission(cur,actor,EDIT),cell=cell,records=records)
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        except (ValueError,PermissionError) as exc:
+            return jsonify(success=False,error=str(exc)),403 if isinstance(exc,PermissionError) else 400
+        except Exception:
+            logging.exception('Staff dispatch detail failed')
+            return jsonify(success=False,error='档期详情暂时无法读取，请稍后重试。'),500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()
+
     @app.route('/api/staff-availability', methods=['GET', 'PUT'])
     def staff_availability_board():
         actor = getattr(g, 'current_user', None)
