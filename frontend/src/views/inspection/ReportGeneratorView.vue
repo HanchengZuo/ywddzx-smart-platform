@@ -10,7 +10,7 @@
       <div class="report-month-control">
         <span :class="['studio-status', { running: loading, pending: hasSavedReportChanges || templateUnavailable, ready: hasReport && !loading && !hasSavedReportChanges && !templateUnavailable }]" role="status"><i aria-hidden="true"></i>{{ loading ? activeJob ? '报告生成中' : '正在读取报告' : templateUnavailable ? '模板待配置' : hasSavedReportChanges ? '设置有更新，待重新生成' : hasReport ? '当前成稿可查看与导出' : '等待生成首份报告' }}</span>
         <div class="studio-hero-actions">
-        <button v-if="hasReport && !isQualityMeasurementReport && !hasIssueLibrary" type="button" class="btn btn-outline studio-html-toggle" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看HTML报告' : '返回PPT预览' }}</button>
+        <button type="button" class="btn btn-outline studio-html-toggle" :disabled="!hasReport || loading || templateUnavailable" :aria-pressed="reportDisplayMode === 'text'" aria-controls="report-studio-rendered" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看HTML报告' : '返回PPT预览' }}</button>
         <button
           type="button"
           class="export-ppt-btn"
@@ -358,7 +358,14 @@
 
     <header id="report-studio-output" tabindex="-1" class="studio-output-heading">
       <div><span class="studio-output-number" aria-hidden="true">03</span><div><h3>报告成稿</h3><p>{{ hasReport ? `最后成功生成于 ${reportGeneratedAt}` : '生成完成后，将在这里展示报告与预览' }}</p></div></div>
-      <div class="studio-output-actions"><span>{{ templateUnavailable ? '模板待配置' : loading ? activeJob ? '后台处理中' : '正在读取' : hasReport ? reportDisplayMode === 'ppt' ? 'PPT 同源预览' : 'HTML 报告' : '尚无成稿' }}</span><button type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button></div>
+      <div class="studio-output-actions">
+        <div v-if="hasReport" class="studio-view-switch" role="group" aria-label="报告显示方式">
+          <button type="button" :aria-pressed="reportDisplayMode === 'ppt'" :disabled="loading || templateUnavailable" aria-controls="report-studio-rendered" @click="reportDisplayMode = 'ppt'">PPT预览</button>
+          <button type="button" :aria-pressed="reportDisplayMode === 'text'" :disabled="loading || templateUnavailable" aria-controls="report-studio-rendered" @click="reportDisplayMode = 'text'">HTML报告</button>
+        </div>
+        <span v-else>{{ templateUnavailable ? '模板待配置' : loading ? '正在读取' : '尚无成稿' }}</span>
+        <button type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button>
+      </div>
     </header>
 
     <section v-if="templateUnavailable" class="template-placeholder card-surface">
@@ -401,12 +408,13 @@
       </div>
     </section>
 
-    <section v-else-if="hasReport && reportDisplayMode === 'ppt'" class="report-document card-surface">
+    <section v-else-if="hasReport && reportDisplayMode === 'ppt'" id="report-studio-rendered" class="report-document card-surface">
       <ReportPptPreview :report-type="selectedReportType" :snapshot-id="Number(selectedSnapshotId)" :generated-at="reportGeneratedAt"
         :title="report.title || reportTitleFallback" @ready="exportTask = $event" />
     </section>
-    <section v-else-if="hasReport" class="report-document card-surface">
-      <div v-if="!isQualityMeasurementReport && !isNonOilReport" class="report-document-head">
+    <section v-else-if="hasReport" id="report-studio-rendered" class="report-document report-document-html card-surface">
+      <p class="studio-html-note">HTML阅读版 · 使用最后成功生成的报告数据，不会调用AI；PPT导出仍使用同一份成稿。</p>
+      <div class="report-document-head">
         <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
           <h1>{{ report.title || reportTitleFallback }}</h1>
@@ -433,171 +441,9 @@
         </div>
       </div>
 
-      <template v-if="isQualityMeasurementReport">
-        <div class="quality-ppt-viewer">
-          <header class="quality-ppt-toolbar">
-            <div>
-              <span>PRESENTATION PREVIEW</span>
-              <strong>{{ report.title || reportTitleFallback }}</strong>
-              <small>生成于 {{ reportGeneratedAt }} · 网页预览与导出PPT使用同一份内容 · 支持键盘 ← → 翻页</small>
-            </div>
-            <div class="quality-ppt-page-count">{{ activeQualitySlideIndex + 1 }} / {{ qualitySlides.length }}</div>
-          </header>
-
-          <div v-if="currentQualitySlide" class="quality-ppt-stage">
-            <article class="quality-ppt-slide" :class="`slide-${currentQualitySlide.kind}`">
-              <header v-if="!['cover', 'agenda', 'ending'].includes(currentQualitySlide.kind)" class="quality-slide-header">
-                <h2><span>{{ currentQualitySlide.title_prefix || currentQualitySlide.title }}</span><em v-if="currentQualitySlide.title_accent">{{ currentQualitySlide.title_accent }}</em></h2>
-                <div class="quality-slide-brand">
-                  <AiContentBadge
-                    v-if="currentQualitySlide.ai_generated"
-                    :generated="true"
-                    ai-label="AI生成"
-                    compact
-                  />
-                  <img src="/report-assets/quality-report-logo.png" alt="品牌标识" />
-                </div>
-              </header>
-
-              <template v-if="currentQualitySlide.kind === 'cover'">
-                <img class="quality-cover-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
-                <h2 class="quality-cover-title">{{ currentQualitySlide.title }}</h2>
-                <p class="quality-cover-period">{{ currentQualitySlide.period_label }}</p>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'agenda'">
-                <div class="quality-agenda-rule"></div>
-                <img class="quality-agenda-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
-                <div class="quality-agenda-list">
-                  <div v-for="(section, index) in currentQualitySlide.sections" :key="`agenda-${section.number}`" :class="{ active: Number(currentQualitySlide.active_section) === index + 1 }">
-                    {{ section.number }}、{{ section.label }}
-                  </div>
-                </div>
-                <div v-if="currentQualitySlide.details?.length" class="quality-agenda-details">
-                  <i aria-hidden="true"></i>
-                  <span v-for="item in currentQualitySlide.details" :key="item.label" :class="`tone-${item.tone || 'ink'}`">{{ item.label }}</span>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'overall'">
-                <p class="quality-slide-narrative overall-copy"><template v-for="(run, index) in currentQualitySlide.narrative_runs || [{ text: currentQualitySlide.narrative, tone: 'ink' }]" :key="`overall-run-${index}`"><span :class="`tone-${run.tone || 'ink'}`">{{ run.text }}</span></template></p>
-                <div class="quality-slide-table-wrap overall-table">
-                  <table>
-                    <colgroup><col style="width: 5%" /><col style="width: 17%" /><col style="width: 10%" /><col style="width: 10%" /><col style="width: 11%" /><col style="width: 9%" /><col style="width: 9%" /><col style="width: 10%" /><col style="width: 9%" /></colgroup>
-                    <thead>
-                      <tr><th rowspan="2">序号</th><th rowspan="2">二级单位</th><th rowspan="2">检查油库数量</th><th rowspan="2">检查加油站数量</th><th rowspan="2">检查运输车辆数量</th><th colspan="3">发现问题数量</th><th rowspan="2">单库、车、站问题数量</th></tr>
-                      <tr><th>一般性问题</th><th>违规违纪问题</th><th>涉及禁止项问题</th></tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="row in qualityOverallRows" :key="`overall-${row.sequence}-${row.unit_name}`" :class="{ total: row.sequence === '合计' }">
-                        <td v-if="row.sequence === '合计'" colspan="2">合计</td><template v-else><td>{{ row.sequence }}</td><td>{{ row.unit_name }}</td></template><td>{{ row.oil_depot_count || 0 }}</td><td>{{ row.station_count || 0 }}</td><td>{{ row.transport_vehicle_count || 0 }}</td><td>{{ row.general_issue_count || 0 }}</td><td>{{ row.violation_issue_count || 0 }}</td><td>{{ row.prohibited_issue_count || 0 }}</td><td>{{ row.total_issue_count || 0 }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'finding_overview'">
-                <div class="quality-finding-layout">
-                  <div class="quality-finding-copy"><p v-for="(block, blockIndex) in currentQualitySlide.text_blocks || currentQualitySlide.text_lines.map((line) => ({ runs: [{ text: line, tone: 'ink' }] }))" :key="`finding-copy-${blockIndex}`"><span v-for="(run, runIndex) in block.runs" :key="`finding-run-${blockIndex}-${runIndex}`" :class="`tone-${run.tone || 'ink'}`">{{ run.text }}</span></p></div>
-                  <div class="quality-slide-table-wrap finding-table"><table><thead><tr><th>序号</th><th>环节排前三</th><th>问题类型</th><th>问题数量</th><th>占比/%</th></tr></thead><tbody><tr v-for="(row, index) in currentQualitySlide.rows" :key="`finding-${index}-${row.problem_type}`" :class="{ total: row.sequence === '合计', 'oil-station-row': row.section === '油站环节' }"><td>{{ row.sequence }}</td><td>{{ row.section }}</td><td>{{ row.problem_type }}</td><td>{{ row.count }}</td><td>{{ row.percentage }}</td></tr></tbody></table></div>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'prohibited'">
-                <div class="quality-prohibited-band">{{ currentQualitySlide.subtitle || '1.禁止项问题' }}</div>
-                <p class="quality-slide-narrative prohibited-copy">{{ currentQualitySlide.narrative }}</p>
-                <div class="quality-slide-table-wrap prohibited-table"><table><thead><tr><th>序号</th><th>环节</th><th>基层单位名称</th><th>禁止项管理规定</th><th>处罚情况</th></tr></thead><tbody><tr v-if="!currentQualitySlide.rows?.length"><td colspan="5">当前月份暂无禁止项问题</td></tr><tr v-for="row in currentQualitySlide.rows" :key="`prohibited-slide-${row.issue_id}`"><td>{{ row.sequence }}</td><td>加油站环节</td><td>{{ row.unit_name }}</td><td class="align-left">{{ row.description }}</td><td>{{ row.penalty || '' }}</td></tr></tbody></table></div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'flow_chart'">
-                <div class="quality-slide-band quality-flow-band">{{ currentQualitySlide.subtitle || '3.加油站环节' }}</div>
-                <p class="quality-slide-narrative flow-copy">{{ currentQualitySlide.narrative }}</p>
-                <h3 class="quality-chart-heading">{{ currentQualitySlide.chart_title }}</h3>
-                <div class="quality-ppt-chart">
-                  <div v-for="item in currentQualitySlide.distribution" :key="`ppt-flow-${item.name}`" class="quality-ppt-bar-column">
-                    <div class="quality-ppt-bar-area"><span class="quality-ppt-bar-value" :style="{ bottom: `calc(${getQualityBarHeight(item.count)}% + 8px)` }">{{ item.count }}</span><i :style="{ height: `${getQualityBarHeight(item.count)}%` }"></i></div>
-                    <strong>{{ item.name }}</strong>
-                  </div>
-                  <div v-if="!currentQualitySlide.distribution?.length" class="quality-slide-empty">当前月份暂无业务流程分布数据</div>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'issue_pairs'">
-                <div class="quality-slide-band quality-issue-band">{{ currentQualitySlide.subtitle }}</div>
-                <p class="quality-issue-summary">{{ currentQualitySlide.summary_text }}</p>
-                <div :class="['quality-issue-pair-grid', currentQualitySlide.layout_variant || 'paired']">
-                  <article
-                    v-for="issue in currentQualitySlide.issues"
-                    :key="`slide-issue-${issue.issue_id}`"
-                    :class="getQualityIssueLayoutClasses(issue)"
-                  >
-                    <h3>{{ issue.station_name || '未命名站点' }}：</h3><p>{{ issue.description || '暂无问题描述' }}</p>
-                    <button v-if="issue.issue_photo" type="button" @click="openImagePreview(issue.issue_photo, `${issue.station_name || '问题'}照片`)"><img :src="resolveImage(issue.issue_photo)" alt="问题照片" @load="rememberQualityImageAspect($event, getQualityImageKey(issue))" /></button>
-                    <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
-                  </article>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'management_trace'">
-                <div :class="['quality-trace-layout', getQualityTraceLayoutClasses(currentQualitySlide)]">
-                  <div><p class="quality-typical-issue"><b>典型问题：</b>{{ formatStationIssue(currentQualitySlide.typical_issue || {}) }}</p><section v-for="item in currentQualitySlide.analysis_items" :key="item.label"><strong>{{ item.label }}</strong><p>{{ item.content || '-' }}</p></section></div>
-                  <button v-if="currentQualitySlide.typical_issue?.issue_photo" type="button" @click="openImagePreview(currentQualitySlide.typical_issue.issue_photo, '典型问题照片')"><img :src="resolveImage(currentQualitySlide.typical_issue.issue_photo)" alt="典型问题照片" @load="rememberQualityImageAspect($event, getQualityImageKey(currentQualitySlide.typical_issue, 'trace'))" /></button>
-                  <div v-else class="quality-slide-photo-empty">暂无问题照片</div>
-                </div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'trace_analysis'">
-                <div class="quality-slide-band wide">{{ currentQualitySlide.subtitle }}</div>
-                <div class="quality-trace-analysis"><h3>综上所述：</h3><p>{{ stripTracePrefix(currentQualitySlide.conclusion) }}</p><h3>改进措施：</h3><ol><li v-for="item in currentQualitySlide.improvement_measures" :key="`${item.level}-${item.content}`"><strong>{{ item.level }}：</strong>{{ item.content }}</li></ol></div>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'work_plan'">
-                <ol class="quality-work-plan"><li v-for="item in currentQualitySlide.items" :key="`${item.title}-${item.content}`"><h3>{{ item.title }}</h3><p>{{ item.content }}</p></li></ol>
-              </template>
-
-              <template v-else-if="currentQualitySlide.kind === 'ending'">
-                <div class="quality-ending-rule"></div>
-                <img class="quality-ending-corner-logo" src="/report-assets/quality-report-logo.png" alt="品牌标识" />
-                <div class="quality-ending-content">
-                  <img src="/report-assets/quality-report-logo.png" alt="品牌标识" />
-                  <strong>{{ currentQualitySlide.title || '通报完毕' }}</strong>
-                </div>
-              </template>
-
-            </article>
-          </div>
-          <div v-else class="quality-slide-empty">当前报告还没有可展示的幻灯片，请重新生成。</div>
-
-          <nav v-if="qualitySlides.length" class="quality-ppt-pagination" aria-label="报告翻页">
-            <button type="button" :disabled="activeQualitySlideIndex === 0" @click="goToQualitySlide(activeQualitySlideIndex - 1)">上一页</button>
-            <div><button v-for="(slide, index) in qualitySlides" :key="`slide-page-${index}`" type="button" :class="{ active: index === activeQualitySlideIndex }" @click="goToQualitySlide(index)">{{ index + 1 }}</button></div>
-            <button type="button" :disabled="activeQualitySlideIndex >= qualitySlides.length - 1" @click="goToQualitySlide(activeQualitySlideIndex + 1)">下一页</button>
-          </nav>
-        </div>
-      </template>
-
-      <template v-else-if="isNonOilReport">
-        <div class="quality-ppt-viewer non-oil-ppt-viewer">
-          <header class="quality-ppt-toolbar">
-            <div>
-              <span>PRESENTATION PREVIEW</span>
-              <strong>{{ report.title || reportTitleFallback }}</strong>
-              <small>生成于 {{ reportGeneratedAt }} · 网页与导出PPT共用同一批幻灯片 · 支持键盘 ← → 翻页</small>
-            </div>
-            <div class="quality-ppt-page-count">{{ activeQualitySlideIndex + 1 }} / {{ nonOilSlideUrls.length }}</div>
-          </header>
-          <div v-if="currentNonOilSlideUrl" class="quality-ppt-stage non-oil-ppt-stage">
-            <img :src="currentNonOilSlideUrl" :alt="`非油检查报告第${activeQualitySlideIndex + 1}页`" />
-          </div>
-          <div v-else class="quality-slide-empty">当前报告还没有可展示的PPT预览，请重新生成。</div>
-          <nav v-if="nonOilSlideUrls.length" class="quality-ppt-pagination" aria-label="报告翻页">
-            <button type="button" :disabled="activeQualitySlideIndex === 0" @click="goToQualitySlide(activeQualitySlideIndex - 1)">上一页</button>
-            <div><button v-for="(_slide, index) in nonOilSlideUrls" :key="`non-oil-slide-page-${index}`" type="button" :class="{ active: index === activeQualitySlideIndex }" @click="goToQualitySlide(index)">{{ index + 1 }}</button></div>
-            <button type="button" :disabled="activeQualitySlideIndex >= nonOilSlideUrls.length - 1" @click="goToQualitySlide(activeQualitySlideIndex + 1)">下一页</button>
-          </nav>
-        </div>
-      </template>
+      <ReportHtmlContent v-if="isQualityMeasurementReport || isNonOilReport"
+        :report="report" :report-type="selectedReportType" :resolve-image="resolveImage"
+        @photo="openImagePreview($event.issue_photo, `${$event.station_name || '问题'}照片`)" />
 
       <template v-else-if="isSafetyQualityReport">
         <div class="summary-cards safety-summary-cards">
@@ -2152,6 +1998,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
+import ReportHtmlContent from '@/components/ReportHtmlContent.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
@@ -2416,8 +2263,6 @@ const nonOilKeyClassificationDialogVisible = ref(false)
 const nonOilKeyClassificationDrafts = ref({})
 const nonOilKeyClassificationKeyword = ref('')
 const nonOilKeyClassificationFilter = ref('')
-const activeQualitySlideIndex = ref(0)
-const qualityImageAspects = ref({})
 const exportDialogVisible = ref(false)
 const exportTask = ref(null)
 const exportError = ref('')
@@ -2462,29 +2307,6 @@ const hasIssueLibrary = computed(() => isNonOilReport.value || isEquipmentFacili
 const issueLibraryEndpoint = computed(() => isEquipmentFacilitiesReport.value
   ? '/api/inspection-reports/equipment-issue-selection'
   : '/api/inspection-reports/non-oil-issue-selection')
-const qualitySlides = computed(() => (
-  Array.isArray(report.value?.slides) ? report.value.slides : []
-))
-const currentQualitySlide = computed(() => (
-  qualitySlides.value[activeQualitySlideIndex.value] || null
-))
-const nonOilSlideUrls = computed(() => (
-  Array.isArray(report.value?.presentation?.slide_urls)
-    ? report.value.presentation.slide_urls
-    : []
-))
-const currentNonOilSlideUrl = computed(() => (
-  nonOilSlideUrls.value[activeQualitySlideIndex.value] || ''
-))
-const activePresentationSlideCount = computed(() => (
-  isQualityMeasurementReport.value ? qualitySlides.value.length : nonOilSlideUrls.value.length
-))
-const qualityOverallRows = computed(() => {
-  if (currentQualitySlide.value?.kind !== 'overall') return []
-  const rows = [...(currentQualitySlide.value.rows || [])]
-  if (currentQualitySlide.value.total_row) rows.push(currentQualitySlide.value.total_row)
-  return rows
-})
 const hasReport = computed(() => Boolean(report.value?.month))
 const exportBusy = computed(() => ['queued', 'running'].includes(exportTask.value?.status))
 const exportStatusLabel = computed(() => {
@@ -3166,53 +2988,6 @@ const resolveImage = (path) => {
   return `/storage/${value.replace(/^\/+/, '')}`
 }
 
-const formatStationIssue = (issue = {}) => {
-  const station = String(issue.station_name || '').trim()
-  const description = String(issue.description || '').trim()
-  if (station && description) return `${station}${description}`
-  return station || description || '暂无典型问题描述。'
-}
-
-const getQualityImageKey = (issue = {}, prefix = 'issue') => (
-  `${prefix}:${issue.issue_id || issue.id || issue.issue_photo || issue.station_name || 'unknown'}`
-)
-
-const rememberQualityImageAspect = (event, key) => {
-  const image = event?.target
-  if (!image?.naturalWidth || !image?.naturalHeight || !key) return
-  const ratio = image.naturalWidth / image.naturalHeight
-  if (Math.abs((qualityImageAspects.value[key] || 0) - ratio) < 0.01) return
-  qualityImageAspects.value = {
-    ...qualityImageAspects.value,
-    [key]: ratio
-  }
-}
-
-const getQualityCopyClass = (value) => {
-  const length = String(value || '').trim().length
-  if (length >= 150) return 'copy-long'
-  if (length <= 70) return 'copy-short'
-  return 'copy-medium'
-}
-
-const getQualityPhotoClass = (ratio) => {
-  if (ratio >= 2.15) return 'photo-panorama'
-  if (ratio >= 1.35) return 'photo-landscape'
-  if (ratio <= 0.72) return 'photo-portrait'
-  return 'photo-balanced'
-}
-
-const getQualityIssueLayoutClasses = (issue = {}) => {
-  const ratio = qualityImageAspects.value[getQualityImageKey(issue)] || 1.35
-  return [getQualityPhotoClass(ratio), getQualityCopyClass(issue.description)]
-}
-
-const getQualityTraceLayoutClasses = (slide = {}) => {
-  const issue = slide.typical_issue || {}
-  const ratio = qualityImageAspects.value[getQualityImageKey(issue, 'trace')] || 1.35
-  const text = [issue.description, ...(slide.analysis_items || []).map((item) => item.content)].join('')
-  return [getQualityPhotoClass(ratio), getQualityCopyClass(text)]
-}
 
 const openImagePreview = (path, title = '问题照片预览') => {
   const src = resolveImage(path)
@@ -3251,56 +3026,6 @@ const closeStandardDetail = () => {
   }
 }
 
-const goToQualitySlide = (index) => {
-  const lastIndex = Math.max(0, activePresentationSlideCount.value - 1)
-  activeQualitySlideIndex.value = Math.max(0, Math.min(lastIndex, Number(index) || 0))
-  window.requestAnimationFrame(() => {
-    document.querySelector('.quality-ppt-stage')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  })
-}
-
-const isKeyboardEditingTarget = (target) => {
-  if (!(target instanceof HTMLElement)) return false
-  return Boolean(
-    target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
-  )
-}
-
-const handleQualitySlideKeydown = (event) => {
-  if (reportDisplayMode.value === 'ppt') return
-  if (
-    (!isQualityMeasurementReport.value && !isNonOilReport.value)
-    || activePresentationSlideCount.value < 2
-    || event.defaultPrevented
-    || event.ctrlKey
-    || event.metaKey
-    || event.altKey
-    || isKeyboardEditingTarget(event.target)
-    || sourceDialogVisible.value
-    || selectionSettingsDialogVisible.value
-    || flowClassificationDialogVisible.value
-    || nonOilClassificationDialogVisible.value
-    || nonOilKeyClassificationDialogVisible.value
-    || exportDialogVisible.value
-    || imagePreview.value.visible
-    || standardDetailPreview.value.visible
-  ) return
-
-  const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
-  if (!direction) return
-  const targetIndex = activeQualitySlideIndex.value + direction
-  if (targetIndex < 0 || targetIndex >= activePresentationSlideCount.value) return
-  event.preventDefault()
-  goToQualitySlide(targetIndex)
-}
-
-const getQualityBarHeight = (value) => {
-  const values = currentQualitySlide.value?.distribution || []
-  const maximum = Math.max(1, ...values.map((item) => Number(item.count) || 0))
-  return Math.max(4, Math.round(((Number(value) || 0) / maximum) * 82))
-}
-
-const stripTracePrefix = (value) => String(value || '暂无分析结论。').replace(/^综上所述[:：]?\s*/, '')
 
 const setCurrentSelectionPriorityIds = (ids) => {
   const normalized = [...new Set((ids || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))]
@@ -4218,7 +3943,6 @@ const pollActiveJob = async () => {
     activeJob.value = job
     if (job.status === 'completed') {
       clearPolling()
-      activeQualitySlideIndex.value = 0
       await loadReportState()
       return
     }
@@ -4263,7 +3987,6 @@ const startGeneration = async (options = {}) => {
       throw new Error(response.data?.error || 'AI报告生成任务提交失败。')
     }
     if (response.data?.report && !response.data?.job) {
-      activeQualitySlideIndex.value = 0
       await loadReportState()
       return
     }
@@ -4401,7 +4124,6 @@ const selectReportType = async (reportType) => {
   resetNonOilIssueLibraryState()
   resetNonOilClassificationState()
   resetNonOilKeyClassificationState()
-  activeQualitySlideIndex.value = 0
   await loadReportState()
 }
 
@@ -4424,13 +4146,11 @@ function focusReportSection(id) {
 }
 
 onMounted(async () => {
-  window.addEventListener('keydown', handleQualitySlideKeydown)
   await loadReportTypes()
   await loadReportState()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleQualitySlideKeydown)
   contextRequestId += 1
   clearPolling()
   clearExportPolling()

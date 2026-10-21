@@ -51,12 +51,21 @@ test('date saving, generation conditions and force action are unchanged',()=>{
     'loading || workspaceSaving || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)')
 })
 
-test('HTML label changes without changing the report display mode or export eligibility',()=>{
+test('all six report types expose HTML reading without generation privileges or a legacy type exclusion',()=>{
   const button=byClass('studio-html-toggle')
-  assert.equal(expression(button,'if'),'hasReport && !isQualityMeasurementReport && !hasIssueLibrary')
+  assert.equal(expression(button,'if'),undefined)
+  assert.equal(expression(button,'bind','disabled'),'!hasReport || loading || templateUnavailable')
   assert.equal(expression(button,'on','click'),"reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'")
+  assert.equal(expression(button,'bind','aria-pressed'),"reportDisplayMode === 'text'")
   assert.match(button.loc.source,/查看HTML报告/)
   assert.doesNotMatch(source,/查看文字汇总/)
+  const toggle=byClass('studio-view-switch')
+  assert.equal(expression(toggle,'if'),'hasReport')
+  const html=elements.find(node=>node.tag==='ReportHtmlContent')
+  assert.equal(expression(html,'if'),'isQualityMeasurementReport || isNonOilReport')
+  assert.equal(expression(html,'bind','report'),'report')
+  assert.equal(expression(html,'bind','report-type'),'selectedReportType')
+  assert.doesNotMatch(source,/handleQualitySlideKeydown|currentNonOilSlideUrl|currentQualitySlide/)
   const exp=byClass('export-ppt-btn')
   assert.equal(expression(exp,'on','click'),'openExportDialog')
   assert.equal(expression(exp,'bind','disabled'),'!hasReport || loading || templateUnavailable')
