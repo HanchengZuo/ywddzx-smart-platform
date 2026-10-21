@@ -1,10 +1,10 @@
 <template>
   <section ref="frame" class="coverage-map" :class="{ fullscreen }" aria-label="未检查站点分布">
     <header class="coverage-map-toolbar">
-      <div><span class="pin-key" aria-hidden="true"></span><strong>未检查站点</strong><small>{{ located.length }} 座已定位</small></div>
+      <div><span class="pin-key" aria-hidden="true"></span><strong>未检查站点</strong><small><b>{{ located.length }}</b> 座可定位</small></div>
       <div>
-        <button class="map-tool" type="button" :disabled="!mapReady" @click="fit">显示全部图钉</button>
-        <button class="map-tool primary" type="button" :disabled="!canFullscreen" @click="toggleFullscreen">{{ fullscreen ? '退出全屏' : '全屏地图' }}</button>
+        <button class="map-tool" type="button" :disabled="!mapReady" title="仅调整地图视野，不重新查询数据" @click="fit">显示全部图钉</button>
+        <button class="map-tool primary" type="button" :disabled="!canFullscreen" :aria-pressed="fullscreen" @click="toggleFullscreen"><span aria-hidden="true">{{ fullscreen ? '↙' : '↗' }}</span>{{ fullscreen ? '退出全屏' : '全屏地图' }}</button>
       </div>
     </header>
     <p v-if="fullscreenError" class="fullscreen-error" role="status">{{ fullscreenError }}</p>
@@ -189,28 +189,33 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.coverage-map { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; overflow:hidden; border:1px solid #cddce8; border-radius:14px; background:#e8eff4; }
-.coverage-map.fullscreen { height:100dvh; min-height:0; border:0; border-radius:0; }
-.coverage-map.fullscreen .coverage-map-body { min-height:0; }
-.fullscreen-error { margin:0; padding:10px 16px; background:#fffbeb; color:#926a24; font-size:12px; }
-.coverage-map-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; background:#fff; border-bottom:1px solid #dce6ee; }
-.coverage-map-toolbar>div { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
-.coverage-map-toolbar strong { color:#183b56; font-size:14px; }
-.coverage-map-toolbar small { color:#6e8296; font-size:12px; }
-.pin-key { width:10px; height:10px; border-radius:50%; background:#d97706; box-shadow:0 0 0 4px #fef3c7; margin-right:3px; }
-.map-tool { min-height:36px; padding:7px 12px; border:1px solid #d4e1ec; border-radius:8px; background:#fff; color:#395972; font:inherit; font-size:12px; cursor:pointer; }
-.map-tool.primary { color:#fff; border-color:#176e9c; background:#176e9c; }
-.map-tool:disabled { cursor:not-allowed; opacity:.5; }
-.map-tool:focus-visible { outline:2px solid #168ec4; outline-offset:3px; }
-.coverage-map-body { position:relative; flex:1; min-height:0; }
-.coverage-map-canvas { position:absolute; inset:0; }
-.coverage-map-state { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:14px; padding:24px; color:#294f68; text-align:center; background:radial-gradient(ellipse at 30% 25%,#e3eef4,#eff4f8); }
-.coverage-map-state p { max-width:340px; margin:0; font-size:13px; line-height:1.8; }
-.loading-ring { width:28px; height:28px; border:3px solid #c7dce9; border-top-color:#2085b3; border-radius:50%; animation:coverage-spin .8s linear infinite; }
-.coverage-map-caption { position:absolute; left:14px; bottom:12px; max-width:calc(100% - 28px); margin:0; padding:8px 11px; border:1px solid #ffffffc9; border-radius:8px; color:#36556b; background:#fffffff0; font-size:11px; line-height:1.7; pointer-events:none; }
-.coverage-map-empty { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); padding:12px 16px; border-radius:10px; background:#fffffff5; color:#416177; font-size:13px; text-align:center; box-shadow:0 5px 24px #123b581a; pointer-events:none; }
-@keyframes coverage-spin { to { transform:rotate(360deg); } }
-@media(max-width:900px) { .coverage-map { height:520px; min-height:0; } .coverage-map.fullscreen { height:100dvh; } .coverage-map-toolbar { padding:12px; } }
-@media(max-width:600px) { .map-tool { min-height:44px; } }
-@media(prefers-reduced-motion:reduce) { .loading-ring { animation:none; } }
+.coverage-map { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid #acbfd0; border-radius: 12px; background: #e5edf4; }
+.coverage-map.fullscreen { height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
+.coverage-map.fullscreen .coverage-map-body { min-height: 0; }
+.fullscreen-error { margin: 0; padding: 11px 16px; background: #fff4de; color: #79521a; font-size: 13px; }
+.coverage-map-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: #eaf1f7; border-bottom: 1px solid #b6cadb; }
+.coverage-map-toolbar > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.coverage-map-toolbar strong { color: #193d58; font-size: 15px; }
+.coverage-map-toolbar small { padding: 4px 7px; color: #405a70; border: 1px solid #c3d3e0; border-radius: 5px; background: #fff; font-size: 12px; }
+.coverage-map-toolbar small b { color: #79521a; font-variant-numeric: tabular-nums; }
+.pin-key { width: 10px; height: 10px; border-radius: 50%; background: #d97706; box-shadow: 0 0 0 4px #ffe8bd; margin-right: 3px; }
+.map-tool { min-height: 39px; padding: 8px 11px; border: 1px solid #91adc3; border-radius: 7px; background: #fff; color: #274f6c; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.map-tool:hover:not(:disabled) { background: #dceaf5; }
+.map-tool.primary { color: #fff; border-color: #173f5d; background: #173f5d; }
+.map-tool.primary:hover:not(:disabled) { background: #245c7f; }
+.map-tool.primary > span { margin-right: 6px; }
+.map-tool:disabled { cursor: not-allowed; opacity: .5; }
+.map-tool:focus-visible { outline: 2px solid #126d9c; outline-offset: 3px; }
+.coverage-map-body { position: relative; flex: 1; min-height: 0; }
+.coverage-map-canvas { position: absolute; inset: 0; }
+.coverage-map-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; color: #284e69; text-align: center; background: radial-gradient(ellipse at 30% 25%, #dce8f1, #eff4f8); }
+.coverage-map-state strong { font-size: 17px; }
+.coverage-map-state p { max-width: 360px; margin: 0; font-size: 14px; line-height: 1.8; }
+.loading-ring { width: 30px; height: 30px; border: 3px solid #aec7da; border-top-color: #235f85; border-radius: 50%; animation: coverage-spin .8s linear infinite; }
+.coverage-map-caption { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); margin: 0; padding: 8px 10px; border: 1px solid #bacddb; border-radius: 7px; color: #284f69; background: #fffffff5; font-size: 12px; line-height: 1.7; pointer-events: none; }
+.coverage-map-empty { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 13px 16px; border: 1px solid #b4cadb; border-radius: 9px; background: #fffffff5; color: #284f69; font-size: 14px; line-height: 1.8; text-align: center; box-shadow: 0 5px 24px #123b581a; pointer-events: none; }
+@keyframes coverage-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1100px) { .coverage-map { height: 560px; min-height: 0; } .coverage-map.fullscreen { height: 100dvh; } }
+@media (max-width: 600px) { .coverage-map { height: clamp(480px, 70dvh, 560px); } .coverage-map.fullscreen { height: 100dvh; } .coverage-map-toolbar { padding: 12px; gap: 10px; } .map-tool { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .loading-ring { animation: none; } }
 </style>
