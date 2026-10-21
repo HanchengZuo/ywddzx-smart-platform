@@ -1,3 +1,8 @@
+export const aiModelDisplayName = (model) =>
+  ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'DeepSeek-V4-Flash'].includes(model)
+    ? 'DeepSeek-Flash'
+    : model || ''
+
 export const routingKey = (config) => JSON.stringify([
   config.default_model,
   Object.entries(config.overrides || {})

@@ -10,6 +10,8 @@
 
 运行账号需要项目目录、Docker及 `/var/www/ywddzx` 的操作权限。服务器须配置 `APP_SECRET_KEY`、`DB_PASSWORD`、`WEBAUTHN_RP_ID`、`WEBAUTHN_ORIGIN` 和 `CORS_ALLOWED_ORIGINS`，且 Nginx 已加载 `deploy/nginx/ywddzx-cache.conf` 与 `ywddzx-security.conf`。配置或构建失败时不会替换前端文件；后续步骤失败会停止并说明阶段，不自动回滚已完成的部署。此脚本会实际更新生产服务并执行迁移，请仅在准备部署时运行。
 
+大模型 Key 必须进入后端容器，仅在 SSH 交互终端里 `export` 不代表 Docker 已收到。部署会保留当前部署环境及项目 `.env` 的四个厂家 Key，对缺失项依次读取专用配置文件 `AI_KEYS_ENV_FILE`（默认 `/etc/ywddzx/ai.env`）、`/etc/environment` 及部署账号的 Shell 配置（兼容旧 `.bashrc`、`.zshrc` 等）。只读取 `DEEPSEEK_API_KEY`、`ZHIPU_API_KEY`、`DASHSCOPE_API_KEY`、`MIMO_API_KEY` 的单行固定值赋值，不执行配置中的命令、变量展开或 Shell 启动逻辑；专用文件应由部署账号保管并设为 `0600`，不要提交 Git。未配置的厂家保持可选，不影响其他厂家。部署日志仅显示是否配置及配置来源，不显示值；密钥只在重建后端的 Compose 子进程中补入，不额外传给前端构建。部署结束还会从后端实际环境核对四个厂家状态，页面的“Key 已配置”仍不代表余额、模型授权或网络可用。
+
 ## v10.3 AI报告工作台界面优化
 
 报告生成页面按“选择报告、准备数据、预览与导出”组织工作区，六类报告采用紧凑卡片，突出当前类型、关联检查表和模板状态。日期范围与生成记录集中展示，报告专属配置统一分区，保留最近保存人、保存时间及设置与成稿不一致的提醒；加载既有报告不再显示为AI生成进度。新增快捷定位与窄屏适配，不变更原有配置保存、生成接口、权限或PPT内容及版式。
@@ -158,7 +160,7 @@
 
 管理菜单在“AI调用统计”前新增“大模型管理”（`manage_ai_models`，默认仅 Root 开启，可按现有权限体系授权）。支持全局默认、场景单独指定和统一应用到全部场景；配置全局共享，保存修改人、时间及前后配置，使用数据库行锁与版本号防止并发覆盖。保存只影响后续调用，不会自动重新生成历史报告或重跑任务；一次 AI 调用期间保持模型快照，不静默回退到其他厂家。
 
-已接入 DeepSeek-V4-Pro / V4-Flash、GLM-5.3 / GLM-5.3-Flash / GLM-5.3-FlashX、Qwen3.8-Max / Qwen3.8-Flash、MiMo-V2.6-Pro / MiMo-V2.6-Flash / MiMo-V2.6-Pro-UltraSpeed。默认仍为 DeepSeek-V4-Pro。调用场景如下（本地统计、检索、PPT编排和预览转换不调用大模型）：
+已接入 DeepSeek-V4-Pro / DeepSeek-Flash、GLM-5.3 / GLM-5.3-Flash / GLM-5.3-FlashX、Qwen3.8-Max / Qwen3.8-Flash、MiMo-V2.6-Pro / MiMo-V2.6-Flash / MiMo-V2.6-Pro-UltraSpeed。默认仍为 DeepSeek-V4-Pro。Flash 统一展示为“DeepSeek-Flash”，调用官方推荐的 `deepseek-flash`（[官方说明](https://api-docs.deepseek.com/zh-cn/)：目前对应 DeepSeek-V4.1-Flash-1017）。已保存的旧 Flash 模型名在读取、调用和统计筛选时兼容映射，不批量改写历史记录；新保存配置及新调用使用推荐标识，Pro 及其他厂家的配置不变。调用场景如下（本地统计、检索、PPT编排和预览转换不调用大模型）：
 
 | 业务位置 | 独立调用场景 |
 | --- | --- |

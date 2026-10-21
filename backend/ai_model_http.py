@@ -3,7 +3,7 @@ import logging
 from flask import Blueprint, g, jsonify, request
 from psycopg2.extras import RealDictCursor
 from ai_model_settings import catalog, read_settings, save_settings, serialize_settings, SettingsConflict
-from ai_routing import configure_routing
+from ai_routing import configure_routing, normalize_model_settings
 
 
 def register_ai_model_management(app, *, connect, require_management_user):
@@ -31,7 +31,8 @@ def register_ai_model_management(app, *, connect, require_management_user):
                     config = read_settings(cur)
                 cur.execute('''SELECT actor_name, created_at, after_config FROM ai_model_setting_events
                     ORDER BY id DESC LIMIT 10''')
-                events = [dict(row, created_at=str(row['created_at'])) for row in cur.fetchall()]
+                events = [dict(row, created_at=str(row['created_at']),
+                               after_config=normalize_model_settings(row['after_config'])) for row in cur.fetchall()]
                 payload = dict(success=True, settings=serialize_settings(config), events=events, **catalog())
             conn.commit()
             return jsonify(payload)

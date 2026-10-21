@@ -9,7 +9,7 @@
       <div class="header-status">
         <span class="status-dot"></span>
         <div>
-          <strong>{{ meta.model || '所选大模型' }}</strong
+          <strong>{{ aiModelDisplayName(meta.model) || '所选大模型' }}</strong
           ><small>全局业务资料 · 检索增强</small>
         </div>
       </div>
@@ -138,7 +138,7 @@
                 <div class="answer-meta">
                   <strong>专家回答</strong
                   ><small
-                    >{{ item.result.cache_hit ? '复用历史答案 · 未调用AI' : item.result.model }} ·
+                    >{{ item.result.cache_hit ? '复用历史答案 · 未调用AI' : aiModelDisplayName(item.result.model) }} ·
                     {{ item.updated_at }}</small
                   ><button class="copy-answer" @click="copyAnswer(item)">复制回答</button>
                 </div>
@@ -261,6 +261,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, nextTick } from 'vue'
 import axios from 'axios'
+import { aiModelDisplayName } from '@/utils/aiModelSettings'
 import {
   answerText,
   citedSources,

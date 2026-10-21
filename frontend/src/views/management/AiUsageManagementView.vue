@@ -74,7 +74,7 @@
             <span>模型</span>
             <select v-model="filters.model">
               <option value="">全部模型</option>
-              <option v-for="item in options.models" :key="item" :value="item">{{ item }}</option>
+              <option v-for="item in options.models" :key="item" :value="item">{{ aiModelDisplayName(item) }}</option>
             </select>
           </label>
           <label>
@@ -140,7 +140,7 @@
               <span>输出/百万</span>
             </div>
             <div v-for="item in options.pricing" :key="item.model" class="pricing-row">
-              <span>{{ item.model }}</span>
+              <span>{{ aiModelDisplayName(item.model) }}</span>
               <span>¥{{ item.input_cache_miss }}</span>
               <span>¥{{ item.output }}</span>
             </div>
@@ -192,7 +192,7 @@
                   <strong>{{ item.usage_module }} · {{ item.usage_action }}</strong>
                   <small>{{ item.request_summary || '-' }}</small>
                 </td>
-                <td>{{ item.model }}</td>
+                <td>{{ aiModelDisplayName(item.model) }}</td>
                 <td>
                   <strong>{{ formatNumber(item.total_chars) }}</strong>
                   <small>输入 {{ formatNumber(item.prompt_chars) }} / 输出 {{ formatNumber(item.completion_chars) }}</small>
@@ -233,6 +233,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { aiModelDisplayName } from '@/utils/aiModelSettings'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from '@/utils/roles'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 

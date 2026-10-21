@@ -1,12 +1,12 @@
 import re
-from ai_routing import MODELS, model_info
+from ai_routing import MODELS, model_info, canonical_model
 
 
 AI_USAGE_BASE_URL = "https://api.deepseek.com"
 
 AI_USAGE_PRICING = {
-    "deepseek-v4-flash": {
-        "label": "DeepSeek-V4-Flash",
+    "deepseek-flash": {
+        "label": "DeepSeek-Flash",
         "input_cache_hit": 0.02,
         "input_cache_miss": 1.0,
         "output": 2.0,
@@ -41,7 +41,7 @@ def estimate_text_tokens(text):
 
 
 def estimate_ai_usage(model, prompt_text="", completion_text="", cache_hit=False):
-    normalized_model = str(model or "deepseek-v4-pro").strip() or "deepseek-v4-pro"
+    normalized_model = canonical_model(str(model or "deepseek-v4-pro").strip() or "deepseek-v4-pro")
     pricing_known = normalized_model in AI_USAGE_PRICING
     pricing = AI_USAGE_PRICING.get(normalized_model, {"input_cache_hit": 0, "input_cache_miss": 0, "output": 0})
     input_metrics = estimate_text_tokens(prompt_text)

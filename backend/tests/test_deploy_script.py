@@ -14,6 +14,7 @@ REQUIRED_VARS = (
     'APP_SECRET_KEY', 'DB_PASSWORD', 'WEBAUTHN_RP_ID',
     'WEBAUTHN_ORIGIN', 'CORS_ALLOWED_ORIGINS',
 )
+AI_KEYS = ('DEEPSEEK_API_KEY', 'ZHIPU_API_KEY', 'DASHSCOPE_API_KEY', 'MIMO_API_KEY')
 
 
 class DeploymentScriptTests(unittest.TestCase):
@@ -28,13 +29,18 @@ class DeploymentScriptTests(unittest.TestCase):
         self.repo = self.root / 'repo'
         (self.repo / 'frontend').mkdir(parents=True)
         shutil.copy(PROJECT_ROOT / 'deploy.sh', self.repo / 'deploy.sh')
+        (self.repo / 'deploy').mkdir()
+        shutil.copy(PROJECT_ROOT / 'deploy/ai_environment.py', self.repo / 'deploy/ai_environment.py')
         self.version = json.loads((PROJECT_ROOT / 'frontend/package.json').read_text())['version']
         (self.repo / 'frontend/package.json').write_text(json.dumps({'version': self.version}))
         self.log = self.root / 'commands.log'
         self.env = dict(os.environ, PATH=f'{self.bin}:/usr/bin:/bin', TEST_LOG=str(self.log),
                         TEST_PYTHON=sys.executable)
-        for key in (*REQUIRED_VARS, 'APP_FRONTEND_VERSION', 'APP_ENV', 'TRUST_PROXY_HEADERS'):
+        for key in (*REQUIRED_VARS, *AI_KEYS, 'APP_FRONTEND_VERSION', 'APP_ENV', 'TRUST_PROXY_HEADERS'):
             self.env.pop(key, None)
+        self.keys_file = self.root / 'ai.env'
+        self.keys_file.write_text('\n'.join(f'{key}=fake-deploy-key-{key}' for key in AI_KEYS))
+        self.env['AI_KEYS_ENV_FILE'] = str(self.keys_file)
         shim = self.bin / 'shim'
         shim.write_text('''#!/bin/bash
 name="${0##*/}"
@@ -59,6 +65,12 @@ case "$name" in
       ps) [ "${WITH_FRONTEND:-}" != 1 ] || printf 'old-vite-container\\n' ;;
       up)
         printf 'backend-env version=%s env=%s proxy=%s\\n' "$APP_FRONTEND_VERSION" "$APP_ENV" "$TRUST_PROXY_HEADERS" >> "$TEST_LOG"
+        for key in DEEPSEEK_API_KEY ZHIPU_API_KEY DASHSCOPE_API_KEY MIMO_API_KEY; do
+          [ -z "${!key:-}" ] || printf 'backend-ai %s=present\\n' "$key" >> "$TEST_LOG"
+        done
+        if [ -n "${EXPECTED_ZHIPU_API_KEY:-}" ]; then
+          [ "$ZHIPU_API_KEY" = "$EXPECTED_ZHIPU_API_KEY" ] || exit 1
+        fi
         [ "${FAIL_PHASE:-}" != backend ] ;;
       exec)
         if [ "$4" = sh ]; then [ "${FAIL_PHASE:-}" != timeout ];
@@ -98,6 +110,25 @@ esac
         self.assertIn(f'backend-env version={self.version} env=production proxy=true', commands)
         self.assertIn('docker compose exec -T backend python /app/ensure_runtime_schema.py', commands)
         self.assertNotIn('test-only', result.stdout + result.stderr)
+        for key in AI_KEYS:
+            self.assertIn(f'backend-ai {key}=present', commands)
+            self.assertNotIn(f'fake-deploy-key-{key}', result.stdout + result.stderr + '\n'.join(commands))
+
+    def test_existing_project_and_exported_keys_are_not_overridden_by_fallback_file(self):
+        self.configure()
+        result, _ = self.run_script(ZHIPU_API_KEY='exported-test-key', EXPECTED_ZHIPU_API_KEY='exported-test-key')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with (self.repo / '.env').open('a') as file:
+            file.write('\nZHIPU_API_KEY=project-test-key\n')
+        result, _ = self.run_script(ZHIPU_API_KEY='exported-test-key', EXPECTED_ZHIPU_API_KEY='project-test-key')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_missing_key_file_stops_before_build_or_publish(self):
+        self.configure()
+        result, commands = self.run_script(AI_KEYS_ENV_FILE=str(self.root / 'missing.env'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AI 密钥配置文件不存在', result.stderr)
+        self.assertFalse(any(line.startswith(('npm ', 'find ', 'cp ')) or ' up ' in line for line in commands))
 
     def test_legacy_compose_and_absent_frontend_container(self):
         self.configure()

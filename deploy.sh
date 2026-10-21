@@ -53,6 +53,7 @@ for variable_name in APP_SECRET_KEY DB_PASSWORD WEBAUTHN_RP_ID WEBAUTHN_ORIGIN C
 done
 export APP_ENV=production
 export TRUST_PROXY_HEADERS=true
+python3 deploy/ai_environment.py --check
 
 phase="构建前端"
 echo "[3/5] 构建并发布前端..."
@@ -80,7 +81,7 @@ fi
 
 phase="重建并启动后端"
 echo "[4/5] 重建并启动后端，执行数据库迁移..."
-"${compose[@]}" up --build --force-recreate -d backend
+python3 deploy/ai_environment.py "${compose[@]}" up --build --force-recreate -d backend
 
 phase="检查后端启动与数据库迁移结果"
 echo "[5/5] 检查后端启动与数据库迁移结果..."
@@ -102,6 +103,8 @@ fi
 
 "${compose[@]}" logs --tail=80 backend
 "${compose[@]}" exec -T backend python /app/ensure_runtime_schema.py
+"${compose[@]}" exec -T backend python -c \
+  "from ai_model_settings import catalog; print('后端 AI Key 状态：' + '；'.join(item['name'] + '=' + ('已配置' if item['configured'] else '未配置') for item in catalog()['providers']))"
 
 echo "请确认 Nginx server 已 include deploy/nginx/ywddzx-cache.conf 和 ywddzx-security.conf。"
 echo "前端与后端部署完成（版本 ${APP_FRONTEND_VERSION}）。"

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import ai_routing as routing
 from ai_model_settings import catalog, save_settings, SettingsConflict
-from ai_usage import build_ai_usage_meta
+from ai_usage import build_ai_usage_meta, get_ai_pricing_table
 import ai_utils
 from report_ai_memory import _current
 
@@ -19,6 +19,37 @@ class RoutingTests(unittest.TestCase):
         self.loader = patch.object(routing, '_loader', None)
         self.loader.start()
         self.addCleanup(self.loader.stop)
+
+    def test_flash_catalog_and_pricing_expose_only_the_official_alias(self):
+        flash = [item for item in catalog()['models'] if 'flash' in item['id'] and item['provider'] == 'deepseek']
+        self.assertEqual(flash, [{'id': 'deepseek-flash', 'provider': 'deepseek', 'name': 'DeepSeek-Flash'}])
+        self.assertEqual(routing.DEFAULT_MODEL, 'deepseek-v4-pro')
+        pricing = [item for item in get_ai_pricing_table() if 'flash' in item['model']]
+        self.assertEqual(len(pricing), 1)
+        self.assertEqual((pricing[0]['model'], pricing[0]['label']), ('deepseek-flash', 'DeepSeek-Flash'))
+
+    def test_legacy_flash_settings_and_scene_overrides_route_to_the_official_alias(self):
+        for old in routing.model_aliases('deepseek-flash'):
+            with self.subTest(old=old):
+                config = {'default_model': old, 'overrides': {'expert_qa': old}}
+                routing.configure_routing(lambda: config)
+                self.assertEqual(routing.resolve_model('finance_insights'), 'deepseek-flash')
+                client = MagicMock()
+                with routing.model_scope('expert_qa'):
+                    self.assertEqual(routing.current_model(), 'deepseek-flash')
+                    routing.create_ai_completion(client, messages=[{'role': 'user', 'content': 'test'}])
+                self.assertEqual(client.chat.completions.create.call_args.kwargs['model'], 'deepseek-flash')
+                self.assertEqual(routing.model_info(old)['label'], 'DeepSeek-Flash')
+                self.assertEqual(routing.completion_options(old, {})['model'], 'deepseek-flash')
+                self.assertEqual(config, {'default_model': old, 'overrides': {'expert_qa': old}})
+
+    def test_flash_usage_estimates_keep_legacy_prices_without_double_counting_or_mutating_history(self):
+        latest = build_ai_usage_meta('deepseek-flash', '问题说明', '回答内容', ai_called=True)
+        self.assertTrue(latest['pricing_known'])
+        self.assertEqual(latest['input_price_per_million'], 1.0)
+        self.assertEqual(latest['output_price_per_million'], 2.0)
+        for old in routing.MODEL_ALIASES:
+            self.assertEqual(build_ai_usage_meta(old, '问题说明', '回答内容', ai_called=True), latest)
 
     def test_catalog_contains_requested_models_and_all_scenarios_no_secrets(self):
         with patch.dict(os.environ, {'ZHIPU_API_KEY': 'secret-not-in-json'}):
@@ -281,6 +312,41 @@ class SettingsPostgresTests(unittest.TestCase):
                 with self.assertRaises(SettingsConflict):
                     save_settings(cur, payload, {'id': 7})
                 self.assertEqual(read_settings(cur)['revision'], 2)
+
+    def test_legacy_settings_read_noop_and_http_history_stay_compatible(self):
+        from flask import Flask, g
+        from ai_model_http import register_ai_model_management
+        from ai_model_settings import read_settings
+        legacy = {'default_model': 'deepseek-v4-flash', 'overrides': {'expert_qa': 'deepseek-v4-flash'}}
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE ai_model_settings SET default_model=%s,overrides=%s,revision=4,updated_by_name='原管理员'",
+                        (legacy['default_model'], self.psycopg2.extras.Json(legacy['overrides'])))
+            cur.execute('''INSERT INTO ai_model_setting_events(actor_id,actor_name,before_config,after_config)
+                           VALUES(7,'原管理员',%s,%s)''', (self.psycopg2.extras.Json(legacy), self.psycopg2.extras.Json(legacy)))
+            canonical = read_settings(cur)
+            self.assertEqual(canonical['default_model'], 'deepseek-flash')
+            self.assertEqual(canonical['overrides'], {'expert_qa': 'deepseek-flash'})
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(save_settings(cur, canonical, {'id': 7})['revision'], 4)
+            cur.execute('SELECT default_model,revision,updated_by_name FROM ai_model_settings')
+            self.assertEqual(dict(cur.fetchone()), {'default_model': 'deepseek-v4-flash', 'revision': 4, 'updated_by_name': '原管理员'})
+        app = Flask(__name__)
+        app.before_request(lambda: setattr(g, 'current_user', {'id': 7}))
+        register_ai_model_management(app, connect=self.connect, require_management_user=lambda *args: {'id': 7})
+        response = app.test_client().get('/api/management/ai-models')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['settings']['default_model'], 'deepseek-flash')
+        self.assertEqual(response.json['events'][0]['after_config'], {'default_model': 'deepseek-flash', 'overrides': {'expert_qa': 'deepseek-flash'}})
+        # An old browser can still save a real change, using the same lock/revision and audit path.
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'fake-test-only'}):
+            response = app.test_client().put('/api/management/ai-models', json=dict(legacy, revision=4, overrides={}))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['settings']['revision'], 5)
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute('SELECT default_model FROM ai_model_settings')
+            self.assertEqual(cur.fetchone()['default_model'], 'deepseek-flash')
+            cur.execute('SELECT count(*) AS n FROM ai_model_setting_events')
+            self.assertEqual(cur.fetchone()['n'], 2)
 
     def test_failure_rolls_back_both_setting_and_event(self):
         conn = self.connect()
