@@ -11,6 +11,7 @@ from schedule_period import period
 from annual_metering_plan import plan_state
 from schedule_row_state import today_assignments
 from schedule_smart import planning_board, replacement_summary, protected_daily_counts, apply_smart_plan
+from schedule_quotas import read_quotas, save_quotas
 from staff_availability import available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
@@ -67,8 +68,12 @@ def proposal(cur, actor, day, options=None):
     if options.get('strategy') not in (None,'replace_today'):
         raise ValueError('请选择有效的排班策略。')
     smart=options.get('strategy')=='replace_today'
+    quota_settings=read_quotas(cur)
+    if smart and 'quota_revision' in options and (type(options['quota_revision']) is not int or options['quota_revision']!=quota_settings['revision']):
+        raise ScheduleConflict('站数配置已被其他用户修改，请重新打开智能排班后调整。')
     quotas = {mode: options.get(key, default) for mode, key, default in
-              [('offline', 'offline_count', 2), ('online', 'online_count', 3)]}
+              [('offline', 'offline_count', quota_settings['offline_count'] if smart else 2),
+               ('online', 'online_count', quota_settings['online_count'] if smart else 3)]}
     if any(type(v) is not int or not 1 <= v <= 10 for v in quotas.values()):
         raise ValueError('每组或每人的站点数量请设置为1至10。')
     origin = ORIGIN_POINT
@@ -193,10 +198,10 @@ def proposal(cur, actor, day, options=None):
             loads[p['id']] = after
     evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
                     board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-compact-v2',
-                    team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'))
+                    team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'),quota_revision=quota_settings['revision'])
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
-        offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
+        offline_count=quotas['offline'], online_count=quotas['online'], quota_settings=quota_settings, origin=origin, origin_address=ORIGIN_ADDRESS,
         warnings=warnings, regional_coverage=coverage, metering_plan=metering,
         current_assignments=today_assignments(boards.values(),day),
         strategy=options.get('strategy'),replacement=replacement_summary(boards.values(),day),
@@ -209,6 +214,30 @@ def proposal(cur, actor, day, options=None):
 
 
 def register_schedule_automation(app, *, connect, has_permission):
+    @app.get('/api/inspection-schedule/quotas')
+    def schedule_station_quotas():
+        actor=getattr(g,'current_user',None)
+        if not actor: return jsonify(success=False,error='请先登录。'),401
+        conn=cur=None
+        try:
+            conn=connect();cur=conn.cursor()
+            if not has_permission(cur,actor,VIEW_PERMISSION): raise PermissionError('当前账号无权查看巡检排班。')
+            result=read_quotas(cur)
+            conn.commit()
+            response=jsonify(success=True,**result)
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        except PermissionError as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False,error=str(exc)),403
+        except Exception:
+            if conn: conn.rollback()
+            logging.exception('Schedule station quotas failed')
+            return jsonify(success=False,error='站数配置暂时无法读取，请稍后重试。'),500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()
+
     @app.get('/api/inspection-schedule/today')
     def saved_daily_dispatch():
         actor=getattr(g,'current_user',None)
@@ -252,7 +281,14 @@ def register_schedule_automation(app, *, connect, has_permission):
                 raise ValueError('请选择预览或确认排班。')
             day = day_value(data.get('day', today().isoformat()))
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
-            if data['action'] == 'confirm': lock_schedule(cur)
+            if 'save_quotas' in data and type(data['save_quotas']) is not bool:
+                raise ValueError('站数配置保存选项不合法。')
+            if data['action'] == 'confirm' or data.get('save_quotas'): lock_schedule(cur)
+            if data.get('save_quotas'):
+                if data['action']!='preview' or data.get('strategy')!='replace_today':
+                    raise ValueError('请在计算智能方案时保存站数配置。')
+                current=save_quotas(cur,actor,data)
+                data=dict(data,quota_revision=current['revision'])
             window = actuals_window(today())
             result, periods = proposal(cur, actor, day, data)
             if data['action'] == 'confirm':

@@ -235,6 +235,8 @@ def main():
                     ('staff_daily_team_events', {'day', 'before_value', 'after_value', 'actor_id'}),
                     ('inspection_schedule_shelf', {'mode', 'scheduled_date', 'inspector_ids', 'plan_team', 'revision', 'status'}),
                     ('inspection_schedule_shelf_events', {'shelf_id', 'action', 'details', 'actor_id'}),
+                    ('inspection_schedule_quotas', {'offline_count', 'online_count', 'revision', 'updated_by'}),
+                    ('inspection_schedule_quota_events', {'before_value', 'after_value', 'actor_id'}),
                     ('staff_availability_events', {'before_value', 'after_value', 'actor_id'}),
                     ('inspection_schedule_tasks', {'user_id', 'scheduled_date', 'team_ids', 'status', 'completion_inspection_id', 'expired_at', 'plan_team', 'dispatch_event_id'}),
                 ):

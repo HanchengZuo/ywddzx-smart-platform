@@ -379,9 +379,12 @@
         </div>
         <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
       </header>
-      <p>
-        仅调度今日尚未开始的站点：任一检查项已完成即整行锁定，不可移入本区或改派。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。拖回目标站整行直接保存，也可点选卡片再点目标位置。今日全局共享，跨日自动清空；调度留痕和实际检查记录保留。
-      </p>
+      <details class="shelf-help">
+        <summary>调度说明</summary>
+        <p>
+          同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。角标仅作提醒，仍可额外手动派站。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。今日全局共享，跨日自动清空，历史调度留痕保留。
+        </p>
+      </details>
       <div
         v-for="item in shelf"
         :key="item.key"
@@ -397,8 +400,13 @@
         @keydown.enter.self="pickedShelf = pickedShelf === item.key ? null : item.key"
         @keydown.space.self.prevent="pickedShelf = pickedShelf === item.key ? null : item.key"
       >
-        <strong>{{ item.name }}</strong
-        ><small>{{ item.day }} · {{ item.sourceName || '新增安排' }}</small>
+        <strong>{{ item.name }}</strong>
+        <span
+          class="shelf-count"
+          :aria-label="`剩余待派 ${item.remaining ?? 0} 站`"
+          :title="`目标 ${item.target ?? 0} 站，今日已派 ${item.assigned ?? 0} 站`"
+          >{{ item.remaining ?? 0 }}</span
+        >
         <button type="button" aria-label="移除待选安排" @click.stop="removeShelf(item.key)">
           ×
         </button>
@@ -1365,7 +1373,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('inspection-schedule-changed', invalidateLinkedBoard)
 })
 function invalidateLinkedBoard() {
-  if (!active) lastSyncedAt = 0
+  lastSyncedAt = 0
+  if (active && !loading.value && !shelfSaving.value && !saving.value && !dialog.value?.open)
+    loadBoard().catch(() => {})
 }
 </script>
 
@@ -1425,6 +1435,14 @@ function invalidateLinkedBoard() {
   color: #667f99;
   line-height: 1.7;
 }
+.shelf-help {
+  margin: 12px 0;
+  color: #61788e;
+  font-size: 11px;
+}
+.shelf-help summary {
+  cursor: pointer;
+}
 .dispatch-shelf button {
   border: 1px solid #c5d4e4;
   border-radius: 6px;
@@ -1447,11 +1465,24 @@ function invalidateLinkedBoard() {
   border-color: #2978b2;
   box-shadow: 0 0 0 2px #2978b22a;
 }
-.shelf-item small {
-  display: block;
-  margin-top: 5px;
-  font-size: 10px;
-  color: #6d849b;
+.shelf-count {
+  position: absolute;
+  right: 29px;
+  top: -7px;
+  display: grid;
+  place-items: center;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #d93445;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 800;
+  box-shadow: 0 2px 5px #8f243b30;
 }
 .shelf-item button {
   position: absolute;

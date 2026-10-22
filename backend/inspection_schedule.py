@@ -16,6 +16,7 @@ from staff_availability import available_people, roster_people, validate_people
 from inspection_schedule_tasks import dispatch_tasks
 from staff_daily_teams import field_team, group_assignments, team_days
 from schedule_shelf_store import shelf_items, refresh_field_shelf, expire_shelf
+from schedule_quotas import read_quotas
 from annual_metering_plan import plan_state, register_metering_plan
 from schedule_row_state import linked_started_stations
 
@@ -141,14 +142,15 @@ def read_board(cur, chosen, start, end):
                          longitude=float(station['longitude']) if station.get('longitude') is not None else None,
                          latitude=float(station['latitude']) if station.get('latitude') is not None else None,
                          region=normalized_region(station['region']), sequence=sequence, cells=cells))
-    shelf = shelf_items(cur,field_mode(chosen['mode']),start,end)
+    dispatch_quotas=read_quotas(cur)
+    shelf = shelf_items(cur,field_mode(chosen['mode']),start,end,quotas=dispatch_quotas)
     eligible_keys = {(normalized_region(s['region']), str(s['station_name']).strip()) for s in stations}
     excluded = [dict(region=r,station_name=n) for r,n in fixed_roster(chosen['mode']) if (r,n) not in eligible_keys]
     evidence = dict(rows=[(r['station_id'],r['locked'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
-                    shelf=[(s['id'],s['revision']) for s in shelf], day=today().isoformat())
+                    shelf=[(s['id'],s['revision']) for s in shelf], quotas=dispatch_quotas['revision'], day=today().isoformat())
     token=hashlib.sha256(json.dumps(evidence).encode()).hexdigest()
     return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,
-                shelf=shelf, board_token=token, roster_total=len(fixed_roster(chosen['mode'])), excluded_stations=excluded,
+                shelf=shelf, dispatch_quotas=dispatch_quotas, board_token=token, roster_total=len(fixed_roster(chosen['mode'])), excluded_stations=excluded,
                 today=today().isoformat(), workdays=working_days(cur, start, end),
                 unmatched_people=[p['display_name'] for p in roster if not p['id']])
 
