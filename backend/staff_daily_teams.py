@@ -64,7 +64,7 @@ def move_student(people, before, student_id, leader_id):
 
 def validate_dispatched_teams(cur, day, assignments):
     groups = {g['leader_id']: {p['id'] for p in g['members']} for g in group_assignments(assignments) if g['mode']=='offline'}
-    cur.execute("""SELECT DISTINCT plan_team FROM inspection_schedule_cells WHERE mode='offline'
+    cur.execute("""SELECT DISTINCT plan_team FROM inspection_schedule_cells WHERE mode IN ('offline','annual')
       AND scheduled_date=%s AND inspector_ids<>'[]'::jsonb AND jsonb_typeof(plan_team)='object'""", (day,))
     for row in cur.fetchall():
         team = row['plan_team']

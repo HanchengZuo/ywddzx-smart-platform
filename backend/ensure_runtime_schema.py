@@ -226,6 +226,8 @@ def main():
                 if not {'include_offline_plan', 'include_online_plan'}.issubset({row[0] for row in cur.fetchall()}):
                     raise RuntimeError('Station plan enrollment migration missing')
                 for table, required in (
+                    ('annual_metering_plans', {'year', 'quotas', 'revision', 'updated_by', 'updated_at'}),
+                    ('annual_metering_plan_events', {'year', 'before_quotas', 'after_quotas', 'actor_id', 'actor_name'}),
                     ('inspection_schedule_cells', {'mode', 'year', 'period_number', 'station_id', 'column_key', 'inspector_ids', 'revision', 'updated_by', 'updated_at', 'scheduled_date', 'plan_team'}),
                     ('inspection_schedule_events', {'station_id', 'before_ids', 'after_ids', 'actor_id', 'actor_name', 'created_at', 'before_team', 'after_team'}),
                     ('staff_availability', {'person_name', 'day', 'available', 'reason', 'revision', 'updated_by', 'history_status', 'is_default'}),

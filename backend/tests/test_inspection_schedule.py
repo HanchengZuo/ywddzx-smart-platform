@@ -72,7 +72,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
-        for module in ('schedule_common', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store'):
+        for module in ('schedule_common', 'schedule_period', 'annual_metering_plan', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         clock = patch('schedule_common.shanghai_now',return_value=datetime(2026,10,19,18,tzinfo=ZoneInfo('Asia/Shanghai')))
         clock.start(); self.addCleanup(clock.stop)
@@ -85,7 +85,8 @@ class ScheduleDatabaseTest(unittest.TestCase):
             (3,'lead','孔德辰','supervisor_manager','active'),(4,'finance','财务人员','finance','active');
           CREATE TABLE stations(id int PRIMARY KEY,region text,station_name text,
             include_offline_plan boolean DEFAULT true,include_online_plan boolean DEFAULT true,
-            address text,longitude numeric DEFAULT 121.5,latitude numeric DEFAULT 31.2);
+            address text,longitude numeric DEFAULT 121.5,latitude numeric DEFAULT 31.2,
+            monitoring_status text NOT NULL DEFAULT '运行中');
           INSERT INTO stations(id,region,station_name) VALUES(1,'松金片区','沈浦泾南'),(2,'浦东片区','国郃'),
             (3,'松金片区','泗砖'),(4,'松金片区','新站'),(5,'松金片区','金朝');
           UPDATE stations SET include_offline_plan=false WHERE id=5;
@@ -93,9 +94,14 @@ class ScheduleDatabaseTest(unittest.TestCase):
           CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP);
           CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending');
         ''')
-        for mode, columns in COLUMNS.items():
+        seen=set()
+        for mode in ('offline','online','annual'):
+            columns=COLUMNS[mode]
             for _, _, name in columns:
-                self.cur.execute('INSERT INTO inspection_tables(table_name,checklist_mode) VALUES(%s,%s)', (name, mode))
+                if name in seen: continue
+                seen.add(name)
+                actual_mode='online' if name.endswith('（视频）') else 'offline'
+                self.cur.execute('INSERT INTO inspection_tables(table_name,checklist_mode) VALUES(%s,%s)', (name, actual_mode))
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/515_inspection_schedule.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/520_staff_scheduling.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/525_staff_daily_teams.sql').read_text())
@@ -105,6 +111,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/545_staff_dispatch_history.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/550_staff_default_availability.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/555_user_driving_permits.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/560_annual_metering_schedule.sql').read_text())
         # Existing scheduling scenarios explicitly qualify their leaders, not the migration default.
         self.cur.execute("UPDATE users SET has_driving_permit=TRUE WHERE id IN (2,3)")
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')

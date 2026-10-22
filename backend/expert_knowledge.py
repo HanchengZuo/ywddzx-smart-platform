@@ -189,7 +189,8 @@ def business_evidence(core, cur, question, options):
         region_where.append('s.station_name=ANY(%s)')
         region_params.append(options['station_names'])
     for row in recall(cur, '''SELECT concat(c.mode,':',c.year,':',c.period_number,':',c.station_id,':',c.column_key) AS id,
-        concat(c.year,'年',c.period_number,CASE WHEN c.mode='offline' THEN '季度' ELSE '月' END) AS period_key,
+        CASE WHEN c.mode='annual' THEN concat(c.year,'年计量年度计划')
+          ELSE concat(c.year,'年',c.period_number,CASE WHEN c.mode='offline' THEN '季度' ELSE '月' END) END AS period_key,
         c.mode,c.column_key,c.inspector_ids,c.updated_at,s.station_name,s.region
         FROM inspection_schedule_cells c JOIN stations s ON s.id=c.station_id''',
         ['c.year::text','c.column_key','s.station_name','s.region'], question, region_where, region_params):

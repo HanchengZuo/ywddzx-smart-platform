@@ -113,7 +113,7 @@ def planned_work(cur, start, end):
     planned = defaultdict(set)
     for row in cur.fetchall():
         for uid in row['inspector_ids']:
-            planned[(uid, row['day'])].add(row['mode'])
+            planned[(uid, row['day'])].add('offline' if row['mode']=='annual' else row['mode'])
     return {key: sorted(modes) for key, modes in planned.items()}
 
 

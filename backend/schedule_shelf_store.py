@@ -74,3 +74,22 @@ def refresh_field_shelf(cur,actor,day,groups,team_revision):
           revision=revision+1,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s''',
           (json.dumps(ids),json.dumps(team,ensure_ascii=False),group['name'],actor['id'],saved['id']))
         event(cur,actor,saved['id'],'team_updated',dict(before_ids=saved['inspector_ids'],after_ids=ids))
+
+
+def seed_daily_shelf(cur, actor, day, groups, revision):
+    """Explicit grouping confirmation publishes reusable manual-dispatch cards, once per group."""
+    cur.execute("SELECT id FROM inspection_schedule_shelf WHERE scheduled_date=%s AND source_column_key='personnel' AND status='waiting' FOR UPDATE",(day,))
+    old=[r['id'] for r in cur.fetchall()]
+    if old:
+        cur.execute("UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,updated_by=%s WHERE id=ANY(%s)",(actor['id'],old))
+        for sid in old: event(cur,actor,sid,'personnel_refreshed',dict(day=day.isoformat()))
+    for group in groups:
+        members = [group['members']] if group['mode']=='offline' else [[p] for p in group['members']]
+        for people in members:
+            ids=sorted(p['id'] for p in people)
+            team=dict(name=group['name'],leader_id=group['leader_id'],members=people,day=day.isoformat(),revision=revision) if group['mode']=='offline' else None
+            name=team['name'] if team else people[0]['display_name']
+            cur.execute('''INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,plan_team,name,
+              source_station_name,source_column_key,created_by,updated_by) VALUES(%s,%s,%s,%s,%s,'今日人员分组','personnel',%s,%s) RETURNING id''',
+              (group['mode'],day,json.dumps(ids),json.dumps(team,ensure_ascii=False),name,actor['id'],actor['id']))
+            event(cur,actor,cur.fetchone()['id'],'personnel_ready',dict(inspector_ids=ids,day=day.isoformat(),name=name))
