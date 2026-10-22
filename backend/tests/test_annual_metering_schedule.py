@@ -23,7 +23,7 @@ class MeteringUnitTests(unittest.TestCase):
         self.assertEqual((start,end),(date(2026,1,1),date(2027,1,1)))
         self.assertEqual(chosen['annual'],1)
         self.assertEqual(roster('annual'),roster('offline'))
-        self.assertEqual(len(roster('online')),132)
+        self.assertEqual(roster('online'),roster('offline'))
         with self.assertRaises(ValueError): map_period(dict(mode='annual'))
         for year in (True,1999,2101,'bad'):
             with self.assertRaises(ValueError): period(dict(mode='annual',year=year))
@@ -188,7 +188,7 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.cur.execute(sql);self.cur.execute(sql)
         self.cur.execute('UPDATE stations SET include_online_plan=false WHERE id=1');self.admin.commit()
         board=self.board(dict(mode='online',year=2026,month=10))
-        self.assertEqual(board['roster_total'],132)
+        self.assertEqual(board['roster_total'],155)
         self.assertTrue(any(s['station_name']=='沈浦泾南' for s in board['excluded_stations']))
         self.cur.execute('SELECT revision FROM annual_metering_plans');self.assertEqual(self.cur.fetchone()['revision'],1)
 

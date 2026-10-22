@@ -99,12 +99,6 @@
         清除筛选</button
       ><span>{{ rows.length }} 个站点</span>
     </div>
-    <p v-if="board?.excluded_stations?.length" class="roster-note">
-      固定名单 {{ board.roster_total }}站，当前纳入 {{ board.rows.length }}站；未纳入或档案未匹配
-      {{ board.excluded_stations.length }}站：{{
-        board.excluded_stations.map((s) => s.station_name).join('、')
-      }}。纳入设置由站点基础档案维护。
-    </p>
     <p v-if="mode === 'annual'" class="roster-note">
       现场与可用的视频项整行一起安排外勤组；视频仅适用于“监控未运行”站点，其余置灰。年度派站同步季度现场，季度派站按当月计量片区配额联动。两表共用今日外勤调度待选区。
     </p>
@@ -321,7 +315,7 @@
       </table>
     </div>
     <footer class="panel-footer">
-      <span>{{ board?.period.label || '当前周期' }} · 保留名单序号和顺序，绿色单元格不可改派。</span
+      <span>{{ board?.period.label || '当前周期' }} · 按站点顺序连续编号，绿色单元格不可改派。</span>
       ><span>{{
         canEdit
           ? fieldMode === 'offline'
@@ -1435,6 +1429,7 @@ function invalidateLinkedBoard() {
   line-height: 1.7;
 }
 .schedule-panel {
+  --matrix-grid: #7c94a8;
   --mode-ink: #8a5015;
   --mode-fill: #ffedc9;
   --mode-border: #dca54d;
@@ -1611,7 +1606,7 @@ input[type='search'] {
   background: #dcecff;
 }
 .matrix-content {
-  border-block: 1px solid #dce5f0;
+  border: 1px solid var(--matrix-grid);
 }
 .schedule-matrix {
   border-collapse: separate;
@@ -1634,8 +1629,8 @@ input[type='search'] {
 }
 .schedule-matrix th,
 .schedule-matrix td {
-  border-bottom: 1px solid #e1e8f0;
-  border-right: 1px solid #e1e8f0;
+  border-bottom: 2px solid var(--matrix-grid);
+  border-right: 2px solid var(--matrix-grid);
   height: 56px;
   padding: 0;
   text-align: center;
@@ -1688,7 +1683,7 @@ input[type='search'] {
   color: #d5e3ee;
 }
 .schedule-matrix .region-start > * {
-  border-top: 2px solid #becfe1;
+  border-top: 3px solid #58768f;
 }
 .station-row:hover > .fixed-index,
 .station-row:hover > .fixed-region,
@@ -2099,11 +2094,11 @@ select:focus-visible {
   .schedule-matrix .station-row {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 1px;
-    border: 1px solid #d7e1ee;
+    gap: 2px;
+    border: 1px solid var(--matrix-grid);
     border-radius: 12px;
     overflow: clip;
-    background: #e1e8f0;
+    background: var(--matrix-grid);
     margin-bottom: 12px;
   }
   .schedule-matrix .station-row:last-child {
@@ -2131,6 +2126,9 @@ select:focus-visible {
   }
   .schedule-matrix .matrix-cell {
     grid-column: span 3;
+  }
+  .schedule-matrix.online .matrix-cell:last-child {
+    grid-column: 1 / -1;
   }
   .mobile-column-label {
     display: block;

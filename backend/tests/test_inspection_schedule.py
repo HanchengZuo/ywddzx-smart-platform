@@ -21,16 +21,17 @@ from scheduling_map import period
 class ScheduleTest(unittest.TestCase):
     def test_exact_rosters_and_fixed_columns(self):
         offline, online = roster('offline'), roster('online')
-        self.assertEqual((len(offline), len(online)), (155, 132))
+        self.assertEqual((len(offline), len(online)), (155, 155))
+        self.assertEqual(online, offline)
         self.assertEqual(list(offline)[:3], [('松金', '沈浦泾南'), ('松金', '金朝'), ('松金', '金发')])
         self.assertEqual(offline[('宝静', '闸北第一')], 155)
-        self.assertEqual(online[('宝静', '闸北第一')], 132)
+        self.assertEqual(online[('宝静', '闸北第一')], 155)
         self.assertEqual(offline[('浦东', '爱使浦南')], 24)
-        self.assertEqual(online[('浦东', '爱使浦南')], 23)
+        self.assertEqual(online[('浦东', '爱使浦南')], 24)
         self.assertIn(('松金', '泗砖'), offline)
-        self.assertNotIn(('松金', '泗砖'), online)
-        self.assertNotIn(('中油申能', '川朴路'), online)
-        self.assertNotIn(('宝静', '晟隆'), online)
+        self.assertEqual(online[('松金', '泗砖')], online[('松金', '三新')]+1)
+        self.assertIn(('中油申能', '川朴路'), online)
+        self.assertIn(('宝静', '晟隆'), online)
         self.assertEqual([item[1] for item in COLUMNS['offline']], ['无异味', '财务', '设备', '质量健康安全', '非油', '加油现场'])
         self.assertEqual([item[1] for item in COLUMNS['online']], ['安全', '计量', '现场'])
         self.assertFalse(any('计量' in item[2] for item in COLUMNS['offline']))
@@ -90,6 +91,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
           INSERT INTO stations(id,region,station_name) VALUES(1,'松金片区','沈浦泾南'),(2,'浦东片区','国郃'),
             (3,'松金片区','泗砖'),(4,'松金片区','新站'),(5,'松金片区','金朝');
           UPDATE stations SET include_offline_plan=false WHERE id=5;
+          UPDATE stations SET include_online_plan=false WHERE id=3;
           CREATE TABLE inspection_tables(id serial PRIMARY KEY,table_name text,checklist_mode text,is_active boolean DEFAULT true);
           CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP);
           CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending');
@@ -215,6 +217,46 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.record(table=7, day='2026-11-01')
         self.assertEqual(self.board(dict(mode='online', year=2026, month=10))['summary']['completed'], 1)
         self.assertEqual(self.board(dict(mode='online', year=2026, month=11))['summary']['completed'], 1)
+
+    def test_video_enrollment_is_authoritative_and_sizhuan_follows_sanxin_without_number_gaps(self):
+        query=dict(mode='online',year=2026,month=10)
+        self.cur.execute('''INSERT INTO stations(id,region,station_name,include_online_plan) VALUES
+          (6,'松金片区','三新',true),(7,'松金片区','松江第二',true),
+          (8,'松金片区','松江第三',true),(9,'松金片区','松江第一',true),
+          (10,'松金片区','望榭',false),(11,'松金片区','欣宝',true),
+          (12,'松金片区','叶新',true);
+          UPDATE stations SET include_online_plan=true WHERE id=3;''')
+        self.admin.commit()
+        board=self.board(query)
+        names=[r['station_name'] for r in board['rows']]
+        self.assertEqual(names[names.index('三新')+1],'泗砖')
+        self.assertEqual(names[names.index('松江第一')+1],'欣宝')
+        self.assertNotIn('望榭',names)
+        self.assertEqual([r['sequence'] for r in board['rows']],list(range(1,len(board['rows'])+1)))
+        self.assertEqual(board['roster_total'],155)
+        self.assertNotIn('泗砖',[s['station_name'] for s in board['excluded_stations']])
+        # A previously hard-excluded station supports record-derived completion and manual dispatch.
+        self.record(station=3,table=7)
+        row=next(r for r in self.board(query)['rows'] if r['station_id']==3)
+        self.assertEqual(row['cells']['safety']['status'],'completed')
+        self.cur.execute("DELETE FROM staff_daily_teams WHERE day='2026-10-20'");self.admin.commit()
+        result=self.client.put('/api/inspection-schedule',json=dict(**query,inspector_ids=[2],scheduled_date='2026-10-20',
+            cells=[dict(station_id=3,column_key=key,revision=cell['revision']) for key,cell in row['cells'].items() if cell['status']!='completed']))
+        self.assertEqual(result.status_code,200,result.json)
+        self.cur.execute('UPDATE stations SET include_online_plan=false WHERE id=3');self.admin.commit()
+        hidden=self.board(query)
+        self.assertNotIn(3,[r['station_id'] for r in hidden['rows']])
+        self.assertEqual([r['sequence'] for r in hidden['rows']],list(range(1,len(hidden['rows'])+1)))
+        self.cur.execute('UPDATE stations SET include_online_plan=true WHERE id=3');self.admin.commit()
+        restored=next(r for r in self.board(query)['rows'] if r['station_id']==3)
+        self.assertEqual(restored['cells']['measurement']['status'],'assigned')
+        self.assertEqual(restored['cells']['safety']['status'],'completed')
+
+    def test_display_numbers_do_not_change_station_ids_or_canonical_order(self):
+        for query in (self.query,dict(mode='annual',year=2026),dict(mode='online',year=2026,month=10)):
+            rows=self.board(query)['rows']
+            self.assertEqual([r['sequence'] for r in rows],list(range(1,len(rows)+1)))
+            self.assertEqual([r['station_id'] for r in rows],sorted([r['station_id'] for r in rows],key=lambda sid:roster_position(next(r for r in rows if r['station_id']==sid),query['mode'])))
 
     def test_authorized_roles_share_the_full_board_and_can_edit_outside_their_own_region(self):
         for role in ('area_account', 'station_manager', 'quality_safety', 'finance'):

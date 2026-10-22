@@ -106,7 +106,7 @@ def read_board(cur, chosen, start, end):
     inspectors = [p for p in roster if p['id']]
     rows = []
     summary = dict(completed=0, assigned=0, unassigned=0)
-    for station in stations:
+    for sequence, station in enumerate(stations, 1):
         cells = {}
         for column in columns:
             existing = saved.get((station['id'], column['key'])) or {}
@@ -128,7 +128,7 @@ def read_board(cur, chosen, start, end):
                          address=station.get('address') or '',
                          longitude=float(station['longitude']) if station.get('longitude') is not None else None,
                          latitude=float(station['latitude']) if station.get('latitude') is not None else None,
-                         region=normalized_region(station['region']), sequence=station['sequence'], cells=cells))
+                         region=normalized_region(station['region']), sequence=sequence, cells=cells))
     shelf = shelf_items(cur,field_mode(chosen['mode']),start,end)
     eligible_keys = {(normalized_region(s['region']), str(s['station_name']).strip()) for s in stations}
     excluded = [dict(region=r,station_name=n) for r,n in fixed_roster(chosen['mode']) if (r,n) not in eligible_keys]

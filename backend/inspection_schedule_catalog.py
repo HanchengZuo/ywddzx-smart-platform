@@ -1,4 +1,4 @@
-"""Explicit business roster and stable column keys for the v9.7 schedule."""
+"""Shared station ordering and stable columns; enrollment comes from station settings."""
 import re
 
 COLUMNS = {
@@ -40,13 +40,6 @@ OFFLINE_GROUPS = (
     ('崇明', '崇明第八 崇明第二 崇明第二十 崇明第九 崇明第七 崇明第三 崇明第十八 崇明第十三 崇明第十四 崇明第十五 崇明第四 崇明第五 前卫 南门 圆沙'),
     ('宝静', '爱使东方唐山路 宝杨第二 宝杨第一 常德路 晟隆 锦秋 灵广 凌桥第二 凌桥第一 泰和 维辉 物流园区 闸北第一'),
 )
-VIDEO_EXCLUSIONS = {
-    '松金': {'泗砖'}, '闵普徐': {'泾阳'}, '嘉青': {'青浦第二'},
-    '中油同盛': {'万祥', '新港'}, '中油申能': {'川朴路', '平霄路'},
-    '中油上海': {'漕宝路'}, '中油浦江': {'航浦'}, '中油浦东': {'绿畅', '绿地', '绿中'},
-    '中油农工商': {'共富', '潘泾路', '前哨', '长江', '长圳', '中鹏'},
-    '中油港汇': {'古棕路', '花柏路'}, '中油奉贤': {'奉杰'}, '宝静': {'晟隆', '灵广'},
-}
 
 
 def normalized_region(value):
@@ -56,8 +49,7 @@ def normalized_region(value):
 def roster(mode):
     if mode not in COLUMNS:
         raise ValueError('请选择现场或视频检查。')
-    entries = [(region, name) for region, names in OFFLINE_GROUPS for name in names.split()
-               if mode != 'online' or name not in VIDEO_EXCLUSIONS.get(region, set())]
+    entries = [(region, name) for region, names in OFFLINE_GROUPS for name in names.split()]
     return {entry: index for index, entry in enumerate(entries, 1)}
 
 

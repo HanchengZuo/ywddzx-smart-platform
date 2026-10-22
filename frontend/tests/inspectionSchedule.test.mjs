@@ -55,6 +55,18 @@ const panelSource = readFileSync(
   new URL('../src/components/InspectionSchedulePanel.vue', import.meta.url),
   'utf8',
 )
+test('schedule hides roster diagnostics and separates adjacent colored cells on desktop and mobile', () => {
+  const template = panelSource.slice(0, panelSource.indexOf('<script setup>'))
+  assert.doesNotMatch(template, /board\.roster_total|board\.excluded_stations|纳入设置由站点基础档案维护/)
+  assert.match(template, /mode === 'annual'/, 'annual metering instructions remain visible')
+  assert.match(panelSource, /border-bottom: 2px solid var\(--matrix-grid\)/)
+  assert.match(panelSource, /border-right: 2px solid var\(--matrix-grid\)/)
+  const mobile = panelSource.slice(panelSource.indexOf('@container (max-width: 760px)'))
+  assert.match(mobile, /\.schedule-matrix \.station-row\s*\{[^}]*gap: 2px;[^}]*background: var\(--matrix-grid\)/)
+  assert.match(mobile, /\.schedule-matrix\.online \.matrix-cell:last-child\s*\{\s*grid-column: 1 \/ -1;/)
+  assert.match(panelSource, /\.schedule-matrix \.completed\s*\{\s*background: #d3f1df;/)
+  assert.match(panelSource, /\.schedule-matrix \.assigned\s*\{\s*background: #ffe0df;/)
+})
 test('cached panels pause and abort when inactive; returning reuses fresh data and refreshes stale data', () => {
   const hooks = {}
   const calls = { load: 0, start: 0, pause: 0, abort: 0, close: 0 }
