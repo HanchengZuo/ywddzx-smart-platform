@@ -56,7 +56,7 @@ test('inbox opening automatically reconciles tasks; only video can navigate to r
   context.open()
   assert.deepEqual([loads,starts,opens],[1,1,1])
   const template=source.slice(0,source.indexOf('<script setup>'))
-  assert.match(template,/v-if="canRegister && task.mode === 'online'/)
+  assert.match(template,/v-if="\s*canRegister\s*&&\s*task.mode === 'online'/)
   assert.doesNotMatch(template,/<footer>|核对完成情况/)
   assert.match(template,/currentAgenda.field_team.members/)
 })

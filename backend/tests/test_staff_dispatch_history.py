@@ -45,7 +45,7 @@ class HistoryDatabaseTests(unittest.TestCase):
     def test_field_progress_follows_assigned_station_tables_not_the_person_or_audit(self):
         self.save();self.save(station_id=2)
         self.clock('2026-10-21')
-        # Field inbox expiration does not discard the original obligations or imply completion.
+        # Historical field inbox tasks preserve the original obligations and do not imply completion.
         self.client.get('/api/my-schedule-tasks')
         before=self.cell();self.assertEqual(before['dispatch']['total'],12)
         self.assertEqual(before['dispatch']['completed'],0)

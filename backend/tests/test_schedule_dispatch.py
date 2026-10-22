@@ -134,15 +134,17 @@ class DispatchDatabaseTests(unittest.TestCase):
         self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(station_id=1,inspector_ids=[])]*3+[dict(station_id=2,inspector_ids=[2])]*3)
         self.assertEqual(self.video(source=dict(cells=source['cells'][:1]),inspector_ids=None).status_code,409)
 
-    def test_field_expires_next_day_without_creating_actual_records_video_remains(self):
+    def test_field_carries_to_history_next_day_without_creating_actual_records(self):
         self.save()
         with patch('inspection_schedule_tasks.today',return_value=date(2026,10,20)):
             inbox=self.client.get('/api/my-schedule-tasks').json
             self.assertEqual(inbox['count'],6)
             self.assertEqual(inbox['agenda']['assignment']['group_name'],'外勤步雪琼组')
         with patch('inspection_schedule_tasks.today',return_value=date(2026,10,21)):
-            self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'],0)
-        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='expired' AND expired_at IS NOT NULL")
+            history=self.client.get('/api/my-schedule-tasks').json
+            self.assertEqual(history['count'],6)
+            self.assertEqual(history['buckets']['history_offline']['pending'],6)
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'")
         self.assertEqual(self.cur.fetchone()['n'],6)
         self.cur.execute('SELECT COUNT(*) AS n FROM inspections'); self.assertEqual(self.cur.fetchone()['n'],0)
 
