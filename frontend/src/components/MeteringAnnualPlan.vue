@@ -275,7 +275,7 @@ select,
 input {
   font: inherit;
 }
-header button {
+.metering-plan-dialog > header button {
   border: 0;
   background: #dce7f0;
   border-radius: 8px;
