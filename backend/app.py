@@ -3,6 +3,7 @@ from flask_cors import CORS
 from frontend_version import development_frontend_version
 from roles import PRIVILEGED_ROLES, is_supervisor_role
 from user_permission_config import merge_personal_permissions, replace_personal_permissions
+from driving_permits import permit_value, save_user_permit
 from upload_request import PlatformRequest
 from standard_history import fetch_standard_history, recommend_from_history
 from equipment_report_library import exclusions as equipment_issue_exclusions, save_exclusions as save_equipment_issue_exclusions
@@ -16051,7 +16052,16 @@ def build_management_user_payload(data, is_create=False):
         "real_name": real_name,
         "phone": normalize_text(data.get("phone"), 40) or None,
         "station_id": station_id,
+        **({"has_driving_permit": permit_value(data, role)} if "has_driving_permit" in data else {}),
     }
+
+
+def apply_user_driving_permit(cur, actor, target_user, data):
+    change = save_user_permit(cur, target_user['id'], data)
+    if change:
+        record_security_event(cur, actor, 'user_driving_permit_update', 'success', target=target_user,
+                              request_ip=get_request_client_ip(), user_agent=request.headers.get('User-Agent'),
+                              details=change)
 
 
 def normalize_permission_updates(raw_permissions):
@@ -21323,6 +21333,7 @@ def get_management_users():
                 u.station_id,
                 s.station_name,
                 s.region AS station_region,
+                u.has_driving_permit,
                 TO_CHAR(u.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
                 TO_CHAR(u.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
             FROM users u
@@ -21476,6 +21487,7 @@ def get_management_users():
                     "station_region": row["station_region"],
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
+                    "has_driving_permit": bool(row["has_driving_permit"]),
                     "permission_overrides": overrides,
                     "has_permission_overrides": has_personalized_config,
                     "permissions": permissions,
@@ -21834,6 +21846,7 @@ def export_management_users():
                 u.phone,
                 u.station_id,
                 u.must_change_password,
+                u.has_driving_permit,
                 u.force_change_immediately,
                 u.password_policy_version,
                 u.account_status,
@@ -21872,6 +21885,7 @@ def export_management_users():
                     "station_id": row["station_id"],
                     "station_name": row["station_name"],
                     "hos_station_code": row["hos_station_code"],
+                    "has_driving_permit": bool(row["has_driving_permit"]),
                     "created_at": row["created_at"],
                     "updated_at": row["updated_at"],
                     "must_change_password": bool(row["must_change_password"]),
@@ -22302,7 +22316,9 @@ def import_management_users():
             target_user = {
                 "id": target_user_id,
                 "role": user_data["role"],
+                "username": user_data["username"],
             }
+            apply_user_driving_permit(cur, actor, target_user, user_data)
             cur.execute("DELETE FROM user_permissions WHERE user_id = %s;", (target_user_id,))
             apply_user_permission_updates(cur, target_user, user_data["permissions"], actor["id"])
             apply_user_inspection_table_scope_updates(
@@ -22446,6 +22462,7 @@ def create_management_user():
             ),
         )
         created_user = cur.fetchone()
+        apply_user_driving_permit(cur, actor, created_user, user_data)
         cur.execute(
             """
             INSERT INTO user_password_history (user_id, password_hash, created_at)
@@ -22567,6 +22584,7 @@ def update_management_user(target_user_id):
             ),
         )
         updated_user = cur.fetchone()
+        apply_user_driving_permit(cur, actor, updated_user, user_data)
         if user_data["password"]:
             credential_user = {
                 **dict(target_user),

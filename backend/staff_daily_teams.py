@@ -4,6 +4,7 @@ import random
 from collections import defaultdict
 from datetime import timedelta
 from schedule_common import ScheduleConflict
+from driving_permits import require_field_driver, validate_driving_teams
 
 
 def team_days(cur, start, end):
@@ -33,8 +34,9 @@ def field_team(cur, day, ids):
     saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
     for group in group_assignments(saved.get('assignments', [])):
         if group['mode'] == 'offline' and group['leader_id'] and set(ids) == {p['id'] for p in group['members']}:
+            drivers = require_field_driver(cur, ids)
             return dict(name=group['name'], leader_id=group['leader_id'], day=day.isoformat(),
-                        revision=saved['revision'], members=group['members'])
+                        revision=saved['revision'], members=[dict(p, has_driving_permit=p['id'] in drivers) for p in group['members']])
     raise ValueError('现场排班必须选择该日期已保存的完整外勤组，请先在人员档期安排分组。')
 
 
@@ -80,11 +82,12 @@ def adjust_preview(people, assignments, student_leaders):
         if leader is not None and (type(leader) is not int or leader < 1):
             raise ValueError('请选择外勤带队组或内勤视频组。')
         assignments = move_student(people, assignments, int(key), leader)
+    validate_driving_teams(people, assignments)
     return assignments
 
 
 def random_teams(people, manager_modes, seed):
-    """Managers are explicit; student split and team sizes differ by at most one when feasible."""
+    """Keep manager choices; prioritize driver coverage, then balance student workloads."""
     managers = [p for p in people if p['position'] == '管理人员']
     students = [p for p in people if p['position'] == '大学生']
     if not isinstance(manager_modes, dict) or set(manager_modes) != {str(p['id']) for p in managers}:
@@ -100,6 +103,7 @@ def random_teams(people, manager_modes, seed):
             raise ValueError(f"{p['display_name']}已有另一种站点排班或巡检实绩，不能更换检查方式。")
         if mode == 'offline': leaders.append(p)
         result.append(dict(id=p['id'], display_name=p['display_name'], position=p['position'], mode=mode,
+                           has_driving_permit=p.get('has_driving_permit') is True,
                            leader_id=p['id'] if mode == 'offline' else None,
                            group_name=f"外勤{p['display_name']}组" if mode == 'offline' else '内勤视频组'))
     rng.shuffle(students)
@@ -114,16 +118,37 @@ def random_teams(people, manager_modes, seed):
         raise ValueError('已有现场安排的大学生需要至少一位现场带队管理人员。')
     target = len(students) // 2 + (rng.randrange(2) if len(students) % 2 else 0)
     target = max(len(fixed['offline']), min(target, len(students) - len(fixed['online']))) if leaders else 0
-    field_students = fixed['offline'] + flexible[:target - len(fixed['offline'])]
-    video_students = fixed['online'] + flexible[target - len(fixed['offline']):]
+    drivers = [p for p in flexible if p.get('has_driving_permit') is True]
+    fixed_drivers = sum(p.get('has_driving_permit') is True for p in fixed['offline'])
+    minimum = sum(p.get('has_driving_permit') is not True for p in leaders)
+    if len(drivers) + fixed_drivers < minimum:
+        raise ValueError(f'现场带队分工需要至少{minimum}名持准驾证的大学生，目前可安排现场的仅{len(drivers)+fixed_drivers}名。请维护准驾证资料或调整管理人员现场/视频分工。')
+    # Driver coverage outranks an exact 50/50 split. Prefer two per team when possible.
+    preferred = sum(2 - int(p.get('has_driving_permit') is True) for p in leaders)
+    selected_drivers = drivers[:max(0, preferred - fixed_drivers)]
+    target = max(target, len(fixed['offline']) + len(selected_drivers))
+    remaining = [p for p in flexible if p not in selected_drivers]
+    take = target - len(fixed['offline']) - len(selected_drivers)
+    field_students = fixed['offline'] + selected_drivers + remaining[:take]
+    video_students = fixed['online'] + remaining[take:]
     rng.shuffle(leaders)
-    for index, p in enumerate(field_students):
-        leader = leaders[index % len(leaders)]
+    sizes = {p['id']: 0 for p in leaders}
+    driver_counts = {p['id']: int(p.get('has_driving_permit') is True) for p in leaders}
+    field_students.sort(key=lambda p: p.get('has_driving_permit') is not True)
+    for p in field_students:
+        licensed = p.get('has_driving_permit') is True
+        leader = min(leaders, key=lambda lead: (min(driver_counts[lead['id']], 2) if licensed else 2,
+                                               sizes[lead['id']]))
+        sizes[leader['id']] += 1
+        driver_counts[leader['id']] += int(licensed)
         result.append(dict(id=p['id'], display_name=p['display_name'], position=p['position'], mode='offline',
+                           has_driving_permit=licensed,
                            leader_id=leader['id'], group_name=f"外勤{leader['display_name']}组"))
     for p in video_students:
         result.append(dict(id=p['id'], display_name=p['display_name'], position=p['position'], mode='online',
+                           has_driving_permit=p.get('has_driving_permit') is True,
                            leader_id=None, group_name='内勤视频组'))
+    validate_driving_teams(people, result)
     return result
 
 

@@ -92,14 +92,21 @@ def proposal(cur, actor, day, options=None):
     # Keep a saved leader/student team together when converting personnel plans to station tasks.
     saved_team = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
     field_teams = []
+    unlicensed_teams = []
     for team in group_assignments(saved_team.get('assignments', [])):
         ids = [p['id'] for p in team['members']]
-        if team['mode'] == 'offline' and all(uid in eligible_by_id for uid in ids): field_teams.append(team)
+        if (team['mode'] == 'offline' and all(uid in eligible_by_id for uid in ids)
+                and any(eligible_by_id[uid].get('has_driving_permit') is True for uid in ids)):
+            field_teams.append(team)
+        elif team['mode'] == 'offline' and all(uid in eligible_by_id for uid in ids):
+            unlicensed_teams.append(team['name'])
     field_teams.sort(key=lambda t: (loads[t['leader_id']]['offline'], t['leader_id']))
     warnings = []
+    if unlicensed_teams:
+        warnings.append('以下外勤组当前无人拥有准驾证，未派现场任务，请先调整：'+'、'.join(unlicensed_teams))
     missing = [s['station_name'] for s in demands['offline'] if not coordinate(s)]
     if missing: warnings.append('以下站点缺少有效坐标，未自动派现场任务：'+'、'.join(missing))
-    if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整外勤组安排。')
+    if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整且至少1人拥有准驾证的外勤组安排。')
     valid = [s for s in demands['offline'] if coordinate(s)]
     _,coverage = regional_targets(valid,len(field_teams)*quotas['offline'],coverage)
     routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage)

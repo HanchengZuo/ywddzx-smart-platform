@@ -143,7 +143,7 @@ class HistoryDatabaseTests(unittest.TestCase):
     def test_all_field_members_share_station_evidence_even_after_group_snapshot_is_replaced(self):
         self.cur.execute("INSERT INTO users VALUES(10,'student','陈中磊','supervisor','active')")
         self.cur.execute("INSERT INTO staff_availability(person_name,day,available,revision,updated_by) VALUES('陈中磊','2026-10-20',true,1,1)")
-        members=[dict(id=uid,display_name=name,position=position,mode='offline',leader_id=2,group_name='外勤步雪琼组')
+        members=[dict(id=uid,display_name=name,position=position,mode='offline',leader_id=2,group_name='外勤步雪琼组',has_driving_permit=uid==2)
             for uid,name,position in [(2,'步雪琼','管理人员'),(10,'陈中磊','大学生')]]
         self.cur.execute('UPDATE staff_daily_teams SET assignments=%s',(json.dumps(members),));self.admin.commit()
         self.assertEqual(self.save(inspector_ids=[2,10]).status_code,200)

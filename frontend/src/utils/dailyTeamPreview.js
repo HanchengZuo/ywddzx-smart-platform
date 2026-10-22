@@ -1,4 +1,9 @@
 // Preview moves are local only. The server validates these choices again on confirmation.
+export function fieldDriverCount(group, people) {
+  return (group.members || []).filter(person =>
+    (people || []).some(p => p.id === person.id && p.has_driving_permit === true)).length
+}
+
 export function movePreviewStudent(preview, people, studentId, leaderId) {
   const assignments = preview.groups.flatMap((group) => group.members)
   const student = assignments.find((p) => p.id === studentId && p.position === '大学生')
