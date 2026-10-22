@@ -179,7 +179,8 @@
       <button
         type="button"
         class="secondary-button"
-        :disabled="loading || shelfSaving || (!hasTodayPlans && !shelf.length) || !canEdit"
+        :disabled="loading || shelfSaving || !hasTodayPlans || !canEdit"
+        title="撤下今日未完成计划并转入今日调度待选区，保留原有待选安排和实际记录"
         @click="clearToday"
       >
         一键清空今日{{ mode === 'annual' ? '计量现场' : mode === 'offline' ? '现场' : '视频' }}排班
@@ -371,7 +372,7 @@
         <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
       </header>
       <p>
-        仅调度今日计划：拖入后整站未检查项一起撤下，拖回目标站整行直接保存，也可点选卡片再点目标位置。今日全局共享，跨日自动清空；一键清空今日排班也会清空本区，调度留痕和实际检查记录保留。
+        仅调度今日计划：拖入后整站未检查项一起撤下，拖回目标站整行直接保存，也可点选卡片再点目标位置。一键清空今日排班会将表内今日未完成计划转入本区，原有待选安排保留。今日全局共享，跨日自动清空；调度留痕和实际检查记录保留。
       </p>
       <div
         v-for="item in shelf"

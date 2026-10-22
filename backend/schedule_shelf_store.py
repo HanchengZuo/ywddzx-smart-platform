@@ -29,16 +29,6 @@ def expire_shelf(cur, *, already_locked=False):
               dict(day=row['scheduled_date'].isoformat(), name=row['name'], reason='非当日待选安排自动清理'))
 
 
-def clear_today_shelf(cur, actor, mode):
-    cur.execute('''UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,
-      updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE status='waiting' AND mode=%s AND scheduled_date=%s
-      RETURNING id,name,inspector_ids''', (actor['id'],mode,today()))
-    rows = cur.fetchall()
-    for row in rows:
-        event(cur, actor, row['id'], 'cleared_today', dict(name=row['name'], inspector_ids=row['inspector_ids']))
-    return len(rows)
-
-
 def event(cur, actor, shelf_id, action, details):
     cur.execute('''INSERT INTO inspection_schedule_shelf_events(shelf_id,action,details,actor_id,actor_name)
       VALUES(%s,%s,%s,%s,%s)''', (shelf_id,action,json.dumps(details,ensure_ascii=False),actor['id'],

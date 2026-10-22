@@ -6,7 +6,7 @@ from flask import g, jsonify, request
 from inspection_schedule import (VIEW_PERMISSION, EDIT_PERMISSION, integer, read_board,
                                   save_cell, validate_edits)
 from schedule_common import ScheduleConflict, lock_schedule, today
-from schedule_shelf_store import event, park_item, expire_shelf, clear_today_shelf
+from schedule_shelf_store import event, park_item, expire_shelf
 from schedule_period import period, field_mode
 
 
@@ -86,7 +86,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         event(cur,actor,sid,'discarded',dict(name=saved['name'],inspector_ids=saved['inspector_ids']))
         return dict(message='待选安排已移除，保留调度历史。')
     if action=='clear_today':
-        if not start<=today()<end: raise ValueError('请切换到本季度或本月后清空今日排班。')
+        if not start<=today()<end: raise ValueError('请切换到本季度、本年度或本月后清空今日排班。')
         if data.get('board_token')!=board['board_token']:
             raise ScheduleConflict('排班已变化，请载入最新排班后再清空今日安排。')
         selected=[]
@@ -94,11 +94,10 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
             for key,cell in row['cells'].items():
                 if cell['status']=='assigned' and cell['scheduled_date']==today().isoformat():
                     selected.append((dict(station_id=row['station_id'],column_key=key,revision=cell['revision']),row,cell))
-        for edit,_,_ in selected:
-            save_cell(cur,actor,{**edit,'inspector_ids':[]},chosen,start,end)
-        discarded = clear_today_shelf(cur,actor,field_mode(chosen['mode']))
-        return dict(parked_count=0,cleared_count=len(selected),discarded_count=discarded,
-                    message=f'已清空今日排班 {len(selected)} 格和今日待选安排 {discarded} 项，实际检查及其他日期安排保持不变。')
+        cards=park_saved(cur,actor,chosen,start,end,selected,action='cleared_to_shelf')
+        stations=len({row['station_id'] for _,row,_ in selected})
+        return dict(parked_count=len(cards),cleared_count=len(selected),cleared_station_count=stations,discarded_count=0,
+                    message=f'已撤下 {stations} 站今日未完成排班，转入今日调度待选区 {len(cards)} 项；原有待选安排、实际检查及其他日期安排保持不变。')
     raise ValueError('请选择移入待选区、安排、移除或清空今日排班。')
 
 

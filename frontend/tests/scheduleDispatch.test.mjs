@@ -140,6 +140,15 @@ test('video drop targets all three columns; clear sends server board token, not 
   assert.equal(clear.body.action, 'clear_today')
   assert.equal(clear.body.board_token, 'latest')
   assert.equal(clear.body.cells, undefined)
+  assert.equal(context.shelf.value[0].id,18,'clear renders the returned waiting cards')
+  assert.equal(context.shelfOpen.value,true,'clear opens the waiting shelf for immediate redispatch')
+})
+
+test('clear-today UI preserves waiting cards and requires plans in the table', () => {
+  const panel=source('components/InspectionSchedulePanel.vue')
+  assert.match(panel,/:disabled="loading \|\| shelfSaving \|\| !hasTodayPlans \|\| !canEdit"/)
+  assert.match(panel,/一键清空今日排班会将表内今日未完成计划转入本区，原有待选安排保留/)
+  assert.doesNotMatch(panel,/一键清空今日排班也会清空本区/)
 })
 
 test('video row drag skips only immutable completed columns', async () => {
