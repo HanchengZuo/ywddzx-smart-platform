@@ -46,7 +46,10 @@
               :disabled="loading || saving"
               @input="stale = true"
           /></label>
-          <small>包含已开始的今日站点；调整后点击“计算智能方案”</small>
+          <small>包含已开始的今日站点；调整后点击“计算智能方案”全局保存，并更新待选区角标</small>
+          <small v-if="quotaSettings"
+            >{{ quotaSettings.updated_by_name }} {{ quotaSettings.updated_at }} 保存</small
+          >
         </div>
         <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -288,6 +291,7 @@ const dialog = ref(null),
   day = ref(shanghaiToday())
 const offlineCount = ref(2),
   onlineCount = ref(3)
+const quotaSettings = ref(null)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
 const basis = computed(() => scheduleBasis(preview.value))
 const targetRegions = computed(() =>
@@ -299,12 +303,33 @@ const coveragePercent = (r) =>
 let controller,
   disposed = false,
   serial = 0
-function open() {
+async function open() {
   day.value = shanghaiToday()
   preview.value = null
+  quotaSettings.value = null
   savedNotice.value = ''
+  error.value = ''
   dialog.value.showModal()
-  createPreview()
+  const ticket = ++serial
+  controller?.abort()
+  controller = new AbortController()
+  loading.value = true
+  try {
+    const { data } = await axios.get('/api/inspection-schedule/quotas', {
+      signal: controller.signal,
+      timeout: 15000,
+    })
+    if (ticket !== serial || disposed) return
+    quotaSettings.value = data
+    offlineCount.value = data.offline_count
+    onlineCount.value = data.online_count
+    await createPreview()
+  } catch (err) {
+    if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
+      error.value = err.response?.data?.error || '站数配置读取失败，请关闭后重新打开。'
+  } finally {
+    if (ticket === serial) loading.value = false
+  }
 }
 function close() {
   if (saving.value) return
@@ -326,6 +351,10 @@ function backdrop(event) {
   }
 }
 async function createPreview() {
+  if (!quotaSettings.value) {
+    error.value = '请重新打开智能排班，读取最新站数配置后再计算。'
+    return
+  }
   const ticket = ++serial
   controller?.abort()
   controller = new AbortController()
@@ -342,12 +371,19 @@ async function createPreview() {
         day: day.value,
         offline_count: offlineCount.value,
         online_count: onlineCount.value,
+        quota_revision: quotaSettings.value.revision,
+        save_quotas:
+          offlineCount.value !== quotaSettings.value.offline_count ||
+          onlineCount.value !== quotaSettings.value.online_count,
       },
       { signal: controller.signal, timeout: 60000 },
     )
     if (ticket === serial && !disposed) {
+      const changed = data.quota_settings?.revision !== quotaSettings.value.revision
+      if (data.quota_settings) quotaSettings.value = data.quota_settings
       preview.value = data
       stale.value = false
+      if (changed) window.dispatchEvent(new Event('inspection-schedule-changed'))
     }
   } catch (err) {
     if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')

@@ -114,6 +114,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/550_staff_default_availability.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/555_user_driving_permits.sql').read_text())
         self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/560_annual_metering_schedule.sql').read_text())
+        self.cur.execute((Path(__file__).resolve().parents[1] / 'db/init/565_schedule_dispatch_quotas.sql').read_text())
         # Existing scheduling scenarios explicitly qualify their leaders, not the migration default.
         self.cur.execute("UPDATE users SET has_driving_permit=TRUE WHERE id IN (2,3)")
         self.cur.execute('CREATE TABLE quality_work_calendar AS SELECT * FROM public.quality_work_calendar')

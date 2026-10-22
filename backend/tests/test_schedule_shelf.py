@@ -307,7 +307,7 @@ class ShelfDatabaseTests(unittest.TestCase):
                 **self.query,'action':'clear_today','board_token':token}).status_code
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sorted(pool.map(clear,range(2))),[200,409])
-        self.assertEqual(len(self.board()['shelf']),2)
+        self.assertEqual(len(self.board()['shelf']),1,'same team is displayed once even when two stations were cleared')
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_shelf_events WHERE action='cleared_to_shelf'")
         self.assertEqual(self.cur.fetchone()['n'],2)
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'")

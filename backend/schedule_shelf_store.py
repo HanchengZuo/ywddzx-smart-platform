@@ -1,9 +1,11 @@
 """Durable waiting assignments and their audit trail. No HTTP or app imports."""
 import json
 from schedule_common import today
+from inspection_schedule_catalog import roster_position
+from schedule_quotas import read_quotas
 
 
-def shelf_items(cur, mode, start, end):
+def shelf_items(cur, mode, start, end, *, quotas=None):
     day = today()
     if not start <= day < end:
         return []
@@ -12,7 +14,33 @@ def shelf_items(cur, mode, start, end):
       to_char(updated_at,'YYYY-MM-DD HH24:MI:SS') AS updated_at
       FROM inspection_schedule_shelf WHERE mode=%s AND status='waiting'
         AND scheduled_date=%s ORDER BY id''', (mode,day))
-    return [dict(row,key=f"shelf:{row['id']}") for row in cur.fetchall()]
+    cards=list(cur.fetchall())
+    if not cards: return []
+    quotas=quotas or read_quotas(cur)
+    # Quarterly and annual field plans share station capacity; count a station
+    # once even when all six/nine checklist cells contain the same assignment.
+    cur.execute('''SELECT c.mode,c.station_id,c.inspector_ids,s.region,s.station_name
+      FROM inspection_schedule_cells c JOIN stations s ON s.id=c.station_id
+      WHERE c.scheduled_date=%s AND c.year=%s AND jsonb_array_length(c.inspector_ids)>0
+        AND ((%s='online' AND c.mode='online' AND c.period_number=%s AND s.include_online_plan)
+          OR (%s='offline' AND c.mode IN ('offline','annual') AND s.include_offline_plan
+            AND c.period_number=CASE WHEN c.mode='annual' THEN 1 ELSE %s END))''',
+      (day,day.year,mode,day.month,mode,(day.month-1)//3+1))
+    used={}
+    for row in cur.fetchall():
+        if not roster_position(row,row['mode']): continue
+        key=tuple(sorted(row['inspector_ids']))
+        used.setdefault(key,set()).add(row['station_id'])
+    unique={}
+    for row in cards:
+        key=tuple(sorted(row['ids']))
+        # Prefer an explicit parked record; the reusable personnel card remains
+        # durable underneath. Source evidence stays in storage, never on the UI.
+        if key not in unique or (unique[key]['source_column_key']=='personnel' and row['source_column_key']!='personnel'):
+            unique[key]=row
+    target=quotas['offline_count' if mode=='offline' else 'online_count']
+    return [dict(row,key=f"shelf:{row['id']}",target=target,assigned=len(used.get(ids,set())),
+                 remaining=max(0,target-len(used.get(ids,set())))) for ids,row in unique.items()]
 
 
 def expire_shelf(cur, *, already_locked=False):

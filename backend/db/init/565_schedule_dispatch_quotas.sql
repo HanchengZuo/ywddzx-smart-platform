@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS inspection_schedule_quotas (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  offline_count INTEGER NOT NULL DEFAULT 2 CHECK(offline_count BETWEEN 1 AND 10),
+  online_count INTEGER NOT NULL DEFAULT 3 CHECK(online_count BETWEEN 1 AND 10),
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO inspection_schedule_quotas(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS inspection_schedule_quota_events (
+  id BIGSERIAL PRIMARY KEY,
+  before_value JSONB NOT NULL,
+  after_value JSONB NOT NULL,
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

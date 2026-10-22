@@ -85,6 +85,7 @@ test('smart apply requires explicit replacement, keeps the modal open, and recal
     AbortController,serial:0,controller:undefined,disposed:false,
     preview:{value:{groups:[{station_id:1}],token:'server-token'}},
     day:{value:'2026-10-22'},offlineCount:{value:2},onlineCount:{value:3},
+    quotaSettings:{value:{offline_count:2,online_count:3,revision:0}},
     loading:{value:false},saving:{value:false},stale:{value:false},error:{value:''},savedNotice:{value:''},
     replaceConfirmed:{value:true},
     dialog:{value:{close(){throw Error('confirmation must not close the dialog')}}},

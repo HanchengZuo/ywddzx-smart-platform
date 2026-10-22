@@ -1,5 +1,6 @@
 """Move saved assignments into/out of a shared durable shelf, atomically with tasks."""
 import logging
+import json
 from collections import defaultdict
 
 from flask import g, jsonify, request
@@ -82,8 +83,16 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
               ('waiting' if saved['source_column_key']=='personnel' else 'assigned',edits[0]['station_id'],'row',actor['id'],sid))
             event(cur,actor,sid,'assigned',dict(station_id=edits[0]['station_id'],inspector_ids=saved['inspector_ids'],displaced_ids=displaced))
             return dict(parked_count=len(displaced),message='已直接安排到目标站点，个人待办已同步。')
-        cur.execute("UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(actor['id'],sid))
-        event(cur,actor,sid,'discarded',dict(name=saved['name'],inspector_ids=saved['inspector_ids']))
+        # A displayed card represents a person/team, not one of its old station
+        # transfers. Removing it must not reveal a hidden duplicate afterwards.
+        ids=json.dumps(saved['inspector_ids'])
+        cur.execute('''UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,
+          updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE mode=%s AND scheduled_date=%s
+          AND status='waiting' AND inspector_ids @> %s::jsonb AND inspector_ids <@ %s::jsonb RETURNING id''',
+          (actor['id'],saved['mode'],saved['scheduled_date'],ids,ids))
+        removed=list(cur.fetchall())
+        for item in removed:
+            event(cur,actor,item['id'],'discarded',dict(name=saved['name'],inspector_ids=saved['inspector_ids']))
         return dict(message='待选安排已移除，保留调度历史。')
     if action=='clear_today':
         if not start<=today()<end: raise ValueError('请切换到本季度、本年度或本月后清空今日排班。')
