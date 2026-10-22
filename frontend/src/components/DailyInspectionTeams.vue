@@ -296,6 +296,7 @@ async function dropStudent(group, event) {
     await load()
     emit('saved', { ...data, adjusted: true })
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
   } catch (err) {
     error.value = err.response?.data?.error || '调整结果未确认，请重新打开核对。'
     await load()
@@ -406,6 +407,8 @@ async function submit(action) {
       dialog.value.close()
       emit('closed')
       emit('saved', data)
+      window.dispatchEvent(new Event('inspection-schedule-changed'))
+      window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     }
   } catch (err) {
     if (!disposed) {

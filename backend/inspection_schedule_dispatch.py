@@ -7,7 +7,7 @@ from inspection_schedule import (VIEW_PERMISSION, EDIT_PERMISSION, integer, read
                                   save_cell, validate_edits)
 from schedule_common import ScheduleConflict, lock_schedule, today
 from schedule_shelf_store import event, park_item, expire_shelf, clear_today_shelf
-from scheduling_map import period
+from schedule_period import period, field_mode
 
 
 def checked_cells(board, edits):
@@ -37,7 +37,7 @@ def park_saved(cur,actor,chosen,start,end,selected,*,clear=True,action='parked')
     cards=[]
     rows={row['station_id']:row for _,row,_ in selected}
     for (sid,key,_,_),cells in buckets.items():
-        cards.append(park_item(cur,actor,chosen['mode'],rows[sid],key,cells,action))
+        cards.append(park_item(cur,actor,field_mode(chosen['mode']),rows[sid],key,cells,action))
     if clear:
         for edit,_,cell in selected:
             if cell['assignees']:
@@ -66,7 +66,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         version=integer(data.get('revision'),'待选版本')
         cur.execute('SELECT * FROM inspection_schedule_shelf WHERE id=%s FOR UPDATE',(sid,))
         saved=cur.fetchone()
-        if not saved or saved['mode']!=chosen['mode'] or saved['scheduled_date']!=today() or not start<=today()<end:
+        if not saved or saved['mode']!=field_mode(chosen['mode']) or saved['scheduled_date']!=today() or not start<=today()<end:
             raise ScheduleConflict('待选安排不是当前模式的今日安排，请载入今日调度待选区。')
         if saved['status']!='waiting' or saved['revision']!=version:
             raise ScheduleConflict('这条待选安排已被其他用户处理，请查看最新排班。')
@@ -77,9 +77,9 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
             for edit,_,_ in selected:
                 save_cell(cur,actor,{**edit,'inspector_ids':saved['inspector_ids'],
                           'scheduled_date':saved['scheduled_date'].isoformat()},chosen,start,end,cache)
-            cur.execute('''UPDATE inspection_schedule_shelf SET status='assigned',revision=revision+1,
+            cur.execute('''UPDATE inspection_schedule_shelf SET status=%s,revision=revision+1,
               target_station_id=%s,target_column_key=%s,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s''',
-              (edits[0]['station_id'],'row',actor['id'],sid))
+              ('waiting' if saved['source_column_key']=='personnel' else 'assigned',edits[0]['station_id'],'row',actor['id'],sid))
             event(cur,actor,sid,'assigned',dict(station_id=edits[0]['station_id'],inspector_ids=saved['inspector_ids'],displaced_ids=displaced))
             return dict(parked_count=len(displaced),message='已直接安排到目标站点，个人待办已同步。')
         cur.execute("UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(actor['id'],sid))
@@ -96,7 +96,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
                     selected.append((dict(station_id=row['station_id'],column_key=key,revision=cell['revision']),row,cell))
         for edit,_,_ in selected:
             save_cell(cur,actor,{**edit,'inspector_ids':[]},chosen,start,end)
-        discarded = clear_today_shelf(cur,actor,chosen['mode'])
+        discarded = clear_today_shelf(cur,actor,field_mode(chosen['mode']))
         return dict(parked_count=0,cleared_count=len(selected),discarded_count=discarded,
                     message=f'已清空今日排班 {len(selected)} 格和今日待选安排 {discarded} 项，实际检查及其他日期安排保持不变。')
     raise ValueError('请选择移入待选区、安排、移除或清空今日排班。')

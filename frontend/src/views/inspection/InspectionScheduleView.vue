@@ -7,6 +7,7 @@
         <p>按站点、按检查表安排检查人，巡检记录自动反映实际检查情况。</p>
       </div>
       <div class="head-actions">
+        <MeteringAnnualPlan v-if="allowed" @saved="refreshKey++" />
         <AutomaticSchedule v-if="allowed" @scheduled="onScheduled" /><span class="access-label">{{
           allowed ? '全局共享 · 独立编辑授权' : '需要查看权限'
         }}</span>
@@ -17,10 +18,10 @@
         <strong>计划与实绩，分开呈现</strong>
         <p>
           <span class="legend done"></span
-          >黄色为本周期已有巡检记录，不论是否审核，均锁定为实际检查人。<span
+          >绿色为本周期已有巡检记录，不论是否审核，均锁定为实际检查人。<span
             class="legend planned"
           ></span
-          >琥珀色为现场已排班，蓝色为视频已排班；无记录时可调整，保存后同步个人待办。
+          >红色为已排班；无记录时可调整，保存后同步个人待办。
         </p>
       </div>
       <p v-if="dispatchNotice" class="dispatch-notice" role="status">{{ dispatchNotice }}</p>
@@ -55,22 +56,25 @@
           </button>
         </div>
       </nav>
-      <KeepAlive :max="2">
+      <KeepAlive :max="3">
         <InspectionSchedulePanel :key="activeMode + ':' + refreshKey" :mode="activeMode" />
       </KeepAlive>
       <details class="schedule-help surface">
         <summary>统计口径与使用说明</summary>
         <p>
-          现场以自然季度覆盖六张检查表，不包含年度覆盖的计量现场检查。视频以自然月覆盖安全、计量、现场三张检查表。两张表各用独立的固定站点名单和顺序，只显示在站点档案中已纳入对应计划的站点。获授权用户均查看同一份完整排班，不按账号片区、站点或检查表范围过滤。
+          计量年度计划按月配置片区站数；当月计量现场巡检记录计实际完成，同站去重，未审核也计数。今日及未来计量安排预留配额但不算实绩，过期未完成的安排释放预留。年度派站同步季度现场未检查项；季度派站只在片区当月尚有配额或本站已纳入本月计量安排时联动年度，实际记录不覆盖。配置变更不追溯撤销已保存派工。
         </p>
         <p>
-          黄色表示已有巡检记录，并非问题已审核、已整改或检查人已完成流程确认；零问题记录同样计数。多人参与按人员去重，可点击单元格查看全部姓名。删除或移走记录后，若已无对应记录，单元格回到原保存排班或待排班状态。
+          普通现场按季度覆盖六张表，计量现场按年度覆盖现场及必要的视频表，普通视频按月覆盖三张表。年度计量与季度现场共用155站名单和外勤组，年度视频仅用于监控未运行站点。实际展示遵循站点“纳入现场/视频计划”设置。获授权用户均查看同一份排班，不按数据范围过滤。
+        </p>
+        <p>
+          绿色表示已有巡检记录，并非问题已审核、已整改；零问题记录同样计数。多人参与按人员去重，可点击查看全部姓名。删除或移走记录后，若已无对应记录，回到原保存排班或待排班状态。
         </p>
         <p>
           未启用、缺失或重复定义的检查表列不可安排。现场选择人员档期已保存的完整外勤组；视频整站由一位检查人完成安全、计量、现场。编辑、多选及拖拽均按整行未检查项处理，实际记录独立锁定。排班全局共享，保存操作人与时间，整批校验；切换筛选清空勾选，避免误改隐藏项目。
         </p>
         <p>
-          今日一键排班先预览再确认，现场默认每组2站、视频默认每人3站，可调整为1至10站，不覆盖已有安排。现场优先补齐季度覆盖率较低的片区，兼顾已有计划预留，再按站点间距离紧凑分组，不以顺路或往返路线选站。右上角“今日安排”展示个人档期及待办；现场当日安排次日自动归档，视频历史未完成任务持续保留至同站同表有巡检记录，不依赖审核。计划和实际检查人始终分开保留。
+          今日一键排班先预览再确认，现场默认每组2站、视频默认每人3站，可调整为1至10站，不覆盖已有安排。现场先补计量月度配额，再均衡季度覆盖，兼顾计划预留，并按站点间距离紧凑分组，不以顺路或往返路线选站。人员档期确认分组后，即可从今日待选区手动派站，无需先自动排班。右上角“今日安排”展示个人档期及待办；现场当日安排次日归档，视频未完成任务持续保留至同站同表有巡检记录，不依赖审核。
         </p>
       </details>
     </template>
@@ -82,6 +86,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import InspectionSchedulePanel from '@/components/InspectionSchedulePanel.vue'
 import AutomaticSchedule from '@/components/AutomaticSchedule.vue'
+import MeteringAnnualPlan from '@/components/MeteringAnnualPlan.vue'
 const refreshKey = ref(0),
   dispatchNotice = ref('')
 function onScheduled(data) {
@@ -91,6 +96,7 @@ function onScheduled(data) {
 }
 const modes = [
   { key: 'offline', label: '现场检查排班', period: '按季度' },
+  { key: 'annual', label: '计量现场排班', period: '按年度' },
   { key: 'online', label: '视频检查排班', period: '按月份' },
 ]
 const activeMode = ref('offline')
@@ -302,11 +308,11 @@ p {
   margin-left: 0;
 }
 .done {
-  background: #ecc142;
+  background: #6ab98b;
 }
 .planned {
   width: 20px;
-  background: linear-gradient(90deg, #d89d38 0 50%, #3175d1 50%);
+  background: #ce625e;
 }
 .schedule-help summary {
   cursor: pointer;

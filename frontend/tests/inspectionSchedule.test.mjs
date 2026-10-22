@@ -123,7 +123,7 @@ test('inactive panels cannot poll, including after network and visibility events
 
 test('schedule has one active cached panel, all rows in page flow, and responsive cards without table scrollers', () => {
   const page = readFileSync(new URL('../src/views/inspection/InspectionScheduleView.vue', import.meta.url), 'utf8')
-  assert.match(page, /<KeepAlive :max="2">/)
+  assert.match(page, /<KeepAlive :max="3">/)
   assert.equal((page.match(/<InspectionSchedulePanel\b/g) || []).length, 1)
   assert.match(page, /:key="activeMode \+ ':' \+ refreshKey" :mode="activeMode"/)
   assert.match(page, /role="tablist"/)

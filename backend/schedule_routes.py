@@ -73,13 +73,18 @@ def regional_targets(stations, count, coverage):
     return targets,list(stats.values())
 
 
-def field_routes(stations, team_count, quota, origin=None, *, coverage=None):
+def field_routes(stations, team_count, quota, origin=None, *, coverage=None, required_ids=()):
     """Keep the legacy entry point; origin is intentionally ignored, not a route objective."""
     if team_count <= 0 or quota <= 0: return []
     stations = sorted((s for s in stations if coordinate(s)),key=lambda s:s['station_id'])
     if not stations: return []
-    targets,_ = regional_targets(stations,team_count*quota,coverage or [])
-    category = lambda i: (stations[i].get('region',''),bool(stations[i].get('covered')))
+    required_ids=set(required_ids)
+    required=[s for s in stations if s['station_id'] in required_ids]
+    regular=[s for s in stations if s['station_id'] not in required_ids]
+    targets=Counter((s.get('region',''),bool(s.get('covered')),True) for s in required)
+    fill,_ = regional_targets(regular,max(0,team_count*quota-len(required)),coverage or [])
+    targets.update({(region,covered,False):n for (region,covered),n in fill.items()})
+    category = lambda i: (stations[i].get('region',''),bool(stations[i].get('covered')),stations[i]['station_id'] in required_ids)
     points = [coordinate(s) for s in stations]
     distances = [[distance(a,b) for b in points] for a in points]
     remaining = set(range(len(stations)))

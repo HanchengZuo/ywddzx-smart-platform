@@ -7,15 +7,16 @@ from datetime import timedelta
 
 from flask import g, jsonify, request
 
-from inspection_schedule_catalog import COLUMNS, normalized_region, roster_position
+from inspection_schedule_catalog import COLUMNS, normalized_region, roster_position, roster as fixed_roster
 from roles import SUPERVISOR_ROLES
-from scheduling_map import period
+from schedule_period import period, field_mode
 from station_plan_eligibility import plan_field
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
 from staff_availability import available_people, roster_people, validate_people
 from inspection_schedule_tasks import dispatch_tasks
 from staff_daily_teams import field_team, group_assignments, team_days
 from schedule_shelf_store import shelf_items, refresh_field_shelf, expire_shelf
+from annual_metering_plan import plan_state, register_metering_plan
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
@@ -27,16 +28,20 @@ def person(row):
 
 
 def period_number(chosen):
+    if chosen['mode'] == 'annual':
+        return 1
     return chosen['quarter' if chosen['mode'] == 'offline' else 'month']
 
 
 def table_columns(cur, mode, lock=False):
     names = [entry[2] for entry in COLUMNS[mode]]
-    cur.execute('''SELECT t.id,t.table_name FROM inspection_tables t
-        WHERE t.checklist_mode=%s AND t.is_active=TRUE AND t.table_name=ANY(%s)''' +
-                (' FOR SHARE OF t' if lock else ''), [mode, names])
+    cur.execute('''SELECT t.id,t.table_name,t.checklist_mode FROM inspection_tables t
+        WHERE t.checklist_mode=ANY(%s) AND t.is_active=TRUE AND t.table_name=ANY(%s)''' +
+                (' FOR SHARE OF t' if lock else ''), [['offline','online'] if mode == 'annual' else [mode], names])
     by_name = defaultdict(list)
     for row in cur.fetchall():
+        if mode=='annual' and row['checklist_mode'] != ('online' if row['table_name'].endswith('（视频）') else 'offline'):
+            continue
         by_name[row['table_name']].append(row['id'])
     # Ambiguous or missing definitions must not silently attach to a different table.
     return [dict(key=key, label=label, full_name=name,
@@ -45,15 +50,20 @@ def table_columns(cur, mode, lock=False):
 
 
 def eligible_stations(cur, chosen, station_id=None, lock=False):
-    clauses = [f's.{plan_field(chosen["mode"])}=TRUE']
+    clauses = [f's.{plan_field(field_mode(chosen["mode"]))}=TRUE']
     params = []
     if station_id is not None:
         clauses.append('s.id=%s')
         params.append(station_id)
-    cur.execute('SELECT s.id,s.station_name,s.region,s.address,s.longitude,s.latitude FROM stations s WHERE ' +
+    cur.execute('SELECT s.id,s.station_name,s.region,s.address,s.longitude,s.latitude,s.monitoring_status FROM stations s WHERE ' +
                 ' AND '.join(clauses or ['TRUE']) + (' FOR SHARE OF s' if lock else ''), params)
     rows = [dict(row, sequence=roster_position(row, chosen['mode'])) for row in cur.fetchall()]
     return sorted((row for row in rows if row['sequence']), key=lambda row: (row['sequence'], row['id']))
+
+
+def column_available(column, station, mode):
+    return bool(column['table_id'] and not (mode == 'annual' and column['key'] == 'metering_video'
+                                          and station['monitoring_status'] != '未运行'))
 
 
 def record_cells(cur, station_ids, table_ids, start, end):
@@ -103,11 +113,12 @@ def read_board(cur, chosen, start, end):
             record = complete.get((station['id'], column['table_id'])) or {}
             assignees = [people.get(uid, dict(id=uid, username='', role='', display_name='账号已删除'))
                          for uid in existing.get('inspector_ids', [])]
-            status = 'unavailable' if not column['table_id'] else 'completed' if record else 'assigned' if assignees else 'unassigned'
+            status = 'unavailable' if not column_available(column, station, chosen['mode']) else 'completed' if record else 'assigned' if assignees else 'unassigned'
             if status in summary:
                 summary[status] += 1
             cells[column['key']] = dict(status=status, assignees=assignees,
                 plan_team=existing.get('plan_team'),
+                unavailable_reason='仅监控未运行站点参与计量视频年度检查' if chosen['mode']=='annual' and column['key']=='metering_video' and station['monitoring_status']!='未运行' else '',
                 completed_inspectors=sorted(record.get('inspectors', []), key=lambda user: (user['display_name'], user['id'])),
                 record_count=record.get('record_count', 0), last_inspection_date=record.get('last_inspection_date'),
                 revision=existing.get('revision', 0), updated_by_name=existing.get('updated_by_name', ''),
@@ -118,12 +129,14 @@ def read_board(cur, chosen, start, end):
                          longitude=float(station['longitude']) if station.get('longitude') is not None else None,
                          latitude=float(station['latitude']) if station.get('latitude') is not None else None,
                          region=normalized_region(station['region']), sequence=station['sequence'], cells=cells))
-    shelf = shelf_items(cur,chosen['mode'],start,end)
+    shelf = shelf_items(cur,field_mode(chosen['mode']),start,end)
+    eligible_keys = {(normalized_region(s['region']), str(s['station_name']).strip()) for s in stations}
+    excluded = [dict(region=r,station_name=n) for r,n in fixed_roster(chosen['mode']) if (r,n) not in eligible_keys]
     evidence = dict(rows=[(r['station_id'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
                     shelf=[(s['id'],s['revision']) for s in shelf], day=today().isoformat())
     token=hashlib.sha256(json.dumps(evidence).encode()).hexdigest()
     return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,
-                shelf=shelf, board_token=token,
+                shelf=shelf, board_token=token, roster_total=len(fixed_roster(chosen['mode'])), excluded_stations=excluded,
                 today=today().isoformat(), workdays=working_days(cur, start, end),
                 unmatched_people=[p['display_name'] for p in roster if not p['id']])
 
@@ -158,7 +171,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     if len(stations) != 1:
         raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
     column = next(col for col in table_columns(cur, chosen['mode'], lock=True) if col['key'] == key)
-    if not column['table_id']:
+    if not column_available(column, stations[0], chosen['mode']):
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     if record_cells(cur, [station_id], [column['table_id']], start, end):
         raise ScheduleConflict('该站点本周期已有此检查表的巡检记录，单元格已完成，不能再分配。')
@@ -174,8 +187,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
             raise ValueError('只能选择当前启用的督导组管理人员或督导组组员，请重新选择。')
         if availability_cache is not None and day not in availability_cache:
             availability_cache[day] = {p['id']: p for p in available_people(cur, day) if p['id']}
-        validate_people(cur, ids, day, chosen['mode'], availability_cache.get(day) if availability_cache is not None else None)
-    team = field_team(cur, day, ids) if ids and chosen['mode'] == 'offline' else None
+        validate_people(cur, ids, day, field_mode(chosen['mode']), availability_cache.get(day) if availability_cache is not None else None)
+    team = field_team(cur, day, ids) if ids and chosen['mode'] != 'online' else None
     if existing['inspector_ids'] == ids and existing['scheduled_date'] == day and existing['plan_team'] == team:
         return existing['revision']
     cur.execute('''INSERT INTO inspection_schedule_cells
@@ -194,6 +207,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
        json.dumps(existing['plan_team'], ensure_ascii=False), json.dumps(team, ensure_ascii=False)))
     dispatch_event_id = cur.fetchone()['id']
     dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start, team, dispatch_event_id)
+    if chosen['mode'] != 'online' and not (availability_cache or {}).get('metering_sync'):
+        sync_metering_row(cur, actor, chosen, stations[0], ids, day, existing, availability_cache)
     return saved_revision
 
 
@@ -214,7 +229,9 @@ def validate_edits(cur, edits, chosen, start, end):
     columns = table_columns(cur, chosen['mode'])
     actual = record_cells(cur, list(by_station), [c['table_id'] for c in columns if c['table_id']], start, end)
     for sid, keys in by_station.items():
-        expected = {c['key'] for c in columns if c['table_id'] and (sid, c['table_id']) not in actual}
+        stations = eligible_stations(cur, chosen, sid)
+        if len(stations) != 1: raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
+        expected = {c['key'] for c in columns if column_available(c, stations[0], chosen['mode']) and (sid, c['table_id']) not in actual}
         if keys != expected:
             raise ScheduleConflict('请按站点整行安排所有尚未检查的检查表，已完成的实际记录保持不变。')
 
@@ -255,27 +272,70 @@ def apply_edits(cur, actor, data, chosen, start, end):
 
 def sync_field_team_plans(cur, actor, day):
     """A same-mode student transfer updates unfinished rows and tasks in the grouping transaction."""
-    chosen, start, end = period(dict(mode='offline', year=day.year, quarter=(day.month-1)//3+1))
     saved = team_days(cur, day, day+timedelta(days=1)).get(day.isoformat(), {})
     groups = {g['leader_id']: g for g in group_assignments(saved.get('assignments', [])) if g['mode']=='offline'}
-    board = read_board(cur, chosen, start, end)
     cache = {}
-    for row in board['rows']:
-        for column in board['columns']:
-            cell = row['cells'][column['key']]
-            team = cell['plan_team']
-            if cell['status'] != 'assigned' or cell['scheduled_date'] != day.isoformat() or not team:
-                continue
-            group = groups.get(team['leader_id'])
-            if not group: raise ScheduleConflict('已有派工的外勤带队组不能删除，请先撤销其站点安排。')
-            if {p['id'] for p in cell['assignees']} == {p['id'] for p in group['members']}:
-                continue
-            save_cell(cur, actor, dict(station_id=row['station_id'],column_key=column['key'],revision=cell['revision'],
-                      inspector_ids=[p['id'] for p in group['members']],scheduled_date=day.isoformat()), chosen,start,end,cache)
+    for mode in ('offline','annual'):
+        chosen,start,end=period(dict(mode=mode,year=day.year,**({'quarter':(day.month-1)//3+1} if mode=='offline' else {})))
+        board = read_board(cur, chosen, start, end)
+        for row in board['rows']:
+            for column in board['columns']:
+                cell = row['cells'][column['key']]
+                team = cell['plan_team']
+                if cell['status'] != 'assigned' or cell['scheduled_date'] != day.isoformat() or not team:
+                    continue
+                group = groups.get(team['leader_id'])
+                if not group: raise ScheduleConflict('已有派工的外勤带队组不能删除，请先撤销其站点安排。')
+                if {p['id'] for p in cell['assignees']} == {p['id'] for p in group['members']}:
+                    continue
+                save_cell(cur, actor, dict(station_id=row['station_id'],column_key=column['key'],revision=cell['revision'],
+                          inspector_ids=[p['id'] for p in group['members']],scheduled_date=day.isoformat()), chosen,start,end,cache)
     refresh_field_shelf(cur,actor,day,groups,saved.get('revision',0))
 
 
+def sync_metering_row(cur, actor, chosen, station, ids, day, previous, cache):
+    """Same transaction and global lock as the source edit, with no recursive fan-out."""
+    cache = cache if cache is not None else {}
+    if ids and day and previous.get('scheduled_date') and previous['scheduled_date'] != day:
+        # Remove the old day's linked intent before testing the new month's quota/quarter.
+        sync_metering_row(cur,actor,chosen,station,[],None,previous,cache)
+    effective_day = day or previous.get('scheduled_date')
+    if not effective_day: return
+    marker = ('linked', chosen['mode'], station['id'], tuple(ids), effective_day)
+    if marker in cache: return
+    cache[marker] = True
+    other_mode = 'offline' if chosen['mode']=='annual' else 'annual'
+    other,start,end = period(dict(mode=other_mode,year=effective_day.year,**(
+        {'quarter':(effective_day.month-1)//3+1} if other_mode=='offline' else {})))
+    columns = table_columns(cur,other_mode)
+    actual = record_cells(cur,[station['id']],[c['table_id'] for c in columns if c['table_id']],start,end)
+    cur.execute('''SELECT * FROM inspection_schedule_cells WHERE mode=%s AND year=%s AND period_number=%s
+      AND station_id=%s FOR UPDATE''',(other_mode,other['year'],period_number(other),station['id']))
+    saved={r['column_key']:r for r in cur.fetchall()}
+    if other_mode=='annual':
+        if ids and not column_available(columns[0],station,other_mode): return
+        existing=saved.get('metering_site') or {}
+        in_month=existing.get('scheduled_date') and existing['scheduled_date'].month==effective_day.month
+        if ids and not in_month:
+            state=plan_state(cur,effective_day.year,effective_day.month)
+            target=next((r for r in state['regions'] if r['region']==normalized_region(station['region'])),{})
+            if not target.get('remaining') or (station['id'],columns[0]['table_id']) in actual: return
+        if not ids and not in_month: return
+    cache['metering_sync']=True
+    try:
+        for column in columns:
+            if not column_available(column,station,other_mode) or (station['id'],column['table_id']) in actual: continue
+            old=saved.get(column['key']) or {}
+            # Clearing an old row must not cancel another team's independent plan.
+            if not ids and (old.get('scheduled_date')!=effective_day or old.get('inspector_ids')!=previous['inspector_ids']): continue
+            save_cell(cur,actor,dict(station_id=station['id'],column_key=column['key'],revision=old.get('revision',0),
+                      inspector_ids=ids,scheduled_date=day.isoformat() if day else None),other,start,end,cache)
+    finally:
+        cache.pop('metering_sync',None)
+
+
 def register_inspection_schedule(app, *, connect, has_permission):
+    register_metering_plan(app,connect=connect,has_permission=has_permission)
     @app.route('/api/inspection-schedule', methods=['GET', 'PUT'])
     def inspection_schedule_board():
         actor = getattr(g, 'current_user', None)

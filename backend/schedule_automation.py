@@ -2,12 +2,13 @@
 import hashlib
 import json
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import timedelta
 from flask import g, jsonify, request
 from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, save_cell
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
-from scheduling_map import period
+from schedule_period import period
+from annual_metering_plan import plan_state
 from staff_availability import available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
@@ -108,8 +109,50 @@ def proposal(cur, actor, day, options=None):
     if missing: warnings.append('以下站点缺少有效坐标，未自动派现场任务：'+'、'.join(missing))
     if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整且至少1人拥有准驾证的外勤组安排。')
     valid = [s for s in demands['offline'] if coordinate(s)]
-    _,coverage = regional_targets(valid,len(field_teams)*quotas['offline'],coverage)
-    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage)
+    metering = plan_state(cur,day.year,day.month)
+    annual_period = period(dict(mode='annual',year=day.year))
+    periods['annual']=annual_period
+    annual_board=read_board(cur,*annual_period)
+    board_tokens['annual']=annual_board['board_token']
+    ordinary=read_board(cur,*periods['offline'])
+    quarter_rows={r['station_id']:r for r in ordinary['rows']}
+    by_id={s['station_id']:s for s in valid}
+    priority=[]
+    for row in annual_board['rows']:
+        site=row['cells']['metering_site']
+        qrow=quarter_rows.get(row['station_id'])
+        if not qrow or site['status'] not in ('assigned','unassigned') or any(c['status']=='assigned' and (c.get('scheduled_date') or '')>=day.isoformat() for c in row['cells'].values()): continue
+        if any(c['status']=='assigned' for c in qrow['cells'].values()) or not coordinate(row): continue
+        annual_cells=[dict(station_id=row['station_id'],column_key=c['key'],revision=row['cells'][c['key']]['revision'],label='计量'+c['label'])
+                      for c in annual_board['columns'] if row['cells'][c['key']]['status'] in ('assigned','unassigned')]
+        if not annual_cells: continue
+        candidate=by_id.get(row['station_id']) or dict(station_id=row['station_id'],station_name=row['station_name'],region=row['region'],
+            address=row['address'],longitude=row['longitude'],latitude=row['latitude'],cells=[dict(station_id=row['station_id'],column_key=c['key'],revision=qrow['cells'][c['key']]['revision'],label=c['label'])
+              for c in ordinary['columns'] if qrow['cells'][c['key']]['status']=='unassigned'],covered=any(c['status']=='completed' for c in qrow['cells'].values()))
+        priority.append(dict(candidate,metering_cells=annual_cells,metering_priority=True))
+    limits={r['region']:r['remaining'] for r in metering['regions']}
+    required=[]
+    used=defaultdict(int)
+    capacity=len(field_teams)*quotas['offline']
+    while len(required)<capacity:
+        choices=[s for s in priority if s['station_id'] not in {r['station_id'] for r in required} and used[s['region']]<limits.get(s['region'],0)]
+        if not choices: break
+        station=min(choices,key=lambda s:(used[s['region']]/max(1,limits[s['region']]),s['station_id']))
+        required.append(station);used[station['region']]+=1
+    required_ids={s['station_id'] for s in required}
+    valid=[s for s in valid if s['station_id'] not in required_ids]+required
+    _,coverage = regional_targets(valid,capacity,coverage)
+    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage,required_ids=required_ids)
+    selected=Counter(s['region'] for route in routes for s in route)
+    newly_covered=Counter(s['region'] for route in routes for s in route if not s['covered'])
+    for r in coverage:
+        r['selected']=selected[r['region']]
+        r['newly_covered']=newly_covered[r['region']]
+        r['projected_rate']=round(100*(r['checked']+r['reserved']+r['newly_covered'])/max(1,r['total']),1)
+    for r in metering['regions']:
+        r['proposed']=used[r['region']]
+        if r['remaining']>r['proposed']:
+            warnings.append(f"计量月度计划：{r['region']}尚缺{r['remaining']}站，本次安排{r['proposed']}站；受可派工人数、坐标或已排班站点限制，剩余任务仍保留。")
     for team, route in zip(field_teams, routes):
         representative = eligible_by_id[team['leader_id']]
         before = dict(loads[representative['id']])
@@ -131,14 +174,14 @@ def proposal(cur, actor, day, options=None):
                                inspector_ids=[p['id']], group_name=p['display_name']))
             loads[p['id']] = after
     evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
-                    board_tokens=board_tokens, algorithm='coverage-compact-v1',
+                    board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-compact-v2',
                     team_revision=saved_team.get('revision', 0))
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
-        warnings=warnings, regional_coverage=coverage,
-        route_method='先均衡片区季度站点覆盖率（含今日及未来计划预留），再缩小同组站点之间的直线距离；不以出发点、行车顺路或往返路线选站。',
-        available_count=len(eligible), cell_count=sum(len(g['cells']) for g in groups),
+        warnings=warnings, regional_coverage=coverage, metering_plan=metering,
+        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后缩小同组站点间距离。已安排计量站点仅作预留，实际完成以当月计量现场巡检记录为准。',
+        available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
         excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or '当天已有站点安排或巡检实绩')
                   for p in people if p not in eligible]), periods
 
@@ -166,6 +209,12 @@ def register_schedule_automation(app, *, connect, has_permission):
                 if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')
                 cache = {}
                 for group in result['groups']:
+                    if group.get('metering_cells'):
+                        annual,annual_start,annual_end=periods['annual']
+                        # Annual-first atomically fills the corresponding quarterly row.
+                        for cell in group['metering_cells']:
+                            save_cell(cur,actor,dict(**cell,inspector_ids=group['inspector_ids'],scheduled_date=day.isoformat()),annual,annual_start,annual_end,cache)
+                        continue
                     chosen, start, end = periods[group['mode']]
                     for cell in group['cells']:
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],

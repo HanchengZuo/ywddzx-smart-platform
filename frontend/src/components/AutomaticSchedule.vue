@@ -21,7 +21,7 @@
           后参与派工校验，早间录入不阻止排班；已有站点安排仍不覆盖。现场按已保存外勤组整行派站，视频每站一人统一完成安全、计量、现场。
         </p>
         <p class="method">
-          现场先优先补齐季度覆盖率较低的片区，再让同组站点彼此靠近，不再按出发点或往返路线选站。缺失坐标的站点不自动派现场任务。视频按本季度工作量优先安排较少者。
+          现场先补足当月计量年度计划的片区站数，再均衡季度片区覆盖，并让同组站点彼此靠近。缺失坐标的站点不自动派现场任务。可在页面“计量年度计划”维护月度配额；视频仍按本季度工作量安排。
         </p>
         <div class="quota-controls">
           <label
@@ -47,6 +47,24 @@
         <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <template v-if="preview">
+          <details
+            v-if="preview.metering_plan?.regions?.some((r) => r.target)"
+            class="coverage-panel"
+          >
+            <summary>当月计量年度计划 · 优先派站依据</summary>
+            <div class="coverage-grid">
+              <div
+                v-for="r in preview.metering_plan.regions.filter((r) => r.target)"
+                :key="r.region"
+              >
+                <strong>{{ r.region }}</strong
+                ><b>目标 {{ r.target }}站</b
+                ><small
+                  >已查 {{ r.completed }} · 预留 {{ r.reserved }} · 本次 {{ r.proposed }}</small
+                >
+              </div>
+            </div>
+          </details>
           <div class="preview-summary">
             <span
               ><b>{{ preview.available_count }}</b> 可派工人员</span
@@ -96,7 +114,13 @@
               >
                 <li v-for="station in group.stations" :key="station.station_id">
                   <b>{{ station.region }} · {{ station.station_name }}</b>
-                  <p>{{ station.cells.map((c) => c.label).join('、') }}</p>
+                  <p>
+                    {{
+                      [...station.cells, ...(station.metering_cells || [])]
+                        .map((c) => c.label)
+                        .join('、')
+                    }}<b v-if="station.metering_priority"> · 计量计划优先</b>
+                  </p>
                   <small v-if="group.mode === 'offline'">{{ station.address }}</small>
                 </li>
               </ol>

@@ -6,7 +6,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import { parse as parseJavascript } from '@babel/parser'
 
 const source = file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
-for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue']) {
+for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/MeteringAnnualPlan.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue']) {
   test(`${file}: the actual inline compiled render function is valid JavaScript`, () => {
     const { descriptor } = parse(source(file))
     const result = compileScript(descriptor, { id: file, inlineTemplate: true })
@@ -57,7 +57,8 @@ test('rejected student move never emits a successful save and retains the server
 
 test('automatic dispatch explains coverage balance and interstation distance without online routing or paid AI', () => {
   const script = source('components/AutomaticSchedule.vue')
-  assert.match(script,/季度覆盖率较低的片区/)
+  assert.match(script,/先补足当月计量年度计划/)
+  assert.match(script,/再均衡季度片区覆盖/)
   assert.match(script,/regional_coverage/)
   assert.match(script,/cluster_max_km/)
   assert.doesNotMatch(script,/route_km|SCHEDULE_ORIGIN|2-opt|建议路线排序/)
@@ -135,9 +136,10 @@ test('video drop targets all three columns; clear sends server board token, not 
   assert.deepEqual(Array.from(calls[0].body.cells,c=>c.column_key),['a','b','c'])
   context.board.value.board_token = 'latest'
   await context.clearToday()
-  assert.equal(calls[2].body.action, 'clear_today')
-  assert.equal(calls[2].body.board_token, 'latest')
-  assert.equal(calls[2].body.cells, undefined)
+  const clear = calls.find(c => c.body?.action === 'clear_today')
+  assert.equal(clear.body.action, 'clear_today')
+  assert.equal(clear.body.board_token, 'latest')
+  assert.equal(clear.body.cells, undefined)
 })
 
 test('video row drag skips only immutable completed columns', async () => {

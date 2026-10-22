@@ -70,6 +70,10 @@ def personal_agenda(cur, user_id):
 
 
 def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id):
+    if chosen['mode']=='annual':
+        # Both annual columns are field-team day tasks, never monthly video carry-over.
+        # Their distinct column keys use a stable year key so date moves cancel the old task too.
+        chosen=dict(mode='offline',year=chosen['year'],quarter=1)
     key = (chosen['mode'], chosen['year'], chosen.get('quarter', chosen.get('month')), station['id'], column['key'])
     cur.execute('''UPDATE inspection_schedule_tasks task SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s AND status='completed'

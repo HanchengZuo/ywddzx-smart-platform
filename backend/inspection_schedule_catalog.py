@@ -2,6 +2,10 @@
 import re
 
 COLUMNS = {
+    'annual': (
+        ('metering_site', '现场', '计量稽查检查表（现场）'),
+        ('metering_video', '视频', '计量稽查检查表（视频）'),
+    ),
     'offline': (
         ('odor', '无异味', '环境无异味管理检查表（现场）'),
         ('finance', '财务', '财务检查表（现场）'),
@@ -53,7 +57,7 @@ def roster(mode):
     if mode not in COLUMNS:
         raise ValueError('请选择现场或视频检查。')
     entries = [(region, name) for region, names in OFFLINE_GROUPS for name in names.split()
-               if mode == 'offline' or name not in VIDEO_EXCLUSIONS.get(region, set())]
+               if mode != 'online' or name not in VIDEO_EXCLUSIONS.get(region, set())]
     return {entry: index for index, entry in enumerate(entries, 1)}
 
 

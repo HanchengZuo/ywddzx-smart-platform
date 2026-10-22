@@ -8,10 +8,20 @@
   >
     <header class="panel-head">
       <div class="panel-identity">
-        <span class="mode-icon" :class="mode">{{ mode === 'offline' ? '季' : '月' }}</span>
+        <span class="mode-icon" :class="mode">{{
+          mode === 'annual' ? '年' : mode === 'offline' ? '季' : '月'
+        }}</span>
         <div>
           <h3>{{ title }}</h3>
-          <p>{{ mode === 'offline' ? '季度覆盖 · 六类现场检查' : '月度覆盖 · 三类视频检查' }}</p>
+          <p>
+            {{
+              mode === 'annual'
+                ? '年度计量覆盖 · 与季度现场排班联动'
+                : mode === 'offline'
+                  ? '季度覆盖 · 六类现场检查'
+                  : '月度覆盖 · 三类视频检查'
+            }}
+          </p>
         </div>
       </div>
       <div class="period-controls">
@@ -33,7 +43,7 @@
               第{{ quarter }}季度
             </option>
           </select></label
-        ><label v-else
+        ><label v-else-if="mode === 'online'"
           >月份<select
             v-model.number="draft.month"
             :disabled="shelfSaving"
@@ -89,6 +99,15 @@
         清除筛选</button
       ><span>{{ rows.length }} 个站点</span>
     </div>
+    <p v-if="board?.excluded_stations?.length" class="roster-note">
+      固定名单 {{ board.roster_total }}站，当前纳入 {{ board.rows.length }}站；未纳入或档案未匹配
+      {{ board.excluded_stations.length }}站：{{
+        board.excluded_stations.map((s) => s.station_name).join('、')
+      }}。纳入设置由站点基础档案维护。
+    </p>
+    <p v-if="mode === 'annual'" class="roster-note">
+      现场与可用的视频项整行一起安排外勤组；视频仅适用于“监控未运行”站点，其余置灰。年度派站同步季度现场，季度派站按当月计量片区配额联动。两表共用今日外勤调度待选区。
+    </p>
     <div v-if="board?.can_edit" class="bulk-toolbar">
       <button
         type="button"
@@ -127,7 +146,7 @@
         </button></template
       >
       <span v-else>{{
-        mode === 'offline'
+        fieldMode === 'offline'
           ? '整站安排一个外勤组，实际检查结果独立保留。'
           : '每站一人，安全、计量、现场整行统一安排。'
       }}</span>
@@ -140,7 +159,7 @@
         :disabled="loading || shelfSaving || (!hasTodayPlans && !shelf.length) || !canEdit"
         @click="clearToday"
       >
-        一键清空今日{{ mode === 'offline' ? '现场' : '视频' }}排班
+        一键清空今日{{ mode === 'annual' ? '计量现场' : mode === 'offline' ? '现场' : '视频' }}排班
       </button>
     </div>
     <div v-if="error" class="panel-error" role="alert">
@@ -164,7 +183,7 @@
           }}
           {{
             board?.period.label
-          }}，黄色为有巡检记录的已检查项。
+          }}，绿色为有巡检记录的已检查项。
         </caption>
         <colgroup>
           <col class="index-col" />
@@ -265,14 +284,14 @@
                   >{{ scheduleSelfRole(row.cells[column.key], board.current_user_id) }}</span
                 >
                 <span class="cell-names">{{
-                  (mode === 'offline' && row.cells[column.key].status === 'assigned'
+                  (fieldMode === 'offline' && row.cells[column.key].status === 'assigned'
                     ? row.cells[column.key].plan_team?.name
                     : '') ||
                   inspectorPreview(row.cells[column.key]) ||
                   (row.cells[column.key].status === 'completed'
                     ? '未记录检查人'
                     : row.cells[column.key].status === 'unavailable'
-                      ? '不可安排'
+                      ? row.cells[column.key].unavailable_reason || '不可安排'
                       : canEdit
                         ? '＋ 选择检查人'
                         : '尚未排班')
@@ -302,10 +321,10 @@
       </table>
     </div>
     <footer class="panel-footer">
-      <span>{{ board?.period.label || '当前周期' }} · 保留名单序号和顺序，黄色单元格不可改派。</span
+      <span>{{ board?.period.label || '当前周期' }} · 保留名单序号和顺序，绿色单元格不可改派。</span
       ><span>{{
         canEdit
-          ? mode === 'offline'
+          ? fieldMode === 'offline'
             ? '点击任一未检查格安排整行外勤组'
             : '点击任一未检查格安排整站一位检查人'
           : '当前为只读查看'
@@ -320,7 +339,9 @@
       <header>
         <div>
           <strong>今日调度待选区</strong
-          ><small>{{ mode === 'offline' ? '外勤组 · 整站改派' : '视频 · 整站同人改派' }}</small>
+          ><small>{{
+            fieldMode === 'offline' ? '外勤组 · 整站改派' : '视频 · 整站同人改派'
+          }}</small>
         </div>
         <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
       </header>
@@ -349,7 +370,9 @@
         </button>
       </div>
       <p v-if="!shelf.length">
-        将任一已排班格拖到这里，整行{{ mode === 'offline' ? '现场' : '视频' }}计划会一起移入待选区。
+        将任一已排班格拖到这里，整行{{
+          fieldMode === 'offline' ? '现场' : '视频'
+        }}计划会一起移入待选区。今日人员分组卡片可重复派站。
       </p>
       <button v-if="pickedShelf" type="button" @click="pickedShelf = null">取消选中卡片</button>
       <span v-if="shelfSaving" role="status">正在原子保存改派…</span>
@@ -443,14 +466,14 @@
               /></label>
               <p class="selection-count">
                 {{
-                  mode === 'offline'
+                  fieldMode === 'offline'
                     ? '选择完整外勤组，应用至所选站点全部未检查项。'
                     : '选择一位检查人，统一安排所选站点安全、计量、现场的未检查项。'
                 }}
                 清空后保存即取消计划，实际记录不变。
               </p>
               <fieldset
-                v-if="mode === 'offline'"
+                v-if="fieldMode === 'offline'"
                 class="field-team-options"
                 :disabled="saving || conflict || peopleLoading || !!peopleError"
               >
@@ -476,7 +499,10 @@
                     "
                     :disabled="
                       !group.members.every((p) =>
-                        personCanSchedule(availablePeople.find((a) => a.id === p.id) || {}, mode),
+                        personCanSchedule(
+                          availablePeople.find((a) => a.id === p.id) || {},
+                          fieldMode,
+                        ),
                       )
                     "
                     @change="selectedIds = group.members.map((p) => p.id)"
@@ -619,7 +645,10 @@ import {
   watch,
 } from 'vue'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
-import { coverageQuery, currentCoveragePeriod } from '@/utils/schedulingCoverage'
+import {
+  coverageQuery as coveragePeriodQuery,
+  currentCoveragePeriod,
+} from '@/utils/schedulingCoverage'
 import {
   cellKey,
   personCanSchedule,
@@ -635,7 +664,16 @@ import {
 } from '@/utils/inspectionSchedule'
 
 const props = defineProps({ mode: { type: String, required: true } })
-const title = props.mode === 'offline' ? '现场检查排班' : '视频检查排班'
+const fieldMode = props.mode === 'annual' ? 'offline' : props.mode
+const title =
+  props.mode === 'annual'
+    ? '计量现场排班'
+    : props.mode === 'offline'
+      ? '现场检查排班'
+      : '视频检查排班'
+function coverageQuery(value) {
+  return value.mode === 'annual' ? { mode: 'annual', year: value.year } : coveragePeriodQuery(value)
+}
 const draft = ref({ ...currentCoveragePeriod(), mode: props.mode })
 const years = Array.from({ length: 101 }, (_, i) => 2100 - i)
 const board = ref(null),
@@ -725,7 +763,7 @@ const unavailableSelected = computed(() =>
             availablePeople.value.find((p) => p.id === id) ||
             board.value?.inspectors.find((p) => p.id === id) || { id, display_name: '原账号' },
         )
-        .filter((p) => !personCanSchedule(p, props.mode)),
+        .filter((p) => !personCanSchedule(p, fieldMode)),
 )
 const changed = computed(() => {
   const selected = JSON.stringify([...selectedIds.value].sort((a, b) => a - b))
@@ -903,6 +941,7 @@ async function runDispatch(action, payload) {
     updatedTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     if (action === 'park' || action === 'clear_today') shelfOpen.value = true
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
   } catch (err) {
     if (disposed) return
     notice.value = err.response?.data?.error || '无法确认改派结果，请核对最新表格后重试。'
@@ -1171,6 +1210,7 @@ async function saveSelection() {
     notice.value = '排班已保存，已同步检查人的巡检待办。'
     selectedCells.value = []
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
     await closeCell(true)
     await loadBoard()
   } catch (err) {
@@ -1238,6 +1278,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', visibilityChanged)
   window.addEventListener('online', visibilityChanged)
   window.addEventListener('offline', visibilityChanged)
+  window.addEventListener('inspection-schedule-changed', invalidateLinkedBoard)
 })
 onActivated(() => {
   active = true
@@ -1270,7 +1311,11 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibilityChanged)
   window.removeEventListener('online', visibilityChanged)
   window.removeEventListener('offline', visibilityChanged)
+  window.removeEventListener('inspection-schedule-changed', invalidateLinkedBoard)
 })
+function invalidateLinkedBoard() {
+  if (!active) lastSyncedAt = 0
+}
 </script>
 
 <style scoped>
@@ -1497,12 +1542,12 @@ input[type='search'] {
   border-left: 3px solid #899cb1;
 }
 .board-stats > span:first-child {
-  background: #fff1b8;
-  border-color: #d2a322;
+  background: #d3f1df;
+  border-color: #5fa57c;
 }
 .board-stats > span:nth-child(2) {
-  background: var(--mode-fill);
-  border-color: var(--mode-border);
+  background: #ffe0df;
+  border-color: #ca5956;
 }
 .board-stats > span:nth-child(2) b {
   color: var(--mode-ink);
@@ -1685,24 +1730,24 @@ input[type='search'] {
   opacity: 0.65;
 }
 .schedule-matrix .completed {
-  background: #ffeb99;
+  background: #d3f1df;
 }
 .completed .cell-button {
-  color: #7d5a15;
+  color: #155437;
 }
 .completed .cell-button small {
-  color: #825f18;
+  color: #286b49;
 }
 .schedule-matrix .assigned {
-  background: var(--mode-fill);
-  box-shadow: inset 3px 0 var(--mode-border);
+  background: #ffe0df;
+  box-shadow: inset 3px 0 #ca5956;
 }
 .assigned .cell-names {
-  color: var(--mode-ink);
+  color: #8f2726;
   font-weight: 750;
 }
 .assigned .cell-button small {
-  color: var(--mode-ink);
+  color: #9e3936;
 }
 .schedule-matrix .unassigned {
   background: #f7f9fc;
@@ -1722,6 +1767,14 @@ input[type='search'] {
   padding: 12px 24px;
   font-size: 11px;
   color: #7e8da0;
+}
+.roster-note {
+  margin: 0;
+  padding: 10px 24px;
+  background: #f0f5fa;
+  color: #47657e;
+  font-size: 12px;
+  line-height: 1.8;
 }
 .panel-error,
 .panel-notice {

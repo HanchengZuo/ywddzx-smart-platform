@@ -12,6 +12,7 @@ from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
 from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
 from driving_permits import validate_driving_teams
+from schedule_shelf_store import seed_daily_shelf
 
 
 def context(cur, day):
@@ -89,7 +90,9 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         before = [p for group in result['groups'] for p in group['members']]
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                     result.update(groups=group_assignments(assignments), token=token, seed=seed)
-            if request.method == 'POST' and data['action'] != 'preview': assert_actuals_window(window,today())
+            if request.method == 'POST' and data['action'] != 'preview':
+                seed_daily_shelf(cur,actor,day,result['groups'],result['revision'])
+                assert_actuals_window(window,today())
             conn.commit()
             response = jsonify(success=True, can_edit=can_edit, **result)
             response.headers['Cache-Control'] = 'private, no-store'
