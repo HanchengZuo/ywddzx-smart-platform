@@ -1,48 +1,37 @@
 """Personal dispatch inbox; completion follows actual records, never a manual checkbox."""
 import json
 import logging
-from flask import g, jsonify
+from flask import g, jsonify, request
 from schedule_common import today
 from staff_availability import STAFF, ensure_today_availability
+from schedule_task_progress import PROGRESS_SQL, params, coverage_end_sql, inbox_summary, inbox_page, BUCKETS
 
 
 def sync_tasks(cur, user_id):
     cur.execute('SELECT pg_try_advisory_xact_lock(9801,1) AS acquired')
     if not cur.fetchone()['acquired']:
         return  # A dispatch is in progress; the next notification refresh reconciles it.
-    # Field dispatch is a day plan, not a record-completion obligation. Keep its audit history.
-    cur.execute('''UPDATE inspection_schedule_tasks SET status='expired',expired_at=CURRENT_TIMESTAMP
-      WHERE user_id=%s AND mode='offline' AND status IN ('pending','completed') AND scheduled_date<%s''', (user_id, today()))
-    cur.execute('''UPDATE inspection_schedule_tasks task SET status='pending',completed_at=NULL,completion_inspection_id=NULL
-      WHERE user_id=%s AND mode='online' AND status='completed' AND NOT EXISTS (
-        SELECT 1 FROM inspections ins WHERE ins.id=task.completion_inspection_id
-        AND ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
-      AND NOT EXISTS(SELECT 1 FROM inspection_schedule_tasks newer WHERE newer.user_id=task.user_id
-        AND newer.mode=task.mode AND newer.year=task.year AND newer.period_number=task.period_number
-        AND newer.station_id=task.station_id AND newer.column_key=task.column_key AND newer.status='pending')''', (user_id, today()))
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE user_id=%s AND status='pending' AND (station_id IS NULL OR table_id IS NULL)''', (user_id,))
-    # These are coverage tasks, using the same record-based completion as the matrix.
-    # Another inspector, early work and cross-period catch-up must not leave a locked cell's task stuck.
-    cur.execute('''WITH matches AS (
-      SELECT task.id,MIN(ins.id) AS inspection_id FROM inspection_schedule_tasks task
-      JOIN inspections ins ON ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date >= task.period_start
-        AND ins.inspection_date <= %s
-      WHERE task.user_id=%s AND task.mode='online' AND task.status='pending'
-      GROUP BY task.id
-    ) UPDATE inspection_schedule_tasks task SET status='completed',completion_inspection_id=matches.inspection_id,
-      completed_at=CURRENT_TIMESTAMP FROM matches WHERE task.id=matches.id AND task.status='pending' ''', (today(), user_id))
+    # Cache reconciles lazily under the existing try-lock. Reads below use the
+    # record projection directly, so contention cannot hide new completion.
+    cur.execute(PROGRESS_SQL+'''UPDATE inspection_schedule_tasks task
+      SET status=p.effective_status,completion_inspection_id=p.inspection_id,
+        completed_at=CASE WHEN p.effective_status='completed' THEN COALESCE(task.completed_at,CURRENT_TIMESTAMP) ELSE NULL END
+      FROM progress p WHERE task.id=p.id
+        AND (task.status IS DISTINCT FROM p.effective_status OR task.completion_inspection_id IS DISTINCT FROM p.inspection_id)
+        AND (p.effective_status='completed' OR NOT EXISTS(
+          SELECT 1 FROM inspection_schedule_tasks other WHERE other.id<>task.id AND other.user_id=task.user_id
+          AND other.mode=task.mode AND other.year=task.year AND other.period_number=task.period_number
+          AND other.station_id=task.station_id AND other.column_key=task.column_key AND other.status='pending'))''',params(user_id,today()))
 
 
 def task_count(cur, user_id):
     sync_tasks(cur, user_id)
-    cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s AND (mode='online' OR scheduled_date=%s)", (user_id, today(), today()))
-    return int(cur.fetchone()['n'])
+    return inbox_summary(cur,user_id,today())['count']
 
 
-def personal_agenda(cur, user_id):
+def personal_agenda(cur, user_id, summary=None):
     # Self-only data, independent of schedule administration privileges.
     cur.execute('''SELECT u.real_name,a.available,a.reason,d.assignments FROM users u
       LEFT JOIN staff_availability a ON a.person_name=TRIM(u.real_name) AND a.day=%s
@@ -60,10 +49,9 @@ def personal_agenda(cur, user_id):
         members = [p for p in row['assignments'] if p['mode'] == 'offline' and p['leader_id'] == assignment['leader_id']]
         field_team = dict(name=assignment['group_name'],leader_id=assignment['leader_id'],
                           members=[dict(id=p['id'],display_name=p['display_name'],position=p['position']) for p in members])
-    cur.execute('''SELECT mode,COUNT(*) AS n,COUNT(*) FILTER(WHERE scheduled_date<%s) AS overdue
-      FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s
-      AND (mode='online' OR scheduled_date=%s) GROUP BY mode''', (today(), user_id, today(), today()))
-    counts = {r['mode']: dict(count=r['n'], overdue=r['overdue']) for r in cur.fetchall()}
+    buckets=(summary or inbox_summary(cur,user_id,today()))['buckets']
+    counts={mode:dict(count=buckets['today_'+mode]['pending']+buckets['history_'+mode]['pending'],
+                      overdue=buckets['history_'+mode]['pending']) for mode in ('offline','online')}
     return dict(day=today().isoformat(), available=row.get('available'), reason=row.get('reason') or '',
                 assignment=assignment, field_team=field_team, offline=counts.get('offline', dict(count=0, overdue=0)),
                 online=counts.get('online', dict(count=0, overdue=0)))
@@ -75,11 +63,11 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, e
         # Their distinct column keys use a stable year key so date moves cancel the old task too.
         chosen=dict(mode='offline',year=chosen['year'],quarter=1)
     key = (chosen['mode'], chosen['year'], chosen.get('quarter', chosen.get('month')), station['id'], column['key'])
-    cur.execute('''UPDATE inspection_schedule_tasks task SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
+    cur.execute(f'''UPDATE inspection_schedule_tasks task SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s AND status='completed'
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.id=task.completion_inspection_id
         AND ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)''', (*key, today()))
+        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')})''', key)
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s
       AND status='pending' AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s))
@@ -106,16 +94,20 @@ def register_schedule_tasks(app, *, connect):
         conn = cur = None
         try:
             conn = connect(); cur = conn.cursor()
-            count = task_count(cur, actor['id'])
-            cur.execute('''SELECT id,mode,station_id,station_name,table_id,table_name,
-              scheduled_date::text,status,completion_inspection_id
-              FROM inspection_schedule_tasks WHERE user_id=%s AND status='pending' AND scheduled_date<=%s
-                AND (mode='online' OR scheduled_date=%s)
-              ORDER BY scheduled_date,mode,station_name,id LIMIT 500''', (actor['id'], today(), today()))
-            rows = [dict(row) for row in cur.fetchall()]
-            agenda = personal_agenda(cur, actor['id'])
+            bucket=request.args.get('bucket','all')
+            if bucket not in ('all',*BUCKETS):
+                return jsonify(success=False,error='请选择有效的待办分类。'),400
+            try:
+                page=int(request.args.get('page','1'));page_size=int(request.args.get('page_size','24'))
+                if page<1 or not 1<=page_size<=50: raise ValueError()
+            except ValueError:
+                return jsonify(success=False,error='待办分页参数不合法。'),400
+            cur.execute("SET LOCAL statement_timeout='10s'")
+            sync_tasks(cur,actor['id'])
+            result=inbox_page(cur,actor['id'],today(),bucket,page,page_size)
+            agenda = personal_agenda(cur, actor['id'],result)
             conn.commit()
-            response = jsonify(success=True, today=today().isoformat(), count=count, tasks=rows, agenda=agenda)
+            response = jsonify(success=True,today=today().isoformat(),**result,bucket=bucket,agenda=agenda)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
         except Exception:

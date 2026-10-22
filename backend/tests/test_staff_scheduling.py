@@ -255,6 +255,8 @@ class StaffDatabaseTests(unittest.TestCase):
         with patch('inspection_schedule_tasks.today', return_value=date(2027, 1, 6)):
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1)
             self.record(day='2027-01-05', inspector=2,table=7)
+            self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 1, 'another month cannot finish the October matrix cell')
+            self.record(day='2026-10-31', inspector=2,table=7)
             self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0)
 
     def test_auto_exclusions_share_busy_unknown_and_existing_work_reasons(self):

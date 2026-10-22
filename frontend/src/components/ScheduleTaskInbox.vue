@@ -19,7 +19,7 @@
         <div>
           <small>MY INSPECTION TASKS</small>
           <h3 :id="titleId">
-            我的巡检待办 <span>{{ total }}</span>
+            我的巡检待办 <span>待完成 {{ total }} 项</span>
           </h3>
         </div>
         <button
@@ -41,17 +41,29 @@
       </header>
       <div class="tasks-body">
         <p class="method">
-          现场为当日行程，次日自动归档，不要求生成记录销项；视频任务需同站同表有巡检记录才完成，不要求审核，历史未完成项持续保留。实际执行人与计划分别留存。
+          与巡检排班采用同一覆盖口径：同站、同检查表在对应季度、年度或月份内有巡检记录即完成，不要求审核，也不限定录入人。现场和视频未完成项跨日分别进入历史分类；整站只有全部检查表完成才算完成。
         </p>
         <section class="agenda-card">
           <span>{{ currentAgenda?.day || today }} · 我的档期</span
           ><strong>{{ agendaLabel }}</strong>
-          <div>
-            <b class="field">现场 {{ currentAgenda?.offline?.count || 0 }} 项</b
-            ><b>视频 {{ currentAgenda?.online?.count || 0 }} 项</b
-            ><b class="late">其中历史未完成 {{ currentAgenda?.online?.overdue || 0 }} 项</b>
-          </div>
         </section>
+        <div class="inbox-metrics" aria-label="检查表任务完成概况">
+          <div class="metric-done">
+            <small>今日已完成</small
+            ><strong
+              >{{ metrics.todayCompleted }}<em> / {{ metrics.todayTotal }} 项</em></strong
+            >
+          </div>
+          <div>
+            <small>今日待完成</small><strong>{{ metrics.todayPending }}<em> 项</em></strong>
+          </div>
+          <div class="metric-history">
+            <small>历史现场未完成</small><strong>{{ metrics.historyOffline }}<em> 项</em></strong>
+          </div>
+          <div class="metric-history">
+            <small>历史视频未完成</small><strong>{{ metrics.historyOnline }}<em> 项</em></strong>
+          </div>
+        </div>
         <section v-if="currentAgenda?.field_team" class="crew-card" aria-label="今日外勤小组成员">
           <div>
             <small>今日同行</small><strong>{{ currentAgenda.field_team.name }}</strong>
@@ -71,14 +83,18 @@
             :key="tab.key"
             type="button"
             :class="{ active: activeTab === tab.key }"
-            @click="activeTab = tab.key"
+            :aria-pressed="activeTab === tab.key"
+            @click="chooseTab(tab.key)"
           >
             {{ tab.name }}
+            <b :class="{ zero: !tab.pending }" :title="`待完成 ${tab.pending} 项`">{{
+              tab.pending
+            }}</b>
           </button>
         </nav>
-        <p v-if="loading && !tasks.length" class="empty" role="status">正在核对巡检任务…</p>
+        <p v-if="loading" class="sync-note" role="status">正在核对巡检任务与最新记录…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <div class="task-cards">
+        <div class="task-cards" :aria-busy="loading">
           <article v-for="group in groups" :key="group.key" class="task-group" :class="group.mode">
             <div class="task-heading">
               <span :class="group.mode">{{
@@ -91,15 +107,63 @@
                   group.scheduled_date < today
                     ? '历史未完成'
                     : group.mode === 'offline'
-                      ? '今日行程 · 次日归档'
-                      : '今天安排'
+                      ? '今日现场'
+                      : '今日视频'
                 }}</small
               >
             </div>
-            <div v-for="task in group.tasks" :key="task.id" class="task-item">
-              <span>{{ task.table_name }}</span
-              ><button
-                v-if="canRegister && task.mode === 'online' && task.station_id && task.table_id"
+            <div class="station-completion" :class="{ done: !group.pending }">
+              <div>
+                <strong>{{
+                  !group.pending ? '整站已完成' : group.completed ? '部分完成' : '待检查'
+                }}</strong
+                ><span
+                  >已完成 {{ group.completed }}/{{ group.total }} 项<span v-if="group.pending">
+                    · 剩余 {{ group.pending }} 项</span
+                  ></span
+                >
+              </div>
+              <div
+                class="station-progress-track"
+                role="progressbar"
+                :aria-label="`${group.station_name}检查表完成进度`"
+                :aria-valuemin="0"
+                :aria-valuemax="group.total"
+                :aria-valuenow="group.completed"
+              >
+                <i :style="{ width: group.percent + '%' }"></i>
+              </div>
+            </div>
+            <p v-if="group.plan_team" class="original-crew">
+              原派工：{{ group.plan_team.name }} ·
+              {{ group.plan_team.members.map((p) => p.display_name).join('、') }}
+            </p>
+            <div v-for="task in group.tasks" :key="task.id" class="task-item" :class="task.status">
+              <span class="task-check" aria-hidden="true">{{
+                task.status === 'completed' ? '✓' : '·'
+              }}</span>
+              <div class="task-label">
+                <strong>{{ task.table_name }}</strong>
+                <small v-if="task.status === 'completed'"
+                  >{{ task.last_inspection_date }} · 巡检记录 #{{ task.completion_inspection_id
+                  }}<span v-if="task.record_count > 1"> 等 {{ task.record_count }} 条</span></small
+                >
+                <small v-else>尚无对应周期内的巡检记录</small>
+                <small class="coverage-window"
+                  >覆盖周期 {{ task.coverage_from }} 至 {{ task.coverage_to }}</small
+                >
+              </div>
+              <span class="task-state">{{
+                task.status === 'completed' ? '已完成' : '未完成'
+              }}</span>
+              <button
+                v-if="
+                  canRegister &&
+                  task.mode === 'online' &&
+                  task.status !== 'completed' &&
+                  task.station_id &&
+                  task.table_id
+                "
                 type="button"
                 @click="register(task)"
               >
@@ -109,10 +173,19 @@
           </article>
         </div>
         <p v-if="!loading && !groups.length" class="empty">当前分类没有巡检待办。</p>
-        <p v-if="total > tasks.length" class="method">
-          当前显示最早的{{ tasks.length }}项，完成后继续展示剩余任务。
-        </p>
-        <p v-if="!canRegister && groups.some((group) => group.mode === 'online')" class="error">
+        <div v-if="totalGroups > pageSize" class="task-pagination" aria-label="站点任务分页">
+          <span>第 {{ page }} / {{ totalPages }} 页 · 共 {{ totalGroups }} 个站点任务组</span>
+          <button type="button" :disabled="loading || page === 1" @click="goPage(page - 1)">
+            上一页
+          </button>
+          <button type="button" :disabled="loading || page >= totalPages" @click="goPage(page + 1)">
+            下一页
+          </button>
+        </div>
+        <p
+          v-if="!canRegister && groups.some((group) => group.mode === 'online' && group.pending)"
+          class="error"
+        >
           当前账号没有巡检登记权限，请联系管理员处理。
         </p>
       </div>
@@ -124,7 +197,7 @@ import axios from 'axios'
 import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
-import { taskGroups } from '@/utils/staffScheduling'
+import { taskProgressGroups, inboxMetrics } from '@/utils/inspectionTaskProgress'
 const props = defineProps({
   compact: { type: Boolean, default: false },
   count: { type: Number, required: true },
@@ -141,6 +214,12 @@ const router = useRouter(),
   error = ref('')
 const loadedAgenda = ref(null),
   activeTab = ref('all')
+const summary = ref(null),
+  page = ref(1),
+  pageSize = 24,
+  totalGroups = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalGroups.value / pageSize)))
+const metrics = computed(() => inboxMetrics(summary.value))
 const currentAgenda = computed(() => loadedAgenda.value || props.agenda)
 const agendaLabel = computed(() => {
   const agenda = currentAgenda.value
@@ -151,23 +230,19 @@ const agendaLabel = computed(() => {
       ? '今日有空 · 等待安排'
       : '档期未确认'
 })
-const tabs = [
-  { key: 'all', name: '全部' },
-  { key: 'offline', name: '今日现场' },
-  { key: 'online', name: '今日视频' },
-  { key: 'overdue', name: '历史视频未完成' },
-]
-const groups = computed(() =>
-  taskGroups(
-    tasks.value.filter(
-      (task) =>
-        activeTab.value === 'all' ||
-        (activeTab.value === 'overdue'
-          ? task.mode === 'online' && task.scheduled_date < today.value
-          : task.mode === activeTab.value && task.scheduled_date === today.value),
-    ),
-  ),
+const tabs = computed(() =>
+  [
+    { key: 'all', name: '全部' },
+    { key: 'today_offline', name: '今日现场' },
+    { key: 'today_online', name: '今日视频' },
+    { key: 'history_offline', name: '历史现场未完成' },
+    { key: 'history_online', name: '历史视频未完成' },
+  ].map((tab) => ({
+    ...tab,
+    pending: tab.key === 'all' ? total.value : summary.value?.buckets?.[tab.key]?.pending || 0,
+  })),
 )
+const groups = computed(() => taskProgressGroups(tasks.value))
 let permissions = {}
 try {
   permissions = JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -187,6 +262,7 @@ async function load() {
   loading.value = true
   try {
     const { data } = await axios.get('/api/my-schedule-tasks', {
+      params: { bucket: activeTab.value, page: page.value, page_size: pageSize },
       signal: controller.signal,
       timeout: 15000,
     })
@@ -195,6 +271,9 @@ async function load() {
     total.value = data.count
     today.value = data.today
     loadedAgenda.value = data.agenda || null
+    summary.value = data
+    page.value = data.page || 1
+    totalGroups.value = data.total_groups || 0
     error.value = ''
     emit('count', data.count)
   } catch (err) {
@@ -208,6 +287,24 @@ const polling = createAdaptivePolling({
   task: load,
   canRun: () => !disposed && !document.hidden && navigator.onLine && dialog.value?.open,
 })
+function changeView(bucket, number) {
+  serial++
+  controller?.abort()
+  loading.value = false
+  activeTab.value = bucket
+  page.value = number
+  tasks.value = []
+  load()
+}
+function chooseTab(bucket) {
+  if (bucket !== activeTab.value) changeView(bucket, 1)
+}
+function goPage(number) {
+  if (number >= 1 && number <= totalPages.value) changeView(activeTab.value, number)
+}
+function scheduleChanged() {
+  if (dialog.value?.open) load()
+}
 function open() {
   dialog.value.showModal()
   load()
@@ -252,6 +349,8 @@ onMounted(() => {
   document.addEventListener('visibilitychange', visibility)
   window.addEventListener('online', visibility)
   window.addEventListener('offline', visibility)
+  window.addEventListener('inspection-schedule-changed', scheduleChanged)
+  window.addEventListener('inspection-sign-pending-refresh', scheduleChanged)
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -262,9 +361,203 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibility)
   window.removeEventListener('online', visibility)
   window.removeEventListener('offline', visibility)
+  window.removeEventListener('inspection-schedule-changed', scheduleChanged)
+  window.removeEventListener('inspection-sign-pending-refresh', scheduleChanged)
 })
 </script>
 <style scoped>
+.tasks-dialog > header {
+  background: #173e58;
+  color: #fff;
+  border-bottom: 3px solid #dfb24b;
+}
+.tasks-dialog > header small,
+.tasks-dialog h3 span {
+  color: #b9dbe7;
+}
+.inbox-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.inbox-metrics > div {
+  padding: 13px;
+  border: 1px solid #c5d8e9;
+  border-top: 3px solid #387baa;
+  border-radius: 9px;
+  background: #f1f6fc;
+}
+.inbox-metrics small {
+  display: block;
+  color: #476580;
+  font-size: 12px;
+}
+.inbox-metrics strong {
+  display: block;
+  margin-top: 8px;
+  color: #23527a;
+  font-size: 23px;
+}
+.inbox-metrics em {
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
+}
+.inbox-metrics .metric-done {
+  border-color: #a2c9b7;
+  border-top-color: #2e8664;
+  background: #eff9f3;
+}
+.metric-done strong {
+  color: #24694b;
+}
+.inbox-metrics .metric-history {
+  border-top-color: #c1813b;
+  background: #fff8ed;
+}
+.task-tabs b {
+  display: inline-flex;
+  min-width: 17px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 9px;
+  color: #a23435;
+  background: #ffe6e3;
+  font-size: 10px;
+}
+.task-tabs b.zero {
+  color: #527386;
+  background: #e2ebf1;
+}
+.station-completion {
+  padding: 12px 14px;
+  background: #f8fafc;
+  border-top: 1px solid #d9e4ec;
+}
+.station-completion > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #6c7c89;
+  margin-bottom: 8px;
+}
+.station-completion strong {
+  color: #906123;
+}
+.station-completion.done strong {
+  color: #206d4c;
+}
+.station-progress-track {
+  height: 6px;
+  border-radius: 4px;
+  background: #dee9ef;
+  overflow: hidden;
+}
+.station-progress-track i {
+  display: block;
+  height: 100%;
+  background: #339077;
+  border-radius: inherit;
+}
+.original-crew {
+  margin: 0;
+  padding: 9px 14px;
+  border-top: 1px solid #e1e9ef;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #826235;
+  background: #fffcf6;
+}
+.task-item .task-check {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #c7a277;
+  border-radius: 50%;
+  color: #ad7332;
+  background: #fff8e9;
+  flex-shrink: 0;
+  font-size: 17px;
+}
+.task-item.completed .task-check {
+  background: #e4f5ec;
+  color: #21704e;
+  border-color: #7db89b;
+  font-size: 12px;
+}
+.task-label {
+  flex: 1;
+  min-width: 0;
+}
+.task-label strong {
+  font-size: 12px;
+  color: #284b65;
+  line-height: 1.7;
+}
+.task-label small {
+  display: block;
+  font-size: 10px;
+  color: #6b7e8e;
+  line-height: 1.7;
+}
+.task-item.completed .task-label > small:first-of-type {
+  color: #247452;
+}
+.task-item .task-state {
+  padding: 4px 7px;
+  color: #995b27;
+  border: 1px solid #e3c7a1;
+  border-radius: 5px;
+  background: #fff4e2;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.task-item.completed .task-state {
+  color: #1d6f4b;
+  border-color: #9ac7ae;
+  background: #e9f7ee;
+}
+.task-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.task-pagination span {
+  margin-right: auto;
+  font-size: 11px;
+  color: #637d90;
+}
+.sync-note {
+  font-size: 12px;
+  color: #2a6d8e;
+  padding: 8px 12px;
+  background: #edf6fb;
+  border-radius: 6px;
+}
+@media (max-width: 760px) {
+  .inbox-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .task-group .task-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .task-item button {
+    grid-column: 2 / -1;
+    justify-self: end;
+  }
+  .task-pagination {
+    flex-wrap: wrap;
+  }
+}
 .tasks-dialog .inbox-close {
   display: grid;
   place-items: center;
@@ -328,6 +621,9 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 .task-group.online {
+  grid-column: 1 / -1;
+}
+.task-group:only-child {
   grid-column: 1 / -1;
 }
 .task-group.offline .task-heading {
