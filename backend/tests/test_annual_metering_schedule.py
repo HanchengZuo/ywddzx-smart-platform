@@ -73,10 +73,13 @@ class MeteringDatabaseTests(unittest.TestCase):
         board=self.annual()
         self.assertEqual(len(board['rows']),len(self.board()['rows']))
         self.assertEqual(board['rows'][0]['cells']['metering_video']['status'],'unavailable')
+        self.assertFalse(board['rows'][0]['cells']['metering_video']['applicable'])
+        self.assertTrue(board['rows'][0]['cells']['metering_site']['applicable'])
         invalid=self.client.put('/api/inspection-schedule',json=dict(mode='annual',year=2026,inspector_ids=[2],scheduled_date='2026-10-20',
             cells=[dict(station_id=1,column_key='metering_video',revision=0)]))
         self.assertEqual(invalid.status_code,409)
         self.cur.execute("UPDATE stations SET monitoring_status='未运行' WHERE id=1"); self.admin.commit()
+        self.assertTrue(self.annual()['rows'][0]['cells']['metering_video']['applicable'])
         half=self.client.put('/api/inspection-schedule',json=dict(mode='annual',year=2026,inspector_ids=[2],scheduled_date='2026-10-20',
             cells=[dict(station_id=1,column_key='metering_site',revision=0)]))
         self.assertEqual(half.status_code,409)
@@ -88,6 +91,16 @@ class MeteringDatabaseTests(unittest.TestCase):
         result=self.assign_annual(ids=[]); self.assertEqual(result.status_code,200,result.json)
         self.assertTrue(all(c['status']=='unassigned' for c in self.board()['rows'][0]['cells'].values()))
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'");self.assertEqual(self.cur.fetchone()['n'],0)
+
+    def test_disabled_required_checklist_is_not_an_annual_video_exemption(self):
+        self.cur.execute("UPDATE inspection_tables SET is_active=false WHERE table_name IN ('计量稽查检查表（现场）','环境无异味管理检查表（现场）')")
+        self.admin.commit()
+        site=self.annual()['rows'][0]['cells']['metering_site']
+        self.assertEqual(site['status'],'unavailable')
+        self.assertTrue(site['applicable'])
+        odor=self.board()['rows'][0]['cells']['odor']
+        self.assertEqual(odor['status'],'unavailable')
+        self.assertTrue(odor['applicable'])
 
     def test_quarter_only_links_monthly_quota_members_not_every_station(self):
         self.assertEqual(self.save(station_id=1).status_code,200)

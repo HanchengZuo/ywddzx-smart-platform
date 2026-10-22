@@ -61,9 +61,13 @@ def eligible_stations(cur, chosen, station_id=None, lock=False):
     return sorted((row for row in rows if row['sequence']), key=lambda row: (row['sequence'], row['id']))
 
 
+def column_applicable(column, station, mode):
+    return not (mode == 'annual' and column['key'] == 'metering_video'
+                and station['monitoring_status'] != '未运行')
+
+
 def column_available(column, station, mode):
-    return bool(column['table_id'] and not (mode == 'annual' and column['key'] == 'metering_video'
-                                          and station['monitoring_status'] != '未运行'))
+    return bool(column['table_id'] and column_applicable(column,station,mode))
 
 
 def record_cells(cur, station_ids, table_ids, start, end):
@@ -117,6 +121,7 @@ def read_board(cur, chosen, start, end):
             if status in summary:
                 summary[status] += 1
             cells[column['key']] = dict(status=status, assignees=assignees,
+                applicable=column_applicable(column,station,chosen['mode']),
                 plan_team=existing.get('plan_team'),
                 unavailable_reason='仅监控未运行站点参与计量视频年度检查' if chosen['mode']=='annual' and column['key']=='metering_video' and station['monitoring_status']!='未运行' else '',
                 completed_inspectors=sorted(record.get('inspectors', []), key=lambda user: (user['display_name'], user['id'])),

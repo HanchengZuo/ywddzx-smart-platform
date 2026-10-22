@@ -57,12 +57,27 @@
     <div class="board-toolbar">
       <div class="board-stats">
         <span
-          ><b>{{ counts.completed }}</b> 已检查</span
-        ><span
-          ><b>{{ counts.assigned }}</b> 已排班</span
-        ><span
-          ><b>{{ counts.unassigned }}</b> 待排班</span
-        ><small>按单元格计数</small>
+          ><span class="stat-label">已检查</span
+          ><span class="stat-value"
+            ><b>{{ counts.completed }}</b
+            ><em>站</em></span
+          ><small class="stat-detail">全部应检表已检查</small></span
+        >
+        <span
+          ><span class="stat-label">已排班</span
+          ><span class="stat-value"
+            ><b>{{ counts.assigned }}</b
+            ><em>站</em></span
+          ><small class="stat-detail">剩余应检表全已安排</small></span
+        >
+        <span
+          ><span class="stat-label">待排班</span
+          ><span class="stat-value"
+            ><b>{{ counts.unassigned }}</b
+            ><em>站</em></span
+          ><small class="stat-detail">仍有应检表需安排</small></span
+        >
+        <small class="stats-scope">当前筛选共 {{ counts.total }}站 · 每站只计一次</small>
       </div>
       <span class="sync-state" role="status"
         >{{
@@ -76,6 +91,17 @@
         }}<em v-if="board && !board.can_edit"> · 只读</em></span
       >
     </div>
+    <div
+      v-if="counts.partialCompleted || counts.partialAssigned || counts.blocked"
+      class="station-summary-notes"
+      role="status"
+    >
+      <span v-if="counts.partialCompleted">其中部分已检查 {{ counts.partialCompleted }}站</span>
+      <span v-if="counts.partialAssigned">待排班中需补排 {{ counts.partialAssigned }}站</span>
+      <span v-if="counts.blocked" class="blocked-note"
+        >检查表异常 {{ counts.blocked }}站，未计为已检查或已排班</span
+      >
+    </div>
     <div class="board-filters">
       <input
         v-model.trim="keyword"
@@ -87,9 +113,12 @@
         <option v-for="value in regions" :key="value" :value="value">{{ value }}</option></select
       ><select v-model="state" :aria-label="title + '排班状态'">
         <option value="">全部状态</option>
-        <option value="unassigned">有待排班项</option>
-        <option value="assigned">有已排班项</option>
-        <option value="completed">有已检查项</option></select
+        <option value="unassigned">待排班（含需补排）</option>
+        <option value="assigned">已排班（剩余应检表全已安排）</option>
+        <option value="completed">已检查（整站完成）</option>
+        <option value="partial_completed">部分已检查</option>
+        <option value="partial_assigned">部分排班，需补排</option>
+        <option value="blocked">检查表异常</option></select
       ><button
         v-if="keyword || region || state"
         type="button"
@@ -100,7 +129,7 @@
       ><span>{{ rows.length }} 个站点</span>
     </div>
     <p v-if="mode === 'annual'" class="roster-note">
-      现场与可用的视频项整行一起安排外勤组；视频仅适用于“监控未运行”站点，其余置灰。年度派站同步季度现场，季度派站按当月计量片区配额联动。两表共用今日外勤调度待选区。
+      现场与可用的视频项整行一起安排外勤组；视频仅适用于“监控未运行”站点，其余置灰，不参与应检站点进度统计。年度派站同步季度现场，季度派站按当月计量片区配额联动。两表共用今日外勤调度待选区。
     </p>
     <div v-if="board?.can_edit" class="bulk-toolbar">
       <button
@@ -315,7 +344,9 @@
       </table>
     </div>
     <footer class="panel-footer">
-      <span>{{ board?.period.label || '当前周期' }} · 按站点顺序连续编号，绿色单元格不可改派。</span>
+      <span
+        >{{ board?.period.label || '当前周期' }} · 按站点顺序连续编号，绿色单元格不可改派。</span
+      >
       ><span>{{
         canEdit
           ? fieldMode === 'offline'
@@ -1519,7 +1550,7 @@ input[type='search'] {
 }
 .board-stats {
   display: flex;
-  align-items: baseline;
+  align-items: stretch;
   flex-wrap: wrap;
   gap: 18px;
   font-size: 12px;
@@ -1531,7 +1562,10 @@ input[type='search'] {
   color: #345a81;
 }
 .board-stats > span {
-  padding: 7px 12px;
+  display: grid;
+  gap: 4px;
+  min-width: 148px;
+  padding: 10px 12px;
   border-radius: 7px;
   background: #eef3f8;
   border-left: 3px solid #899cb1;
@@ -1549,6 +1583,43 @@ input[type='search'] {
 }
 .board-stats small {
   color: #94a1b2;
+}
+.board-stats .stat-label {
+  font-weight: 700;
+  color: #294960;
+}
+.stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.stat-value em {
+  font-size: 11px;
+  font-style: normal;
+  color: #43637b;
+}
+.board-stats .stat-detail {
+  color: #416077;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.board-stats .stats-scope {
+  flex-basis: 100%;
+  color: #5b7489;
+  font-size: 11px;
+}
+.station-summary-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 8px 24px;
+  color: #3e647c;
+  background: #f0f6fa;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.station-summary-notes .blocked-note {
+  color: #926014;
 }
 .sync-state {
   align-self: center;
@@ -2058,7 +2129,20 @@ select:focus-visible {
     padding: 12px 16px;
   }
   .board-stats {
-    gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+  .board-stats > span {
+    min-width: 0;
+    padding: 8px;
+  }
+  .board-stats .stats-scope {
+    grid-column: 1 / -1;
+  }
+  .station-summary-notes {
+    padding: 8px 16px;
   }
   .board-stats b {
     font-size: 18px;
