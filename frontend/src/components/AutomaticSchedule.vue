@@ -70,9 +70,15 @@
               请先前往人员档期保存今日现场/视频分组，再计算智能方案。
             </p>
           </section>
-          <details v-if="targetRegions.length" class="coverage-panel" open>
-            <summary>当月计量年度计划 · 优先派站依据</summary>
-            <p>
+          <details class="coverage-panel" :class="{ 'basis-applied': basis.metering.applied }" open>
+            <summary>
+              <span class="basis-name"><b>01</b> 当月计量年度计划 · 优先派站依据</span>
+              <span class="basis-badge" :class="{ applied: basis.metering.applied, stale }">{{
+                stale ? '方案待重新计算' : basis.metering.label
+              }}</span>
+            </summary>
+            <p class="basis-explanation">{{ basis.metering.detail }}</p>
+            <p v-if="targetRegions.length">
               圆环为年度站点覆盖：年度表任一适用检查项为绿色即计已查，每站只计一次。月度目标与本月已查单独列出；未审核记录同样计数，计划预留不算已查。
             </p>
             <div class="quota-progress-grid">
@@ -121,19 +127,14 @@
               </article>
             </div>
           </details>
-          <p v-else class="method">本月未配置计量目标，按普通现场片区覆盖均衡派站。</p>
-          <h4 class="upcoming-title">今日智能排班方案 <small>仅预览，不自动修改排班表</small></h4>
-          <div class="preview-summary">
-            <span
-              ><b>{{ preview.available_count }}</b> 可派工人员</span
-            ><span
-              ><b>{{ preview.groups.length }}</b> 站点任务组</span
-            ><span
-              ><b>{{ preview.cell_count }}</b> 排班单元格</span
-            ><small>{{ preview.quarter }}实绩平衡口径</small>
-          </div>
-          <details v-if="preview.regional_coverage?.length" class="coverage-panel">
-            <summary>现场片区覆盖均衡 · 查看本次分配依据</summary>
+          <details class="coverage-panel" :class="{ 'basis-applied': basis.coverage.applied }">
+            <summary>
+              <span class="basis-name"><b>02</b> 现场片区覆盖均衡 · 查看本次分配依据</span>
+              <span class="basis-badge" :class="{ applied: basis.coverage.applied, stale }">{{
+                stale ? '方案待重新计算' : basis.coverage.label
+              }}</span>
+            </summary>
+            <p class="basis-explanation">{{ basis.coverage.detail }}</p>
             <p>
               本季度有任一现场检查记录即计覆盖，不依赖审核。忽略今日未开始的手动计划，未来计划仍受保护；先补齐低覆盖片区，再缩小组内站点距离。
             </p>
@@ -153,7 +154,23 @@
                 >
               </div>
             </div>
+            <p v-if="!preview.regional_coverage?.length">暂无可供比较的现场片区覆盖数据。</p>
           </details>
+          <section class="scheme-summary" aria-label="今日智能排班方案概况">
+            <h4 class="upcoming-title">今日智能排班方案 <small>仅预览，不自动修改排班表</small></h4>
+            <div class="preview-summary">
+              <span
+                ><b>{{ preview.available_count }}</b> 可派工人员</span
+              >
+              <span
+                ><b>{{ preview.groups.length }}</b> 站点任务组</span
+              >
+              <span
+                ><b>{{ preview.cell_count }}</b> 排班单元格</span
+              >
+              <small>{{ preview.quarter }}实绩平衡口径</small>
+            </div>
+          </section>
           <template v-for="mode in ['offline', 'online']" :key="mode"
             ><section
               v-if="proposalGroups.some((g) => g.mode === mode)"
@@ -250,6 +267,7 @@ import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { shanghaiToday } from '@/utils/staffScheduling'
 import { groupScheduleProposals } from '@/utils/scheduleProposals'
+import { scheduleBasis } from '@/utils/scheduleBasis'
 const emit = defineEmits(['scheduled'])
 let permissions = {}
 try {
@@ -271,6 +289,7 @@ const dialog = ref(null),
 const offlineCount = ref(2),
   onlineCount = ref(3)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
+const basis = computed(() => scheduleBasis(preview.value))
 const targetRegions = computed(() =>
   (preview.value?.metering_plan?.regions || []).filter((r) => r.target > 0),
 )
@@ -674,6 +693,104 @@ input[type='number']::-webkit-outer-spin-button {
 .coverage-panel summary {
   cursor: pointer;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+.coverage-panel summary::-webkit-details-marker {
+  display: none;
+}
+.basis-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.basis-name b {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: #ddeaf0;
+  border-radius: 7px;
+  font-size: 11px;
+}
+.basis-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid #b8c7d0;
+  border-radius: 7px;
+  background: #e8eef2;
+  color: #4c6373;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.basis-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.basis-badge.applied {
+  border-color: #84b9a4;
+  color: #176044;
+  background: #e1f3e9;
+}
+.basis-badge.stale {
+  border-color: #cdb275;
+  color: #7d5919;
+  background: #fff2d8;
+}
+.basis-applied {
+  border-left: 4px solid #2c8669;
+}
+.coverage-panel summary::after {
+  content: '+';
+  font-size: 19px;
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+}
+.coverage-panel[open] summary::after {
+  content: '−';
+}
+.basis-badge {
+  margin-left: auto;
+}
+.coverage-panel .basis-explanation {
+  color: #294c61;
+}
+.scheme-summary {
+  border-top: 2px solid #bdcfdc;
+  margin-top: 24px;
+  padding-top: 22px;
+}
+.scheme-summary .preview-summary {
+  margin-bottom: 0;
+}
+@media (max-width: 600px) {
+  .coverage-panel summary {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .basis-name {
+    flex: 1 1 calc(100% - 28px);
+    font-size: 13px;
+  }
+  .basis-badge {
+    order: 1;
+    margin-left: 38px;
+    white-space: normal;
+    font-size: 11px;
+  }
 }
 .coverage-panel p {
   font-size: 13px;
@@ -742,7 +859,8 @@ input[type='number']::-webkit-outer-spin-button {
   white-space: nowrap;
 }
 .auto-dialog {
-  width: min(940px, calc(100vw - 24px));
+  width: min(1280px, calc(100vw - 32px));
+  max-width: none;
   max-height: calc(100dvh - 32px);
   padding: 0;
   border: 1px solid #d6e1ed;
