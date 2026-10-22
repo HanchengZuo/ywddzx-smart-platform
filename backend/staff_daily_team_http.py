@@ -11,6 +11,7 @@ from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_rea
 from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
 from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
+from driving_permits import validate_driving_teams
 
 
 def context(cur, day):
@@ -19,10 +20,12 @@ def context(cur, day):
     cur.execute('SELECT working FROM quality_work_calendar WHERE day=%s', (day,))
     calendar = cur.fetchone()
     eligible = [p for p in people if p['id'] and p['available'] is True]
+    permits = {p['id']: p.get('has_driving_permit') is True for p in people if p['id']}
+    assignments = [dict(p, has_driving_permit=permits.get(p['id'], False)) for p in saved.get('assignments', [])]
     unconfirmed = [p['display_name'] for p in people if p['available'] is None]
     return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
                 unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
-                revision=saved.get('revision', 0), groups=group_assignments(saved.get('assignments', [])),
+                revision=saved.get('revision', 0), groups=group_assignments(assignments),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
                 excluded=[dict(name=p['display_name'], reason=excluded_reason(p))
                           for p in people if p not in eligible])
@@ -63,6 +66,7 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         raise ValueError('分组人员不合法。')
                     before = [p for group in result['groups'] for p in group['members']]
                     assignments = move_student(result['people'], before, data['student_id'], data.get('leader_id'))
+                    validate_driving_teams(result['people'], assignments)
                     if assignments != before:
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                         sync_field_team_plans(cur, actor, day)

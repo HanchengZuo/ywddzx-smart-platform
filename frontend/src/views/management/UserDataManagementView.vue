@@ -78,6 +78,12 @@
               <input v-model.trim="form.phone" type="tel" maxlength="40" placeholder="请输入手机号" />
             </label>
 
+            <label v-if="isSupervisorRole(form.role)" class="form-field">
+              <span>是否拥有准驾证</span>
+              <select v-model="form.has_driving_permit"><option :value="false">否</option><option :value="true">是</option></select>
+              <small class="field-tip">用于现场巡检分组，每组至少1人持证，条件允许时优先配2人；默认否。</small>
+            </label>
+
             <div v-if="form.role === 'area_account'" class="station-picker-card area-account-region-card">
               <div class="station-picker-head">
                 <div>
@@ -800,6 +806,7 @@ const createEmptyForm = () => ({
   role: 'supervisor',
   real_name: '',
   phone: '',
+  has_driving_permit: false,
   station_id: '',
   inspection_table_scope_ids: createEmptyInspectionScopeMap(),
   station_region_scope_values: createEmptyStationRegionScopeMap(),
@@ -1234,6 +1241,7 @@ const handleRolePermissionChange = (permissionKey) => {
 }
 
 const applyRoleDefaults = () => {
+  if (!isSupervisorRole(form.role)) form.has_driving_permit = false
   form.permissions = buildDefaultPermissions(form.role)
   form.inspection_table_scope_ids = createRoleInspectionScopeMap(form.role)
   form.station_region_scope_values = createEmptyStationRegionScopeMap()
@@ -1574,6 +1582,7 @@ const startEdit = (user, mode = 'account') => {
     role: user.role || 'supervisor',
     real_name: user.real_name || '',
     phone: user.phone || '',
+    has_driving_permit: user.has_driving_permit === true,
     station_id: user.station_id || '',
     inspection_table_scope_ids: normalizeInspectionScopeMap(personalScopeDraft(user.inspection_table_scope_ids, user.inspection_table_scope_overrides)),
     station_region_scope_values: normalizeStationRegionScopeMap(personalScopeDraft(user.station_region_scope_values, user.station_region_scope_overrides)),
@@ -1759,7 +1768,8 @@ const saveUser = async () => {
       })
     } else {
       const payload = { user_id: currentUserId, username: form.username, role: form.role,
-        real_name: normalizedRealName, phone: form.phone, station_id: form.station_id }
+        real_name: normalizedRealName, phone: form.phone, station_id: form.station_id,
+        has_driving_permit: isSupervisorRole(form.role) && form.has_driving_permit }
       if (form.role === 'area_account') payload.station_region_scope_values = Object.fromEntries(stationRegionScopePermissionKeys.map(key => [key, [areaAccountRegion.value]]))
       response = form.id ? await axios.put(`/api/management/users/${form.id}`, payload) : await axios.post('/api/management/users', payload)
     }

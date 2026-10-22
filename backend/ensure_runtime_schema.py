@@ -219,6 +219,9 @@ def main():
                 verify_account_security_schema(cur)
                 verify_quality_deadline_schema(cur)
                 verify_expert_qa_schema(cur)
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='has_driving_permit' AND is_nullable='NO' AND data_type='boolean'")
+                if not cur.fetchone():
+                    raise RuntimeError('User driving permit migration missing')
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='stations' AND is_nullable='NO' AND data_type='boolean'")
                 if not {'include_offline_plan', 'include_online_plan'}.issubset({row[0] for row in cur.fetchall()}):
                     raise RuntimeError('Station plan enrollment migration missing')

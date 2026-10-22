@@ -25,7 +25,7 @@
         <p class="method">
           今日未设置的档期默认有空，提前设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
           17:00
-          前的当日记录不阻止分组，已有站点派工仍须保留。先确定管理人员分工，再随机均分大学生和现场带队小组。此处保存人员分组，具体站点与检查表仍在巡检排班安排。
+          前的当日记录不阻止分组，已有站点派工仍须保留。先确定管理人员分工，再随机分配大学生。每个外勤组至少1人拥有准驾证，优先配2人；不足时不生成无持证人员的组。此处保存人员分组，具体站点与检查表仍在巡检排班安排。
         </p>
         <p v-if="loading" role="status" class="empty">正在核对今日档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -52,7 +52,7 @@
             </summary>
             <div v-for="person in managers" :key="person.id" class="manager-row">
               <div>
-                <strong>{{ person.display_name }}</strong
+                <strong>{{ person.display_name }} <em v-if="person.has_driving_permit" class="permit-tag">准驾证</em></strong
                 ><small v-if="lockedMode(person)"
                   >已有{{
                     lockedMode(person) === 'offline' ? '现场' : '视频'
@@ -78,7 +78,7 @@
               今天没有有空的管理人员，大学生只能安排视频巡检，不会形成无带队人的外勤组。
             </p>
             <p class="method">
-              大学生现场、视频人数尽量各半，奇数时随机决定多出的一人；现场学生平均分配到带队管理人员，人数相差不超过1人。已有站点安排或实绩优先保留，因此受约束时可能无法完全均分。
+              准驾证安全要求优先：现场组至少1人持证，条件允许时优先配2人，再尽量均分现场、视频人数及各组人数。已有站点安排或实绩优先保留，因此受约束时可能无法完全均分。请先在用户数据管理维护准驾证属性，未配置视为无证。
             </p>
             <button
               type="button"
@@ -115,6 +115,7 @@
                   <strong>{{ group.name }}</strong
                   ><span>{{ group.members.length }} 人</span>
                 </header>
+                <p v-if="group.mode === 'offline'" class="driver-status" :class="{ unsafe: !driverCount(group), preferred: driverCount(group) >= 2 }">{{ driverCount(group) ? driverCount(group) + ' 人拥有准驾证' + (driverCount(group) >= 2 ? ' · 优选配置' : ' · 已满足最低要求') : '缺少持准驾证人员 · 不可确认或派现场任务' }}</p>
                 <div class="member-tags">
                   <button
                     v-for="person in group.members"
@@ -138,7 +139,7 @@
                     @click="selectedStudent = selectedStudent === person.id ? null : person.id"
                   >
                     {{ person.display_name
-                    }}<small v-if="person.id === group.leader_id">带队</small>
+                    }}<small v-if="person.id === group.leader_id">带队</small><small v-if="person.has_driving_permit" class="permit-tag">准驾</small>
                   </button>
                 </div>
                 <button
@@ -172,6 +173,7 @@
             <p v-if="preview && !displayGroups.some((g) => g.mode === 'offline')" class="warning">
               没有现场带队管理人员，本次大学生全部安排视频巡检。
             </p>
+            <p v-if="unsafeGroups.length" class="error" role="alert">{{ unsafeGroups.map(g => g.name).join('、') }}尚无持准驾证成员。请调整预览；已保存分组请先维护人员准驾证资料或调整成员，不能派现场任务。</p>
           </section>
           <details v-if="context.excluded.length" class="excluded">
             <summary>未参与安排的人员（{{ context.excluded.length }}）</summary>
@@ -187,7 +189,7 @@
           v-if="editable"
           type="button"
           class="primary"
-          :disabled="!preview || !ready || loading || saving"
+          :disabled="!preview || !ready || loading || saving || unsafeGroups.length > 0"
           @click="confirm"
         >
           {{ saving ? '保存中…' : '确认安排' }}
@@ -199,7 +201,7 @@
 <script setup>
 import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { movePreviewStudent } from '@/utils/dailyTeamPreview'
+import { fieldDriverCount, movePreviewStudent } from '@/utils/dailyTeamPreview'
 const props = defineProps({ canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['saved', 'opened', 'closed'])
 const dialog = ref(null),
@@ -229,6 +231,8 @@ const displayGroups = computed(() => {
     ? [...groups, { name: '内勤视频组', mode: 'online', leader_id: null, members: [] }]
     : groups
 })
+const driverCount = (group) => fieldDriverCount(group, context.value?.people)
+const unsafeGroups = computed(() => displayGroups.value.filter(group => group.mode === 'offline' && !driverCount(group)))
 const draggingStudent = ref(null),
   selectedStudent = ref(null)
 function startStudentDrag(event, person) {
@@ -444,6 +448,10 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.permit-tag { display: inline-block; font-size: 11px; font-style: normal; color: #17634b; background: #e5f5ed; border-radius: 4px; padding: 2px 5px; }
+.driver-status { margin: 0 0 12px; padding: 7px 9px; background: #fff3df; color: #805019; border-radius: 6px; font-size: 12px; }
+.driver-status.preferred { background: #e5f5ed; color: #17634b; }
+.driver-status.unsafe { background: #fff0ed; color: #9c352a; }
 .team-trigger,
 .primary {
   background: #1e6786;

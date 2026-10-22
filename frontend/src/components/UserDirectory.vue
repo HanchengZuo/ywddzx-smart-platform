@@ -30,7 +30,7 @@
           <thead><tr><th scope="col">账号与联系方式</th><th scope="col">角色</th><th scope="col">所属范围</th><th scope="col">权限概览</th><th scope="col">维护时间</th><th scope="col">操作</th></tr></thead>
           <tbody><tr v-for="entry in entries" :key="entry.user.id" :class="{ editing: editingId === entry.user.id }">
             <td><div class="directory-identity"><span class="directory-avatar" :class="{ admin: entry.user.role === 'root' }" aria-hidden="true">{{ userInitial(entry.user) }}</span><div><strong>{{ entry.user.real_name || entry.user.username }}</strong><span>{{ entry.user.username }} <i>· ID {{ entry.user.id }}</i></span><small>{{ entry.user.phone || '未填写手机号' }}</small></div></div></td>
-            <td><span class="directory-role" :class="{ manager: entry.user.role === 'supervisor_manager', station: entry.user.role === 'station_manager' }">{{ label(entry.user.role) }}</span><small v-if="editingId === entry.user.id" class="directory-editing">正在编辑</small></td>
+            <td><span class="directory-role" :class="{ manager: entry.user.role === 'supervisor_manager', station: entry.user.role === 'station_manager' }">{{ label(entry.user.role) }}</span><small v-if="isSupervisorRole(entry.user.role)" class="directory-driving" :class="{ licensed: entry.user.has_driving_permit }">{{ entry.user.has_driving_permit ? '拥有准驾证' : '无准驾证' }}</small><small v-if="editingId === entry.user.id" class="directory-editing">正在编辑</small></td>
             <td class="directory-scope"><strong>{{ entry.user.role === 'root' ? '全局数据' : entry.user.station_name || (entry.regions.length ? entry.regions.join('、') : '未绑定站点') }}</strong><span>{{ entry.user.role === 'root' ? '内置管理员，不受业务范围限制' : entry.user.station_name ? entry.regions.join('、') || '片区未填写' : '具体数据范围见权限详情' }}</span></td>
             <td><button class="directory-permission" type="button" :aria-label="`查看 ${entry.user.username} 的权限详情`" title="查看完整权限与生效数据范围" @click="$emit('permissions', entry.user)"><span class="directory-config" :class="entry.summary.kind">{{ entry.summary.label }}</span><strong>{{ entry.summary.enabled }}<small> / {{ entry.summary.total }} 项已开启</small><em aria-hidden="true">›</em></strong></button></td>
             <td class="directory-times"><span>更新 {{ entry.user.updated_at || '未记录' }}</span><small>创建 {{ entry.user.created_at || '未记录' }}</small></td>
@@ -43,6 +43,7 @@
         <article v-for="entry in entries" :key="entry.user.id" class="directory-mobile-card" :class="{ editing: editingId === entry.user.id }">
           <div class="directory-mobile-head"><div class="directory-identity"><span class="directory-avatar" aria-hidden="true">{{ userInitial(entry.user) }}</span><div><strong>{{ entry.user.real_name || entry.user.username }}</strong><span>{{ entry.user.username }} · ID {{ entry.user.id }}</span></div></div><span class="directory-role">{{ label(entry.user.role) }}</span></div>
           <dl><div><dt>手机号</dt><dd>{{ entry.user.phone || '未填写' }}</dd></div><div><dt>所属范围</dt><dd>{{ entry.user.role === 'root' ? '全局数据，不受业务范围限制' : [entry.user.station_name, ...entry.regions].filter(Boolean).join(' · ') || '未绑定站点，详见权限范围' }}</dd></div><div><dt>更新于</dt><dd>{{ entry.user.updated_at || '未记录' }}</dd></div><div><dt>创建于</dt><dd>{{ entry.user.created_at || '未记录' }}</dd></div></dl>
+          <small v-if="isSupervisorRole(entry.user.role)" class="directory-driving" :class="{ licensed: entry.user.has_driving_permit }">{{ entry.user.has_driving_permit ? '拥有准驾证' : '无准驾证' }}</small>
           <button class="directory-mobile-permission" type="button" :aria-label="`查看 ${entry.user.username} 的权限详情`" @click="$emit('permissions', entry.user)"><span class="directory-config" :class="entry.summary.kind">{{ entry.summary.label }}</span><span><strong>{{ entry.summary.enabled }}/{{ entry.summary.total }}</strong> 项已开启 <b>查看详情 ›</b></span></button>
           <div class="directory-mobile-actions"><small v-if="editingId === entry.user.id" class="directory-editing">正在编辑</small><UserAccountActions :user="entry.user" :resetting="resetting" :deleting="deletingId === entry.user.id" @edit="$emit('edit', $event)" @reset="$emit('reset', $event)" @delete="$emit('delete', $event)" /></div>
         </article>
@@ -59,6 +60,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import UserAccountActions from './UserAccountActions.vue'
+import { isSupervisorRole } from '../utils/roles.js'
 import { directoryPageNumbers, filterDirectoryUsers, permissionConfiguration, permissionSummary, roleLabelFor, userInitial, userRegions } from '../utils/userDirectory.js'
 const props = defineProps({ users: { type: Array, default: () => [] }, roles: { type: Array, default: () => [] }, catalog: { type: Array, default: () => [] }, loading: Boolean, editingId: Number, deletingId: Number, resetting: Boolean })
 defineEmits(['create', 'edit', 'reset', 'delete', 'permissions'])
@@ -84,6 +86,8 @@ watch(pageCount, value => { page.value = Math.min(page.value, value) }, { flush:
 <style scoped>
 .user-directory, .user-directory * { box-sizing: border-box; }
 .user-directory { color: #172033; min-width: 0; }
+.directory-driving { display: block; width: fit-content; margin-top: 7px; padding: 3px 7px; border-radius: 5px; color: #835018; background: #fff3df; font-size: 12px; }
+.directory-driving.licensed { color: #16624a; background: #e5f5ed; }
 .directory-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .directory-eyebrow { margin: 0 0 5px; color: #2563eb; font-size: 12px; font-weight: 800; }
 h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }

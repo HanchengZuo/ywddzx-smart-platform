@@ -14,7 +14,7 @@ from staff_availability import EDIT, VIEW, STAFF
 
 class DailyTeamAlgorithmTests(unittest.TestCase):
     def people(self, students=18):
-        managers = [dict(id=i+1, display_name=name, position='管理人员') for i, name in enumerate(['吕泽昆', '韩叙', '芦斌'])]
+        managers = [dict(id=i+1, display_name=name, position='管理人员', has_driving_permit=True) for i, name in enumerate(['吕泽昆', '韩叙', '芦斌'])]
         return managers + [dict(id=i+10, display_name=f'学生{i}', position='大学生') for i in range(students)]
 
     def test_random_split_and_leader_sizes_are_balanced_and_reproducible(self):

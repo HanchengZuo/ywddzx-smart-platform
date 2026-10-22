@@ -50,7 +50,7 @@ def excluded_reason(person):
 
 
 def roster_people(cur):
-    cur.execute('''SELECT id,username,real_name,role,COALESCE(account_status,'active') AS account_status
+    cur.execute('''SELECT id,username,real_name,role,has_driving_permit,COALESCE(account_status,'active') AS account_status
       FROM users WHERE TRIM(real_name)=ANY(%s) ORDER BY id''', ([name for name, _ in STAFF],))
     matches = defaultdict(list)
     for row in cur.fetchall(): matches[row['real_name'].strip()].append(row)
@@ -60,6 +60,7 @@ def roster_people(cur):
         user = choices[0] if len(choices) == 1 else {}
         result.append(dict(id=user.get('id'), username=user.get('username', ''), role=user.get('role', ''),
             display_name=name, position=position, sequence=index + 1,
+            has_driving_permit=user.get('has_driving_permit') is True,
             history_ids=[matches[name][0]['id']] if len(matches[name]) == 1 else [user['id']] if user else [],
             binding='matched' if len(choices) == 1 else 'missing' if not choices else 'ambiguous'))
     return result
