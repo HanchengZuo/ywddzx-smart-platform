@@ -159,6 +159,46 @@ class MeteringDatabaseTests(unittest.TestCase):
         state=self.client.get('/api/inspection-schedule/metering-plan?year=2026&month=10').json
         self.assertEqual(next(r for r in state['regions'] if r['region']=='松金')['reserved'],0)
 
+    def check_linked_clear_to_shelf(self,mode):
+        self.cur.execute("INSERT INTO staff_daily_teams(day,assignments,revision,updated_by) SELECT '2026-10-19',assignments,1,1 FROM staff_daily_teams WHERE day='2026-10-20'")
+        self.cur.execute("UPDATE stations SET monitoring_status='未运行' WHERE id=1")
+        self.admin.commit()
+        self.assertEqual(self.assign_annual(day='2026-10-19').status_code,200)
+        self.assertEqual(self.assign_annual(sid=2).status_code,200)
+        self.record(table=1)
+        query=dict(mode=mode,year=2026,**({'quarter':4} if mode=='offline' else {}))
+        board=self.board(query)
+        result=self.client.post('/api/inspection-schedule/dispatch',json=dict(
+            **query,action='clear_today',board_token=board['board_token']))
+        self.assertEqual(result.status_code,200,result.json)
+        self.assertEqual(result.json['parked_count'],1)
+        self.assertEqual(result.json['cleared_station_count'],1)
+        card=result.json['board']['shelf'][0]
+        self.assertEqual(card['source_station_id'],1)
+        self.assertEqual(card['ids'],[2])
+        self.assertEqual(card['plan_team']['leader_id'],2)
+        self.assertEqual(self.annual()['shelf'],self.board()['shelf'])
+        for linked in (self.annual(),self.board()):
+            first=next(r for r in linked['rows'] if r['station_id']==1)
+            self.assertTrue(all(c['status'] in ('unassigned','completed') for c in first['cells'].values()))
+            future=next(r for r in linked['rows'] if r['station_id']==2)
+            self.assertTrue(all(c['status']=='assigned' for c in future['cells'].values() if c['applicable']))
+        self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'],'completed')
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE station_id=1 AND status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],1,'only the immutable actual cell keeps its original task')
+        target=result.json['board']['rows'][0]
+        restored=self.client.post('/api/inspection-schedule/dispatch',json=dict(**query,action='place',shelf_id=card['id'],revision=card['revision'],
+            cells=[dict(station_id=1,column_key=k,revision=c['revision']) for k,c in target['cells'].items() if c['status']=='unassigned']))
+        self.assertEqual(restored.status_code,200,restored.json)
+        self.assertEqual(restored.json['board']['shelf'],[])
+        self.assertTrue(all(c['status'] in ('assigned','completed') for c in restored.json['board']['rows'][0]['cells'].values()))
+
+    def test_quarter_clear_parks_linked_field_group_once_and_preserves_future_and_actual(self):
+        self.check_linked_clear_to_shelf('offline')
+
+    def test_annual_clear_parks_linked_field_group_once_and_preserves_future_and_actual(self):
+        self.check_linked_clear_to_shelf('annual')
+
     def test_plan_permissions_revision_audit_rollback_and_concurrent_edit(self):
         self.permissions.clear()
         self.assertEqual(self.plan().status_code,403)

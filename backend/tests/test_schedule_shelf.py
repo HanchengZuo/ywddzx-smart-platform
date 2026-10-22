@@ -129,7 +129,11 @@ class ShelfDatabaseTests(unittest.TestCase):
             response = self.dispatch('clear_today', board_token=token)
             self.assertEqual(response.status_code, 200, response.json)
             self.assertEqual(response.json['cleared_count'], 11)
-            self.assertEqual(response.json['board']['shelf'], [])
+            self.assertEqual(response.json['cleared_station_count'], 2)
+            self.assertEqual(response.json['parked_count'], 2)
+            self.assertEqual({c['source_station_id'] for c in response.json['board']['shelf']}, {1, 2})
+            self.assertTrue(all(c['ids']==[2] and c['plan_team']['leader_id']==2
+                                for c in response.json['board']['shelf']))
             self.assertEqual(self.dispatch('clear_today', board_token=token).status_code, 409)
         self.cur.execute("SELECT inspector_ids FROM inspection_schedule_cells WHERE station_id=3")
         self.assertTrue(all(r['inspector_ids'] == [2] for r in self.cur.fetchall()))
@@ -146,14 +150,24 @@ class ShelfDatabaseTests(unittest.TestCase):
             response = self.dispatch('clear_today', query, board_token=token)
         self.assertEqual(response.status_code, 200, response.json)
         self.assertEqual(response.json['cleared_count'], 3)
-        self.assertEqual(response.json['parked_count'], 0)
-        self.assertEqual(response.json['board']['shelf'], [])
+        self.assertEqual(response.json['parked_count'], 1)
+        self.assertEqual(response.json['cleared_station_count'], 1)
+        card=response.json['board']['shelf'][0]
+        self.assertEqual(card['ids'],[3])
+        self.assertEqual(card['source_column_key'],'row')
         self.assertTrue(all(c['status'] == 'assigned' for c in self.board()['rows'][0]['cells'].values()))
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE mode='online' AND status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],0)
+        restored=self.dispatch('place',query,shelf_id=card['id'],revision=card['revision'],cells=self.video_cells(1,2))
+        self.assertEqual(restored.status_code,200,restored.json)
+        self.assertTrue(all(c['status']=='assigned' and c['assignees'][0]['id']==3
+                            for c in restored.json['board']['rows'][0]['cells'].values()))
 
     def test_permissions_and_malformed_requests_do_not_write(self):
         self.save()
         self.permissions.discard('edit_inspection_schedule')
         self.assertEqual(self.dispatch('park', cells=self.row_cells(1,1)).status_code, 403)
+        self.assertEqual(self.dispatch('clear_today', board_token=self.board()['board_token']).status_code,403)
         self.permissions.add('edit_inspection_schedule')
         for cells in [None, [], 123, [{}], self.row_cells(1,1)[:1]]:
             self.assertIn(self.dispatch('park', cells=cells).status_code, (400,409))
@@ -257,21 +271,45 @@ class ShelfDatabaseTests(unittest.TestCase):
         self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_shelf');self.assertEqual(self.cur.fetchone()['n'],6)
         self.assertEqual(len(self.board()['shelf']),1,'field cards are untouched')
 
-    def test_clear_today_also_discards_shelf_only_and_preserves_other_mode(self):
+    def test_clear_today_preserves_existing_shelf_and_other_mode(self):
         self.save(); item = self.park()
+        self.save(station_id=2,inspector_ids=[3])
         self.cur.execute("INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,source_station_name,source_column_key) VALUES('online','2026-10-20','[3]','视频人员','金朝','row')")
         self.admin.commit()
         board = self.board()
         response = self.dispatch('clear_today',board_token=board['board_token'])
         self.assertEqual(response.status_code,200,response.json)
-        self.assertEqual(response.json['cleared_count'],0)
-        self.assertEqual(response.json['discarded_count'],1)
-        self.assertEqual(response.json['board']['shelf'],[])
+        self.assertEqual(response.json['cleared_count'],6)
+        self.assertEqual(response.json['discarded_count'],0)
+        self.assertEqual(response.json['parked_count'],1)
+        cards=response.json['board']['shelf']
+        self.assertEqual(len(cards),2)
+        self.assertEqual(cards[0],item)
+        self.assertEqual(cards[1]['ids'],[3])
+        self.assertEqual(cards[1]['source_station_id'],2)
         self.assertEqual(len(self.board(dict(mode='online',year=2026,month=10))['shelf']),1)
         self.cur.execute('SELECT status FROM inspection_schedule_shelf WHERE id=%s',(item['id'],))
-        self.assertEqual(self.cur.fetchone()['status'],'discarded')
+        self.assertEqual(self.cur.fetchone()['status'],'waiting')
         self.cur.execute("SELECT actor_id,action FROM inspection_schedule_shelf_events ORDER BY id DESC LIMIT 1")
-        self.assertEqual(dict(self.cur.fetchone()),dict(actor_id=2,action='cleared_today'))
+        self.assertEqual(dict(self.cur.fetchone()),dict(actor_id=2,action='cleared_to_shelf'))
+        again=self.dispatch('clear_today',board_token=response.json['board']['board_token'])
+        self.assertEqual(again.status_code,200,again.json)
+        self.assertEqual(again.json['parked_count'],0)
+        self.assertEqual(again.json['board']['shelf'],cards)
+
+    def test_concurrent_clears_park_each_station_only_once(self):
+        self.save();self.save(station_id=2)
+        token=self.board()['board_token']
+        def clear(_):
+            return self.client.application.test_client().post('/api/inspection-schedule/dispatch',json={
+                **self.query,'action':'clear_today','board_token':token}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(clear,range(2))),[200,409])
+        self.assertEqual(len(self.board()['shelf']),2)
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_shelf_events WHERE action='cleared_to_shelf'")
+        self.assertEqual(self.cur.fetchone()['n'],2)
+        self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'")
+        self.assertEqual(self.cur.fetchone()['n'],0)
 
     def test_expiration_is_audited_nonblocking_and_cannot_place_old_or_future_cards(self):
         self.save(); item = self.park()
@@ -310,7 +348,7 @@ class ShelfDatabaseTests(unittest.TestCase):
     def test_clear_shelf_audit_failure_rolls_back_cells_tasks_and_cards(self):
         self.save(); self.save(station_id=2); item = self.park()
         board = self.board()
-        self.cur.execute("ALTER TABLE inspection_schedule_shelf_events ADD CHECK(action<>'cleared_today') NOT VALID")
+        self.cur.execute("ALTER TABLE inspection_schedule_shelf_events ADD CHECK(action<>'cleared_to_shelf') NOT VALID")
         self.admin.commit()
         with self.assertLogs(level='ERROR'):
             self.assertEqual(self.dispatch('clear_today',board_token=board['board_token']).status_code,500)
