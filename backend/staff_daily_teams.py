@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import timedelta
 from schedule_common import ScheduleConflict
 from driving_permits import require_field_driver, validate_driving_teams
+from inspection_schedule_catalog import roster_position
 
 
 def team_days(cur, start, end):
@@ -70,6 +71,53 @@ def validate_dispatched_teams(cur, day, assignments):
         team = row['plan_team']
         if groups.get(team['leader_id']) != {p['id'] for p in team['members']}:
             raise ScheduleConflict('外勤组已派站点，请先撤销相关站点安排，再调整成员或重新分组。')
+
+
+def dispatched_members(cur, day):
+    """Actual board intent, not inbox state: completed/expired tasks still bind a saved plan."""
+    cur.execute("""SELECT DISTINCT c.inspector_ids,c.plan_team,c.mode,s.region,s.station_name
+      FROM inspection_schedule_cells c JOIN stations s ON s.id=c.station_id
+      WHERE scheduled_date=%s AND inspector_ids<>'[]'::jsonb
+        AND ((c.mode='online' AND s.include_online_plan) OR (c.mode IN ('offline','annual') AND s.include_offline_plan))""",(day,))
+    ids,leaders=set(),set()
+    for row in cur.fetchall():
+        if not roster_position(row,row['mode']): continue
+        ids.update(row['inspector_ids'])
+        team=row['plan_team']
+        if team:
+            leaders.add(team['leader_id'])
+            ids.update(p['id'] for p in team['members'])
+    return ids,leaders
+
+
+def annotate_dispatch_locks(cur,day,groups):
+    ids,leaders=dispatched_members(cur,day)
+    for group in groups:
+        locked=group['mode']=='offline' and (group['leader_id'] in leaders or any(p['id'] in ids for p in group['members']))
+        group['dispatch_locked']=locked
+        for p in group['members']:
+            p['dispatch_locked']=bool(locked or p['id'] in ids)
+    return groups
+
+
+def validate_team_changes(cur,day,before,after):
+    """Freeze both incoming and outgoing membership of dispatched field groups;
+    video members lock individually, leaving undispatched video peers editable.
+    """
+    ids,leaders=dispatched_members(cur,day)
+    current={p['id']:p for p in before}
+    proposed={p['id']:p for p in after}
+    for group in group_assignments(before):
+        if group['mode']=='offline' and (group['leader_id'] in leaders or any(p['id'] in ids for p in group['members'])):
+            old={p['id'] for p in group['members']}
+            new={p['id'] for p in after if p['mode']=='offline' and p['leader_id']==group['leader_id']}
+            if old!=new:
+                raise ScheduleConflict(f"{group['name']}已有今日站点派工，不能调入或调出组员；请先撤下该组全部今日排班。")
+    for uid in ids:
+        old=current.get(uid)
+        new=proposed.get(uid)
+        if old and (not new or (old['mode'],old['leader_id'])!=(new['mode'],new['leader_id'])):
+            raise ScheduleConflict(f"{old['display_name']}已有今日站点派工，不能调整分组；请先撤下其全部今日排班。")
 
 
 def adjust_preview(people, assignments, student_leaders):

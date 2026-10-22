@@ -7,7 +7,7 @@ import { parse as parseJavascript } from '@babel/parser'
 import { scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
 
 const source = file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
-for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/MeteringAnnualPlan.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue']) {
+for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/MeteringAnnualPlan.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue', 'components/TodayInspectionDispatch.vue', 'components/TransientNotice.vue', 'components/StaffDispatchDetails.vue', 'views/inspection/StaffAvailabilityView.vue']) {
   test(`${file}: the actual inline compiled render function is valid JavaScript`, () => {
     const { descriptor } = parse(source(file))
     const result = compileScript(descriptor, { id: file, inlineTemplate: true })
@@ -25,6 +25,7 @@ test('student drag submits server-owned student/leader IDs and refreshes only af
     axios: { post: async (url, body) => { calls.push({url,body}); return {data: {day: '2026-10-20', revision: 5}} } },
     load: async () => calls.push('load'), emit: (...args) => calls.push(args),
     window: { dispatchEvent: () => calls.push('notify') }, Event: class {},
+    personLocked:()=>false,groupLocked:()=>false,
   })
   const script = source('components/DailyInspectionTeams.vue')
   vm.runInContext(script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')), context)
@@ -48,12 +49,13 @@ test('rejected student move never emits a successful save and retains the server
     displayGroups: {value: [{name: '外勤甲组', members: [{id: 10}]}]},
     axios: {post: async () => { throw {response: {status: 409, data: {error: '已有站点派工'}}} }},
     load: async () => calls.push('reload'), emit: () => calls.push('saved'),
+    personLocked:()=>false,groupLocked:()=>false,warn:message=>calls.push(message),
   })
   const script = source('components/DailyInspectionTeams.vue')
   vm.runInContext(script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')), context)
   await context.dropStudent({name: '内勤视频组', leader_id: null})
-  assert.deepEqual(calls, ['reload'])
-  assert.equal(context.error.value, '已有站点派工')
+  assert.deepEqual(calls, ['已有站点派工','reload'])
+  assert.equal(context.error.value, '')
 })
 
 test('automatic dispatch explains coverage balance and interstation distance without online routing or paid AI', () => {
@@ -76,7 +78,7 @@ test('personal inbox lives in desktop and mobile headers, not the page body', ()
   assert.match(app, /scheduleAgenda.value = payload.schedule_agenda/)
 })
 
-test('confirm keeps the modal open, retains saved dispatch, and reloads both existing work and new preview', async () => {
+test('smart apply requires explicit replacement, keeps the modal open, and recalculates the independent plan', async () => {
   const calls=[]
   const saved={day:'2026-10-22',groups:[{station_id:1}],current_assignments:[{name:'外勤甲组',stations:[{station_id:1}]}]}
   const context=vm.createContext({
@@ -84,6 +86,7 @@ test('confirm keeps the modal open, retains saved dispatch, and reloads both exi
     preview:{value:{groups:[{station_id:1}],token:'server-token'}},
     day:{value:'2026-10-22'},offlineCount:{value:2},onlineCount:{value:3},
     loading:{value:false},saving:{value:false},stale:{value:false},error:{value:''},savedNotice:{value:''},
+    replaceConfirmed:{value:true},
     dialog:{value:{close(){throw Error('confirmation must not close the dialog')}}},
     emit:(event,data)=>calls.push({event,data}),window:{dispatchEvent(){}},Event:class{},
     axios:{post:async(url,body)=>{
@@ -97,7 +100,10 @@ test('confirm keeps the modal open, retains saved dispatch, and reloads both exi
   assert.deepEqual(calls.filter(c=>c.body).map(c=>c.body.action),['confirm','preview'])
   assert.equal(context.preview.value.current_assignments[0].name,'外勤甲组')
   assert.equal(context.preview.value.groups.length,0)
-  assert.match(context.savedNotice.value,/已确认/)
+  assert.equal(calls[0].body.strategy,'replace_today')
+  assert.equal(calls[0].body.replace_confirmed,true)
+  assert.equal(context.replaceConfirmed.value,false)
+  assert.match(context.savedNotice.value,/已应用/)
   assert.equal(context.saving.value,false)
   assert.equal(context.stale.value,false)
 })

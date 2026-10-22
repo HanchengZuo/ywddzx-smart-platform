@@ -215,7 +215,7 @@ class TeamAdjustmentDatabaseTests(unittest.TestCase):
         self.assertFalse(any(g['mode']=='offline' for g in response.json['groups']))
         self.assertTrue(any('缺少有效坐标' in w for w in response.json['warnings']))
 
-    def test_field_student_transfer_updates_unfinished_station_plans_and_tasks_atomically(self):
+    def test_field_student_transfer_is_rejected_once_either_group_has_station_dispatch(self):
         self.confirm()
         options=dict(day='2026-10-19')
         preview=self.client.post('/api/inspection-schedule/auto',json=dict(action='preview',**options)).json
@@ -224,16 +224,12 @@ class TeamAdjustmentDatabaseTests(unittest.TestCase):
         source=field[0]
         student=next(p for p in source['team_members'] if p['position']=='大学生')
         target=next(g for g in field if g['person']['id']!=source['person']['id'])
-        # First verify station-task write failure rolls the team move back too.
-        self.cur.execute('ALTER TABLE inspection_schedule_events ADD CHECK(false) NOT VALID'); self.admin.commit()
-        with self.assertLogs(level='ERROR'):
-            self.assertEqual(self.move(student['id'],target['person']['id']).status_code,500)
+        self.assertEqual(self.move(student['id'],target['person']['id']).status_code,409)
         self.cur.execute("SELECT revision FROM staff_daily_teams WHERE day='2026-10-19'"); self.assertEqual(self.cur.fetchone()['revision'],1)
-        self.cur.execute('ALTER TABLE inspection_schedule_events DROP CONSTRAINT inspection_schedule_events_check'); self.admin.commit()
-        result=self.move(student['id'],target['person']['id']); self.assertEqual(result.status_code,200,result.json)
+        result=self.move(student['id'],target['person']['id']); self.assertEqual(result.status_code,409,result.json)
         self.cur.execute('SELECT inspector_ids FROM inspection_schedule_cells WHERE mode=%s AND station_id=%s',('offline',source['station_id']))
-        self.assertTrue(all(student['id'] not in r['inspector_ids'] for r in self.cur.fetchall()))
-        self.cur.execute('SELECT inspector_ids FROM inspection_schedule_cells WHERE mode=%s AND station_id=%s',('offline',target['station_id']))
         self.assertTrue(all(student['id'] in r['inspector_ids'] for r in self.cur.fetchall()))
+        self.cur.execute('SELECT inspector_ids FROM inspection_schedule_cells WHERE mode=%s AND station_id=%s',('offline',target['station_id']))
+        self.assertTrue(all(student['id'] not in r['inspector_ids'] for r in self.cur.fetchall()))
         self.cur.execute("SELECT station_id FROM inspection_schedule_tasks WHERE mode='offline' AND user_id=%s AND status='pending'",(student['id'],))
-        self.assertEqual({r['station_id'] for r in self.cur.fetchall()},{g['station_id'] for g in field if g['person']['id']==target['person']['id']})
+        self.assertEqual({r['station_id'] for r in self.cur.fetchall()},{g['station_id'] for g in field if g['person']['id']==source['person']['id']})

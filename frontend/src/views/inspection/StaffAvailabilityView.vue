@@ -188,78 +188,94 @@
               ×
             </button>
           </header>
+          <TransientNotice
+            :message="warningToast"
+            :sequence="warningSequence"
+            @dismiss="warningToast = ''"
+          />
           <div class="dialog-body">
             <p v-if="detailLoading" class="edit-hint" role="status">正在核对原派工与最新实绩…</p>
             <p v-if="detailError" class="error" role="alert">
               {{ detailError }} <button type="button" @click="loadDetail">重新读取详情</button>
             </p>
-            <div
-              v-if="selectionState"
-              class="current-arrangement"
-              :class="'tone-' + selectionState.tone"
-            >
-              <strong>{{ selectionState.label }}</strong
-              ><span
-                >{{ selectionState.stage }} ·
-                {{ selectionState.detail || '此日没有实际巡检记录' }}</span
-              >
+            <div class="staff-dialog-layout">
+              <aside class="staff-edit-pane">
+                <div
+                  v-if="selectionState"
+                  class="current-arrangement"
+                  :class="'tone-' + selectionState.tone"
+                >
+                  <strong>{{ selectionState.label }}</strong
+                  ><span
+                    >{{ selectionState.stage }} ·
+                    {{ selectionState.detail || '此日没有实际巡检记录' }}</span
+                  >
+                </div>
+                <template v-if="editable">
+                  <div
+                    v-if="historical"
+                    class="status-picker history-picker"
+                    aria-label="补录历史档期"
+                  >
+                    <button
+                      v-for="item in historyOptions"
+                      :key="item.value"
+                      type="button"
+                      :class="item.value"
+                      :aria-pressed="historyStatus === item.value"
+                      :disabled="saving"
+                      @click="historyStatus = item.value"
+                    >
+                      <b>{{ item.label }}</b
+                      ><small>{{ item.hint }}</small>
+                    </button>
+                  </div>
+                  <div v-else class="status-picker" aria-label="选择当天档期">
+                    <button
+                      type="button"
+                      :aria-pressed="available"
+                      class="free"
+                      :disabled="saving"
+                      @click="available = true"
+                    >
+                      <b>有空</b><small>允许安排巡检</small>
+                    </button>
+                    <button
+                      type="button"
+                      :aria-pressed="!available"
+                      class="busy"
+                      :disabled="saving"
+                      @click="available = false"
+                    >
+                      <b>没空</b><small>当天不参与派工</small>
+                    </button>
+                  </div>
+                  <label v-if="historical ? historyStatus === 'busy' : !available" class="reason"
+                    >原因（选填，最多4字）<input
+                      v-model="reason"
+                      :disabled="saving"
+                      maxlength="4"
+                      placeholder="如：休假、培训、出差"
+                  /></label>
+                  <p v-if="historical" class="edit-hint">
+                    历史补录仅修改此人的档期显示，不会新增、删除或修改实际巡检记录。选择“自动记录”可恢复按原始巡检记录展示。
+                  </p>
+                  <p v-else class="edit-hint">
+                    仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
+                  </p>
+                </template>
+                <p v-else-if="detail" class="edit-hint readonly-explanation">
+                  {{ detail.cell.read_only_reason || '当前账号只有查看权限，不能修改档期。' }}
+                </p>
+                <p v-if="originalRecords" class="edit-hint">原始巡检记录：{{ originalRecords }}</p>
+                <p v-if="savedMeta" class="saved-meta">{{ savedMeta }}</p>
+              </aside>
+              <section class="staff-evidence-pane">
+                <h4>委派任务与执行进度</h4>
+                <StaffDispatchDetails v-if="detail" :cell="detail.cell" :records="detail.records" />
+                <p v-else class="edit-hint">核对原派工与巡检记录后显示详情。</p>
+              </section>
             </div>
-            <StaffDispatchDetails v-if="detail" :cell="detail.cell" :records="detail.records" />
-            <template v-if="editable">
-              <div v-if="historical" class="status-picker history-picker" aria-label="补录历史档期">
-                <button
-                  v-for="item in historyOptions"
-                  :key="item.value"
-                  type="button"
-                  :class="item.value"
-                  :aria-pressed="historyStatus === item.value"
-                  :disabled="saving"
-                  @click="historyStatus = item.value"
-                >
-                  <b>{{ item.label }}</b
-                  ><small>{{ item.hint }}</small>
-                </button>
-              </div>
-              <div v-else class="status-picker" aria-label="选择当天档期">
-                <button
-                  type="button"
-                  :aria-pressed="available"
-                  class="free"
-                  :disabled="saving"
-                  @click="available = true"
-                >
-                  <b>有空</b><small>允许安排巡检</small>
-                </button>
-                <button
-                  type="button"
-                  :aria-pressed="!available"
-                  class="busy"
-                  :disabled="saving"
-                  @click="available = false"
-                >
-                  <b>没空</b><small>当天不参与派工</small>
-                </button>
-              </div>
-              <label v-if="historical ? historyStatus === 'busy' : !available" class="reason"
-                >原因（选填，最多4字）<input
-                  v-model="reason"
-                  :disabled="saving"
-                  maxlength="4"
-                  placeholder="如：休假、培训、出差"
-              /></label>
-              <p v-if="historical" class="edit-hint">
-                历史补录仅修改此人的档期显示，不会新增、删除或修改实际巡检记录。选择“自动记录”可恢复按原始巡检记录展示。
-              </p>
-              <p v-else class="edit-hint">
-                仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
-              </p>
-            </template>
-            <p v-else-if="detail" class="edit-hint readonly-explanation">
-              {{ detail.cell.read_only_reason || '当前账号只有查看权限，不能修改档期。' }}
-            </p>
-            <p v-if="originalRecords" class="edit-hint">原始巡检记录：{{ originalRecords }}</p>
-            <p v-if="savedMeta" class="saved-meta">{{ savedMeta }}</p>
-            <p v-if="saveError" class="error" role="alert">{{ saveError }}</p>
           </div>
           <footer>
             <button type="button" :disabled="saving" @click="close">关闭</button
@@ -293,6 +309,13 @@ import { createAdaptivePolling } from '@/utils/adaptivePolling'
 import { actualsRefreshDelay } from '@/utils/staffActuals'
 import DailyInspectionTeams from '@/components/DailyInspectionTeams.vue'
 import StaffDispatchDetails from '@/components/StaffDispatchDetails.vue'
+import TransientNotice from '@/components/TransientNotice.vue'
+const warningToast = ref(''),
+  warningSequence = ref(0)
+function warn(message) {
+  warningToast.value = message
+  warningSequence.value++
+}
 const week = ref(shanghaiToday()),
   board = ref(null),
   loading = ref(false),
@@ -328,7 +351,6 @@ const historyOptions = [
   { value: 'auto', label: '自动记录', hint: '恢复原始巡检记录' },
 ]
 const dialog = ref(null),
-  saveError = ref(''),
   conflict = ref(false)
 const detail = ref(null),
   detailLoading = ref(false),
@@ -443,7 +465,6 @@ async function openCell(person, day) {
   editable.value = false
   detail.value = null
   detailError.value = ''
-  saveError.value = ''
   conflict.value = false
   polling.pause()
   await nextTick()
@@ -516,7 +537,6 @@ function backdrop(event) {
 async function save() {
   if (saving.value || !editable.value || conflict.value || !selection.value) return
   saving.value = true
-  saveError.value = ''
   try {
     await axios.put(
       '/api/staff-availability',
@@ -540,10 +560,12 @@ async function save() {
   } catch (err) {
     if (!disposed) {
       conflict.value = err.response?.status === 409
-      saveError.value =
-        (err.response?.data?.error || '保存失败，请重试。') +
-        (conflict.value ? ' 请关闭并重新选择。' : '')
-      if (conflict.value) await load()
+      warn(err.response?.data?.error || '保存失败，请重试。')
+      if (conflict.value) {
+        await loadDetail()
+        await load()
+        conflict.value = false
+      }
     }
   } finally {
     saving.value = false
@@ -1132,7 +1154,7 @@ tbody tr:hover .person-name {
   font-size: 13px;
 }
 .staff-dialog {
-  width: min(680px, calc(100vw - 24px));
+  width: min(1120px, calc(100vw - 24px));
   max-width: none;
   max-height: calc(100dvh - 24px);
   padding: 0;
@@ -1141,6 +1163,36 @@ tbody tr:hover .person-name {
   border-radius: 16px;
   color: #1c3b55;
   box-shadow: 0 24px 80px #0d263b55;
+  overflow: hidden;
+}
+.staff-dialog-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.staff-edit-pane {
+  background: #f3f7fa;
+  border: 1px solid #d5e2eb;
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.staff-evidence-pane {
+  min-width: 0;
+}
+.staff-evidence-pane > h4 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: #214b68;
+  border-left: 3px solid #227490;
+  padding-left: 10px;
+}
+@media (max-width: 760px) {
+  .staff-dialog-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
 }
 .staff-dialog[open] {
   display: flex;

@@ -10,13 +10,14 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from schedule_period import period
 from annual_metering_plan import plan_state
 from schedule_row_state import today_assignments
+from schedule_smart import planning_board, replacement_summary, protected_daily_counts, apply_smart_plan
 from staff_availability import available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, cluster_diameter, regional_coverage, regional_targets
 
 
-def workload(cur, ids, start, end):
+def workload(cur, ids, start, end, *, include_plans=True):
     cur.execute('''WITH participants AS (
       SELECT id AS inspection_id,inspector_id FROM inspections WHERE inspection_date >= %s AND inspection_date < %s
       UNION SELECT i.inspection_id,i.inspector_id FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
@@ -28,13 +29,13 @@ def workload(cur, ids, start, end):
       WHERE p.inspector_id=ANY(%s) AND t.checklist_mode IN ('offline','online') AND ins.inspection_date<=%s
       UNION
       SELECT task.user_id,task.mode,task.scheduled_date,task.station_id FROM inspection_schedule_tasks task
-      WHERE task.user_id=ANY(%s) AND task.status='pending' AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
+      WHERE %s AND task.user_id=ANY(%s) AND task.status='pending' AND task.station_id IS NOT NULL AND task.table_id IS NOT NULL
         AND task.scheduled_date >= %s AND task.scheduled_date < %s
         AND (task.mode='online' OR task.scheduled_date>=%s)
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.station_id=task.station_id
         AND ins.inspection_table_id=task.table_id
         AND ins.inspection_date>=task.period_start AND ins.inspection_date<=%s)
-    ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), ids, start, end, today(), today()))
+    ) SELECT uid,mode,COUNT(*) AS n FROM units GROUP BY uid,mode''', (start, end, start, end, ids, today(), include_plans, ids, start, end, today(), today()))
     result = {uid: dict(offline=0, online=0) for uid in ids}
     for r in cur.fetchall(): result[r['uid']][r['mode']] = r['n']
     return result
@@ -63,6 +64,9 @@ def proposal(cur, actor, day, options=None):
     require_workday(cur, day)
     if day != today(): raise ValueError('一键排班只安排今天，请刷新日期。')
     options = options or {}
+    if options.get('strategy') not in (None,'replace_today'):
+        raise ValueError('请选择有效的排班策略。')
+    smart=options.get('strategy')=='replace_today'
     quotas = {mode: options.get(key, default) for mode, key, default in
               [('offline', 'offline_count', 2), ('online', 'online_count', 3)]}
     if any(type(v) is not int or not 1 <= v <= 10 for v in quotas.values()):
@@ -70,6 +74,9 @@ def proposal(cur, actor, day, options=None):
     origin = ORIGIN_POINT
     people = available_people(cur, day)
     eligible = [p for p in people if p['id'] and p['available'] is True and not p['station_modes'] and not p['actual_modes']]
+    if smart:
+        eligible=[p for p in people if p['id'] and p['available'] is True and p['daily_assignment']
+                  and not ({m['mode'] for m in p['actual_modes']}-{p['daily_assignment']['mode']})]
     demands, periods, board_tokens, boards = {}, {}, {}, {}
     coverage = []
     quarter = (day.month - 1) // 3 + 1
@@ -79,6 +86,7 @@ def proposal(cur, actor, day, options=None):
         board = read_board(cur, chosen, start, end)
         boards[mode]=board
         board_tokens[mode] = board['board_token']
+        if smart: board=planning_board(board,day)
         if mode == 'offline': coverage = regional_coverage(board['rows'],day)
         demands[mode] = []
         for row in board['rows']:
@@ -90,7 +98,7 @@ def proposal(cur, actor, day, options=None):
                   region=row['region'], address=row['address'], longitude=row['longitude'], latitude=row['latitude'], cells=cells,
                   covered=any(c['status']=='completed' for c in row['cells'].values())))
     _, start, end = periods['offline']
-    loads = workload(cur, [p['id'] for p in eligible], start, end)
+    loads = workload(cur, [p['id'] for p in eligible], start, end,include_plans=not smart)
     groups = []
     eligible_by_id = {p['id']: p for p in eligible}
     # Keep a saved leader/student team together when converting personnel plans to station tasks.
@@ -112,13 +120,14 @@ def proposal(cur, actor, day, options=None):
     if missing: warnings.append('以下站点缺少有效坐标，未自动派现场任务：'+'、'.join(missing))
     if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整且至少1人拥有准驾证的外勤组安排。')
     valid = [s for s in demands['offline'] if coordinate(s)]
-    metering = plan_state(cur,day.year,day.month)
+    metering = plan_state(cur,day.year,day.month,ignore_plan_day=day if smart else None)
     annual_period = period(dict(mode='annual',year=day.year))
     periods['annual']=annual_period
     annual_board=read_board(cur,*annual_period)
     boards['annual']=annual_board
     board_tokens['annual']=annual_board['board_token']
-    ordinary=read_board(cur,*periods['offline'])
+    if smart: annual_board=planning_board(annual_board,day)
+    ordinary=planning_board(boards['offline'],day) if smart else read_board(cur,*periods['offline'])
     quarter_rows={r['station_id']:r for r in ordinary['rows']}
     by_id={s['station_id']:s for s in valid}
     priority=[]
@@ -137,7 +146,10 @@ def proposal(cur, actor, day, options=None):
     limits={r['region']:r['remaining'] for r in metering['regions']}
     required=[]
     used=defaultdict(int)
-    capacity=len(field_teams)*quotas['offline']
+    protected=protected_daily_counts(boards.values(),day) if smart else {}
+    field_teams=[t for t in field_teams if protected.get(('offline',tuple(sorted(p['id'] for p in t['members']))),0)<quotas['offline']]
+    capacities=[quotas['offline']-protected.get(('offline',tuple(sorted(p['id'] for p in t['members']))),0) for t in field_teams]
+    capacity=sum(capacities)
     while len(required)<capacity:
         choices=[s for s in priority if s['station_id'] not in {r['station_id'] for r in required} and used[s['region']]<limits.get(s['region'],0)]
         if not choices: break
@@ -146,7 +158,7 @@ def proposal(cur, actor, day, options=None):
     required_ids={s['station_id'] for s in required}
     valid=[s for s in valid if s['station_id'] not in required_ids]+required
     _,coverage = regional_targets(valid,capacity,coverage)
-    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage,required_ids=required_ids)
+    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage,required_ids=required_ids,capacities=capacities)
     selected=Counter(s['region'] for route in routes for s in route)
     newly_covered=Counter(s['region'] for route in routes for s in route if not s['covered'])
     for r in coverage:
@@ -167,10 +179,12 @@ def proposal(cur, actor, day, options=None):
                 route_order=index+1, cluster_max_km=round(cluster_diameter(route),1)))
             before = after
     video_people = [p for p in eligible if not p['daily_assignment'] or p['daily_assignment']['mode']=='online']
+    if smart: video_people=[p for p in video_people if p['daily_assignment'] and p['daily_assignment']['mode']=='online']
     video_people.sort(key=lambda p: (loads[p['id']]['online'], p['sequence']))
     # Round robin shares scarce remaining stations before giving anyone a second station.
-    for _ in range(quotas['online']):
+    for index in range(quotas['online']):
         for p in video_people:
+            if index>=quotas['online']-protected.get(('online',(p['id'],)),0): continue
             if not demands['online']: break
             station = demands['online'].pop(0)
             before = dict(loads[p['id']]); after = dict(before); after['online'] += 1
@@ -179,19 +193,51 @@ def proposal(cur, actor, day, options=None):
             loads[p['id']] = after
     evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
                     board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-compact-v2',
-                    team_revision=saved_team.get('revision', 0))
+                    team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'))
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
         warnings=warnings, regional_coverage=coverage, metering_plan=metering,
         current_assignments=today_assignments(boards.values(),day),
+        strategy=options.get('strategy'),replacement=replacement_summary(boards.values(),day),
+        personnel=dict(groups=group_assignments(saved_team.get('assignments',[])),
+                       revision=saved_team.get('revision',0),updated_by_name=saved_team.get('updated_by_name',''),updated_at=saved_team.get('updated_at','')),
         route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后缩小同组站点间距离。计量年度表任一适用检查项有记录即算已查，未审核也计数；本月目标按本月记录，年度覆盖按全年记录，同站去重。',
         available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
-        excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or '当天已有站点安排或巡检实绩')
+        excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or ('尚未保存今日巡检分组或分工与实绩冲突' if smart else '当天已有站点安排或巡检实绩'))
                   for p in people if p not in eligible]), periods
 
 
 def register_schedule_automation(app, *, connect, has_permission):
+    @app.get('/api/inspection-schedule/today')
+    def saved_daily_dispatch():
+        actor=getattr(g,'current_user',None)
+        if not actor: return jsonify(success=False,error='请先登录。'),401
+        conn=cur=None
+        try:
+            conn=connect();cur=conn.cursor()
+            if not has_permission(cur,actor,VIEW_PERMISSION):
+                raise PermissionError('当前账号无权查看巡检排班。')
+            cur.execute("SET LOCAL statement_timeout='10s'")
+            day=today()
+            boards=[read_board(cur,*period(dict(mode=mode,year=day.year,**extra))) for mode,extra in (
+                ('offline',dict(quarter=(day.month-1)//3+1)),('annual',{}),('online',dict(month=day.month)))]
+            result=today_assignments(boards,day)
+            conn.commit()
+            response=jsonify(success=True,day=day.isoformat(),groups=result)
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        except PermissionError as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False,error=str(exc)),403
+        except Exception:
+            if conn: conn.rollback()
+            logging.exception('Saved daily dispatch failed')
+            return jsonify(success=False,error='今日已确认排班暂时无法读取，请稍后重试。'),500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()
+
     @app.post('/api/inspection-schedule/auto')
     def auto_schedule():
         actor = getattr(g, 'current_user', None)
@@ -212,8 +258,12 @@ def register_schedule_automation(app, *, connect, has_permission):
             if data['action'] == 'confirm':
                 if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
                 if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')
+                if result['strategy']=='replace_today':
+                    if data.get('replace_confirmed') is not True:
+                        raise ValueError('请先确认替换今日未开始的排班，已开始及其他日期计划将保留。')
+                    result['replaced_cell_count']=apply_smart_plan(cur,actor,result,periods,day)
                 cache = {}
-                for group in result['groups']:
+                for group in ([] if result['strategy']=='replace_today' else result['groups']):
                     if group.get('metering_cells'):
                         annual,annual_start,annual_end=periods['annual']
                         # Annual-first atomically fills the corresponding quarterly row.

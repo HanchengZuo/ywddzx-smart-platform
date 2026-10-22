@@ -410,10 +410,12 @@ class ShelfTeamDatabaseTests(unittest.TestCase):
         cells = [dict(station_id=row['station_id'],column_key=k,revision=c['revision']) for k,c in row['cells'].items() if c['status']!='completed']
         parked = self.dispatch('park',cells=cells)
         self.assertEqual(parked.status_code,200,parked.json)
-        card = parked.json['board']['shelf'][0]
+        card = next(c for c in parked.json['board']['shelf'] if c['source_station_id']==source['station_id'])
+        cleared=self.dispatch('clear_today',board_token=self.board()['board_token'])
+        self.assertEqual(cleared.status_code,200,cleared.json)
         moved = self.post('move',student_id=student['id'],leader_id=target['person']['id'],revision=1)
         self.assertEqual(moved.status_code,200,moved.json)
-        current = self.board()['shelf'][0]
+        current = next(c for c in self.board()['shelf'] if c['id']==card['id'])
         self.assertEqual(current['revision'],card['revision']+1)
         self.assertNotIn(student['id'],current['ids'])
         latest_row = next(r for r in self.board()['rows'] if r['station_id']==source['station_id'])

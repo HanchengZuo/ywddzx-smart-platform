@@ -42,8 +42,13 @@
         按原委派站点、检查表及计划日起的巡检记录核对，不要求审核，也不以录入人是否为组员判定。现场待办次日归档不等于实际完成。
       </p>
     </div>
-    <article v-for="group in groups" :key="group.key" class="station-progress">
-      <header>
+    <details
+      v-for="group in groups"
+      :key="group.key"
+      class="station-progress"
+      :open="groups.length === 1"
+    >
+      <summary class="station-progress-head">
         <div>
           <small>{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }}</small>
           <h4>{{ group.station_name }}</h4>
@@ -52,39 +57,41 @@
           >{{ group.tasks.filter((t) => t.record_count).length }} /
           {{ group.tasks.length }} 项完成</span
         >
-      </header>
-      <div v-for="task in group.tasks" :key="task.id" class="dispatch-task">
-        <div class="task-title">
-          <strong>{{ task.table_name }}</strong
-          ><span :class="task.record_count ? 'done' : 'pending'">{{
-            task.record_count ? '已完成' : '未完成'
-          }}</span>
+      </summary>
+      <div class="station-checks">
+        <div v-for="task in group.tasks" :key="task.id" class="dispatch-task">
+          <div class="task-title">
+            <strong>{{ task.table_name }}</strong
+            ><span :class="task.record_count ? 'done' : 'pending'">{{
+              task.record_count ? '已完成' : '未完成'
+            }}</span>
+          </div>
+          <p v-if="task.plan_team" class="team-evidence">
+            {{ task.plan_team.name }} ·
+            {{ task.plan_team.members.map((p) => p.display_name).join('、') }}
+          </p>
+          <p class="dispatch-meta">
+            原派工：{{ task.assigned_by_name }} · {{ task.assigned_at
+            }}<span>计划日期 {{ task.day }}</span>
+          </p>
+          <ul v-if="task.records.length" class="record-list">
+            <li v-for="record in task.records" :key="record.id">
+              <b>巡检记录 #{{ record.id }}</b
+              ><span>{{ record.day }} · {{ record.inspector_name }}</span>
+            </li>
+          </ul>
+          <p v-else class="pending-note">
+            {{
+              !task.station_id || !task.table_id
+                ? '站点或检查表已删除，原派工信息仍保留。'
+                : cell.actuals_pending
+                  ? '当日记录待 17:00 后统一核对。'
+                  : '尚未发现对应巡检记录。'
+            }}
+          </p>
         </div>
-        <p v-if="task.plan_team" class="team-evidence">
-          {{ task.plan_team.name }} ·
-          {{ task.plan_team.members.map((p) => p.display_name).join('、') }}
-        </p>
-        <p class="dispatch-meta">
-          原派工：{{ task.assigned_by_name }} · {{ task.assigned_at
-          }}<span>计划日期 {{ task.day }}</span>
-        </p>
-        <ul v-if="task.records.length" class="record-list">
-          <li v-for="record in task.records" :key="record.id">
-            <b>巡检记录 #{{ record.id }}</b
-            ><span>{{ record.day }} · {{ record.inspector_name }}</span>
-          </li>
-        </ul>
-        <p v-else class="pending-note">
-          {{
-            !task.station_id || !task.table_id
-              ? '站点或检查表已删除，原派工信息仍保留。'
-              : cell.actuals_pending
-                ? '当日记录待 17:00 后统一核对。'
-                : '尚未发现对应巡检记录。'
-          }}
-        </p>
       </div>
-    </article>
+    </details>
     <details v-if="cancelled.length" class="dispatch-history">
       <summary>已撤销 / 改派的原始任务（{{ cancelled.length }}）</summary>
       <article v-for="task in cancelled" :key="task.id">
@@ -243,7 +250,7 @@ const groups = computed(() => {
   overflow: hidden;
   margin-top: 14px;
 }
-.station-progress > header {
+.station-progress-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -251,7 +258,7 @@ const groups = computed(() => {
   padding: 12px 14px;
   background: #f2f6fa;
 }
-header small {
+.station-progress-head small {
   font-size: 10px;
   color: #6d8497;
 }
@@ -260,10 +267,23 @@ h4 {
   color: #244f6c;
   margin: 4px 0 0;
 }
-header > span {
+.station-progress-head > span {
   font-size: 11px;
   color: #4f7386;
   white-space: nowrap;
+}
+.station-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.station-checks > .dispatch-task {
+  min-width: 0;
+  border-right: 1px solid #e0e8f0;
+}
+@media (max-width: 900px) {
+  .station-checks {
+    grid-template-columns: 1fr;
+  }
 }
 .dispatch-task {
   padding: 12px 14px;

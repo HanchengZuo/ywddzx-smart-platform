@@ -8,6 +8,7 @@
       </div>
       <div class="head-actions">
         <MeteringAnnualPlan v-if="allowed" @saved="refreshKey++" />
+        <TodayInspectionDispatch v-if="allowed" />
         <AutomaticSchedule v-if="allowed" @scheduled="onScheduled" /><span class="access-label">{{
           allowed ? '全局共享 · 独立编辑授权' : '需要查看权限'
         }}</span>
@@ -78,7 +79,7 @@
           未启用、缺失或重复定义的检查表列不可安排。现场选择人员档期已保存的完整外勤组；视频整站由一位检查人完成安全、计量、现场。本站任一适用检查项已检查即整行只读，包括编辑、多选、拖拽及一键清空；季度与年度中同组同日的联动计划也锁定。过期未检查计划变黄，但原派工信息和个人视频待办仍保留。排班全局共享，保存操作人与时间，整批校验；切换筛选清空勾选，避免误改隐藏项目。
         </p>
         <p>
-          今日一键排班先预览再确认，现场默认每组2站、视频默认每人3站，可调整为1至10站，不覆盖已有安排。现场先补计量月度配额，再均衡季度覆盖，兼顾计划预留，并按站点间距离紧凑分组，不以顺路或往返路线选站。人员档期确认分组后，即可从今日待选区手动派站，无需先自动排班。右上角“今日安排”展示个人档期及待办；现场当日安排次日归档，视频未完成任务持续保留至同站同表有巡检记录，不依赖审核。
+          今日智能排班基于人员档期已保存的现场组和视频人员，忽略今日未开始的手动派工来计算方案。现场默认每组2站、视频每人3站，可调整1至10站，已开始的今日站点计入该组/人的数量。确认替换范围后，同事务撤下今日未开始的安排并应用方案；已开始整行、原始记录及其他日期计划保留，失败全部回滚。现场先补当月计量目标，再均衡季度片区覆盖和组内距离。实际派工在“今日已确认排班”独立窗口按现场/视频查看，右上角“今日安排”仍为个人待办。
         </p>
       </details>
     </template>
@@ -91,12 +92,13 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import InspectionSchedulePanel from '@/components/InspectionSchedulePanel.vue'
 import AutomaticSchedule from '@/components/AutomaticSchedule.vue'
 import MeteringAnnualPlan from '@/components/MeteringAnnualPlan.vue'
+import TodayInspectionDispatch from '@/components/TodayInspectionDispatch.vue'
 const refreshKey = ref(0),
   dispatchNotice = ref('')
 function onScheduled(data) {
   refreshKey.value++
   activeMode.value = 'offline'
-  dispatchNotice.value = `${data.day} 已安排 ${data.groups.length} 个站点任务组、${data.cell_count} 个单元格，已同步个人待办。`
+  dispatchNotice.value = `${data.day} ${data.strategy === 'replace_today' ? '今日智能方案已应用' : '排班已保存'}，本次安排 ${data.groups.length} 个站点任务，已同步个人待办；已开始站点及其他日期计划保持不变。`
 }
 const modes = [
   { key: 'offline', label: '现场检查排班', period: '按季度' },
@@ -214,6 +216,17 @@ p {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.head-actions :deep(.plan-trigger),
+.head-actions :deep(.auto-trigger),
+.head-actions :deep(.today-dispatch-trigger) {
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  border-radius: 10px;
+  font-weight: 700;
 }
 .dispatch-notice {
   margin: 0;
