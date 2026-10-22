@@ -8,7 +8,7 @@ from inspection_schedule_catalog import normalized_region, roster_position, OFFL
 from schedule_common import ScheduleConflict, lock_schedule, today
 
 
-def plan_state(cur, year, month):
+def plan_state(cur, year, month, *, ignore_plan_day=None):
     cur.execute('''SELECT p.*,COALESCE(NULLIF(TRIM(u.real_name),''),u.username,'未记录') AS updated_by_name,
       to_char(p.updated_at,'YYYY-MM-DD HH24:MI:SS') AS saved_at
       FROM annual_metering_plans p LEFT JOIN users u ON u.id=p.updated_by WHERE p.year=%s''', (year,))
@@ -31,7 +31,8 @@ def plan_state(cur, year, month):
     annual = {r['station_id'] for r in records}
     cur.execute('''SELECT DISTINCT station_id FROM inspection_schedule_cells WHERE mode='annual' AND year=%s
       AND column_key='metering_site' AND jsonb_array_length(inspector_ids)>0
-      AND scheduled_date>=%s AND scheduled_date<%s AND scheduled_date>=%s''', (year,start,end,today()))
+      AND scheduled_date>=%s AND scheduled_date<%s AND scheduled_date>=%s
+      AND scheduled_date IS DISTINCT FROM %s''', (year,start,end,today(),ignore_plan_day))
     reserved = {r['station_id'] for r in cur.fetchall()} - actual
     checked = Counter(normalized_region(s['region']) for s in stations if s['id'] in actual)
     annual_checked = Counter(normalized_region(s['region']) for s in stations if s['id'] in annual)

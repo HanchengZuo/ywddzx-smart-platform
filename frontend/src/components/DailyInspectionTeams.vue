@@ -21,6 +21,11 @@
           ×
         </button>
       </header>
+      <TransientNotice
+        :message="warningToast"
+        :sequence="warningSequence"
+        @dismiss="warningToast = ''"
+      />
       <div class="team-body">
         <p class="method">
           今日未设置的档期默认有空，提前设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
@@ -52,7 +57,9 @@
             </summary>
             <div v-for="person in managers" :key="person.id" class="manager-row">
               <div>
-                <strong>{{ person.display_name }} <em v-if="person.has_driving_permit" class="permit-tag">准驾证</em></strong
+                <strong
+                  >{{ person.display_name }}
+                  <em v-if="person.has_driving_permit" class="permit-tag">准驾证</em></strong
                 ><small v-if="lockedMode(person)"
                   >已有{{
                     lockedMode(person) === 'offline' ? '现场' : '视频'
@@ -83,11 +90,14 @@
             <button
               type="button"
               class="primary"
-              :disabled="!ready || loading || saving"
+              :disabled="!ready || loading || saving || hasDispatchedMembers"
               @click="createPreview"
             >
               {{ preview ? '重新随机分组' : '平均随机分组' }}
             </button>
+            <p v-if="hasDispatchedMembers" class="method">
+              已有今日站点派工，暂不能整体重新随机分组。已派工的外勤组与视频人员锁定，其余未派工人员仍可在下方调整。
+            </p>
           </details>
           <section class="result-step">
             <div class="step-heading">
@@ -115,14 +125,41 @@
                   <strong>{{ group.name }}</strong
                   ><span>{{ group.members.length }} 人</span>
                 </header>
-                <p v-if="group.mode === 'offline'" class="driver-status" :class="{ unsafe: !driverCount(group), preferred: driverCount(group) >= 2 }">{{ driverCount(group) ? driverCount(group) + ' 人拥有准驾证' + (driverCount(group) >= 2 ? ' · 优选配置' : ' · 已满足最低要求') : '缺少持准驾证人员 · 不可确认或派现场任务' }}</p>
+                <small v-if="groupLocked(group)" class="dispatch-lock"
+                  >已有今日派工 · 不可调入或调出组员</small
+                >
+                <p
+                  v-if="group.mode === 'offline'"
+                  class="driver-status"
+                  :class="{ unsafe: !driverCount(group), preferred: driverCount(group) >= 2 }"
+                >
+                  {{
+                    driverCount(group)
+                      ? driverCount(group) +
+                        ' 人拥有准驾证' +
+                        (driverCount(group) >= 2 ? ' · 优选配置' : ' · 已满足最低要求')
+                      : '缺少持准驾证人员 · 不可确认或派现场任务'
+                  }}
+                </p>
                 <div class="member-tags">
                   <button
                     v-for="person in group.members"
                     :key="person.id"
                     type="button"
-                    :draggable="editable && !loading && !saving && person.position === '大学生'"
-                    :disabled="!editable || loading || saving || person.position !== '大学生'"
+                    :draggable="
+                      editable &&
+                      !loading &&
+                      !saving &&
+                      person.position === '大学生' &&
+                      !personLocked(person)
+                    "
+                    :disabled="
+                      !editable ||
+                      loading ||
+                      saving ||
+                      person.position !== '大学生' ||
+                      personLocked(person)
+                    "
                     :aria-label="
                       person.display_name +
                       (person.position === '大学生' ? '，点击或拖动调整分组' : '，管理人员固定带队')
@@ -138,15 +175,16 @@
                     @dragend="draggingStudent = null"
                     @click="selectedStudent = selectedStudent === person.id ? null : person.id"
                   >
-                    {{ person.display_name
-                    }}<small v-if="person.id === group.leader_id">带队</small><small v-if="person.has_driving_permit" class="permit-tag">准驾</small>
+                    {{ person.display_name }}<small v-if="person.id === group.leader_id">带队</small
+                    ><small v-if="person.has_driving_permit" class="permit-tag">准驾</small
+                    ><small v-if="personLocked(person)">已派工</small>
                   </button>
                 </div>
                 <button
                   v-if="selectedStudent"
                   type="button"
                   class="move-here"
-                  :disabled="saving"
+                  :disabled="saving || groupLocked(group)"
                   @click="dropStudent(group)"
                 >
                   移至{{ group.name }}
@@ -159,7 +197,7 @@
                   ? '正在保存分组调整…'
                   : preview
                     ? '拖动大学生姓名到其他组调整预览；手机或键盘可先点姓名，再点目标组“移至”。调整暂不保存，确认安排后统一生效；人工调整不强制各组人数相同。'
-                    : '拖动大学生姓名到其他组即可保存；手机或键盘可先点姓名，再点目标组“移至”。外勤组换人同步未检查的站点计划及待办；已派站人员跨现场/视频调组前需先撤销原派站。'
+                    : '未派工的大学生可拖动调组；已派工外勤组不可调入或调出，已派工视频人员不可调组。须先从巡检排班撤下相关组或人员全部今日计划，才能解锁。手机可先点姓名，再点目标组“移至”。'
               }}
               <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
                 取消选择
@@ -173,7 +211,11 @@
             <p v-if="preview && !displayGroups.some((g) => g.mode === 'offline')" class="warning">
               没有现场带队管理人员，本次大学生全部安排视频巡检。
             </p>
-            <p v-if="unsafeGroups.length" class="error" role="alert">{{ unsafeGroups.map(g => g.name).join('、') }}尚无持准驾证成员。请调整预览；已保存分组请先维护人员准驾证资料或调整成员，不能派现场任务。</p>
+            <p v-if="unsafeGroups.length" class="error" role="alert">
+              {{
+                unsafeGroups.map((g) => g.name).join('、')
+              }}尚无持准驾证成员。请调整预览；已保存分组请先维护人员准驾证资料或调整成员，不能派现场任务。
+            </p>
           </section>
           <details v-if="context.excluded.length" class="excluded">
             <summary>未参与安排的人员（{{ context.excluded.length }}）</summary>
@@ -202,6 +244,7 @@
 import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { fieldDriverCount, movePreviewStudent } from '@/utils/dailyTeamPreview'
+import TransientNotice from '@/components/TransientNotice.vue'
 const props = defineProps({ canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['saved', 'opened', 'closed'])
 const dialog = ref(null),
@@ -212,6 +255,24 @@ const dialog = ref(null),
   saving = ref(false),
   error = ref('')
 const editable = computed(() => props.canEdit && context.value?.can_edit)
+const warningToast = ref(''),
+  warningSequence = ref(0)
+function warn(message) {
+  warningToast.value = message
+  warningSequence.value++
+}
+const hasDispatchedMembers = computed(() =>
+  (context.value?.groups || []).some((g) => g.members.some((p) => p.dispatch_locked)),
+)
+const personLocked = (p) =>
+  (context.value?.groups || []).some((g) =>
+    g.members.some((m) => m.id === p.id && m.dispatch_locked),
+  )
+const groupLocked = (g) =>
+  g.mode === 'offline' &&
+  (context.value?.groups || []).some(
+    (saved) => saved.mode === 'offline' && saved.leader_id === g.leader_id && saved.dispatch_locked,
+  )
 const managers = computed(() =>
   (context.value?.people || []).filter((p) => p.position === '管理人员'),
 )
@@ -232,11 +293,19 @@ const displayGroups = computed(() => {
     : groups
 })
 const driverCount = (group) => fieldDriverCount(group, context.value?.people)
-const unsafeGroups = computed(() => displayGroups.value.filter(group => group.mode === 'offline' && !driverCount(group)))
+const unsafeGroups = computed(() =>
+  displayGroups.value.filter((group) => group.mode === 'offline' && !driverCount(group)),
+)
 const draggingStudent = ref(null),
   selectedStudent = ref(null)
 function startStudentDrag(event, person) {
-  if (!editable.value || loading.value || saving.value || person.position !== '大学生') {
+  if (
+    !editable.value ||
+    loading.value ||
+    saving.value ||
+    person.position !== '大学生' ||
+    personLocked(person)
+  ) {
     event.preventDefault()
     return
   }
@@ -260,6 +329,12 @@ async function dropStudent(group, event) {
     return
   const source = displayGroups.value.find((g) => g.members.some((p) => p.id === studentId))
   if (!source) return
+  const person = source.members.find((p) => p.id === studentId)
+  if (personLocked(person) || groupLocked(group)) {
+    warn('已有今日站点派工，须先撤下相关组或人员的全部今日排班，才能调整组员。')
+    draggingStudent.value = selectedStudent.value = null
+    return
+  }
   if (source?.name === group.name) {
     draggingStudent.value = selectedStudent.value = null
     return
@@ -298,7 +373,7 @@ async function dropStudent(group, event) {
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     window.dispatchEvent(new Event('inspection-schedule-changed'))
   } catch (err) {
-    error.value = err.response?.data?.error || '调整结果未确认，请重新打开核对。'
+    warn(err.response?.data?.error || '调整结果未确认，请重新打开核对。')
     await load()
   } finally {
     saving.value = false
@@ -357,7 +432,14 @@ async function load() {
   }
 }
 async function createPreview() {
-  if (!editable.value || !ready.value || loading.value || saving.value) return
+  if (
+    !editable.value ||
+    !ready.value ||
+    loading.value ||
+    saving.value ||
+    hasDispatchedMembers.value
+  )
+    return
   const ticket = ++serial
   controller?.abort()
   controller = new AbortController()
@@ -451,10 +533,38 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
-.permit-tag { display: inline-block; font-size: 11px; font-style: normal; color: #17634b; background: #e5f5ed; border-radius: 4px; padding: 2px 5px; }
-.driver-status { margin: 0 0 12px; padding: 7px 9px; background: #fff3df; color: #805019; border-radius: 6px; font-size: 12px; }
-.driver-status.preferred { background: #e5f5ed; color: #17634b; }
-.driver-status.unsafe { background: #fff0ed; color: #9c352a; }
+.dispatch-lock {
+  display: block;
+  margin: -4px 0 12px;
+  color: #7e4b18;
+  font-weight: 700;
+  font-size: 11px;
+}
+.permit-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-style: normal;
+  color: #17634b;
+  background: #e5f5ed;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+.driver-status {
+  margin: 0 0 12px;
+  padding: 7px 9px;
+  background: #fff3df;
+  color: #805019;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.driver-status.preferred {
+  background: #e5f5ed;
+  color: #17634b;
+}
+.driver-status.unsafe {
+  background: #fff0ed;
+  color: #9c352a;
+}
 .team-trigger,
 .primary {
   background: #1e6786;

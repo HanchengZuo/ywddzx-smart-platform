@@ -73,16 +73,19 @@ def regional_targets(stations, count, coverage):
     return targets,list(stats.values())
 
 
-def field_routes(stations, team_count, quota, origin=None, *, coverage=None, required_ids=()):
+def field_routes(stations, team_count, quota, origin=None, *, coverage=None, required_ids=(), capacities=None):
     """Keep the legacy entry point; origin is intentionally ignored, not a route objective."""
     if team_count <= 0 or quota <= 0: return []
+    capacities=list(capacities) if capacities is not None else [quota]*team_count
+    if len(capacities)!=team_count or any(type(n) is not int or not 1<=n<=quota for n in capacities):
+        raise ValueError('现场组剩余站点容量不合法。')
     stations = sorted((s for s in stations if coordinate(s)),key=lambda s:s['station_id'])
     if not stations: return []
     required_ids=set(required_ids)
     required=[s for s in stations if s['station_id'] in required_ids]
     regular=[s for s in stations if s['station_id'] not in required_ids]
     targets=Counter((s.get('region',''),bool(s.get('covered')),True) for s in required)
-    fill,_ = regional_targets(regular,max(0,team_count*quota-len(required)),coverage or [])
+    fill,_ = regional_targets(regular,max(0,sum(capacities)-len(required)),coverage or [])
     targets.update({(region,covered,False):n for (region,covered),n in fill.items()})
     category = lambda i: (stations[i].get('region',''),bool(stations[i].get('covered')),stations[i]['station_id'] in required_ids)
     points = [coordinate(s) for s in stations]
@@ -99,7 +102,8 @@ def field_routes(stations, team_count, quota, origin=None, *, coverage=None, req
             seed = min(choices,key=lambda i:(sum(sorted(distances[i][j] for j in choices)[:quota]),i))
         groups.append([seed]); remaining.remove(seed); targets[category(seed)] -= 1
     for _ in range(quota-1):
-        for group in groups:
+        for index,group in enumerate(groups):
+            if len(group)>=capacities[index]: continue
             choices = [i for i in sorted(remaining) if targets[category(i)]]
             if not choices: break
             chosen = min(choices,key=lambda i:(max(distances[i][j] for j in group),

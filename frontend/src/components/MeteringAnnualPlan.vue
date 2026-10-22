@@ -75,6 +75,8 @@
                   :aria-label="`${r.region}${month}月计划站数`"
                   :disabled="!state.can_edit || loading || saving || !!error"
                   @input="setQuota(r.region, $event.target.value)"
+                  @focus="clearQuotaInput"
+                  @blur="restoreQuotaInput($event, r.region)"
               /></label>
               <p>
                 实际完成 <b>{{ r.completed }}</b> · 已排预留 <b>{{ r.reserved }}</b> · 尚需派站
@@ -143,6 +145,13 @@ function setQuota(region, value) {
   const key = String(month.value)
   quotas.value[key] ||= {}
   quotas.value[key][region] = value === '' ? 0 : Number(value)
+}
+function clearQuotaInput(event) {
+  event.target.value = ''
+}
+function restoreQuotaInput(event, region) {
+  if (event.target.value === '')
+    event.target.value = String(quotas.value[String(month.value)]?.[region] || 0)
 }
 function open() {
   dialog.value.showModal()
@@ -233,11 +242,17 @@ onBeforeUnmount(() => {
 .plan-trigger {
   border: 1px solid #a6bcd1;
   border-radius: 9px;
-  padding: 10px 15px;
+  padding: 12px 16px;
   background: #fff;
   color: #244b70;
   font-weight: 700;
   cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  min-height: 44px;
+  white-space: nowrap;
 }
 .metering-plan-dialog {
   width: min(1040px, 94vw);
@@ -369,6 +384,14 @@ article input {
   border: 1px solid #b3c5d5;
   border-radius: 6px;
   text-align: center;
+}
+article input {
+  appearance: textfield;
+}
+article input::-webkit-inner-spin-button,
+article input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 article p {
   font-size: 11px;

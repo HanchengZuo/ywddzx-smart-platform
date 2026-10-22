@@ -1,5 +1,5 @@
 <template>
-  <button v-if="allowed" type="button" class="auto-trigger" @click="open">今日一键排班</button>
+  <button v-if="allowed" type="button" class="auto-trigger" @click="open">今日智能排班</button>
   <Teleport to="body"
     ><dialog
       ref="dialog"
@@ -10,18 +10,22 @@
     >
       <header>
         <div>
-          <small>平衡派工 / DAILY DISPATCH</small>
-          <h3 id="auto-schedule-title">今日一键排班</h3>
+          <small>SMART DISPATCH / 人员方案驱动</small>
+          <h3 id="auto-schedule-title">
+            今日智能排班 <span>{{ day }}</span>
+          </h3>
         </div>
-        <button type="button" :disabled="saving" aria-label="关闭自动排班" @click="close">×</button>
+        <button type="button" :disabled="saving" aria-label="关闭今日智能排班" @click="close">
+          ×
+        </button>
       </header>
       <div class="auto-body">
+        <div class="smart-flow" aria-label="智能排班步骤">
+          <span><b>01</b> 人员档期方案</span><span><b>02</b> 算法推荐站点</span
+          ><span><b>03</b> 应用到今日排班</span>
+        </div>
         <p class="method">
-          {{ day }} · 今日未设置的档期默认有空，已标记没空者不参与。当天实绩自上海时间 17:00
-          后参与派工校验，早间录入不阻止排班；已有站点安排仍不覆盖。现场按已保存外勤组整行派站，视频每站一人统一完成安全、计量、现场。
-        </p>
-        <p class="method">
-          现场先补足当月计量年度计划的片区站数，再均衡季度片区覆盖，并让同组站点彼此靠近。缺失坐标的站点不自动派现场任务。可在页面“计量年度计划”维护月度配额；视频仍按本季度工作量安排。
+          以人员档期已保存的现场组和视频人员为基础，不因今日手动派工而减少候选人员或改变方案。应用时替换今日尚未开始的排班；已开始整行和其他日期计划保留。现场先补足当月计量年度计划，再均衡季度片区覆盖，让同组站点彼此靠近；无有效坐标不自动派现场站点。
         </p>
         <div class="quota-controls">
           <label
@@ -42,56 +46,37 @@
               :disabled="loading || saving"
               @input="stale = true"
           /></label>
-          <small>调整数量后点击“重新预览”</small>
+          <small>包含已开始的今日站点；调整后点击“计算智能方案”</small>
         </div>
         <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <p v-if="savedNotice" class="saved-notice" role="status">{{ savedNotice }}</p>
-        <section v-if="preview?.current_assignments?.length" class="today-saved">
-          <div class="today-saved-title">
-            <h4>今日已确认排班</h4>
-            <span>全局共享 · 含手动派工与实际进度</span>
-          </div>
-          <div class="proposal-list">
-            <article v-for="group in preview.current_assignments" :key="group.key">
-              <div class="proposal-person">
-                <strong>{{ group.name }}</strong
-                ><span :class="group.mode"
-                  >{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }} ·
-                  {{ group.stations.length }}站</span
-                >
-              </div>
-              <p>{{ group.people.map((p) => p.display_name).join('、') }}</p>
-              <strong class="saved-progress">已查 {{ group.completed }}/{{ group.total }}项</strong>
-              <ol class="proposal-stations">
-                <li v-for="station in group.stations" :key="station.station_id">
-                  <b>{{ station.region }} · {{ station.station_name }}</b
-                  ><small v-if="station.locked" class="execution-lock">已开始 · 整行锁定</small>
-                  <div class="saved-checks">
-                    <span v-for="cell in station.cells" :key="cell.key" :class="cell.status"
-                      >{{ cell.label }} ·
-                      {{
-                        cell.status === 'completed'
-                          ? '已检查'
-                          : cell.status === 'unavailable'
-                            ? '不可安排'
-                            : '已排班'
-                      }}</span
-                    >
-                  </div>
-                </li>
-              </ol>
-            </article>
-          </div>
-        </section>
         <template v-if="preview">
-          <details v-if="preview.metering_plan?.regions?.length" class="coverage-panel" open>
+          <section class="personnel-basis">
+            <div class="basis-heading">
+              <h4>人员档期 · 今日分工依据</h4>
+              <small
+                >{{ preview.personnel?.updated_by_name || '尚未保存' }}
+                {{ preview.personnel?.updated_at || '' }}</small
+              >
+            </div>
+            <div class="basis-groups">
+              <div v-for="g in preview.personnel?.groups || []" :key="g.name" :class="g.mode">
+                <strong>{{ g.name }}</strong
+                ><span>{{ g.members.map((p) => p.display_name).join('、') }}</span>
+              </div>
+            </div>
+            <p v-if="!preview.personnel?.groups?.length" class="method">
+              请先前往人员档期保存今日现场/视频分组，再计算智能方案。
+            </p>
+          </section>
+          <details v-if="targetRegions.length" class="coverage-panel" open>
             <summary>当月计量年度计划 · 优先派站依据</summary>
             <p>
               圆环为年度站点覆盖：年度表任一适用检查项为绿色即计已查，每站只计一次。月度目标与本月已查单独列出；未审核记录同样计数，计划预留不算已查。
             </p>
             <div class="quota-progress-grid">
-              <article v-for="r in preview.metering_plan.regions" :key="r.region">
+              <article v-for="r in targetRegions" :key="r.region">
                 <div
                   class="quota-ring"
                   role="progressbar"
@@ -136,7 +121,8 @@
               </article>
             </div>
           </details>
-          <h4 class="upcoming-title">待确认的新派工预览</h4>
+          <p v-else class="method">本月未配置计量目标，按普通现场片区覆盖均衡派站。</p>
+          <h4 class="upcoming-title">今日智能排班方案 <small>仅预览，不自动修改排班表</small></h4>
           <div class="preview-summary">
             <span
               ><b>{{ preview.available_count }}</b> 可派工人员</span
@@ -144,12 +130,12 @@
               ><b>{{ preview.groups.length }}</b> 站点任务组</span
             ><span
               ><b>{{ preview.cell_count }}</b> 排班单元格</span
-            ><small>{{ preview.quarter }}平衡口径</small>
+            ><small>{{ preview.quarter }}实绩平衡口径</small>
           </div>
           <details v-if="preview.regional_coverage?.length" class="coverage-panel">
             <summary>现场片区覆盖均衡 · 查看本次分配依据</summary>
             <p>
-              本季度有任一现场检查记录即计覆盖，不依赖审核。今日及未来已有计划仅作预留，不算实绩；在此基础上优先补齐低覆盖片区，再缩小组内站点距离。
+              本季度有任一现场检查记录即计覆盖，不依赖审核。忽略今日未开始的手动计划，未来计划仍受保护；先补齐低覆盖片区，再缩小组内站点距离。
             </p>
             <div class="coverage-grid">
               <div
@@ -168,45 +154,56 @@
               </div>
             </div>
           </details>
-          <div v-if="preview.groups.length" class="proposal-list">
-            <article v-for="group in proposalGroups" :key="group.key">
-              <div class="proposal-person">
-                <strong>{{ group.group_name || group.person.display_name }}</strong
-                ><span :class="group.mode"
-                  >{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }} ·
-                  {{ group.stations.length }}站</span
+          <template v-for="mode in ['offline', 'online']" :key="mode"
+            ><section
+              v-if="proposalGroups.some((g) => g.mode === mode)"
+              :class="['smart-mode', mode]"
+            >
+              <h4>{{ mode === 'offline' ? '现场巡检 · 外勤组方案' : '视频巡检 · 单人方案' }}</h4>
+              <div class="proposal-list">
+                <article
+                  v-for="group in proposalGroups.filter((g) => g.mode === mode)"
+                  :key="group.key"
                 >
-              </div>
-              <p v-if="group.team_members">
-                {{ group.team_members.map((p) => p.display_name).join('、') }}
-              </p>
-              <ol
-                class="proposal-stations"
-                :aria-label="(group.group_name || group.person.display_name) + '负责的站点'"
-              >
-                <li v-for="station in group.stations" :key="station.station_id">
-                  <b>{{ station.region }} · {{ station.station_name }}</b>
-                  <p>
-                    {{
-                      [...station.cells, ...(station.metering_cells || [])]
-                        .map((c) => c.label)
-                        .join('、')
-                    }}<b v-if="station.metering_priority"> · 计量计划优先</b>
+                  <div class="proposal-person">
+                    <strong>{{ group.group_name || group.person.display_name }}</strong
+                    ><span :class="group.mode"
+                      >{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }} ·
+                      {{ group.stations.length }}站</span
+                    >
+                  </div>
+                  <p v-if="group.team_members">
+                    {{ group.team_members.map((p) => p.display_name).join('、') }}
                   </p>
-                  <small v-if="group.mode === 'offline'">{{ station.address }}</small>
-                </li>
-              </ol>
-              <p v-if="group.mode === 'offline'">
-                组内站点最远直线距离 {{ group.cluster_max_km }} km · 非行车路线
-              </p>
-              <small
-                >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
-                {{ group.before.online }} → {{ group.after.online }} 组</small
-              >
-            </article>
-          </div>
-          <p v-else class="empty">
-            没有可以自动安排的组合。请先设置今日人员有空，或核对当前季度 / 月份是否还有待排班项目。
+                  <ol
+                    class="proposal-stations"
+                    :aria-label="(group.group_name || group.person.display_name) + '负责的站点'"
+                  >
+                    <li v-for="station in group.stations" :key="station.station_id">
+                      <b>{{ station.region }} · {{ station.station_name }}</b>
+                      <p>
+                        {{
+                          [...station.cells, ...(station.metering_cells || [])]
+                            .map((c) => c.label)
+                            .join('、')
+                        }}<b v-if="station.metering_priority"> · 计量计划优先</b>
+                      </p>
+                      <small v-if="group.mode === 'offline'">{{ station.address }}</small>
+                    </li>
+                  </ol>
+                  <p v-if="group.mode === 'offline'">
+                    组内站点最远直线距离 {{ group.cluster_max_km }} km · 非行车路线
+                  </p>
+                  <small
+                    >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
+                    {{ group.before.online }} → {{ group.after.online }} 组</small
+                  >
+                </article>
+              </div>
+            </section></template
+          >
+          <p v-if="!preview.groups.length" class="empty">
+            当前没有可应用的新增组合。请核对今日已保存的人员分工、未检查站点及已开始任务；当前已确认派工可在独立窗口查看。
           </p>
           <p v-for="warning in preview.warnings" :key="warning" class="method">{{ warning }}</p>
           <details v-if="preview.excluded.length" class="excluded">
@@ -216,17 +213,33 @@
             </p>
           </details>
         </template>
+        <section v-if="preview?.groups.length" class="replace-confirmation">
+          <strong>应用将替换今日尚未开始的排班</strong>
+          <p>
+            当前可替换 {{ preview.replacement?.stations || 0 }} 个站点任务，保留已开始的
+            {{ preview.replacement?.protected || 0 }}
+            个站点任务及其他日期计划。原派工、取消记录和新派工全程留痕，保存失败不会清空原计划。
+          </p>
+          <label
+            ><input
+              v-model="replaceConfirmed"
+              type="checkbox"
+              :disabled="saving || loading || stale"
+            />我已确认以上替换范围</label
+          >
+        </section>
       </div>
       <footer>
-        <span>确认后同步个人待办，已确认的今日排班仍保留在本窗口。</span
-        ><button type="button" :disabled="loading || saving" @click="createPreview">重新预览</button
+        <span>实际安排请从“今日已确认排班”独立窗口查看。</span
+        ><button type="button" :disabled="loading || saving" @click="createPreview">
+          计算智能方案</button
         ><button
           type="button"
           class="primary"
-          :disabled="loading || saving || !preview?.groups.length || stale"
+          :disabled="loading || saving || !preview?.groups.length || stale || !replaceConfirmed"
           @click="confirm"
         >
-          {{ saving ? '正在保存…' : '确认派工' }}
+          {{ saving ? '正在原子替换…' : '应用方案并替换今日排班' }}
         </button>
       </footer>
     </dialog></Teleport
@@ -258,6 +271,10 @@ const dialog = ref(null),
 const offlineCount = ref(2),
   onlineCount = ref(3)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
+const targetRegions = computed(() =>
+  (preview.value?.metering_plan?.regions || []).filter((r) => r.target > 0),
+)
+const replaceConfirmed = ref(false)
 const coveragePercent = (r) =>
   r.total ? Math.min(100, Math.round((100 * (r.annual_completed || 0)) / r.total)) : 0
 let controller,
@@ -296,11 +313,13 @@ async function createPreview() {
   loading.value = true
   error.value = ''
   stale.value = true
+  replaceConfirmed.value = false
   try {
     const { data } = await axios.post(
       '/api/inspection-schedule/auto',
       {
         action: 'preview',
+        strategy: 'replace_today',
         day: day.value,
         offline_count: offlineCount.value,
         online_count: onlineCount.value,
@@ -319,7 +338,14 @@ async function createPreview() {
   }
 }
 async function confirm() {
-  if (saving.value || loading.value || stale.value || !preview.value?.groups.length) return
+  if (
+    saving.value ||
+    loading.value ||
+    stale.value ||
+    !preview.value?.groups.length ||
+    !replaceConfirmed.value
+  )
+    return
   saving.value = true
   error.value = ''
   try {
@@ -327,6 +353,8 @@ async function confirm() {
       '/api/inspection-schedule/auto',
       {
         action: 'confirm',
+        strategy: 'replace_today',
+        replace_confirmed: replaceConfirmed.value,
         day: day.value,
         token: preview.value.token,
         offline_count: offlineCount.value,
@@ -335,10 +363,11 @@ async function confirm() {
       { timeout: 120000 },
     )
     if (!disposed) {
-      savedNotice.value = `已确认 ${data.groups.length} 个站点任务，个人待办已同步。下方“今日已确认排班”可持续查看。`
+      savedNotice.value = `今日智能方案已应用，个人待办已同步。可关闭本窗口，从“今日已确认排班”查看实际安排。`
       preview.value = { ...data, groups: [], cell_count: 0 }
       emit('scheduled', data)
       window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+      window.dispatchEvent(new Event('inspection-schedule-changed'))
       await createPreview()
     }
   } catch (err) {
@@ -358,24 +387,191 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
-.today-saved {
-  border: 1px solid #a6c6d5;
-  border-top: 4px solid #176b80;
-  border-radius: 12px;
-  padding: 16px;
-  margin: 16px 0 24px;
-  background: #f5fafc;
+.smart-flow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #cbdce7;
+  margin-bottom: 16px;
 }
-.today-saved-title {
+.smart-flow > span {
   display: flex;
+  align-items: center;
   gap: 8px;
+  color: #274c64;
+  font-size: 12px;
+  font-weight: 700;
+}
+.smart-flow b {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: 1px solid #2a6c86;
+  border-radius: 7px;
+  color: #fff;
+  background: #236a84;
+  font-size: 10px;
+}
+.personnel-basis {
+  border: 1px solid #b6cbd8;
+  border-left: 4px solid #39728a;
+  padding: 14px;
+  border-radius: 10px;
+  margin: 14px 0;
+  background: #f7fafc;
+}
+.basis-heading {
+  display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
-.today-saved .proposal-list {
+.basis-heading h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.basis-heading small {
+  font-size: 10px;
+  color: #59778c;
+}
+.basis-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.basis-groups > div {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #d5bb8d;
+  border-radius: 6px;
+  background: #fff6e7;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #78511b;
+}
+.basis-groups > .online {
+  border-color: #9dbce0;
+  background: #eaf2ff;
+  color: #215b94;
+}
+.basis-groups span {
+  line-height: 1.6;
+}
+.upcoming-title small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  margin: 8px 0;
+  color: #59758b;
+}
+.smart-mode {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #d8bb88;
+  border-top: 4px solid #bc8a35;
+  border-radius: 12px;
+  background: #fffaf0;
+}
+.smart-mode > h4 {
+  color: #805417;
+  margin: 0 0 15px;
+  font-size: 16px;
+}
+.smart-mode.online {
+  border-color: #a9c6e6;
+  border-top-color: #2e73b9;
+  background: #f0f6ff;
+}
+.smart-mode.online > h4 {
+  color: #215c98;
+}
+.smart-mode .proposal-list {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+.smart-mode article {
+  background: white;
+}
+.replace-confirmation {
+  padding: 16px;
+  border: 1px solid #d4b16f;
+  border-left: 4px solid #b47a1e;
+  border-radius: 10px;
+  background: #fff6e3;
+  margin: 20px 0 0;
+  color: #744e19;
+  font-size: 13px;
+}
+.replace-confirmation p {
+  line-height: 1.8;
+  font-size: 12px;
+}
+.replace-confirmation label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.replace-confirmation input {
+  width: 17px;
+  height: 17px;
+  accent-color: #b47a1e;
+}
+.auto-dialog > header {
+  background: #173e58;
+  color: white;
+  border-bottom: 3px solid #dfb24b;
+}
+.auto-dialog > header small {
+  color: #b9dbe7;
+}
+.auto-dialog > header > button {
+  background: #ffffff12;
+  border-color: #ffffff40;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 23px;
+}
+.auto-dialog h3 span {
+  color: #b9dbe7;
+  font-size: 13px;
+  margin-left: 10px;
+  font-weight: 400;
+}
+.auto-trigger {
+  min-height: 44px;
+  line-height: 1.4;
+}
+input[type='number'] {
+  appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .smart-flow {
+    gap: 7px;
+  }
+  .smart-flow > span {
+    flex-direction: column;
+    align-items: flex-start;
+    font-size: 11px;
+  }
+  .smart-mode {
+    padding: 12px;
+  }
+  .auto-dialog h3 span {
+    display: block;
+    margin: 6px 0 0;
+  }
 }
 .month-progress {
   height: 5px;
@@ -388,48 +584,10 @@ onBeforeUnmount(() => {
   display: block;
   background: #237ea0;
 }
-.today-saved-title h4,
 .upcoming-title {
   margin: 0;
   font-size: 16px;
   color: #21465c;
-}
-.today-saved-title > span {
-  font-size: 11px;
-  color: #527184;
-}
-.saved-checks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 8px;
-}
-.saved-checks > span {
-  font-size: 11px;
-  padding: 4px 6px;
-  border: 1px solid #d68c88;
-  background: #ffe7e5;
-  color: #8b302a;
-  border-radius: 4px;
-}
-.saved-checks > .completed {
-  background: #d3f1df;
-  color: #155437;
-  border-color: #7fb797;
-}
-.saved-checks > .unavailable {
-  background: #eee;
-  border-color: #aaa;
-  color: #666;
-}
-.execution-lock {
-  display: block;
-  color: #17654a;
-  margin-top: 5px;
-}
-.saved-progress {
-  font-size: 12px;
-  color: #17654a;
 }
 .saved-notice {
   background: #e7f6ee;

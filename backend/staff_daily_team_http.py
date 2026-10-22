@@ -10,9 +10,14 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
-from staff_daily_teams import adjust_preview, group_assignments, move_student, random_teams, save_teams, team_days, validate_dispatched_teams
+from staff_daily_teams import (adjust_preview, group_assignments, move_student, random_teams, save_teams,
+                              team_days, validate_dispatched_teams, validate_team_changes, annotate_dispatch_locks)
 from driving_permits import validate_driving_teams
 from schedule_shelf_store import seed_daily_shelf
+
+
+def stored_assignments(result):
+    return [{k:v for k,v in p.items() if k!='dispatch_locked'} for group in result['groups'] for p in group['members']]
 
 
 def context(cur, day):
@@ -26,7 +31,7 @@ def context(cur, day):
     unconfirmed = [p['display_name'] for p in people if p['available'] is None]
     return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
                 unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
-                revision=saved.get('revision', 0), groups=group_assignments(assignments),
+                revision=saved.get('revision', 0), groups=annotate_dispatch_locks(cur,day,group_assignments(assignments)),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
                 excluded=[dict(name=p['display_name'], reason=excluded_reason(p))
                           for p in people if p not in eligible])
@@ -65,8 +70,9 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     require_workday(cur, day)
                     if type(data.get('student_id')) is not int or (data.get('leader_id') is not None and type(data['leader_id']) is not int):
                         raise ValueError('分组人员不合法。')
-                    before = [p for group in result['groups'] for p in group['members']]
+                    before = stored_assignments(result)
                     assignments = move_student(result['people'], before, data['student_id'], data.get('leader_id'))
+                    validate_team_changes(cur,day,before,assignments)
                     validate_driving_teams(result['people'], assignments)
                     if assignments != before:
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
@@ -87,10 +93,12 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
                         assignments = adjust_preview(result['people'], assignments, data.get('student_leaders', {}))
                         validate_dispatched_teams(cur, day, assignments)
-                        before = [p for group in result['groups'] for p in group['members']]
+                        before = stored_assignments(result)
+                        validate_team_changes(cur,day,before,assignments)
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                     result.update(groups=group_assignments(assignments), token=token, seed=seed)
             if request.method == 'POST' and data['action'] != 'preview':
+                result['groups']=annotate_dispatch_locks(cur,day,result['groups'])
                 seed_daily_shelf(cur,actor,day,result['groups'],result['revision'])
                 assert_actuals_window(window,today())
             conn.commit()

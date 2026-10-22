@@ -52,6 +52,7 @@ test('the preview drop handler makes no request or successful-save event until c
     draggingStudent:{value:null},selectedStudent:{value:null},editable:{value:true},loading:{value:false},saving:{value:false},
     preview:{value:preview},error:{value:''},context:{value:{people}},displayGroups:{value:preview.groups},movePreviewStudent,
     axios:{post:()=>{throw new Error('must not save a preview')}},emit:()=>{throw new Error('must not emit saved')},
+    personLocked:()=>false,groupLocked:()=>false,
   })
   const source = readFileSync(new URL('../src/components/DailyInspectionTeams.vue',import.meta.url),'utf8')
   vm.runInContext(source.slice(source.indexOf('async function dropStudent'),source.indexOf('let controller,')),context)
