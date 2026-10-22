@@ -117,7 +117,6 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.assertEqual((region['completed'],region['reserved'],region['remaining']),(0,1,0))
 
     def test_actual_locks_and_audit_failure_roll_back_both_boards(self):
-        self.record(table=1)
         self.cur.execute('ALTER TABLE inspection_schedule_events ADD CHECK(false) NOT VALID'); self.admin.commit()
         with self.assertLogs(level='ERROR'):
             self.assertEqual(self.assign_annual().status_code,500)
@@ -125,9 +124,12 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_tasks');self.assertEqual(self.cur.fetchone()['n'],0)
         self.cur.execute('ALTER TABLE inspection_schedule_events DROP CONSTRAINT inspection_schedule_events_check');self.admin.commit()
         self.assertEqual(self.assign_annual().status_code,200)
+        self.record(table=1)
         cells=self.board()['rows'][0]['cells']
         self.assertEqual(cells['odor']['status'],'completed')
         self.assertEqual(cells['finance']['status'],'assigned')
+        self.assertTrue(cells['finance']['row_locked'])
+        self.assertEqual(self.assign_annual(ids=[]).status_code,409)
 
     def test_shared_shelf_park_place_keeps_both_boards_in_sync(self):
         self.cur.execute("INSERT INTO staff_daily_teams(day,assignments,revision,updated_by) SELECT '2026-10-19',assignments,1,1 FROM staff_daily_teams WHERE day='2026-10-20'")
@@ -165,7 +167,6 @@ class MeteringDatabaseTests(unittest.TestCase):
         self.admin.commit()
         self.assertEqual(self.assign_annual(day='2026-10-19').status_code,200)
         self.assertEqual(self.assign_annual(sid=2).status_code,200)
-        self.record(table=1)
         query=dict(mode=mode,year=2026,**({'quarter':4} if mode=='offline' else {}))
         board=self.board(query)
         result=self.client.post('/api/inspection-schedule/dispatch',json=dict(
@@ -183,9 +184,9 @@ class MeteringDatabaseTests(unittest.TestCase):
             self.assertTrue(all(c['status'] in ('unassigned','completed') for c in first['cells'].values()))
             future=next(r for r in linked['rows'] if r['station_id']==2)
             self.assertTrue(all(c['status']=='assigned' for c in future['cells'].values() if c['applicable']))
-        self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'],'completed')
+        self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'],'unassigned')
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE station_id=1 AND status='pending'")
-        self.assertEqual(self.cur.fetchone()['n'],1,'only the immutable actual cell keeps its original task')
+        self.assertEqual(self.cur.fetchone()['n'],0)
         target=result.json['board']['rows'][0]
         restored=self.client.post('/api/inspection-schedule/dispatch',json=dict(**query,action='place',shelf_id=card['id'],revision=card['revision'],
             cells=[dict(station_id=1,column_key=k,revision=c['revision']) for k,c in target['cells'].items() if c['status']=='unassigned']))
@@ -257,8 +258,7 @@ class MeteringAutomationTests(unittest.TestCase):
     preview=coverage.CoverageDatabaseTests.preview
 
     def test_unmet_metering_quota_precedes_quarter_coverage_and_stale_plan_rejected(self):
-        self.record(table=1,station=1)
-        self.record(table=1,station=3)
+        self.record(table=1,station=2)
         result=self.client.put('/api/inspection-schedule/metering-plan',json=dict(year=2026,month=10,revision=0,quotas={'10':{'松金':2}}))
         self.assertEqual(result.status_code,200,result.json)
         preview=self.preview()

@@ -83,12 +83,12 @@ class DispatchDatabaseTests(unittest.TestCase):
         self.assertEqual(cell['plan_team']['name'],'外勤步雪琼组')
         self.assertEqual([p['id'] for p in cell['assignees']],[2])
         self.assertEqual([p['id'] for p in cell['completed_inspectors']],[3])
-        # Partial completion is immutable while the remaining five cells may move to another whole team.
+        # Starting any one check locks the entire row, preserving its original team.
         response=self.save(inspector_ids=[3],cells=self.row_cells(1,1,skip=('odor',)))
-        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.status_code,409,response.json)
         cells=self.board()['rows'][0]['cells']
         self.assertEqual(cells['odor']['assignees'][0]['id'],2)
-        self.assertEqual(cells['finance']['assignees'][0]['id'],3)
+        self.assertEqual(cells['finance']['assignees'][0]['id'],2)
 
     def test_field_move_is_atomic_and_stale_or_audit_failure_preserves_both_rows(self):
         self.assertEqual(self.save().status_code,200)

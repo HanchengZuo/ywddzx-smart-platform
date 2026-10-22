@@ -15,7 +15,7 @@ import {
   isCurrentPerson,
   scheduleSelfRole,
 } from '../src/utils/staffScheduling.js'
-import { scheduleCellEditable } from '../src/utils/inspectionSchedule.js'
+import { scheduleCellEditable, scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
 
 test('system-default availability is explicit, while busy overrides remain red and future remains unconfirmed', () => {
   const today='2026-10-21'
@@ -292,7 +292,7 @@ test('real records override manual supplements, while original busy history stay
   assert.equal(staffCellPresentation({ ...cell, history_status: null }, '2026-10-16', '2026-10-20').stage, '实绩')
   assert.equal(staffCellPresentation({ ...cell, actual_modes: [] }, '2026-10-20', '2026-10-20').tone, 'unknown', 'manual history cannot override current-day availability')
 })
-test('multi-selection is row-only and excludes completed cells; no column selection remains', () => {
+test('multi-selection is row-only and excludes the entire started row; no column selection remains', () => {
   const source = readFileSync(
     new URL('../src/components/InspectionSchedulePanel.vue', import.meta.url),
     'utf8',
@@ -311,6 +311,7 @@ test('multi-selection is row-only and excludes completed cells; no column select
     rows: { value: [row] },
     cellKey,
     scheduleCellEditable,
+    scheduleRowLocked,
   })
   vm.runInContext(
     source.slice(
@@ -321,16 +322,16 @@ test('multi-selection is row-only and excludes completed cells; no column select
   )
   context.toggleMulti()
   context.selectRow(row)
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
-  assert.equal(context.rowSelected(row), true)
+  assert.deepEqual(Array.from(context.selectedCells.value), [])
+  assert.equal(context.rowSelected(row), false)
   context.selectRow(second)
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a', '2:a', '2:b'])
+  assert.deepEqual(Array.from(context.selectedCells.value), ['2:a', '2:b'])
   context.selectRow(second)
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
+  assert.deepEqual(Array.from(context.selectedCells.value), [])
   assert.doesNotMatch(source, /selectColumn|选列|function toggleCell/)
   context.canEdit.value = false
   context.selectRow(second)
-  assert.deepEqual(Array.from(context.selectedCells.value), ['1:a'])
+  assert.deepEqual(Array.from(context.selectedCells.value), [])
 })
 for (const filename of [
   'components/AutomaticSchedule.vue',

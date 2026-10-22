@@ -91,6 +91,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
             raise ScheduleConflict('排班已变化，请载入最新排班后再清空今日安排。')
         selected=[]
         for row in board['rows']:
+            if row.get('locked'): continue
             for key,cell in row['cells'].items():
                 if cell['status']=='assigned' and cell['scheduled_date']==today().isoformat():
                     selected.append((dict(station_id=row['station_id'],column_key=key,revision=cell['revision']),row,cell))

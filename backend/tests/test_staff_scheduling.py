@@ -234,12 +234,13 @@ class StaffDatabaseTests(unittest.TestCase):
 
     def test_tasks_persist_overdue_complete_unreviewed_and_reopen_after_record_delete(self):
         def video_save(**overrides):
-            return self.client.put('/api/inspection-schedule',json=dict(mode='online',year=2026,month=10,station_id=1,column_key='safety',inspector_ids=[2],scheduled_date='2026-10-20',revision=0,**overrides))
+            return self.client.put('/api/inspection-schedule',json=dict(mode='online',year=2026,month=10,inspector_ids=[2],scheduled_date='2026-10-20',
+                cells=[dict(station_id=1,column_key=k,revision=0) for k in ('safety','measurement','service')],**overrides))
         self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
-        # These two actual records are locked; the remaining row consists of safety only.
+        self.assertEqual(video_save().status_code, 200)
+        # After dispatch, two actual records finish their tasks; the whole row is now immutable.
         self.record(day='2026-10-01',table=8)
         self.record(day='2026-10-01',table=9)
-        self.assertEqual(video_save().status_code, 200)
         self.assertEqual(self.client.get('/api/my-schedule-tasks').json['count'], 0, 'future task is not due yet')
         with patch('inspection_schedule_tasks.today', return_value=date(2026, 10, 23)):
             response = self.client.get('/api/my-schedule-tasks?user_id=3')

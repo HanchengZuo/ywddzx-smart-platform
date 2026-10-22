@@ -8,9 +8,18 @@ import {
   scheduleCellEditable,
   scheduleCounts,
   stationScheduleProgress,
+  scheduleRowLocked,
 } from '../src/utils/inspectionSchedule.js'
 
 const people = [1, 2, 3].map((id) => ({ id, display_name: '人员' + id }))
+
+test('row execution locks preserve plan status but disable all assigned/unassigned editors', () => {
+  assert.equal(scheduleCellEditable({status:'assigned',row_locked:true},true),false)
+  assert.equal(scheduleCellEditable({status:'unassigned',row_locked:true},true),false)
+  assert.equal(scheduleRowLocked({cells:{a:{status:'completed'},b:{status:'assigned'}}}),true)
+  assert.equal(scheduleRowLocked({locked:true,cells:{a:{status:'assigned'}}}),true)
+  assert.equal(scheduleRowLocked({cells:{a:{status:'assigned',overdue:true}}}),false)
+})
 const completed = { status: 'completed', assignees: [people[0]], completed_inspectors: people }
 const assigned = { status: 'assigned', assignees: [people[1]], completed_inspectors: [] }
 const rows = [

@@ -46,25 +46,97 @@
         </div>
         <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <template v-if="preview">
-          <details
-            v-if="preview.metering_plan?.regions?.some((r) => r.target)"
-            class="coverage-panel"
-          >
-            <summary>当月计量年度计划 · 优先派站依据</summary>
-            <div class="coverage-grid">
-              <div
-                v-for="r in preview.metering_plan.regions.filter((r) => r.target)"
-                :key="r.region"
-              >
-                <strong>{{ r.region }}</strong
-                ><b>目标 {{ r.target }}站</b
-                ><small
-                  >已查 {{ r.completed }} · 预留 {{ r.reserved }} · 本次 {{ r.proposed }}</small
+        <p v-if="savedNotice" class="saved-notice" role="status">{{ savedNotice }}</p>
+        <section v-if="preview?.current_assignments?.length" class="today-saved">
+          <div class="today-saved-title">
+            <h4>今日已确认排班</h4>
+            <span>全局共享 · 含手动派工与实际进度</span>
+          </div>
+          <div class="proposal-list">
+            <article v-for="group in preview.current_assignments" :key="group.key">
+              <div class="proposal-person">
+                <strong>{{ group.name }}</strong
+                ><span :class="group.mode"
+                  >{{ group.mode === 'offline' ? '现场巡检' : '视频巡检' }} ·
+                  {{ group.stations.length }}站</span
                 >
               </div>
+              <p>{{ group.people.map((p) => p.display_name).join('、') }}</p>
+              <strong class="saved-progress">已查 {{ group.completed }}/{{ group.total }}项</strong>
+              <ol class="proposal-stations">
+                <li v-for="station in group.stations" :key="station.station_id">
+                  <b>{{ station.region }} · {{ station.station_name }}</b
+                  ><small v-if="station.locked" class="execution-lock">已开始 · 整行锁定</small>
+                  <div class="saved-checks">
+                    <span v-for="cell in station.cells" :key="cell.key" :class="cell.status"
+                      >{{ cell.label }} ·
+                      {{
+                        cell.status === 'completed'
+                          ? '已检查'
+                          : cell.status === 'unavailable'
+                            ? '不可安排'
+                            : '已排班'
+                      }}</span
+                    >
+                  </div>
+                </li>
+              </ol>
+            </article>
+          </div>
+        </section>
+        <template v-if="preview">
+          <details v-if="preview.metering_plan?.regions?.length" class="coverage-panel" open>
+            <summary>当月计量年度计划 · 优先派站依据</summary>
+            <p>
+              圆环为年度站点覆盖：年度表任一适用检查项为绿色即计已查，每站只计一次。月度目标与本月已查单独列出；未审核记录同样计数，计划预留不算已查。
+            </p>
+            <div class="quota-progress-grid">
+              <article v-for="r in preview.metering_plan.regions" :key="r.region">
+                <div
+                  class="quota-ring"
+                  role="progressbar"
+                  :aria-label="r.region + '年度站点覆盖'"
+                  :aria-valuenow="r.annual_completed || 0"
+                  :aria-valuemin="0"
+                  :aria-valuemax="r.total"
+                >
+                  <svg viewBox="0 0 80 80" aria-hidden="true">
+                    <circle cx="40" cy="40" r="33" class="ring-track" />
+                    <circle
+                      cx="40"
+                      cy="40"
+                      r="33"
+                      class="ring-value"
+                      pathLength="100"
+                      :stroke-dasharray="`${coveragePercent(r)} 100`"
+                    />
+                  </svg>
+                  <b>{{ coveragePercent(r) }}<small>%</small></b>
+                </div>
+                <div class="quota-caption">
+                  <strong>{{ r.region }}</strong
+                  ><b>年度已查 {{ r.annual_completed || 0 }}/{{ r.total }}站</b
+                  ><small
+                    >{{ preview.metering_plan.month }}月目标 {{ r.target }} · 本月已查
+                    {{ r.completed }}站</small
+                  >
+                  <div
+                    v-if="r.target"
+                    class="month-progress"
+                    role="progressbar"
+                    :aria-label="r.region + '本月目标完成'"
+                    :aria-valuenow="Math.min(r.completed, r.target)"
+                    :aria-valuemin="0"
+                    :aria-valuemax="r.target"
+                  >
+                    <i :style="{ width: Math.min(100, (100 * r.completed) / r.target) + '%' }"></i>
+                  </div>
+                  <small>预留 {{ r.reserved }} · 本次拟派 {{ r.proposed || 0 }}站</small>
+                </div>
+              </article>
             </div>
           </details>
+          <h4 class="upcoming-title">待确认的新派工预览</h4>
           <div class="preview-summary">
             <span
               ><b>{{ preview.available_count }}</b> 可派工人员</span
@@ -146,7 +218,7 @@
         </template>
       </div>
       <footer>
-        <span>确认后同步个人待办，并转到本季度 / 本月排班。</span
+        <span>确认后同步个人待办，已确认的今日排班仍保留在本窗口。</span
         ><button type="button" :disabled="loading || saving" @click="createPreview">重新预览</button
         ><button
           type="button"
@@ -180,17 +252,21 @@ const dialog = ref(null),
   loading = ref(false),
   saving = ref(false),
   error = ref(''),
+  savedNotice = ref(''),
   stale = ref(false),
   day = ref(shanghaiToday())
 const offlineCount = ref(2),
   onlineCount = ref(3)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
+const coveragePercent = (r) =>
+  r.total ? Math.min(100, Math.round((100 * (r.annual_completed || 0)) / r.total)) : 0
 let controller,
   disposed = false,
   serial = 0
 function open() {
   day.value = shanghaiToday()
   preview.value = null
+  savedNotice.value = ''
   dialog.value.showModal()
   createPreview()
 }
@@ -259,9 +335,11 @@ async function confirm() {
       { timeout: 120000 },
     )
     if (!disposed) {
-      dialog.value.close()
+      savedNotice.value = `已确认 ${data.groups.length} 个站点任务，个人待办已同步。下方“今日已确认排班”可持续查看。`
+      preview.value = { ...data, groups: [], cell_count: 0 }
       emit('scheduled', data)
       window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+      await createPreview()
     }
   } catch (err) {
     if (!disposed) {
@@ -280,6 +358,153 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.today-saved {
+  border: 1px solid #a6c6d5;
+  border-top: 4px solid #176b80;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0 24px;
+  background: #f5fafc;
+}
+.today-saved-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.today-saved .proposal-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+.month-progress {
+  height: 5px;
+  background: #dcebf2;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.month-progress i {
+  height: 100%;
+  display: block;
+  background: #237ea0;
+}
+.today-saved-title h4,
+.upcoming-title {
+  margin: 0;
+  font-size: 16px;
+  color: #21465c;
+}
+.today-saved-title > span {
+  font-size: 11px;
+  color: #527184;
+}
+.saved-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.saved-checks > span {
+  font-size: 11px;
+  padding: 4px 6px;
+  border: 1px solid #d68c88;
+  background: #ffe7e5;
+  color: #8b302a;
+  border-radius: 4px;
+}
+.saved-checks > .completed {
+  background: #d3f1df;
+  color: #155437;
+  border-color: #7fb797;
+}
+.saved-checks > .unavailable {
+  background: #eee;
+  border-color: #aaa;
+  color: #666;
+}
+.execution-lock {
+  display: block;
+  color: #17654a;
+  margin-top: 5px;
+}
+.saved-progress {
+  font-size: 12px;
+  color: #17654a;
+}
+.saved-notice {
+  background: #e7f6ee;
+  border: 1px solid #a6ceb9;
+  padding: 12px;
+  border-radius: 8px;
+  color: #155437;
+  font-size: 13px;
+}
+.quota-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 10px;
+}
+.quota-progress-grid article {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #c9dce4;
+  background: #fff;
+  padding: 12px;
+  border-radius: 10px;
+}
+.quota-ring {
+  width: 76px;
+  height: 76px;
+  position: relative;
+  flex-shrink: 0;
+}
+.quota-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.quota-ring circle {
+  fill: none;
+  stroke-width: 8;
+}
+.ring-track {
+  stroke: #e2edf1;
+}
+.ring-value {
+  stroke: #18846a;
+  stroke-linecap: round;
+}
+.quota-ring > b {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #155941;
+}
+.quota-ring small {
+  font-size: 11px;
+}
+.quota-caption {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.quota-caption strong {
+  font-size: 14px;
+  color: #234358;
+}
+.quota-caption b {
+  font-size: 12px;
+  color: #17654a;
+}
+.quota-caption small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #526d80;
+}
 .coverage-panel {
   margin: 14px 0;
   padding: 14px;

@@ -88,11 +88,13 @@ class ShelfDatabaseTests(unittest.TestCase):
     def test_partial_actual_record_is_never_cleared_or_moved(self):
         self.save()
         record = self.record()
-        item = self.park(skip=('odor',))
+        self.assertEqual(self.dispatch('park',cells=self.row_cells(1,1,skip=('odor',))).status_code,409)
         cells = self.board()['rows'][0]['cells']
         self.assertEqual(cells['odor']['status'], 'completed')
         self.assertEqual([p['id'] for p in cells['odor']['assignees']], [2])
-        self.assertEqual(self.place(item).status_code, 200)
+        self.assertTrue(all(c['row_locked'] for c in cells.values()))
+        self.assertEqual(self.board()['shelf'],[])
+        self.assertTrue(all(c['assignees'][0]['id']==2 for c in cells.values()))
         self.cur.execute('SELECT id FROM inspections'); self.assertEqual(self.cur.fetchone()['id'], record)
 
     def test_video_moves_whole_row_and_cannot_be_placed_as_field(self):
@@ -128,10 +130,10 @@ class ShelfDatabaseTests(unittest.TestCase):
         with patch('inspection_schedule_dispatch.today', return_value=date(2026,10,20)):
             response = self.dispatch('clear_today', board_token=token)
             self.assertEqual(response.status_code, 200, response.json)
-            self.assertEqual(response.json['cleared_count'], 11)
-            self.assertEqual(response.json['cleared_station_count'], 2)
-            self.assertEqual(response.json['parked_count'], 2)
-            self.assertEqual({c['source_station_id'] for c in response.json['board']['shelf']}, {1, 2})
+            self.assertEqual(response.json['cleared_count'], 6)
+            self.assertEqual(response.json['cleared_station_count'], 1)
+            self.assertEqual(response.json['parked_count'], 1)
+            self.assertEqual({c['source_station_id'] for c in response.json['board']['shelf']}, {2})
             self.assertTrue(all(c['ids']==[2] and c['plan_team']['leader_id']==2
                                 for c in response.json['board']['shelf']))
             self.assertEqual(self.dispatch('clear_today', board_token=token).status_code, 409)
@@ -238,12 +240,12 @@ class ShelfDatabaseTests(unittest.TestCase):
     def test_video_partial_actual_preserved_and_full_row_conflict_rolls_back(self):
         self.cur.execute('DELETE FROM staff_daily_teams'); self.admin.commit()
         self.video()
-        original = self.record(table=7,inspector=3)
         query = dict(mode='online',year=2026,month=10)
-        parked = self.dispatch('park',query,cells=self.video_cells(1,1,skip=('safety',)))
+        parked = self.dispatch('park',query,cells=self.video_cells(1,1))
         self.assertEqual(parked.status_code,200,parked.json)
         card = parked.json['board']['shelf'][0]
-        self.assertEqual(parked.json['board']['rows'][0]['cells']['safety']['status'],'completed')
+        original = self.record(table=7,inspector=3)
+        self.assertEqual(self.board(query)['rows'][0]['cells']['safety']['status'],'completed')
         self.cur.execute("ALTER TABLE inspection_schedule_events ADD CHECK(column_key<>'service') NOT VALID");self.admin.commit()
         with self.assertLogs(level='ERROR'):
             response = self.dispatch('place',query,shelf_id=card['id'],revision=card['revision'],cells=self.video_cells(2))

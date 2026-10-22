@@ -236,13 +236,13 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.assertEqual(board['roster_total'],155)
         self.assertNotIn('泗砖',[s['station_name'] for s in board['excluded_stations']])
         # A previously hard-excluded station supports record-derived completion and manual dispatch.
-        self.record(station=3,table=7)
         row=next(r for r in self.board(query)['rows'] if r['station_id']==3)
-        self.assertEqual(row['cells']['safety']['status'],'completed')
+        self.assertEqual(row['cells']['safety']['status'],'unassigned')
         self.cur.execute("DELETE FROM staff_daily_teams WHERE day='2026-10-20'");self.admin.commit()
         result=self.client.put('/api/inspection-schedule',json=dict(**query,inspector_ids=[2],scheduled_date='2026-10-20',
             cells=[dict(station_id=3,column_key=key,revision=cell['revision']) for key,cell in row['cells'].items() if cell['status']!='completed']))
         self.assertEqual(result.status_code,200,result.json)
+        self.record(station=3,table=7)
         self.cur.execute('UPDATE stations SET include_online_plan=false WHERE id=3');self.admin.commit()
         hidden=self.board(query)
         self.assertNotIn(3,[r['station_id'] for r in hidden['rows']])
