@@ -9,6 +9,7 @@ from inspection_schedule import EDIT_PERMISSION, VIEW_PERMISSION, read_board, sa
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from schedule_period import period
 from annual_metering_plan import plan_state
+from schedule_row_state import today_assignments
 from staff_availability import available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
@@ -69,17 +70,19 @@ def proposal(cur, actor, day, options=None):
     origin = ORIGIN_POINT
     people = available_people(cur, day)
     eligible = [p for p in people if p['id'] and p['available'] is True and not p['station_modes'] and not p['actual_modes']]
-    demands, periods, board_tokens = {}, {}, {}
+    demands, periods, board_tokens, boards = {}, {}, {}, {}
     coverage = []
     quarter = (day.month - 1) // 3 + 1
     for mode in ('offline', 'online'):
         chosen, start, end = period(dict(mode=mode, year=day.year, **({'quarter': quarter} if mode == 'offline' else {'month': day.month})))
         periods[mode] = (chosen, start, end)
         board = read_board(cur, chosen, start, end)
+        boards[mode]=board
         board_tokens[mode] = board['board_token']
         if mode == 'offline': coverage = regional_coverage(board['rows'],day)
         demands[mode] = []
         for row in board['rows']:
+            if row.get('locked'): continue
             cells = [dict(station_id=row['station_id'], column_key=c['key'], revision=row['cells'][c['key']]['revision'], label=c['label'])
                      for c in board['columns'] if row['cells'][c['key']]['status'] == 'unassigned']
             if cells and not any(c['status']=='assigned' for c in row['cells'].values()):
@@ -113,6 +116,7 @@ def proposal(cur, actor, day, options=None):
     annual_period = period(dict(mode='annual',year=day.year))
     periods['annual']=annual_period
     annual_board=read_board(cur,*annual_period)
+    boards['annual']=annual_board
     board_tokens['annual']=annual_board['board_token']
     ordinary=read_board(cur,*periods['offline'])
     quarter_rows={r['station_id']:r for r in ordinary['rows']}
@@ -121,7 +125,7 @@ def proposal(cur, actor, day, options=None):
     for row in annual_board['rows']:
         site=row['cells']['metering_site']
         qrow=quarter_rows.get(row['station_id'])
-        if not qrow or site['status'] not in ('assigned','unassigned') or any(c['status']=='assigned' and (c.get('scheduled_date') or '')>=day.isoformat() for c in row['cells'].values()): continue
+        if not qrow or row.get('locked') or qrow.get('locked') or site['status'] not in ('assigned','unassigned') or any(c['status']=='assigned' and (c.get('scheduled_date') or '')>=day.isoformat() for c in row['cells'].values()): continue
         if any(c['status']=='assigned' for c in qrow['cells'].values()) or not coordinate(row): continue
         annual_cells=[dict(station_id=row['station_id'],column_key=c['key'],revision=row['cells'][c['key']]['revision'],label='计量'+c['label'])
                       for c in annual_board['columns'] if row['cells'][c['key']]['status'] in ('assigned','unassigned')]
@@ -180,7 +184,8 @@ def proposal(cur, actor, day, options=None):
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         offline_count=quotas['offline'], online_count=quotas['online'], origin=origin, origin_address=ORIGIN_ADDRESS,
         warnings=warnings, regional_coverage=coverage, metering_plan=metering,
-        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后缩小同组站点间距离。已安排计量站点仅作预留，实际完成以当月计量现场巡检记录为准。',
+        current_assignments=today_assignments(boards.values(),day),
+        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后缩小同组站点间距离。计量年度表任一适用检查项有记录即算已查，未审核也计数；本月目标按本月记录，年度覆盖按全年记录，同站去重。',
         available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
         excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or '当天已有站点安排或巡检实绩')
                   for p in people if p not in eligible]), periods
@@ -220,6 +225,7 @@ def register_schedule_automation(app, *, connect, has_permission):
                         save_cell(cur, actor, dict(station_id=cell['station_id'], column_key=cell['column_key'], revision=cell['revision'],
                           inspector_ids=group.get('inspector_ids', [group['person']['id']]), scheduled_date=day.isoformat()), chosen, start, end, cache)
                 assert_actuals_window(window,today())
+                result['current_assignments']=today_assignments([read_board(cur,*p) for p in periods.values()],day)
             conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'

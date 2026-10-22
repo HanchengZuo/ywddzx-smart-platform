@@ -17,6 +17,7 @@ from inspection_schedule_tasks import dispatch_tasks
 from staff_daily_teams import field_team, group_assignments, team_days
 from schedule_shelf_store import shelf_items, refresh_field_shelf, expire_shelf
 from annual_metering_plan import plan_state, register_metering_plan
+from schedule_row_state import linked_started_stations
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
@@ -108,6 +109,7 @@ def read_board(cur, chosen, start, end):
     people = {row['id']: person(row) for row in cur.fetchall()}
     roster = roster_people(cur)
     inspectors = [p for p in roster if p['id']]
+    linked_locks = linked_started_stations(cur,chosen,station_ids)
     rows = []
     summary = dict(completed=0, assigned=0, unassigned=0)
     for sequence, station in enumerate(stations, 1):
@@ -128,8 +130,13 @@ def read_board(cur, chosen, start, end):
                 record_count=record.get('record_count', 0), last_inspection_date=record.get('last_inspection_date'),
                 revision=existing.get('revision', 0), updated_by_name=existing.get('updated_by_name', ''),
                 updated_at=existing.get('saved_at', ''),
-                scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None)
+                scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None,
+                overdue=bool(status=='assigned' and existing.get('scheduled_date') and existing['scheduled_date']<today()))
+        locked=station['id'] in linked_locks or any(c['status']=='completed' for c in cells.values())
+        for cell in cells.values():
+            cell['row_locked']=locked
         rows.append(dict(station_id=station['id'], station_name=station['station_name'],
+                         locked=locked,
                          address=station.get('address') or '',
                          longitude=float(station['longitude']) if station.get('longitude') is not None else None,
                          latitude=float(station['latitude']) if station.get('latitude') is not None else None,
@@ -137,7 +144,7 @@ def read_board(cur, chosen, start, end):
     shelf = shelf_items(cur,field_mode(chosen['mode']),start,end)
     eligible_keys = {(normalized_region(s['region']), str(s['station_name']).strip()) for s in stations}
     excluded = [dict(region=r,station_name=n) for r,n in fixed_roster(chosen['mode']) if (r,n) not in eligible_keys]
-    evidence = dict(rows=[(r['station_id'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
+    evidence = dict(rows=[(r['station_id'],r['locked'],[(k,c['revision'],c['status']) for k,c in r['cells'].items()]) for r in rows],
                     shelf=[(s['id'],s['revision']) for s in shelf], day=today().isoformat())
     token=hashlib.sha256(json.dumps(evidence).encode()).hexdigest()
     return dict(period=chosen, columns=columns, rows=rows, inspectors=inspectors, summary=summary,
@@ -175,11 +182,13 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     stations = eligible_stations(cur, chosen, station_id, lock=True)
     if len(stations) != 1:
         raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
-    column = next(col for col in table_columns(cur, chosen['mode'], lock=True) if col['key'] == key)
+    columns = table_columns(cur, chosen['mode'], lock=True)
+    column = next(col for col in columns if col['key'] == key)
     if not column_available(column, stations[0], chosen['mode']):
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
-    if record_cells(cur, [station_id], [column['table_id']], start, end):
-        raise ScheduleConflict('该站点本周期已有此检查表的巡检记录，单元格已完成，不能再分配。')
+    required_ids=[c['table_id'] for c in columns if column_available(c,stations[0],chosen['mode'])]
+    if record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id]):
+        raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入今日调度待选区。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date,plan_team FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
     existing = cur.fetchone() or dict(inspector_ids=[], revision=0, scheduled_date=None, plan_team=None)
@@ -233,9 +242,12 @@ def validate_edits(cur, edits, chosen, start, end):
         by_station[sid].add(key)
     columns = table_columns(cur, chosen['mode'])
     actual = record_cells(cur, list(by_station), [c['table_id'] for c in columns if c['table_id']], start, end)
+    linked_locks=linked_started_stations(cur,chosen,list(by_station))
     for sid, keys in by_station.items():
         stations = eligible_stations(cur, chosen, sid)
         if len(stations) != 1: raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
+        if sid in linked_locks or any((sid,c['table_id']) in actual for c in columns if column_available(c,stations[0],chosen['mode'])):
+            raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入今日调度待选区。')
         expected = {c['key'] for c in columns if column_available(c, stations[0], chosen['mode']) and (sid, c['table_id']) not in actual}
         if keys != expected:
             raise ScheduleConflict('请按站点整行安排所有尚未检查的检查表，已完成的实际记录保持不变。')
@@ -284,6 +296,7 @@ def sync_field_team_plans(cur, actor, day):
         chosen,start,end=period(dict(mode=mode,year=day.year,**({'quarter':(day.month-1)//3+1} if mode=='offline' else {})))
         board = read_board(cur, chosen, start, end)
         for row in board['rows']:
+            if row.get('locked'): continue
             for column in board['columns']:
                 cell = row['cells'][column['key']]
                 team = cell['plan_team']
@@ -314,6 +327,10 @@ def sync_metering_row(cur, actor, chosen, station, ids, day, previous, cache):
         {'quarter':(effective_day.month-1)//3+1} if other_mode=='offline' else {})))
     columns = table_columns(cur,other_mode)
     actual = record_cells(cur,[station['id']],[c['table_id'] for c in columns if c['table_id']],start,end)
+    if any((station['id'],c['table_id']) in actual for c in columns if column_available(c,station,other_mode)):
+        # An independent already-started board is read-only, not a reason to
+        # manufacture new assignments in its remaining cells.
+        return
     cur.execute('''SELECT * FROM inspection_schedule_cells WHERE mode=%s AND year=%s AND period_number=%s
       AND station_id=%s FOR UPDATE''',(other_mode,other['year'],period_number(other),station['id']))
     saved={r['column_key']:r for r in cur.fetchall()}

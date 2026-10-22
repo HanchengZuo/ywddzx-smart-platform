@@ -1,4 +1,4 @@
-"""Shared monthly regional targets. Completion comes only from metering field records."""
+"""Shared monthly targets and annual coverage, using either applicable metering record."""
 import json
 import logging
 from collections import Counter
@@ -13,23 +13,32 @@ def plan_state(cur, year, month):
       to_char(p.updated_at,'YYYY-MM-DD HH24:MI:SS') AS saved_at
       FROM annual_metering_plans p LEFT JOIN users u ON u.id=p.updated_by WHERE p.year=%s''', (year,))
     saved = cur.fetchone() or {}
-    cur.execute('SELECT id,region,station_name FROM stations WHERE include_offline_plan=TRUE')
+    cur.execute('SELECT id,region,station_name,monitoring_status FROM stations WHERE include_offline_plan=TRUE')
     stations = [s for s in cur.fetchall() if roster_position(s,'annual')]
     regions = Counter(normalized_region(s['region']) for s in stations)
     start, end = date(year,month,1), date(year+1,1,1) if month==12 else date(year,month+1,1)
-    cur.execute('''SELECT DISTINCT ins.station_id FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
-      WHERE t.table_name='计量稽查检查表（现场）' AND t.checklist_mode='offline'
-      AND ins.inspection_date>=%s AND ins.inspection_date<%s''', (start,end))
-    actual = {r['station_id'] for r in cur.fetchall()}
+    cur.execute('''SELECT ins.station_id,BOOL_OR(ins.inspection_date>=%s AND ins.inspection_date<%s) AS in_month
+      FROM inspections ins JOIN inspection_tables t ON t.id=ins.inspection_table_id
+      JOIN stations s ON s.id=ins.station_id
+      WHERE t.is_active=TRUE AND (SELECT COUNT(*) FROM inspection_tables definition
+        WHERE definition.table_name=t.table_name AND definition.checklist_mode=t.checklist_mode AND definition.is_active=TRUE)=1 AND (
+        (t.table_name='计量稽查检查表（现场）' AND t.checklist_mode='offline') OR
+        (t.table_name='计量稽查检查表（视频）' AND t.checklist_mode='online' AND s.monitoring_status='未运行'))
+      AND ins.inspection_date>=%s AND ins.inspection_date<%s GROUP BY ins.station_id''',
+      (start,end,date(year,1,1),date(year+1,1,1)))
+    records=cur.fetchall()
+    actual = {r['station_id'] for r in records if r['in_month']}
+    annual = {r['station_id'] for r in records}
     cur.execute('''SELECT DISTINCT station_id FROM inspection_schedule_cells WHERE mode='annual' AND year=%s
       AND column_key='metering_site' AND jsonb_array_length(inspector_ids)>0
       AND scheduled_date>=%s AND scheduled_date<%s AND scheduled_date>=%s''', (year,start,end,today()))
     reserved = {r['station_id'] for r in cur.fetchall()} - actual
     checked = Counter(normalized_region(s['region']) for s in stations if s['id'] in actual)
+    annual_checked = Counter(normalized_region(s['region']) for s in stations if s['id'] in annual)
     held = Counter(normalized_region(s['region']) for s in stations if s['id'] in reserved)
     quotas = saved.get('quotas', {})
     progress = [dict(region=r,total=regions[r],target=quotas.get(str(month),{}).get(r,0),
-                     completed=checked[r],reserved=held[r],
+                     completed=checked[r],annual_completed=annual_checked[r],reserved=held[r],
                      remaining=max(0,quotas.get(str(month),{}).get(r,0)-checked[r]-held[r]))
                 for r,_ in OFFLINE_GROUPS if regions[r]]
     return dict(year=year,month=month,quotas=quotas,revision=saved.get('revision',0),regions=progress,

@@ -260,6 +260,7 @@
                 ><input
                   v-if="multiSelect"
                   type="checkbox"
+                  :disabled="scheduleRowLocked(row)"
                   :checked="rowSelected(row)"
                   :aria-label="'选择' + row.station_name + '全部可编辑项'"
                   @change="selectRow(row)"
@@ -272,6 +273,7 @@
               :class="[
                 'matrix-cell',
                 row.cells[column.key].status,
+                { overdue: row.cells[column.key].overdue, 'row-locked': scheduleRowLocked(row) },
                 { 'is-self': !!scheduleSelfRole(row.cells[column.key], board.current_user_id) },
               ]"
               @dragover.prevent
@@ -281,7 +283,11 @@
                 type="button"
                 class="cell-button"
                 :draggable="
-                  canEdit && row.cells[column.key].status === 'assigned' && !loading && !shelfSaving
+                  canEdit &&
+                  !scheduleRowLocked(row) &&
+                  row.cells[column.key].status === 'assigned' &&
+                  !loading &&
+                  !shelfSaving
                 "
                 @dragstart="startAssignmentDrag($event, row)"
                 @dragend="dragged = null"
@@ -296,7 +302,7 @@
                   !!error ||
                   blocked ||
                   row.cells[column.key].status === 'unavailable' ||
-                  (multiSelect && row.cells[column.key].status === 'completed')
+                  (multiSelect && !scheduleCellEditable(row.cells[column.key], canEdit))
                 "
                 :aria-label="`${row.station_name}，${column.label}，${scheduleStatusLabels[row.cells[column.key].status]}${inspectorPreview(row.cells[column.key]) ? '，' + inspectorPreview(row.cells[column.key]) : ''}`"
                 @click="multiSelect ? selectRow(row) : openCell(row, column)"
@@ -324,7 +330,8 @@
                   >已检查 · {{ row.cells[column.key].last_inspection_date }}</small
                 ><small v-else-if="row.cells[column.key].status === 'assigned'"
                   >{{ row.cells[column.key].scheduled_date || '待补计划日期'
-                  }}{{ canEdit ? ' · 调整' : '' }}</small
+                  }}{{ row.cells[column.key].overdue ? ' · 逾期未检查' : ''
+                  }}{{ scheduleRowLocked(row) ? ' · 整站已锁定' : canEdit ? ' · 调整' : '' }}</small
                 >
                 <small
                   v-if="
@@ -346,7 +353,8 @@
     </div>
     <footer class="panel-footer">
       <span
-        >{{ board?.period.label || '当前周期' }} · 按站点顺序连续编号，绿色单元格不可改派。</span
+        >{{ board?.period.label || '当前周期' }} ·
+        任一检查项完成即整行锁定，黄色表示原计划逾期未检查。</span
       >
       ><span>{{
         canEdit
@@ -372,7 +380,7 @@
         <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
       </header>
       <p>
-        仅调度今日计划：拖入后整站未检查项一起撤下，拖回目标站整行直接保存，也可点选卡片再点目标位置。一键清空今日排班会将表内今日未完成计划转入本区，原有待选安排保留。今日全局共享，跨日自动清空；调度留痕和实际检查记录保留。
+        仅调度今日尚未开始的站点：任一检查项已完成即整行锁定，不可移入本区或改派。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。拖回目标站整行直接保存，也可点选卡片再点目标位置。今日全局共享，跨日自动清空；调度留痕和实际检查记录保留。
       </p>
       <div
         v-for="item in shelf"
@@ -437,6 +445,9 @@
             </button>
           </header>
           <div class="cell-dialog-body">
+            <p v-if="currentCell.row_locked" class="completion-note">
+              本站已有检查项完成，整行及同组同日的联动计划已锁定。仅查看原派工和实际记录，不能调整、取消或移入待选区。
+            </p>
             <div v-if="currentCell.status === 'completed'" class="completion-note">
               <strong>本周期已有巡检记录，已锁定</strong>
               <p>
@@ -599,7 +610,10 @@
                 </button>
               </p>
             </template>
-            <p v-else-if="currentCell.status !== 'completed'" class="readonly-note">
+            <p
+              v-else-if="currentCell.status !== 'completed' && !currentCell.row_locked"
+              class="readonly-note"
+            >
               当前仅可查看排班，编辑权限由Root独立分配。
             </p>
           </div>
@@ -685,6 +699,7 @@ import {
   filterScheduleRows,
   inspectorPreview,
   scheduleCellEditable,
+  scheduleRowLocked,
   scheduleCounts,
   scheduleStatusLabels,
 } from '@/utils/inspectionSchedule'
@@ -760,9 +775,11 @@ const regionStarts = computed(
 const currentCell = computed(() =>
   bulkEdits.value.length
     ? { status: 'assigned', assignees: [], revision: 0 }
-    : board.value?.rows.find((row) => row.station_id === selection.value?.row.station_id)?.cells[
-        selection.value?.column.key
-      ],
+    : (() => {
+        const row = board.value?.rows.find((r) => r.station_id === selection.value?.row.station_id)
+        const cell = row?.cells[selection.value?.column.key]
+        return cell ? { ...cell, row_locked: scheduleRowLocked(row) } : undefined
+      })(),
 )
 const peopleGroups = computed(() =>
   [
@@ -814,6 +831,7 @@ function toggleMulti() {
   selectedCells.value = []
 }
 function editableRowKeys(row) {
+  if (scheduleRowLocked(row)) return []
   return board.value.columns
     .filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
     .map((c) => cellKey(row, c))
@@ -844,13 +862,16 @@ const stageableSelection = computed(() => {
   return !!planPayload(selection.value.row)
 })
 const hasTodayPlans = computed(() =>
-  (board.value?.rows || []).some((row) =>
-    Object.values(row.cells).some(
-      (cell) => cell.status === 'assigned' && cell.scheduled_date === board.value.today,
-    ),
+  (board.value?.rows || []).some(
+    (row) =>
+      !scheduleRowLocked(row) &&
+      Object.values(row.cells).some(
+        (cell) => cell.status === 'assigned' && cell.scheduled_date === board.value.today,
+      ),
   ),
 )
 function targetCells(row) {
+  if (scheduleRowLocked(row)) return []
   const columns = board.value.columns.filter((c) =>
     scheduleCellEditable(row.cells[c.key], canEdit.value),
   )
@@ -933,6 +954,10 @@ async function removeShelf(key) {
 async function dropOn(row, event) {
   const item = dragPayload(event) || shelf.value.find((s) => s.key === pickedShelf.value)
   if (!item) return
+  if (scheduleRowLocked(row)) {
+    notice.value = '该站已有检查项完成，整行已锁定，不能改派。'
+    return
+  }
   if (item.kind === 'plan') {
     notice.value = '请先将今日计划拖入今日调度待选区，再选择目标站点。'
     return
@@ -1032,7 +1057,7 @@ async function loadPeople() {
     !selection.value ||
     !plannedDate.value ||
     !canEdit.value ||
-    currentCell.value?.status === 'completed'
+    !scheduleCellEditable(currentCell.value, canEdit.value)
   ) {
     peopleLoading.value = false
     return
@@ -1142,7 +1167,7 @@ async function openCell(row, column) {
   selection.value = { row, column }
   peopleKeyword.value = ''
   copySelection()
-  if (scheduleCellEditable(row.cells[column.key], canEdit.value)) {
+  if (!scheduleRowLocked(row) && scheduleCellEditable(row.cells[column.key], canEdit.value)) {
     bulkEdits.value = board.value.columns
       .filter((c) => scheduleCellEditable(row.cells[c.key], canEdit.value))
       .map((c) => ({
@@ -1160,7 +1185,7 @@ async function closeCell(force = false) {
   if (
     force !== true &&
     changed.value &&
-    currentCell.value?.status !== 'completed' &&
+    scheduleCellEditable(currentCell.value, canEdit.value) &&
     !window.confirm('排班调整尚未保存，确定放弃吗？')
   )
     return
@@ -1815,6 +1840,17 @@ input[type='search'] {
 }
 .assigned .cell-button small {
   color: #9e3936;
+}
+.schedule-matrix .assigned.overdue {
+  background: #fff0bd;
+  box-shadow: inset 3px 0 #bd880d;
+}
+.assigned.overdue .cell-names,
+.assigned.overdue .cell-button small {
+  color: #79550b;
+}
+.row-locked .cell-button {
+  cursor: default;
 }
 .schedule-matrix .unassigned {
   background: #f7f9fc;

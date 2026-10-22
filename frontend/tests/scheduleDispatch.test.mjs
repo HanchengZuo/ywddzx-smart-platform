@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { parse as parseJavascript } from '@babel/parser'
+import { scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
 
 const source = file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
 for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/MeteringAnnualPlan.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue']) {
@@ -75,6 +76,32 @@ test('personal inbox lives in desktop and mobile headers, not the page body', ()
   assert.match(app, /scheduleAgenda.value = payload.schedule_agenda/)
 })
 
+test('confirm keeps the modal open, retains saved dispatch, and reloads both existing work and new preview', async () => {
+  const calls=[]
+  const saved={day:'2026-10-22',groups:[{station_id:1}],current_assignments:[{name:'外勤甲组',stations:[{station_id:1}]}]}
+  const context=vm.createContext({
+    AbortController,serial:0,controller:undefined,disposed:false,
+    preview:{value:{groups:[{station_id:1}],token:'server-token'}},
+    day:{value:'2026-10-22'},offlineCount:{value:2},onlineCount:{value:3},
+    loading:{value:false},saving:{value:false},stale:{value:false},error:{value:''},savedNotice:{value:''},
+    dialog:{value:{close(){throw Error('confirmation must not close the dialog')}}},
+    emit:(event,data)=>calls.push({event,data}),window:{dispatchEvent(){}},Event:class{},
+    axios:{post:async(url,body)=>{
+      calls.push({url,body})
+      return {data:body.action==='confirm'?saved:{...saved,groups:[],token:'new-token'}}
+    }},
+  })
+  const script=source('components/AutomaticSchedule.vue')
+  vm.runInContext(script.slice(script.indexOf('async function createPreview()'),script.indexOf('onBeforeUnmount(() =>')),context)
+  await context.confirm()
+  assert.deepEqual(calls.filter(c=>c.body).map(c=>c.body.action),['confirm','preview'])
+  assert.equal(context.preview.value.current_assignments[0].name,'外勤甲组')
+  assert.equal(context.preview.value.groups.length,0)
+  assert.match(context.savedNotice.value,/已确认/)
+  assert.equal(context.saving.value,false)
+  assert.equal(context.stale.value,false)
+})
+
 function dispatchHarness(mode = 'offline', fail = false) {
   const item = {id: 17, revision: 2, key: 'shelf:17', name: '外勤甲组'}
   const calls = []
@@ -84,6 +111,7 @@ function dispatchHarness(mode = 'offline', fail = false) {
     canEdit: {value: true}, loading: {value: false}, shelfSaving: {value: false}, saving: {value: false},
     props: {mode}, board: {value: {columns: keys.map(key => ({key})), board_token: 'server-token',today:'2026-10-20'}},
     draft: {value: {}}, scheduleCellEditable: c => c.status !== 'completed', coverageQuery: () => ({mode}),
+    scheduleRowLocked,
     serial: 0, controller: undefined, polling: {pause() {}, start() {}}, disposed: false,
     selectedCells: {value: ['old']}, error: {value: ''}, updatedTime: {value: ''}, lastSyncedAt: 0,
     shelfOpen: {value: false}, notice: {value: ''},
@@ -101,15 +129,14 @@ function dispatchHarness(mode = 'offline', fail = false) {
   return {context, calls, row, item}
 }
 
-test('field drop fills whole unfinished row without confirmation and renders authoritative board/shelf immediately', async () => {
+test('field drop fills the whole unstarted row without confirmation and renders authoritative board/shelf immediately', async () => {
   const {context,calls,row} = dispatchHarness()
-  row.cells.a.status = 'completed'
   await context.dropOn(row, {key: 'c'})
   assert.equal(calls[0].url, '/api/inspection-schedule/dispatch')
   assert.equal(calls[0].body.action, 'place')
   assert.equal(calls[0].body.shelf_id, 17)
-  assert.equal(calls[0].body.cells.length, 5)
-  assert.ok(calls[0].body.cells.every(c => c.station_id === 2 && c.column_key !== 'a'))
+  assert.equal(calls[0].body.cells.length, 6)
+  assert.ok(calls[0].body.cells.every(c => c.station_id === 2))
   assert.equal(context.board.value.rows[0], 'server-owned')
   assert.equal(context.shelf.value[0].name, '被替换组')
   assert.equal(context.pickedShelf.value, null)
@@ -147,19 +174,23 @@ test('video drop targets all three columns; clear sends server board token, not 
 test('clear-today UI preserves waiting cards and requires plans in the table', () => {
   const panel=source('components/InspectionSchedulePanel.vue')
   assert.match(panel,/:disabled="loading \|\| shelfSaving \|\| !hasTodayPlans \|\| !canEdit"/)
-  assert.match(panel,/一键清空今日排班会将表内今日未完成计划转入本区，原有待选安排保留/)
+  assert.match(panel,/一键清空今日排班只将未开始站点转入本区，原有待选安排保留/)
   assert.doesNotMatch(panel,/一键清空今日排班也会清空本区/)
 })
 
-test('video row drag skips only immutable completed columns', async () => {
+test('one completed video item locks the whole row against drag and drops', async () => {
   const {context,calls,row} = dispatchHarness('online')
   row.cells.a.status = 'completed'
   const data = new Map()
-  const event = {preventDefault(){},dataTransfer:{setData:(k,v)=>data.set(k,v),getData:k=>data.get(k)}}
+  let prevented=false
+  const event = {preventDefault(){prevented=true},dataTransfer:{setData:(k,v)=>data.set(k,v),getData:k=>data.get(k)}}
   context.startAssignmentDrag(event,row)
   await context.stageDragged(event)
-  assert.equal(calls[0].body.action,'park')
-  assert.deepEqual(Array.from(calls[0].body.cells,c=>c.column_key),['b','c'])
+  assert.equal(prevented,true)
+  assert.equal(calls.length,0)
+  await context.dropOn(row,event)
+  assert.equal(calls.length,0)
+  assert.match(context.notice.value,/整行已锁定/)
 })
 
 test('today shelf refuses to drag a future or mixed-day row, without clearing any cells', () => {

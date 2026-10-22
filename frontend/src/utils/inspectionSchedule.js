@@ -65,7 +65,16 @@ export function inspectorPreview(cell) {
 }
 
 export function scheduleCellEditable(cell, allowed) {
-  return Boolean(allowed && cell && ['assigned', 'unassigned'].includes(cell.status))
+  return Boolean(
+    allowed && cell && !cell.row_locked && ['assigned', 'unassigned'].includes(cell.status),
+  )
+}
+
+export function scheduleRowLocked(row) {
+  return Boolean(
+    row?.locked ||
+    Object.values(row?.cells || {}).some((c) => c.row_locked || c.status === 'completed'),
+  )
 }
 
 export function scheduleCounts(rows) {
