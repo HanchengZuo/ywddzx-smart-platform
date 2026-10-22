@@ -5,16 +5,50 @@ export const scheduleStatusLabels = {
   unavailable: '不可安排',
 }
 
+export function stationScheduleProgress(row) {
+  // An inapplicable annual video column is exempt; a missing checklist is not.
+  const cells = Object.values(row?.cells || {}).filter((cell) => cell.applicable !== false)
+  const total = cells.length
+  const completed = cells.filter((cell) => cell.status === 'completed').length
+  const assigned = cells.filter((cell) => cell.status === 'assigned').length
+  const blocked =
+    !total || cells.some((cell) => !['completed', 'assigned', 'unassigned'].includes(cell.status))
+  const remaining = total - completed
+  const status =
+    total > 0 && remaining === 0
+      ? 'completed'
+      : !blocked && remaining > 0 && assigned === remaining
+        ? 'assigned'
+        : 'unassigned'
+  return {
+    status,
+    total,
+    completed,
+    assigned,
+    remaining,
+    blocked,
+    partialCompleted: completed > 0 && remaining > 0,
+    partialAssigned: assigned > 0 && assigned < remaining,
+  }
+}
+
 export function filterScheduleRows(rows, region, keyword, state = '') {
   const query = String(keyword || '')
     .trim()
     .toLocaleLowerCase()
-  return rows.filter(
-    (row) =>
-      (!region || row.region === region) &&
-      (!query || [row.station_name, row.region].join(' ').toLocaleLowerCase().includes(query)) &&
-      (!state || Object.values(row.cells).some((cell) => cell.status === state)),
-  )
+  return rows.filter((row) => {
+    if (
+      (region && row.region !== region) ||
+      (query && ![row.station_name, row.region].join(' ').toLocaleLowerCase().includes(query))
+    )
+      return false
+    if (!state) return true
+    const progress = stationScheduleProgress(row)
+    if (state === 'partial_completed') return progress.partialCompleted
+    if (state === 'partial_assigned') return progress.partialAssigned
+    if (state === 'blocked') return progress.blocked
+    return progress.status === state
+  })
 }
 
 export function displayedInspectors(cell) {
@@ -35,11 +69,20 @@ export function scheduleCellEditable(cell, allowed) {
 }
 
 export function scheduleCounts(rows) {
-  const result = { completed: 0, assigned: 0, unassigned: 0 }
-  rows.forEach((row) =>
-    Object.values(row.cells).forEach((cell) => {
-      if (Object.hasOwn(result, cell.status)) result[cell.status]++
-    }),
-  )
+  const result = {
+    completed: 0,
+    assigned: 0,
+    unassigned: 0,
+    total: rows.length,
+    partialCompleted: 0,
+    partialAssigned: 0,
+    blocked: 0,
+  }
+  rows.forEach((row) => {
+    const progress = stationScheduleProgress(row)
+    result[progress.status]++
+    for (const flag of ['partialCompleted', 'partialAssigned', 'blocked'])
+      result[flag] += Number(progress[flag])
+  })
   return result
 }

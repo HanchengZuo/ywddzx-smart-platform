@@ -7,6 +7,7 @@ import {
   inspectorPreview,
   scheduleCellEditable,
   scheduleCounts,
+  stationScheduleProgress,
 } from '../src/utils/inspectionSchedule.js'
 
 const people = [1, 2, 3].map((id) => ({ id, display_name: '人员' + id }))
@@ -34,7 +35,81 @@ test('local filters intersect and preserve business roster order; summary exclud
   assert.deepEqual(filterScheduleRows(rows, '', ''), rows)
   assert.deepEqual(filterScheduleRows(rows, '松金', '甲', 'assigned'), [rows[0]])
   assert.deepEqual(filterScheduleRows(rows, '浦东', '', 'completed'), [])
-  assert.deepEqual(scheduleCounts(rows), { completed: 1, assigned: 1, unassigned: 1 })
+  assert.deepEqual(scheduleCounts(rows), { completed: 0, assigned: 1, unassigned: 1, total: 2,
+    partialCompleted: 1, partialAssigned: 0, blocked: 1 })
+})
+
+test('station counts are mutually exclusive; partial inspection does not mean station completion', () => {
+  const row = statuses => ({ cells: Object.fromEntries(statuses.map((status, i) => [i, { status }])) })
+  const cases = [
+    [Array(6).fill('completed'), 'completed', false, false],
+    [Array(3).fill('assigned'), 'assigned', false, false],
+    [['completed', ...Array(5).fill('assigned')], 'assigned', true, false],
+    [['completed', ...Array(5).fill('unassigned')], 'unassigned', true, false],
+    [['assigned', 'unassigned', 'unassigned'], 'unassigned', false, true],
+    [['completed', 'assigned', 'unassigned'], 'unassigned', true, true],
+  ]
+  const stations = cases.map(([statuses]) => row(statuses))
+  cases.forEach(([, status, partialCompleted, partialAssigned], i) => {
+    const progress = stationScheduleProgress(stations[i])
+    assert.equal(progress.status, status)
+    assert.equal(progress.partialCompleted, partialCompleted)
+    assert.equal(progress.partialAssigned, partialAssigned)
+  })
+  const counts = scheduleCounts(stations)
+  assert.deepEqual(counts, { completed: 1, assigned: 2, unassigned: 3, total: 6,
+    partialCompleted: 3, partialAssigned: 2, blocked: 0 })
+  assert.equal(counts.completed + counts.assigned + counts.unassigned, counts.total)
+})
+
+test('annual video exemptions are distinct from missing/disabled required checklists', () => {
+  const site = { status: 'completed', applicable: true }
+  const exempt = { cells: { site, video: { status: 'unavailable', applicable: false } } }
+  assert.equal(stationScheduleProgress(exempt).status, 'completed')
+  assert.equal(stationScheduleProgress(exempt).total, 1)
+  const monitoredDown = { cells: { site, video: { status: 'unassigned', applicable: true } } }
+  assert.equal(stationScheduleProgress(monitoredDown).status, 'unassigned')
+  assert.equal(stationScheduleProgress(monitoredDown).partialCompleted, true)
+  const missing = { cells: { site, other: { status: 'unavailable', applicable: true } } }
+  assert.equal(stationScheduleProgress(missing).status, 'unassigned')
+  assert.equal(stationScheduleProgress(missing).blocked, true)
+  assert.equal(stationScheduleProgress({ cells: {} }).status, 'unassigned')
+  assert.equal(stationScheduleProgress({ cells: {} }).blocked, true)
+})
+
+test('station state filters agree with counters and auxiliary partial-state filters preserve row order', () => {
+  const stations = [
+    { station_name: '甲', region: '松金', cells: { a: { status: 'completed' }, b: { status: 'assigned' } } },
+    { station_name: '乙', region: '浦东', cells: { a: { status: 'completed' }, b: { status: 'completed' } } },
+    { station_name: '丙', region: '松金', cells: { a: { status: 'completed' }, b: { status: 'unassigned' } } },
+    { station_name: '丁', region: '松金', cells: { a: { status: 'assigned' }, b: { status: 'unassigned' } } },
+    { station_name: '戊', region: '松金', cells: { a: { status: 'unavailable', applicable: true } } },
+  ]
+  const counts = scheduleCounts(stations)
+  for (const state of ['completed', 'assigned', 'unassigned']) {
+    const filtered = filterScheduleRows(stations, '', '', state)
+    assert.equal(filtered.length, counts[state])
+    assert.equal(scheduleCounts(filtered)[state], filtered.length)
+  }
+  assert.deepEqual(filterScheduleRows(stations, '', '', 'partial_completed').map(r => r.station_name), ['甲', '丙'])
+  assert.deepEqual(filterScheduleRows(stations, '', '', 'partial_assigned').map(r => r.station_name), ['丁'])
+  assert.deepEqual(filterScheduleRows(stations, '松金', '戊', 'blocked').map(r => r.station_name), ['戊'])
+})
+
+test('every combination of six checklist states counts each station once, never each cell', () => {
+  const states = ['completed', 'assigned', 'unassigned', 'unavailable']
+  for (let code = 0; code < 4 ** 6; code++) {
+    let n = code
+    const cells = {}
+    for (let i = 0; i < 6; i++) { cells[i] = { status: states[n % 4], applicable: true }; n = Math.floor(n / 4) }
+    const station = { cells }
+    const progress = stationScheduleProgress(station)
+    const counts = scheduleCounts([station])
+    assert.equal(counts.completed + counts.assigned + counts.unassigned, 1)
+    assert.equal(counts[progress.status], 1)
+    if (progress.status === 'completed') assert.ok(Object.values(cells).every(c => c.status === 'completed'))
+    if (progress.status === 'assigned') assert.ok(Object.values(cells).every(c => ['completed', 'assigned'].includes(c.status)))
+  }
 })
 test('new independent rights replace retired plan routes and no longer render plan todos', () => {
   const router = readFileSync(new URL('../src/router/index.js', import.meta.url), 'utf8')
@@ -55,6 +130,17 @@ const panelSource = readFileSync(
   new URL('../src/components/InspectionSchedulePanel.vue', import.meta.url),
   'utf8',
 )
+test('all schedule panels show station totals and explain partial completion without cell counters', () => {
+  const template = panelSource.slice(0, panelSource.indexOf('<script setup>'))
+  assert.doesNotMatch(template, /按单元格计数|有已检查项|有已排班项|有待排班项/)
+  assert.match(template, /counts\.total/)
+  assert.match(template, /每站只计一次/)
+  assert.match(template, /全部应检表已检查/)
+  assert.match(template, /剩余应检表全已安排/)
+  assert.match(template, /counts\.partialCompleted/)
+  assert.match(template, /counts\.partialAssigned/)
+  assert.match(template, /value="partial_completed"/)
+})
 test('schedule hides roster diagnostics and separates adjacent colored cells on desktop and mobile', () => {
   const template = panelSource.slice(0, panelSource.indexOf('<script setup>'))
   assert.doesNotMatch(template, /board\.roster_total|board\.excluded_stations|纳入设置由站点基础档案维护/)
