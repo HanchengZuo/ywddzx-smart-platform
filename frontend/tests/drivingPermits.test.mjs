@@ -39,7 +39,8 @@ for (const file of ['views/management/UserDataManagementView.vue', 'components/U
     } else if (file.includes('DailyInspectionTeams')) {
       assert.match(source, /unsafeGroups.length > 0/)
       assert.match(source, /driverCount\(group\)/)
-      assert.match(source, /student_id: studentId/)
+      assert.match(source, /movePreviewMember/)
+      assert.match(source, /moves: preview.value.moves/)
     }
   })
 }

@@ -10,7 +10,7 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
-from staff_daily_teams import (adjust_preview, group_assignments, move_student, random_teams, save_teams,
+from staff_daily_teams import (adjust_preview, adjust_members, group_assignments, move_student, propose_teams, save_teams,
                               team_days, validate_dispatched_teams, validate_team_changes, annotate_dispatch_locks)
 from driving_permits import validate_driving_teams
 from schedule_shelf_store import seed_daily_shelf
@@ -18,6 +18,11 @@ from schedule_shelf_store import seed_daily_shelf
 
 def stored_assignments(result):
     return [{k:v for k,v in p.items() if k!='dispatch_locked'} for group in result['groups'] for p in group['members']]
+
+
+def proposal_token(actor, result, assignments, seed=None):
+    evidence = dict(actor=actor['id'], context=result, assignments=assignments, seed=seed)
+    return hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def context(cur, day):
@@ -52,10 +57,11 @@ def register_staff_daily_teams(app, *, connect, has_permission):
             window = actuals_window(day)
             if request.method == 'GET':
                 result = context(cur, day)
+                result['current_token'] = proposal_token(actor, result, stored_assignments(result))
             else:
                 if not can_edit: raise PermissionError('当前账号不能安排今日巡检。')
                 data = request.get_json(silent=True)
-                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'move'):
+                if not isinstance(data, dict) or data.get('action') not in ('preview', 'confirm', 'move', 'apply'):
                     raise ValueError('请选择预览、确认或调整今日分组。')
                 if day_value(data.get('day')) != day:
                     raise ScheduleConflict('日期已变化，请重新打开今日巡检安排。')
@@ -78,6 +84,16 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                         sync_field_team_plans(cur, actor, day)
                     result['groups'] = group_assignments(assignments)
+                elif data['action'] == 'apply' and data.get('source') == 'current':
+                    require_workday(cur, day)
+                    before = stored_assignments(result)
+                    if proposal_token(actor, result, before) != data.get('token'):
+                        raise ScheduleConflict('档期、分组或站点派工已变化，请重新载入当前安排后调整。')
+                    assignments = adjust_members(result['people'], before, data.get('moves', []))
+                    validate_team_changes(cur, day, before, assignments)
+                    validate_driving_teams(result['people'], assignments)
+                    result['revision'] = save_teams(cur, actor, day, assignments, before)
+                    result['groups'] = group_assignments(assignments)
                 else:
                     require_workday(cur, day)
                     if result['unconfirmed']:
@@ -86,17 +102,23 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     if not isinstance(seed, str) or not re.fullmatch('[0-9a-f]{32}', seed):
                         raise ValueError('随机预览标识不合法，请重新预览。')
                     if not result['people']: raise ValueError('今天没有已确认有空且匹配账号的人员。')
-                    assignments = random_teams(result['people'], data.get('manager_modes'), seed)
-                    evidence = dict(actor=actor['id'], context=result, assignments=assignments, seed=seed)
-                    token = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-                    if data['action'] == 'confirm':
+                    annotated = [p for group in result['groups'] for p in group['members']]
+                    assignments = propose_teams(result['people'], annotated, data.get('manager_modes'), seed)
+                    token = proposal_token(actor, result, assignments, seed)
+                    if data['action'] in ('confirm', 'apply'):
+                        if data['action'] == 'apply' and data.get('source') != 'generated':
+                            raise ValueError('请选择智能生成方案或当前安排进行调整。')
                         if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
                         assignments = adjust_preview(result['people'], assignments, data.get('student_leaders', {}))
+                        assignments = adjust_members(result['people'], assignments, data.get('moves', []))
+                        assignments = [{k:v for k,v in p.items() if k!='dispatch_locked'} for p in assignments]
                         validate_dispatched_teams(cur, day, assignments)
                         before = stored_assignments(result)
                         validate_team_changes(cur,day,before,assignments)
+                        validate_driving_teams(result['people'], assignments)
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
-                    result.update(groups=group_assignments(assignments), token=token, seed=seed)
+                    result.update(groups=annotate_dispatch_locks(cur,day,group_assignments(assignments)),
+                                  token=token, seed=seed, source='generated', manager_modes=data.get('manager_modes'))
             if request.method == 'POST' and data['action'] != 'preview':
                 result['groups']=annotate_dispatch_locks(cur,day,result['groups'])
                 seed_daily_shelf(cur,actor,day,result['groups'],result['revision'])

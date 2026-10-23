@@ -261,7 +261,7 @@
                     历史补录仅修改此人的档期显示，不会新增、删除或修改实际巡检记录。选择“自动记录”可恢复按原始巡检记录展示。
                   </p>
                   <p v-else class="edit-hint">
-                    仅保存此人这一天的档期，不会影响其他人员或日期。已有排班需先改派或取消，才能标记没空。
+                    尚未派站可直接标记没空，并自动退出今日分组；若为外勤带队管理人员，原组大学生转入内勤视频组。已派站或已有实绩仍受保护，其他日期安排不变。
                   </p>
                 </template>
                 <p v-else-if="detail" class="edit-hint readonly-explanation">
@@ -555,7 +555,9 @@ async function save() {
     selection.value = null
     notice.value = wasHistorical
       ? '历史档期已保存，原始巡检记录保持不变。'
-      : '档期已保存，可在巡检排班选择有空人员。'
+      : '档期已保存；未派站人员的分组和今日调度待选区已同步更新。'
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     await load()
   } catch (err) {
     if (!disposed) {
