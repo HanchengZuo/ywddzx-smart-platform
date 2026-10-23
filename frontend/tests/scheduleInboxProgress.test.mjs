@@ -43,6 +43,7 @@ test('today progress and two kinds of historical unfinished counts never mix', (
   assert.deepEqual(metrics, {
     todayCompleted: 3,
     todayTotal: 9,
+    todayExempted: 0,
     todayPending: 6,
     historyOffline: 7,
     historyOnline: 5,
@@ -152,6 +153,6 @@ test('progress UI compiles with explicit states, history field/video tabs and no
   assert.match(source, /历史视频未完成/)
   assert.match(source, /role="progressbar"/)
   assert.match(source, /task.completion_inspection_id/)
-  assert.match(source, /task.status !== 'completed'/)
+  assert.match(source, /task.status === 'pending'/)
   assert.doesNotMatch(descriptor.template.content, /次日归档|核对完成情况|type="checkbox"/)
 })

@@ -19,6 +19,7 @@ from schedule_shelf_store import shelf_items, refresh_field_shelf, expire_shelf
 from schedule_quotas import read_quotas
 from annual_metering_plan import plan_state, register_metering_plan
 from schedule_row_state import linked_started_stations
+from schedule_video_exceptions import video_exceptions
 
 VIEW_PERMISSION = 'view_inspection_schedule'
 EDIT_PERMISSION = 'edit_inspection_schedule'
@@ -111,6 +112,7 @@ def read_board(cur, chosen, start, end):
     roster = roster_people(cur)
     inspectors = [p for p in roster if p['id']]
     linked_locks = linked_started_stations(cur,chosen,station_ids)
+    exceptions = video_exceptions(cur, chosen, station_ids)
     rows = []
     summary = dict(completed=0, assigned=0, unassigned=0)
     for sequence, station in enumerate(stations, 1):
@@ -120,10 +122,11 @@ def read_board(cur, chosen, start, end):
             record = complete.get((station['id'], column['table_id'])) or {}
             assignees = [people.get(uid, dict(id=uid, username='', role='', display_name='账号已删除'))
                          for uid in existing.get('inspector_ids', [])]
-            status = 'unavailable' if not column_available(column, station, chosen['mode']) else 'completed' if record else 'assigned' if assignees else 'unassigned'
+            status = 'exception' if station['id'] in exceptions else 'unavailable' if not column_available(column, station, chosen['mode']) else 'completed' if record else 'assigned' if assignees else 'unassigned'
             if status in summary:
                 summary[status] += 1
             cells[column['key']] = dict(status=status, assignees=assignees,
+                video_exception=exceptions.get(station['id']),
                 applicable=column_applicable(column,station,chosen['mode']),
                 plan_team=existing.get('plan_team'),
                 unavailable_reason='仅监控未运行站点参与计量视频年度检查' if chosen['mode']=='annual' and column['key']=='metering_video' and station['monitoring_status']!='未运行' else '',
@@ -133,7 +136,7 @@ def read_board(cur, chosen, start, end):
                 updated_at=existing.get('saved_at', ''),
                 scheduled_date=existing['scheduled_date'].isoformat() if existing.get('scheduled_date') else None,
                 overdue=bool(status=='assigned' and existing.get('scheduled_date') and existing['scheduled_date']<today()))
-        locked=station['id'] in linked_locks or any(c['status']=='completed' for c in cells.values())
+        locked=station['id'] in exceptions or station['id'] in linked_locks or any(c['status']=='completed' for c in cells.values())
         for cell in cells.values():
             cell['row_locked']=locked
         rows.append(dict(station_id=station['id'], station_name=station['station_name'],
@@ -178,6 +181,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
         if not start <= day < end: raise ValueError('计划日期必须位于所选季度或月份内。')
         require_workday(cur, day)
     lock_schedule(cur)
+    if video_exceptions(cur, chosen, [station_id]):
+        raise ScheduleConflict('本站本月已登记视频异常免检，原派工已留存，不能调整或移入待选区。')
     cell_key = (chosen['mode'], chosen['year'], period_number(chosen), station_id, key)
     # Cross-worker serialization plus a revision check avoids lost updates and ABA on clears.
     cur.execute('SELECT pg_advisory_xact_lock(9701,hashtext(%s))', (json.dumps(cell_key),))
@@ -245,7 +250,10 @@ def validate_edits(cur, edits, chosen, start, end):
     columns = table_columns(cur, chosen['mode'])
     actual = record_cells(cur, list(by_station), [c['table_id'] for c in columns if c['table_id']], start, end)
     linked_locks=linked_started_stations(cur,chosen,list(by_station))
+    exceptions=video_exceptions(cur,chosen,list(by_station))
     for sid, keys in by_station.items():
+        if sid in exceptions:
+            raise ScheduleConflict('本站本月已登记视频异常免检，原派工已留存，不能调整或移入待选区。')
         stations = eligible_stations(cur, chosen, sid)
         if len(stations) != 1: raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
         if sid in linked_locks or any((sid,c['table_id']) in actual for c in columns if column_available(c,stations[0],chosen['mode'])):

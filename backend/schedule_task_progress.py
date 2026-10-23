@@ -27,11 +27,15 @@ PROGRESS_SQL = f"""WITH candidates AS MATERIALIZED (
         AND newer.status IN ('pending','completed'))
 ), progress AS MATERIALIZED (
   SELECT task.*, matches.record_count,matches.inspection_id,matches.inspection_date,
-    CASE WHEN matches.record_count>0 THEN 'completed' ELSE 'pending' END AS effective_status,
+    waiver.id AS exception_id,waiver.reason AS exception_reason,waiver.reporter_name AS exception_reporter,
+    to_char(waiver.created_at AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD HH24:MI:SS') AS exception_reported_at,
+    CASE WHEN waiver.id IS NOT NULL THEN 'exception' WHEN matches.record_count>0 THEN 'completed' ELSE 'pending' END AS effective_status,
     CASE WHEN task.scheduled_date=%s THEN 'today_' ELSE 'history_' END || task.mode AS bucket,
-    MAX(CASE WHEN matches.record_count=0 THEN 1 ELSE 0 END)
+    MAX(CASE WHEN matches.record_count=0 AND waiver.id IS NULL THEN 1 ELSE 0 END)
       OVER(PARTITION BY task.scheduled_date,task.mode,task.station_id) AS group_pending
   FROM candidates task
+  LEFT JOIN inspection_schedule_video_exceptions waiver ON task.mode='online'
+    AND waiver.year=task.year AND waiver.month=task.period_number AND waiver.station_id=task.station_id
   LEFT JOIN LATERAL (
     SELECT COUNT(*)::int AS record_count,(array_agg(ins.id ORDER BY ins.inspection_date DESC,ins.id DESC))[1] AS inspection_id,
       MAX(ins.inspection_date) AS inspection_date
@@ -58,12 +62,15 @@ def inbox_summary(cur,user_id,day):
     cur.execute(PROGRESS_SQL+'''SELECT bucket,COUNT(*)::int AS total,
       COUNT(*) FILTER(WHERE effective_status='pending')::int AS pending,
       COUNT(*) FILTER(WHERE effective_status='completed')::int AS completed,
+      COUNT(*) FILTER(WHERE effective_status='exception')::int AS exempted,
       COUNT(DISTINCT (scheduled_date,station_id))::int AS stations
       FROM visible GROUP BY bucket''',params(user_id,day))
     buckets={key:dict(total=0,pending=0,completed=0,stations=0) for key in BUCKETS}
+    exception_counts={key:0 for key in BUCKETS}
     for row in cur.fetchall():
         buckets[row['bucket']]={key:row[key] for key in ('total','pending','completed','stations')}
-    return dict(buckets=buckets,count=sum(r['pending'] for r in buckets.values()))
+        exception_counts[row['bucket']]=row['exempted']
+    return dict(buckets=buckets,exception_counts=exception_counts,count=sum(r['pending'] for r in buckets.values()))
 
 
 def inbox_page(cur,user_id,day,bucket,page,page_size):
@@ -76,6 +83,7 @@ def inbox_page(cur,user_id,day,bucket,page,page_size):
       ORDER BY (scheduled_date=%s) DESC,scheduled_date,mode,station_id LIMIT %s OFFSET %s
     ) SELECT p.id,p.mode,p.station_id,p.station_name,p.table_id,p.table_name,p.column_key,p.plan_team,
       p.scheduled_date::text,p.effective_status AS status,p.record_count,
+      p.exception_id,p.exception_reason,p.exception_reporter,p.exception_reported_at,
       p.inspection_id AS completion_inspection_id,p.inspection_date::text AS last_inspection_date,
       p.period_start::text AS coverage_from,(p.coverage_end-1)::text AS coverage_to,p.bucket
       FROM visible p JOIN selected_groups g USING(scheduled_date,mode,station_id)

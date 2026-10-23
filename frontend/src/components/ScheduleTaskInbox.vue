@@ -42,6 +42,7 @@
       <div class="tasks-body">
         <p class="method">
           与巡检排班采用同一覆盖口径：同站、同检查表在对应季度、年度或月份内有巡检记录即完成，不要求审核，也不限定录入人。现场和视频未完成项跨日分别进入历史分类；整站只有全部检查表完成才算完成。
+          视频任务可按站报告异常，填写原因后该站本月三张视频检查表异常免检，不计为已检查。
         </p>
         <section class="agenda-card">
           <span>{{ currentAgenda?.day || today }} · 我的档期</span
@@ -56,6 +57,7 @@
           </div>
           <div>
             <small>今日待完成</small><strong>{{ metrics.todayPending }}<em> 项</em></strong>
+            <small v-if="metrics.todayExempted">另有 {{ metrics.todayExempted }} 项异常免检</small>
           </div>
           <div class="metric-history">
             <small>历史现场未完成</small><strong>{{ metrics.historyOffline }}<em> 项</em></strong>
@@ -95,7 +97,12 @@
         <p v-if="loading" class="sync-note" role="status">正在核对巡检任务与最新记录…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <div class="task-cards" :aria-busy="loading">
-          <article v-for="group in groups" :key="group.key" class="task-group" :class="group.mode">
+          <article
+            v-for="group in groups"
+            :key="group.key"
+            class="task-group"
+            :class="[group.mode, { 'station-exception': group.exempted }]"
+          >
             <div class="task-heading">
               <span :class="group.mode">{{
                 group.mode === 'offline' ? '现场巡检' : '视频巡检'
@@ -112,15 +119,23 @@
                 }}</small
               >
             </div>
-            <div class="station-completion" :class="{ done: !group.pending }">
+            <div class="station-completion" :class="{ done: !group.pending && !group.exempted }">
               <div>
                 <strong>{{
-                  !group.pending ? '整站已完成' : group.completed ? '部分完成' : '待检查'
+                  group.exempted
+                    ? '整站视频异常 · 无需再检查'
+                    : !group.pending
+                      ? '整站已完成'
+                      : group.completed
+                        ? '部分完成'
+                        : '待检查'
                 }}</strong
                 ><span
-                  >已完成 {{ group.completed }}/{{ group.total }} 项<span v-if="group.pending">
-                    · 剩余 {{ group.pending }} 项</span
-                  ></span
+                  >{{
+                    group.exempted
+                      ? `异常免检 ${group.exempted}/${group.total} 项`
+                      : `已完成 ${group.completed}/${group.total} 项`
+                  }}<span v-if="group.pending"> · 剩余 {{ group.pending }} 项</span></span
                 >
               </div>
               <div
@@ -129,10 +144,29 @@
                 :aria-label="`${group.station_name}检查表完成进度`"
                 :aria-valuemin="0"
                 :aria-valuemax="group.total"
-                :aria-valuenow="group.completed"
+                :aria-valuenow="group.completed + group.exempted"
               >
                 <i :style="{ width: group.percent + '%' }"></i>
               </div>
+            </div>
+            <section
+              v-if="group.exception"
+              class="video-exception-note"
+              aria-label="整站视频异常原因"
+            >
+              <strong>异常原因</strong>
+              <p>{{ group.exception.exception_reason }}</p>
+              <small
+                >{{ group.exception.exception_reporter }} ·
+                {{ group.exception.exception_reported_at }}
+                登记。原派工及已有巡检记录均保留。</small
+              >
+            </section>
+            <div v-else-if="group.mode === 'online' && group.pending" class="station-actions">
+              <span>本站无法正常视频检查？可整站报告异常。</span>
+              <button type="button" class="report-exception" @click="openException(group)">
+                报告视频异常
+              </button>
             </div>
             <p v-if="group.plan_team" class="original-crew">
               原派工：{{ group.plan_team.name }} ·
@@ -140,13 +174,16 @@
             </p>
             <div v-for="task in group.tasks" :key="task.id" class="task-item" :class="task.status">
               <span class="task-check" aria-hidden="true">{{
-                task.status === 'completed' ? '✓' : '·'
+                task.status === 'exception' ? '—' : task.status === 'completed' ? '✓' : '·'
               }}</span>
               <div class="task-label">
                 <strong>{{ task.table_name }}</strong>
-                <small v-if="task.status === 'completed'"
+                <small v-if="task.record_count > 0"
                   >{{ task.last_inspection_date }} · 巡检记录 #{{ task.completion_inspection_id
                   }}<span v-if="task.record_count > 1"> 等 {{ task.record_count }} 条</span></small
+                >
+                <small v-else-if="task.status === 'exception'"
+                  >整站异常免检，无需提交本表巡检记录</small
                 >
                 <small v-else>尚无对应周期内的巡检记录</small>
                 <small class="coverage-window"
@@ -154,13 +191,17 @@
                 >
               </div>
               <span class="task-state">{{
-                task.status === 'completed' ? '已完成' : '未完成'
+                task.status === 'exception'
+                  ? '异常免检'
+                  : task.status === 'completed'
+                    ? '已完成'
+                    : '未完成'
               }}</span>
               <button
                 v-if="
                   canRegister &&
                   task.mode === 'online' &&
-                  task.status !== 'completed' &&
+                  task.status === 'pending' &&
                   task.station_id &&
                   task.table_id
                 "
@@ -189,6 +230,47 @@
           当前账号没有巡检登记权限，请联系管理员处理。
         </p>
       </div>
+    </dialog>
+    <dialog
+      ref="exceptionDialog"
+      class="video-exception-dialog"
+      :aria-labelledby="titleId + '-exception'"
+      @cancel.prevent="closeException"
+    >
+      <form @submit.prevent="saveException">
+        <header>
+          <small>VIDEO INSPECTION EXCEPTION</small>
+          <h3 :id="titleId + '-exception'">报告整站视频异常</h3>
+          <p>{{ exceptionTarget?.station_name }} · {{ exceptionTarget?.scheduled_date }}</p>
+        </header>
+        <div class="exception-form-body">
+          <p class="exception-warning">
+            提交后，该站本月安全、计量、现场三张视频检查表均无需再完成。排班表将整站置灰，保留原派工和操作记录，不计为已检查。请核实后提交。
+          </p>
+          <label :for="titleId + '-reason'">异常原因 <span>必填</span></label>
+          <textarea
+            :id="titleId + '-reason'"
+            v-model="exceptionReason"
+            maxlength="500"
+            rows="4"
+            required
+            :disabled="exceptionSaving"
+            placeholder="例如：站点监控故障，无法查看视频。请说明具体情况。"
+          ></textarea>
+          <small class="reason-count">{{ exceptionReason.length }}/500</small>
+          <p v-if="exceptionError" class="error" role="alert">{{ exceptionError }}</p>
+        </div>
+        <footer>
+          <button type="button" :disabled="exceptionSaving" @click="closeException">取消</button
+          ><button
+            type="submit"
+            class="exception-submit"
+            :disabled="exceptionSaving || !exceptionReason.trim()"
+          >
+            {{ exceptionSaving ? '正在保存…' : '确认整站异常免检' }}
+          </button>
+        </footer>
+      </form>
     </dialog></Teleport
   >
 </template>
@@ -243,6 +325,46 @@ const tabs = computed(() =>
   })),
 )
 const groups = computed(() => taskProgressGroups(tasks.value))
+const exceptionDialog = ref(null),
+  exceptionTarget = ref(null),
+  exceptionReason = ref(''),
+  exceptionSaving = ref(false),
+  exceptionError = ref('')
+function openException(group) {
+  const task = group.tasks.find((item) => item.status === 'pending')
+  if (!task || group.mode !== 'online') return
+  exceptionTarget.value = task
+  exceptionReason.value = ''
+  exceptionError.value = ''
+  exceptionDialog.value.showModal()
+}
+function closeException() {
+  if (!exceptionSaving.value) exceptionDialog.value?.close()
+}
+async function saveException() {
+  if (exceptionSaving.value || !exceptionTarget.value || !exceptionReason.value.trim()) return
+  exceptionSaving.value = true
+  exceptionError.value = ''
+  try {
+    await axios.post(
+      `/api/my-schedule-tasks/${exceptionTarget.value.id}/video-exception`,
+      { reason: exceptionReason.value.trim() },
+      { timeout: 15000 },
+    )
+    exceptionDialog.value?.close()
+    serial++
+    controller?.abort()
+    loading.value = false
+    await load()
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+  } catch (err) {
+    if (!disposed)
+      exceptionError.value = err.response?.data?.error || '保存结果未确认，请刷新核对后重试。'
+  } finally {
+    exceptionSaving.value = false
+  }
+}
 let permissions = {}
 try {
   permissions = JSON.parse(localStorage.getItem('permissions') || '{}')
@@ -285,7 +407,12 @@ async function load() {
 }
 const polling = createAdaptivePolling({
   task: load,
-  canRun: () => !disposed && !document.hidden && navigator.onLine && dialog.value?.open,
+  canRun: () =>
+    !disposed &&
+    !document.hidden &&
+    navigator.onLine &&
+    dialog.value?.open &&
+    !exceptionDialog.value?.open,
 })
 function changeView(bucket, number) {
   serial++
@@ -316,6 +443,7 @@ function close() {
   loading.value = false
   polling.pause()
   dialog.value?.close()
+  exceptionDialog.value?.close()
   loadedAgenda.value = null
 }
 function backdrop(event) {
@@ -358,6 +486,7 @@ onBeforeUnmount(() => {
   controller?.abort()
   polling.dispose()
   dialog.value?.close()
+  exceptionDialog.value?.close()
   document.removeEventListener('visibilitychange', visibility)
   window.removeEventListener('online', visibility)
   window.removeEventListener('offline', visibility)
@@ -366,6 +495,152 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.video-exception-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: 90dvh;
+  padding: 0;
+  border: 1px solid #aab7c4;
+  border-radius: 16px;
+  color: #273e50;
+  box-shadow: 0 24px 80px #10283e45;
+}
+.video-exception-dialog::backdrop {
+  background: #152b487a;
+}
+.video-exception-dialog header {
+  display: block;
+  padding: 23px 24px 18px;
+  background: #263e53;
+  color: white;
+}
+.video-exception-dialog header small {
+  display: block;
+  color: #bdd0df;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+.video-exception-dialog h3 {
+  margin: 8px 0;
+  font-size: 21px;
+}
+.video-exception-dialog header p {
+  margin: 0;
+  font-size: 13px;
+  color: #d7e2eb;
+  overflow-wrap: anywhere;
+}
+.exception-form-body {
+  padding: 20px 24px;
+}
+.exception-warning {
+  margin: 0 0 20px;
+  padding: 12px;
+  background: #fff7e9;
+  border-left: 3px solid #d39b44;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #78582f;
+}
+.exception-form-body label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 9px;
+}
+.exception-form-body label span {
+  color: #a33935;
+  font-size: 11px;
+  margin-left: 6px;
+}
+.exception-form-body textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 105px;
+  max-height: 220px;
+  border: 1px solid #aebfd0;
+  border-radius: 8px;
+  padding: 11px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.reason-count {
+  display: block;
+  text-align: right;
+  color: #718293;
+  margin-top: 4px;
+}
+.video-exception-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 15px 24px;
+  background: #f2f5f8;
+  border-top: 1px solid #d4dee6;
+}
+.video-exception-dialog button,
+.station-actions button {
+  font: inherit;
+  font-size: 13px;
+  padding: 9px 13px;
+  border: 1px solid #aebdcb;
+  border-radius: 7px;
+  background: white;
+  color: #344c62;
+  cursor: pointer;
+}
+.video-exception-dialog .exception-submit {
+  color: white;
+  border-color: #3a526a;
+  background: #3a526a;
+}
+.video-exception-dialog button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.station-actions {
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: #f5f7fa;
+  border-top: 1px solid #d7e1e9;
+  font-size: 12px;
+  color: #60758a;
+}
+.video-exception-note {
+  padding: 13px 15px;
+  color: #45576a;
+  background: #e9edf2;
+  border-top: 1px solid #c1cbd6;
+  font-size: 13px;
+}
+.video-exception-note p {
+  margin: 7px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.video-exception-note small {
+  color: #64778a;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.station-exception .station-completion strong {
+  color: #5c6a79;
+}
+.station-exception .station-progress-track i {
+  background: #8c9baa;
+}
+.task-item.exception .task-check,
+.task-item.exception .task-state {
+  color: #526171;
+  border-color: #b9c3ce;
+  background: #e8edf2;
+}
 .tasks-dialog > header {
   background: #173e58;
   color: #fff;

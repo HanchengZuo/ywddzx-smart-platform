@@ -3,6 +3,7 @@ export const scheduleStatusLabels = {
   assigned: '已排班',
   unassigned: '待排班',
   unavailable: '不可安排',
+  exception: '视频异常免检',
 }
 
 export function shelfHasCapacity(item) {
@@ -15,23 +16,30 @@ export function stationScheduleProgress(row) {
   const total = cells.length
   const completed = cells.filter((cell) => cell.status === 'completed').length
   const assigned = cells.filter((cell) => cell.status === 'assigned').length
+  const exempted = cells.filter((cell) => cell.status === 'exception').length
   const blocked =
-    !total || cells.some((cell) => !['completed', 'assigned', 'unassigned'].includes(cell.status))
-  const remaining = total - completed
+    !total ||
+    cells.some(
+      (cell) => !['completed', 'assigned', 'unassigned', 'exception'].includes(cell.status),
+    )
+  const remaining = total - completed - exempted
   const status =
-    total > 0 && remaining === 0
-      ? 'completed'
-      : !blocked && remaining > 0 && assigned === remaining
-        ? 'assigned'
-        : 'unassigned'
+    exempted > 0
+      ? 'exception'
+      : total > 0 && remaining === 0
+        ? 'completed'
+        : !blocked && remaining > 0 && assigned === remaining
+          ? 'assigned'
+          : 'unassigned'
   return {
     status,
     total,
     completed,
     assigned,
+    exempted,
     remaining,
     blocked,
-    partialCompleted: completed > 0 && remaining > 0,
+    partialCompleted: !exempted && completed > 0 && remaining > 0,
     partialAssigned: assigned > 0 && assigned < remaining,
   }
 }
@@ -77,7 +85,9 @@ export function scheduleCellEditable(cell, allowed) {
 export function scheduleRowLocked(row) {
   return Boolean(
     row?.locked ||
-    Object.values(row?.cells || {}).some((c) => c.row_locked || c.status === 'completed'),
+    Object.values(row?.cells || {}).some(
+      (c) => c.row_locked || ['completed', 'exception'].includes(c.status),
+    ),
   )
 }
 
@@ -91,6 +101,8 @@ export function scheduleCounts(rows) {
     partialAssigned: 0,
     blocked: 0,
   }
+  if (rows.some((row) => Object.values(row?.cells || {}).some((c) => c.status === 'exception')))
+    result.exception = 0
   rows.forEach((row) => {
     const progress = stationScheduleProgress(row)
     result[progress.status]++

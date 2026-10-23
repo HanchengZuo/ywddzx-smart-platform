@@ -18,7 +18,7 @@ def sync_tasks(cur, user_id):
     cur.execute(PROGRESS_SQL+'''UPDATE inspection_schedule_tasks task
       SET status=p.effective_status,completion_inspection_id=p.inspection_id,
         completed_at=CASE WHEN p.effective_status='completed' THEN COALESCE(task.completed_at,CURRENT_TIMESTAMP) ELSE NULL END
-      FROM progress p WHERE task.id=p.id
+      FROM progress p WHERE task.id=p.id AND p.effective_status IN ('pending','completed')
         AND (task.status IS DISTINCT FROM p.effective_status OR task.completion_inspection_id IS DISTINCT FROM p.inspection_id)
         AND (p.effective_status='completed' OR NOT EXISTS(
           SELECT 1 FROM inspection_schedule_tasks other WHERE other.id<>task.id AND other.user_id=task.user_id
@@ -86,6 +86,8 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, e
 
 
 def register_schedule_tasks(app, *, connect):
+    from schedule_video_exceptions import register_video_exceptions
+    register_video_exceptions(app, connect=connect)
     @app.get('/api/my-schedule-tasks')
     def my_schedule_tasks():
         actor = getattr(g, 'current_user', None)
