@@ -414,7 +414,7 @@
       <header class="header">
         <div class="header-left-block">
           <div class="header-left">
-            <div class="header-title">业务督导中心数智管理平台</div>
+            <div class="header-title" title="业务督导中心数智管理平台">业务督导中心数智管理平台</div>
             <div class="header-desc">统一承载巡检、考核、培训等业务场景</div>
           </div>
         </div>
@@ -465,7 +465,7 @@
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
-              <div class="header-user-name">{{ currentUsername }}</div>
+              <div class="header-user-name" :title="currentUsername">{{ currentUsername }}</div>
               <div class="header-user-meta">
                 <span v-if="authState.stationName" class="header-user-station">{{ authState.stationName }}</span>
                 <span class="header-user-role">{{ currentRoleLabel }}</span>
@@ -483,7 +483,7 @@
           <button v-if="!isImpersonating" class="header-passkey-button" type="button" @click="passkeyManagerOpen = true">
             <span></span>Passkey
           </button>
-          <button class="btn btn-secondary btn-sm" type="button" @click="handleLogout">退出登录</button>
+          <button class="btn btn-secondary btn-sm header-logout-button" type="button" @click="handleLogout">退出登录</button>
         </div>
       </header>
 
@@ -3583,6 +3583,8 @@ textarea:focus {
   display: flex;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
 }
 
 .mobile-topbar,
@@ -3874,6 +3876,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   min-width: 0;
+  flex: 1 1 320px;
 }
 
 .sidebar-collapsed-layout .sidebar {
@@ -3883,6 +3886,7 @@ textarea:focus {
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: visible;
@@ -3891,15 +3895,16 @@ textarea:focus {
 .header {
   position: relative;
   z-index: 900;
-  height: 76px;
+  min-height: 76px;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line-soft);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 0 28px;
+  gap: 12px 18px;
+  padding: 12px 28px;
   flex-shrink: 0;
   overflow: visible;
 }
@@ -3912,18 +3917,30 @@ textarea:focus {
   font-size: 24px;
   font-weight: 800;
   color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-desc {
   margin-top: 4px;
   font-size: 13px;
   color: var(--text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-user-area {
   position: relative;
   z-index: 1;
   display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
   align-items: center;
   gap: 10px;
   overflow: visible;
@@ -4204,6 +4221,7 @@ textarea:focus {
   background: #fff;
   border: 1px solid var(--line-soft);
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .header-passkey-button,
@@ -4330,6 +4348,7 @@ textarea:focus {
   background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   color: #1d4ed8;
   font-weight: 800;
+  flex-shrink: 0;
 }
 
 .header-user-text {
@@ -4351,6 +4370,10 @@ textarea:focus {
 .header-user-name {
   font-size: 14px;
   font-weight: 700;
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-user-station {
@@ -4371,8 +4394,16 @@ textarea:focus {
 
 .content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior-y: contain;
   padding: 24px;
+}
+
+.header-logout-button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .btn {
@@ -5060,7 +5091,79 @@ textarea:focus {
   }
 }
 
-@media (max-width: 1280px) {
+@media (min-width: 901px) and (max-width: 1600px) {
+  .header {
+    padding: 12px 20px;
+    column-gap: 14px;
+  }
+
+  .header-title {
+    font-size: 21px;
+  }
+
+  .header-left-block {
+    flex-basis: 268px;
+  }
+
+  .header-desc {
+    font-size: 12px;
+  }
+
+  .header-user-area {
+    gap: 8px;
+  }
+
+  .header-user-area .task-banner {
+    flex-shrink: 0;
+    max-width: 156px;
+    padding: 7px 9px;
+    gap: 8px;
+  }
+
+  .header-user-area .task-icon {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    font-size: 13px;
+  }
+
+  .header-user-area .task-banner > span:last-child {
+    min-width: 0;
+  }
+
+  .header-user-area .task-banner strong {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .header-user-area .task-banner small {
+    max-width: 100%;
+    font-size: 10px;
+  }
+
+  .header-user-card {
+    padding: 7px 9px;
+    gap: 7px;
+  }
+
+  .header-user-avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .header-user-name {
+    font-size: 13px;
+  }
+
+  .header-user-role {
+    font-size: 11px;
+  }
+
+  .header-account-switch-button {
+    gap: 7px;
+    padding: 6px 9px;
+  }
+
   .server-resource-card {
     width: 256px;
   }

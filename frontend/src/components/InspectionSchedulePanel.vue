@@ -1797,6 +1797,7 @@ input[type='search'] {
   background: #dcecff;
 }
 .matrix-content {
+  position: relative;
   border: 1px solid var(--matrix-grid);
 }
 .schedule-matrix {
@@ -2232,6 +2233,8 @@ select:focus-visible {
 }
 .sr-only {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   overflow: hidden;
