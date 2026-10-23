@@ -119,10 +119,8 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         group=next(g for g in auto['groups'] if g.get('group_name')=='外勤步雪琼组')
         expected=next(g for g in result.json['groups'] if g['name']=='外勤步雪琼组')
         self.assertEqual(set(group['inspector_ids']),{p['id'] for p in expected['members']})
-        self.assertEqual(self.availability(available=False).status_code,409)
         response=self.post('cancel',revision=1)
         self.assertEqual(response.status_code,400,response.json)
-        self.assertEqual(self.availability(available=False).status_code,409)
         self.cur.execute('SELECT actor_id,after_value FROM staff_daily_team_events ORDER BY id')
         rows=self.cur.fetchall(); self.assertEqual(len(rows),1); self.assertTrue(rows[-1]['after_value']); self.assertEqual(rows[-1]['actor_id'],2)
         agenda = self.client.get('/api/my-schedule-tasks?user_id=3').json['agenda']
@@ -132,6 +130,9 @@ class DailyTeamDatabaseTests(unittest.TestCase):
         other = self.client.get('/api/my-schedule-tasks?user_id=2').json['agenda']['field_team']
         self.assertEqual(other['leader_id'],3)
         self.assertNotIn(2,[p['id'] for p in other['members']])
+        self.assertEqual(self.availability(available=False).status_code,200)
+        current=self.client.get('/api/staff-availability/today-inspection').json
+        self.assertFalse(any(g['leader_id']==2 for g in current['groups']))
 
     def test_permissions_date_and_context_changes_block_confirmation(self):
         self.permissions.discard(EDIT)

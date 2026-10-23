@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { parse as parseJavascript } from '@babel/parser'
 import { scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
+import { currentTeamDraft, movePreviewMember } from '../src/utils/dailyTeamPreview.js'
 
 const source = file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
 for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'components/MeteringAnnualPlan.vue', 'components/DailyInspectionTeams.vue', 'components/AutomaticSchedule.vue', 'components/ScheduleTaskInbox.vue', 'components/TodayInspectionDispatch.vue', 'components/TransientNotice.vue', 'components/StaffDispatchDetails.vue', 'views/inspection/StaffAvailabilityView.vue']) {
@@ -15,46 +16,122 @@ for (const file of ['App.vue', 'components/InspectionSchedulePanel.vue', 'compon
   })
 }
 
-test('student drag submits server-owned student/leader IDs and refreshes only after confirmation', async () => {
+test('dragging the current saved arrangement only creates a draft and does not write or notify', async () => {
   const calls = []
   const context = vm.createContext({
-    draggingStudent: { value: 10 }, selectedStudent: { value: null }, editable: { value: true },
-    preview: { value: null }, saving: { value: false }, loading: {value:false}, error: { value: '' },
-    context: { value: { day: '2026-10-20', revision: 4 } },
-    displayGroups: { value: [{ name: '外勤甲组', members: [{ id: 10 }] }] },
-    axios: { post: async (url, body) => { calls.push({url,body}); return {data: {day: '2026-10-20', revision: 5}} } },
-    load: async () => calls.push('load'), emit: (...args) => calls.push(args),
-    window: { dispatchEvent: () => calls.push('notify') }, Event: class {},
-    personLocked:()=>false,groupLocked:()=>false,
+    draggingStudent: { value: 10 },
+    selectedStudent: { value: null },
+    editable: { value: true },
+    preview: { value: null },
+    saving: { value: false },
+    loading: { value: false },
+    error: { value: '' },
+    success: { value: '' },
+    context: {
+      value: {
+        day: '2026-10-20',
+        revision: 4,
+        current_token: 'evidence',
+        people: [{ id: 10, available: true, position: '大学生' }],
+        groups: [
+          {
+            name: '外勤甲组',
+            mode: 'offline',
+            leader_id: 2,
+            members: [
+              {
+                id: 2,
+                position: '管理人员',
+                mode: 'offline',
+                leader_id: 2,
+                group_name: '外勤甲组',
+              },
+              { id: 10, position: '大学生', mode: 'offline', leader_id: 2, group_name: '外勤甲组' },
+            ],
+          },
+          {
+            name: '外勤乙组',
+            mode: 'offline',
+            leader_id: 3,
+            members: [
+              {
+                id: 3,
+                position: '管理人员',
+                mode: 'offline',
+                leader_id: 3,
+                group_name: '外勤乙组',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    displayGroups: { value: [{ name: '外勤甲组', members: [{ id: 10, position: '大学生' }] }] },
+    currentTeamDraft,
+    movePreviewMember,
+    warn: (message) => calls.push(message),
+    axios: {
+      post: async (url, body) => {
+        calls.push({ url, body })
+        return { data: { day: '2026-10-20', revision: 5 } }
+      },
+    },
+    load: async () => calls.push('load'),
+    emit: (...args) => calls.push(args),
+    window: { dispatchEvent: () => calls.push('notify') },
+    Event: class {},
+    personLocked: () => false,
+    groupLocked: () => false,
   })
   const script = source('components/DailyInspectionTeams.vue')
-  vm.runInContext(script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')), context)
-  await context.dropStudent({name: '外勤乙组', leader_id: 3})
-  assert.equal(calls[0].body.student_id, 10)
-  assert.equal(calls[0].body.leader_id, 3)
-  assert.equal(calls[0].body.revision, 4)
-  assert.equal(calls[1], 'load')
-  assert.equal(calls[2][0], 'saved')
-  assert.equal(calls[2][1].adjusted, true)
+  vm.runInContext(
+    script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')),
+    context,
+  )
+  await context.dropStudent({ name: '外勤乙组', leader_id: 3 })
+  assert.deepEqual(calls, [])
+  assert.equal(context.preview.value.source, 'current')
+  assert.equal(context.preview.value.token, 'evidence')
+  assert.equal(context.preview.value.moves[0].person_id, 10)
+  assert.equal(context.preview.value.moves[0].leader_id, 3)
   assert.equal(context.saving.value, false)
   assert.equal(context.draggingStudent.value, null)
 })
 
-test('rejected student move never emits a successful save and retains the server error', async () => {
+test('a rejected draft move only displays a warning and does not reload or write', async () => {
   const calls = []
   const context = vm.createContext({
-    draggingStudent: {value: 10}, selectedStudent: {value: null}, editable: {value: true},
-    preview: {value: null}, saving: {value: false}, loading: {value:false}, error: {value: ''},
-    context: {value: {day: '2026-10-20', revision: 1}},
-    displayGroups: {value: [{name: '外勤甲组', members: [{id: 10}]}]},
-    axios: {post: async () => { throw {response: {status: 409, data: {error: '已有站点派工'}}} }},
-    load: async () => calls.push('reload'), emit: () => calls.push('saved'),
-    personLocked:()=>false,groupLocked:()=>false,warn:message=>calls.push(message),
+    draggingStudent: { value: 10 },
+    selectedStudent: { value: null },
+    editable: { value: true },
+    preview: { value: null },
+    saving: { value: false },
+    loading: { value: false },
+    error: { value: '' },
+    context: { value: { day: '2026-10-20', revision: 1 } },
+    displayGroups: { value: [{ name: '外勤甲组', members: [{ id: 10 }] }] },
+    axios: {
+      post: async () => {
+        throw { response: { status: 409, data: { error: '已有站点派工' } } }
+      },
+    },
+    load: async () => calls.push('reload'),
+    emit: () => calls.push('saved'),
+    personLocked: () => false,
+    groupLocked: () => false,
+    warn: (message) => calls.push(message),
+    currentTeamDraft: () => ({}),
+    movePreviewMember: () => {
+      throw new Error('已有站点派工')
+    },
   })
   const script = source('components/DailyInspectionTeams.vue')
-  vm.runInContext(script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')), context)
-  await context.dropStudent({name: '内勤视频组', leader_id: null})
-  assert.deepEqual(calls, ['已有站点派工','reload'])
+  vm.runInContext(
+    script.slice(script.indexOf('async function dropStudent'), script.indexOf('let controller,')),
+    context,
+  )
+  await context.dropStudent({ name: '内勤视频组', leader_id: null })
+  assert.deepEqual(calls, ['已有站点派工'])
   assert.equal(context.error.value, '')
 })
 

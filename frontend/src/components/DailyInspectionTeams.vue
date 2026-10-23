@@ -30,7 +30,7 @@
         <p class="method">
           今日未设置的档期默认有空，提前设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
           17:00
-          前的当日记录不阻止分组，已有站点派工仍须保留。先确定管理人员分工，再随机分配大学生。每个外勤组至少1人拥有准驾证，优先配2人；不足时不生成无持证人员的组。此处保存人员分组，具体站点与检查表仍在巡检排班安排。
+          前的当日记录不阻止分组。先确定管理人员分工，再智能生成方案；生成和拖动均不自动保存，采用后才覆盖今日人员安排。已派站的外勤组及视频人员保持锁定。每组只能有一位管理人员，且至少1人持准驾证，优先配2人。
         </p>
         <p v-if="loading" role="status" class="empty">正在核对今日档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -68,7 +68,7 @@
               </div>
               <select
                 v-model="managerModes[person.id]"
-                :disabled="loading || saving"
+                :disabled="loading || saving || personLocked(person)"
                 :aria-label="person.display_name + '今日巡检方式'"
                 @change="invalidate"
               >
@@ -90,29 +90,30 @@
             <button
               type="button"
               class="primary"
-              :disabled="!ready || loading || saving || hasDispatchedMembers"
+              :disabled="!ready || loading || saving"
               @click="createPreview"
             >
-              {{ preview ? '重新随机分组' : '平均随机分组' }}
+              智能生成今日巡检方案
             </button>
             <p v-if="hasDispatchedMembers" class="method">
-              已有今日站点派工，暂不能整体重新随机分组。已派工的外勤组与视频人员锁定，其余未派工人员仍可在下方调整。
+              已派站的外勤组和视频人员将原样保留，仅重新生成其他有空人员的方案。
             </p>
           </details>
           <section class="result-step">
             <div class="step-heading">
               <b>02</b>
               <div>
-                <strong>{{ preview ? '待确认的分组预览' : '已保存的今日分组' }}</strong
+                <strong>{{ preview ? '待采用的今日巡检方案' : '当前生效的今日巡检安排' }}</strong
                 ><small>{{
                   preview
-                    ? '可拖动大学生调整分组，点击确认安排后统一保存'
+                    ? '仅为草案 · 调整不自动生效，采用后覆盖今日安排'
                     : context.updated_at
                       ? context.updated_by_name + ' · ' + context.updated_at + ' 保存'
                       : '今日尚未安排分组'
                 }}</small>
               </div>
             </div>
+            <p v-if="success" class="applied-notice" role="status">{{ success }}</p>
             <div v-if="displayGroups.length" class="team-groups">
               <article
                 v-for="group in displayGroups"
@@ -146,31 +147,14 @@
                     v-for="person in group.members"
                     :key="person.id"
                     type="button"
-                    :draggable="
-                      editable &&
-                      !loading &&
-                      !saving &&
-                      person.position === '大学生' &&
-                      !personLocked(person)
-                    "
-                    :disabled="
-                      !editable ||
-                      loading ||
-                      saving ||
-                      person.position !== '大学生' ||
-                      personLocked(person)
-                    "
-                    :aria-label="
-                      person.display_name +
-                      (person.position === '大学生' ? '，点击或拖动调整分组' : '，管理人员固定带队')
-                    "
+                    :draggable="editable && !loading && !saving && !personLocked(person)"
+                    :disabled="!editable || loading || saving || personLocked(person)"
+                    :aria-label="person.display_name + '，点击或拖动调整分组'"
                     :class="{
                       leader: person.id === group.leader_id,
                       selected: selectedStudent === person.id,
                     }"
-                    :aria-pressed="
-                      person.position === '大学生' ? selectedStudent === person.id : undefined
-                    "
+                    :aria-pressed="selectedStudent === person.id"
                     @dragstart="startStudentDrag($event, person)"
                     @dragend="draggingStudent = null"
                     @click="selectedStudent = selectedStudent === person.id ? null : person.id"
@@ -181,7 +165,7 @@
                   </button>
                 </div>
                 <button
-                  v-if="selectedStudent"
+                  v-if="selectedStudent && canMoveTo(group)"
                   type="button"
                   class="move-here"
                   :disabled="saving || groupLocked(group)"
@@ -191,13 +175,23 @@
                 </button>
               </article>
             </div>
+            <div v-if="editable && videoManagers.length" class="restore-leaders">
+              <span>内勤管理人员也可独立带队：</span>
+              <button
+                v-for="person in videoManagers"
+                :key="person.id"
+                type="button"
+                :disabled="loading || saving || personLocked(person)"
+                @click="restoreLeader(person)"
+              >
+                {{ person.display_name }} · 设为外勤带队
+              </button>
+            </div>
             <p v-if="editable && displayGroups.length" class="method move-help" role="status">
               {{
                 saving
-                  ? '正在保存分组调整…'
-                  : preview
-                    ? '拖动大学生姓名到其他组调整预览；手机或键盘可先点姓名，再点目标组“移至”。调整暂不保存，确认安排后统一生效；人工调整不强制各组人数相同。'
-                    : '未派工的大学生可拖动调组；已派工外勤组不可调入或调出，已派工视频人员不可调组。须先从巡检排班撤下相关组或人员全部今日计划，才能解锁。手机可先点姓名，再点目标组“移至”。'
+                  ? '正在采用方案…'
+                  : '拖动姓名可调整草案，手机或键盘可先点姓名，再点目标组“移至”。管理人员只能移至内勤或独立带队，离开外勤时原组大学生自动转内勤。所有调整须点击“采用方案并覆盖今日安排”才生效。'
               }}
               <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
                 取消选择
@@ -205,7 +199,9 @@
             </p>
             <p v-else-if="!displayGroups.length" class="empty">
               {{
-                editable ? '完成上方管理人员分工后，点击平均随机分组。' : '今日暂未保存巡检分组。'
+                editable
+                  ? '完成上方管理人员分工后，点击“智能生成今日巡检方案”。'
+                  : '今日暂未保存巡检分组。'
               }}
             </p>
             <p v-if="preview && !displayGroups.some((g) => g.mode === 'offline')" class="warning">
@@ -226,15 +222,23 @@
         </template>
       </div>
       <footer>
-        <span></span><button type="button" :disabled="saving" @click="close">关闭</button
+        <span>{{
+          preview
+            ? '草案未采用 · 当前安排不会自动变化'
+            : '当前展示为已保存安排，可生成新方案或直接调整'
+        }}</span>
+        <button v-if="preview" type="button" :disabled="saving || loading" @click="discardDraft">
+          放弃草案
+        </button>
+        <button type="button" :disabled="saving" @click="close">关闭</button
         ><button
           v-if="editable"
           type="button"
           class="primary"
-          :disabled="!preview || !ready || loading || saving || unsafeGroups.length > 0"
+          :disabled="!preview || !context?.working || loading || saving || unsafeGroups.length > 0"
           @click="confirm"
         >
-          {{ saving ? '保存中…' : '确认安排' }}
+          {{ saving ? '采用中…' : '采用方案并覆盖今日安排' }}
         </button>
       </footer>
     </dialog>
@@ -243,7 +247,7 @@
 <script setup>
 import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { fieldDriverCount, movePreviewStudent } from '@/utils/dailyTeamPreview'
+import { fieldDriverCount, currentTeamDraft, movePreviewMember } from '@/utils/dailyTeamPreview'
 import TransientNotice from '@/components/TransientNotice.vue'
 const props = defineProps({ canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['saved', 'opened', 'closed'])
@@ -253,7 +257,8 @@ const dialog = ref(null),
   managerModes = ref({}),
   loading = ref(false),
   saving = ref(false),
-  error = ref('')
+  error = ref(''),
+  success = ref('')
 const editable = computed(() => props.canEdit && context.value?.can_edit)
 const warningToast = ref(''),
   warningSequence = ref(0)
@@ -261,16 +266,17 @@ function warn(message) {
   warningToast.value = message
   warningSequence.value++
 }
+const lockGroups = computed(() => preview.value?.groups || context.value?.groups || [])
 const hasDispatchedMembers = computed(() =>
-  (context.value?.groups || []).some((g) => g.members.some((p) => p.dispatch_locked)),
+  lockGroups.value.some((g) => g.members.some((p) => p.dispatch_locked)),
 )
 const personLocked = (p) =>
-  (context.value?.groups || []).some((g) =>
+  lockGroups.value.some((g) =>
     g.members.some((m) => m.id === p.id && m.dispatch_locked),
   )
 const groupLocked = (g) =>
   g.mode === 'offline' &&
-  (context.value?.groups || []).some(
+  lockGroups.value.some(
     (saved) => saved.mode === 'offline' && saved.leader_id === g.leader_id && saved.dispatch_locked,
   )
 const managers = computed(() =>
@@ -292,6 +298,12 @@ const displayGroups = computed(() => {
     ? [...groups, { name: '内勤视频组', mode: 'online', leader_id: null, members: [] }]
     : groups
 })
+const videoManagers = computed(() =>
+  displayGroups.value
+    .filter((g) => g.mode === 'online')
+    .flatMap((g) => g.members)
+    .filter((p) => p.position === '管理人员'),
+)
 const driverCount = (group) => fieldDriverCount(group, context.value?.people)
 const unsafeGroups = computed(() =>
   displayGroups.value.filter((group) => group.mode === 'offline' && !driverCount(group)),
@@ -299,13 +311,7 @@ const unsafeGroups = computed(() =>
 const draggingStudent = ref(null),
   selectedStudent = ref(null)
 function startStudentDrag(event, person) {
-  if (
-    !editable.value ||
-    loading.value ||
-    saving.value ||
-    person.position !== '大学生' ||
-    personLocked(person)
-  ) {
+  if (!editable.value || loading.value || saving.value || personLocked(person)) {
     event.preventDefault()
     return
   }
@@ -339,46 +345,35 @@ async function dropStudent(group, event) {
     draggingStudent.value = selectedStudent.value = null
     return
   }
-  if (preview.value) {
-    try {
-      preview.value = movePreviewStudent(
-        preview.value,
-        context.value.people,
-        studentId,
-        group.leader_id,
-      )
-      error.value = ''
-    } catch (err) {
-      error.value = err.message
-    }
-    draggingStudent.value = selectedStudent.value = null
-    return
-  }
-  saving.value = true
-  error.value = ''
   try {
-    const { data } = await axios.post(
-      '/api/staff-availability/today-inspection',
-      {
-        action: 'move',
-        day: context.value.day,
-        revision: context.value.revision,
-        student_id: studentId,
-        leader_id: group.leader_id,
-      },
-      { timeout: 30000 },
+    preview.value = movePreviewMember(
+      preview.value || currentTeamDraft(context.value),
+      context.value.people,
+      studentId,
+      group.leader_id,
     )
-    await load()
-    emit('saved', { ...data, adjusted: true })
-    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
-    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    success.value = ''
+    error.value = ''
   } catch (err) {
-    warn(err.response?.data?.error || '调整结果未确认，请重新打开核对。')
-    await load()
+    warn(err.message)
   } finally {
-    saving.value = false
     draggingStudent.value = selectedStudent.value = null
   }
+}
+function canMoveTo(group) {
+  const person = displayGroups.value
+    .flatMap((g) => g.members)
+    .find((p) => p.id === selectedStudent.value)
+  return person?.position !== '管理人员' || group.mode === 'online' || group.leader_id === person.id
+}
+function restoreLeader(person) {
+  selectedStudent.value = person.id
+  dropStudent({ mode: 'offline', leader_id: person.id, name: `外勤${person.display_name}组` })
+}
+function discardDraft() {
+  invalidate()
+  success.value = ''
+  load()
 }
 let controller,
   serial = 0,
@@ -396,12 +391,14 @@ function invalidate() {
   preview.value = null
   draggingStudent.value = selectedStudent.value = null
   error.value = ''
+  success.value = ''
 }
 async function open() {
   selectedStudent.value = draggingStudent.value = null
   context.value = null
   preview.value = null
   error.value = ''
+  success.value = ''
   dialog.value.showModal()
   emit('opened')
   await load()
@@ -432,19 +429,13 @@ async function load() {
   }
 }
 async function createPreview() {
-  if (
-    !editable.value ||
-    !ready.value ||
-    loading.value ||
-    saving.value ||
-    hasDispatchedMembers.value
-  )
-    return
+  if (!editable.value || !ready.value || loading.value || saving.value) return
   const ticket = ++serial
   controller?.abort()
   controller = new AbortController()
   loading.value = true
   error.value = ''
+  success.value = ''
   preview.value = null
   draggingStudent.value = selectedStudent.value = null
   try {
@@ -458,7 +449,11 @@ async function createPreview() {
       },
       { signal: controller.signal, timeout: 15000 },
     )
-    if (ticket === serial && !disposed) preview.value = data
+    if (ticket === serial && !disposed) {
+      context.value.people = data.people
+      context.value.excluded = data.excluded
+      preview.value = data
+    }
   } catch (err) {
     if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
       error.value = err.response?.data?.error || '分组预览失败，请重新打开核对。'
@@ -466,28 +461,29 @@ async function createPreview() {
     if (ticket === serial) loading.value = false
   }
 }
-async function submit(action) {
-  if (!editable.value || saving.value || loading.value || (action === 'confirm' && !preview.value))
-    return
+async function submit() {
+  if (!editable.value || saving.value || loading.value || !preview.value) return
   saving.value = true
   error.value = ''
   try {
     const { data } = await axios.post(
       '/api/staff-availability/today-inspection',
       {
-        action,
+        action: 'apply',
+        source: preview.value.source,
         day: context.value.day,
         revision: context.value.revision,
-        manager_modes: managerModes.value,
+        manager_modes: preview.value.manager_modes || managerModes.value,
         seed: preview.value?.seed,
         token: preview.value?.token,
-        ...(action === 'confirm' ? { student_leaders: preview.value?.student_leaders || {} } : {}),
+        moves: preview.value.moves || [],
       },
       { timeout: 30000 },
     )
     if (!disposed) {
-      dialog.value.close()
-      emit('closed')
+      preview.value = null
+      await load()
+      success.value = '已采用方案并覆盖今日人员安排，今日调度待选区已同步。可继续调整未派站人员。'
       emit('saved', data)
       window.dispatchEvent(new Event('inspection-schedule-changed'))
       window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
@@ -495,16 +491,15 @@ async function submit(action) {
   } catch (err) {
     if (!disposed) {
       preview.value = null
-      error.value =
-        (err.response?.data?.error || '保存结果未能确认，请关闭后重新核对。') +
-        ' 请重新打开或重新预览后操作。'
+      await load()
+      warn(err.response?.data?.error || '保存结果未能确认，已重新读取当前安排，请核对后调整。')
     }
   } finally {
     saving.value = false
   }
 }
 function confirm() {
-  submit('confirm')
+  submit()
 }
 function close() {
   if (saving.value) return
@@ -598,7 +593,7 @@ select:focus-visible {
   outline-offset: 2px;
 }
 .team-dialog {
-  width: min(820px, calc(100vw - 24px));
+  width: min(1000px, calc(100vw - 24px));
   max-height: calc(100dvh - 28px);
   padding: 0;
   margin: auto;
@@ -791,6 +786,26 @@ select {
 .move-help {
   margin-top: 12px;
 }
+.applied-notice {
+  padding: 12px 16px;
+  border: 1px solid #a8cdbb;
+  border-left: 4px solid #278364;
+  border-radius: 8px;
+  background: #edf8f1;
+  color: #17583f;
+  font-size: 13px;
+}
+.restore-leaders {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px dashed #9ebcd6;
+  border-radius: 8px;
+  font-size: 12px;
+}
 .member-tags small {
   margin-left: 5px;
   font-size: 9px;
@@ -839,6 +854,11 @@ footer {
 }
 footer > span {
   flex: 1;
+  align-self: center;
+  min-width: 180px;
+  color: #526d84;
+  font-size: 12px;
+  line-height: 1.6;
 }
 @media (max-width: 600px) {
   .team-dialog {
@@ -862,6 +882,12 @@ footer > span {
   }
   .manager-row {
     align-items: flex-start;
+  }
+  footer > span {
+    flex-basis: 100%;
+  }
+  footer > .primary {
+    flex: 1;
   }
 }
 </style>

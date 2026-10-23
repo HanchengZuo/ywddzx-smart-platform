@@ -63,6 +63,79 @@ def move_student(people, before, student_id, leader_id):
     return result
 
 
+def without_member(before, member_id):
+    """A departing field leader dissolves their group; students return to video."""
+    departing = next((p for p in before if p['id'] == member_id), None)
+    result = []
+    for person in before:
+        if person['id'] == member_id:
+            continue
+        person = dict(person)
+        if (departing and departing['position'] == '管理人员' and departing['mode'] == 'offline'
+                and person['mode'] == 'offline' and person['leader_id'] == member_id):
+            person.update(mode='online', leader_id=None, group_name='内勤视频组')
+        result.append(person)
+    return result
+
+
+def move_member(people, before, member_id, leader_id):
+    """Apply a draft move using server-owned identities, including leader dissolution."""
+    person = next((p for p in before if p['id'] == member_id), None)
+    eligible = {p['id']: p for p in people if p.get('available') is True}
+    if not person or member_id not in eligible:
+        raise ValueError('只能调整今日有空且已参与方案的人员。')
+    if person['position'] == '大学生':
+        return move_student(people, before, member_id, leader_id)
+    if leader_id not in (None, member_id):
+        raise ValueError('一个外勤组只能有一位管理人员；管理人员可移至内勤视频组或独立带队。')
+    result = without_member(before, member_id)
+    mode = 'online' if leader_id is None else 'offline'
+    # Restoring a leader does not dissolve an already unchanged group.
+    if (person['mode'], person['leader_id']) == (mode, leader_id):
+        return [dict(p) for p in before]
+    result.append(dict(person, mode=mode, leader_id=leader_id,
+                       group_name='内勤视频组' if leader_id is None else f"外勤{person['display_name']}组"))
+    old = {p['id']: p for p in before}
+    for changed in result:
+        previous = old[changed['id']]
+        if (previous['mode'], previous['leader_id']) != (changed['mode'], changed['leader_id']):
+            source = eligible.get(changed['id'])
+            if not source:
+                raise ScheduleConflict('原组成员档期已变化，请重新载入方案。')
+            if source.get('station_modes'):
+                raise ScheduleConflict('相关人员已有今日站点派工，请先撤下全部今日排班。')
+            if {m['mode'] for m in source.get('actual_modes', [])} - {changed['mode']}:
+                raise ScheduleConflict('相关人员已有另一种巡检实绩，不能调整到此组。')
+    return result
+
+
+def adjust_members(people, assignments, moves):
+    if not isinstance(moves, list) or len(moves) > 200:
+        raise ValueError('方案调整数据不合法，请重新生成或载入。')
+    for move in moves:
+        if (not isinstance(move, dict) or set(move) != {'person_id', 'leader_id'}
+                or type(move['person_id']) is not int or move['person_id'] < 1
+                or (move['leader_id'] is not None and (type(move['leader_id']) is not int or move['leader_id'] < 1))):
+            raise ValueError('方案中的人员或带队组不合法。')
+        assignments = move_member(people, assignments, move['person_id'], move['leader_id'])
+    return assignments
+
+
+def propose_teams(people, before, manager_modes, seed):
+    """Re-generate only undispatched people; dispatched teams remain intact."""
+    managers = [p for p in people if p['position'] == '管理人员']
+    if not isinstance(manager_modes, dict) or set(manager_modes) != {str(p['id']) for p in managers}:
+        raise ValueError('请为每一位今日有空的管理人员选择现场或视频巡检。')
+    frozen = [dict(p) for p in before if p.get('dispatch_locked')]
+    for p in frozen:
+        if p['position'] == '管理人员' and manager_modes.get(str(p['id'])) != p['mode']:
+            raise ScheduleConflict(f"{p['display_name']}已有今日站点派工，不能更换分工。")
+    ids = {p['id'] for p in frozen}
+    free = [p for p in people if p['id'] not in ids]
+    choices = {str(p['id']): manager_modes[str(p['id'])] for p in free if p['position'] == '管理人员'}
+    return frozen + random_teams(free, choices, seed)
+
+
 def validate_dispatched_teams(cur, day, assignments):
     groups = {g['leader_id']: {p['id'] for p in g['members']} for g in group_assignments(assignments) if g['mode']=='offline'}
     cur.execute("""SELECT DISTINCT plan_team FROM inspection_schedule_cells WHERE mode IN ('offline','annual')

@@ -96,8 +96,13 @@ def refresh_field_shelf(cur,actor,day,groups,team_revision):
 
 def seed_daily_shelf(cur, actor, day, groups, revision):
     """Explicit grouping confirmation publishes reusable manual-dispatch cards, once per group."""
-    cur.execute("SELECT id FROM inspection_schedule_shelf WHERE scheduled_date=%s AND source_column_key='personnel' AND status='waiting' FOR UPDATE",(day,))
-    old=[r['id'] for r in cur.fetchall()]
+    valid = {('offline', tuple(sorted(p['id'] for p in g['members']))) for g in groups if g['mode']=='offline'}
+    valid.update(('online', (p['id'],)) for g in groups if g['mode']=='online' for p in g['members'])
+    cur.execute("SELECT id,mode,inspector_ids,source_column_key FROM inspection_schedule_shelf WHERE scheduled_date=%s AND status='waiting' FOR UPDATE",(day,))
+    # Parked old groups must not survive dissolution and reappear beside the
+    # replacement personnel cards. Keep their audit trail, retire only intent.
+    old=[r['id'] for r in cur.fetchall() if r['source_column_key']=='personnel'
+         or (r['mode'],tuple(sorted(r['inspector_ids']))) not in valid]
     if old:
         cur.execute("UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,updated_by=%s WHERE id=ANY(%s)",(actor['id'],old))
         for sid in old: event(cur,actor,sid,'personnel_refreshed',dict(day=day.isoformat()))

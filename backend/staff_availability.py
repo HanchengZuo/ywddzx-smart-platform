@@ -5,7 +5,9 @@ from collections import defaultdict
 from datetime import timedelta
 from flask import g, jsonify, request
 from roles import SUPERVISOR_ROLES
-from staff_daily_teams import team_days, team_members
+from staff_daily_teams import (team_days, team_members, without_member, validate_team_changes,
+                              save_teams, group_assignments)
+from schedule_shelf_store import seed_daily_shelf
 from staff_schedule_history import dispatch_history, personal_records, cell_read_only_reason
 from staff_actuals import actuals_window, assert_actuals_window, merge_actual_modes
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today, working_days
@@ -192,8 +194,23 @@ def save_availability(cur, actor, data):
         cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
           AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
         if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
-        assigned = team_members(team_days(cur, day, day + timedelta(days=1))).get((people[name]['id'], day.isoformat()))
-        if assigned: raise ScheduleConflict('此人已加入今日巡检分组，不能直接标记没空；请调整分组安排后再保存。')
+        saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
+        before = saved.get('assignments', [])
+        if any(p['id'] == people[name]['id'] for p in before):
+            after = without_member(before, people[name]['id'])
+            validate_team_changes(cur, day, before, after)
+            # A leader's departure also changes their students' mode. Keep the
+            # existing released-actuals protection for everyone affected.
+            current_people = {p['id']: p for p in available_people(cur, day, window=window) if p['id']}
+            old = {p['id']: p for p in before}
+            for p in after:
+                if p['mode'] != old[p['id']]['mode']:
+                    if p['id'] not in current_people:
+                        raise ScheduleConflict('原组成员账号已变化，请先核对今日巡检安排。')
+                    if current_people[p['id']]['actual_modes']:
+                        raise ScheduleConflict('原外勤组成员已有巡检实绩，不能自动调整为视频巡检。')
+            revision = save_teams(cur, actor, day, after, before)
+            seed_daily_shelf(cur, actor, day, group_assignments(after), revision)
     if (previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status
             and not previous.get('is_default')): return
     cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status,is_default)

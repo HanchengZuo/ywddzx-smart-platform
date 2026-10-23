@@ -210,6 +210,7 @@ test('staff editing always resets to the clicked individual cell and saves exact
     editable: { value: false },
     detail: {value:null},detailLoading:{value:false},detailError:{value:''},detailSerial:0,detailController:undefined,AbortController,
     saveError: { value: '' },
+    window: { dispatchEvent() {} }, Event: class {},
     conflict: { value: false },
     saving: { value: false },
     notice: { value: '' },
