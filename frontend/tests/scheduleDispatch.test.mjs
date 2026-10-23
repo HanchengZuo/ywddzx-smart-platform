@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { parse as parseJavascript } from '@babel/parser'
-import { scheduleRowLocked } from '../src/utils/inspectionSchedule.js'
+import { scheduleRowLocked, shelfHasCapacity } from '../src/utils/inspectionSchedule.js'
 import { currentTeamDraft, movePreviewMember } from '../src/utils/dailyTeamPreview.js'
 
 const source = file => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
@@ -187,7 +187,7 @@ test('smart apply requires explicit replacement, keeps the modal open, and recal
 })
 
 function dispatchHarness(mode = 'offline', fail = false) {
-  const item = {id: 17, revision: 2, key: 'shelf:17', name: '外勤甲组'}
+  const item = {id: 17, revision: 2, key: 'shelf:17', name: '外勤甲组', remaining: 2}
   const calls = []
   const keys = mode === 'offline' ? ['a','b','c','d','e','f'] : ['a','b','c']
   const context = vm.createContext({
@@ -196,6 +196,7 @@ function dispatchHarness(mode = 'offline', fail = false) {
     props: {mode}, board: {value: {columns: keys.map(key => ({key})), board_token: 'server-token',today:'2026-10-20'}},
     draft: {value: {}}, scheduleCellEditable: c => c.status !== 'completed', coverageQuery: () => ({mode}),
     scheduleRowLocked,
+    shelfHasCapacity,
     serial: 0, controller: undefined, polling: {pause() {}, start() {}}, disposed: false,
     selectedCells: {value: ['old']}, error: {value: ''}, updatedTime: {value: ''}, lastSyncedAt: 0,
     shelfOpen: {value: false}, notice: {value: ''},
@@ -203,7 +204,9 @@ function dispatchHarness(mode = 'offline', fail = false) {
     axios: {post: async (url, body) => {
       calls.push({url,body})
       if (fail) throw {response: {status: 409, data: {error: '计划已变化'}}}
-      return {data: {message: '保存成功',board: {rows: ['server-owned'],shelf: [{id: 18, key: 'shelf:18',name:'被替换组'}]}}}
+      return {data: {message: '保存成功',board: {rows: ['server-owned'],shelf: [
+        {id: 18, key: 'shelf:18',name:'被替换组',remaining:1},
+        {id: 19, key:'shelf:19',name:'已满组',remaining:0}]}}}
     }},
     retryBoard: async () => calls.push('reconcile'),
   })
@@ -223,6 +226,7 @@ test('field drop fills the whole unstarted row without confirmation and renders 
   assert.ok(calls[0].body.cells.every(c => c.station_id === 2))
   assert.equal(context.board.value.rows[0], 'server-owned')
   assert.equal(context.shelf.value[0].name, '被替换组')
+  assert.equal(context.shelf.value.length, 1, 'exhausted cards cannot render even in a stale server response')
   assert.equal(context.pickedShelf.value, null)
   assert.equal(context.shelfSaving.value, false)
 })
@@ -297,6 +301,27 @@ test('failed dispatch reconciles rather than inventing or deleting a shelf card'
   assert.equal(context.notice.value, '计划已变化')
   assert.equal(calls[1], 'reconcile')
   assert.equal(context.shelfSaving.value, false)
+})
+
+test('zero-capacity or vanished shelf cards cannot start dragging or be dropped from stale payloads', async () => {
+  for (const remaining of [0,-1,undefined]) {
+    const {context,calls,row,item}=dispatchHarness()
+    item.remaining=remaining
+    let prevented=false
+    context.startShelfDrag({preventDefault(){prevented=true}},item)
+    assert.equal(prevented,true)
+    context.dragged.value={...item,remaining:2,kind:'shelf'}
+    await context.dropOn(row)
+    assert.equal(calls.length,0)
+    assert.match(context.notice.value,/无剩余待派/)
+    assert.equal(context.pickedShelf.value,null)
+    assert.equal(context.dragged.value,null)
+  }
+  const {context,calls,row,item}=dispatchHarness('online')
+  context.dragged.value={...item,kind:'shelf'}
+  context.shelf.value=[]
+  await context.dropOn(row)
+  assert.equal(calls.length,0)
 })
 
 test('daily grouping remains disabled while any roster member is unconfirmed', () => {

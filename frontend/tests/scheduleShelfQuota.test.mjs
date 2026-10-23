@@ -3,8 +3,19 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
+import { shelfHasCapacity } from '../src/utils/inspectionSchedule.js'
 const source = (file) => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
 const ref = (value = null) => ({ value })
+
+test('only positive whole remaining station counts are dispatchable', () => {
+  for (const remaining of [1,2,10]) assert.equal(shelfHasCapacity({remaining}),true)
+  for (const remaining of [0,-1,undefined,null,'1',NaN,Infinity,0.5])
+    assert.equal(shelfHasCapacity({remaining}),false)
+  assert.equal(shelfHasCapacity(null),false)
+  const script=source('components/InspectionSchedulePanel.vue')
+  assert.match(script,/shelf.value = \(response.data.shelf \|\| \[\]\).filter\(shelfHasCapacity\)/)
+  assert.doesNotMatch(script,/角标仅作提醒，仍可额外手动派站/)
+})
 
 test('smart opening reads globally saved station targets before calculating any proposal', async () => {
   const script = source('components/AutomaticSchedule.vue'),

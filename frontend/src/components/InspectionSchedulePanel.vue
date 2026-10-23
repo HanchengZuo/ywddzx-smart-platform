@@ -382,7 +382,7 @@
       <details class="shelf-help">
         <summary>调度说明</summary>
         <p>
-          同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。角标仅作提醒，仍可额外手动派站。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。今日全局共享，跨日自动清空，历史调度留痕保留。
+          同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。剩余为0时不再显示，也不能继续从待选区派站；撤下未开始的计划或提高站数目标后会重新出现。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。今日全局共享，跨日自动清空，历史调度留痕保留。
         </p>
       </details>
       <div
@@ -414,7 +414,7 @@
       <p v-if="!shelf.length">
         将任一已排班格拖到这里，整行{{
           fieldMode === 'offline' ? '现场' : '视频'
-        }}计划会一起移入待选区。今日人员分组卡片可重复派站。
+        }}计划会一起移入待选区。仅显示仍有待派名额的组或人员，名额用完后自动隐藏。
       </p>
       <button v-if="pickedShelf" type="button" @click="pickedShelf = null">取消选中卡片</button>
       <span v-if="shelfSaving" role="status">正在原子保存改派…</span>
@@ -710,6 +710,7 @@ import {
   scheduleRowLocked,
   scheduleCounts,
   scheduleStatusLabels,
+  shelfHasCapacity,
 } from '@/utils/inspectionSchedule'
 
 const props = defineProps({ mode: { type: String, required: true } })
@@ -933,7 +934,7 @@ function startAssignmentDrag(event, row) {
   event.dataTransfer.setData('text/plain', item.name)
 }
 function startShelfDrag(event, item) {
-  if (shelfSaving.value || loading.value) {
+  if (shelfSaving.value || loading.value || !shelfHasCapacity(item)) {
     event.preventDefault()
     return
   }
@@ -970,6 +971,12 @@ async function dropOn(row, event) {
     notice.value = '请先将今日计划拖入今日调度待选区，再选择目标站点。'
     return
   }
+  const current = shelf.value.find((card) => card.id === item.id)
+  if (!shelfHasCapacity(current)) {
+    notice.value = '该组或人员已无剩余待派名额，请核对最新排班和站数目标。'
+    dragged.value = pickedShelf.value = null
+    return
+  }
   const cells = targetCells(row)
   if (cells.length)
     await runDispatch('place', { shelf_id: item.id, revision: item.revision, cells })
@@ -991,7 +998,7 @@ async function runDispatch(action, payload) {
     )
     if (disposed) return
     board.value = data.board
-    shelf.value = data.board.shelf || []
+    shelf.value = (data.board.shelf || []).filter(shelfHasCapacity)
     selectedCells.value = []
     pickedShelf.value = null
     error.value = ''
@@ -1109,7 +1116,7 @@ async function loadBoard() {
     })
     if (disposed || ticket !== serial) return
     board.value = response.data
-    shelf.value = response.data.shelf || []
+    shelf.value = (response.data.shelf || []).filter(shelfHasCapacity)
     if (!shelf.value.some((item) => item.key === pickedShelf.value)) pickedShelf.value = null
     if (!board.value.can_edit) {
       multiSelect.value = false

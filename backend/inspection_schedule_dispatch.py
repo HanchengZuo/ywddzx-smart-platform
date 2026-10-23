@@ -72,6 +72,12 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         if saved['status']!='waiting' or saved['revision']!=version:
             raise ScheduleConflict('这条待选安排已被其他用户处理，请查看最新排班。')
         if action=='place':
+            # The board was read under the cross-worker dispatch lock. Check the
+            # live, deduplicated capacity, not a client badge or an old shelf ID.
+            available=next((card for card in board['shelf']
+                            if sorted(card['ids'])==sorted(saved['inspector_ids'])),None)
+            if not available or available['remaining']<=0:
+                raise ScheduleConflict('该组或人员今日待派站数已为0，不能继续派站。请调整站数目标或撤下未开始的今日排班后再试。')
             # Preserve occupied destinations in the same transaction so a two-way swap cannot lose a plan.
             displaced=park_saved(cur,actor,chosen,start,end,selected,clear=False,action='displaced')
             cache={}

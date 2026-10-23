@@ -1,4 +1,4 @@
-"""Shared per-group/person daily station targets; no dispatch limits or startup work."""
+"""Shared daily station targets, also used as the waiting shelf's capacity."""
 import json
 from schedule_common import ScheduleConflict
 
