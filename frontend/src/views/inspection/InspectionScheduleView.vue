@@ -93,6 +93,7 @@ import InspectionSchedulePanel from '@/components/InspectionSchedulePanel.vue'
 import AutomaticSchedule from '@/components/AutomaticSchedule.vue'
 import MeteringAnnualPlan from '@/components/MeteringAnnualPlan.vue'
 import TodayInspectionDispatch from '@/components/TodayInspectionDispatch.vue'
+import { scrollScheduleToFilters } from '@/utils/scheduleViewport'
 const refreshKey = ref(0),
   dispatchNotice = ref('')
 function onScheduled(data) {
@@ -111,7 +112,7 @@ const switcherHeight = ref(76)
 let switcherObserver
 async function scrollToFilters() {
   await nextTick()
-  document.getElementById('schedule-panel-' + activeMode.value)?.scrollIntoView({ block: 'start' })
+  scrollScheduleToFilters(document.getElementById('schedule-panel-' + activeMode.value))
 }
 watch(activeMode, scrollToFilters)
 async function onTabKeydown(event, key) {
