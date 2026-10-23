@@ -22,10 +22,11 @@ def summarize_tasks(tasks):
         if task['plan_team']:
             names.add(task['plan_team']['name'])
     completed = sum(bool(t['record_count']) for t in current)
-    return dict(total=len(current), completed=completed,
+    exempted = sum(bool(t.get('exception_id')) and not t['record_count'] for t in current)
+    return dict(total=len(current), completed=completed, exempted=exempted, resolved=completed+exempted,
                 station_total=len(stations), station_completed=sum(all(t['record_count'] for t in group) for group in stations.values()),
                 cancelled=sum(t['status']=='cancelled' for t in tasks),
-                percent=round(completed/len(current)*100) if current else 0,
+                percent=round((completed+exempted)/len(current)*100) if current else 0,
                 has_dispatch=bool(tasks), has_actual=bool(modes),
                 modes=sorted({t['mode'] for t in current}), group_names=sorted(names),
                 _actual_record_ids={mode:sorted(ids) for mode,ids in record_ids.items()},
@@ -60,6 +61,7 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False, defer_d
     ) SELECT task.id,task.user_id,task.mode,task.station_id,task.station_name,task.table_id,task.table_name,
       task.column_key,task.scheduled_date::text AS day,task.status,task.team_ids,task.plan_team,
       task.dispatch_event_id,task.assigned_by_name,
+      waiver.id AS exception_id,waiver.reason AS exception_reason,waiver.reporter_name AS exception_reporter,
       to_char(task.created_at,'YYYY-MM-DD HH24:MI:SS') AS assigned_at,
       to_char(task.cancelled_at,'YYYY-MM-DD HH24:MI:SS') AS cancelled_at,
       CASE WHEN task.status='cancelled' THEN 0 ELSE COALESCE(c.record_count,0) END AS record_count,
@@ -68,6 +70,8 @@ def dispatch_history(cur, user_ids, start, end, as_of, *, details=False, defer_d
       CASE WHEN task.status='cancelled' THEN '[]'::jsonb ELSE COALESCE(c.records,'[]'::jsonb) END AS records
     FROM selected task LEFT JOIN coverage c ON c.station_id=task.station_id AND c.table_id=task.table_id
       AND c.scheduled_date=task.scheduled_date
+    LEFT JOIN inspection_schedule_video_exceptions waiver ON task.status<>'cancelled' AND task.mode='online'
+      AND waiver.station_id=task.station_id AND waiver.year=task.year AND waiver.month=task.period_number
     ORDER BY task.id''', (user_ids,start,end,as_of,defer_day,defer_day,defer_day))
     result = defaultdict(list)
     for row in cur.fetchall():

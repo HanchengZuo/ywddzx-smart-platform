@@ -47,7 +47,7 @@
                 <span
                   >{{ group.stations.length }}站 · 已查 {{ group.completed }}/{{
                     group.total
-                  }}项</span
+                  }}项<span v-if="group.exempted"> · 异常免检 {{ group.exempted }}项</span></span
                 >
               </div>
               <p class="group-people">{{ group.people.map((p) => p.display_name).join('、') }}</p>
@@ -57,16 +57,27 @@
                 class="saved-station"
               >
                 <strong>{{ station.region }} · {{ station.station_name }}</strong
-                ><small v-if="station.locked" class="locked">已开始 · 整行锁定</small>
+                ><small v-if="station.locked" class="locked">{{
+                  station.video_exception ? '异常免检 · 整站锁定' : '已开始 · 整行锁定'
+                }}</small>
+                <p v-if="station.video_exception" class="station-exception">
+                  异常原因：{{ station.video_exception.reason
+                  }}<small
+                    >{{ station.video_exception.reporter_name }} ·
+                    {{ station.video_exception.reported_at }}</small
+                  >
+                </p>
                 <div class="saved-checks">
                   <span v-for="cell in station.cells" :key="cell.key" :class="cell.status"
                     >{{ cell.label }} ·
                     {{
-                      cell.status === 'completed'
-                        ? '已检查'
-                        : cell.status === 'unavailable'
-                          ? '不可安排'
-                          : '已排班'
+                      cell.status === 'exception'
+                        ? '异常免检'
+                        : cell.status === 'completed'
+                          ? '已检查'
+                          : cell.status === 'unavailable'
+                            ? '不可安排'
+                            : '已排班'
                     }}</span
                   >
                 </div>
@@ -177,6 +188,26 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.station-exception {
+  padding: 10px;
+  color: #4e6072;
+  background: #e7ecf2;
+  border: 1px solid #c0cad5;
+  border-radius: 7px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.station-exception small {
+  display: block;
+  color: #687b8d;
+}
+.saved-checks .exception {
+  background: #e2e7ed;
+  color: #4a5a6c;
+  border-color: #b5c1cc;
+}
 .today-dispatch-trigger {
   border: 1px solid #9ab6c9;
   border-radius: 10px;

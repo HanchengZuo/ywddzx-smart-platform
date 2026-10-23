@@ -51,6 +51,8 @@ def today_assignments(boards, day):
                 station=group['stations'].setdefault(row['station_id'],dict(station_id=row['station_id'],station_name=row['station_name'],
                     region=row['region'],locked=False,cells=[]))
                 station['locked']=station['locked'] or row.get('locked',False)
+                if cell.get('video_exception'):
+                    station['video_exception']=cell['video_exception']
                 station['cells'].append(dict(key=f"{board['period']['mode']}:{col['key']}",
                     label=('计量' if board['period']['mode']=='annual' else '')+col['label'],
                     status=cell['status'],record_count=cell['record_count']))
@@ -58,5 +60,6 @@ def today_assignments(boards, day):
     for index,group in enumerate(grouped.values()):
         stations=list(group['stations'].values())
         cells=[c for s in stations for c in s['cells'] if c['status']!='unavailable']
-        result.append(dict(group,key=str(index),stations=stations,completed=sum(c['status']=='completed' for c in cells),total=len(cells)))
+        result.append(dict(group,key=str(index),stations=stations,completed=sum(c['status']=='completed' for c in cells),
+                           exempted=sum(c['status']=='exception' for c in cells),total=len(cells)))
     return result

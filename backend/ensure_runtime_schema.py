@@ -239,6 +239,7 @@ def main():
                     ('inspection_schedule_quota_events', {'before_value', 'after_value', 'actor_id'}),
                     ('staff_availability_events', {'before_value', 'after_value', 'actor_id'}),
                     ('inspection_schedule_tasks', {'user_id', 'scheduled_date', 'team_ids', 'status', 'completion_inspection_id', 'expired_at', 'plan_team', 'dispatch_event_id'}),
+                    ('inspection_schedule_video_exceptions', {'year', 'month', 'station_id', 'scheduled_date', 'reported_by', 'reporter_name', 'reason', 'source_task_id', 'task_ids', 'dispatch_snapshot', 'created_at'}),
                 ):
                     cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s", (table,))
                     if not required.issubset({row[0] for row in cur.fetchall()}):

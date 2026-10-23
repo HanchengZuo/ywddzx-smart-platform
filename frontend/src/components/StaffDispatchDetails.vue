@@ -31,7 +31,7 @@
       <div
         class="progress-track"
         role="progressbar"
-        :aria-valuenow="summary.completed"
+        :aria-valuenow="summary.resolved ?? summary.completed"
         :aria-valuemax="summary.total"
         aria-valuemin="0"
         aria-label="委派检查表完成进度"
@@ -39,6 +39,9 @@
         <i :style="{ width: summary.percent + '%' }"></i>
       </div>
       <p>
+        <strong v-if="summary.exempted"
+          >另有 {{ summary.exempted }} 项异常免检，无需再完成，不计巡检实绩。</strong
+        >
         按原委派站点、检查表及计划日起的巡检记录核对，不要求审核，也不以录入人是否为组员判定。此处保留派工实绩追溯；右上角待办按排班表覆盖周期核对，现场和视频未完成项跨日分别保留。
       </p>
     </div>
@@ -62,13 +65,20 @@
         <div v-for="task in group.tasks" :key="task.id" class="dispatch-task">
           <div class="task-title">
             <strong>{{ task.table_name }}</strong
-            ><span :class="task.record_count ? 'done' : 'pending'">{{
-              task.record_count ? '已完成' : '未完成'
-            }}</span>
+            ><span
+              :class="task.exception_id ? 'exception' : task.record_count ? 'done' : 'pending'"
+              >{{ task.exception_id ? '异常免检' : task.record_count ? '已完成' : '未完成' }}</span
+            >
           </div>
           <p v-if="task.plan_team" class="team-evidence">
             {{ task.plan_team.name }} ·
             {{ task.plan_team.members.map((p) => p.display_name).join('、') }}
+          </p>
+          <p v-if="task.exception_id" class="exception-note">
+            整站视频异常：{{ task.exception_reason
+            }}<small
+              >登记人：{{ task.exception_reporter }}。原派工和已有记录保留，无需再完成。</small
+            >
           </p>
           <p class="dispatch-meta">
             原派工：{{ task.assigned_by_name }} · {{ task.assigned_at
@@ -80,7 +90,7 @@
               ><span>{{ record.day }} · {{ record.inspector_name }}</span>
             </li>
           </ul>
-          <p v-else class="pending-note">
+          <p v-else-if="!task.exception_id" class="pending-note">
             {{
               !task.station_id || !task.table_id
                 ? '站点或检查表已删除，原派工信息仍保留。'
@@ -147,6 +157,24 @@ const groups = computed(() => {
 })
 </script>
 <style scoped>
+.exception-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #e9edf2;
+  border: 1px solid #bbc7d2;
+  padding: 10px;
+  border-radius: 7px;
+  color: #4d6275;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.exception-note small {
+  display: block;
+}
+.task-title .exception {
+  background: #e1e6ed;
+  color: #4c6072;
+}
 .dispatch-details {
   margin: 16px 0;
   min-width: 0;

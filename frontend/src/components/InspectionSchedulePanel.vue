@@ -77,6 +77,13 @@
             ><em>站</em></span
           ><small class="stat-detail">仍有应检表需安排</small></span
         >
+        <span v-if="counts.exception" class="exception-stat"
+          ><span class="stat-label">视频异常免检</span
+          ><span class="stat-value"
+            ><b>{{ counts.exception }}</b
+            ><em>站</em></span
+          ><small class="stat-detail">整站置灰 · 不计已检查</small></span
+        >
         <small class="stats-scope">当前筛选共 {{ counts.total }}站 · 每站只计一次</small>
       </div>
       <span class="sync-state" role="status"
@@ -116,6 +123,7 @@
         <option value="unassigned">待排班（含需补排）</option>
         <option value="assigned">已排班（剩余应检表全已安排）</option>
         <option value="completed">已检查（整站完成）</option>
+        <option v-if="mode === 'online'" value="exception">视频异常免检</option>
         <option value="partial_completed">部分已检查</option>
         <option value="partial_assigned">部分排班，需补排</option>
         <option value="blocked">检查表异常</option></select
@@ -328,6 +336,10 @@
                 }}</span>
                 <small v-if="row.cells[column.key].status === 'completed'"
                   >已检查 · {{ row.cells[column.key].last_inspection_date }}</small
+                ><small
+                  v-else-if="row.cells[column.key].status === 'exception'"
+                  class="exception-reason"
+                  >视频异常免检 · {{ row.cells[column.key].video_exception?.reason }}</small
                 ><small v-else-if="row.cells[column.key].status === 'assigned'"
                   >{{ row.cells[column.key].scheduled_date || '待补计划日期'
                   }}{{ row.cells[column.key].overdue ? ' · 逾期未检查' : ''
@@ -354,7 +366,9 @@
     <footer class="panel-footer">
       <span
         >{{ board?.period.label || '当前周期' }} ·
-        任一检查项完成即整行锁定，黄色表示原计划逾期未检查。</span
+        任一检查项完成即整行锁定，黄色表示原计划逾期未检查。<template v-if="mode === 'online'"
+          >灰色表示整站视频异常免检，不计为已检查。</template
+        ></span
       >
       ><span>{{
         canEdit
@@ -453,10 +467,21 @@
             </button>
           </header>
           <div class="cell-dialog-body">
-            <p v-if="currentCell.row_locked" class="completion-note">
+            <section v-if="currentCell.video_exception" class="video-exception-detail">
+              <strong>整站视频异常免检</strong>
+              <p>{{ currentCell.video_exception.reason }}</p>
+              <small
+                >{{ currentCell.video_exception.reporter_name }} ·
+                {{ currentCell.video_exception.reported_at }} 登记</small
+              >
+              <p>
+                本月三张视频检查表均无需再完成，不计为已检查。原派工和已有巡检记录保留，不能调整或移入待选区。
+              </p>
+            </section>
+            <p v-else-if="currentCell.row_locked" class="completion-note">
               本站已有检查项完成，整行及同组同日的联动计划已锁定。仅查看原派工和实际记录，不能调整、取消或移入待选区。
             </p>
-            <div v-if="currentCell.status === 'completed'" class="completion-note">
+            <div v-if="currentCell.record_count > 0" class="completion-note">
               <strong>本周期已有巡检记录，已锁定</strong>
               <p>
                 共 {{ currentCell.record_count }} 条记录，最近检查
@@ -1387,6 +1412,37 @@ function invalidateLinkedBoard() {
 </script>
 
 <style scoped>
+.matrix-cell.exception {
+  background: #dce2e9;
+  border-color: #9eacb9;
+}
+.exception .cell-button {
+  color: #46596b;
+  background: #e4e9ef;
+}
+.exception .cell-button .exception-reason {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #526474;
+  line-height: 1.6;
+  margin-top: 6px;
+}
+.video-exception-detail {
+  background: #edf0f4;
+  padding: 15px;
+  border: 1px solid #b1becb;
+  border-radius: 10px;
+  color: #3f5366;
+}
+.video-exception-detail p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.video-exception-detail small {
+  color: #60758a;
+}
 .matrix-cell.is-self .cell-button {
   outline: 2px solid #12858a;
   outline-offset: -3px;
