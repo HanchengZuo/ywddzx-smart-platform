@@ -5,6 +5,10 @@ export const scheduleStatusLabels = {
   unavailable: '不可安排',
 }
 
+export function shelfHasCapacity(item) {
+  return Number.isSafeInteger(item?.remaining) && item.remaining > 0
+}
+
 export function stationScheduleProgress(row) {
   // An inapplicable annual video column is exempt; a missing checklist is not.
   const cells = Object.values(row?.cells || {}).filter((cell) => cell.applicable !== false)

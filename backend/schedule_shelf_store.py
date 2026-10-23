@@ -40,7 +40,8 @@ def shelf_items(cur, mode, start, end, *, quotas=None):
             unique[key]=row
     target=quotas['offline_count' if mode=='offline' else 'online_count']
     return [dict(row,key=f"shelf:{row['id']}",target=target,assigned=len(used.get(ids,set())),
-                 remaining=max(0,target-len(used.get(ids,set())))) for ids,row in unique.items()]
+                 remaining=target-len(used.get(ids,set()))) for ids,row in unique.items()
+            if len(used.get(ids,set())) < target]
 
 
 def expire_shelf(cur, *, already_locked=False):
