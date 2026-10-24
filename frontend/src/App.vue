@@ -645,6 +645,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
 import { schedulingMenuPages } from './config/schedulingCatalog'
+import { reportPerspective } from './utils/reportAccess'
 import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
 import PasskeyManagerModal from './components/PasskeyManagerModal.vue'
@@ -969,7 +970,7 @@ const canViewRecords = computed(() => (
   Boolean(localPermissions.value.view_own_inspection_records)
 ) && isPageVisible('/inspection/records'))
 const canViewHighlights = computed(() => (isRoot.value || ['view_all_inspection_issues', 'limit_issue_station_region_scope', 'view_own_inspection_issues', 'submit_inspections'].some(key => localPermissions.value[key])) && isPageVisible('/inspection/highlights'))
-const canViewInspectionReports = computed(() => hasPermissionKey('view_inspection_reports') && isPageVisible('/inspection/reports'))
+const canViewInspectionReports = computed(() => Boolean(reportPerspective(authState.role, localPermissions.value)) && isPageVisible('/inspection/reports'))
 const canViewCertificates = computed(() => (
   isRoot.value ||
   Boolean(localPermissions.value.view_all_certificates) ||
@@ -1789,7 +1790,7 @@ const resolveHomePath = (user) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
-  if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
+  if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
   if (
     permissions.view_all_certificates ||
     permissions.limit_certificate_station_region_scope ||
