@@ -168,7 +168,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/help-documents') return true
   if (path === '/inspection/appeals') return true
   if (role === 'root') return true
-  if (path === '/management/page-visibility') return false
+  if (path === '/management/page-visibility') return hasPermission(role, permissions, 'manage_page_visibility')
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
   if (path === '/management/checklists') return hasPermission(role, permissions, 'manage_checklists')
   if (path === '/management/internal-standards') return hasPermission(role, permissions, 'manage_internal_standards')
@@ -258,6 +258,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.manage_ai_models) candidates.push('/management/ai-models')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
+  if (permissions.manage_page_visibility) candidates.push('/management/page-visibility')
   if (role === 'root') {
     candidates.push('/management/inspection-completion', '/management/backups', '/management/page-visibility')
   }

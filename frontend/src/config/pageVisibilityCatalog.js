@@ -109,7 +109,7 @@ export const PAGE_VISIBILITY_GROUPS = [
         key: '/assessment/station-score',
         path: '/assessment/station-score',
         title: '站点评分',
-        description: '按站点、检查表和时间范围计算评分。'
+        description: '按站点、可评分检查表及自然月核对审核通过的问题。'
       }
     ]
   },

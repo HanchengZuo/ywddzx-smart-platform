@@ -16,7 +16,7 @@ export function resolvePermissionCategory(groups, current) {
   return groups.some((group) => group.category === current) ? current : (groups[0]?.category || '')
 }
 const categoryAliases = { '报告生成': 'AI报告生成', '证照管理': '站点证照有效期管理' }
-const categoryOrder = PAGE_VISIBILITY_GROUPS.flatMap((group) => group.pages.map((page) => categoryAliases[page.title] || page.title))
+const categoryOrder = [...PAGE_VISIBILITY_GROUPS.flatMap((group) => group.pages.map((page) => categoryAliases[page.title] || page.title)), '页面显示管理']
 
 export function sortPermissionGroups(groups) {
   const rank = (category) => {

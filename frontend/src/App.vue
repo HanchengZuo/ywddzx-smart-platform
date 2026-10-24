@@ -640,6 +640,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { createAdaptivePolling } from './utils/adaptivePolling'
 import { useRoute, useRouter } from 'vue-router'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
@@ -1013,7 +1014,7 @@ const canManageAutoAudit = computed(() => hasPermissionKey('manage_auto_audit_ru
 const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
 const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
 const canManageAiModels = computed(() => hasPermissionKey('manage_ai_models') && isPageVisible('/management/ai-models'))
-const canManagePageVisibility = computed(() => isRoot.value)
+const canManagePageVisibility = computed(() => hasPermissionKey('manage_page_visibility'))
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
   canManageSecurity.value ||
@@ -1209,6 +1210,16 @@ const refreshPageVisibilityState = async ({ force = false } = {}) => {
 
 const handlePageVisibilityUpdated = (event) => {
   pageVisibilitySettings.value = event?.detail?.settings || getPageVisibilitySnapshot()
+}
+
+const pageVisibilityPolling = createAdaptivePolling({
+  task: () => refreshPageVisibilityState({ force: true }),
+  interval: 30000,
+  canRun: () => !isLoginPage.value && !document.hidden && navigator.onLine && isUsableAuthToken(getStoredAuthToken()),
+})
+const syncPageVisibilityPolling = () => {
+  if (isLoginPage.value || document.hidden || !navigator.onLine) pageVisibilityPolling.pause()
+  else pageVisibilityPolling.start({ immediate: true })
 }
 
 const showAuthSessionMessageIfNeeded = () => {
@@ -1624,6 +1635,7 @@ const handleWindowFocus = () => {
   runSessionMonitor()
   refreshNotificationSummary()
   refreshServerResources()
+  syncPageVisibilityPolling()
 }
 
 const handleInspectionSignPendingRefresh = () => {
@@ -1651,6 +1663,7 @@ watch(
     syncAuthState()
     showAuthSessionMessageIfNeeded()
     if (route.path === '/login') {
+      pageVisibilityPolling.pause()
       stopIdleLogoutTimer()
       resetSessionNotice()
       resetNotificationCounts()
@@ -1658,6 +1671,7 @@ watch(
       resetPageVisibilityState()
       resetBirthdayBlessing()
     } else {
+      pageVisibilityPolling.start()
       if (isUsableAuthToken(getStoredAuthToken())) {
         scheduleIdleLogout()
       }
@@ -1671,6 +1685,10 @@ watch(
 )
 
 onMounted(() => {
+  document.addEventListener('visibilitychange', syncPageVisibilityPolling)
+  window.addEventListener('online', syncPageVisibilityPolling)
+  window.addEventListener('offline', syncPageVisibilityPolling)
+  syncPageVisibilityPolling()
   window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.addEventListener('password-change-required', handlePasswordChangeRequired)
   window.addEventListener('storage', handleAuthStorageChange)
@@ -1709,6 +1727,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  pageVisibilityPolling.dispose()
+  document.removeEventListener('visibilitychange', syncPageVisibilityPolling)
+  window.removeEventListener('online', syncPageVisibilityPolling)
+  window.removeEventListener('offline', syncPageVisibilityPolling)
   window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleAuthSessionExpired)
   window.removeEventListener('password-change-required', handlePasswordChangeRequired)
   window.removeEventListener('storage', handleAuthStorageChange)
@@ -1786,6 +1808,7 @@ const resolveHomePath = (user) => {
   if (permissions.manage_ai_models) candidates.push('/management/ai-models')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
+  if (permissions.manage_page_visibility) candidates.push('/management/page-visibility')
   if (role === 'root') candidates.push('/management/inspection-completion', '/management/page-visibility')
   candidates.push('/feedback', '/help-documents')
   return candidates.find((path) => isPageVisible(path)) || (role === 'root' ? '/management/page-visibility' : '/feedback')

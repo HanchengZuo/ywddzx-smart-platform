@@ -1074,6 +1074,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
     },
     {
+        "key": "manage_page_visibility",
+        "name": "管理全局页面显示",
+        "category": "页面显示管理",
+        "description": "控制所有用户的菜单页面显示；开关即时保存，不授予其他业务或数据权限。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "review_quality_appeals",
         "name": "质安部申诉终审",
         "category": "申诉空间",
@@ -5380,6 +5387,8 @@ def normalize_page_visibility_items(raw_items):
             raise ValueError("页面标识不能为空。")
         if page_key in seen_keys:
             raise ValueError(f"页面显示配置中存在重复项目：{page_key}")
+        if not isinstance(item.get('is_visible'), bool):
+            raise ValueError('页面显示开关必须为启用或关闭。')
         seen_keys.add(page_key)
         normalized.append(
             {
@@ -13991,6 +14000,20 @@ def parse_reporting_date_range(month_value=None, date_from_value=None, date_to_v
     return parse_attendance_month(month_value)
 
 
+def parse_station_score_month(month_value=None, date_from_value=None, date_to_value=None):
+    month_text = str(month_value or '').strip()
+    if not month_text and not date_from_value and not date_to_value:
+        month_text = (beijing_today().replace(day=1) - timedelta(days=1)).strftime('%Y-%m')
+    if month_text and not re.fullmatch(r'(?:19\d{2}|20\d{2}|2100)-(?:0[1-9]|1[0-2])', month_text):
+        raise ValueError('评分月份格式必须为 YYYY-MM，年份为1900至2100。')
+    period_key, start, end = parse_reporting_date_range(month_text, date_from_value, date_to_value)
+    if period_key != start.strftime('%Y-%m') or start.day != 1 or end.day != 1:
+        raise ValueError('站点评分仅支持自然月，请选择评分月份。')
+    if month_text and month_text != period_key:
+        raise ValueError('评分月份与日期范围不一致。')
+    return period_key, start, end
+
+
 def normalize_attendance_mode(mode_value):
     mode = str(mode_value or "all").strip().lower()
     if mode not in {"all", "online", "offline"}:
@@ -15118,7 +15141,7 @@ def fetch_station_score_standard_context(
     date_from=None,
     date_to=None,
 ):
-    month_text, month_start, next_month = parse_reporting_date_range(month, date_from, date_to)
+    month_text, month_start, next_month = parse_station_score_month(month, date_from, date_to)
     station = fetch_station_for_score(cur, station_id)
     if not station:
         raise LookupError("站点不存在。")
@@ -18508,7 +18531,7 @@ def get_management_page_visibility():
         ensure_user_security_schema(cur)
         ensure_system_page_visibility_schema(cur)
         conn.commit()
-        require_management_user(cur, user_id, "manage_users")
+        require_management_user(cur, user_id, "manage_page_visibility")
         return jsonify({"success": True, "settings": fetch_page_visibility_settings(cur)})
     except PermissionError as exc:
         return jsonify({"success": False, "error": str(exc)}), 403
@@ -18534,7 +18557,7 @@ def update_management_page_visibility():
         cur = conn.cursor()
         ensure_user_security_schema(cur)
         ensure_system_page_visibility_schema(cur)
-        actor = require_management_user(cur, user_id, "manage_users")
+        actor = require_management_user(cur, user_id, "manage_page_visibility")
         for item in page_items:
             cur.execute(
                 """
@@ -18554,12 +18577,15 @@ def update_management_page_visibility():
                 """,
                 (item["page_key"], item["is_visible"], actor["id"]),
             )
+        record_security_event(cur, actor, 'page_visibility_updated', 'success',
+                              affected_count=len(page_items), details={'pages': page_items})
+        settings = fetch_page_visibility_settings(cur)
         conn.commit()
         return jsonify(
             {
                 "success": True,
                 "message": "页面显示设置已保存。",
-                "settings": fetch_page_visibility_settings(cur),
+                "settings": settings,
             }
         )
     except PermissionError as exc:
@@ -33371,11 +33397,14 @@ def get_assessment_station_scores():
         return jsonify({"success": False, "error": "请选择需要评分的站点。"}), 400
     try:
         station_id = int(station_id)
-        month, month_start, next_month = parse_reporting_date_range(
+        month, month_start, next_month = parse_station_score_month(
             request.args.get("month"),
             request.args.get("date_from"),
             request.args.get("date_to"),
         )
+        inspection_table_id = int(request.args.get('inspection_table_id') or 0) or None
+        if inspection_table_id is not None and inspection_table_id < 1:
+            raise ValueError('请选择有效的检查表。')
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
@@ -33395,7 +33424,10 @@ def get_assessment_station_scores():
         if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
 
-        payload = build_station_score_payload(cur, station_id, month, month_start, next_month, user)
+        if inspection_table_id and inspection_table_id not in {r['id'] for r in fetch_scorable_checklist_rows(cur)}:
+            return jsonify(success=False, error='该检查表未启用或未配置可评分字段。'), 400
+        payload = build_station_score_payload(cur, station_id, month, month_start, next_month, user,
+                                             inspection_table_id=inspection_table_id)
         return jsonify({"success": True, **payload})
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -33437,7 +33469,7 @@ def create_assessment_station_score_export_task():
     if mode not in {"single", "all"}:
         return jsonify({"success": False, "error": "导出范围参数不合法。"}), 400
     try:
-        month, month_start, next_month = parse_reporting_date_range(
+        month, month_start, next_month = parse_station_score_month(
             data.get("month"),
             data.get("date_from"),
             data.get("date_to"),
