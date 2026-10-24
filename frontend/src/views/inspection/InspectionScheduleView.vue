@@ -46,7 +46,6 @@
           </button>
         </div>
         <div class="switcher-actions">
-          <span class="switcher-hint">全部站点展开 · 切换保留各自筛选</span>
           <button
             type="button"
             class="return-filters"
@@ -214,7 +213,7 @@ p {
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -223,11 +222,46 @@ p {
 .head-actions :deep(.today-dispatch-trigger) {
   box-sizing: border-box;
   height: 44px;
-  padding: 0 16px;
+  padding: 0 18px;
   font-size: 13px;
   line-height: 1.4;
-  border-radius: 10px;
-  font-weight: 700;
+  border-radius: 12px;
+  font-weight: 600;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.head-actions :deep(.plan-trigger) {
+  background: #f2f5f8;
+  color: #294b65;
+  border-color: #dce5ed;
+}
+.head-actions :deep(.plan-trigger:hover:not(:disabled)) {
+  background: #e5edf4;
+  border-color: #b9cbd9;
+}
+.head-actions :deep(.today-dispatch-trigger) {
+  background: #d8f0ea;
+  color: #17665f;
+  border-color: #b9ded4;
+}
+.head-actions :deep(.today-dispatch-trigger:hover:not(:disabled)) {
+  background: #c5e7de;
+  border-color: #8fc6b8;
+}
+.head-actions :deep(.auto-trigger) {
+  background: #3479ce;
+  color: #fff;
+  border-color: #3479ce;
+}
+.head-actions :deep(.auto-trigger:hover:not(:disabled)) {
+  background: #2b68b4;
+  border-color: #2b68b4;
+  box-shadow: 0 3px 10px #061f3b26;
+}
+.head-actions :deep(.plan-trigger:focus-visible),
+.head-actions :deep(.today-dispatch-trigger:focus-visible),
+.head-actions :deep(.auto-trigger:focus-visible) {
+  outline: 2px solid #e5f4ff;
+  outline-offset: 3px;
 }
 .dispatch-notice {
   margin: 0;
@@ -286,10 +320,6 @@ p {
   margin-left: 10px;
   font-size: 11px;
   font-weight: 400;
-}
-.switcher-hint {
-  font-size: 11px;
-  color: #788ba1;
 }
 .switcher-actions {
   display: flex;
@@ -351,9 +381,6 @@ p {
   }
 }
 @container (max-width: 760px) {
-  .switcher-hint {
-    display: none;
-  }
   .schedule-tabs {
     flex: 1;
   }

@@ -10,7 +10,7 @@
       <div class="report-month-control">
         <span :class="['studio-status', { running: loading, pending: hasSavedReportChanges || templateUnavailable, ready: hasReport && !loading && !hasSavedReportChanges && !templateUnavailable }]" role="status"><i aria-hidden="true"></i>{{ loading ? activeJob ? '报告生成中' : '正在读取报告' : templateUnavailable ? '模板待配置' : hasSavedReportChanges ? '设置有更新，待重新生成' : hasReport ? '当前成稿可查看与导出' : '等待生成首份报告' }}</span>
         <div class="studio-hero-actions">
-        <button type="button" class="btn btn-outline studio-html-toggle" :disabled="!hasReport || loading || templateUnavailable" :aria-pressed="reportDisplayMode === 'text'" aria-controls="report-studio-rendered" @click="reportDisplayMode = reportDisplayMode === 'ppt' ? 'text' : 'ppt'">{{ reportDisplayMode === 'ppt' ? '查看HTML报告' : '返回PPT预览' }}</button>
+        <ReportViewModeSwitch v-model="reportDisplayMode" variant="hero" />
         <button
           type="button"
           class="export-ppt-btn"
@@ -359,10 +359,7 @@
     <header id="report-studio-output" tabindex="-1" class="studio-output-heading">
       <div><span class="studio-output-number" aria-hidden="true">03</span><div><h3>报告成稿</h3><p>{{ hasReport ? `最后成功生成于 ${reportGeneratedAt}` : '生成完成后，将在这里展示报告与预览' }}</p></div></div>
       <div class="studio-output-actions">
-        <div v-if="hasReport" class="studio-view-switch" role="group" aria-label="报告显示方式">
-          <button type="button" :aria-pressed="reportDisplayMode === 'ppt'" :disabled="loading || templateUnavailable" aria-controls="report-studio-rendered" @click="reportDisplayMode = 'ppt'">PPT预览</button>
-          <button type="button" :aria-pressed="reportDisplayMode === 'text'" :disabled="loading || templateUnavailable" aria-controls="report-studio-rendered" @click="reportDisplayMode = 'text'">HTML报告</button>
-        </div>
+        <ReportViewModeSwitch v-if="hasReport" v-model="reportDisplayMode" />
         <span v-else>{{ templateUnavailable ? '模板待配置' : loading ? '正在读取' : '尚无成稿' }}</span>
         <button type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button>
       </div>
@@ -1999,12 +1996,14 @@ import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
 import ReportHtmlContent from '@/components/ReportHtmlContent.vue'
+import ReportViewModeSwitch from '@/components/ReportViewModeSwitch.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
 import { reportConfigurationDiffers } from '@/utils/reportConfiguration'
+import { readReportViewMode, saveReportViewMode } from '@/utils/reportViewMode'
 
 const equipmentTopicSelection = ref(null)
 const currentRole = localStorage.getItem('user_role') || ''
@@ -2156,8 +2155,8 @@ let workspaceSaveQueue = Promise.resolve()
 let workspaceSaveSequence = 0
 const selectedSnapshotId = ref(0)
 const selectedReportType = ref('quality_measurement')
-const reportDisplayMode = ref('ppt')
-watch(selectedReportType, () => { reportDisplayMode.value = 'ppt' })
+const reportDisplayMode = ref(readReportViewMode())
+watch(reportDisplayMode, (mode) => saveReportViewMode(mode))
 const reportTypes = ref(DEFAULT_REPORT_TYPES)
 const loading = ref(false)
 const error = ref('')
