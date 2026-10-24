@@ -13,6 +13,7 @@ const PAGE_VISIBILITY_CACHE_TTL_MS = 30 * 1000
 let pageVisibilityInFlight = null
 let pageVisibilityFetchedAt = 0
 let pageVisibilitySettings = {}
+let visibilityGeneration = 0
 
 const normalizeSettings = (rawSettings) => {
   const result = {}
@@ -39,6 +40,7 @@ export const isPageVisibleInSnapshot = (pathOrKey, settings = pageVisibilitySett
 }
 
 export const clearPageVisibilityCache = () => {
+  visibilityGeneration++
   pageVisibilityInFlight = null
   pageVisibilityFetchedAt = 0
   pageVisibilitySettings = {}
@@ -62,18 +64,19 @@ export const fetchPageVisibility = async ({ force = false } = {}) => {
 
   if (pageVisibilityInFlight) return pageVisibilityInFlight
 
+  const generation = visibilityGeneration
   pageVisibilityInFlight = axios.get('/api/page-visibility')
     .then((response) => {
+      if (generation !== visibilityGeneration) return getPageVisibilitySnapshot()
       if (!response.data?.success) throw new Error(response.data?.error || '页面显示配置读取失败。')
       pageVisibilitySettings = normalizeSettings(response.data.settings || {})
       pageVisibilityFetchedAt = Date.now()
       return getPageVisibilitySnapshot()
     })
     .catch((error) => {
-      console.warn('页面显示配置读取失败，将暂时默认全部显示。', error)
+      console.warn('页面显示配置读取失败，保留上次成功配置。', error)
       pageVisibilityFetchedAt = Date.now()
-      pageVisibilitySettings = {}
-      return {}
+      return getPageVisibilitySnapshot()
     })
     .finally(() => {
       pageVisibilityInFlight = null
@@ -82,13 +85,18 @@ export const fetchPageVisibility = async ({ force = false } = {}) => {
   return pageVisibilityInFlight
 }
 
-export const refreshPageVisibilityAndNotify = async () => {
-  const settings = await fetchPageVisibility({ force: true })
+export const publishPageVisibility = (rawSettings) => {
+  visibilityGeneration++
+  pageVisibilitySettings = normalizeSettings(rawSettings)
+  pageVisibilityFetchedAt = Date.now()
+  const settings = getPageVisibilitySnapshot()
   window.dispatchEvent(new CustomEvent(PAGE_VISIBILITY_UPDATED_EVENT, {
     detail: { settings }
   }))
   return settings
 }
+
+export const refreshPageVisibilityAndNotify = async () => publishPageVisibility(await fetchPageVisibility({ force: true }))
 
 export const isKnownPagePath = (path) => Boolean(PAGE_VISIBILITY_PAGE_BY_PATH[path])
 

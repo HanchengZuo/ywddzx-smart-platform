@@ -4,22 +4,27 @@
       <div>
         <div class="page-kicker">管理系统</div>
         <h2>页面显示管理</h2>
-        <p>root 可以统一控制各业务页面是否在菜单栏展示；当某个系统下所有子页面都被隐藏时，该系统分组也会自动隐藏。</p>
+        <p>
+          统一控制所有用户的菜单显示。切换开关后自动保存，系统分组下全部页面隐藏时，分组也会隐藏。
+        </p>
       </div>
       <div class="hero-actions">
-        <button class="btn btn-secondary" type="button" :disabled="loading || saving" @click="loadSettings">
-          {{ loading ? '刷新中...' : '刷新配置' }}
-        </button>
-        <button class="btn btn-primary" type="button" :disabled="loading || saving" @click="saveSettings">
-          {{ saving ? '保存中...' : '保存显示设置' }}
-        </button>
+        <span class="autosave-status" role="status">{{
+          loading
+            ? '正在读取全局设置…'
+            : saving
+              ? '正在自动保存…'
+              : loaded
+                ? '已同步 · 切换自动保存'
+                : '配置尚未加载'
+        }}</span>
       </div>
     </section>
 
-    <section v-if="!isRoot" class="card-surface permission-card">
+    <section v-if="!canManage" class="card-surface permission-card">
       <div class="permission-icon">!</div>
       <div class="permission-title">无权访问页面显示管理</div>
-      <div class="permission-desc">该功能仅 root 系统管理员账号可以操作。</div>
+      <div class="permission-desc">需要“管理全局页面显示”权限，请联系管理员分配。</div>
     </section>
 
     <template v-else>
@@ -31,28 +36,49 @@
         </div>
         <div class="summary-card">
           <span>当前显示</span>
-          <strong>{{ visibleCount }}</strong>
+          <strong>{{ loaded ? visibleCount : '—' }}</strong>
           <small>会出现在左侧菜单中</small>
         </div>
         <div class="summary-card hidden">
           <span>当前隐藏</span>
-          <strong>{{ hiddenCount }}</strong>
+          <strong>{{ loaded ? hiddenCount : '—' }}</strong>
           <small>菜单和直接访问都会被拦截</small>
         </div>
       </section>
 
-      <div v-if="message" class="visibility-toast" :class="{ error: messageType === 'error' }">{{ message }}</div>
+      <div
+        v-if="message"
+        class="visibility-toast"
+        :class="{ error: messageType === 'error' }"
+        :role="messageType === 'error' ? 'alert' : 'status'"
+      >
+        {{ message
+        }}<button v-if="!loaded && !loading" type="button" @click="loadSettings">重试读取</button>
+      </div>
 
       <section class="card-surface visibility-guide">
         <div>
           <strong>使用提示</strong>
-          <span>页面隐藏是全局开关，和用户权限是两层逻辑：用户先要有权限，其次页面也必须处于显示状态。</span>
+          <span
+            >页面隐藏是全局开关，和用户权限是两层逻辑：用户先要有权限，其次页面也必须处于显示状态。</span
+          >
         </div>
-        <button class="mini-action" type="button" :disabled="saving" @click="showAllPages">一键全部显示</button>
+        <button
+          class="mini-action"
+          type="button"
+          :disabled="!loaded || loading || saving || !hiddenCount"
+          @click="showAllPages"
+        >
+          一键全部显示
+        </button>
       </section>
 
-      <section class="visibility-groups">
-        <article v-for="group in groupedPages" :key="group.key" class="visibility-group card-surface">
+      <section v-if="loaded" class="visibility-groups" :aria-busy="saving">
+        <article
+          v-for="group in groupedPages"
+          :key="group.key"
+          class="visibility-group card-surface"
+        >
           <div class="group-head">
             <div>
               <h3>{{ group.title }}</h3>
@@ -64,14 +90,26 @@
           </div>
 
           <div class="page-toggle-list">
-            <div v-for="page in group.pages" :key="page.key" class="page-toggle-row" :class="{ hidden: !isVisible(page.key) }">
+            <div
+              v-for="page in group.pages"
+              :key="page.key"
+              class="page-toggle-row"
+              :class="{ hidden: !isVisible(page.key) }"
+            >
               <div class="page-toggle-main">
                 <strong>{{ page.title }}</strong>
                 <span>{{ page.description }}</span>
                 <em>{{ page.path }}</em>
               </div>
               <label class="visibility-switch">
-                <input type="checkbox" :checked="isVisible(page.key)" @change="setVisible(page.key, $event.target.checked)" />
+                <input
+                  type="checkbox"
+                  role="switch"
+                  :aria-label="page.title + '全局显示'"
+                  :checked="isVisible(page.key)"
+                  :disabled="saving || loading"
+                  @change="setVisible(page.key, $event.target.checked)"
+                />
                 <span class="switch-track">
                   <span class="switch-thumb"></span>
                 </span>
@@ -89,34 +127,47 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
 import { PAGE_VISIBILITY_GROUPS, PAGE_VISIBILITY_PAGES } from '@/config/pageVisibilityCatalog'
-import { refreshPageVisibilityAndNotify } from '@/utils/pageVisibility'
+import { publishPageVisibility } from '@/utils/pageVisibility'
 
 const loading = ref(false)
 const saving = ref(false)
+const loaded = ref(false)
 const message = ref('')
 const messageType = ref('success')
 const settings = reactive({})
 
-const userId = () => localStorage.getItem('user_id') || ''
-const isRoot = computed(() => localStorage.getItem('user_role') === 'root')
+let permissions = {}
+try {
+  permissions = JSON.parse(localStorage.getItem('permissions') || '{}') || {}
+} catch {
+  /* API also checks permission. */
+}
+const canManage =
+  (localStorage.getItem('user_role') || localStorage.getItem('role')) === 'root' ||
+  Boolean(permissions.manage_page_visibility)
 const totalPages = computed(() => PAGE_VISIBILITY_PAGES.length)
-const visibleCount = computed(() => PAGE_VISIBILITY_PAGES.filter((page) => isVisible(page.key)).length)
+const visibleCount = computed(
+  () => PAGE_VISIBILITY_PAGES.filter((page) => isVisible(page.key)).length,
+)
 const hiddenCount = computed(() => Math.max(0, totalPages.value - visibleCount.value))
-const groupedPages = computed(() => PAGE_VISIBILITY_GROUPS.map((group) => {
-  const pages = group.pages.map((page) => ({
-    ...page,
-    visible: isVisible(page.key)
-  }))
-  return {
-    ...group,
-    pages,
-    visibleCount: pages.filter((page) => page.visible).length
-  }
-}))
+const groupedPages = computed(() =>
+  PAGE_VISIBILITY_GROUPS.map((group) => {
+    const pages = group.pages.map((page) => ({
+      ...page,
+      visible: isVisible(page.key),
+    }))
+    return {
+      ...group,
+      pages,
+      visibleCount: pages.filter((page) => page.visible).length,
+    }
+  }),
+)
 
 const showMessage = (text, type = 'success') => {
   message.value = text
   messageType.value = type
+  if (!loaded.value && type === 'error') return
   window.setTimeout(() => {
     if (message.value === text) message.value = ''
   }, 2600)
@@ -130,27 +181,27 @@ const applySettings = (rawSettings = {}) => {
 
 const isVisible = (key) => settings[key] !== false
 
-const setVisible = (key, value) => {
-  settings[key] = Boolean(value)
-}
+const setVisible = (key, value) => saveSettings([{ page_key: key, is_visible: Boolean(value) }])
 
 const showAllPages = () => {
-  PAGE_VISIBILITY_PAGES.forEach((page) => {
-    settings[page.key] = true
-  })
-  showMessage('已临时切换为全部显示，点击保存后生效。')
+  saveSettings(
+    PAGE_VISIBILITY_PAGES.filter((page) => !isVisible(page.key)).map((page) => ({
+      page_key: page.key,
+      is_visible: true,
+    })),
+  )
 }
 
 const loadSettings = async () => {
-  if (!isRoot.value) return
+  if (!canManage) return
   loading.value = true
   message.value = ''
   try {
-    const response = await axios.get('/api/management/page-visibility', {
-      params: { user_id: userId() }
-    })
+    const response = await axios.get('/api/management/page-visibility')
     if (!response.data?.success) throw new Error(response.data?.error || '页面显示配置读取失败。')
     applySettings(response.data.settings || {})
+    publishPageVisibility(response.data.settings || {})
+    loaded.value = true
   } catch (error) {
     showMessage(error?.response?.data?.error || error.message || '页面显示配置读取失败。', 'error')
   } finally {
@@ -158,24 +209,22 @@ const loadSettings = async () => {
   }
 }
 
-const saveSettings = async () => {
-  if (!isRoot.value) return
+const saveSettings = async (pages) => {
+  if (!canManage || !loaded.value || saving.value || !pages.length) return
+  const previous = { ...settings }
   saving.value = true
   message.value = ''
+  pages.forEach((page) => {
+    settings[page.page_key] = page.is_visible
+  })
   try {
-    const pages = PAGE_VISIBILITY_PAGES.map((page) => ({
-      page_key: page.key,
-      is_visible: isVisible(page.key)
-    }))
-    const response = await axios.put('/api/management/page-visibility', {
-      user_id: userId(),
-      pages
-    })
+    const response = await axios.put('/api/management/page-visibility', { pages })
     if (!response.data?.success) throw new Error(response.data?.error || '页面显示配置保存失败。')
     applySettings(response.data.settings || {})
-    await refreshPageVisibilityAndNotify()
-    showMessage(response.data.message || '页面显示设置已保存。')
+    publishPageVisibility(response.data.settings || {})
+    showMessage('已自动保存，对所有用户生效。')
   } catch (error) {
+    applySettings(previous)
     showMessage(error?.response?.data?.error || error.message || '页面显示配置保存失败。', 'error')
   } finally {
     saving.value = false
@@ -239,6 +288,23 @@ onMounted(loadSettings)
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+.autosave-status {
+  padding: 10px 14px;
+  border: 1px solid #b8d8d1;
+  border-radius: 10px;
+  background: #f1fcf8;
+  color: #245c51;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.visibility-switch:has(input:disabled) {
+  opacity: 0.65;
+  cursor: wait;
+}
+.visibility-switch input:focus-visible + .switch-track {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .visibility-summary-grid {
@@ -340,9 +406,7 @@ onMounted(loadSettings)
   justify-content: space-between;
   gap: 18px;
   padding: 20px 22px;
-  background:
-    linear-gradient(90deg, rgba(15, 118, 110, 0.08), rgba(37, 99, 235, 0.06)),
-    #fff;
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.08), rgba(37, 99, 235, 0.06)), #fff;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
@@ -405,11 +469,12 @@ onMounted(loadSettings)
 
 .page-toggle-main em {
   font-style: normal;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
 }
 
 .visibility-switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -419,8 +484,13 @@ onMounted(loadSettings)
 
 .visibility-switch input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 1;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .switch-track {
@@ -429,7 +499,9 @@ onMounted(loadSettings)
   height: 30px;
   border-radius: 999px;
   background: #cbd5e1;
-  transition: background 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .switch-thumb {

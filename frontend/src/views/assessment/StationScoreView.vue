@@ -2,63 +2,130 @@
   <div class="station-score-page">
     <section class="score-hero">
       <div>
-        <div class="page-kicker">考核系统</div>
+        <div class="page-kicker">考核系统 / MONTHLY SCORECARD</div>
         <h2>站点评分</h2>
-        <p>按站点和时间范围读取可评分检查表，自动扣分并形成可导出的评分台账。</p>
+        <p>按自然月核对已审核通过的问题，自动评分与人工调整分开留痕。</p>
+        <div class="hero-tags">
+          <span>默认上月</span><span>仅审核通过</span><span>仅可评分检查表</span>
+        </div>
       </div>
       <div class="hero-score-card">
         <span>{{ selectedMonthLabel }}</span>
-        <strong>{{ formatScore(activeSummary.final_score) }}</strong>
-        <small>当前总分 / {{ formatScore(activeSummary.max_score) }}</small>
+        <strong>{{ hasScore ? formatScore(activeSummary.final_score) : '—' }}</strong>
+        <small>{{
+          hasScore
+            ? `当前检查表 / ${formatScore(activeSummary.max_score)} 分`
+            : '选择站点后查看评分'
+        }}</small>
       </div>
     </section>
 
     <section class="score-toolbar">
-      <DateRangePicker
-        v-model:date-from="filters.dateFrom"
-        v-model:date-to="filters.dateTo"
-        placeholder="选择评分日期范围"
-        aria-label="选择评分日期范围"
-        @change="fetchScores"
-      />
+      <label class="score-month-field"
+        ><span>评分月份</span
+        ><input
+          v-model="filters.month"
+          type="month"
+          min="1900-01"
+          max="2100-12"
+          aria-label="评分月份"
+          @change="fetchScores"
+        /><small>{{
+          filters.month === defaultMonth ? '默认统计上一个月' : '按所选自然月统计'
+        }}</small></label
+      >
 
       <div ref="stationSelectRef" class="station-search-select">
-        <input v-model.trim="stationSearch" type="search" placeholder="搜索并选择站点名称" aria-label="搜索并选择站点名称"
-          @focus="openStationDropdown" @input="handleStationInput" />
+        <label for="score-station-input">评分站点</label>
+        <input
+          id="score-station-input"
+          v-model.trim="stationSearch"
+          type="search"
+          placeholder="搜索站名、片区或拼音"
+          aria-label="搜索并选择站点名称"
+          @focus="openStationDropdown"
+          @input="handleStationInput"
+        />
         <div v-if="stationDropdownVisible" class="station-dropdown">
-          <button v-for="station in filteredStations" :key="station.id" class="station-option" type="button"
-            @click="selectStation(station)">
+          <button
+            v-for="station in filteredStations"
+            :key="station.id"
+            class="station-option"
+            type="button"
+            @click="selectStation(station)"
+          >
             <strong>{{ station.station_name }}</strong>
-            <span>{{ station.region || '未设置片区' }}<template v-if="station.hos_station_code"> ｜ {{ station.hos_station_code }}</template></span>
+            <span
+              >{{ station.region || '未设置片区'
+              }}<template v-if="station.hos_station_code">
+                ｜ {{ station.hos_station_code }}</template
+              ></span
+            >
           </button>
           <div v-if="!filteredStations.length" class="station-empty">无匹配站点</div>
         </div>
       </div>
 
       <div ref="checklistSelectRef" class="checklist-search-select">
-        <input v-model.trim="checklistSearch" type="search" placeholder="搜索并选择检查表" aria-label="搜索并选择检查表"
-          :disabled="!scoreData.tables.length" @focus="openChecklistDropdown" @input="handleChecklistInput" />
+        <label for="score-checklist-input">可评分检查表</label>
+        <input
+          id="score-checklist-input"
+          v-model.trim="checklistSearch"
+          type="search"
+          placeholder="搜索并选择检查表"
+          aria-label="搜索并选择检查表"
+          :disabled="!scorableChecklists.length"
+          @focus="openChecklistDropdown"
+          @input="handleChecklistInput"
+        />
         <div v-if="checklistDropdownVisible" class="station-dropdown">
-          <button v-for="table in filteredChecklists" :key="table.id" class="station-option" type="button"
-            @click="selectChecklist(table)">
+          <button
+            v-for="table in filteredChecklists"
+            :key="table.id"
+            class="station-option"
+            type="button"
+            @click="selectChecklist(table)"
+          >
             <strong>{{ table.table_name }}</strong>
-            <span>{{ table.checklist_mode_label || '未设置模式' }} ｜ {{ table.item_count || 0 }} 条规范</span>
+            <span>{{ table.checklist_mode_label || '未设置模式' }} · 已配置可评分字段</span>
           </button>
           <div v-if="!filteredChecklists.length" class="station-empty">无匹配检查表</div>
         </div>
       </div>
 
       <div class="export-actions">
-        <button class="export-btn" type="button" :disabled="!canExportScores || !filters.stationId || !filters.inspectionTableId || !visibleScoreTables.length"
-          @click="openScoreExportDialog('single')">
+        <button
+          class="export-btn"
+          type="button"
+          :disabled="
+            loading ||
+            !canExportScores ||
+            !filters.stationId ||
+            !filters.inspectionTableId ||
+            !visibleScoreTables.length
+          "
+          @click="openScoreExportDialog('single')"
+        >
           导出Excel
         </button>
-        <button class="export-btn secondary" type="button" :disabled="!canExportScores || !stations.length"
-          @click="openScoreExportDialog('all')">
+        <button
+          class="export-btn secondary"
+          type="button"
+          :disabled="!canExportScores || !stations.length"
+          @click="openScoreExportDialog('all')"
+        >
           一键导出全部站点
         </button>
       </div>
     </section>
+
+    <aside class="score-method">
+      <strong>评分口径</strong
+      ><span
+        >{{ selectedMonthLabel }} ·
+        仅审核通过的问题参与自动扣分，待审核和已否决的问题不计分。检查表需至少配置一个“可评分”字段；关闭全部可评分字段或停用检查表后，该表不再参与评分。</span
+      >
+    </aside>
 
     <div v-if="message.text" :class="['toast-message', message.type]">{{ message.text }}</div>
     <div v-if="error" class="message-card error">{{ error }}</div>
@@ -80,13 +147,18 @@
     <div v-else-if="!filters.stationId" class="state-card">
       <div class="state-orb"></div>
       <h3>先选择一个站点</h3>
-      <p>选择站点和时间范围后，系统会自动计算各检查表得分。</p>
+      <p>月份已默认选择上月，搜索站点后即可查看对应的月度评分台账。</p>
     </div>
 
-    <div v-else-if="!scoreData.tables.length" class="state-card">
+    <div v-else-if="!scorableChecklists.length" class="state-card">
       <div class="state-orb"></div>
       <h3>暂无可评分检查表</h3>
       <p>请先在检查表数据管理中，把需要参与评分的字段标记为“可评分”。</p>
+    </div>
+
+    <div v-else-if="!scoreData.tables.length" class="state-card">
+      <h3>暂未取得可评分数据</h3>
+      <p>{{ error || '请核对所选检查表是否仍已启用且存在可评分字段与规范数据。' }}</p>
     </div>
 
     <div v-else-if="!filters.inspectionTableId" class="state-card">
@@ -101,17 +173,38 @@
           <div>
             <div class="table-title-line">
               <h3>{{ table.table_name }}</h3>
-              <span :class="['mode-pill', table.checklist_mode]">{{ table.checklist_mode_label }}</span>
+              <span :class="['mode-pill', table.checklist_mode]">{{
+                table.checklist_mode_label
+              }}</span>
             </div>
             <p>
-              {{ table.item_count }} 条规范，{{ table.issue_count }} 条问题，{{ table.deducted_item_count }} 项扣分。
+              {{ table.item_count }} 条规范，{{ table.issue_count }} 条问题，{{
+                table.deducted_item_count
+              }}
+              项扣分。
             </p>
           </div>
           <div class="table-score-meter">
             <strong>{{ formatScore(table.final_score) }}</strong>
             <span>最终得分</span>
-            <small>自动 {{ formatScore(table.auto_score) }} / 满分 {{ formatScore(table.max_score) }}</small>
+            <small
+              >自动 {{ formatScore(table.auto_score) }} / 满分
+              {{ formatScore(table.max_score) }}</small
+            >
           </div>
+        </div>
+
+        <div class="ledger-tools">
+          <input
+            v-model="ledgerKeyword"
+            type="search"
+            aria-label="搜索评分明细"
+            placeholder="搜索规范ID、规范内容或问题描述"
+          /><select v-model="ledgerState" aria-label="评分明细状态">
+            <option value="">全部规范</option>
+            <option value="deducted">仅自动扣分项</option>
+            <option value="adjusted">仅人工调整项</option></select
+          ><span>{{ ledgerRows(table).length }} / {{ table.standards.length }} 条规范</span>
         </div>
 
         <div class="ledger-table-wrap">
@@ -128,12 +221,22 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="standard in table.standards" :key="standard.standard_id"
-                :class="{ deducted: standard.is_deducted, adjusted: standard.has_manual_adjustment }">
+              <tr
+                v-for="standard in ledgerRows(table)"
+                :key="standard.standard_id"
+                :class="{
+                  deducted: standard.is_deducted,
+                  adjusted: standard.has_manual_adjustment,
+                }"
+              >
                 <td class="standard-id-col">
                   <strong>{{ standard.standard_id }}</strong>
                 </td>
-                <td v-for="field in standard.all_fields" :key="field.field_key" class="standard-field-cell">
+                <td
+                  v-for="field in standard.all_fields"
+                  :key="field.field_key"
+                  class="standard-field-cell"
+                >
                   {{ field.value || '-' }}
                 </td>
                 <td class="issue-desc-col">
@@ -141,15 +244,23 @@
                     <div v-for="issue in standard.issues" :key="issue.id" class="issue-desc-item">
                       <strong>#{{ issue.id }}</strong>
                       <span>{{ issue.description || '未填写问题描述' }}</span>
-                      <em>{{ issue.inspection_date }} ｜ {{ issue.inspector_name || '未记录检查人' }}</em>
+                      <em
+                        >{{ issue.inspection_date }} ｜
+                        {{ issue.inspector_name || '未记录检查人' }}</em
+                      >
                     </div>
                   </div>
                   <span v-else class="muted-text">-</span>
                 </td>
                 <td class="issue-photo-col">
                   <div v-if="issuePhotos(standard).length" class="photo-strip">
-                    <button v-for="photo in issuePhotos(standard)" :key="photo.url" class="photo-thumb-btn" type="button"
-                      @click="previewImage(photo.url)">
+                    <button
+                      v-for="photo in issuePhotos(standard)"
+                      :key="photo.url"
+                      class="photo-thumb-btn"
+                      type="button"
+                      @click="previewImage(photo.url)"
+                    >
                       <img :src="photo.url" alt="问题照片" />
                     </button>
                   </div>
@@ -158,12 +269,21 @@
                 <td class="score-col">
                   <div class="score-cell">
                     <strong>{{ formatScore(standard.final_score) }}</strong>
-                    <span>自动 {{ formatScore(standard.auto_score) }} / 满分 {{ formatScore(standard.max_score) }}</span>
+                    <span
+                      >自动 {{ formatScore(standard.auto_score) }} / 满分
+                      {{ formatScore(standard.max_score) }}</span
+                    >
                     <small v-if="standard.has_manual_adjustment">
-                      {{ standard.adjusted_by_name || '未知人员' }}｜{{ standard.adjusted_at || '-' }}
+                      {{ standard.adjusted_by_name || '未知人员' }}｜{{
+                        standard.adjusted_at || '-'
+                      }}
                     </small>
-                    <button v-if="scoreData.can_adjust" class="adjust-btn" type="button"
-                      @click="openAdjustment(table, standard)">
+                    <button
+                      v-if="scoreData.can_adjust"
+                      class="adjust-btn"
+                      type="button"
+                      @click="openAdjustment(table, standard)"
+                    >
                       调整
                     </button>
                   </div>
@@ -171,137 +291,238 @@
               </tr>
             </tbody>
           </table>
+          <p v-if="!ledgerRows(table).length" class="ledger-empty">没有匹配的评分明细。</p>
         </div>
       </article>
     </section>
 
-    <div v-if="adjustDialog.visible" class="dialog-backdrop">
-      <section class="adjust-dialog">
-        <div class="dialog-head">
-          <div>
-            <div class="page-kicker">手动调整评分</div>
-            <h3>{{ adjustDialog.tableName }}</h3>
-            <p>外部规范ID {{ adjustDialog.standardId }}，本项满分 {{ formatScore(adjustDialog.maxScore) }}。</p>
-          </div>
-          <button class="dialog-close" type="button" @click="closeAdjustment">×</button>
-        </div>
-
-        <label class="score-input-field">
-          <input v-model.number="adjustDialog.manualScore" type="number" min="0" :max="adjustDialog.maxScore"
-            step="0.01" aria-label="调整后分值" />
-        </label>
-
-        <div class="dialog-actions">
-          <button class="btn btn-secondary" type="button" @click="closeAdjustment">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="adjustDialog.saving" @click="saveAdjustment">
-            {{ adjustDialog.saving ? '保存中...' : '保存调整' }}
-          </button>
-        </div>
-      </section>
-    </div>
-
-    <div v-if="exportDialog.visible" class="dialog-backdrop">
-      <section class="export-dialog">
-        <div class="dialog-head">
-          <div>
-            <div class="page-kicker">后台导出任务</div>
-            <h3>{{ exportDialog.mode === 'all' ? '一键导出全部站点评分' : '导出当前检查表评分' }}</h3>
-            <p>导出任务会在后台生成文件，完成后可直接下载，服务器仅保留 7 天。</p>
-          </div>
-          <button class="dialog-close" type="button" @click="closeScoreExportDialog">×</button>
-        </div>
-
-        <div class="export-summary-grid">
-          <div>
-            <span>评分时间</span>
-            <strong>{{ selectedMonthLabel }}</strong>
-          </div>
-          <div>
-            <span>导出范围</span>
-            <strong>{{ exportDialog.mode === 'all' ? '全部站点' : selectedStationName }}</strong>
-          </div>
-          <div v-if="exportDialog.mode === 'single'">
-            <span>检查表</span>
-            <strong>{{ selectedChecklistName }}</strong>
-          </div>
-          <div>
-            <span>{{ exportDialog.mode === 'all' ? '站点数量' : '规范数量' }}</span>
-            <strong>{{ exportDialog.selectedCount }}</strong>
-          </div>
-          <div v-if="exportDialog.mode === 'all'">
-            <span>检查表</span>
-            <strong>{{ selectedExportChecklistCount }}</strong>
-          </div>
-        </div>
-
-        <div v-if="exportDialog.mode === 'all'" class="export-checklist-panel">
-          <div class="export-panel-head">
+    <Teleport to="body"
+      ><dialog
+        ref="adjustModal"
+        class="score-native-dialog adjustment-modal"
+        aria-labelledby="score-adjust-title"
+        @cancel.prevent="closeAdjustment"
+      >
+        <section v-if="adjustDialog.visible" class="adjust-dialog">
+          <div class="score-dialog-head">
             <div>
-              <strong>导出检查表</strong>
-              <small>默认导出全部可评分检查表，也可以只选择一张或多张检查表。</small>
+              <div class="page-kicker">手动调整评分</div>
+              <h3 id="score-adjust-title">{{ adjustDialog.tableName }}</h3>
+              <p>
+                外部规范ID {{ adjustDialog.standardId }}，本项满分
+                {{ formatScore(adjustDialog.maxScore) }}。
+              </p>
             </div>
-            <div class="export-panel-actions">
-              <button type="button" :disabled="isScoreExportLocked" @click="selectAllExportChecklists">全选</button>
-              <button type="button" :disabled="isScoreExportLocked" @click="clearExportChecklists">清空</button>
+            <button
+              class="dialog-close"
+              type="button"
+              aria-label="关闭评分调整"
+              @click="closeAdjustment"
+            >
+              ×
+            </button>
+          </div>
+
+          <label class="score-input-field">
+            <input
+              v-model.number="adjustDialog.manualScore"
+              type="number"
+              min="0"
+              :max="adjustDialog.maxScore"
+              step="0.01"
+              aria-label="调整后分值"
+            />
+          </label>
+
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" type="button" @click="closeAdjustment">取消</button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              :disabled="adjustDialog.saving"
+              @click="saveAdjustment"
+            >
+              {{ adjustDialog.saving ? '保存中...' : '保存调整' }}
+            </button>
+          </div>
+        </section>
+      </dialog>
+
+      <dialog
+        ref="exportModal"
+        class="score-native-dialog"
+        aria-labelledby="score-export-title"
+        @cancel.prevent="closeScoreExportDialog"
+      >
+        <section v-if="exportDialog.visible" class="export-dialog">
+          <div class="score-dialog-head">
+            <div>
+              <div class="page-kicker">后台导出任务</div>
+              <h3 id="score-export-title">
+                {{ exportDialog.mode === 'all' ? '一键导出全部站点评分' : '导出当前检查表评分' }}
+              </h3>
+              <p>导出任务会在后台生成文件，完成后可直接下载，服务器仅保留 7 天。</p>
+            </div>
+            <button
+              class="dialog-close"
+              type="button"
+              aria-label="关闭评分导出"
+              @click="closeScoreExportDialog"
+            >
+              ×
+            </button>
+          </div>
+
+          <div class="export-summary-grid">
+            <div>
+              <span>评分时间</span>
+              <strong>{{ selectedMonthLabel }}</strong>
+            </div>
+            <div>
+              <span>导出范围</span>
+              <strong>{{ exportDialog.mode === 'all' ? '全部站点' : selectedStationName }}</strong>
+            </div>
+            <div v-if="exportDialog.mode === 'single'">
+              <span>检查表</span>
+              <strong>{{ selectedChecklistName }}</strong>
+            </div>
+            <div>
+              <span>{{ exportDialog.mode === 'all' ? '站点数量' : '规范数量' }}</span>
+              <strong>{{ exportDialog.selectedCount }}</strong>
+            </div>
+            <div v-if="exportDialog.mode === 'all'">
+              <span>检查表</span>
+              <strong>{{ selectedExportChecklistCount }}</strong>
             </div>
           </div>
-          <input v-model.trim="exportDialog.checklistSearch" class="export-checklist-search" type="search"
-            placeholder="搜索检查表名称" :disabled="isScoreExportLocked" />
-          <div class="export-checklist-options">
-            <label v-for="table in filteredExportChecklists" :key="table.id" class="export-checklist-option"
-              :class="{ active: exportDialog.selectedTableIds.includes(String(table.id)), disabled: isScoreExportLocked }">
-              <input type="checkbox" :checked="exportDialog.selectedTableIds.includes(String(table.id))"
-                :disabled="isScoreExportLocked" @change="toggleExportChecklist(table.id)" />
-              <span>
-                <strong>{{ table.table_name }}</strong>
-                <small>{{ table.checklist_mode_label || '未设置模式' }}</small>
-              </span>
-            </label>
-            <div v-if="!filteredExportChecklists.length" class="export-checklist-empty">没有匹配的可评分检查表</div>
+
+          <div v-if="exportDialog.mode === 'all'" class="export-checklist-panel">
+            <div class="export-panel-head">
+              <div>
+                <strong>导出检查表</strong>
+                <small>默认导出全部可评分检查表，也可以只选择一张或多张检查表。</small>
+              </div>
+              <div class="export-panel-actions">
+                <button
+                  type="button"
+                  :disabled="isScoreExportLocked"
+                  @click="selectAllExportChecklists"
+                >
+                  全选
+                </button>
+                <button
+                  type="button"
+                  :disabled="isScoreExportLocked"
+                  @click="clearExportChecklists"
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+            <input
+              v-model.trim="exportDialog.checklistSearch"
+              class="export-checklist-search"
+              type="search"
+              placeholder="搜索检查表名称"
+              :disabled="isScoreExportLocked"
+            />
+            <div class="export-checklist-options">
+              <label
+                v-for="table in filteredExportChecklists"
+                :key="table.id"
+                class="export-checklist-option"
+                :class="{
+                  active: exportDialog.selectedTableIds.includes(String(table.id)),
+                  disabled: isScoreExportLocked,
+                }"
+              >
+                <input
+                  type="checkbox"
+                  :checked="exportDialog.selectedTableIds.includes(String(table.id))"
+                  :disabled="isScoreExportLocked"
+                  @change="toggleExportChecklist(table.id)"
+                />
+                <span>
+                  <strong>{{ table.table_name }}</strong>
+                  <small>{{ table.checklist_mode_label || '未设置模式' }}</small>
+                </span>
+              </label>
+              <div v-if="!filteredExportChecklists.length" class="export-checklist-empty">
+                没有匹配的可评分检查表
+              </div>
+            </div>
           </div>
-        </div>
 
-        <label class="photo-option-card">
-          <input v-model="exportDialog.includePhotos.issue_photo" type="checkbox"
-            :disabled="['pending', 'running'].includes(exportDialog.status)" />
-          <span>
-            <strong>导出问题照片</strong>
-            <small>照片会嵌入 Excel 单元格，文件生成会更慢、体积也会更大。</small>
-          </span>
-        </label>
+          <label class="photo-option-card">
+            <input
+              v-model="exportDialog.includePhotos.issue_photo"
+              type="checkbox"
+              :disabled="['pending', 'running'].includes(exportDialog.status)"
+            />
+            <span>
+              <strong>导出问题照片</strong>
+              <small>照片会嵌入 Excel 单元格，文件生成会更慢、体积也会更大。</small>
+            </span>
+          </label>
 
-        <div v-if="exportDialog.taskId" class="export-task-panel">
-          <div>
-            <span class="task-status-label">{{ exportStatusLabel }}</span>
-            <strong>{{ exportDialog.fileName || '正在准备文件名' }}</strong>
-            <small v-if="exportDialog.fileSizeLabel">文件大小 {{ exportDialog.fileSizeLabel }}</small>
-            <small v-if="exportDialog.expiresAt">保留至 {{ exportDialog.expiresAt }}</small>
+          <div v-if="exportDialog.taskId" class="export-task-panel">
+            <div>
+              <span class="task-status-label">{{ exportStatusLabel }}</span>
+              <strong>{{ exportDialog.fileName || '正在准备文件名' }}</strong>
+              <small v-if="exportDialog.fileSizeLabel"
+                >文件大小 {{ exportDialog.fileSizeLabel }}</small
+              >
+              <small v-if="exportDialog.expiresAt">保留至 {{ exportDialog.expiresAt }}</small>
+            </div>
+            <div class="task-progress-track">
+              <span :style="{ width: exportProgressPercent + '%' }"></span>
+            </div>
+            <p v-if="exportDialog.error" class="export-error">{{ exportDialog.error }}</p>
           </div>
-          <div class="task-progress-track">
-            <span :style="{ width: exportProgressPercent + '%' }"></span>
+          <p v-if="exportDialog.error && !exportDialog.taskId" class="export-error standalone">
+            {{ exportDialog.error }}
+          </p>
+
+          <div class="dialog-actions">
+            <button
+              class="btn btn-secondary"
+              type="button"
+              :disabled="exportDialog.submitting"
+              @click="closeScoreExportDialog"
+            >
+              关闭
+            </button>
+            <button
+              v-if="exportDialog.status !== 'completed'"
+              class="btn btn-primary"
+              type="button"
+              :disabled="
+                exportDialog.submitting || ['pending', 'running'].includes(exportDialog.status)
+              "
+              @click="submitScoreExportTask"
+            >
+              {{ exportDialog.submitting ? '提交中...' : '提交导出任务' }}
+            </button>
+            <button
+              v-else
+              class="btn btn-primary"
+              type="button"
+              :disabled="exportDialog.downloading"
+              @click="downloadScoreExport"
+            >
+              {{ exportDialog.downloading ? '下载中...' : '下载文件' }}
+            </button>
           </div>
-          <p v-if="exportDialog.error" class="export-error">{{ exportDialog.error }}</p>
-        </div>
-        <p v-if="exportDialog.error && !exportDialog.taskId" class="export-error standalone">{{ exportDialog.error }}</p>
+        </section>
+      </dialog></Teleport
+    >
 
-        <div class="dialog-actions">
-          <button class="btn btn-secondary" type="button" :disabled="exportDialog.submitting" @click="closeScoreExportDialog">
-            关闭
-          </button>
-          <button v-if="exportDialog.status !== 'completed'" class="btn btn-primary" type="button"
-            :disabled="exportDialog.submitting || ['pending', 'running'].includes(exportDialog.status)"
-            @click="submitScoreExportTask">
-            {{ exportDialog.submitting ? '提交中...' : '提交导出任务' }}
-          </button>
-          <button v-else class="btn btn-primary" type="button" :disabled="exportDialog.downloading"
-            @click="downloadScoreExport">
-            {{ exportDialog.downloading ? '下载中...' : '下载文件' }}
-          </button>
-        </div>
-      </section>
-    </div>
-
-    <InspectionPhotoPreview v-if="imagePreview.visible" :url="imagePreview.url" title="问题照片预览" @close="closePreview" />
+    <InspectionPhotoPreview
+      v-if="imagePreview.visible"
+      :url="imagePreview.url"
+      title="问题照片预览"
+      @close="closePreview"
+    />
   </div>
 </template>
 
@@ -309,40 +530,24 @@
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import axios from 'axios'
 import { pinyin } from 'pinyin-pro'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import DateRangePicker from '@/components/DateRangePicker.vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { previousScoreMonth, scoreMonthLabel, scoreLedgerRows } from '@/utils/stationScoreMonth'
 
-const formatLocalDate = (value = new Date()) => {
-  const now = new Date()
-  const target = value instanceof Date ? value : now
-  return [
-    target.getFullYear(),
-    String(target.getMonth() + 1).padStart(2, '0'),
-    String(target.getDate()).padStart(2, '0')
-  ].join('-')
-}
-
-const getDefaultDateRange = () => {
-  const now = new Date()
-  return {
-    dateFrom: formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1)),
-    dateTo: formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
-  }
-}
-
-const defaultDateRange = getDefaultDateRange()
+const defaultMonth = previousScoreMonth()
 const filters = reactive({
-  dateFrom: defaultDateRange.dateFrom,
-  dateTo: defaultDateRange.dateTo,
+  month: defaultMonth,
   stationId: '',
-  inspectionTableId: ''
+  inspectionTableId: '',
 })
 
-const getScorePeriodKey = () => (
-  filters.dateFrom && filters.dateTo
-    ? `${filters.dateFrom}_${filters.dateTo}`
-    : ''
-)
+const getScorePeriodKey = () => filters.month
+const ledgerKeyword = ref(''),
+  ledgerState = ref('')
+const ledgerRows = (table) =>
+  scoreLedgerRows(table.standards, ledgerKeyword.value, ledgerState.value)
+let scoreController,
+  scoreSerial = 0,
+  disposed = false
 
 const stationSearch = ref('')
 const stationDropdownVisible = ref(false)
@@ -377,16 +582,20 @@ const emptyScoreData = () => ({
     adjusted_item_count: 0,
     max_score: 0,
     auto_score: 0,
-    final_score: 0
+    final_score: 0,
   },
-  tables: []
+  tables: [],
 })
 
 const scoreData = ref(emptyScoreData())
+const hasScore = computed(() => !loading.value && visibleScoreTables.value.length > 0)
 
 const exportDialog = reactive({
   visible: false,
   mode: 'single',
+  month: '',
+  stationId: '',
+  inspectionTableId: '',
   submitting: false,
   downloading: false,
   taskId: '',
@@ -400,8 +609,8 @@ const exportDialog = reactive({
   checklistSearch: '',
   selectedTableIds: [],
   includePhotos: {
-    issue_photo: false
-  }
+    issue_photo: false,
+  },
 })
 
 const adjustDialog = reactive({
@@ -413,22 +622,36 @@ const adjustDialog = reactive({
   maxScore: 0,
   manualScore: 0,
   hasManualAdjustment: false,
-  saving: false
+  saving: false,
+  month: '',
 })
+const adjustModal = ref(null),
+  exportModal = ref(null)
+watch(
+  () => adjustDialog.visible,
+  async (visible) => {
+    await nextTick()
+    if (disposed) return
+    if (visible && !adjustModal.value?.open) adjustModal.value?.showModal()
+    else if (!visible) adjustModal.value?.close()
+  },
+)
+watch(
+  () => exportDialog.visible,
+  async (visible) => {
+    await nextTick()
+    if (disposed) return
+    if (visible && !exportModal.value?.open) exportModal.value?.showModal()
+    else if (!visible) exportModal.value?.close()
+  },
+)
 
 const imagePreview = reactive({
   visible: false,
-  url: ''
+  url: '',
 })
 
-const selectedMonthLabel = computed(() => {
-  if (filters.dateFrom && filters.dateTo) {
-    return filters.dateFrom === filters.dateTo
-      ? filters.dateFrom
-      : `${filters.dateFrom} 至 ${filters.dateTo}`
-  }
-  return '当前时间范围'
-})
+const selectedMonthLabel = computed(() => scoreMonthLabel(filters.month))
 
 const selectedStation = computed(() => {
   return stations.value.find((station) => String(station.id) === String(filters.stationId)) || null
@@ -438,7 +661,9 @@ const selectedStationName = computed(() => selectedStation.value?.station_name |
 
 const visibleScoreTables = computed(() => {
   if (!filters.inspectionTableId) return []
-  return (scoreData.value.tables || []).filter((table) => String(table.id) === String(filters.inspectionTableId))
+  return (scoreData.value.tables || []).filter(
+    (table) => String(table.id) === String(filters.inspectionTableId),
+  )
 })
 
 const selectedChecklistName = computed(() => {
@@ -456,15 +681,15 @@ const activeSummary = computed(() => {
     adjusted_item_count: table.adjusted_item_count || 0,
     max_score: table.max_score || 0,
     auto_score: table.auto_score || 0,
-    final_score: table.final_score || 0
+    final_score: table.final_score || 0,
   }
 })
 
 const filteredChecklists = computed(() => {
-  return (scoreData.value.tables || []).filter((table) => {
+  return scorableChecklists.value.filter((table) => {
     return matchesSmartSearch(
       [table.table_name, table.checklist_mode_label, table.table_code],
-      checklistSearch.value
+      checklistSearch.value,
     )
   })
 })
@@ -473,17 +698,23 @@ const filteredExportChecklists = computed(() => {
   return scorableChecklists.value.filter((table) => {
     return matchesSmartSearch(
       [table.table_name, table.checklist_mode_label, table.table_code],
-      exportDialog.checklistSearch
+      exportDialog.checklistSearch,
     )
   })
 })
 
 const selectedExportChecklistCount = computed(() => exportDialog.selectedTableIds.length)
 
-const isScoreExportLocked = computed(() => Boolean(exportDialog.taskId) || ['pending', 'running'].includes(exportDialog.status))
+const isScoreExportLocked = computed(
+  () => Boolean(exportDialog.taskId) || ['pending', 'running'].includes(exportDialog.status),
+)
 
 const canExportScores = computed(() => {
-  return currentRole === 'root' || Boolean(parsedPermissions.adjust_station_scores) || Boolean(scoreData.value.can_adjust)
+  return (
+    currentRole === 'root' ||
+    Boolean(parsedPermissions.adjust_station_scores) ||
+    Boolean(scoreData.value.can_adjust)
+  )
 })
 
 const exportStatusLabel = computed(() => {
@@ -492,7 +723,7 @@ const exportStatusLabel = computed(() => {
     pending: '等待处理',
     running: '正在生成',
     completed: '已完成',
-    failed: '生成失败'
+    failed: '生成失败',
   }
   return statusMap[exportDialog.status] || '处理中'
 })
@@ -522,7 +753,7 @@ const toPinyinText = (value, options = {}) => {
     return pinyin(text, {
       toneType: 'none',
       nonZh: 'consecutive',
-      ...options
+      ...options,
     })
   } catch {
     return ''
@@ -532,24 +763,24 @@ const toPinyinText = (value, options = {}) => {
 const buildSearchVariants = (value) => {
   const source = String(value || '').trim()
   if (!source) return []
-  return [
-    source,
-    toPinyinText(source),
-    toPinyinText(source, { pattern: 'first' })
-  ].map(normalizeSearchToken).filter(Boolean)
+  return [source, toPinyinText(source), toPinyinText(source, { pattern: 'first' })]
+    .map(normalizeSearchToken)
+    .filter(Boolean)
 }
 
 const matchesSmartSearch = (values, keyword) => {
   const needle = normalizeSearchToken(keyword)
   if (!needle) return true
-  return values.some((value) => buildSearchVariants(value).some((variant) => variant.includes(needle)))
+  return values.some((value) =>
+    buildSearchVariants(value).some((variant) => variant.includes(needle)),
+  )
 }
 
 const filteredStations = computed(() => {
   return stations.value.filter((station) => {
     return matchesSmartSearch(
       [station.station_name, station.region, station.station_usernames, station.hos_station_code],
-      stationSearch.value
+      stationSearch.value,
     )
   })
 })
@@ -557,24 +788,26 @@ const filteredStations = computed(() => {
 const summaryCards = computed(() => [
   {
     label: '最终得分',
-    value: `${formatScore(activeSummary.value.final_score)} / ${formatScore(activeSummary.value.max_score)}`,
-    desc: '包含人工调整后的全局结果'
+    value: hasScore.value
+      ? `${formatScore(activeSummary.value.final_score)} / ${formatScore(activeSummary.value.max_score)}`
+      : '—',
+    desc: '包含人工调整后的全局结果',
   },
   {
     label: '自动扣分项',
-    value: activeSummary.value.deducted_item_count,
-    desc: `${activeSummary.value.issue_count} 条问题触发扣分`
+    value: hasScore.value ? activeSummary.value.deducted_item_count : '—',
+    desc: `${activeSummary.value.issue_count} 条已通过问题关联`,
   },
   {
-    label: '可评分检查表',
-    value: activeSummary.value.table_count,
-    desc: `${activeSummary.value.item_count} 条规范参与评分`
+    label: '本表评分规范',
+    value: hasScore.value ? activeSummary.value.item_count : '—',
+    desc: '每条规范等权计分，单项不重复扣分',
   },
   {
     label: '人工调整',
-    value: activeSummary.value.adjusted_item_count,
-    desc: scoreData.value.can_adjust ? '你有调整权限' : '当前账号只读'
-  }
+    value: hasScore.value ? activeSummary.value.adjusted_item_count : '—',
+    desc: scoreData.value.can_adjust ? '你有调整权限' : '当前账号只读',
+  },
 ])
 
 const setMessage = (text, type = 'info') => {
@@ -606,7 +839,7 @@ const issuePhotos = (standard) => {
     .filter((issue) => issue.issue_photo)
     .map((issue) => ({
       id: issue.id,
-      url: resolveImage(issue.issue_photo)
+      url: resolveImage(issue.issue_photo),
     }))
 }
 
@@ -619,18 +852,17 @@ const openStationDropdown = () => {
 }
 
 const handleStationInput = () => {
+  scoreSerial++
+  scoreController?.abort()
+  loading.value = false
   stationDropdownVisible.value = true
   filters.stationId = ''
-  filters.inspectionTableId = ''
-  checklistSearch.value = ''
   scoreData.value = emptyScoreData()
 }
 
 const selectStation = async (station) => {
   stationSearch.value = station.station_name
   filters.stationId = String(station.id)
-  filters.inspectionTableId = ''
-  checklistSearch.value = ''
   stationDropdownVisible.value = false
   await fetchScores()
 }
@@ -645,19 +877,24 @@ const closeStationDropdownOnOutsideClick = (event) => {
 }
 
 const openChecklistDropdown = () => {
-  if (!scoreData.value.tables.length) return
+  if (!scorableChecklists.value.length) return
   checklistDropdownVisible.value = true
 }
 
 const handleChecklistInput = () => {
+  scoreSerial++
+  scoreController?.abort()
+  loading.value = false
   checklistDropdownVisible.value = true
   filters.inspectionTableId = ''
+  scoreData.value = emptyScoreData()
 }
 
-const selectChecklist = (table) => {
+const selectChecklist = async (table) => {
   checklistSearch.value = table.table_name
   filters.inspectionTableId = String(table.id)
   checklistDropdownVisible.value = false
+  await fetchScores()
 }
 
 const syncSelectedChecklistAfterLoad = () => {
@@ -680,35 +917,49 @@ const fetchStations = async () => {
 
 const fetchScorableChecklists = async () => {
   const response = await axios.get('/api/assessment/station-scores/scorable-checklists', {
-    params: { _ts: Date.now() }
+    params: { _ts: Date.now() },
   })
-  scorableChecklists.value = Array.isArray(response.data?.checklists) ? response.data.checklists : []
+  scorableChecklists.value = Array.isArray(response.data?.checklists)
+    ? response.data.checklists
+    : []
+  if (!scorableChecklists.value.some((t) => String(t.id) === String(filters.inspectionTableId))) {
+    filters.inspectionTableId = scorableChecklists.value[0]
+      ? String(scorableChecklists.value[0].id)
+      : ''
+    checklistSearch.value = scorableChecklists.value[0]?.table_name || ''
+  }
 }
 
 const fetchScores = async () => {
-  if (!filters.stationId) {
-    scoreData.value = emptyScoreData()
-    return
-  }
+  const ticket = ++scoreSerial
+  scoreController?.abort()
+  loading.value = false
+  scoreData.value = emptyScoreData()
+  ledgerKeyword.value = ''
+  ledgerState.value = ''
+  if (!filters.stationId || !filters.inspectionTableId || !filters.month) return
+  scoreController = new AbortController()
   loading.value = true
   error.value = ''
   try {
     const response = await axios.get('/api/assessment/station-scores', {
       params: {
         station_id: filters.stationId,
-        date_from: filters.dateFrom,
-        date_to: filters.dateTo
-      }
+        inspection_table_id: filters.inspectionTableId,
+        month: filters.month,
+      },
+      signal: scoreController.signal,
+      timeout: 30000,
     })
+    if (disposed || ticket !== scoreSerial) return
     scoreData.value = response.data
     syncSelectedChecklistAfterLoad()
   } catch (err) {
+    if (disposed || ticket !== scoreSerial || err.code === 'ERR_CANCELED') return
     error.value = err?.response?.data?.error || '站点评分加载失败。'
     scoreData.value = emptyScoreData()
-    filters.inspectionTableId = ''
-    checklistSearch.value = ''
   } finally {
-    loading.value = false
+    if (ticket === scoreSerial) loading.value = false
   }
 }
 
@@ -716,6 +967,9 @@ const resetExportDialog = (mode) => {
   stopScoreExportPolling()
   exportDialog.visible = true
   exportDialog.mode = mode
+  exportDialog.month = filters.month
+  exportDialog.stationId = filters.stationId
+  exportDialog.inspectionTableId = filters.inspectionTableId
   exportDialog.submitting = false
   exportDialog.downloading = false
   exportDialog.taskId = ''
@@ -726,13 +980,11 @@ const resetExportDialog = (mode) => {
   exportDialog.fileSizeLabel = ''
   exportDialog.expiresAt = ''
   exportDialog.checklistSearch = ''
-  exportDialog.selectedTableIds = mode === 'all'
-    ? scorableChecklists.value.map((table) => String(table.id))
-    : []
+  exportDialog.selectedTableIds =
+    mode === 'all' ? scorableChecklists.value.map((table) => String(table.id)) : []
   exportDialog.includePhotos = { issue_photo: false }
-  exportDialog.selectedCount = mode === 'all'
-    ? stations.value.length
-    : Number(visibleScoreTables.value[0]?.item_count || 0)
+  exportDialog.selectedCount =
+    mode === 'all' ? stations.value.length : Number(visibleScoreTables.value[0]?.item_count || 0)
 }
 
 const openScoreExportDialog = async (mode) => {
@@ -740,7 +992,10 @@ const openScoreExportDialog = async (mode) => {
     setMessage('当前账号没有导出站点评分的权限。', 'error')
     return
   }
-  if (mode === 'single' && (!filters.stationId || !filters.inspectionTableId || !visibleScoreTables.value.length)) {
+  if (
+    mode === 'single' &&
+    (!filters.stationId || !filters.inspectionTableId || !visibleScoreTables.value.length)
+  ) {
     setMessage('请先选择站点和检查表。', 'error')
     return
   }
@@ -777,7 +1032,9 @@ const toggleExportChecklist = (tableId) => {
   if (isScoreExportLocked.value) return
   const normalizedId = String(tableId)
   if (exportDialog.selectedTableIds.includes(normalizedId)) {
-    exportDialog.selectedTableIds = exportDialog.selectedTableIds.filter((item) => item !== normalizedId)
+    exportDialog.selectedTableIds = exportDialog.selectedTableIds.filter(
+      (item) => item !== normalizedId,
+    )
     return
   }
   exportDialog.selectedTableIds = [...exportDialog.selectedTableIds, normalizedId]
@@ -810,7 +1067,7 @@ const applyScoreExportTask = (task = {}) => {
   const includePhotos = task.export_options?.include_photos
   if (includePhotos && typeof includePhotos === 'object') {
     exportDialog.includePhotos = {
-      issue_photo: Boolean(includePhotos.issue_photo)
+      issue_photo: Boolean(includePhotos.issue_photo),
     }
   }
 }
@@ -818,9 +1075,12 @@ const applyScoreExportTask = (task = {}) => {
 const pollScoreExportTask = async () => {
   if (!exportDialog.taskId) return
   try {
-    const response = await axios.get(`/api/assessment/station-scores/export-tasks/${exportDialog.taskId}`, {
-      params: { _ts: Date.now() }
-    })
+    const response = await axios.get(
+      `/api/assessment/station-scores/export-tasks/${exportDialog.taskId}`,
+      {
+        params: { _ts: Date.now() },
+      },
+    )
     applyScoreExportTask(response.data?.task || {})
     if (['completed', 'failed'].includes(exportDialog.status)) {
       stopScoreExportPolling()
@@ -847,17 +1107,16 @@ const submitScoreExportTask = async () => {
     exportDialog.error = ''
     const payload = {
       mode: exportDialog.mode,
-      date_from: filters.dateFrom,
-      date_to: filters.dateTo,
+      month: exportDialog.month,
       export_options: {
         include_photos: {
-          issue_photo: Boolean(exportDialog.includePhotos.issue_photo)
-        }
-      }
+          issue_photo: Boolean(exportDialog.includePhotos.issue_photo),
+        },
+      },
     }
     if (exportDialog.mode === 'single') {
-      payload.station_id = filters.stationId
-      payload.inspection_table_id = filters.inspectionTableId
+      payload.station_id = exportDialog.stationId
+      payload.inspection_table_id = exportDialog.inspectionTableId
     } else {
       if (!exportDialog.selectedTableIds.length) {
         exportDialog.error = '请选择至少一张需要导出的检查表。'
@@ -880,16 +1139,29 @@ const downloadScoreExport = async () => {
   if (!exportDialog.taskId) return
   try {
     exportDialog.downloading = true
-    const response = await axios.get(`/api/assessment/station-scores/export-tasks/${exportDialog.taskId}/download`, {
-      responseType: 'blob'
-    })
-    const isZip = String(exportDialog.fileName || '').toLowerCase().endsWith('.zip')
-    const blobUrl = window.URL.createObjectURL(new Blob([response.data], {
-      type: isZip ? 'application/zip' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }))
+    const response = await axios.get(
+      `/api/assessment/station-scores/export-tasks/${exportDialog.taskId}/download`,
+      {
+        responseType: 'blob',
+      },
+    )
+    const isZip = String(exportDialog.fileName || '')
+      .toLowerCase()
+      .endsWith('.zip')
+    const blobUrl = window.URL.createObjectURL(
+      new Blob([response.data], {
+        type: isZip
+          ? 'application/zip'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
+    )
     const link = document.createElement('a')
     link.href = blobUrl
-    link.download = exportDialog.fileName || (isZip ? `站点评分_${exportDialog.taskId.slice(0, 8)}.zip` : `站点评分_${exportDialog.taskId.slice(0, 8)}.xlsx`)
+    link.download =
+      exportDialog.fileName ||
+      (isZip
+        ? `站点评分_${exportDialog.taskId.slice(0, 8)}.zip`
+        : `站点评分_${exportDialog.taskId.slice(0, 8)}.xlsx`)
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -904,6 +1176,7 @@ const downloadScoreExport = async () => {
 const openAdjustment = (table, standard) => {
   adjustDialog.visible = true
   adjustDialog.stationId = filters.stationId
+  adjustDialog.month = filters.month
   adjustDialog.inspectionTableId = table.id
   adjustDialog.tableName = table.table_name
   adjustDialog.standardId = standard.standard_id
@@ -924,10 +1197,8 @@ const saveAdjustment = async () => {
       station_id: adjustDialog.stationId,
       inspection_table_id: adjustDialog.inspectionTableId,
       standard_id: adjustDialog.standardId,
-      score_period: scoreData.value.month || getScorePeriodKey(),
-      date_from: filters.dateFrom,
-      date_to: filters.dateTo,
-      manual_score: adjustDialog.manualScore
+      month: adjustDialog.month,
+      manual_score: adjustDialog.manualScore,
     })
     adjustDialog.visible = false
     setMessage('评分调整成功。', 'success')
@@ -953,12 +1224,18 @@ onMounted(async () => {
   document.addEventListener('click', closeStationDropdownOnOutsideClick)
   try {
     await Promise.all([fetchStations(), fetchScorableChecklists()])
+    if (filters.stationId && filters.inspectionTableId) await fetchScores()
   } catch (err) {
     error.value = err?.response?.data?.error || '站点数据加载失败。'
   }
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  scoreSerial++
+  scoreController?.abort()
+  adjustModal.value?.close()
+  exportModal.value?.close()
   document.removeEventListener('click', closeStationDropdownOnOutsideClick)
   stopScoreExportPolling()
   if (messageTimer) window.clearTimeout(messageTimer)
@@ -970,6 +1247,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 18px;
   color: #172033;
+  min-width: 0;
 }
 
 .score-hero,
@@ -993,12 +1271,14 @@ onBeforeUnmount(() => {
   padding: 26px;
   border-radius: 28px;
   background:
-    radial-gradient(circle at 12% 16%, rgba(47, 125, 95, 0.16), transparent 32%),
-    linear-gradient(135deg, #f7fbf7 0%, #eef5ef 52%, #f8faf8 100%);
+    radial-gradient(ellipse at 88% 0, #2c7084 0, transparent 55%),
+    linear-gradient(115deg, #122c45, #1b435b);
+  color: #fff;
+  border-bottom: 4px solid #d4a44e;
 }
 
 .page-kicker {
-  color: #527260;
+  color: #327b70;
   font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.16em;
@@ -1011,7 +1291,7 @@ onBeforeUnmount(() => {
 
 .score-hero p {
   margin: 0;
-  color: #5c6678;
+  color: #d3e2ed;
   line-height: 1.7;
 }
 
@@ -1021,7 +1301,8 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 18px;
   border-radius: 24px;
-  background: #173d2c;
+  background: #ffffff13;
+  border: 1px solid #ffffff38;
   color: #fff;
 }
 
@@ -1037,19 +1318,107 @@ onBeforeUnmount(() => {
 
 .score-toolbar {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(260px, 1fr) minmax(260px, 1fr) minmax(300px, auto);
+  grid-template-columns: minmax(160px, 0.65fr) minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 12px;
-  align-items: center;
-  padding: 14px;
+  align-items: start;
+  padding: 20px;
   border-radius: 22px;
 }
 
-.score-toolbar :deep(.date-range-trigger) {
+.score-hero .page-kicker {
+  color: #a0dce4;
+}
+.hero-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.hero-tags span {
+  padding: 5px 9px;
+  color: #d7ebf2;
+  background: #ffffff10;
+  border: 1px solid #ffffff30;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.score-month-field,
+.station-search-select,
+.checklist-search-select {
+  min-width: 0;
+}
+.score-toolbar label,
+.score-month-field > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #29455b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.score-month-field input {
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
-  border-radius: 14px;
-  --date-range-border: #d8dfd9;
-  --date-range-focus: #2f7d5f;
-  --date-range-focus-shadow: rgba(47, 125, 95, 0.12);
+  padding: 8px 12px;
+  background: #f6f9fc;
+  color: #203e57;
+  border: 1px solid #b9ccda;
+  border-radius: 10px;
+}
+.score-month-field small {
+  display: block;
+  margin-top: 7px;
+  color: #6b7e8e;
+  font-weight: 400;
+}
+.score-method {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 13px 17px;
+  border: 1px solid #c8d9e5;
+  border-left: 4px solid #3e7f94;
+  border-radius: 10px;
+  background: #edf5fa;
+  color: #446075;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.score-method strong {
+  white-space: nowrap;
+  color: #244a65;
+}
+.ledger-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  background: #f5f8fb;
+  border-bottom: 1px solid #d5e1e9;
+}
+.ledger-tools input,
+.ledger-tools select {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid #bacddd;
+  border-radius: 8px;
+  background: white;
+  color: #294d68;
+  font-size: 12px;
+}
+.ledger-tools input {
+  flex: 1;
+  min-width: 180px;
+}
+.ledger-tools > span {
+  color: #687e90;
+  font-size: 12px;
+}
+.ledger-empty {
+  text-align: center;
+  color: #64798b;
+  padding: 30px;
 }
 
 .station-search-select input,
@@ -1150,6 +1519,9 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  grid-column: 1 / -1;
+  padding-top: 12px;
+  border-top: 1px solid #dce5ec;
 }
 
 .export-actions .export-btn {
@@ -1172,6 +1544,14 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 18px;
   border-radius: 22px;
+  border-top: 3px solid #42728d;
+}
+.summary-card:nth-child(2) {
+  border-top-color: #ca9249;
+  background: #fffaf2;
+}
+.summary-card:nth-child(4) {
+  border-top-color: #48947a;
 }
 
 .summary-card span,
@@ -1182,7 +1562,7 @@ onBeforeUnmount(() => {
 }
 
 .summary-card strong {
-  font-size: 28px;
+  font-size: clamp(20px, 2.1vw, 28px);
   color: #173d2c;
 }
 
@@ -1465,19 +1845,31 @@ onBeforeUnmount(() => {
   background: #b44a3b;
 }
 
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(13, 22, 34, 0.48);
+.score-native-dialog {
+  width: min(760px, calc(100vw - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  overflow: auto;
+}
+.score-native-dialog.adjustment-modal {
+  width: min(480px, calc(100vw - 24px));
+}
+.score-native-dialog::backdrop {
+  background: #10283d80;
+}
+.score-native-dialog .adjust-dialog,
+.score-native-dialog .export-dialog {
+  width: 100%;
 }
 
 .adjust-dialog,
 .export-dialog {
   width: min(480px, 100%);
+  background: #fff;
   border-radius: 26px;
   padding: 22px;
 }
@@ -1486,17 +1878,17 @@ onBeforeUnmount(() => {
   width: min(760px, 100%);
 }
 
-.dialog-head {
+.score-dialog-head {
   display: flex;
   justify-content: space-between;
   gap: 16px;
 }
 
-.dialog-head h3 {
+.score-dialog-head h3 {
   margin: 6px 0;
 }
 
-.dialog-head p {
+.score-dialog-head p {
   margin: 0;
   color: #657082;
 }
