@@ -55,7 +55,7 @@
       </div>
     </header>
     <div class="board-toolbar">
-      <div class="board-stats">
+      <div class="board-stats" :class="{ 'has-exceptions': counts.exception }">
         <span
           ><span class="stat-label">已检查</span
           ><span class="stat-value"
@@ -84,7 +84,6 @@
             ><em>站</em></span
           ><small class="stat-detail">整站置灰 · 不计已检查</small></span
         >
-        <small class="stats-scope">当前筛选共 {{ counts.total }}站 · 每站只计一次</small>
       </div>
       <span class="sync-state" role="status"
         >{{
@@ -99,11 +98,10 @@
       >
     </div>
     <div
-      v-if="counts.partialCompleted || counts.partialAssigned || counts.blocked"
+      v-if="counts.partialAssigned || counts.blocked"
       class="station-summary-notes"
       role="status"
     >
-      <span v-if="counts.partialCompleted">其中部分已检查 {{ counts.partialCompleted }}站</span>
       <span v-if="counts.partialAssigned">待排班中需补排 {{ counts.partialAssigned }}站</span>
       <span v-if="counts.blocked" class="blocked-note"
         >检查表异常 {{ counts.blocked }}站，未计为已检查或已排班</span
@@ -1669,12 +1667,17 @@ input[type='search'] {
   background: #fbfcff;
 }
 .board-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 1 1 440px;
+  max-width: 860px;
   align-items: stretch;
-  flex-wrap: wrap;
-  gap: 18px;
+  gap: 12px;
   font-size: 12px;
   color: #66788d;
+}
+.board-stats.has-exceptions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .board-stats b {
   margin-right: 4px;
@@ -1684,7 +1687,7 @@ input[type='search'] {
 .board-stats > span {
   display: grid;
   gap: 4px;
-  min-width: 148px;
+  min-width: 0;
   padding: 10px 12px;
   border-radius: 7px;
   background: #eef3f8;
@@ -1722,11 +1725,6 @@ input[type='search'] {
   color: #416077;
   font-size: 11px;
   line-height: 1.5;
-}
-.board-stats .stats-scope {
-  flex-basis: 100%;
-  color: #5b7489;
-  font-size: 11px;
 }
 .station-summary-notes {
   display: flex;
@@ -2267,13 +2265,14 @@ select:focus-visible {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
     gap: 8px;
+    flex-basis: 100%;
   }
   .board-stats > span {
     min-width: 0;
     padding: 8px;
   }
-  .board-stats .stats-scope {
-    grid-column: 1 / -1;
+  .board-stats.has-exceptions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .station-summary-notes {
     padding: 8px 16px;

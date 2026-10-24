@@ -139,14 +139,13 @@ const panelSource = readFileSync(
   new URL('../src/components/InspectionSchedulePanel.vue', import.meta.url),
   'utf8',
 )
-test('all schedule panels show station totals and explain partial completion without cell counters', () => {
+test('schedule station counts retain their rules without redundant scope or partial-completion banners', () => {
   const template = panelSource.slice(0, panelSource.indexOf('<script setup>'))
   assert.doesNotMatch(template, /按单元格计数|有已检查项|有已排班项|有待排班项/)
-  assert.match(template, /counts\.total/)
-  assert.match(template, /每站只计一次/)
+  assert.doesNotMatch(template, /当前筛选共|每站只计一次|其中部分已检查/)
   assert.match(template, /全部应检表已检查/)
   assert.match(template, /剩余应检表全已安排/)
-  assert.match(template, /counts\.partialCompleted/)
+  assert.doesNotMatch(template, /v-if="counts\.partialCompleted/)
   assert.match(template, /counts\.partialAssigned/)
   assert.match(template, /value="partial_completed"/)
 })
