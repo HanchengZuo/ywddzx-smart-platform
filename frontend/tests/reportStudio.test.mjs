@@ -67,6 +67,8 @@ test('all six report types expose HTML reading without generation privileges or 
   const ppt=elements.find(node=>node.tag==='section'&&expression(node,'else-if')==="hasReport && reportDisplayMode === 'ppt'")
   assert.ok(ppt)
   assert.ok(byClass('report-document-html'))
+  assert.equal(byClass('studio-html-note'),undefined)
+  assert.doesNotMatch(source,/HTML阅读版 · 使用最后成功生成的报告数据/)
   const html=elements.find(node=>node.tag==='ReportHtmlContent')
   assert.equal(expression(html,'if'),'isQualityMeasurementReport || isNonOilReport')
   assert.equal(expression(html,'bind','report'),'report')

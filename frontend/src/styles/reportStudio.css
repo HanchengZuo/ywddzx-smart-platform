@@ -899,16 +899,6 @@
   color: #276453;
   font-size: 12px;
 }
-.report-studio .studio-html-note {
-  color: #23455e;
-  background: #eaf2f9;
-  border-left: 4px solid #24668f;
-  padding: 12px 16px;
-  border-radius: 5px;
-  font-size: 14px;
-  line-height: 1.8;
-  margin: 0 0 24px;
-}
 .report-studio .report-document-html {
   color: #172d43;
 }
