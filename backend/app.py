@@ -75,6 +75,8 @@ from ai_utils import (
 from ai_usage import get_ai_pricing_table, AI_USAGE_PRICING
 from ai_routing import canonical_model, model_aliases
 from report_workspace import get_report_workspace, save_report_workspace, list_report_generation_requests
+from report_access import allowed_report_types, report_perspective
+from report_months import list_report_months, valid_report_month
 from report_ai_memory import (
     begin_report_ai_memory,
     end_report_ai_memory,
@@ -942,10 +944,17 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "view_inspection_reports",
-        "name": "查看页面",
+        "name": "督导中心视角",
         "category": "AI报告生成",
-        "description": "访问AI报告生成页面，查看已生成的监督检查报告。",
+        "description": "访问完整报告工作台，查看全部业务报告；生成报告仍需生成权限。",
         "defaults": {"root": True, "supervisor": False, "station_manager": False, "quality_safety": False},
+    },
+    {
+        "key": "view_department_inspection_reports",
+        "name": "处室部门视角",
+        "category": "AI报告生成",
+        "description": "五类处室账号只读查看、导出本处室检查表对应的最新成稿，不展示配置与生成操作。两种视角同时授权时以督导中心视角为准。",
+        "defaults": {"root": True},
     },
     {
         "key": "generate_inspection_reports",
@@ -8515,7 +8524,7 @@ def get_latest_inspection_report_snapshot(cur, report_type, report_month=None):
     return attach_report_snapshot_meta(payload, row, cached=True)
 
 
-def get_inspection_report_snapshot_by_id(cur, snapshot_id, report_type=None):
+def get_inspection_report_snapshot_by_id(cur, snapshot_id, report_type=None, report_month=None):
     if not report_snapshot_table_available(cur):
         return None
     cur.execute(
@@ -8525,9 +8534,10 @@ def get_inspection_report_snapshot_by_id(cur, snapshot_id, report_type=None):
         FROM inspection_report_snapshots
         WHERE id = %s
           AND (%s = '' OR report_type = %s)
+          AND (%s::text IS NULL OR report_month = %s)
         LIMIT 1;
         """,
-        (snapshot_id, report_type or "", report_type or ""),
+        (snapshot_id, report_type or "", report_type or "", report_month, report_month),
     )
     row = cur.fetchone()
     if not row:
@@ -30024,21 +30034,33 @@ def queue_or_get_inspection_report_job(
     return None, get_inspection_report_job(cur, task_id), True
 
 
-def get_authorized_inspection_report_user(cur):
+def get_authorized_inspection_report_user(cur, allow_department=False, report_type=None):
     user = get_user_by_id(cur, get_authenticated_request_user_id())
     if not user:
         raise LookupError("用户不存在。")
-    if not has_permission(cur, user, "view_inspection_reports"):
+    permissions = get_effective_permissions(cur, user)
+    perspective = report_perspective(user, permissions)
+    if not perspective or (perspective != "center" and not allow_department):
         raise PermissionError("当前账号无权查看AI报告。")
+    if report_type is not None:
+        require_inspection_report_type_access(cur, user, report_type, permissions)
     return user
+
+
+def require_inspection_report_type_access(cur, user, report_type, permissions=None):
+    permissions = permissions if permissions is not None else get_effective_permissions(cur, user)
+    if report_type not in allowed_report_types(user, permissions, INSPECTION_REPORT_TYPE_CONFIGS):
+        raise PermissionError("当前账号无权查看该业务报告。")
 
 
 def get_inspection_report_capabilities(cur, user):
     permissions = get_effective_permissions(cur, user)
+    center = report_perspective(user, permissions) == "center"
     return {
-        "can_generate": bool(permissions.get("generate_inspection_reports")),
-        "can_manage_quality_report_source": True,
-        "can_manage_quality_report_selection_rules": True,
+        "view_mode": "center" if center else "department",
+        "can_generate": center and bool(permissions.get("generate_inspection_reports")),
+        "can_manage_quality_report_source": center,
+        "can_manage_quality_report_selection_rules": center,
     }
 
 
@@ -30128,10 +30150,11 @@ def get_inspection_report_types():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True)
+        permitted = allowed_report_types(user, get_effective_permissions(cur, user), INSPECTION_REPORT_TYPE_CONFIGS)
         return jsonify({
             "success": True,
-            "report_types": list(INSPECTION_REPORT_TYPE_CONFIGS.values()),
+            "report_types": [INSPECTION_REPORT_TYPE_CONFIGS[key] for key in permitted],
             **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
@@ -30155,20 +30178,40 @@ def get_inspection_report_status():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True, report_type=report_type)
+        capabilities = get_inspection_report_capabilities(cur, user)
+        department = capabilities.get("view_mode") == "department"
         report = None
         job = None
+        available_months = []
+        selected_month = ""
         if config.get("template_ready"):
-            report = get_latest_inspection_report_snapshot(cur, report_type)
-            job = get_active_inspection_report_job(cur, report_type)
+            if department:
+                requested_month = str(request.args.get("month") or "").strip()
+                if requested_month and not valid_report_month(requested_month):
+                    return jsonify({"success": False, "error": "报告月份格式不正确，请使用YYYY-MM。"}), 400
+                if report_snapshot_table_available(cur):
+                    available_months = list_report_months(cur, report_type, is_inspection_report_snapshot_current)
+                selected = next((item for item in available_months if item["month"] == requested_month), None) if requested_month else next(iter(available_months), None)
+                if requested_month and not selected:
+                    raise LookupError("该月份尚无已生成的报告，请选择已生成的月份。")
+                if selected:
+                    selected_month = selected["month"]
+                    report = get_inspection_report_snapshot_by_id(cur, selected["snapshot_id"], report_type, selected_month)
+                    if not report:
+                        raise LookupError("该月份成稿已更新或不可用，请重新选择月份。")
+            else:
+                report = get_latest_inspection_report_snapshot(cur, report_type)
+                job = get_active_inspection_report_job(cur, report_type)
         return jsonify({
             "success": True,
             "report_type": config,
             "report": report,
             "job": serialize_inspection_report_job(job),
-            "history": list_report_generation_requests(cur, report_type),
-            "workspace": get_current_report_workspace(cur, report_type, report),
-            **get_inspection_report_capabilities(cur, user),
+            "history": [] if department else list_report_generation_requests(cur, report_type),
+            "workspace": {} if department else get_current_report_workspace(cur, report_type, report),
+            **({"available_months": available_months, "selected_month": selected_month} if department else {}),
+            **capabilities,
         })
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
@@ -31291,7 +31334,7 @@ def create_inspection_report_powerpoint_export():
         snapshot_id = int(data.get("snapshot_id") or 0)
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True, report_type=report_type)
         require_inspection_report_export_schema(cur)
         cleanup_expired_inspection_report_exports(cur)
         # Serialize identical preview/export requests without holding the lock during rendering.
@@ -31446,7 +31489,7 @@ def get_latest_inspection_report_powerpoint_export():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True, report_type=report_type)
         task = get_latest_inspection_report_export(
             cur,
             user["id"],
@@ -31477,10 +31520,11 @@ def get_inspection_report_powerpoint_export(task_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True)
         task = get_inspection_report_export(cur, task_id, user["id"])
         if not task:
             return jsonify({"success": False, "error": "PPT导出任务不存在或已过期。"}), 404
+        require_inspection_report_type_access(cur, user, task.get("report_type"))
         return jsonify(
             {"success": True, "task": serialize_inspection_report_export(task)}
         )
@@ -31501,10 +31545,11 @@ def get_report_ppt_preview_slide(task_id, page):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True)
         task = get_inspection_report_export(cur,task_id,user['id'])
         if not task or task.get('status') != 'completed':
             return jsonify(error='预览不存在、已过期或尚未完成。'),404
+        require_inspection_report_type_access(cur, user, task.get("report_type"))
         path = preview_slide_path(resolve_storage_abs_path(task.get('file_path')),STORAGE_ROOT,page)
         if not path:
             return jsonify(error='预览页不存在，请重新准备PPT。'),404
@@ -31527,10 +31572,11 @@ def download_inspection_report_powerpoint_export(task_id):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        user = get_authorized_inspection_report_user(cur)
+        user = get_authorized_inspection_report_user(cur, allow_department=True)
         task = get_inspection_report_export(cur, task_id, user["id"])
         if not task:
             return jsonify({"success": False, "error": "PPT导出任务不存在或已过期。"}), 404
+        require_inspection_report_type_access(cur, user, task.get("report_type"))
         if task.get("status") != "completed":
             return jsonify({"success": False, "error": "PPT文件尚未生成完成。"}), 409
         abs_path = resolve_storage_abs_path(task.get("file_path"))

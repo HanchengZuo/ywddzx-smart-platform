@@ -3,6 +3,7 @@ import InspectionStandardsView from '../views/inspection/InspectionStandardsView
 import StationMapView from '../views/inspection/StationMapView.vue'
 import { operationsPages } from '../config/operationsCatalog'
 import { isSupervisorRole } from '../utils/roles'
+import { reportPerspective } from '../utils/reportAccess'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
 import { fetchPageVisibility, isPageVisibleInSnapshot } from '../utils/pageVisibility'
 
@@ -202,7 +203,7 @@ const canAccessPath = (path, role, permissions) => {
     )
   }
   if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_schedule')
-  if (path === '/inspection/reports') return hasPermission(role, permissions, 'view_inspection_reports')
+  if (path === '/inspection/reports') return Boolean(reportPerspective(role, permissions))
   if (path === '/inspection/certificates') {
     return Boolean(
       permissions.view_all_certificates ||
@@ -244,7 +245,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
     candidates.push('/inspection/records')
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
-  if (permissions.view_inspection_reports) candidates.push('/inspection/reports')
+  if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
   if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
     candidates.push('/inspection/certificates')
   }

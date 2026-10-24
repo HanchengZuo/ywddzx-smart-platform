@@ -86,11 +86,13 @@ test('manual is a signed-in common menu without role or individual permission ga
     'isSupervisorRole',
     'operationsPages',
     'hasPermission',
+    'reportPerspective',
     `return (${accessBody})`,
   )(
     () => false,
     [],
     () => false,
+    () => null,
   )
   for (const role of [
     'root',
@@ -112,8 +114,9 @@ test('manual is a signed-in common menu without role or individual permission ga
     'isSupervisorRole',
     'operationsPages',
     'canAccessPath',
+    'reportPerspective',
     `return (${fallbackBody})`,
-  )(() => false, [], canAccess)
+  )(() => false, [], canAccess, () => null)
   assert.equal(
     fallback('reader', {}, (path) => path === '/help-documents'),
     '/help-documents',

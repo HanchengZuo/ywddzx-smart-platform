@@ -1,11 +1,11 @@
 <template>
-  <div class="report-page report-studio">
+  <div class="report-page report-studio" :class="{ 'department-view': isDepartmentView }">
     <section class="report-hero card-surface">
       <div class="studio-hero-copy">
         <div class="page-kicker">AI REPORT STUDIO</div>
         <h2>报告生成</h2>
-        <p>从巡检数据到正式报告，在一个工作台完成。查看成稿不会自动生成报告。</p>
-        <div class="studio-hero-meta"><span>报告与配置全局共享</span><span>保留最后一次成功成稿</span></div>
+        <p>{{ isDepartmentView ? '查看本处室业务报告，阅读与导出均使用最后成功生成的成稿。' : '从巡检数据到正式报告，在一个工作台完成。查看成稿不会自动生成报告。' }}</p>
+        <div class="studio-hero-meta"><span>{{ isDepartmentView ? '处室部门视角 · 只读' : '督导中心视角 · 报告与配置全局共享' }}</span><span>保留最后一次成功成稿</span></div>
       </div>
       <div class="report-month-control">
         <span :class="['studio-status', { running: loading, pending: hasSavedReportChanges || templateUnavailable, ready: hasReport && !loading && !hasSavedReportChanges && !templateUnavailable }]" role="status"><i aria-hidden="true"></i>{{ loading ? activeJob ? '报告生成中' : '正在读取报告' : templateUnavailable ? '模板待配置' : hasSavedReportChanges ? '设置有更新，待重新生成' : hasReport ? '当前成稿可查看与导出' : '等待生成首份报告' }}</span>
@@ -14,21 +14,21 @@
         <button
           type="button"
           class="export-ppt-btn"
-          :disabled="!hasReport || loading || templateUnavailable"
+          :disabled="!hasReport || loading || templateUnavailable || htmlExporting"
           :title="!hasReport ? '请先生成报告' : '导出最后生成成功的报告'"
-          @click="openExportDialog"
+          @click="exportCurrentReport"
         >
-          <span class="ppt-file-mark">P</span>
-          {{ exportBusy ? `PPT生成中 ${exportTask?.progress || 0}%` : '导出PPT' }}
+          <span class="ppt-file-mark" aria-hidden="true">{{ reportDisplayMode === 'html' ? 'H' : 'P' }}</span>
+          {{ reportDisplayMode === 'html' ? (htmlExporting ? 'HTML导出中…' : '导出HTML') : exportBusy ? `PPT生成中 ${exportTask?.progress || 0}%` : '导出PPT' }}
         </button>
         </div>
-        <small v-if="!canGenerateReports" class="report-readonly-note">
+        <small v-if="!canGenerateReports && !isDepartmentView" class="report-readonly-note">
           当前账号可查看、分类和选择问题；新建或覆盖时间段报告需由管理员分配生成权限。
         </small>
       </div>
     </section>
 
-    <nav class="studio-workflow" aria-label="报告工作流程快捷导航">
+    <nav v-if="!isDepartmentView" class="studio-workflow" aria-label="报告工作流程快捷导航">
       <button type="button" @click="focusReportSection('report-studio-types')"><b>01</b><span><strong>选择报告</strong><small>{{ currentReportType.name }}</small></span><i aria-hidden="true">↗</i></button>
       <button type="button" @click="focusReportSection('report-studio-period')"><b>02</b><span><strong>准备数据</strong><small>{{ reportDateFrom || '选择日期' }} 至 {{ reportDateTo || '选择日期' }}</small></span><i aria-hidden="true">↗</i></button>
       <button type="button" @click="focusReportSection('report-studio-output')"><b>03</b><span><strong>预览与导出</strong><small>{{ loading ? activeJob ? '后台生成任务进行中' : '正在读取成稿' : hasReport ? '查看最后生成成功的报告' : '生成后在此查看成稿' }}</small></span><i aria-hidden="true">↗</i></button>
@@ -38,9 +38,9 @@
       <div class="report-type-panel-head">
         <div>
           <span>REPORT TYPE / 报告类型</span>
-          <h3 id="report-studio-types-title">选择需要制作的报告</h3>
+          <h3 id="report-studio-types-title">{{ isDepartmentView ? '本处室业务报告' : '选择需要制作的报告' }}</h3>
         </div>
-        <small>{{ reportTypes.length }} 类业务报告 · 独立模板与配置</small>
+        <small>{{ reportTypes.length }} 类业务报告{{ isDepartmentView ? ' · 只读查看与导出' : ' · 独立模板与配置' }}</small>
       </div>
       <div class="report-type-grid">
         <button
@@ -64,7 +64,9 @@
       <div class="studio-selected-sources"><span>当前关联检查表</span><div><em v-for="tableName in currentReportType.target_tables" :key="tableName">{{ tableName }}</em></div><small>切换类型不会触发生成</small></div>
     </section>
 
-    <section id="report-studio-period" tabindex="-1" aria-labelledby="report-studio-period-title" class="report-period-workspace card-surface">
+    <DepartmentReportMonth v-if="isDepartmentView" :model-value="departmentMonth" :months="departmentMonths"
+      :loading="loading" @update:model-value="selectDepartmentMonth" />
+    <section v-else id="report-studio-period" tabindex="-1" aria-labelledby="report-studio-period-title" class="report-period-workspace card-surface">
       <div class="report-period-editor">
         <div class="period-editor-title">
           <span>REPORT DATE RANGE / 数据范围</span>
@@ -127,7 +129,7 @@
       />
     </section>
 
-    <section v-if="(isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface" :data-report="selectedReportType">
+    <section v-if="!isDepartmentView && (isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface" :data-report="selectedReportType">
       <header class="report-config-heading">
         <div><span>REPORT CONFIGURATION</span><h3>{{ currentReportType.name }} · 专属配置</h3><p>所有用户共享最新保存设置；保存不调用 AI，重新生成后应用到报告。</p></div>
         <span class="shared-config-badge">全局共享</span>
@@ -357,11 +359,11 @@
     <div v-if="error" class="state-card error">{{ error }}</div>
 
     <header id="report-studio-output" tabindex="-1" class="studio-output-heading">
-      <div><span class="studio-output-number" aria-hidden="true">03</span><div><h3>报告成稿</h3><p>{{ hasReport ? `最后成功生成于 ${reportGeneratedAt}` : '生成完成后，将在这里展示报告与预览' }}</p></div></div>
+      <div><span v-if="!isDepartmentView" class="studio-output-number" aria-hidden="true">03</span><div><h3>报告成稿</h3><p>{{ hasReport ? `最后成功生成于 ${reportGeneratedAt}` : '暂无已生成报告' }}</p></div></div>
       <div class="studio-output-actions">
         <ReportViewModeSwitch v-if="hasReport" v-model="reportDisplayMode" />
         <span v-else>{{ templateUnavailable ? '模板待配置' : loading ? '正在读取' : '尚无成稿' }}</span>
-        <button type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button>
+        <button v-if="!isDepartmentView" type="button" @click="focusReportSection('report-studio-period')">返回数据设置 ↑</button>
       </div>
     </header>
 
@@ -410,7 +412,7 @@
         :title="report.title || reportTitleFallback" @ready="exportTask = $event" />
     </section>
     <section v-else-if="hasReport" id="report-studio-rendered" class="report-document report-document-html card-surface">
-      <p class="studio-html-note">HTML阅读版 · 使用最后成功生成的报告数据，不会调用AI；PPT导出仍使用同一份成稿。</p>
+      <p class="studio-html-note">HTML阅读版 · 使用最后成功生成的报告数据，不会调用AI，可导出为独立HTML文件。</p>
       <div class="report-document-head">
         <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
@@ -1991,12 +1993,13 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
 import ReportHtmlContent from '@/components/ReportHtmlContent.vue'
 import ReportViewModeSwitch from '@/components/ReportViewModeSwitch.vue'
+import DepartmentReportMonth from '@/components/DepartmentReportMonth.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
@@ -2004,6 +2007,8 @@ import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
 import { reportConfigurationDiffers } from '@/utils/reportConfiguration'
 import { readReportViewMode, saveReportViewMode } from '@/utils/reportViewMode'
+import { reportPerspective, visibleReportTypes } from '@/utils/reportAccess'
+import { downloadReportHtml } from '@/utils/reportHtmlExport'
 
 const equipmentTopicSelection = ref(null)
 const currentRole = localStorage.getItem('user_role') || ''
@@ -2154,10 +2159,14 @@ const configurationReady = ref(false)
 let workspaceSaveQueue = Promise.resolve()
 let workspaceSaveSequence = 0
 const selectedSnapshotId = ref(0)
-const selectedReportType = ref('quality_measurement')
-const reportDisplayMode = ref(readReportViewMode())
-watch(reportDisplayMode, (mode) => saveReportViewMode(mode))
-const reportTypes = ref(DEFAULT_REPORT_TYPES)
+const viewPerspective = ref(reportPerspective(currentRole, storedPermissions))
+const isDepartmentView = computed(() => viewPerspective.value === 'department')
+const selectedReportType = ref(visibleReportTypes(DEFAULT_REPORT_TYPES, currentRole, storedPermissions)[0]?.key || '')
+const reportDisplayMode = ref(isDepartmentView.value ? 'html' : readReportViewMode())
+watch(reportDisplayMode, (mode) => { if (!isDepartmentView.value) saveReportViewMode(mode) })
+const departmentMonth = ref('')
+const departmentMonths = ref([])
+const reportTypes = ref(visibleReportTypes(DEFAULT_REPORT_TYPES, currentRole, storedPermissions))
 const loading = ref(false)
 const error = ref('')
 const activeJob = ref(null)
@@ -2168,6 +2177,8 @@ const canManageQualityReportSource = ref(true)
 const canManageQualityReportSelectionRules = ref(true)
 
 const applyReportCapabilities = (payload = {}) => {
+  if (payload.view_mode === 'department' && !isDepartmentView.value) reportDisplayMode.value = 'html'
+  if (payload.view_mode) viewPerspective.value = payload.view_mode
   if (Object.prototype.hasOwnProperty.call(payload, 'can_generate')) {
     canGenerateReports.value = Boolean(payload.can_generate)
   }
@@ -2283,6 +2294,7 @@ const validReportDateRange = computed(() => Boolean(
   && reportDateFrom.value <= reportDateTo.value
 ))
 const hasSavedReportChanges = computed(() => {
+  if (isDepartmentView.value) return false
   if (!configurationReady.value || loading.value || workspaceSaving.value) return false
   if (isQualityMeasurementReport.value && (sourceError.value || selectionSettingsError.value || flowClassificationsError.value)) return false
   if (hasIssueLibrary.value && nonOilIssueLibraryError.value) return false
@@ -3863,6 +3875,26 @@ const openExportDialog = async () => {
   if (exportDialogVisible.value && !exportTask.value && !exportError.value) await startPptExport()
 }
 
+const htmlExporting = ref(false)
+const exportCurrentReport = async () => {
+  if (reportDisplayMode.value === 'ppt') return openExportDialog()
+  if (!hasReport.value || loading.value || htmlExporting.value) return
+  htmlExporting.value = true
+  error.value = ''
+  try {
+    await nextTick()
+    await downloadReportHtml(document.querySelector('.report-document-html'), {
+      title: report.value.title || reportTitleFallback.value,
+      filename: `${isDepartmentView.value ? departmentMonth.value : report.value.snapshot?.date_from || report.value.month}_${currentReportType.value.name}.html`,
+      loadImage: async (url) => (await axios.get(url, { responseType: 'blob' })).data
+    })
+  } catch (err) {
+    error.value = err?.message || 'HTML导出失败，请稍后重试。'
+  } finally {
+    htmlExporting.value = false
+  }
+}
+
 const closeExportDialog = () => {
   exportDialogVisible.value = false
   clearExportPolling()
@@ -4026,7 +4058,7 @@ const loadReportState = async () => {
     await workspaceSaveQueue.catch(() => {})
     if (requestId !== contextRequestId) return
     const response = await axios.get('/api/inspection-reports/status', {
-      params: { report_type: selectedReportType.value }
+      params: { report_type: selectedReportType.value, ...(isDepartmentView.value && departmentMonth.value ? { month: departmentMonth.value } : {}) }
     })
     if (requestId !== contextRequestId) return
     if (!response.data?.success) {
@@ -4036,6 +4068,16 @@ const loadReportState = async () => {
     reportHistory.value = Array.isArray(response.data?.history) ? response.data.history : []
     report.value = response.data?.report || createEmptyReport()
     selectedSnapshotId.value = Number(report.value?.snapshot?.id || 0)
+    if (isDepartmentView.value) {
+      // Readers never load the mutable workspace or any configuration/AI panels.
+      departmentMonths.value = Array.isArray(response.data.available_months) ? response.data.available_months : []
+      departmentMonth.value = response.data.selected_month || ''
+      reportDateFrom.value = report.value.snapshot?.date_from || report.value.summary?.date_from || ''
+      reportDateTo.value = report.value.snapshot?.date_to || report.value.summary?.date_to || ''
+      if (departmentMonth.value) selectedMonth.value = departmentMonth.value
+      loading.value = false
+      return
+    }
     applyWorkspaceSettings(response.data?.workspace || {}, report.value)
     if (isQualityMeasurementReport.value) {
       await loadSourceOptions({}, {}, requestId)
@@ -4108,6 +4150,8 @@ const selectReportType = async (reportType) => {
   exportTask.value = null
   exportError.value = ''
   selectedReportType.value = reportType
+  departmentMonth.value = ''
+  departmentMonths.value = []
   workspaceSaveSequence += 1
   workspaceSaving.value = false
   workspaceSaveError.value = ''
@@ -4126,15 +4170,34 @@ const selectReportType = async (reportType) => {
   await loadReportState()
 }
 
+const selectDepartmentMonth = async (month) => {
+  if (!isDepartmentView.value || loading.value || month === departmentMonth.value
+    || !departmentMonths.value.some(item => item.month === month)) return
+  closeExportDialog()
+  exportTask.value = null
+  exportError.value = ''
+  report.value = createEmptyReport()
+  selectedSnapshotId.value = 0
+  departmentMonth.value = month
+  await loadReportState()
+}
+
 const loadReportTypes = async () => {
   try {
     const response = await axios.get('/api/inspection-reports/types')
-    if (response.data?.success && Array.isArray(response.data.report_types) && response.data.report_types.length) {
+    if (response.data?.success && Array.isArray(response.data.report_types)) {
       reportTypes.value = response.data.report_types
       applyReportCapabilities(response.data)
+      if (!reportTypes.value.some(item => item.key === selectedReportType.value)) {
+        selectedReportType.value = reportTypes.value[0]?.key || ''
+      }
+      return Boolean(selectedReportType.value)
     }
-  } catch {
-    reportTypes.value = DEFAULT_REPORT_TYPES
+    throw new Error('读取报告类型失败。')
+  } catch (err) {
+    reportTypes.value = []
+    error.value = err?.response?.data?.error || err?.message || '读取报告类型失败。'
+    return false
   }
 }
 
@@ -4145,8 +4208,7 @@ function focusReportSection(id) {
 }
 
 onMounted(async () => {
-  await loadReportTypes()
-  await loadReportState()
+  if (await loadReportTypes()) await loadReportState()
 })
 
 onBeforeUnmount(() => {
@@ -4162,6 +4224,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
 }
+.department-view .report-type-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 
 .report-config-workspace { overflow: hidden; border: 1px solid #dce7ee; border-radius: 22px; }
 .report-config-heading {

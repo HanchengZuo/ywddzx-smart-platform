@@ -61,8 +61,8 @@ test('all six report types expose HTML reading without generation privileges or 
     assert.equal(expression(toggle,'bind','disabled'),undefined)
   }
   assert.doesNotMatch(source,/查看文字汇总|查看HTML报告|返回PPT预览/)
-  assert.match(source,/const reportDisplayMode = ref\(readReportViewMode\(\)\)/)
-  assert.match(source,/watch\(reportDisplayMode, \(mode\) => saveReportViewMode\(mode\)\)/)
+  assert.match(source,/const reportDisplayMode = ref\(isDepartmentView.value \? 'html' : readReportViewMode\(\)\)/)
+  assert.match(source,/watch\(reportDisplayMode, \(mode\) => \{ if \(!isDepartmentView.value\) saveReportViewMode\(mode\) \}\)/)
   assert.doesNotMatch(source,/watch\(selectedReportType,.*reportDisplayMode/)
   const ppt=elements.find(node=>node.tag==='section'&&expression(node,'else-if')==="hasReport && reportDisplayMode === 'ppt'")
   assert.ok(ppt)
@@ -73,8 +73,8 @@ test('all six report types expose HTML reading without generation privileges or 
   assert.equal(expression(html,'bind','report-type'),'selectedReportType')
   assert.doesNotMatch(source,/handleQualitySlideKeydown|currentNonOilSlideUrl|currentQualitySlide/)
   const exp=byClass('export-ppt-btn')
-  assert.equal(expression(exp,'on','click'),'openExportDialog')
-  assert.equal(expression(exp,'bind','disabled'),'!hasReport || loading || templateUnavailable')
+  assert.equal(expression(exp,'on','click'),'exportCurrentReport')
+  assert.equal(expression(exp,'bind','disabled'),'!hasReport || loading || templateUnavailable || htmlExporting')
 })
 
 test('shared configurations, classification editing and native PPT preview retain all entry points',()=>{

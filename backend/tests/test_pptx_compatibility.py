@@ -179,8 +179,8 @@ class PptCompatibilityTests(unittest.TestCase):
                 'app.get_authorized_inspection_report_user',
                 side_effect=None if allowed else PermissionError(), return_value={'id': 3}
             ), patch('app.get_inspection_report_export', return_value={
-                'status': 'completed', 'file_path': 'report_exports/test.pptx'
-            }) as lookup, patch('app.preview_slide_path', return_value=None):
+                'status': 'completed', 'file_path': 'report_exports/test.pptx', 'report_type': 'quality_measurement'
+            }) as lookup, patch('app.get_effective_permissions', return_value={'view_inspection_reports': True}), patch('app.preview_slide_path', return_value=None):
                 response, status = reports.get_report_ppt_preview_slide('example', 999)
             self.assertEqual(status, 404 if allowed else 403)
             if allowed:
@@ -194,7 +194,7 @@ class PptCompatibilityTests(unittest.TestCase):
             path = Path(root) / 'slide.jpg'; Image.new('RGB', (64, 36), 'white').save(path)
             with reports.app.test_request_context(), patch('app.get_db_connection', return_value=MagicMock()), patch(
                 'app.get_authorized_inspection_report_user', return_value={'id': 3}
-            ), patch('app.get_inspection_report_export', return_value={'status': 'completed'}), patch(
+            ), patch('app.get_inspection_report_export', return_value={'status': 'completed', 'report_type': 'quality_measurement'}), patch('app.get_effective_permissions', return_value={'view_inspection_reports': True}), patch(
                 'app.preview_slide_path', return_value=path
             ):
                 response = reports.get_report_ppt_preview_slide('example', 1)
