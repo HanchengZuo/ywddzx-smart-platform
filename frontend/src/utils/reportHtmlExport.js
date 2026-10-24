@@ -51,7 +51,7 @@ export async function buildReportHtml(element, { title, loadImage }) {
   }
   // Photo enlargement buttons contain the actual report images; unwrap, do not discard them.
   clone.querySelectorAll('button').forEach(node => node.replaceWith(...node.childNodes))
-  clone.querySelectorAll('script, style, link, iframe, object, embed, form, input, select, textarea, .studio-html-note, .html-contents')
+  clone.querySelectorAll('script, style, link, iframe, object, embed, form, input, select, textarea, .html-contents')
     .forEach(node => node.remove())
   const cache = new Map()
   // Bound concurrent image requests and reuse duplicated issue photos.

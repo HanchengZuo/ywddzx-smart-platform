@@ -412,7 +412,6 @@
         :title="report.title || reportTitleFallback" @ready="exportTask = $event" />
     </section>
     <section v-else-if="hasReport" id="report-studio-rendered" class="report-document report-document-html card-surface">
-      <p class="studio-html-note">HTML阅读版 · 使用最后成功生成的报告数据，不会调用AI，可导出为独立HTML文件。</p>
       <div class="report-document-head">
         <div class="report-title-block">
           <span class="doc-eyebrow">{{ report.month_label || '-' }}</span>
