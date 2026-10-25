@@ -20,12 +20,13 @@
       :key="section.id"
       class="html-chapter"
       :class="{ 'collapsible-chapter': section.collapsible, 'priority-chapter': section.tone === 'priority' }"
+      :open="section.collapsible || undefined"
       tabindex="-1"
     >
       <component :is="section.collapsible ? 'summary' : 'h2'" class="html-chapter-title">{{ section.title }}<small v-if="section.metrics">{{ section.metrics }}</small></component>
       <div class="html-section-body">
       <p v-for="(paragraph, index) in section.paragraphs" :key="index">{{ paragraph }}</p>
-      <details v-for="(note, index) in section.notes" :key="`note-${index}`" class="html-reading-note"><summary>{{ note.title }}</summary><p>{{ note.content }}</p></details>
+      <details v-for="(note, index) in section.notes" :key="`note-${index}`" class="html-reading-note" open><summary>{{ note.title }}</summary><p>{{ note.content }}</p></details>
       <template v-for="(data, index) in section.tables" :key="`table-${index}`">
         <ReportDistribution v-if="reportType !== 'quality_measurement' && data.chartRows?.length" :title="data.title || '问题类别分布'" :items="data.chartRows" :text="data.description" class="html-distribution" />
         <div

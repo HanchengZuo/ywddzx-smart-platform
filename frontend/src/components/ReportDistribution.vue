@@ -10,7 +10,7 @@
       </div>
       <p v-if="!rows.length" class="distribution-empty">暂无此分类的统计数据。</p>
     </div>
-    <details v-if="text" class="distribution-explanation"><summary>查看统计说明</summary><p>{{ text }}</p></details>
+    <details v-if="text" class="distribution-explanation" open><summary>查看统计说明</summary><p>{{ text }}</p></details>
   </section>
 </template>
 <script setup>
