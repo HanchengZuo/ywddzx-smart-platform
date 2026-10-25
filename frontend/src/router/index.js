@@ -118,7 +118,7 @@ const routes = [
   },
   {
     path: '/management/driving-matrix',
-    component: () => import('../views/management/DrivingMatrixView.vue')
+    component: () => import('../views/inspection/DrivingDataView.vue')
   },
   {
     path: '/management/ai-models',

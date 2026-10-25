@@ -22,7 +22,7 @@
 
 部署迁移 `20261025_002`，并由 `deploy/install_driving_timer.py` 安装独立的 `ywddzx-driving-refresh.service/.timer`，北京时间每周一09:30运行，`Persistent=true` 可补执行停机错过的周期。部署提交一次后台初始化/补漏请求，CLI通过PostgreSQL会话级锁与已完成周期判断防止重复采集，不在Gunicorn中启动采集线程，不要求用户保持网页打开。采集按批提交、限速、不持有业务事务或排班锁。采集遇到网络/额度问题时记录失败并保留已收集部分，后台间隔10分钟有限重试，1小时内最多启动3次；运维可用 `systemctl start ywddzx-driving-refresh.service` 续采，页面不提供修改或触发按钮。
 
-管理系统的“路网数据管理”仅GET读取，独立 `view_driving_matrix` 权限默认仅root，可通过角色模板/个人权限分配，沿用页面显示开关。展示采集百分比、有效站点、已发布站对、成功批次、下次更新时间及分页明细，明确不可达不代表0分钟。新站或坐标变更等待下次周更新，不在排班中偷偷补查；失败或中断时展示状态，原有效批次仍可用。高德Web服务Key继续使用 `AMAP_WEB_SERVICE_KEY` / `AMAP_KEY`，不写入业务表或前端。
+排班系统的“路网数据”位于“排班地图”下方，仅GET读取；原网址 `/management/driving-matrix` 和显示开关键保留，独立 `view_driving_matrix` 权限默认仅root，可通过角色模板/个人权限分配。展示采集进度、有效站点、已发布站对、成功批次及下次更新时间；站间明细按页查询，支持任一端站名的部分名称搜索、可达情况及行车用时/行驶距离双向排序，未应用条件与当前结果分开呈现。不可达不代表0分钟。新站或坐标变更等待下次周更新，不在排班中补查；失败或中断时原有效批次仍可用。高德Web服务Key继续使用 `AMAP_WEB_SERVICE_KEY` / `AMAP_KEY`，不写入业务表或前端。
 
 ## v11.1 驾车时间优先智能排班（历史实现，已由v11.1.1替代）
 
@@ -513,6 +513,7 @@ flowchart TB
     INS --> MINE[我的待整改 / 待复核]
     ROOT --> SCHEDULE[排班系统]
     SCHEDULE --> SCHEDULEMAP[排班地图]
+    SCHEDULE --> ROAD[路网数据]
     SCHEDULE --> PLAN[现场季度 / 视频月度排班表]
     INS --> REPORT[AI 报告生成]
     INS --> CERT[证照管理]

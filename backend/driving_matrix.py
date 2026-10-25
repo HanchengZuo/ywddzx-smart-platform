@@ -61,7 +61,7 @@ class DatabaseMatrix:
 
     def incoming(self, destination, origins):
         if any(origin != destination and tuple(sorted((origin, destination))) not in self.values for origin in origins):
-            raise DrivingUnavailable('站间路网数据尚未采集完整，请在路网数据管理查看采集状态；不会实时调用高德。')
+            raise DrivingUnavailable('站间路网数据尚未采集完整，请在路网数据查看采集状态；不会实时调用高德。')
 
 
 class DrivingService:
@@ -82,7 +82,7 @@ class DrivingService:
                                 calculated_at=run['finished_at'].isoformat() if run else None, api_requests=0,
                                 cache_reused=True, source='database', provider='amap')
                 if not run:
-                    raise DrivingUnavailable('路网数据库正在初始化，完成后即可使用现场智能排班；请查看路网数据管理。')
+                    raise DrivingUnavailable('路网数据库正在初始化，完成后即可使用现场智能排班；请查看路网数据。')
                 saved = {s['station_id']: s['point'] for s in run['stations']}
                 if any(saved.get(sid) != coords for sid, coords in points.items()):
                     raise DrivingUnavailable('部分站点新增或坐标已调整，尚未纳入最新路网批次，请等待定时更新；不会实时查询高德。')

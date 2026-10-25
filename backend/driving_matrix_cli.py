@@ -19,7 +19,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception:
-        print('路网采集未完成；已保留旧批次与采集中进度，详情见路网数据管理。')
+        print('路网采集未完成；已保留旧批次与采集中进度，详情见路网数据。')
         return 1
 
 

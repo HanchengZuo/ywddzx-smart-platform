@@ -72,7 +72,7 @@ export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'scheduling',
     title: '排班系统',
-    description: '巡检覆盖排班地图与现场季度、视频月度排班表',
+    description: '排班地图、路网数据、人员档期与巡检排班',
     pages: schedulingMenuPages.map(page => ({ key: page.path, path: page.path, title: page.title, description: page.description }))
   },
   {
@@ -203,12 +203,6 @@ export const PAGE_VISIBILITY_GROUPS = [
         path: '/management/backups',
         title: '数据备份管理',
         description: '管理数据库和上传文件备份。'
-      },
-      {
-        key: '/management/driving-matrix',
-        path: '/management/driving-matrix',
-        title: '路网数据管理',
-        description: '只读查看站间驾车估算数据库、全量采集进度及每周更新时间。'
       },
       {
         key: '/management/ai-models',

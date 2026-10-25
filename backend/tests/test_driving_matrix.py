@@ -219,3 +219,51 @@ class MatrixDatabaseTests(unittest.TestCase):
         self.cur.execute(sql); self.cur.execute(sql); self.admin.commit()
         self.cur.execute('SELECT active_run_id FROM driving_matrix_state')
         self.assertEqual(self.cur.fetchone()['active_run_id'], result['run_id'])
+
+    def test_station_name_search_matches_either_endpoint_and_uses_literal_published_names(self):
+        seed_ready(self)
+        self.cur.execute("UPDATE stations SET station_name='新名称' WHERE id=3"); self.admin.commit()
+        response = self.client.get('/api/management/driving-matrix', query_string={'keyword': '  泗砖  '})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['total'], 4)
+        self.assertTrue(any(item['origin_id'] == 3 for item in response.json['items']))
+        self.assertTrue(any(item['destination_id'] == 3 for item in response.json['items']))
+        for keyword in ('新名称', '%', '_', "' OR 1=1 --", '不存在的站点'):
+            result = self.client.get('/api/management/driving-matrix', query_string={'keyword': keyword})
+            self.assertEqual(result.status_code, 200, result.json)
+            self.assertEqual(result.json['total'], 0)
+        self.assertEqual(self.client.get('/api/management/driving-matrix?station=1&keyword=泗砖').json['total'], 1)
+        self.assertEqual(self.client.get('/api/management/driving-matrix?state=unreachable&keyword=泗砖').json['total'], 0)
+
+    def test_distance_sort_both_directions_keeps_unreachable_last_and_rejects_invalid_conditions(self):
+        seed_ready(self)
+        self.cur.execute('UPDATE driving_matrix_pairs SET meters=1000')
+        self.cur.execute('UPDATE driving_matrix_pairs SET meters=9000 WHERE origin_id=1 AND destination_id=2')
+        self.cur.execute('UPDATE driving_matrix_pairs SET meters=500 WHERE origin_id=1 AND destination_id=3')
+        self.cur.execute('UPDATE driving_matrix_pairs SET meters=NULL,seconds=NULL,reachable=false WHERE origin_id=1 AND destination_id=4')
+        self.admin.commit()
+        for order, first in (('distance_asc', 500), ('distance_desc', 9000)):
+            response = self.client.get('/api/management/driving-matrix', query_string={'sort': order})
+            self.assertEqual(response.status_code, 200, response.json)
+            rows = response.json['items']
+            self.assertEqual(rows[0]['meters'], first)
+            self.assertFalse(rows[-1]['reachable'])
+            self.assertEqual([r['meters'] for r in rows[:-1]], sorted([r['meters'] for r in rows[:-1]], reverse=order=='distance_desc'))
+        for query in ({'keyword': '站'*81}, {'sort': 'meters; DROP TABLE stations'}, {'state': 'invalid'}, {'page': '0'}):
+            self.assertEqual(self.client.get('/api/management/driving-matrix', query_string=query).status_code, 400)
+
+    def test_named_route_results_are_paginated_and_reads_do_not_start_collection(self):
+        execute_values(self.cur, 'INSERT INTO stations(id,station_name,region,longitude,latitude) VALUES %s',
+                       [(sid, f'搜索测试站{sid}', '松金', 121.5+sid*.001, 31.2) for sid in range(6,41)])
+        self.admin.commit()
+        seed_ready(self)
+        one = self.client.get('/api/management/driving-matrix?keyword=搜索测试站').json
+        two = self.client.get('/api/management/driving-matrix?keyword=搜索测试站&page=2').json
+        self.assertEqual(one['total'], 770)
+        self.assertEqual(two['total'], one['total'])
+        self.assertEqual(len(one['items']), 30)
+        self.assertEqual(len(two['items']), 30)
+        pairs = lambda page: {(r['origin_id'], r['destination_id']) for r in page['items']}
+        self.assertFalse(pairs(one) & pairs(two))
+        self.cur.execute('SELECT COUNT(*) n FROM driving_matrix_runs')
+        self.assertEqual(self.cur.fetchone()['n'], 1)

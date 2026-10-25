@@ -1072,8 +1072,8 @@ PERMISSION_CATALOG = [
     },
     {
         "key": "view_driving_matrix",
-        "name": "查看路网数据库",
-        "category": "路网数据管理",
+        "name": "查看路网数据",
+        "category": "路网数据",
         "description": "只读查看站间驾车距离、估算用时、采集进度及每周更新情况，不授予站点或排班编辑权限。",
         "defaults": {"root": True},
     },

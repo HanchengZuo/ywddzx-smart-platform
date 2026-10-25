@@ -40,7 +40,7 @@ def register_driving_matrix(app, *, connect, has_permission):
             conn = connect()
             with conn.cursor() as cur:
                 if not has_permission(cur, actor, VIEW_PERMISSION):
-                    return jsonify(success=False, error='当前账号无权查看路网数据管理。'), 403
+                    return jsonify(success=False, error='当前账号无权查看路网数据。'), 403
                 status = read_status(cur)
                 active = status['active']
                 page = int(request.args.get('page', 1))
@@ -52,13 +52,25 @@ def register_driving_matrix(app, *, connect, has_permission):
                     if value:
                         sid = int(value)
                         where.append('(origin_id=%s OR destination_id=%s)'); params.extend([sid, sid])
+                keyword = request.args.get('keyword', '').strip()
+                if len(keyword) > 80:
+                    raise ValueError()
+                if keyword:
+                    # Search the published names, not live archives that may
+                    # have changed since this dataset was collected.
+                    matching = [s['station_id'] for s in (active['stations'] if active else [])
+                                if keyword.casefold() in s['station_name'].casefold()]
+                    where.append('(origin_id=ANY(%s) OR destination_id=ANY(%s))')
+                    params.extend([matching, matching])
                 state = request.args.get('state', '')
                 if state not in ('', 'reachable', 'unreachable'):
                     raise ValueError()
                 if state:
                     where.append('reachable=%s'); params.append(state == 'reachable')
                 orders = {'': 'origin_id,destination_id', 'fastest': 'seconds ASC NULLS LAST,origin_id,destination_id',
-                          'slowest': 'seconds DESC NULLS LAST,origin_id,destination_id'}
+                          'slowest': 'seconds DESC NULLS LAST,origin_id,destination_id',
+                          'distance_asc': 'meters ASC NULLS LAST,origin_id,destination_id',
+                          'distance_desc': 'meters DESC NULLS LAST,origin_id,destination_id'}
                 order = request.args.get('sort', '')
                 if order not in orders:
                     raise ValueError()

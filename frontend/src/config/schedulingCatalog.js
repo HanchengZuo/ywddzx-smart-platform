@@ -8,6 +8,15 @@ export const schedulingMenuPages = [
     description: '现场按季度、视频按月，快速查找没有巡检记录的站点。',
   },
   {
+    key: 'driving-data',
+    // Preserve existing links and global visibility settings after moving menus.
+    path: '/management/driving-matrix',
+    permission: 'view_driving_matrix',
+    title: '路网数据',
+    icon: '路',
+    description: '查看站间驾车用时、行驶距离及每周采集情况，为智能排班提供依据。',
+  },
+  {
     key: 'staff-availability',
     path: '/inspection/staff-availability',
     permission: 'view_staff_availability',
