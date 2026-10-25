@@ -122,8 +122,8 @@ test('non-oil HTML uses saved periods, business order, classifications, evidence
   assert.deepEqual(sections[1].paragraphs, [
     report.period_text,
     report.scope_text,
-    report.issue_overview_text,
   ])
+  assert.equal(sections[1].notes[0].content, report.issue_overview_text)
   assert.deepEqual(
     sections[1].tables[0].rows.map((row) => row[0]),
     ['浦东', '闵普徐'],
