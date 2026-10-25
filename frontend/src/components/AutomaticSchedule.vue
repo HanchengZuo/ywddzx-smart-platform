@@ -51,7 +51,7 @@
             >{{ quotaSettings.updated_by_name }} {{ quotaSettings.updated_at }} 保存</small
           >
         </div>
-        <p v-if="loading" role="status" class="empty">正在核对档期与任务，并查询高德驾车用时；首次计算可能较慢，已有路线将自动复用…</p>
+        <p v-if="loading" role="status" class="empty">正在核对档期与任务，从路网数据库计算智能方案，不会实时查询高德…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <p v-if="savedNotice" class="saved-notice" role="status">{{ savedNotice }}</p>
         <template v-if="preview">
@@ -233,8 +233,8 @@
           </p>
           <p v-for="warning in preview.warnings" :key="warning" class="method">{{ warning }}</p>
           <p v-if="preview.driving?.applicable" class="driving-source">
-            高德驾车 · 时间优先 · {{ preview.driving.cache_reused ? '复用路线缓存' : '已查询路线' }}
-            <span>只统计站点之间的行车，非直线距离；不含办公室往返及检查时间。路线缓存最长2小时，实际出行以实时导航为准。</span>
+            路网数据库 · 时间优先 · 采样于 {{ drivingDate(preview.driving.calculated_at) }}
+            <span>每周一09:30自动更新；站对只采一个方向，往返共用估算。此处只读数据库，不实时查询高德；不含办公室往返及检查时间。</span>
           </p>
           <details v-if="preview.excluded.length" class="excluded">
             <summary>未参与自动派工的人员（{{ preview.excluded.length }}）</summary>
@@ -305,6 +305,7 @@ const quotaSettings = ref(null)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
 const drivingMinutes = (seconds) => Number.isFinite(seconds) ? Math.ceil(seconds / 60) : '—'
 const drivingKilometers = (meters) => Number.isFinite(meters) ? (meters / 1000).toFixed(1) : '—'
+const drivingDate = value => value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '—'
 const drivingLeg = (station, group) => (group.driving_legs || []).find(leg => leg.destination_id === station.station_id)
 const basis = computed(() => scheduleBasis(preview.value))
 const targetRegions = computed(() =>

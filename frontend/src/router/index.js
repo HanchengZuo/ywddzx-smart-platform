@@ -117,6 +117,10 @@ const routes = [
     component: () => import('../views/management/AutoAuditManagementView.vue')
   },
   {
+    path: '/management/driving-matrix',
+    component: () => import('../views/management/DrivingMatrixView.vue')
+  },
+  {
     path: '/management/ai-models',
     component: () => import('../views/management/AiModelManagementView.vue')
   },
@@ -176,6 +180,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/auto-audit') return hasPermission(role, permissions, 'manage_auto_audit_rules')
   if (path === '/management/ai-usage') return hasPermission(role, permissions, 'manage_ai_usage')
   if (path === '/management/ai-models') return hasPermission(role, permissions, 'manage_ai_models')
+  if (path === '/management/driving-matrix') return hasPermission(role, permissions, 'view_driving_matrix')
   if (path === '/management/security') return hasPermission(role, permissions, 'manage_security')
   if (path === '/management/inspection-completion') return role === 'root'
   if (path.startsWith('/management')) return false
@@ -257,6 +262,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   if (permissions.manage_internal_standards) candidates.push('/management/internal-standards')
   if (permissions.manage_auto_audit_rules) candidates.push('/management/auto-audit')
   if (permissions.manage_ai_models) candidates.push('/management/ai-models')
+  if (permissions.view_driving_matrix) candidates.push('/management/driving-matrix')
   if (permissions.manage_ai_usage) candidates.push('/management/ai-usage')
   if (permissions.manage_security) candidates.push('/management/security')
   if (permissions.manage_page_visibility) candidates.push('/management/page-visibility')

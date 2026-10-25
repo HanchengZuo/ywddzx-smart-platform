@@ -32,6 +32,9 @@ class DeploymentScriptTests(unittest.TestCase):
         (self.repo / 'deploy').mkdir()
         shutil.copy(PROJECT_ROOT / 'deploy/ai_environment.py', self.repo / 'deploy/ai_environment.py')
         shutil.copy(PROJECT_ROOT / 'deploy/amap_environment.py', self.repo / 'deploy/amap_environment.py')
+        # Installing a host timer is separately tested against a temporary
+        # directory. Deployment contract tests must never touch real systemd.
+        (self.repo / 'deploy/install_driving_timer.py').write_text("print('isolated timer installation')\n")
         self.version = json.loads((PROJECT_ROOT / 'frontend/package.json').read_text())['version']
         (self.repo / 'frontend/package.json').write_text(json.dumps({'version': self.version}))
         self.log = self.root / 'commands.log'

@@ -37,5 +37,7 @@ test('driving requests remain server-side, failures make an old preview non-appl
   assert.match(source, /stale\.value = true/)
   assert.match(source, /!preview\?\.groups\.length \|\| stale \|\| !replaceConfirmed/)
   assert.match(source, /token: preview\.value\.token/)
-  assert.match(source, /最多|最长2小时/)
+  assert.match(source, /每周一09:30自动更新/)
+  assert.match(source, /站对只采一个方向/)
+  assert.match(source, /此处只读数据库/)
 })
