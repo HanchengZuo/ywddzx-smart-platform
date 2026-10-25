@@ -77,6 +77,7 @@ from ai_routing import canonical_model, model_aliases
 from report_workspace import get_report_workspace, save_report_workspace, list_report_generation_requests
 from report_access import allowed_report_types, report_perspective
 from report_months import list_report_months, valid_report_month
+from report_job_liveness import report_job_lease, claim_report_job, expire_unowned_report_jobs
 from report_ai_memory import (
     begin_report_ai_memory,
     end_report_ai_memory,
@@ -203,6 +204,7 @@ FEEDBACK_SCREENSHOTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "feedback_screensh
 ISSUE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "issue_exports")
 STATION_SCORE_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "station_score_exports")
 INSPECTION_REPORT_EXPORTS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "report_exports")
+REPORT_JOB_LOCK_DIR = os.path.join(STORAGE_ROOT, '.report-job-locks')
 INSPECTION_REPORT_PRESENTATIONS_STORAGE_DIR = os.path.join(STORAGE_ROOT, "report_presentations")
 BACKUP_CONFIG_PATH = os.path.join(STORAGE_ROOT, "backup_config.json")
 DEFAULT_BACKUP_DIR = os.path.join(STORAGE_ROOT, "backups")
@@ -8778,6 +8780,7 @@ def get_active_inspection_report_job(
     period_end_exclusive=None,
 ):
     require_inspection_report_job_schema(cur)
+    expire_unowned_report_jobs(cur, REPORT_JOB_LOCK_DIR, report_type=report_type)
     cur.execute(
         """
         SELECT
@@ -29864,16 +29867,28 @@ def generate_non_oil_report_job(
         close_db_resources(cur, conn)
 
 def run_inspection_report_generation_job(task_id):
+    try:
+        with report_job_lease(REPORT_JOB_LOCK_DIR, task_id) as owned:
+            if owned:
+                run_owned_inspection_report_generation_job(task_id)
+    except Exception as exc:
+        logging.exception('Report job owner failed. task_id=%s', task_id)
+        update_inspection_report_job(task_id, 'failed', 100, '报告生成已中断', str(exc))
+
+
+def run_owned_inspection_report_generation_job(task_id):
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        job = get_inspection_report_job(cur, task_id)
+        require_inspection_report_job_schema(cur)
+        job = claim_report_job(cur, task_id)
+        conn.commit()
     finally:
         close_db_resources(cur, conn)
 
-    if not job or job.get("status") != "queued":
+    if not job:
         return
     memory_token = None
     try:
@@ -30203,7 +30218,7 @@ def get_inspection_report_status():
             else:
                 report = get_latest_inspection_report_snapshot(cur, report_type)
                 job = get_active_inspection_report_job(cur, report_type)
-        return jsonify({
+        response = jsonify({
             "success": True,
             "report_type": config,
             "report": report,
@@ -30213,6 +30228,9 @@ def get_inspection_report_status():
             **({"available_months": available_months, "selected_month": selected_month} if department else {}),
             **capabilities,
         })
+        if not department:
+            conn.commit()
+        return response
     except LookupError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
     except PermissionError as exc:
@@ -31292,6 +31310,10 @@ def get_inspection_report_generation_job(task_id):
             return jsonify({"success": False, "error": "报告生成任务不存在。"}), 404
         if user.get("role") != "root" and int(job.get("requested_by") or 0) != int(user.get("id") or 0):
             return jsonify({"success": False, "error": "无权查看该报告生成任务。"}), 403
+        if job.get('status') in {'queued', 'running'}:
+            if expire_unowned_report_jobs(cur, REPORT_JOB_LOCK_DIR, task_id=task_id):
+                conn.commit()
+                job = get_inspection_report_job(cur, task_id)
         report = None
         if job.get("status") in {"completed", "failed"}:
             report = get_inspection_report_snapshot(

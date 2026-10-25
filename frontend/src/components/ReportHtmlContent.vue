@@ -1,5 +1,8 @@
 <template>
-  <div class="html-report-content">
+  <div class="html-report-content" :class="{ editorial: reportType === 'non_oil' || reportType === 'equipment_facilities' }">
+    <div v-if="metrics.length" class="html-reading-metrics">
+      <article v-for="metric in metrics" :key="metric.label"><span>{{ metric.label }}</span><strong>{{ metric.value }}<small>{{ metric.unit }}</small></strong></article>
+    </div>
     <nav v-if="sections.length > 1" class="html-contents" aria-label="HTML报告目录">
       <strong>报告目录</strong>
       <button
@@ -11,18 +14,22 @@
         {{ section.title }}
       </button>
     </nav>
-    <article
+    <component :is="section.collapsible ? 'details' : 'article'"
       v-for="section in sections"
       :id="section.id"
       :key="section.id"
       class="html-chapter"
+      :class="{ 'collapsible-chapter': section.collapsible, 'priority-chapter': section.tone === 'priority' }"
       tabindex="-1"
     >
-      <h2>{{ section.title }}</h2>
+      <component :is="section.collapsible ? 'summary' : 'h2'" class="html-chapter-title">{{ section.title }}<small v-if="section.metrics">{{ section.metrics }}</small></component>
+      <div class="html-section-body">
       <p v-for="(paragraph, index) in section.paragraphs" :key="index">{{ paragraph }}</p>
+      <details v-for="(note, index) in section.notes" :key="`note-${index}`" class="html-reading-note"><summary>{{ note.title }}</summary><p>{{ note.content }}</p></details>
       <template v-for="(data, index) in section.tables" :key="`table-${index}`">
+        <ReportDistribution v-if="reportType !== 'quality_measurement' && data.chartRows?.length" :title="data.title || '问题类别分布'" :items="data.chartRows" :text="data.description" class="html-distribution" />
         <div
-          v-if="data.rows.length"
+          v-else-if="data.rows.length"
           class="html-table-wrap"
           tabindex="0"
           role="region"
@@ -88,12 +95,14 @@
       >
         此成稿没有保存该章节的详细内容，请查看PPT预览。
       </p>
-    </article>
+      </div>
+    </component>
   </div>
 </template>
 <script setup>
 import { computed } from 'vue'
-import { buildReportHtmlSections } from '@/utils/reportHtmlContent'
+import { buildReportHtmlSections, reportReadingMetrics } from '@/utils/reportHtmlContent'
+import ReportDistribution from '@/components/ReportDistribution.vue'
 const props = defineProps({
   report: { type: Object, required: true },
   reportType: String,
@@ -101,9 +110,11 @@ const props = defineProps({
 })
 defineEmits(['photo'])
 const sections = computed(() => buildReportHtmlSections(props.report, props.reportType))
+const metrics = computed(() => reportReadingMetrics(props.report, props.reportType))
 const cellText = (value) => (value && typeof value === 'object' ? value.text : (value ?? ''))
 function goToSection(id) {
   const section = document.getElementById(id)
+  if (section?.tagName === 'DETAILS') section.open = true
   section?.scrollIntoView({
     behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     block: 'start',
@@ -152,7 +163,7 @@ function goToSection(id) {
   border-bottom: 1px solid #c4d2de;
   scroll-margin-top: 22px;
 }
-.html-chapter h2 {
+.html-chapter-title {
   padding: 12px 16px;
   background: #183e5a;
   color: #fff;
@@ -161,6 +172,26 @@ function goToSection(id) {
   margin: 0 0 18px;
   line-height: 1.6;
 }
+.html-chapter-title small { display: block; font-size: 12px; font-weight: 500; opacity: .9; margin-top: 5px; }
+.html-reading-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); border: 1px solid #bdd0de; border-radius: 12px; overflow: hidden; margin-bottom: 20px; background: #f3f7fa; }
+.html-reading-metrics article { display: grid; gap: 6px; padding: 18px 20px; border-left: 1px solid #d8e3eb; }
+.html-reading-metrics article:first-child { border-left: 0; }
+.html-reading-metrics article > span { font-size: 12px; color: #4e6a7e; }
+.html-reading-metrics strong { font-size: 28px; color: #1b5675; line-height: 1.2; }
+.html-reading-metrics strong small { margin-left: 7px; font-size: 12px; font-weight: 500; }
+.html-distribution { margin: 18px 0; }
+.html-reading-note { margin: 12px 0; padding: 12px 16px; background: #f5f8fa; border: 1px solid #dae4eb; border-radius: 8px; color: #48677c; font-size: 13px; }
+.html-reading-note summary { cursor: pointer; font-weight: 600; }
+.editorial .html-contents { background: #f7fafb; padding: 16px; border-color: #d0dfe8; }
+.editorial .html-chapter { padding: 0; border: 1px solid #c3d7e3; border-radius: 12px; overflow: hidden; margin-bottom: 22px; background: #fff; }
+.editorial .html-chapter-title { border-radius: 0; margin: 0; background: #1e526d; padding: 16px 20px; }
+.editorial .html-section-body { padding: 8px 20px 20px; }
+.editorial .collapsible-chapter > summary { cursor: pointer; list-style-position: inside; background: #edf5f7; color: #244d62; font-size: 16px; }
+.editorial .collapsible-chapter[open] > summary { border-bottom: 1px solid #c7dbe5; }
+.editorial .priority-chapter > .html-chapter-title { background: #835a2b; }
+.editorial .html-analysis { background: #f3f7f9; border-left: 3px solid #2e7b91; padding: 16px; border-radius: 5px; }
+.editorial .html-issues > section { background: #f8fafb; border-color: #d0dfe7; }
+.editorial .html-issues figure { border: 1px solid #d1e0e8; border-radius: 8px; padding: 8px; background: #fff; overflow: hidden; }
 .html-chapter h3 {
   color: #183e5a;
   font-size: 17px;
@@ -255,9 +286,11 @@ figcaption {
   .html-issues {
     grid-template-columns: 1fr;
   }
-  .html-chapter h2 {
+  .html-chapter-title {
     font-size: 17px;
   }
+  .editorial .html-section-body { padding: 8px 14px 14px; }
+  .editorial .html-chapter-title { padding: 14px; }
   .html-contents {
     padding: 12px;
   }

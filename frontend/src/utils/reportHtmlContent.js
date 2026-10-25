@@ -6,10 +6,10 @@ const percent = (value) =>
   value === undefined || value === null || value === '' ? '' : `${text(value).replace(/%$/, '')}%`
 const table = (headings, rows) => ({ headings, rows })
 const distribution = (rows) =>
-  table(
+  ({ ...table(
     ['问题类别', '问题数量', '占比'],
     list(rows).map((row) => [row.display_name || row.name, row.count, percent(row.percentage)]),
-  )
+  ), chartRows: list(rows) })
 const items = (rows) =>
   list(rows).map((row) =>
     typeof row === 'string'
@@ -43,12 +43,14 @@ const overallTable = (rows) =>
 
 // Project only saved report fields. Never mix unsaved configuration or live issue-library rows into a draft.
 export function buildReportHtmlSections(report = {}, type) {
-  const sections = type === 'quality_measurement' ? qualitySections(report) : nonOilSections(report)
+  const sections = type === 'quality_measurement' ? qualitySections(report)
+    : type === 'equipment_facilities' ? equipmentSections(report) : nonOilSections(report)
   return sections.map((section, index) => ({
     paragraphs: [],
     tables: [],
     items: [],
     issues: [],
+    notes: [],
     ...section,
     id: `report-html-section-${index + 1}`,
   }))
@@ -158,7 +160,8 @@ function nonOilSections(report) {
     },
     {
       title: '巡检范围',
-      paragraphs: paragraphs([report.period_text, report.scope_text, report.issue_overview_text]),
+      paragraphs: paragraphs([report.period_text, report.scope_text]),
+      notes: report.issue_overview_text ? [{ title: '完整问题概况', content: report.issue_overview_text }] : [],
       tables: [
         table(
           ['片区/单位', '检查站数', '问题总数', '站均问题数', '加油站问题数'],
@@ -176,8 +179,8 @@ function nonOilSections(report) {
     },
     {
       title: '二、片区问题汇总 · 总体概况',
-      paragraphs: paragraphs([report.unit_overview_text, report.category_distribution_text]),
-      tables: [distribution(report.category_distribution)],
+      paragraphs: paragraphs([report.unit_overview_text]),
+      tables: [{ ...distribution(report.category_distribution), title: '非油检查问题分布', description: report.category_distribution_text }],
     },
   ]
   for (const unit of list(report.units)) {
@@ -185,6 +188,8 @@ function nonOilSections(report) {
       list(analysis.unit_highlights).find((item) => item.unit_name === unit.unit_name) || {}
     sections.push({
       title: `片区问题汇总 · ${unit.unit_name}`,
+      collapsible: true,
+      metrics: `${unit.station_count ?? 0}站 · ${unit.issue_count ?? 0}项问题`,
       paragraphs: paragraphs([highlight.summary]),
       tables: [
         table(
@@ -218,6 +223,7 @@ function nonOilSections(report) {
     if (!group.count && !list(group.issues).length) continue
     sections.push({
       title: `重点问题 · ${group.name}`,
+      tone: 'priority',
       tables: [distribution(group.relationship)],
       issues: list(group.issues),
     })
@@ -225,6 +231,7 @@ function nonOilSections(report) {
   for (const group of list(report.category_details)) {
     sections.push({
       title: `四、具体结果分析 · ${group.name}`,
+      collapsible: true,
       issues: list(group.issues),
       tables: [
         table(
@@ -251,4 +258,82 @@ function nonOilSections(report) {
     if (list(analysis[key]).length) sections.push({ title, items: items(analysis[key]) })
   }
   return sections
+}
+
+const groundingIds = new Set([9000, 9001, 9002, 9003, 9006, 9007, 9008, 9009, 9010, 9018, 9022, 9023, 9025, 9026, 9029, 9030, 9031, 9032, 9039, 9044, 9047, 9048, 9057, 9058])
+const unitKey = name => text(name).replace('闵浦徐', '闵普徐').replace(/管理片区|片区|公司/g, '')
+
+export function equipmentPhraseDistribution(analysis) {
+  if (!Array.isArray(analysis.issues)) return list(analysis.phrase_distribution)
+  const counts = new Map()
+  for (const issue of analysis.issues) {
+    const name = groundingIds.has(Number(issue.external_standard_id)) ? '设备接地不规范' : issue.phrase || '未匹配检查短语'
+    counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+    .map(([name, count]) => ({ name, count, percentage: Number((count / analysis.issues.length * 100).toFixed(1)) }))
+}
+
+function equipmentSections(report) {
+  const analysis = report.equipment_analysis || {}
+  const issues = list(analysis.issues)
+  const phrases = equipmentPhraseDistribution(analysis)
+  const leading = phrases[0]
+  const sections = [{
+    title: '一、总体情况', paragraphs: paragraphs([report.overview_text, report.region_text]),
+    tables: [table(['片区/单位', '检查站数', '问题总数', '站均问题数'], list(report.region_rows).map(row => [row.unit_name, row.station_count, row.issue_count, row.average_issue_count]))]
+  }, {
+    title: '二、问题数据统计分析',
+    paragraphs: paragraphs([leading ? `${leading.name}是单类问题${phrases.filter(row => row.count === leading.count).length > 1 ? '并列' : ''}最多的项，共${leading.count}个问题，占比${leading.percentage}%。` : '本次报告未纳入设备设施问题。']),
+    tables: [
+      { ...distribution(report.area_distribution), title: '按所属区域分类' },
+      { ...distribution(report.item_distribution), title: '按检查事项分类' },
+      { ...distribution(phrases), title: '按检查内容短语分类' }
+    ]
+  }]
+  for (const group of list(analysis.high_groups)) {
+    const records = list(group.issues)
+    sections.push({
+      title: `高频问题 · ${group.phrase}`, collapsible: true, metrics: `${records.length}项`,
+      items: [{ title: '问题产生原因', content: list(group.causes).join('；') }],
+      tables: [table(['站点', '问题描述'], records.map(issue => [issue.station_name, issue.description]))],
+      issues: [...records].sort((a, b) => Number(!a.issue_photo) - Number(!b.issue_photo) || a.issue_id - b.issue_id).slice(0, 2)
+    })
+  }
+  const special = new Set(list(analysis.special_issue_ids).map(Number))
+  for (const region of list(report.region_rows)) {
+    const unitIssues = issues.filter(issue => unitKey(issue.management_unit) === unitKey(region.unit_name))
+    const stations = list(report.station_ranking).filter(station => unitKey(station.management_unit) === unitKey(region.unit_name))
+    const chosen = unitIssues.filter(issue => special.has(Number(issue.issue_id)))
+    sections.push({
+      title: `片区检查发现 · ${region.unit_name}`, collapsible: true,
+      metrics: `${region.station_count ?? stations.length}站 · ${region.issue_count ?? unitIssues.length}项问题`,
+      paragraphs: paragraphs([`检查站点：${stations.map(station => station.station_name).join('、') || '成稿未记录站名'}。`, ...chosen.map(issue => `特性问题 · ${issue.station_name}：${issue.description}`)]),
+      tables: [table(['站点', '问题数量', '主要问题'], stations.map(station => {
+        const stationIssues = unitIssues.filter(issue => issue.station_id === station.station_id)
+        return [station.station_name, station.issue_count ?? stationIssues.length, stationIssues.map(issue => issue.description).join('\n') || '本次未发现参与报告的问题。']
+      }))], issues: chosen
+    })
+  }
+  const priorityIds = new Set(list(analysis.severe_issue_ids).map(Number))
+  const priority = issues.filter(issue => priorityIds.has(Number(issue.issue_id)))
+  if (priority.length) sections.push({ title: '重点问题', tone: 'priority', issues: priority })
+  const deep = report.deep_analysis || {}
+  if (list(deep.problem_analysis).length) sections.push({ title: '问题分析', items: items(deep.problem_analysis) })
+  if (list(deep.work_suggestions).length) sections.push({ title: '工作建议', items: items(deep.work_suggestions) })
+  return sections
+}
+
+export function reportReadingMetrics(report, type) {
+  if (!['non_oil', 'equipment_facilities'].includes(type)) return []
+  const summary = report.summary || {}
+  const issueCount = summary.total_issue_count ?? summary.issue_count ?? (type === 'equipment_facilities' ? report.equipment_analysis?.issues?.length : undefined)
+  const stations = summary.station_count ?? summary.inspected_station_count
+  const units = type === 'non_oil' ? report.units : report.region_rows
+  return [
+    { label: '报告问题', value: issueCount, unit: '项' },
+    { label: '受检站点', value: stations, unit: '站' },
+    { label: '片区及单位', value: Array.isArray(units) ? units.length : undefined, unit: '个' },
+    { label: type === 'non_oil' ? '重点问题' : '高频问题类别', value: type === 'non_oil' ? report.key_issue_summary?.selected_count ?? report.key_issue_count : report.equipment_analysis?.high_groups?.length, unit: type === 'non_oil' ? '项' : '类' }
+  ].filter(item => item.value !== undefined && item.value !== null)
 }

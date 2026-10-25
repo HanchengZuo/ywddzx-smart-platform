@@ -439,7 +439,7 @@
         </div>
       </div>
 
-      <ReportHtmlContent v-if="isQualityMeasurementReport || isNonOilReport"
+      <ReportHtmlContent v-if="isQualityMeasurementReport || isNonOilReport || (isEquipmentFacilitiesReport && report.equipment_analysis)"
         :report="report" :report-type="selectedReportType" :resolve-image="resolveImage"
         @photo="openImagePreview($event.issue_photo, `${$event.station_name || '问题'}照片`)" />
 
@@ -841,34 +841,11 @@
           </section>
 
           <div class="finance-distribution-grid">
-            <section
+            <ReportDistribution
               v-for="distribution in financeDistributions"
               :key="distribution.key"
-              class="finance-distribution-card"
-            >
-              <div class="finance-subsection-head">
-                <div>
-                  <span>{{ distribution.eyebrow }}</span>
-                  <h3>{{ distribution.title }}</h3>
-                </div>
-                <strong>{{ distribution.items.length }}类</strong>
-              </div>
-              <p>{{ distribution.text }}</p>
-              <div v-if="distribution.items.length" class="safety-category-list">
-                <div
-                  v-for="item in distribution.items"
-                  :key="`${distribution.key}-${item.name}`"
-                  class="safety-category-row"
-                >
-                  <strong>{{ item.name }}</strong>
-                  <div class="safety-category-track">
-                    <span :style="{ width: `${getFinanceCategoryWidth(distribution.items, item.count)}%` }"></span>
-                  </div>
-                  <div><b>{{ item.count }}项</b><span>{{ formatPercent(item.percentage) }}</span></div>
-                </div>
-              </div>
-              <div v-else class="safety-chart-empty">当前分类暂无审核通过的问题数据。</div>
-            </section>
+              :title="distribution.title" :eyebrow="distribution.eyebrow" :text="distribution.text" :items="distribution.items"
+            />
           </div>
         </article>
 
@@ -1997,6 +1974,7 @@ import axios from 'axios'
 import AiContentBadge from '@/components/AiContentBadge.vue'
 import ReportPptPreview from '@/components/ReportPptPreview.vue'
 import ReportHtmlContent from '@/components/ReportHtmlContent.vue'
+import ReportDistribution from '@/components/ReportDistribution.vue'
 import ReportViewModeSwitch from '@/components/ReportViewModeSwitch.vue'
 import DepartmentReportMonth from '@/components/DepartmentReportMonth.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
@@ -9177,7 +9155,7 @@ onBeforeUnmount(() => {
   width: var(--category-width);
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #9ac8dc, var(--category-color));
+  background: linear-gradient(90deg, #9ac8dc, var(--category-color, #287c9f));
 }
 
 .safety-category-row > div:last-child {
@@ -9400,8 +9378,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.finance-chart-section,
-.finance-distribution-card {
+.finance-chart-section {
   overflow: hidden;
   border: 1px solid #dbe7ef;
   border-radius: 20px;
@@ -9454,22 +9431,7 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-top: 18px;
-}
-
-.finance-distribution-card > p {
-  min-height: 74px;
-  margin: 0;
-  padding: 16px 18px 4px;
-  color: #475569;
-  line-height: 1.75;
-}
-
-.finance-distribution-card .safety-category-list {
-  padding: 14px 18px 20px;
-}
-
-.finance-distribution-card .safety-category-row {
-  grid-template-columns: minmax(105px, 0.9fr) minmax(120px, 1.5fr) 78px;
+  align-items: start;
 }
 
 .finance-station-report-list {
@@ -11314,10 +11276,6 @@ onBeforeUnmount(() => {
   .finance-distribution-grid,
   .finance-ai-grid {
     grid-template-columns: 1fr;
-  }
-
-  .finance-distribution-card > p {
-    min-height: 0;
   }
 
   .equipment-region-row {

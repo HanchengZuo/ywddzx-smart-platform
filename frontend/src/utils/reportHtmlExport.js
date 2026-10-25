@@ -53,6 +53,7 @@ export async function buildReportHtml(element, { title, loadImage }) {
   clone.querySelectorAll('button').forEach(node => node.replaceWith(...node.childNodes))
   clone.querySelectorAll('script, style, link, iframe, object, embed, form, input, select, textarea, .html-contents')
     .forEach(node => node.remove())
+  clone.querySelectorAll('details').forEach(node => { node.open = true })
   const cache = new Map()
   // Bound concurrent image requests and reuse duplicated issue photos.
   const pictures = [...clone.querySelectorAll('img')]

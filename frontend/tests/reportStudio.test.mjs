@@ -70,7 +70,7 @@ test('all six report types expose HTML reading without generation privileges or 
   assert.equal(byClass('studio-html-note'),undefined)
   assert.doesNotMatch(source,/HTML阅读版 · 使用最后成功生成的报告数据/)
   const html=elements.find(node=>node.tag==='ReportHtmlContent')
-  assert.equal(expression(html,'if'),'isQualityMeasurementReport || isNonOilReport')
+  assert.equal(expression(html,'if'),'isQualityMeasurementReport || isNonOilReport || (isEquipmentFacilitiesReport && report.equipment_analysis)')
   assert.equal(expression(html,'bind','report'),'report')
   assert.equal(expression(html,'bind','report-type'),'selectedReportType')
   assert.doesNotMatch(source,/handleQualitySlideKeydown|currentNonOilSlideUrl|currentQualitySlide/)
