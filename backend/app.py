@@ -35540,7 +35540,9 @@ from inspection_schedule_tasks import register_schedule_tasks
 register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
 from staff_daily_team_http import register_staff_daily_teams
 register_staff_daily_teams(app, connect=get_db_connection, has_permission=has_permission)
-register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission)
+from amap_driving import DrivingService
+register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission,
+                             driving_service=DrivingService(os.path.join(STORAGE_ROOT, '.schedule-driving')))
 register_schedule_tasks(app, connect=get_db_connection)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)

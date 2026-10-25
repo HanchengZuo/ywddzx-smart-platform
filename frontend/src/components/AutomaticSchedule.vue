@@ -25,7 +25,7 @@
           ><span><b>03</b> 应用到今日排班</span>
         </div>
         <p class="method">
-          以人员档期已保存的现场组和视频人员为基础，不因今日手动派工而减少候选人员或改变方案。应用时替换今日尚未开始的排班；已开始整行和其他日期计划保留。现场先补足当月计量年度计划，再均衡季度片区覆盖，让同组站点彼此靠近；无有效坐标不自动派现场站点。
+          以人员档期已保存的现场组和视频人员为基础，不因今日手动派工而减少候选人员或改变方案。应用时替换今日尚未开始的排班；已开始整行和其他日期计划保留。现场先补足当月计量年度计划，再均衡季度片区覆盖，优先组合高德预计驾车时间短的站点；无有效坐标不自动派现场站点。
         </p>
         <div class="quota-controls">
           <label
@@ -51,7 +51,7 @@
             >{{ quotaSettings.updated_by_name }} {{ quotaSettings.updated_at }} 保存</small
           >
         </div>
-        <p v-if="loading" role="status" class="empty">正在核对档期、巡检记录和本季度任务量…</p>
+        <p v-if="loading" role="status" class="empty">正在核对档期与任务，并查询高德驾车用时；首次计算可能较慢，已有路线将自动复用…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <p v-if="savedNotice" class="saved-notice" role="status">{{ savedNotice }}</p>
         <template v-if="preview">
@@ -139,7 +139,7 @@
             </summary>
             <p class="basis-explanation">{{ basis.coverage.detail }}</p>
             <p>
-              本季度有任一现场检查记录即计覆盖，不依赖审核。忽略今日未开始的手动计划，未来计划仍受保护；先补齐低覆盖片区，再缩小组内站点距离。
+              本季度有任一现场检查记录即计覆盖，不依赖审核。忽略今日未开始的手动计划，未来计划仍受保护；先补齐低覆盖片区，再按驾车时间组合站点，不按直线距离。
             </p>
             <div class="coverage-grid">
               <div
@@ -209,11 +209,17 @@
                         }}<b v-if="station.metering_priority"> · 计量计划优先</b>
                       </p>
                       <small v-if="group.mode === 'offline'">{{ station.address }}</small>
+                      <span v-if="group.mode === 'offline' && drivingLeg(station, group)" class="driving-leg">
+                        从上一站驾车约 {{ drivingMinutes(drivingLeg(station, group).seconds) }} 分钟 ·
+                        {{ drivingKilometers(drivingLeg(station, group).meters) }} 公里
+                      </span>
                     </li>
                   </ol>
-                  <p v-if="group.mode === 'offline'">
-                    组内站点最远直线距离 {{ group.cluster_max_km }} km · 非行车路线
-                  </p>
+                  <div v-if="group.mode === 'offline'" class="driving-summary">
+                    <span><b>{{ drivingMinutes(group.driving_seconds) }}</b> 分钟 <small>站间预计行车</small></span>
+                    <span><b>{{ drivingKilometers(group.driving_meters) }}</b> 公里 <small>驾车距离</small></span>
+                    <small>{{ group.stations.length < 2 ? '单站任务，无站间行程' : '按用时优化检查顺序' }}</small>
+                  </div>
                   <small
                     >本季度现场 {{ group.before.offline }} → {{ group.after.offline }} 组 · 视频
                     {{ group.before.online }} → {{ group.after.online }} 组</small
@@ -226,6 +232,10 @@
             当前没有可应用的新增组合。请核对今日已保存的人员分工、未检查站点及已开始任务；当前已确认派工可在独立窗口查看。
           </p>
           <p v-for="warning in preview.warnings" :key="warning" class="method">{{ warning }}</p>
+          <p v-if="preview.driving?.applicable" class="driving-source">
+            高德驾车 · 时间优先 · {{ preview.driving.cache_reused ? '复用路线缓存' : '已查询路线' }}
+            <span>只统计站点之间的行车，非直线距离；不含办公室往返及检查时间。路线缓存最长2小时，实际出行以实时导航为准。</span>
+          </p>
           <details v-if="preview.excluded.length" class="excluded">
             <summary>未参与自动派工的人员（{{ preview.excluded.length }}）</summary>
             <p v-for="person in preview.excluded" :key="person.name">
@@ -293,6 +303,9 @@ const offlineCount = ref(2),
   onlineCount = ref(3)
 const quotaSettings = ref(null)
 const proposalGroups = computed(() => groupScheduleProposals(preview.value?.groups))
+const drivingMinutes = (seconds) => Number.isFinite(seconds) ? Math.ceil(seconds / 60) : '—'
+const drivingKilometers = (meters) => Number.isFinite(meters) ? (meters / 1000).toFixed(1) : '—'
+const drivingLeg = (station, group) => (group.driving_legs || []).find(leg => leg.destination_id === station.station_id)
 const basis = computed(() => scheduleBasis(preview.value))
 const targetRegions = computed(() =>
   (preview.value?.metering_plan?.regions || []).filter((r) => r.target > 0),
@@ -376,7 +389,7 @@ async function createPreview() {
           offlineCount.value !== quotaSettings.value.offline_count ||
           onlineCount.value !== quotaSettings.value.online_count,
       },
-      { signal: controller.signal, timeout: 60000 },
+      { signal: controller.signal, timeout: 90000 },
     )
     if (ticket === serial && !disposed) {
       const changed = data.quota_settings?.revision !== quotaSettings.value.revision
@@ -442,6 +455,24 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.driving-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  margin: 12px 0;
+  border: 1px solid #b2d4d5;
+  border-radius: 8px;
+  background: #eef8f6;
+  color: #205951;
+  font-size: 12px;
+}
+.driving-summary b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.driving-summary small { display: block; font-size: 11px; color: #526f70; }
+.driving-leg { display: block; font-size: 12px; color: #246b69; padding-top: 7px; }
+.driving-source { padding: 12px; background: #edf4f9; border: 1px solid #bdd2e0; border-radius: 8px; color: #30546c; font-size: 12px; }
+.driving-source span { display: block; margin-top: 6px; line-height: 1.7; }
 .smart-flow {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
