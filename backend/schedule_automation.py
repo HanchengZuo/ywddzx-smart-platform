@@ -17,7 +17,7 @@ from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, regional_coverage, regional_targets
 from schedule_driving_routes import DrivingPlanNeeded, driving_request, resolve_driving_plan
-from amap_driving import DrivingUnavailable
+from driving_errors import DrivingUnavailable
 
 
 def workload(cur, ids, start, end, *, include_plans=True):
@@ -215,8 +215,8 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
                        revision=saved_team.get('revision',0),updated_by_name=saved_team.get('updated_by_name',''),updated_at=saved_team.get('updated_at','')),
         driving=dict(provider='amap', applicable=any(trip['legs'] for trip in driving['trips']),
                      calculated_at=driving['calculated_at'], cache_reused=driving['cache_reused'],
-                     api_requests=driving['api_requests'], cache_seconds=7200),
-        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后优先组合预计驾车时间短的站点；同耗时时参考行驶距离，不使用直线距离。仅统计组内站间行车，不包含办公室出发、返程或现场检查耗时。高德路况估算有时效性，实际出行请以导航为准。',
+                     api_requests=0, source='database', dataset_id=driving.get('dataset_id')),
+        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后优先组合预计驾车时间短的站点；同耗时时参考行驶距离，不使用直线距离。只读取每周更新的路网数据库，每对站点采一个方向、往返共用估算。仅统计组内站间行车，不包含办公室出发、返程或现场检查耗时，实际出行请以导航为准。',
         available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
         excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or ('尚未保存今日巡检分组或分工与实绩冲突' if smart else '当天已有站点安排或巡检实绩'))
                   for p in people if p not in eligible]), periods
@@ -298,7 +298,7 @@ def register_schedule_automation(app, *, connect, has_permission, driving_servic
                 raise DrivingUnavailable('驾车排班服务尚未初始化，请联系管理员。')
             if data['action'] == 'preview':
                 # Gather authorized inputs without saving quotas or taking the
-                # global dispatch lock. HTTP runs after this transaction closes.
+                # global dispatch lock. Planning reads only the road database.
                 try:
                     proposal(cur, actor, day, data)
                 except DrivingPlanNeeded as needed:
@@ -312,7 +312,7 @@ def register_schedule_automation(app, *, connect, has_permission, driving_servic
                     raise PermissionError('当前账号不能自动排班。')
                 cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             else:
-                # Confirmation is pinned to the preview and cannot call AMap.
+                # Confirmation is pinned to the preview, including its dataset.
                 driving_plan = driving_service.recall(data.get('token'), actor['id'], day)
             if data['action'] == 'confirm' or data.get('save_quotas'): lock_schedule(cur)
             if data.get('save_quotas'):

@@ -1071,6 +1071,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True},
     },
     {
+        "key": "view_driving_matrix",
+        "name": "查看路网数据库",
+        "category": "路网数据管理",
+        "description": "只读查看站间驾车距离、估算用时、采集进度及每周更新情况，不授予站点或排班编辑权限。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "manage_ai_models",
         "name": "管理大模型配置",
         "category": "大模型管理",
@@ -35540,9 +35547,11 @@ from inspection_schedule_tasks import register_schedule_tasks
 register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
 from staff_daily_team_http import register_staff_daily_teams
 register_staff_daily_teams(app, connect=get_db_connection, has_permission=has_permission)
-from amap_driving import DrivingService
+from driving_matrix import DrivingService
 register_schedule_automation(app, connect=get_db_connection, has_permission=has_permission,
-                             driving_service=DrivingService(os.path.join(STORAGE_ROOT, '.schedule-driving')))
+                             driving_service=DrivingService(get_db_connection))
+from driving_matrix_http import register_driving_matrix
+register_driving_matrix(app, connect=get_db_connection, has_permission=has_permission)
 register_schedule_tasks(app, connect=get_db_connection)
 from ai_model_http import register_ai_model_management
 register_ai_model_management(app, connect=get_db_connection, require_management_user=require_management_user)

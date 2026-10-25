@@ -108,4 +108,6 @@ fi
   "from ai_model_settings import catalog; print('后端 AI Key 状态：' + '；'.join(item['name'] + '=' + ('已配置' if item['configured'] else '未配置') for item in catalog()['providers']))"
 
 echo "请确认 Nginx server 已 include deploy/nginx/ywddzx-cache.conf 和 ywddzx-security.conf。"
+phase="安装路网定时采集任务"
+python3 deploy/install_driving_timer.py
 echo "前端与后端部署完成（版本 ${APP_FRONTEND_VERSION}）。"

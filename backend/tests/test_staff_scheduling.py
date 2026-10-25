@@ -62,11 +62,8 @@ class StaffDatabaseTests(unittest.TestCase):
         self.setUp_base()
         self.permissions.update({VIEW, EDIT})
         app = self.client.application
-        from tempfile import TemporaryDirectory
         from tests.driving_fakes import fake_driving_service
-        self.driving_folder = TemporaryDirectory()
-        self.addCleanup(self.driving_folder.cleanup)
-        self.driving_service = fake_driving_service(self.driving_folder.name)
+        self.driving_service = fake_driving_service()
         register_staff_availability(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions)
         register_schedule_automation(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions,
                                      driving_service=self.driving_service)

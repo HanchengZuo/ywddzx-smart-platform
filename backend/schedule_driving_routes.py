@@ -1,4 +1,4 @@
-"""Coverage-constrained groups ranked by directed driving seconds, never geometry."""
+"""Coverage-constrained groups ranked by stored driving seconds, never geometry."""
 from collections import Counter
 import hashlib
 import json
@@ -36,9 +36,9 @@ def resolve_driving_plan(request, prepared):
 def driving_groups(request, matrix):
     """Bounded heuristic: fixed coverage buckets, road-time growth and local swaps.
 
-    Matrix.incoming queries many candidate origins to a selected destination at
-    once. Only measured directed legs are used; missing directions are never
-    filled with straight-line distance or copied from the opposite direction.
+    Matrix.incoming validates the required stored station pairs. Each pair uses
+    one sampled direction shared both ways; no missing pair is substituted with
+    straight-line distance or fetched from the map provider during planning.
     """
     stations = request['stations']
     capacities = request['capacities']
@@ -67,7 +67,7 @@ def driving_groups(request, matrix):
         remaining.remove(seed)
         targets[category(seed)] -= 1
 
-    # Existing members' incoming columns give real candidate -> member routes.
+    # Compare stored estimates for candidate/member pairs.
     # Time is the first criterion; driving metres only break equal-time ties.
     def pair(a, b):
         paths = [edge for edge in (matrix.edge(a, b), matrix.edge(b, a)) if edge is not None]
@@ -149,8 +149,7 @@ def driving_groups(request, matrix):
 
     result = []
     for group in groups:
-        # Ensure both directions for every final leg are measured. One-way roads
-        # can make a->b and b->a different, so the display also preserves order.
+        # Validate every final pair before ordering the shared estimates.
         for sid in group:
             matrix.incoming(sid, group)
         ordered = shortest_order(group, matrix)

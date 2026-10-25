@@ -3,7 +3,9 @@ import os
 import unittest
 from unittest.mock import patch
 
-from amap_driving import DrivingUnavailable
+from driving_errors import DrivingUnavailable
+from driving_matrix import DrivingService
+from tests.test_driving_matrix import seed_ready
 from tests import test_staff_daily_teams as teams
 
 
@@ -28,6 +30,10 @@ class DrivingDispatchTests(unittest.TestCase):
         self.confirm()
         self.cur.execute('UPDATE stations SET longitude=121.1+id*.01')
         self.admin.commit()
+        seed_ready(self)
+        real = DrivingService(self.connect)
+        for name in ('prepare','remember','recall'):
+            setattr(self.driving_service,name,getattr(real,name))
 
     def preview(self, **extra):
         return self.client.post('/api/inspection-schedule/auto', json=dict(action='preview',
@@ -38,24 +44,13 @@ class DrivingDispatchTests(unittest.TestCase):
             strategy='replace_today', replace_confirmed=True, day='2026-10-19',
             offline_count=2, online_count=3, token=preview['token']))
 
-    def test_external_queries_close_business_connections_and_confirmation_is_cache_only(self):
-        original = self.driving_service.fetch
-        def fetch(*args):
-            self.assertTrue(all(conn.closed for conn in self.connections))
-            other = self.connect()
-            try:
-                with other.cursor() as cur:
-                    cur.execute('SELECT pg_try_advisory_xact_lock(9801,1) AS free')
-                    self.assertTrue(cur.fetchone()['free'])
-            finally:
-                other.close()
-            return original(*args)
-        self.driving_service.fetch = fetch
-        preview = self.preview()
-        self.assertEqual(preview.status_code, 200, preview.json)
-        self.assertEqual(preview.json['driving']['provider'], 'amap')
-        self.assertTrue(any(g.get('driving_seconds', 0) > 0 for g in preview.json['groups']))
-        with patch.object(self.driving_service, 'fetch', side_effect=AssertionError('confirmation must not call AMap')):
+    def test_preview_and_confirmation_only_read_published_database_without_http(self):
+        with patch('amap_driving.urlopen', side_effect=AssertionError('planning cannot call AMap')):
+            preview = self.preview()
+            self.assertEqual(preview.status_code, 200, preview.json)
+            self.assertEqual(preview.json['driving']['source'], 'database')
+            self.assertEqual(preview.json['driving']['api_requests'], 0)
+            self.assertTrue(any(g.get('driving_seconds', 0) > 0 for g in preview.json['groups']))
             applied = self.apply(preview.json)
         self.assertEqual(applied.status_code, 200, applied.json)
 
@@ -73,7 +68,7 @@ class DrivingDispatchTests(unittest.TestCase):
         self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_cells')
         self.assertEqual(self.cur.fetchone()['n'], 0)
 
-    def test_changed_coordinates_during_http_conflict_before_any_business_write(self):
+    def test_changed_coordinates_during_database_planning_conflict_before_any_business_write(self):
         prepare = self.driving_service.prepare
         def change(request):
             result = prepare(request)
@@ -90,6 +85,6 @@ class DrivingDispatchTests(unittest.TestCase):
         preview = self.preview()
         self.assertEqual(preview.status_code, 200, preview.json)
         self.record(station=1, table=1, inspector=2)
-        with patch.object(self.driving_service, 'fetch', side_effect=AssertionError('no network')):
+        with patch('amap_driving.urlopen', side_effect=AssertionError('no network')):
             response = self.apply(preview.json)
         self.assertEqual(response.status_code, 409, response.json)
