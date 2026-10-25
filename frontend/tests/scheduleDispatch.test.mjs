@@ -135,12 +135,15 @@ test('a rejected draft move only displays a warning and does not reload or write
   assert.equal(context.error.value, '')
 })
 
-test('automatic dispatch explains coverage balance and interstation distance without online routing or paid AI', () => {
+test('automatic dispatch preserves metering and coverage before driving time without browser API keys or AI', () => {
   const script = source('components/AutomaticSchedule.vue')
   assert.match(script,/先补足当月计量年度计划/)
   assert.match(script,/再均衡季度片区覆盖/)
   assert.match(script,/regional_coverage/)
-  assert.match(script,/cluster_max_km/)
+  assert.match(script,/driving_seconds/)
+  assert.match(script,/driving_meters/)
+  assert.match(script,/预计驾车时间短/)
+  assert.doesNotMatch(script,/cluster_max_km|组内站点最远直线距离/)
   assert.doesNotMatch(script,/route_km|SCHEDULE_ORIGIN|2-opt|建议路线排序/)
   assert.doesNotMatch(script,/AMap|Geocoder|scheduleOrigin|originError|deepseek/i)
   assert.match(script,/offlineCount = ref\(2\)/)

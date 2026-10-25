@@ -54,6 +54,7 @@ done
 export APP_ENV=production
 export TRUST_PROXY_HEADERS=true
 python3 deploy/ai_environment.py --check
+python3 deploy/amap_environment.py --check
 
 phase="构建前端"
 echo "[3/5] 构建并发布前端..."
@@ -81,7 +82,7 @@ fi
 
 phase="重建并启动后端"
 echo "[4/5] 重建并启动后端，执行数据库迁移..."
-python3 deploy/ai_environment.py "${compose[@]}" up --build --force-recreate -d backend
+python3 deploy/amap_environment.py python3 deploy/ai_environment.py "${compose[@]}" up --build --force-recreate -d backend
 
 phase="检查后端启动与数据库迁移结果"
 echo "[5/5] 检查后端启动与数据库迁移结果..."

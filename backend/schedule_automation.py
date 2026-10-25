@@ -15,7 +15,9 @@ from schedule_quotas import read_quotas, save_quotas
 from staff_availability import available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
-from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, field_routes, cluster_diameter, regional_coverage, regional_targets
+from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, regional_coverage, regional_targets
+from schedule_driving_routes import DrivingPlanNeeded, driving_request, resolve_driving_plan
+from amap_driving import DrivingUnavailable
 
 
 def workload(cur, ids, start, end, *, include_plans=True):
@@ -61,7 +63,7 @@ def balanced_allocation(people, demands, loads):
     return result
 
 
-def proposal(cur, actor, day, options=None):
+def proposal(cur, actor, day, options=None, *, driving_plan=None):
     require_workday(cur, day)
     if day != today(): raise ValueError('一键排班只安排今天，请刷新日期。')
     options = options or {}
@@ -163,7 +165,10 @@ def proposal(cur, actor, day, options=None):
     required_ids={s['station_id'] for s in required}
     valid=[s for s in valid if s['station_id'] not in required_ids]+required
     _,coverage = regional_targets(valid,capacity,coverage)
-    routes = field_routes(valid, len(field_teams), quotas['offline'],coverage=coverage,required_ids=required_ids,capacities=capacities)
+    driving = resolve_driving_plan(driving_request(valid, len(field_teams), quotas['offline'], coverage,
+                                                 required_ids, capacities), driving_plan)
+    by_id = {s['station_id']: s for s in valid}
+    routes = [[by_id[sid] for sid in trip['station_ids']] for trip in driving['trips']]
     selected=Counter(s['region'] for route in routes for s in route)
     newly_covered=Counter(s['region'] for route in routes for s in route if not s['covered'])
     for r in coverage:
@@ -174,14 +179,15 @@ def proposal(cur, actor, day, options=None):
         r['proposed']=used[r['region']]
         if r['remaining']>r['proposed']:
             warnings.append(f"计量月度计划：{r['region']}尚缺{r['remaining']}站，本次安排{r['proposed']}站；受可派工人数、坐标或已排班站点限制，剩余任务仍保留。")
-    for team, route in zip(field_teams, routes):
+    for team, route, trip in zip(field_teams, routes, driving['trips']):
         representative = eligible_by_id[team['leader_id']]
         before = dict(loads[representative['id']])
         for index, station in enumerate(route):
             after = dict(before); after['offline'] += 1
             groups.append(dict(**station, mode='offline', person=representative, before=before, after=after,
                 inspector_ids=[p['id'] for p in team['members']], group_name=team['name'], team_members=team['members'],
-                route_order=index+1, cluster_max_km=round(cluster_diameter(route),1)))
+                route_order=index+1, driving_seconds=trip['seconds'], driving_meters=trip['meters'],
+                driving_legs=trip['legs']))
             before = after
     video_people = [p for p in eligible if not p['daily_assignment'] or p['daily_assignment']['mode']=='online']
     if smart: video_people=[p for p in video_people if p['daily_assignment'] and p['daily_assignment']['mode']=='online']
@@ -197,7 +203,7 @@ def proposal(cur, actor, day, options=None):
                                inspector_ids=[p['id']], group_name=p['display_name']))
             loads[p['id']] = after
     evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
-                    board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-compact-v2',
+                    board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-driving-v3',
                     team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'),quota_revision=quota_settings['revision'])
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
@@ -207,13 +213,16 @@ def proposal(cur, actor, day, options=None):
         strategy=options.get('strategy'),replacement=replacement_summary(boards.values(),day),
         personnel=dict(groups=group_assignments(saved_team.get('assignments',[])),
                        revision=saved_team.get('revision',0),updated_by_name=saved_team.get('updated_by_name',''),updated_at=saved_team.get('updated_at','')),
-        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后缩小同组站点间距离。计量年度表任一适用检查项有记录即算已查，未审核也计数；本月目标按本月记录，年度覆盖按全年记录，同站去重。',
+        driving=dict(provider='amap', applicable=any(trip['legs'] for trip in driving['trips']),
+                     calculated_at=driving['calculated_at'], cache_reused=driving['cache_reused'],
+                     api_requests=driving['api_requests'], cache_seconds=7200),
+        route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后优先组合预计驾车时间短的站点；同耗时时参考行驶距离，不使用直线距离。仅统计组内站间行车，不包含办公室出发、返程或现场检查耗时。高德路况估算有时效性，实际出行请以导航为准。',
         available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
         excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or ('尚未保存今日巡检分组或分工与实绩冲突' if smart else '当天已有站点安排或巡检实绩'))
                   for p in people if p not in eligible]), periods
 
 
-def register_schedule_automation(app, *, connect, has_permission):
+def register_schedule_automation(app, *, connect, has_permission, driving_service=None):
     @app.get('/api/inspection-schedule/quotas')
     def schedule_station_quotas():
         actor=getattr(g,'current_user',None)
@@ -283,6 +292,28 @@ def register_schedule_automation(app, *, connect, has_permission):
             cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
             if 'save_quotas' in data and type(data['save_quotas']) is not bool:
                 raise ValueError('站数配置保存选项不合法。')
+            if data.get('save_quotas') and (data['action'] != 'preview' or data.get('strategy') != 'replace_today'):
+                raise ValueError('请在计算智能方案时保存站数配置。')
+            if driving_service is None:
+                raise DrivingUnavailable('驾车排班服务尚未初始化，请联系管理员。')
+            if data['action'] == 'preview':
+                # Gather authorized inputs without saving quotas or taking the
+                # global dispatch lock. HTTP runs after this transaction closes.
+                try:
+                    proposal(cur, actor, day, data)
+                except DrivingPlanNeeded as needed:
+                    route_request = needed.request
+                conn.rollback()
+                cur.close(); cur = None
+                conn.close(); conn = None
+                driving_plan = driving_service.prepare(route_request)
+                conn = connect(); cur = conn.cursor()
+                if not has_permission(cur, actor, VIEW_PERMISSION) or not has_permission(cur, actor, EDIT_PERMISSION):
+                    raise PermissionError('当前账号不能自动排班。')
+                cur.execute("SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='10s'")
+            else:
+                # Confirmation is pinned to the preview and cannot call AMap.
+                driving_plan = driving_service.recall(data.get('token'), actor['id'], day)
             if data['action'] == 'confirm' or data.get('save_quotas'): lock_schedule(cur)
             if data.get('save_quotas'):
                 if data['action']!='preview' or data.get('strategy')!='replace_today':
@@ -290,7 +321,7 @@ def register_schedule_automation(app, *, connect, has_permission):
                 current=save_quotas(cur,actor,data)
                 data=dict(data,quota_revision=current['revision'])
             window = actuals_window(today())
-            result, periods = proposal(cur, actor, day, data)
+            result, periods = proposal(cur, actor, day, data, driving_plan=driving_plan)
             if data['action'] == 'confirm':
                 if result['token'] != data.get('token'): raise ScheduleConflict('档期、实绩或排班已变化，请重新预览后确认。')
                 if not result['groups']: raise ValueError('当前没有可派工人员或待排班单元格。')
@@ -312,10 +343,15 @@ def register_schedule_automation(app, *, connect, has_permission):
                           inspector_ids=group.get('inspector_ids', [group['person']['id']]), scheduled_date=day.isoformat()), chosen, start, end, cache)
                 assert_actuals_window(window,today())
                 result['current_assignments']=today_assignments([read_board(cur,*p) for p in periods.values()],day)
+            if data['action'] == 'preview':
+                driving_service.remember(result['token'], actor['id'], day, driving_plan)
             conn.commit()
             response = jsonify(success=True, **result)
             response.headers['Cache-Control'] = 'private, no-store'
             return response
+        except DrivingUnavailable as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False, error=str(exc)), 503
         except (ValueError, PermissionError) as exc:
             if conn: conn.rollback()
             return jsonify(success=False, error=str(exc)), 409 if isinstance(exc, ScheduleConflict) else 403 if isinstance(exc, PermissionError) else 400

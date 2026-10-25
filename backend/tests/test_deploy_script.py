@@ -31,6 +31,7 @@ class DeploymentScriptTests(unittest.TestCase):
         shutil.copy(PROJECT_ROOT / 'deploy.sh', self.repo / 'deploy.sh')
         (self.repo / 'deploy').mkdir()
         shutil.copy(PROJECT_ROOT / 'deploy/ai_environment.py', self.repo / 'deploy/ai_environment.py')
+        shutil.copy(PROJECT_ROOT / 'deploy/amap_environment.py', self.repo / 'deploy/amap_environment.py')
         self.version = json.loads((PROJECT_ROOT / 'frontend/package.json').read_text())['version']
         (self.repo / 'frontend/package.json').write_text(json.dumps({'version': self.version}))
         self.log = self.root / 'commands.log'
@@ -41,6 +42,9 @@ class DeploymentScriptTests(unittest.TestCase):
         self.keys_file = self.root / 'ai.env'
         self.keys_file.write_text('\n'.join(f'{key}=fake-deploy-key-{key}' for key in AI_KEYS))
         self.env['AI_KEYS_ENV_FILE'] = str(self.keys_file)
+        self.amap_keys_file = self.root / 'amap.env'
+        self.amap_keys_file.write_text('AMAP_KEY=test-only-web-service-key\n')
+        self.env['AMAP_KEYS_ENV_FILE'] = str(self.amap_keys_file)
         shim = self.bin / 'shim'
         shim.write_text('''#!/bin/bash
 name="${0##*/}"
@@ -68,6 +72,7 @@ case "$name" in
         for key in DEEPSEEK_API_KEY ZHIPU_API_KEY DASHSCOPE_API_KEY MIMO_API_KEY; do
           [ -z "${!key:-}" ] || printf 'backend-ai %s=present\\n' "$key" >> "$TEST_LOG"
         done
+        [ -z "${AMAP_WEB_SERVICE_KEY:-}" ] || printf 'backend-amap=present\\n' >> "$TEST_LOG"
         if [ -n "${EXPECTED_ZHIPU_API_KEY:-}" ]; then
           [ "$ZHIPU_API_KEY" = "$EXPECTED_ZHIPU_API_KEY" ] || exit 1
         fi
@@ -113,6 +118,8 @@ esac
         for key in AI_KEYS:
             self.assertIn(f'backend-ai {key}=present', commands)
             self.assertNotIn(f'fake-deploy-key-{key}', result.stdout + result.stderr + '\n'.join(commands))
+        self.assertIn('backend-amap=present', commands)
+        self.assertNotIn('test-only-web-service-key', result.stdout + result.stderr + '\n'.join(commands))
 
     def test_existing_project_and_exported_keys_are_not_overridden_by_fallback_file(self):
         self.configure()

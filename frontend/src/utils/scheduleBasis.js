@@ -51,7 +51,7 @@ export function scheduleBasis(preview) {
         coverageCount > 0
           ? meteringCount > 0
             ? `先保留 ${meteringCount} 个计量优先站点，再用剩余名额按片区覆盖均衡选入 ${coverageCount} 站。`
-            : `本次 ${coverageCount} 个普通现场站点按片区覆盖均衡选入，再优化同组站点间距离。`
+            : `本次 ${coverageCount} 个普通现场站点按片区覆盖均衡选入，再优先组合预计驾车时间短的站点。`
           : meteringCount > 0
             ? '本次现场选站全部用于计量优先任务，没有使用普通片区均衡名额。下方覆盖数据仅供查看。'
             : '本次没有新增现场站点方案，因此未采用片区覆盖均衡选站；视频方案不计入此标识。',

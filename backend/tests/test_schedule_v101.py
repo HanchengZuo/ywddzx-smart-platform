@@ -213,7 +213,8 @@ class CoverageDatabaseTests(unittest.TestCase):
         stats={r['region']:r for r in preview['regional_coverage']}
         self.assertEqual((stats['松金']['total'],stats['松金']['checked'],stats['松金']['reserved']),(2,0,1))
         self.assertEqual(stats['浦东']['selected'],1)
-        self.assertEqual(field[0]['cluster_max_km'],0)
+        self.assertEqual(field[0]['driving_seconds'],0)
+        self.assertEqual(field[0]['driving_meters'],0)
         self.record(station=1,table=1,inspector=3)
         stats={r['region']:r for r in self.preview()['regional_coverage']}
         self.assertEqual((stats['松金']['checked'],stats['松金']['reserved']),(1,0))
