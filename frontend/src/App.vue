@@ -2097,6 +2097,7 @@ const handleLogout = async () => {
 
 <style>
 :root {
+  font-size: 16px;
   --bg-app: #eef3f8;
   --bg-panel: rgba(255, 255, 255, 0.96);
   --bg-panel-soft: #f8fafc;

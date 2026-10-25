@@ -1,3 +1,5 @@
+import { densityMediaMode } from './uiDensity.js'
+
 // Export the displayed, saved report, not the mutable workbench or PPT preview.
 function standaloneStyles(doc) {
   const readRules = rules => [...rules].map(rule => {
@@ -10,6 +12,11 @@ function standaloneStyles(doc) {
       return `${rule.selectorText}{${holder.style.cssText}}`
     }
     if (rule.type === 4 || rule.type === 12) {
+      // Workspace density is not a document format. Preserve the report's
+      // original responsive typography in downloaded HTML and print output.
+      const density = rule.type === 4 ? densityMediaMode(rule.conditionText) : null
+      if (density === 'compact') return ''
+      if (density === 'regular') return readRules(rule.cssRules)
       return `@${rule.type === 4 ? 'media' : 'supports'} ${rule.conditionText}{${readRules(rule.cssRules)}}`
     }
     // Do not include font downloads, imports or animations from the application shell.
