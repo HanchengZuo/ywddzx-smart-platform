@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { buildReportHtmlSections, equipmentPhraseDistribution, reportReadingMetrics } from '../src/utils/reportHtmlContent.js'
 import { distributionRows } from '../src/utils/reportDistributions.js'
+import { baseParse } from '@vue/compiler-dom'
 
 test('distribution colors always exist and preserve counts, actual percentages and zeros', () => {
   const rows = distributionRows([{ name: '现场资金管理', count: 51, percentage: 82.3 }, { name: '卡类资金管理', count: 7, percentage: 11.3 }, { name: '设备设施管理', count: 4, percentage: 6.5 }, { name: '零值', count: 0, percentage: 0 }])
@@ -54,4 +55,31 @@ test('distribution and shared report reader compile as safe Vue text, including 
     assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: String(path), id: name, compilerOptions: { bindingMetadata: script.bindings } }).errors, [])
     assert.doesNotMatch(source, /v-html|axios|fetch\(/)
   }
+})
+
+test('every report-body disclosure opens by default and fresh report identities remount the reader', () => {
+  const nodes = []
+  const visit = node => {
+    if (node.type === 1) nodes.push(node)
+    for (const child of node.children || []) visit(child)
+  }
+  for (const name of ['ReportHtmlContent', 'ReportDistribution']) {
+    const source = readFileSync(new URL(`../src/components/${name}.vue`, import.meta.url), 'utf8')
+    visit(baseParse(parse(source).descriptor.template.content))
+  }
+  const details = nodes.filter(node => node.tag === 'details')
+  assert.equal(details.length, 2)
+  for (const node of details) assert.ok(node.props.some(p => p.type === 6 && p.name === 'open'))
+  const chapter = nodes.find(node => node.tag === 'component' && node.props.some(p => p.type === 7 && p.arg?.content === 'is' && p.exp?.content.includes("'details'")))
+  assert.equal(chapter.props.find(p => p.type === 7 && p.arg?.content === 'open').exp.content, 'section.collapsible || undefined')
+  const view = readFileSync(new URL('../src/views/inspection/ReportGeneratorView.vue', import.meta.url), 'utf8')
+  const reader = baseParse(parse(view).descriptor.template.content)
+  const readers = []
+  const findReader = node => { if (node.tag === 'ReportHtmlContent') readers.push(node); for (const child of node.children || []) findReader(child) }
+  findReader(reader)
+  assert.equal(readers.length, 1)
+  const key = readers[0].props.find(p => p.type === 7 && p.arg?.content === 'key').exp.content
+  for (const identity of ['selectedReportType', 'selectedSnapshotId', 'reportGeneratedAt']) assert.ok(key.includes(identity))
+  const log = parse(readFileSync(new URL('../src/components/ReportGenerationLog.vue', import.meta.url), 'utf8')).descriptor.template.content
+  assert.doesNotMatch(log, /<details[^>]*\bopen\b/)
 })

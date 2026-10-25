@@ -440,6 +440,7 @@
       </div>
 
       <ReportHtmlContent v-if="isQualityMeasurementReport || isNonOilReport || (isEquipmentFacilitiesReport && report.equipment_analysis)"
+        :key="`${selectedReportType}:${selectedSnapshotId}:${reportGeneratedAt}`"
         :report="report" :report-type="selectedReportType" :resolve-image="resolveImage"
         @photo="openImagePreview($event.issue_photo, `${$event.station_name || '问题'}照片`)" />
 
