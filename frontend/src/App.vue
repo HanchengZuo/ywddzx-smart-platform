@@ -389,11 +389,6 @@
           <span class="nav-item-icon">备</span>
           <span v-if="!sidebarCollapsed">数据备份管理</span>
         </button>
-        <button v-if="canViewDrivingMatrix" class="nav-item"
-          :class="{ active: isActive('/management/driving-matrix'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/management/driving-matrix')" :title="sidebarCollapsed ? '路网数据管理' : ''">
-          <span class="nav-item-icon">路</span><span v-if="!sidebarCollapsed">路网数据管理</span>
-        </button>
         <button v-if="canManageAiModels" class="nav-item"
           :class="{ active: isActive('/management/ai-models'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/ai-models')" :title="sidebarCollapsed ? '大模型管理' : ''">
@@ -1020,7 +1015,6 @@ const canManageAutoAudit = computed(() => hasPermissionKey('manage_auto_audit_ru
 const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
 const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
 const canManageAiModels = computed(() => hasPermissionKey('manage_ai_models') && isPageVisible('/management/ai-models'))
-const canViewDrivingMatrix = computed(() => hasPermissionKey('view_driving_matrix') && isPageVisible('/management/driving-matrix'))
 const canManagePageVisibility = computed(() => hasPermissionKey('manage_page_visibility'))
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
@@ -1031,7 +1025,6 @@ const canViewManagementSection = computed(() => (
   canManageInspectionCompletion.value ||
   canManageAutoAudit.value ||
   canManageBackups.value ||
-  canViewDrivingMatrix.value ||
   canManageAiModels.value ||
   canManageAiUsage.value ||
   canManagePageVisibility.value
