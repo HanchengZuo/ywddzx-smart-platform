@@ -43,7 +43,7 @@
       </div>
     </template>
 
-    <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters }">
+    <div class="filter-card card-surface" :class="{ 'mobile-expanded': showMobileFilters || isMobileReview, 'mobile-review-filters': isMobileReview }">
       <div class="filter-head">
         <div>
           <div class="filter-kicker">筛选面板</div>
@@ -51,14 +51,14 @@
         </div>
         <div class="filter-head-actions">
           <span v-if="activeFilterCount" class="active-filter-pill">已选 {{ activeFilterCount }} 项</span>
-          <button v-if="isMobileView" class="btn btn-secondary mobile-filter-toggle" type="button"
+          <button v-if="isMobileView && !isReviewQueue" class="btn btn-secondary mobile-filter-toggle" type="button"
             @click="showMobileFilters = !showMobileFilters">
             {{ showMobileFilters ? '收起筛选' : '展开筛选' }}
           </button>
         </div>
       </div>
 
-      <FilterSummary :fields="filterSummaryFields" />
+      <FilterSummary :fields="filterSummaryFields" :manual="isMobileReview" />
 
       <div v-if="currentRole === 'station_manager'" class="filter-grid">
         <div class="filter-item" :data-filter-state="filterFieldState('region')">
@@ -108,18 +108,18 @@
       </div>
 
       <div v-else class="filter-grid">
-        <div v-for="[key, label] in reviewFilterDefinitions" :key="key" class="filter-item" :data-filter-state="filterFieldState(key)">
+        <div v-for="[key, label] in visibleReviewFilterDefinitions" :key="key" class="filter-item" :data-filter-key="key" :data-filter-state="filterFieldState(key)">
           <label>{{ label }}</label>
           <div v-if="key === 'dateRange'" class="review-date-range">
             <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
           </div>
-          <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" />
+          <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" :placeholder="isMobileReview ? '搜索并多选' + label : undefined" />
           <input v-else v-model="filters[key]" :type="key === 'month' ? 'month' : 'text'" :placeholder="'请输入' + label" />
         </div>
       </div>
       <div class="filter-actions">
         <button class="btn btn-secondary" type="button" @click="resetFilters">重置筛选</button>
-        <button class="btn btn-secondary" type="button" @click="isReviewQueue ? applyFilters() : fetchMyIssues()" :disabled="loading">
+        <button class="btn" :class="isMobileReview ? 'btn-primary' : 'btn-secondary'" type="button" @click="isReviewQueue ? applyFilters() : fetchMyIssues()" :disabled="loading">
           {{ isReviewQueue ? loading ? '筛选加载中...' : '开始筛选' : loading ? '刷新中...' : '刷新数据' }}
         </button>
       </div>
@@ -675,7 +675,7 @@ import { createAutoIssuePhotoComposition } from '@/utils/imageComposer'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
 import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
-import { reviewFilterDefinitions, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
+import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
@@ -758,6 +758,8 @@ const serverOptions = ref({})
 let listController, optionsController, listSequence = 0, initialized = false, acceptingPage = false
 
 const isMobileView = ref(false)
+const isMobileReview = computed(() => isMobileView.value && isReviewQueue.value)
+const visibleReviewFilterDefinitions = computed(() => isMobileReview.value ? mobileReviewFilterDefinitions : reviewFilterDefinitions)
 const showMobileFilters = ref(false)
 const columnSettingsOpen = ref(false)
 
@@ -862,7 +864,7 @@ const filteredInspectionTableOptions = computed(() => filterOptionByKeyword(insp
 
 
 const filterSummaryFields = computed(() => buildFilterSummary(
-  currentRole.value === 'station_manager' ? [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]] : reviewFilterDefinitions,
+  currentRole.value === 'station_manager' ? [["region","站点所属地"],["station","站点名称"],["inspectionTableName","检查表"]] : visibleReviewFilterDefinitions.value,
   filters.value, isReviewQueue.value ? appliedFilters.value : filters.value
 ))
 const filterFieldState = (key) => filterSummaryFields.value.find((item) => item.key === key)?.state || 'empty'
@@ -999,7 +1001,9 @@ const rememberMobileStationFilter = (value) => {
 watch(() => filters.value.station, value => rememberMobileStationFilter(value), { deep: true })
 
 const resetFilters = () => {
-  filters.value = currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters()
+  filters.value = isMobileReview.value
+    ? { ...filters.value, station: [], inspectionTableName: [] }
+    : currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters()
   if (isMobileView.value) {
     localStorage.removeItem(getMobileStationStorageKey())
   }
@@ -1193,7 +1197,7 @@ const fetchMyIssues = async () => {
   try {
     loading.value = true
     const response = await axios.get('/api/my-issues', {
-      params: isReviewQueue.value ? reviewRequestParams(appliedFilters.value, page.value, pageSize.value) : { user_id: userId },
+      params: isReviewQueue.value ? reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value) : { user_id: userId },
       signal: listController.signal,
     })
     if (sequence !== listSequence) return
@@ -1213,10 +1217,13 @@ const fetchMyIssues = async () => {
 }
 
 const applyFilters = () => {
-  if (filters.value.dateFrom && filters.value.dateTo && filters.value.dateFrom > filters.value.dateTo) {
+  if (!isMobileReview.value && filters.value.dateFrom && filters.value.dateTo && filters.value.dateFrom > filters.value.dateTo) {
     showActionToast('开始日期不能晚于结束日期。', 'error'); return
   }
-  appliedFilters.value = JSON.parse(JSON.stringify(filters.value))
+  // Mobile applies only its two visible fields, preserving desktop draft/applied conditions.
+  appliedFilters.value = JSON.parse(JSON.stringify(isMobileReview.value
+    ? { ...appliedFilters.value, station: filters.value.station, inspectionTableName: filters.value.inspectionTableName }
+    : filters.value))
   acceptingPage = true; page.value = 1; acceptingPage = false
   fetchMyIssues()
 }
@@ -3383,6 +3390,22 @@ onBeforeUnmount(() => {
   .drawer-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .mobile-review-filters .filter-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .mobile-review-filters .filter-actions .btn {
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .mobile-review-filters :deep(.filter-summary) {
+    margin-bottom: 14px;
+    padding: 10px 12px;
   }
 
   .pagination-bar {
