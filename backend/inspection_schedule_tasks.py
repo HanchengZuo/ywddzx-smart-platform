@@ -57,7 +57,7 @@ def personal_agenda(cur, user_id, summary=None):
                 online=counts.get('online', dict(count=0, overdue=0)))
 
 
-def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id):
+def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id, *, replace_team=False):
     if chosen['mode']=='annual':
         # Both annual columns are field-team day tasks, never monthly video carry-over.
         # Their distinct column keys use a stable year key so date moves cancel the old task too.
@@ -70,9 +70,9 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, e
         AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')})''', key)
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s
-      AND status='pending' AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s))
+      AND (status='pending' OR (%s AND status IN ('completed','expired'))) AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s))
         OR team_ids<>%s::jsonb OR plan_team IS DISTINCT FROM %s::jsonb)''',
-      (*key, day, ids, json.dumps(ids), json.dumps(team,ensure_ascii=False)))
+      (*key, replace_team, day, ids, json.dumps(ids), json.dumps(team,ensure_ascii=False)))
     if not ids:
         return
     for uid in ids:

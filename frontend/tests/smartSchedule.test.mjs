@@ -30,7 +30,7 @@ test('dispatched source or field destination refuses a student move before sendi
     )
     await context.dropStudent({ name: '外勤乙组', leader_id: 2 })
     assert.equal(calls.length, 1)
-    assert.match(calls[0], /须先撤下/)
+    assert.match(calls[0], /派工.*巡检实绩|视频派工/)
     assert.equal(context.draggingStudent.value, null)
   }
 })

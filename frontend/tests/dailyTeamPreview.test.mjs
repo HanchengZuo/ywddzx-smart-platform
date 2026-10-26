@@ -159,9 +159,40 @@ test('preview refuses managers, busy/missing students, invalid leaders and cross
               property === 'station_modes' ? ['offline'] : [{ mode: 'offline', count: 1 }],
           },
     )
-    assert.throws(() => movePreviewStudent(preview, locked, 10, null), /派工或巡检实绩/)
+    if(property === 'actual_modes') assert.throws(() => movePreviewStudent(preview, locked, 10, null), /派工或巡检实绩/)
+    else assert.equal(movePreviewStudent(preview, locked, 10, null).student_leaders['10'], null)
     assert.equal(movePreviewStudent(preview, locked, 10, 2).student_leaders['10'], 2)
   }
+})
+
+test('unstarted field groups receive returned-free members without mutating saved groups', () => {
+  const { preview, people } = fixture()
+  const free={id:20,display_name:'重新有空',position:'大学生',available:true,station_modes:[],actual_modes:[]}
+  const context=reactive({...preview,current_token:'current',unassigned_people:[free]})
+  context.groups[0].has_dispatch=true
+  context.groups[0].dispatch_locked=false
+  const draft=currentTeamDraft(context)
+  const joined=movePreviewMember(draft,[...people,free],20,1)
+  assert.equal(joined.groups[0].members.length,3)
+  assert.equal(joined.unassigned_people.length,0)
+  assert.equal(context.unassigned_people.length,1)
+  assert.equal(context.groups[0].members.length,2)
+  assert.deepEqual(joined.moves,[{person_id:20,leader_id:1}])
+  const video=movePreviewMember(currentTeamDraft(context),[...people,free],20,null)
+  assert.equal(video.groups.find(g=>g.mode==='online').members[0].id,20)
+  const locked=currentTeamDraft(context)
+  locked.groups[0].dispatch_locked=true
+  assert.throws(()=>movePreviewMember(locked,[...people,free],20,1),/派工/)
+  assert.throws(()=>movePreviewMember(draft,people,20,1),/有空/)
+})
+
+test('pending field plans allow transfers; video plans and actual mode conflicts remain protected', () => {
+  const {preview,people}=fixture()
+  const field=people.map(p=>p.id===10?{...p,station_modes:['offline']}:p)
+  assert.equal(movePreviewMember(preview,field,10,2).moves[0].leader_id,2)
+  assert.equal(movePreviewMember(preview,field,10,null).moves[0].leader_id,null)
+  const video=people.map(p=>p.id===10?{...p,station_modes:['online']}:p)
+  assert.throws(()=>movePreviewMember(preview,video,10,2),/派工/)
 })
 
 test('the preview drop handler makes no request or successful-save event until confirm, with drag data fallback', async () => {

@@ -20,7 +20,7 @@ export function movePreviewStudent(preview, people, studentId, leaderId) {
   if (leaderId !== null && !leader) throw new Error('请选择预览中的外勤带队组或内勤视频组。')
   const mode = leader ? 'offline' : 'online'
   if (
-    (eligible.station_modes || []).some((m) => m !== mode) ||
+    ((eligible.station_modes || []).includes('online') && mode !== 'online') ||
     (eligible.actual_modes || []).some((m) => m.mode !== mode)
   )
     throw new Error('该学生已有另一种站点派工或巡检实绩，不能调整到此组。')
@@ -58,22 +58,45 @@ export function movePreviewStudent(preview, people, studentId, leaderId) {
 export function currentTeamDraft(context) {
   return {
     ...context,
-    groups: context.groups.map((group) => ({ ...group, members: group.members.map((p) => ({ ...p })) })),
+    groups: context.groups.map((group) => ({
+      ...group,
+      members: group.members.map((p) => ({ ...p })),
+    })),
     source: 'current',
     token: context.current_token,
     moves: [],
+    unassigned_people: (context.unassigned_people || []).map((p) => ({ ...p })),
   }
 }
 
 export function movePreviewMember(preview, people, personId, leaderId) {
-  const assignments = preview.groups.flatMap((group) => group.members)
-  const person = assignments.find((p) => p.id === personId)
+  let assignments = preview.groups.flatMap((group) => group.members)
   const eligible = new Map(people.filter((p) => p.available === true).map((p) => [p.id, p]))
+  let person = assignments.find((p) => p.id === personId)
+  if (!person && preview.unassigned_people?.some((p) => p.id === personId)) {
+    const free = eligible.get(personId)
+    if (free && !free.station_modes?.length) {
+      person = {
+        id: free.id,
+        display_name: free.display_name,
+        position: free.position,
+        has_driving_permit: free.has_driving_permit === true,
+        mode: 'unassigned',
+        leader_id: null,
+      }
+      assignments = [...assignments, person]
+    }
+  }
   if (!person || !eligible.has(personId)) throw new Error('只能调整今日有空且已参与方案的人员。')
   const source = preview.groups.find((g) => g.members.some((p) => p.id === personId))
   const target = preview.groups.find((g) => g.mode === 'offline' && g.leader_id === leaderId)
-  if (person.dispatch_locked || source.dispatch_locked || target?.dispatch_locked)
-    throw new Error('相关组或人员已有今日站点派工，请先撤下全部今日排班。')
+  if (person.dispatch_locked || source?.dispatch_locked || target?.dispatch_locked)
+    throw new Error(
+      person.lock_reason ||
+        source?.lock_reason ||
+        target?.lock_reason ||
+        '相关组派工后已有巡检实绩，或人员已有视频派工，不能调整。',
+    )
   const manager = person.position === '管理人员'
   if (manager && leaderId !== null && leaderId !== person.id)
     throw new Error('一个外勤组只能有一位管理人员；可移至内勤视频组或独立带队。')
@@ -89,7 +112,11 @@ export function movePreviewMember(preview, people, personId, leaderId) {
       return { ...p }
     const chosenMode = p.id === personId ? mode : 'online'
     const info = eligible.get(p.id)
-    if (!info || info.station_modes?.length || p.dispatch_locked)
+    if (
+      !info ||
+      (info.station_modes?.includes('online') && chosenMode !== 'online') ||
+      p.dispatch_locked
+    )
       throw new Error('相关组员的档期或派工已变化，请重新载入。')
     if (info.actual_modes?.some((m) => m.mode !== chosenMode))
       throw new Error('相关人员已有另一种巡检实绩，不能调整到此组。')
@@ -127,5 +154,6 @@ export function movePreviewMember(preview, people, personId, leaderId) {
         ),
       })),
     moves: [...(preview.moves || []), { person_id: personId, leader_id: leaderId }],
+    unassigned_people: (preview.unassigned_people || []).filter((p) => p.id !== personId),
   }
 }
