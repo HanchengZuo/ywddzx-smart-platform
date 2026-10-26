@@ -144,6 +144,13 @@ test('all photo-lightbox pages use the shared viewer instead of their old implem
   ]
   for (const page of pages) {
     const source = readFileSync(new URL(`../src/views/${page}.vue`, import.meta.url), 'utf8')
+    if (page === 'inspection/RegisterView') {
+      assert.match(source, /<InspectionPhotoUpload/)
+      const upload = readFileSync(new URL('../src/components/InspectionPhotoUpload.vue', import.meta.url), 'utf8')
+      assert.match(upload, /import InspectionPhotoPreview from/)
+      assert.match(upload, /<InspectionPhotoPreview[^>]+@close=/s)
+      continue
+    }
     assert.match(source, /import InspectionPhotoPreview from/, page)
     assert.match(source, /<InspectionPhotoPreview[^>]+@close=/s, page)
     assert.doesNotMatch(
@@ -157,6 +164,7 @@ test('all photo-lightbox pages use the shared viewer instead of their old implem
 test('shared photo viewer and all consumers compile, including multiple template roots', () => {
   const files = [
     'components/InspectionPhotoPreview',
+    'components/InspectionPhotoUpload',
     ...[
       'inspection/MyIssuesView',
       'inspection/IssuesView',

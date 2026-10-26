@@ -30,6 +30,7 @@ const createItem = (photo, cell) => ({
   y: Math.round(cell.y),
   w: Math.round(cell.w),
   h: Math.round(cell.h),
+  fit: 'contain',
   scale: 1,
   offsetX: 0,
   offsetY: 0
@@ -131,9 +132,12 @@ export const createAutoIssuePhotoComposition = (photos = []) => {
   }
 }
 
+// New layouts preserve the entire image; legacy editor layouts retain their original crop.
+const itemBaseScale = (item, photo) => (item.fit === 'contain' ? Math.min : Math.max)(item.w / photo.img.width, item.h / photo.img.height)
+
 export const clampCompositionItemOffset = (item, photo) => {
   if (!item || !photo?.img) return item
-  const baseScale = Math.max(item.w / photo.img.width, item.h / photo.img.height)
+  const baseScale = itemBaseScale(item, photo)
   const scale = baseScale * clamp(Number(item.scale || 1), 1, 3)
   const renderedWidth = photo.img.width * scale
   const renderedHeight = photo.img.height * scale
@@ -180,7 +184,7 @@ export const renderIssuePhotoComposition = (canvas, photos = [], composition, op
     ctx.fillRect(item.x, item.y, item.w, item.h)
 
     if (photo?.img) {
-      const baseScale = Math.max(item.w / photo.img.width, item.h / photo.img.height)
+      const baseScale = itemBaseScale(item, photo)
       const scale = baseScale * item.scale
       const drawWidth = photo.img.width * scale
       const drawHeight = photo.img.height * scale
