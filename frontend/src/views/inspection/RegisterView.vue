@@ -248,65 +248,18 @@
               <textarea v-model="form.description" rows="4" :placeholder="form.isHighlight ? '请记录值得推广的现场做法与亮点' : '请填写现场实际问题描述'"></textarea>
             </div>
 
-            <div ref="issuePhotoUploadSectionRef" class="form-item form-item-full upload-follow-anchor">
+            <div class="form-item form-item-full">
               <label>{{ form.isHighlight ? '上传亮点照片' : '上传问题照片' }}</label>
-              <div class="upload-card">
-                <input id="issue-photo-upload" class="upload-input" type="file" accept="image/*" multiple
-                  @change="handleFileChange" />
-                <input id="issue-photo-camera" class="upload-input" type="file" accept="image/*" capture="environment"
-                  @change="handleFileChange" />
-
-                <div class="upload-dropzone" :class="{ 'drag-active': isPhotoDragActive }" role="button" tabindex="0"
-                  @click="openIssuePhotoPicker" @keydown.enter.prevent="openIssuePhotoPicker"
-                  @keydown.space.prevent="openIssuePhotoPicker" @dragenter.prevent="handlePhotoDragEnter"
-                  @dragover.prevent="handlePhotoDragOver" @dragleave.prevent="handlePhotoDragLeave"
-                  @drop.prevent="handlePhotoDrop" @paste="handlePhotoPaste">
-                  <div class="upload-icon">↑</div>
-                  <div class="upload-title">
-                    <span class="desktop-upload-title">选择或拖拽{{ form.isHighlight ? '亮点' : '问题' }}照片</span>
-                    <span class="mobile-upload-title">选择或添加{{ form.isHighlight ? '亮点' : '问题' }}照片</span>
-                  </div>
-                  <div class="upload-desc">
-                    最多上传3张，系统会自动拼接成一张照片提交；也可进入图片编辑裁剪，并用圆形或矩形标注重点。
-                    <span class="desktop-drop-hint">桌面端可拖拽多张图片，也可复制图片后在此处粘贴上传。</span>
-                  </div>
-                  <div class="upload-trigger-group">
-                    <label for="issue-photo-camera" class="upload-trigger upload-trigger-secondary" @click.stop>拍照添加</label>
-                    <label for="issue-photo-upload" class="upload-trigger" @click.stop>相册选择</label>
-                  </div>
-                </div>
-
-                <div v-if="imagePreviewUrl" class="image-preview-panel">
-                  <button class="image-preview-thumb-btn" type="button" @click="openIssuePhotoPreview">
-                    <img :src="imagePreviewUrl" :alt="form.isHighlight ? '亮点照片预览' : '问题照片预览'" class="image-preview-thumb" />
-                  </button>
-                  <div class="image-preview-meta">
-                    <div class="image-preview-title">最终提交照片</div>
-                    <div class="image-preview-name">
-                      {{ sourcePhotos.length > 1 ? `已由 ${sourcePhotos.length} 张照片拼接生成` : imageFile?.name || '已上传图片' }}
-                    </div>
-                    <div v-if="sourcePhotos.length" class="source-photo-strip">
-                      <span v-for="photo in sourcePhotos" :key="photo.id" class="source-photo-chip">
-                        <img :src="photo.url" :alt="photo.name" />
-                        <button type="button" @click="removeSourcePhoto(photo.id)">×</button>
-                      </span>
-                    </div>
-                    <div class="image-preview-actions">
-                      <button v-if="sourcePhotos.length" class="btn btn-secondary image-action-btn" type="button"
-                        @click="openPhotoEditor">图片编辑</button>
-                      <label for="issue-photo-camera" class="btn btn-light image-action-btn">继续拍照</label>
-                      <label for="issue-photo-upload" class="btn btn-light image-action-btn">继续添加</label>
-                      <button class="btn btn-secondary image-action-btn" type="button" @click="clearImage">清空图片</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <InspectionPhotoUpload ref="issuePhotoUploadRef" v-model="imageFile" id-prefix="issue-photo"
+                :label="form.isHighlight ? '亮点照片' : '问题照片'" :active="hasPermission && showIssueFields"
+                :disabled="submitting" @update:model-value="rememberIssuePhoto" @notify="showSubmitToast"
+                @busy-change="photoProcessing = $event" />
             </div>
           </div>
         </template>
 
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit" :disabled="submitting">
+          <button class="btn btn-primary" type="submit" :disabled="submitting || photoProcessing">
             {{ submitting ? '提交中...' : normalizedHasIssue === 'yes' && expectedIssueCount ? `提交登记（${expectedIssueCount}条问题）` : '提交登记' }}
           </button>
           <button class="btn btn-secondary" type="button" @click="resetForm" :disabled="submitting">重置</button>
@@ -320,19 +273,13 @@
     </div>
 
     <RegistrationDuplicateDialog v-if="duplicateWarning" :warning="duplicateWarning" @resolve="resolveDuplicateWarning" />
-    <InspectionPhotoPreview v-if="issuePhotoPreviewVisible" :url="imagePreviewUrl"
-      :title="form.isHighlight ? '亮点照片' : '问题照片'" @close="closeIssuePhotoPreview" />
-
-    <PhotoEditor v-if="photoEditorVisible" :photos="sourcePhotos" :composition="photoComposition"
-      :title="form.isHighlight ? '亮点照片编辑' : '问题照片编辑'" :save-photo="savePhotoEditor" @close="closePhotoEditor" />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
-import PhotoEditor from '@/components/PhotoEditor.vue'
-import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
+import InspectionPhotoUpload from '@/components/InspectionPhotoUpload.vue'
 import RegistrationDuplicateDialog from '@/components/RegistrationDuplicateDialog.vue'
 import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
@@ -340,23 +287,6 @@ import axios from 'axios'
 import { useRoute } from 'vue-router'
 import { pinyin } from 'pinyin-pro'
 import AiContentBadge from '@/components/AiContentBadge.vue'
-import {
-  clearFileInputsById,
-  getImageFilesFromClipboardEvent,
-  getImageFilesFromDataTransfer,
-  getImageFilesFromFileList,
-  hasImageInDataTransfer,
-  isDesktopImageDropEnabled,
-  loadImageFromFile,
-  prepareImageFile,
-  prepareImagePreview,
-  revokeObjectUrl,
-  scrollImageUploadIntoView
-} from '@/utils/imageUpload'
-import {
-  createAutoIssuePhotoComposition,
-  exportIssuePhotoCompositionFile
-} from '@/utils/imageComposer'
 import {
   createLocalDraftManager,
   draftAssetToFile,
@@ -398,18 +328,13 @@ const aiReferenceMessageType = ref('info')
 const aiNoRelated = ref(false)
 const selectedStandardSnapshots = ref({})
 const imageFile = ref(null)
-const imagePreviewUrl = ref('')
 const imageDraftAsset = ref(null)
-const sourcePhotos = ref([])
-const photoComposition = ref({ width: 1200, height: 800, items: [], circles: [] })
-const photoEditorVisible = ref(false)
-const issuePhotoPreviewVisible = ref(false)
-const issuePhotoUploadSectionRef = ref(null)
-const isPhotoDragActive = ref(false)
+const issuePhotoUploadRef = ref(null)
+const photoProcessing = ref(false)
+let imageDraftSequence = 0
 const submitMessage = ref('')
 const submitMessageType = ref('info')
 let submitMessageTimer = null
-let photoDragDepth = 0
 const showSubmitToast = (message, type = 'info') => {
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
@@ -1041,8 +966,6 @@ const restoreRegisterDraft = async () => {
         if (restoredFile) {
           imageFile.value = restoredFile
           imageDraftAsset.value = draft.image
-          revokeObjectUrl(imagePreviewUrl.value)
-          imagePreviewUrl.value = URL.createObjectURL(restoredFile)
         }
       } catch {
         imageDraftAsset.value = null
@@ -1057,198 +980,28 @@ const restoreRegisterDraft = async () => {
 }
 
 
-const revokeSourcePhotos = () => {
-  sourcePhotos.value.forEach((photo) => revokeObjectUrl(photo.url))
-  sourcePhotos.value = []
-}
-
-const setFinalIssuePhotoFile = async (file, options = {}) => {
-  const prepared = await prepareImagePreview(file)
-  imageFile.value = prepared.file
-  revokeObjectUrl(imagePreviewUrl.value)
-  imagePreviewUrl.value = prepared.previewUrl
-  try {
-    imageDraftAsset.value = await fileToDraftAsset(prepared.file)
-  } catch {
-    imageDraftAsset.value = null
-    if (!options.silentDraftWarning) {
+const rememberIssuePhoto = async (file) => {
+  const sequence = ++imageDraftSequence
+  imageDraftAsset.value = null
+  if (file) {
+    try {
+      const asset = await fileToDraftAsset(file)
+      if (sequence !== imageDraftSequence || imageFile.value !== file) return
+      imageDraftAsset.value = asset
+    } catch {
+      if (sequence !== imageDraftSequence) return
       showSubmitToast('图片已选择，草稿只会保存文字内容。', 'info')
     }
   }
   registerDraftManager?.scheduleSave()
 }
 
-
-const generateCompositePhoto = async () => {
-  if (!sourcePhotos.value.length) return false
-  const outputFile = await exportIssuePhotoCompositionFile(
-    sourcePhotos.value,
-    photoComposition.value,
-    `inspection-issue-${Date.now()}.jpg`
-  )
-  await setFinalIssuePhotoFile(outputFile, { silentDraftWarning: true })
-  return true
-}
-
-const resetPhotoComposition = async () => {
-  photoComposition.value = createAutoIssuePhotoComposition(sourcePhotos.value)
-  await generateCompositePhoto()
-}
-
-const handleFileChange = async (event) => {
-  const files = getImageFilesFromFileList(event.target.files || [])
-  if (!files.length) return
-  await processSelectedImages(files)
-  clearFileInputsById(['issue-photo-upload', 'issue-photo-camera'])
-}
-
-const processSelectedImages = async (files = []) => {
-  const incomingFiles = Array.from(files || []).filter(Boolean)
-  if (!incomingFiles.length) return false
-  const photoLabel = form.value.isHighlight ? '亮点照片' : '问题照片'
-
-  const remainingCount = Math.max(0, 3 - sourcePhotos.value.length)
-  if (remainingCount <= 0) {
-    showSubmitToast(`${photoLabel}最多只能添加3张。`, 'error')
-    return false
-  }
-
-  const filesToProcess = incomingFiles.slice(0, remainingCount)
-  const addedPhotos = []
-  try {
-    for (const file of filesToProcess) {
-      const preparedFile = await prepareImageFile(file)
-      const img = await loadImageFromFile(preparedFile)
-      addedPhotos.push({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        file: preparedFile,
-        url: URL.createObjectURL(preparedFile),
-        img,
-        name: preparedFile.name || file.name || photoLabel
-      })
-    }
-
-    sourcePhotos.value = [...sourcePhotos.value, ...addedPhotos].slice(0, 3)
-    photoComposition.value = createAutoIssuePhotoComposition(sourcePhotos.value)
-    await generateCompositePhoto()
-
-    if (incomingFiles.length > remainingCount) {
-      showSubmitToast(`最多添加3张${photoLabel}，已自动忽略超出的图片。`, 'info')
-    } else if (sourcePhotos.value.length > 1) {
-      showSubmitToast(`已自动拼接${photoLabel}，可点击图片编辑继续调整。`, 'success')
-    }
-
-    if (submitMessageType.value !== 'success' && submitMessageTimer) {
-      clearTimeout(submitMessageTimer)
-      submitMessageTimer = null
-      submitMessage.value = ''
-      submitMessageType.value = 'info'
-    }
-    return true
-  } catch (error) {
-    addedPhotos.forEach((photo) => revokeObjectUrl(photo.url))
-    showSubmitToast(error?.message || '图片处理失败，请更换图片后重试。', 'error')
-    return false
-  }
-}
-
-const scrollToIssuePhotoUpload = async () => {
-  await nextTick()
-  scrollImageUploadIntoView(issuePhotoUploadSectionRef.value)
-}
-
-const openIssuePhotoPicker = () => {
-  document.getElementById('issue-photo-upload')?.click()
-}
-
-const openIssuePhotoPreview = () => {
-  if (!imagePreviewUrl.value) return
-  issuePhotoPreviewVisible.value = true
-}
-
-const closeIssuePhotoPreview = () => {
-  issuePhotoPreviewVisible.value = false
-}
-
-const handlePhotoDragEnter = (event) => {
-  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
-  photoDragDepth += 1
-  isPhotoDragActive.value = true
-}
-
-const handlePhotoDragOver = (event) => {
-  if (!isDesktopImageDropEnabled() || !hasImageInDataTransfer(event.dataTransfer)) return
-  event.dataTransfer.dropEffect = 'copy'
-  isPhotoDragActive.value = true
-}
-
-const handlePhotoDragLeave = () => {
-  if (!isDesktopImageDropEnabled()) return
-  photoDragDepth = Math.max(photoDragDepth - 1, 0)
-  if (photoDragDepth === 0) {
-    isPhotoDragActive.value = false
-  }
-}
-
-const handlePhotoDrop = async (event) => {
-  if (!isDesktopImageDropEnabled()) return
-  photoDragDepth = 0
-  isPhotoDragActive.value = false
-  const files = getImageFilesFromDataTransfer(event.dataTransfer)
-  if (!files.length) {
-    showSubmitToast('请拖入图片文件。', 'error')
-    return
-  }
-  await processSelectedImages(files)
-}
-
-const handlePhotoPaste = async (event) => {
-  if (event.defaultPrevented || !hasPermission || !showIssueFields.value || submitting.value
-    || photoEditorVisible.value || issuePhotoPreviewVisible.value) return
-  const files = getImageFilesFromClipboardEvent(event)
-  if (!files.length) return
-  event.preventDefault()
-  photoDragDepth = 0
-  isPhotoDragActive.value = false
-  const uploaded = await processSelectedImages(files)
-  if (uploaded) {
-    await scrollToIssuePhotoUpload()
-  }
-}
-
-const removeSourcePhoto = async (photoId) => {
-  const target = sourcePhotos.value.find(photo => photo.id === photoId)
-  if (target) revokeObjectUrl(target.url)
-  sourcePhotos.value = sourcePhotos.value.filter((photo) => photo.id !== photoId)
-  if (!sourcePhotos.value.length) {
-    clearImage()
-    return
-  }
-  await resetPhotoComposition()
-}
-
-const openPhotoEditor = () => {
-  if (sourcePhotos.value.length) photoEditorVisible.value = true
-}
-const closePhotoEditor = () => { photoEditorVisible.value = false }
-const savePhotoEditor = async (file, composition) => {
-  await setFinalIssuePhotoFile(file, { silentDraftWarning: true })
-  photoComposition.value = composition
-  showSubmitToast('编辑照片已更新。', 'success')
-}
-
 const clearImage = () => {
-  closeIssuePhotoPreview()
-  closePhotoEditor()
+  imageDraftSequence++
+  issuePhotoUploadRef.value?.clear()
   imageFile.value = null
   imageDraftAsset.value = null
-  revokeSourcePhotos()
-  revokeObjectUrl(imagePreviewUrl.value)
-  imagePreviewUrl.value = ''
-  photoComposition.value = { width: 1200, height: 800, items: [], circles: [] }
-  isPhotoDragActive.value = false
-  photoDragDepth = 0
-  clearFileInputsById(['issue-photo-upload', 'issue-photo-camera'])
+  photoProcessing.value = false
   registerDraftManager?.scheduleSave()
 }
 
@@ -1293,7 +1046,7 @@ const confirmDuplicateRegistration = (warning) => new Promise((resolve) => {
 })
 
 const handleSubmit = async () => {
-  if (submitting.value) return
+  if (submitting.value || photoProcessing.value) return
   const hasIssueValue = normalizedHasIssue.value
 
   if (!form.value.stationId) {
@@ -1446,7 +1199,6 @@ watch(() => route.query.schedule_task, () => { if (registerDraftReady) applySche
 onMounted(async () => {
   createdTime.value = formatCurrentTime()
   document.addEventListener('click', handleClickOutside)
-  window.addEventListener('paste', handlePhotoPaste)
   window.addEventListener('beforeunload', handleRegisterBeforeUnload)
   const [stationResult, tableResult] = await Promise.allSettled([
     fetchStations(),
@@ -1474,16 +1226,12 @@ onBeforeUnmount(() => {
   registerDraftManager?.flush()
   registerDraftManager?.destroy()
   document.removeEventListener('click', handleClickOutside)
-  window.removeEventListener('paste', handlePhotoPaste)
   window.removeEventListener('beforeunload', handleRegisterBeforeUnload)
   if (submitMessageTimer) {
     clearTimeout(submitMessageTimer)
     submitMessageTimer = null
   }
-  closeIssuePhotoPreview()
-  closePhotoEditor()
-  revokeSourcePhotos()
-  revokeObjectUrl(imagePreviewUrl.value)
+  imageDraftSequence++
 })
 </script>
 
@@ -2051,247 +1799,6 @@ onBeforeUnmount(() => {
   line-height: 1.65;
 }
 
-.upload-follow-anchor {
-  scroll-margin-top: 96px;
-}
-
-.upload-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.upload-input {
-  display: none;
-}
-
-.upload-dropzone {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 10px;
-  min-height: 168px;
-  padding: 24px 20px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%);
-  cursor: pointer;
-  transition: all 0.18s ease;
-  overflow: hidden;
-}
-
-.upload-dropzone:hover {
-  border-color: #93c5fd;
-  background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
-}
-
-.upload-dropzone.drag-active {
-  border-color: #2563eb;
-  background:
-    radial-gradient(circle at 50% 20%, rgba(37, 99, 235, 0.16), transparent 36%),
-    linear-gradient(180deg, #eff6ff 0%, #f8fafc 100%);
-  box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.14), 0 18px 36px rgba(37, 99, 235, 0.12);
-  transform: translateY(-1px);
-}
-
-.upload-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 24px;
-  font-weight: 800;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-}
-
-.upload-title {
-  font-size: 16px;
-  font-weight: 800;
-  color: #0f172a;
-}
-
-.mobile-upload-title {
-  display: none;
-}
-
-.upload-desc {
-  max-width: 560px;
-  font-size: 13px;
-  line-height: 1.8;
-  color: #64748b;
-}
-
-.desktop-drop-hint {
-  display: block;
-  margin-top: 4px;
-  color: #2563eb;
-  font-weight: 700;
-}
-
-.upload-trigger-group {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.upload-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 96px;
-  height: 38px;
-  padding: 0 16px;
-  border-radius: 10px;
-  background: #2563eb;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.upload-trigger-secondary {
-  background: #eef4ff;
-  color: #1d4ed8;
-  border: 1px solid #bfd3ff;
-}
-
-.upload-trigger:hover {
-  filter: brightness(0.98);
-}
-
-.upload-trigger-secondary:hover {
-  background: #e0edff;
-  border-color: #93c5fd;
-}
-
-.image-preview-panel {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px;
-  border: 1px solid #dbe4ee;
-  border-radius: 18px;
-  background: #fff;
-  flex-wrap: wrap;
-}
-
-.image-preview-thumb-btn {
-  position: relative;
-  display: block;
-  flex-shrink: 0;
-  width: 148px;
-  height: 108px;
-  padding: 0;
-  border: none;
-  border-radius: 14px;
-  overflow: hidden;
-  background: #f8fafc;
-  cursor: zoom-in;
-}
-
-.image-preview-thumb {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
-  transition: transform 0.2s ease;
-}
-
-.image-preview-thumb-btn:hover .image-preview-thumb {
-  transform: scale(1.04);
-}
-
-.image-preview-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 220px;
-  flex: 1;
-}
-
-.image-preview-title {
-  font-size: 15px;
-  font-weight: 800;
-  color: #0f172a;
-}
-
-.image-preview-name {
-  font-size: 13px;
-  line-height: 1.7;
-  color: #64748b;
-  word-break: break-all;
-}
-
-.source-photo-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 2px 0 4px;
-  overflow-x: auto;
-}
-
-.source-photo-chip {
-  position: relative;
-  flex: 0 0 auto;
-  width: 72px;
-  height: 54px;
-  border: 1px solid #dbe4ee;
-  border-radius: 12px;
-  background: #f8fafc;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-}
-
-.source-photo-chip img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-}
-
-.source-photo-chip button {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 22px;
-  height: 22px;
-  border: 2px solid #fff;
-  border-radius: 999px;
-  background: #ef4444;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 8px 14px rgba(239, 68, 68, 0.28);
-}
-
-.image-preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.image-action-btn {
-  min-width: 96px;
-  justify-content: center;
-  text-decoration: none;
-}
-
 .form-actions {
   display: flex;
   align-items: center;
@@ -2496,84 +2003,6 @@ onBeforeUnmount(() => {
     font-size: 12px;
     line-height: 1.7;
   }
-
-  .upload-dropzone {
-    min-height: 148px;
-    padding: 18px 14px;
-  }
-
-  .upload-title {
-    font-size: 15px;
-  }
-
-  .desktop-upload-title {
-    display: none;
-  }
-
-  .mobile-upload-title {
-    display: inline;
-  }
-
-  .upload-desc {
-    font-size: 12px;
-  }
-
-  .desktop-drop-hint {
-    display: none;
-  }
-
-  .upload-trigger-group {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .upload-trigger {
-    width: 100%;
-  }
-
-  .image-preview-panel {
-    align-items: flex-start;
-    padding: 12px;
-  }
-
-  .image-preview-thumb-btn {
-    width: 100%;
-    height: auto;
-    aspect-ratio: 4 / 3;
-  }
-
-  .image-preview-thumb {
-    width: 100%;
-    max-width: none;
-    height: 100%;
-    aspect-ratio: 4 / 3;
-  }
-
-  .image-preview-meta {
-    min-width: 0;
-    width: 100%;
-  }
-
-  .image-preview-actions {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .image-action-btn {
-    width: 100%;
-  }
-
-  .source-photo-strip {
-    padding-bottom: 8px;
-  }
-
-  .source-photo-chip {
-    width: 66px;
-    height: 50px;
-  }
-
 
   .form-actions {
     flex-direction: column;

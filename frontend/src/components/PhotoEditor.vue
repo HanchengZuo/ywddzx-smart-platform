@@ -170,7 +170,7 @@ const shapes = [
 ]
 const tip = computed(() =>
   tool.value === 'crop'
-    ? '选择图片后拖动调整裁剪位置，使用缩放条放大。'
+    ? '默认完整显示图片；需要裁剪时先放大，再拖动调整位置。'
     : tool.value === 'swap'
       ? '将一张照片拖到另一个框中调换位置。'
       : shape.value === 'circle'
@@ -452,7 +452,7 @@ button.active {
 .editor-source-list img {
   width: 48px;
   height: 48px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 6px;
 }
 .editor-source-list span {

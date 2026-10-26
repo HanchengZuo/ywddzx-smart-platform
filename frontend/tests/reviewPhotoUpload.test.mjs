@@ -21,9 +21,12 @@ test('review drawer compiles and shares registration image utilities', () => {
     [],
   )
   assert.doesNotThrow(() => compileScript(descriptor, { id: 'review' }))
-  assert.match(source, /getImageFilesFromClipboardEvent\(event\)/)
-  assert.match(source, /window\.removeEventListener\('paste', handleReviewPhotoPaste\)/)
-  assert.match(source, /sequence !== reviewPhotoSequence/)
+  assert.match(source, /<InspectionPhotoUpload ref="reviewPhotoUploadRef"/)
+  assert.doesNotMatch(source, /processReviewPhoto|reviewSourcePhotos/)
+  const uploader = readFileSync(new URL('../src/components/InspectionPhotoUpload.vue', import.meta.url), 'utf8')
+  assert.match(uploader, /getImageFilesFromClipboardEvent\(event\)/)
+  assert.match(uploader, /window\.removeEventListener\('paste', paste\)/)
+  assert.match(uploader, /token === revision/)
 })
 
 test('clipboard images use the same extraction path as file drops', () => {
@@ -69,8 +72,8 @@ test('approval and rejection share one uploader, editor and submit path with sep
     /if \(reviewAllowsPhoto\(actionForm.value.reviewResult\) && actionForm.value.reviewPhotoFile\)/,
   )
   assert.match(source, /if \(!reviewAllowsPhoto\(value\)\) \{\s+clearReviewFile\(\)/)
-  assert.equal((source.match(/id="review-photo-upload"/g) || []).length, 1)
-  assert.equal((source.match(/title="复核照片编辑"/g) || []).length, 1)
+  assert.equal((source.match(/id-prefix="review-photo"/g) || []).length, 1)
+  assert.equal((source.match(/label="复核照片"/g) || []).length, 1)
   assert.match(
     source,
     /复核照片 <span v-if="!reviewRequiresPhoto\(actionForm.reviewResult\)" class="optional-field-tag">选填/,

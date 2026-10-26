@@ -5,27 +5,27 @@ import { runInNewContext } from 'node:vm'
 import { parse, compileTemplate, compileScript } from '@vue/compiler-sfc'
 import { getImageFilesFromClipboardEvent } from '../src/utils/imageUpload.js'
 
-const filename = new URL('../src/views/inspection/RegisterView.vue', import.meta.url)
+const filename = new URL('../src/components/InspectionPhotoUpload.vue', import.meta.url)
 const source = readFileSync(filename, 'utf8')
-const handlerSource = source.match(/const handlePhotoPaste = async \(event\) => \{[\s\S]*?\n\}/)[0]
+const handlerSource = source.match(/async function paste\(event\) \{[\s\S]*?\n\}/)[0]
 
 const setup = (overrides = {}) => {
   const uploads = []
   let scrollCount = 0
   const context = {
-    hasPermission: true,
-    showIssueFields: { value: true },
-    submitting: { value: false },
-    photoEditorVisible: { value: false },
-    issuePhotoPreviewVisible: { value: false },
-    isPhotoDragActive: { value: true },
-    photoDragDepth: 2,
+    props: { active: true, disabled: false },
+    editorVisible: { value: false },
+    previewVisible: { value: false },
+    dragActive: { value: true },
+    dragDepth: 2,
     getImageFilesFromClipboardEvent,
-    processSelectedImages: async (files) => { uploads.push(files); return true },
-    scrollToIssuePhotoUpload: async () => { scrollCount++ },
+    addFiles: async (files) => { uploads.push(files); return true },
+    nextTick: async () => {}, uploadSection: { value: {} },
+    scrollImageUploadIntoView: () => { scrollCount++ },
     ...overrides
   }
-  const paste = runInNewContext(`${handlerSource}; handlePhotoPaste`, context)
+  context.canReceive = () => context.props.active && !context.props.disabled && !context.editorVisible.value && !context.previewVisible.value
+  const paste = runInNewContext(`${handlerSource}; paste`, context)
   const event = (files = [{ name: 'clipboard.png', type: 'image/png' }]) => ({
     defaultPrevented: false,
     clipboardData: { files },
@@ -43,8 +43,8 @@ test('problem and highlight modes paste without navigation through the same uplo
     assert.equal(state.uploads.length, 1)
     assert.equal(state.uploads[0][0].name, 'clipboard.png')
     assert.equal(state.scrollCount(), 1)
-    assert.equal(state.context.photoDragDepth, 0)
-    assert.equal(state.context.isPhotoDragActive.value, false)
+    assert.equal(state.context.dragDepth, 0)
+    assert.equal(state.context.dragActive.value, false)
   }
 })
 
@@ -68,11 +68,10 @@ test('text-only paste is untouched and does not invoke photo processing', async 
 
 test('hidden upload, denied permission, submission and photo modals do not capture paste', async () => {
   for (const overrides of [
-    { hasPermission: false },
-    { showIssueFields: { value: false } },
-    { submitting: { value: true } },
-    { photoEditorVisible: { value: true } },
-    { issuePhotoPreviewVisible: { value: true } }
+    { props: { active: false, disabled: false } },
+    { props: { active: true, disabled: true } },
+    { editorVisible: { value: true } },
+    { previewVisible: { value: true } }
   ]) {
     const state = setup(overrides)
     const event = state.event()
@@ -87,8 +86,10 @@ test('registration compiles and both listeners share the handler with unmount cl
   assert.deepEqual(errors, [])
   assert.deepEqual(compileTemplate({ source: descriptor.template.content, filename: filename.pathname, id: 'register-paste' }).errors, [])
   assert.doesNotThrow(() => compileScript(descriptor, { id: 'register-paste' }))
-  assert.match(source, /@paste="handlePhotoPaste"/)
-  assert.match(source, /window\.addEventListener\('paste', handlePhotoPaste\)/)
-  assert.match(source, /window\.removeEventListener\('paste', handlePhotoPaste\)/)
-  assert.doesNotMatch(source, /handleWindowPhotoPaste/)
+  assert.match(source, /@paste="paste"/)
+  assert.match(source, /window\.addEventListener\('paste', paste\)/)
+  assert.match(source, /window\.removeEventListener\('paste', paste\)/)
+  const registration = readFileSync(new URL('../src/views/inspection/RegisterView.vue', import.meta.url), 'utf8')
+  assert.match(registration, /<InspectionPhotoUpload/)
+  assert.match(registration, /:active="hasPermission && showIssueFields"/)
 })

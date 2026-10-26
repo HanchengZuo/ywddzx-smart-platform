@@ -13,7 +13,7 @@ function setup(responses, confirmations = [true], mode = 'yes') {
   const requests = [], toasts = [], notifications = []
   let reset = 0, dialogs = 0
   const context = {
-    submitting: { value: false }, normalizedHasIssue: { value: mode },
+    submitting: { value: false }, photoProcessing: { value: false }, normalizedHasIssue: { value: mode },
     form: { value: { stationId: 1, description: '新问题', isHighlight: mode === 'highlight', inspectionTableId: 2 } },
     selectedStandards: { value: [{ inspection_table_id: 2 }] },
     imageFile: { value: new Blob(['photo'], { type: 'image/png' }) },
