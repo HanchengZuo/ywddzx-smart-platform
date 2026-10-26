@@ -4,11 +4,11 @@ export const reviewFilterDefinitions = [
   ['inspector', '检查人员'], ['inspectionTableName', '检查表'], ['standardId', '外部规范ID'],
   ['standardDetail', '规范详情'], ['standardTags', '规范标签'], ['description', '问题描述']
 ]
-export const emptyReviewFilters = () => ({ id: '', month: '', dateFrom: '', dateTo: '', region: [], station: [], stationManager: '', inspector: [], inspectionTableName: [], standardId: '', standardDetail: '', standardTags: [], description: '' })
-export const mobileReviewFilterDefinitions = reviewFilterDefinitions.filter(([key]) => ['station', 'inspectionTableName'].includes(key))
+export const emptyReviewFilters = () => ({ id: '', month: '', dateFrom: '', dateTo: '', region: [], station: [], stationManager: '', inspector: [], inspectionTableName: [], standardId: '', standardDetail: '', standardTags: [], description: '', keyword: '' })
+export const mobileReviewFilterDefinitions = [...reviewFilterDefinitions.filter(([key]) => ['station', 'inspectionTableName'].includes(key)), ['keyword', '关键词搜索']]
 const copySelection = value => Array.isArray(value) ? [...value] : value ? [value] : []
 export const mobileReviewFilters = filters => ({
-  ...emptyReviewFilters(), station: copySelection(filters.station), inspectionTableName: copySelection(filters.inspectionTableName),
+  ...emptyReviewFilters(), station: copySelection(filters.station), inspectionTableName: copySelection(filters.inspectionTableName), keyword: String(filters.keyword || '').trim(),
 })
 export const reviewRequestParams = (filters, page = 1, pageSize = 20) => ({
   page, page_size: pageSize, issue_id: filters.id, month: filters.month,

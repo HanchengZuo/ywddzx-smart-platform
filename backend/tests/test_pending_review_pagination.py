@@ -36,7 +36,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
     def test_page_is_bounded_and_reads_only_current_page_without_sync(self):
         for role in ('root', 'supervisor', 'supervisor_manager'):
             with self.subTest(role=role), ExitStack() as stack:
-                stack.enter_context(api.app.test_request_context('/api/my-issues?page=999&page_size=5'))
+                stack.enter_context(api.app.test_request_context('/api/my-issues?page=999&page_size=5&keyword=接地'))
                 stack.enter_context(patch('app.get_authenticated_request_user_id', return_value=7))
                 conn = MagicMock(); cur = conn.cursor.return_value
                 cur.fetchone.side_effect = [{'id': 7, 'role': role}, {'total': 11}]
@@ -55,8 +55,21 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 self.assertIn('WITH page_ids AS MATERIALIZED', query)
                 self.assertIn('LIMIT %s OFFSET %s', query)
                 self.assertEqual(params[-2:], [5, 10])
+                self.assertEqual(params[:-2], ['%接地%', '%接地%'])
                 self.assertEqual(tags.call_args.args[1], [{'id': 1}])
                 conn.commit.assert_not_called()
+
+    def test_invalid_keyword_has_clear_error_and_does_not_query_the_queue(self):
+        conn = MagicMock()
+        conn.cursor.return_value.fetchone.return_value = {'id': 7, 'role': 'supervisor'}
+        with api.app.test_request_context('/api/my-issues', query_string={'keyword': '词' * 1001}), patch(
+            'app.get_authenticated_request_user_id', return_value=7
+        ), patch('app.get_db_connection', return_value=conn):
+            response, status = api.get_my_issues()
+        self.assertEqual(status, 400)
+        self.assertIn('关键词搜索最多输入1000个字符', response.get_json()['error'])
+        self.assertEqual(conn.cursor.return_value.execute.call_count, 1)
+        conn.commit.assert_not_called()
 
     def test_options_are_role_protected_and_not_page_limited(self):
         with api.app.test_request_context(), patch('app.get_db_connection', return_value=MagicMock()), patch(

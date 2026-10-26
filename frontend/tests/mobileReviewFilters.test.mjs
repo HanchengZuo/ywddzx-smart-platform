@@ -13,7 +13,7 @@ const plain = value => JSON.parse(JSON.stringify(value))
 
 test('mobile apply uses visible draft fields, fetches page one and leaves desktop conditions unchanged', () => {
   const old = { ...emptyReviewFilters(), id: '18', dateFrom: '2026-09-01', dateTo: '2026-09-30', description: '积水' }
-  const draft = { ...old, id: '99', dateFrom: '2026-10-31', dateTo: '2026-10-01', station: ['杨思'], inspectionTableName: ['现场表'] }
+  const draft = { ...old, id: '99', dateFrom: '2026-10-31', dateTo: '2026-10-01', station: ['杨思'], inspectionTableName: ['现场表'], keyword: '接地 锈蚀' }
   const appliedFilters = { value: structuredClone(old) }
   const page = { value: 4 }
   let calls = 0
@@ -24,7 +24,7 @@ test('mobile apply uses visible draft fields, fetches page one and leaves deskto
   })
   assert.equal(calls, 1)
   assert.equal(page.value, 1)
-  assert.deepEqual(plain(appliedFilters.value), { ...old, station: ['杨思'], inspectionTableName: ['现场表'] })
+  assert.deepEqual(plain(appliedFilters.value), { ...old, station: ['杨思'], inspectionTableName: ['现场表'], keyword: '接地 锈蚀' })
   assert.equal(draft.id, '99')
   assert.equal(reviewRequestParams(mobileReviewFilters(appliedFilters.value)).issue_id, '')
   assert.notEqual(appliedFilters.value.station, draft.station)
@@ -49,9 +49,9 @@ test('desktop apply still validates dates and applies all fields', () => {
   assert.deepEqual(plain(appliedFilters.value), filters.value)
 })
 
-test('mobile reset clears its two fields only; desktop and station-manager resets retain previous scope', () => {
+test('mobile reset clears visible fields only; desktop and station-manager resets retain previous scope', () => {
   for (const [mobile, role] of [[true, 'supervisor'], [false, 'supervisor'], [false, 'station_manager']]) {
-    const initial = { ...emptyReviewFilters(), id: '18', station: ['杨思'], inspectionTableName: ['现场表'] }
+    const initial = { ...emptyReviewFilters(), id: '18', station: ['杨思'], inspectionTableName: ['现场表'], keyword: '接地' }
     const filters = { value: initial }
     let closed = 0
     let removed = 0
@@ -61,7 +61,7 @@ test('mobile reset clears its two fields only; desktop and station-manager reset
       closeAllDropdowns: () => closed++, getMobileStationStorageKey: () => 'station-filter',
       localStorage: { removeItem: key => { assert.equal(key, 'station-filter'); removed++ } },
     })
-    const expected = mobile ? { ...initial, station: [], inspectionTableName: [] }
+    const expected = mobile ? { ...initial, station: [], inspectionTableName: [], keyword: '' }
       : role === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters()
     assert.deepEqual(plain(filters.value), expected)
     assert.equal(closed, 1)

@@ -114,6 +114,10 @@
             <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
           </div>
           <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" :placeholder="isMobileReview ? '搜索并多选' + label : undefined" />
+          <template v-else-if="key === 'keyword'">
+            <input id="review-keyword" v-model="filters.keyword" type="search" placeholder="搜索规范详情、问题描述、整改说明等" maxlength="1000" enterkeyhint="search" aria-label="关键词搜索" aria-describedby="review-keyword-hint" @keydown.enter.prevent="!$event.isComposing && !loading && applyFilters()" />
+            <small id="review-keyword-hint" class="queue-hint">多个关键词用空格分隔，可跨字段匹配。</small>
+          </template>
           <input v-else v-model="filters[key]" :type="key === 'month' ? 'month' : 'text'" :placeholder="'请输入' + label" />
         </div>
       </div>
@@ -1002,7 +1006,7 @@ watch(() => filters.value.station, value => rememberMobileStationFilter(value), 
 
 const resetFilters = () => {
   filters.value = isMobileReview.value
-    ? { ...filters.value, station: [], inspectionTableName: [] }
+    ? { ...filters.value, station: [], inspectionTableName: [], keyword: '' }
     : currentRole.value === 'station_manager' ? { region: '', station: '', inspectionTableName: '' } : emptyReviewFilters()
   if (isMobileView.value) {
     localStorage.removeItem(getMobileStationStorageKey())
@@ -1197,7 +1201,10 @@ const fetchMyIssues = async () => {
   try {
     loading.value = true
     const response = await axios.get('/api/my-issues', {
-      params: isReviewQueue.value ? reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value) : { user_id: userId },
+      params: isReviewQueue.value ? {
+        ...reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value),
+        ...(isMobileReview.value ? { keyword: appliedFilters.value.keyword.trim() } : {}),
+      } : { user_id: userId },
       signal: listController.signal,
     })
     if (sequence !== listSequence) return
@@ -1220,9 +1227,9 @@ const applyFilters = () => {
   if (!isMobileReview.value && filters.value.dateFrom && filters.value.dateTo && filters.value.dateFrom > filters.value.dateTo) {
     showActionToast('开始日期不能晚于结束日期。', 'error'); return
   }
-  // Mobile applies only its two visible fields, preserving desktop draft/applied conditions.
+  // Mobile applies only its visible fields, preserving desktop draft/applied conditions.
   appliedFilters.value = JSON.parse(JSON.stringify(isMobileReview.value
-    ? { ...appliedFilters.value, station: filters.value.station, inspectionTableName: filters.value.inspectionTableName }
+    ? { ...appliedFilters.value, station: filters.value.station, inspectionTableName: filters.value.inspectionTableName, keyword: filters.value.keyword }
     : filters.value))
   acceptingPage = true; page.value = 1; acceptingPage = false
   fetchMyIssues()

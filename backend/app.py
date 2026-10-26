@@ -12,6 +12,7 @@ import issue_export_cache
 import issue_export_download
 from external_standard_status import disabled_standard_ids, require_active_standards
 from inspection_registration import parse_standard_selections
+from pending_review_search import pending_review_keyword_clause
 from issue_description_filter import (
     IssueDescriptionFilterError,
     description_filter_clause,
@@ -27552,6 +27553,8 @@ def get_my_issues():
             })
 
         return jsonify([])
+    except IssueDescriptionFilterError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
     except ValueError:
         return jsonify({"success": False, "error": "筛选日期格式不正确，请检查后重试。"}), 400
     except Exception:
@@ -27591,6 +27594,10 @@ def build_pending_review_filters(source):
             if filters['month']:
                 where.append(predicate); params.append(value)
     append_issue_list_filter_clauses(where, params, filters)
+    keyword_clause, keyword_params = pending_review_keyword_clause(source.get('keyword'))
+    if keyword_clause:
+        where.append(keyword_clause)
+        params.extend(keyword_params)
     return 'WHERE ' + ' AND '.join(where), params
 
 
