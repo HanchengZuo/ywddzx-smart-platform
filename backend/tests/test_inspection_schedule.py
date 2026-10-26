@@ -94,7 +94,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
           UPDATE stations SET include_online_plan=false WHERE id=3;
           CREATE TABLE inspection_tables(id serial PRIMARY KEY,table_name text,checklist_mode text,is_active boolean DEFAULT true);
           CREATE TABLE inspections(id serial PRIMARY KEY,station_id int,inspection_table_id int,inspector_id int,inspection_date date,created_at timestamp DEFAULT CURRENT_TIMESTAMP);
-          CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending');
+          CREATE TABLE issues(id serial PRIMARY KEY,inspection_id int,inspector_id int,audit_status text DEFAULT 'pending',created_at timestamp DEFAULT CURRENT_TIMESTAMP);
         ''')
         seen=set()
         for mode in ('offline','online','annual'):

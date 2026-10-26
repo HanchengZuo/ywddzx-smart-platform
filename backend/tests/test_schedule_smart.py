@@ -162,21 +162,20 @@ class SmartDatabaseTests(unittest.TestCase):
             codes=list(pool.map(lambda _:self.client.application.test_client().post('/api/inspection-schedule/auto',json=body).status_code,range(2)))
         self.assertEqual(sorted(codes),[200,409])
 
-    def test_dispatched_field_members_cannot_leave_or_receive_new_members_until_all_plans_removed(self):
+    def test_dispatched_field_members_can_change_until_a_member_registers_at_the_assigned_station(self):
         saved=self.confirm().json
         field=[g for g in saved['groups'] if g['mode']=='offline']
         student=next(p for p in field[0]['members'] if p['position']=='大学生')
         other=next(p for p in field[1]['members'] if p['position']=='大学生')
         self.assign(field[0])
-        self.assertEqual(self.post('move',revision=1,student_id=student['id'],leader_id=field[1]['leader_id']).status_code,409)
-        self.assertEqual(self.post('move',revision=1,student_id=other['id'],leader_id=field[0]['leader_id']).status_code,409)
+        self.assertEqual(self.post('move',revision=1,student_id=student['id'],leader_id=field[1]['leader_id']).status_code,200)
+        self.assertEqual(self.post('move',revision=2,student_id=other['id'],leader_id=field[0]['leader_id']).status_code,200)
+        self.admin.commit()
+        self.record(station=1,table=1,inspector=field[0]['leader_id'],day='2026-10-19')
         context=self.client.get('/api/staff-availability/today-inspection').json
         locked=next(g for g in context['groups'] if g['leader_id']==field[0]['leader_id'])
         self.assertTrue(locked['dispatch_locked']);self.assertTrue(all(p['dispatch_locked'] for p in locked['members']))
-        token=self.board()['board_token']
-        result=self.client.post('/api/inspection-schedule/dispatch',json=dict(mode='offline',year=2026,quarter=4,action='clear_today',board_token=token))
-        self.assertEqual(result.status_code,200,result.json)
-        self.assertEqual(self.post('move',revision=1,student_id=student['id'],leader_id=field[1]['leader_id']).status_code,200)
+        self.assertEqual(self.post('move',revision=3,student_id=other['id'],leader_id=field[1]['leader_id']).status_code,409)
 
     def test_video_locks_individual_not_whole_video_pool(self):
         saved=self.confirm().json

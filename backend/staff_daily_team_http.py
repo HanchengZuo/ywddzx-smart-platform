@@ -10,14 +10,14 @@ from schedule_common import ScheduleConflict, day_value, lock_schedule, require_
 from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason
 from staff_actuals import actuals_window, assert_actuals_window
 from inspection_schedule import sync_field_team_plans
-from staff_daily_teams import (adjust_preview, adjust_members, group_assignments, move_student, propose_teams, save_teams,
+from staff_daily_teams import (adjust_preview, adjust_members, clean_assignments, group_assignments, move_student, propose_teams, save_teams,
                               team_days, validate_dispatched_teams, validate_team_changes, annotate_dispatch_locks)
 from driving_permits import validate_driving_teams
 from schedule_shelf_store import seed_daily_shelf
 
 
 def stored_assignments(result):
-    return [{k:v for k,v in p.items() if k!='dispatch_locked'} for group in result['groups'] for p in group['members']]
+    return clean_assignments([p for group in result['groups'] for p in group['members']])
 
 
 def proposal_token(actor, result, assignments, seed=None):
@@ -33,8 +33,10 @@ def context(cur, day):
     eligible = [p for p in people if p['id'] and p['available'] is True]
     permits = {p['id']: p.get('has_driving_permit') is True for p in people if p['id']}
     assignments = [dict(p, has_driving_permit=permits.get(p['id'], False)) for p in saved.get('assignments', [])]
+    assigned_ids = {p['id'] for p in assignments}
     unconfirmed = [p['display_name'] for p in people if p['available'] is None]
     return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
+                unassigned_people=[p for p in eligible if p['id'] not in assigned_ids and not p['station_modes']],
                 unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
                 revision=saved.get('revision', 0), groups=annotate_dispatch_locks(cur,day,group_assignments(assignments)),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
@@ -67,6 +69,9 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     raise ScheduleConflict('日期已变化，请重新打开今日巡检安排。')
                 if data['action'] != 'preview':
                     lock_schedule(cur)
+                    # Short, bounded write transaction: do not let a record be
+                    # inserted between execution validation and member/task sync.
+                    cur.execute('LOCK TABLE inspections, issues IN SHARE MODE')
                     cur.execute('SELECT id FROM users WHERE TRIM(real_name)=ANY(%s) ORDER BY id FOR SHARE', ([name for name, _ in STAFF],))
                     cur.fetchall()
                 result = context(cur, day)
@@ -82,7 +87,6 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                     validate_driving_teams(result['people'], assignments)
                     if assignments != before:
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
-                        sync_field_team_plans(cur, actor, day)
                     result['groups'] = group_assignments(assignments)
                 elif data['action'] == 'apply' and data.get('source') == 'current':
                     require_workday(cur, day)
@@ -111,17 +115,22 @@ def register_staff_daily_teams(app, *, connect, has_permission):
                         if token != data.get('token'): raise ScheduleConflict('档期、站点排班或实绩已变化，请重新预览。')
                         assignments = adjust_preview(result['people'], assignments, data.get('student_leaders', {}))
                         assignments = adjust_members(result['people'], assignments, data.get('moves', []))
-                        assignments = [{k:v for k,v in p.items() if k!='dispatch_locked'} for p in assignments]
+                        assignments = clean_assignments(assignments)
                         validate_dispatched_teams(cur, day, assignments)
                         before = stored_assignments(result)
                         validate_team_changes(cur,day,before,assignments)
                         validate_driving_teams(result['people'], assignments)
                         result['revision'] = save_teams(cur, actor, day, assignments, before)
                     result.update(groups=annotate_dispatch_locks(cur,day,group_assignments(assignments)),
+                                  unassigned_people=[p for p in result['unassigned_people']
+                                                     if p['id'] not in {a['id'] for a in assignments}],
                                   token=token, seed=seed, source='generated', manager_modes=data.get('manager_modes'))
             if request.method == 'POST' and data['action'] != 'preview':
-                result['groups']=annotate_dispatch_locks(cur,day,result['groups'])
-                seed_daily_shelf(cur,actor,day,result['groups'],result['revision'])
+                sync_field_team_plans(cur, actor, day)
+                fresh = context(cur, day)
+                fresh['current_token'] = proposal_token(actor, fresh, stored_assignments(fresh))
+                result.update(fresh)
+                seed_daily_shelf(cur,actor,day,group_assignments(stored_assignments(result)),result['revision'])
                 assert_actuals_window(window,today())
             conn.commit()
             response = jsonify(success=True, can_edit=can_edit, **result)

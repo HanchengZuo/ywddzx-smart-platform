@@ -74,14 +74,15 @@ class ProposalDatabaseTests(unittest.TestCase):
         generated=self.post(revision=1).json
         locked=next(g for g in generated['groups'] if g['leader_id']==2)
         self.assertEqual({p['id'] for p in locked['members']},{p['id'] for p in field['members']})
-        self.assertTrue(locked['dispatch_locked'])
+        self.assertFalse(locked['dispatch_locked'])
+        self.assertTrue(locked['has_dispatch'])
         adopted=self.post('apply',revision=1,source='generated',seed=generated['seed'],token=generated['token'])
         self.assertEqual(adopted.status_code,200,adopted.json)
         current=self.current()
         self.assertEqual(self.adopt(current,[dict(person_id=2,leader_id=None)]).status_code,409)
         outsider=next(p for g in current['groups'] if g['mode']=='online' for p in g['members'] if p['position']=='大学生')
-        self.assertEqual(self.adopt(current,[dict(person_id=outsider['id'],leader_id=2)]).status_code,409)
-        self.assertEqual(self.post(revision=2,manager_modes={'2':'online','3':'offline','6':'online'}).status_code,409)
+        self.assertEqual(self.adopt(current,[dict(person_id=outsider['id'],leader_id=2)]).status_code,200)
+        self.assertEqual(self.post(revision=3,manager_modes={'2':'online','3':'offline','6':'online'}).status_code,409)
 
     def test_busy_leader_dissolves_group_and_retires_parked_cards_without_touching_records(self):
         saved=self.confirm().json

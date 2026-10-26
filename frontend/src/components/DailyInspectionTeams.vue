@@ -30,7 +30,7 @@
         <p class="method">
           今日未设置的档期默认有空，提前设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
           17:00
-          前的当日记录不阻止分组。先确定管理人员分工，再智能生成方案；生成和拖动均不自动保存，采用后才覆盖今日人员安排。已派站的外勤组及视频人员保持锁定。每组只能有一位管理人员，且至少1人持准驾证，优先配2人。
+          前的当日记录不影响档期展示；但外勤组任一成员在派工后登记了对应站点、检查表的巡检记录，该组立即锁定。未开工的外勤组可以调整组员，采用后同步站点排班与个人待办。已有派工的带队人、视频人员仍须先撤下派工才能更换分工。每组只能有一位管理人员，且至少1人持准驾证，优先配2人。
         </p>
         <p v-if="loading" role="status" class="empty">正在核对今日档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -43,7 +43,7 @@
           <details
             v-if="editable && context.working"
             class="manager-step"
-            :open="!displayGroups.length"
+            :open="!(preview?.groups || context.groups).length"
           >
             <summary class="step-heading">
               <b>01</b>
@@ -114,6 +114,42 @@
               </div>
             </div>
             <p v-if="success" class="applied-notice" role="status">{{ success }}</p>
+            <section
+              v-if="unassignedPeople.length"
+              class="unassigned-personnel"
+              aria-label="待编组人员"
+            >
+              <header>
+                <div>
+                  <strong
+                    >有空待编组 <span>{{ unassignedPeople.length }} 人</span></strong
+                  >
+                  <p>
+                    来自今日档期中有空、尚未编组且没有站点派工的人员。{{
+                      editable ? '可拖动或点击姓名加入下方分组。' : '当前为只读查看。'
+                    }}
+                  </p>
+                </div>
+              </header>
+              <div class="member-tags">
+                <button
+                  v-for="person in unassignedPeople"
+                  :key="person.id"
+                  type="button"
+                  :draggable="editable && !loading && !saving"
+                  :disabled="!editable || loading || saving"
+                  :aria-label="person.display_name + '，待编组，点击或拖动加入分组'"
+                  :class="{ selected: selectedStudent === person.id }"
+                  :aria-pressed="selectedStudent === person.id"
+                  @dragstart="startStudentDrag($event, person)"
+                  @dragend="draggingStudent = null"
+                  @click="selectedStudent = selectedStudent === person.id ? null : person.id"
+                >
+                  {{ person.display_name }}<small>{{ person.position }}</small
+                  ><small v-if="person.has_driving_permit" class="permit-tag">准驾</small>
+                </button>
+              </div>
+            </section>
             <div v-if="displayGroups.length" class="team-groups">
               <article
                 v-for="group in displayGroups"
@@ -127,7 +163,14 @@
                   ><span>{{ group.members.length }} 人</span>
                 </header>
                 <small v-if="groupLocked(group)" class="dispatch-lock"
-                  >已有今日派工 · 不可调入或调出组员</small
+                  >派工后已有本站巡检记录 · 人员锁定</small
+                >
+                <small
+                  v-else-if="group.mode === 'offline' && group.has_dispatch"
+                  class="dispatch-lock editable-dispatch"
+                  >{{
+                    editable ? '已派站、未开工 · 可调整组员' : '已派站、未开工 · 组员未锁定'
+                  }}</small
                 >
                 <p
                   v-if="group.mode === 'offline'"
@@ -161,7 +204,9 @@
                   >
                     {{ person.display_name }}<small v-if="person.id === group.leader_id">带队</small
                     ><small v-if="person.has_driving_permit" class="permit-tag">准驾</small
-                    ><small v-if="personLocked(person)">已派工</small>
+                    ><small v-if="personLocked(person)">{{
+                      groupLocked(group) ? '实绩锁定' : '派工绑定'
+                    }}</small>
                   </button>
                 </div>
                 <button
@@ -176,7 +221,7 @@
               </article>
             </div>
             <div v-if="editable && videoManagers.length" class="restore-leaders">
-              <span>内勤管理人员也可独立带队：</span>
+              <span>有空的内勤或待编组管理人员可独立带队：</span>
               <button
                 v-for="person in videoManagers"
                 :key="person.id"
@@ -204,7 +249,12 @@
                   : '今日暂未保存巡检分组。'
               }}
             </p>
-            <p v-if="preview && !displayGroups.some((g) => g.mode === 'offline')" class="warning">
+            <p
+              v-if="
+                preview?.source === 'generated' && !displayGroups.some((g) => g.mode === 'offline')
+              "
+              class="warning"
+            >
               没有现场带队管理人员，本次大学生全部安排视频巡检。
             </p>
             <p v-if="unsafeGroups.length" class="error" role="alert">
@@ -268,12 +318,10 @@ function warn(message) {
 }
 const lockGroups = computed(() => preview.value?.groups || context.value?.groups || [])
 const hasDispatchedMembers = computed(() =>
-  lockGroups.value.some((g) => g.members.some((p) => p.dispatch_locked)),
+  lockGroups.value.some((g) => g.members.some((p) => p.dispatch_locked || p.field_dispatched)),
 )
 const personLocked = (p) =>
-  lockGroups.value.some((g) =>
-    g.members.some((m) => m.id === p.id && m.dispatch_locked),
-  )
+  lockGroups.value.some((g) => g.members.some((m) => m.id === p.id && m.dispatch_locked))
 const groupLocked = (g) =>
   g.mode === 'offline' &&
   lockGroups.value.some(
@@ -294,15 +342,20 @@ const ready = computed(
 )
 const displayGroups = computed(() => {
   const groups = preview.value?.groups || context.value?.groups || []
-  return editable.value && groups.length && !groups.some((g) => g.mode === 'online')
+  return editable.value &&
+    (groups.length || unassignedPeople.value.length) &&
+    !groups.some((g) => g.mode === 'online')
     ? [...groups, { name: '内勤视频组', mode: 'online', leader_id: null, members: [] }]
     : groups
 })
+const unassignedPeople = computed(
+  () => preview.value?.unassigned_people || context.value?.unassigned_people || [],
+)
 const videoManagers = computed(() =>
-  displayGroups.value
-    .filter((g) => g.mode === 'online')
-    .flatMap((g) => g.members)
-    .filter((p) => p.position === '管理人员'),
+  [
+    ...displayGroups.value.filter((g) => g.mode === 'online').flatMap((g) => g.members),
+    ...unassignedPeople.value,
+  ].filter((p) => p.position === '管理人员'),
 )
 const driverCount = (group) => fieldDriverCount(group, context.value?.people)
 const unsafeGroups = computed(() =>
@@ -334,10 +387,16 @@ async function dropStudent(group, event) {
   )
     return
   const source = displayGroups.value.find((g) => g.members.some((p) => p.id === studentId))
-  if (!source) return
-  const person = source.members.find((p) => p.id === studentId)
+  const person =
+    source?.members.find((p) => p.id === studentId) ||
+    unassignedPeople.value.find((p) => p.id === studentId)
+  if (!person) return
   if (personLocked(person) || groupLocked(group)) {
-    warn('已有今日站点派工，须先撤下相关组或人员的全部今日排班，才能调整组员。')
+    warn(
+      person.lock_reason ||
+        group.lock_reason ||
+        '相关外勤组已有派工后的巡检实绩，或人员已有视频派工，暂不能调整。',
+    )
     draggingStudent.value = selectedStudent.value = null
     return
   }
@@ -361,9 +420,9 @@ async function dropStudent(group, event) {
   }
 }
 function canMoveTo(group) {
-  const person = displayGroups.value
-    .flatMap((g) => g.members)
-    .find((p) => p.id === selectedStudent.value)
+  const person = [...displayGroups.value.flatMap((g) => g.members), ...unassignedPeople.value].find(
+    (p) => p.id === selectedStudent.value,
+  )
   return person?.position !== '管理人员' || group.mode === 'online' || group.leader_id === person.id
 }
 function restoreLeader(person) {
@@ -394,6 +453,7 @@ function invalidate() {
   success.value = ''
 }
 async function open() {
+  warningToast.value = ''
   selectedStudent.value = draggingStudent.value = null
   context.value = null
   preview.value = null
@@ -483,7 +543,8 @@ async function submit() {
     if (!disposed) {
       preview.value = null
       await load()
-      success.value = '已采用方案并覆盖今日人员安排，今日调度待选区已同步。可继续调整未派站人员。'
+      success.value =
+        '已采用今日人员安排，站点排班、个人待办及今日调度待选区已同步。未开工的外勤组可继续调整组员。'
       emit('saved', data)
       window.dispatchEvent(new Event('inspection-schedule-changed'))
       window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
@@ -713,6 +774,34 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+.unassigned-personnel {
+  margin: 0 0 16px;
+  padding: 15px;
+  border: 1px dashed #92b9c9;
+  border-left: 4px solid #2d7c8a;
+  border-radius: 10px;
+  background: #f0f8fa;
+}
+.unassigned-personnel strong {
+  color: #215668;
+  font-size: 14px;
+}
+.unassigned-personnel strong span {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.unassigned-personnel p {
+  margin: 7px 0 13px;
+  color: #56798a;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.dispatch-lock.editable-dispatch {
+  color: #226f5b;
+  background: #e8f4ec;
+  border-color: #a7cfc0;
 }
 .team-groups article {
   border: 1px solid #e6c98c;

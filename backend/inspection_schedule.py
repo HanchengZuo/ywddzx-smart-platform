@@ -164,7 +164,7 @@ def integer(value, label, minimum=1):
     return value
 
 
-def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
+def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, refresh_team=False):
     station_id = integer(data.get('station_id'), '站点')
     key = data.get('column_key')
     if not isinstance(key, str) or key not in {entry[0] for entry in COLUMNS[chosen['mode']]}:
@@ -194,7 +194,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
     if not column_available(column, stations[0], chosen['mode']):
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     required_ids=[c['table_id'] for c in columns if column_available(c,stations[0],chosen['mode'])]
-    if record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id]):
+    if not refresh_team and (record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id])):
         raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入今日调度待选区。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date,plan_team FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
@@ -210,6 +210,9 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
             availability_cache[day] = {p['id']: p for p in available_people(cur, day) if p['id']}
         validate_people(cur, ids, day, field_mode(chosen['mode']), availability_cache.get(day) if availability_cache is not None else None)
     team = field_team(cur, day, ids) if ids and chosen['mode'] != 'online' else None
+    if refresh_team and (not team or not existing['plan_team'] or existing['scheduled_date'] != day
+                         or team['leader_id'] != existing['plan_team']['leader_id']):
+        raise ScheduleConflict('人员同步只能调整原外勤带队组的成员，不能更换站点、日期或带队人。')
     if existing['inspector_ids'] == ids and existing['scheduled_date'] == day and existing['plan_team'] == team:
         return existing['revision']
     cur.execute('''INSERT INTO inspection_schedule_cells
@@ -227,7 +230,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None):
        json.dumps(existing['inspector_ids']), json.dumps(ids), actor['id'], person(actor)['display_name'], existing['scheduled_date'], day,
        json.dumps(existing['plan_team'], ensure_ascii=False), json.dumps(team, ensure_ascii=False)))
     dispatch_event_id = cur.fetchone()['id']
-    dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start, team, dispatch_event_id)
+    dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start, team, dispatch_event_id,
+                   replace_team=refresh_team)
     if chosen['mode'] != 'online' and not (availability_cache or {}).get('metering_sync'):
         sync_metering_row(cur, actor, chosen, stations[0], ids, day, existing, availability_cache)
     return saved_revision
@@ -298,26 +302,26 @@ def apply_edits(cur, actor, data, chosen, start, end):
 
 
 def sync_field_team_plans(cur, actor, day):
-    """A same-mode student transfer updates unfinished rows and tasks in the grouping transaction."""
+    """Refresh field intent/tasks, never actual records, in the grouping transaction."""
     saved = team_days(cur, day, day+timedelta(days=1)).get(day.isoformat(), {})
     groups = {g['leader_id']: g for g in group_assignments(saved.get('assignments', [])) if g['mode']=='offline'}
-    cache = {}
+    cache = {'metering_sync': True}
     for mode in ('offline','annual'):
         chosen,start,end=period(dict(mode=mode,year=day.year,**({'quarter':(day.month-1)//3+1} if mode=='offline' else {})))
         board = read_board(cur, chosen, start, end)
         for row in board['rows']:
-            if row.get('locked'): continue
             for column in board['columns']:
                 cell = row['cells'][column['key']]
                 team = cell['plan_team']
-                if cell['status'] != 'assigned' or cell['scheduled_date'] != day.isoformat() or not team:
+                if not cell['assignees'] or cell['scheduled_date'] != day.isoformat() or not team:
                     continue
                 group = groups.get(team['leader_id'])
                 if not group: raise ScheduleConflict('已有派工的外勤带队组不能删除，请先撤销其站点安排。')
                 if {p['id'] for p in cell['assignees']} == {p['id'] for p in group['members']}:
                     continue
                 save_cell(cur, actor, dict(station_id=row['station_id'],column_key=column['key'],revision=cell['revision'],
-                          inspector_ids=[p['id'] for p in group['members']],scheduled_date=day.isoformat()), chosen,start,end,cache)
+                          inspector_ids=[p['id'] for p in group['members']],scheduled_date=day.isoformat()),
+                          chosen,start,end,cache,refresh_team=True)
     refresh_field_shelf(cur,actor,day,groups,saved.get('revision',0))
 
 
