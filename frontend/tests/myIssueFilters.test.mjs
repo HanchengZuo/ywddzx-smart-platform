@@ -28,17 +28,17 @@ test('server review defaults include all dates and serialize full filter values'
   assert.equal(reviewRequestParams(filters).issue_description, '积水')
 })
 
-test('mobile review exposes only station and table without restricting desktop definitions', () => {
-  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表']])
+test('mobile review exposes station, table and keyword without restricting desktop definitions', () => {
+  assert.deepEqual(mobileReviewFilterDefinitions, [['station', '站点名称'], ['inspectionTableName', '检查表'], ['keyword', '关键词搜索']])
   assert.equal(reviewFilterDefinitions.length, 12)
 })
 
 test('mobile requests ignore hidden desktop conditions and preserve independent selections', () => {
-  const desktop = { ...emptyReviewFilters(), id: '18', month: '2026-09', dateFrom: '2026-09-01', dateTo: '2026-09-30', region: ['浦东'], inspector: ['张三'], description: '积水', station: ['杨思'], inspectionTableName: ['现场表'] }
+  const desktop = { ...emptyReviewFilters(), id: '18', month: '2026-09', dateFrom: '2026-09-01', dateTo: '2026-09-30', region: ['浦东'], inspector: ['张三'], description: '积水', station: ['杨思'], inspectionTableName: ['现场表'], keyword: ' 接地 锈蚀 ' }
   const snapshot = structuredClone(desktop)
   const mobile = mobileReviewFilters(desktop)
   const request = reviewRequestParams(mobile, 2, 5)
-  assert.deepEqual(mobile, { ...emptyReviewFilters(), station: ['杨思'], inspectionTableName: ['现场表'] })
+  assert.deepEqual(mobile, { ...emptyReviewFilters(), station: ['杨思'], inspectionTableName: ['现场表'], keyword: '接地 锈蚀' })
   assert.equal(request.page_size, 5)
   assert.equal(request.page, 2)
   assert.equal(request.issue_id, '')
@@ -50,5 +50,6 @@ test('mobile requests ignore hidden desktop conditions and preserve independent 
   mobile.station.push('新站')
   mobile.inspectionTableName.push('新表')
   assert.deepEqual(desktop, snapshot)
+  assert.ok(!('keyword' in reviewRequestParams(desktop)), 'desktop requests must not inherit mobile keywords')
   assert.deepEqual(mobileReviewFilters({ station: '杨思', inspectionTableName: '' }).station, ['杨思'])
 })
