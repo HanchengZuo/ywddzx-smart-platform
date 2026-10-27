@@ -602,8 +602,8 @@ function measureColumnLayout() {
   if (disposed || !desktopAligned.value || !measurementListRef.value || !externalSectionRef.value) return
   const directory = directoryCardRef.value, preview = previewCardRef.value, external = externalSectionRef.value
   if (!directory || !preview) return
-  // offsetHeight and computed spacing use layout pixels, including at the
-  // platform's 80% UI scale. Never let the stretched grid height feed itself.
+  // Use intrinsic content in layout pixels, not the grid's stretched height,
+  // so resizing cannot feed the measured height back into itself.
   const directoryHeight = boxChrome(directory) + [...directory.children].reduce((sum, el) => sum + outerHeight(el), 0)
   const previewFixed = [...preview.children].filter(el => el !== external).reduce((sum, el) => sum + outerHeight(el), 0)
   const externalFixed = [...external.children].filter(el => !el.classList.contains('external-standard-list') && !el.classList.contains('external-measure'))
@@ -1277,8 +1277,7 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
-  .external-section-head,
-  .external-standard-top {
+  .external-section-head {
     flex-direction: column;
   }
 
