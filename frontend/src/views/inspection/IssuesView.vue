@@ -5029,8 +5029,7 @@ onBeforeUnmount(() => {
 }
 
 .table-scroll {
-  max-height: 60vh;
-  overflow: auto;
+  overflow-x: auto;
 }
 
 .issues-table {

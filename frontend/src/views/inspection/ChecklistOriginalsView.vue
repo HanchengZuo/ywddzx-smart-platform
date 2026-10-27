@@ -18,7 +18,7 @@
     <div v-if="actionMessage" :class="['message-card', actionMessageType]">{{ actionMessage }}</div>
 
     <div class="content-grid">
-      <section class="list-card card-surface">
+      <section ref="directoryCardRef" class="list-card card-surface">
         <div class="section-head">
           <div>
             <div class="section-kicker">检查表目录</div>
@@ -26,7 +26,7 @@
           </div>
         </div>
 
-        <div class="checklist-list">
+        <div ref="directoryListRef" class="checklist-list">
           <article v-for="item in checklistItems" :key="item.inspection_table_id" class="checklist-card"
             :class="{ active: activeItem?.inspection_table_id === item.inspection_table_id }" @click="selectItem(item)">
             <div class="checklist-card-main">
@@ -72,17 +72,8 @@
                 <strong>外部规范列表</strong>
                 <span>{{ getExternalStandardsByTable(item.inspection_table_id).length }} 条</span>
               </div>
-              <article v-for="standard in getPaginatedExternalStandards(item.inspection_table_id)"
-                :key="standard.external_standard_id" class="external-standard-card">
-                <div class="external-standard-top">
-                  <span>外部规范ID {{ standard.external_standard_id }}</span>
-                  <em :class="{ linked: standard.linked_internal_standard_id }">
-                    {{ standard.linked_internal_standard_id ? `内部 ${standard.linked_internal_standard_id}` : '未关联内部规范'
-                    }}
-                  </em>
-                </div>
-                <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
-              </article>
+              <ExternalStandardCard v-for="standard in getPaginatedExternalStandards(item.inspection_table_id)"
+                :key="standard.external_standard_id" :standard="standard" compact />
               <div v-if="getExternalTotalPage(item.inspection_table_id) > 1"
                 class="pagination-bar mobile-standard-pager">
                 <button class="btn btn-secondary pagination-btn" type="button"
@@ -114,7 +105,7 @@
         </div>
       </section>
 
-      <section v-if="!isMobileView" class="preview-card card-surface">
+      <section v-if="!isMobileView" ref="previewCardRef" class="preview-card card-surface">
         <template v-if="activeItem">
           <div class="preview-header">
             <div>
@@ -159,7 +150,7 @@
             <p>上传后，所有用户都可以在这里查看该检查表原件；移动端也可以直接打开预览。</p>
           </div>
 
-          <div class="external-section">
+          <div ref="externalSectionRef" class="external-section">
             <div class="external-section-head">
               <div>
                 <div class="section-kicker">外部规范列表</div>
@@ -187,23 +178,22 @@
               </label>
             </div>
 
-            <div v-if="filteredActiveExternalStandards.length" class="external-standard-list">
-              <article v-for="standard in paginatedActiveExternalStandards" :key="standard.external_standard_id"
-                class="external-standard-card">
-                <div class="external-standard-top">
-                  <span>外部规范ID {{ standard.external_standard_id }}</span>
-                  <em :class="{ linked: standard.linked_internal_standard_id }">
-                    {{ standard.linked_internal_standard_id ? `已关联内部规范 ${standard.linked_internal_standard_id}` :
-                    '未关联内部规范' }}
-                  </em>
-                </div>
-                <p>{{ standard.standard_detail_text || '暂无外部规范详情。' }}</p>
-              </article>
-
-              <div class="pagination-bar">
+            <div v-if="desktopAligned" class="external-measure" aria-hidden="true" inert>
+              <div ref="measurementListRef" class="measurement-list">
+                <ExternalStandardCard v-for="standard in filteredActiveExternalStandards"
+                  :key="standard.external_standard_id" :standard="standard" />
+              </div>
+            </div>
+            <template v-if="filteredActiveExternalStandards.length">
+              <div class="external-standard-list">
+                <ExternalStandardCard v-for="standard in paginatedActiveExternalStandards"
+                  :key="standard.external_standard_id" :standard="standard" />
+              </div>
+              <div ref="externalPagerRef" class="pagination-bar">
                 <div class="pagination-summary">
                   共 {{ filteredActiveExternalStandards.length }} 条外部规范，第 {{ activeExternalPage }} / {{
                   activeExternalTotalPage }} 页
+                  <small v-if="desktopAligned" class="adaptive-page-hint">本页 {{ paginatedActiveExternalStandards.length }} 条 · 随目录高度适配</small>
                 </div>
                 <div class="pagination-controls">
                   <button class="btn btn-secondary pagination-btn" type="button" :disabled="activeExternalPage <= 1"
@@ -224,7 +214,7 @@
                   </button>
                 </div>
               </div>
-            </div>
+            </template>
             <div v-else class="empty-external">
               {{ activeExternalStandards.length ? '没有符合筛选条件的外部规范。' : '这张检查表暂未维护外部规范数据。' }}
             </div>
@@ -248,7 +238,9 @@
 
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import ExternalStandardCard from '@/components/ExternalStandardCard.vue'
+import { paginateByHeight } from '@/utils/heightPagination'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
 const currentRole = localStorage.getItem('user_role') || ''
@@ -272,6 +264,10 @@ const activeTableId = ref('')
 const fieldMap = ref({})
 const standardPageByTable = ref({})
 const STANDARD_PAGE_SIZE = 5
+const DESKTOP_STANDARD_PAGE_SIZE = 12
+const directoryCardRef = ref(null), directoryListRef = ref(null), previewCardRef = ref(null),
+  externalSectionRef = ref(null), externalPagerRef = ref(null), measurementListRef = ref(null)
+const standardListBudget = ref(1200), measuredStandardHeights = ref({})
 const desktopStandardFilters = reactive({
   keyword: '',
   fieldValues: {}
@@ -286,6 +282,7 @@ const detectMobileViewport = () => {
 }
 
 const isMobileView = ref(detectMobileViewport())
+const desktopAligned = ref(!isMobileView.value && window.innerWidth > 1200)
 
 const uploadedCount = computed(() => checklistItems.value.filter((item) => item.has_pdf).length)
 const externalStandardCount = computed(() => externalStandards.value.length)
@@ -321,17 +318,22 @@ const filteredActiveExternalStandards = computed(() => {
   })
 })
 
-const activeExternalTotalPage = computed(() => {
-  return Math.max(1, Math.ceil(filteredActiveExternalStandards.value.length / STANDARD_PAGE_SIZE))
+const desktopStandardPages = computed(() => {
+  const items = filteredActiveExternalStandards.value
+  if (!desktopAligned.value) return Array.from({ length: Math.ceil(items.length / DESKTOP_STANDARD_PAGE_SIZE) }, (_, i) => ({
+    start: i * DESKTOP_STANDARD_PAGE_SIZE, end: (i + 1) * DESKTOP_STANDARD_PAGE_SIZE
+  }))
+  return paginateByHeight(items.map(item => measuredStandardHeights.value[item.external_standard_id] || 160), standardListBudget.value)
 })
+const activeExternalTotalPage = computed(() => Math.max(1, desktopStandardPages.value.length))
 
 const activeExternalPage = computed(() => {
   return getStandardPage(activeItem.value?.inspection_table_id, activeExternalTotalPage.value)
 })
 
 const paginatedActiveExternalStandards = computed(() => {
-  const start = (activeExternalPage.value - 1) * STANDARD_PAGE_SIZE
-  return filteredActiveExternalStandards.value.slice(start, start + STANDARD_PAGE_SIZE)
+  const range = desktopStandardPages.value[activeExternalPage.value - 1]
+  return range ? filteredActiveExternalStandards.value.slice(range.start, range.end) : []
 })
 
 const getExternalStandardsByTable = (inspectionTableId) => {
@@ -362,6 +364,7 @@ const resetStandardPage = (inspectionTableId) => {
 }
 
 const getExternalTotalPage = (inspectionTableId) => {
+  if (!isMobileView.value && String(inspectionTableId) === String(activeItem.value?.inspection_table_id)) return activeExternalTotalPage.value
   const list = getExternalStandardsByTable(inspectionTableId)
   return Math.max(1, Math.ceil(list.length / STANDARD_PAGE_SIZE))
 }
@@ -580,10 +583,58 @@ const handlePdfChange = async (item, event) => {
 
 const handleViewportResize = () => {
   isMobileView.value = detectMobileViewport()
+  desktopAligned.value = !isMobileView.value && window.innerWidth > 1200
+  queueColumnLayout()
+}
+
+let columnObserver, layoutFrame = null, disposed = false
+const pixels = value => Number.parseFloat(value) || 0
+const boxChrome = element => {
+  const style = getComputedStyle(element)
+  return pixels(style.paddingTop) + pixels(style.paddingBottom) + pixels(style.borderTopWidth) + pixels(style.borderBottomWidth)
+}
+const outerHeight = element => {
+  const style = getComputedStyle(element)
+  return element.offsetHeight + pixels(style.marginTop) + pixels(style.marginBottom)
+}
+function measureColumnLayout() {
+  layoutFrame = null
+  if (disposed || !desktopAligned.value || !measurementListRef.value || !externalSectionRef.value) return
+  const directory = directoryCardRef.value, preview = previewCardRef.value, external = externalSectionRef.value
+  if (!directory || !preview) return
+  // offsetHeight and computed spacing use layout pixels, including at the
+  // platform's 80% UI scale. Never let the stretched grid height feed itself.
+  const directoryHeight = boxChrome(directory) + [...directory.children].reduce((sum, el) => sum + outerHeight(el), 0)
+  const previewFixed = [...preview.children].filter(el => el !== external).reduce((sum, el) => sum + outerHeight(el), 0)
+  const externalFixed = [...external.children].filter(el => !el.classList.contains('external-standard-list') && !el.classList.contains('external-measure'))
+    .reduce((sum, el) => sum + outerHeight(el), 0)
+  const style = getComputedStyle(external)
+  standardListBudget.value = Math.max(160, Math.floor(directoryHeight - boxChrome(preview) - previewFixed - boxChrome(external)
+    - pixels(style.marginTop) - pixels(style.marginBottom) - externalFixed))
+  const heights = Object.fromEntries(filteredActiveExternalStandards.value.map((item, index) =>
+    [item.external_standard_id, measurementListRef.value.children[index]?.offsetHeight || 160]))
+  const previous = measuredStandardHeights.value
+  if (Object.keys(previous).length !== Object.keys(heights).length || Object.keys(heights).some(key => heights[key] !== previous[key]))
+    measuredStandardHeights.value = heights
+}
+function queueColumnLayout() {
+  if (!disposed && layoutFrame === null) layoutFrame = requestAnimationFrame(measureColumnLayout)
+}
+async function observeColumnLayout() {
+  await nextTick()
+  if (disposed) return
+  columnObserver?.disconnect()
+  if (desktopAligned.value && typeof ResizeObserver !== 'undefined') {
+    columnObserver = new ResizeObserver(queueColumnLayout)
+    for (const element of [directoryListRef.value, directoryCardRef.value?.firstElementChild, previewCardRef.value,
+      measurementListRef.value, externalPagerRef.value]) if (element) columnObserver.observe(element)
+  }
+  queueColumnLayout()
 }
 
 onMounted(() => {
   window.addEventListener('resize', handleViewportResize)
+  document.fonts?.ready.then(queueColumnLayout)
   Promise.all([fetchOriginals(), fetchExternalStandards()]).catch((error) => {
     setActionMessage(error?.response?.data?.error || '外部规范库加载失败。', 'error')
   })
@@ -595,8 +646,15 @@ watch(activeItem, (item) => {
     resetStandardPage(item.inspection_table_id)
   }
 }, { immediate: true })
+watch([filteredActiveExternalStandards, desktopAligned], observeColumnLayout, { flush: 'post' })
+watch([isMobileView, desktopAligned], () => {
+  if (activeItem.value) resetStandardPage(activeItem.value.inspection_table_id)
+})
 
 onBeforeUnmount(() => {
+  disposed = true
+  columnObserver?.disconnect()
+  if (layoutFrame !== null) cancelAnimationFrame(layoutFrame)
   window.removeEventListener('resize', handleViewportResize)
   if (actionMessageTimer) {
     window.clearTimeout(actionMessageTimer)
@@ -753,9 +811,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 760px;
-  overflow: auto;
-  padding-right: 4px;
 }
 
 .checklist-card {
@@ -877,6 +932,7 @@ onBeforeUnmount(() => {
 }
 
 .external-section {
+  position: relative;
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid #e5edf5;
@@ -927,6 +983,7 @@ onBeforeUnmount(() => {
 }
 
 .external-standard-list,
+.measurement-list,
 .mobile-external-section {
   display: flex;
   flex-direction: column;
@@ -939,50 +996,8 @@ onBeforeUnmount(() => {
   border-top: 1px solid #e5edf5;
 }
 
-.external-standard-card {
-  padding: 14px;
-  border: 1px solid #e5edf5;
-  border-radius: 16px;
-  background: #ffffff;
-}
-
-.external-standard-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.external-standard-top span {
-  color: #1d4ed8;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.external-standard-top em {
-  flex: 0 0 auto;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: #f1f5f9;
-  color: #64748b;
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 900;
-}
-
-.external-standard-top em.linked {
-  background: #ecfdf5;
-  color: #15803d;
-}
-
-.external-standard-card p {
-  margin: 0;
-  color: #334155;
-  font-size: 13px;
-  line-height: 1.8;
-  white-space: pre-line;
-}
+.external-measure { position:absolute; inset:0 0 auto; height:0; overflow:hidden; visibility:hidden; pointer-events:none; contain:layout style paint; }
+.adaptive-page-hint { display:block; margin-top:6px; color:#64748b; font-size:12px; font-weight:500; }
 
 .empty-external {
   min-height: 110px;
@@ -1015,6 +1030,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .pagination-btn {
@@ -1191,28 +1208,28 @@ onBeforeUnmount(() => {
 }
 
 @media (min-width: 1201px) {
+  .preview-card,
   .list-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .preview-card > :not(.external-section),
+  .list-card > * {
+    flex-shrink: 0;
+  }
+
+  .preview-card .external-section {
+    flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
   }
 
-  .list-card .section-head {
+  .external-section > :not(.external-standard-list) {
     flex-shrink: 0;
   }
-
-  /* Let the preview determine the shared row height, not the directory length. */
-  .checklist-list {
-    flex: 1 1 0;
-    height: 0;
-    min-height: 0;
-    max-height: none;
-    scrollbar-gutter: stable;
-  }
-
-  .checklist-list > * {
-    flex-shrink: 0;
-  }
+  .external-standard-list { flex:1; }
 }
 
 @media (max-width: 1200px) {
@@ -1220,9 +1237,6 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .checklist-list {
-    max-height: none;
-  }
 }
 
 @media (max-width: 768px) {
