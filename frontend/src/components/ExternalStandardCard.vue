@@ -21,4 +21,7 @@ defineProps({ standard: { type: Object, required: true }, compact: Boolean })
 .external-standard-top em { flex:0 0 auto; padding:4px 9px; border-radius:999px; background:#f1f5f9; color:#64748b; font-size:12px; font-style:normal; font-weight:900; }
 .external-standard-top em.linked { background:#ecfdf5; color:#15803d; }
 p { margin:0; color:#334155; font-size:13px; line-height:1.8; white-space:pre-line; overflow-wrap:anywhere; }
+@media (max-width: 768px) {
+  .external-standard-top { flex-direction:column; align-items:flex-start; }
+}
 </style>

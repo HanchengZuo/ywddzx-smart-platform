@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
+import './styles/workspaceResponsive.css'
 import router from './router'
 import { configureAxiosAuth } from './utils/authSession'
 import { checkFrontendVersion } from './utils/frontendVersion'
