@@ -218,13 +218,97 @@ test('inactive panels cannot poll, including after network and visibility events
   assert.equal(options.canRun(), false)
   context.active = true
   assert.equal(options.canRun(), true)
-  for (const ref of [context.online, context.blocked, context.saving, context.shelfSaving]) {
+  context.online.value = false
+  assert.equal(options.canRun(), true, 'a failed connection must remain eligible for backoff retries')
+  for (const ref of [context.blocked, context.saving, context.shelfSaving]) {
     ref.value = !ref.value
     assert.equal(options.canRun(), false)
     ref.value = !ref.value
   }
   context.document.hidden = true
   assert.equal(options.canRun(), false)
+})
+
+function boardLoader(initialBoard = null) {
+  const payload = { success: true, rows: [], columns: [{ key: 'odor' }], shelf: [], period: { label: '第四季度' }, can_edit: true }
+  const requests = []
+  const context = vm.createContext({
+    disposed: false, active: true, blocked: { value: false }, online: { value: false }, serial: 0,
+    controller: null, AbortController, loading: { value: false }, error: { value: '' },
+    board: { value: initialBoard }, shelf: { value: [] }, pickedShelf: { value: null },
+    multiSelect: { value: false }, selectedCells: { value: [] }, selection: { value: null },
+    currentCell: { value: null }, notice: { value: '' }, lastSyncedAt: 0,
+    updatedTime: { value: '' }, region: { value: '' }, regions: { value: [] },
+    draft: { value: { mode: 'offline', year: 2026, quarter: 4 } },
+    coverageQuery: value => value, shelfHasCapacity: () => true, closeCell: () => {},
+    axios: { get: async (...args) => { requests.push(args); return { data: payload } } },
+  })
+  vm.runInContext(panelSource.slice(panelSource.indexOf('async function loadBoard()'), panelSource.indexOf('async function retryBoard()')), context)
+  return { context, requests, payload, load: () => context.loadBoard() }
+}
+
+test('initial board request is attempted despite an offline hint and a successful empty board is valid', async () => {
+  const { context, requests, payload, load } = boardLoader()
+  assert.equal(await load(), true)
+  assert.equal(requests.length, 1)
+  assert.equal(context.board.value, payload)
+  assert.equal(context.online.value, true)
+  assert.equal(context.error.value, '')
+  assert.equal(context.loading.value, false)
+})
+
+test('connection errors retain the last board, disable edits and can recover without a browser online event', async () => {
+  const previous = { rows: [{ station_name: '甲站' }] }
+  const { context, load } = boardLoader(previous)
+  context.axios.get = async () => { throw new Error('Network Error') }
+  await assert.rejects(load())
+  assert.equal(context.board.value, previous)
+  assert.equal(context.online.value, false)
+  assert.match(context.error.value, /排班表读取失败/)
+  assert.equal(context.loading.value, false)
+  const response = { success: true, rows: [], columns: [{ key: 'odor' }], period: {}, can_edit: false }
+  context.axios.get = async () => ({ data: response })
+  assert.equal(await load(), true)
+  assert.equal(context.board.value, response)
+  assert.equal(context.online.value, true)
+  assert.equal(context.error.value, '')
+})
+
+test('malformed responses do not overwrite cached data; permission refusals clear it and block retries', async () => {
+  const previous = { rows: [{ station_name: '甲站' }] }
+  for (const data of [null, '<html>proxy error</html>', { success: true, rows: [] }, { success: true, rows: [], columns: [], period: {} }]) {
+    const { context, load } = boardLoader(previous)
+    context.axios.get = async () => ({ data })
+    await assert.rejects(load())
+    assert.equal(context.board.value, previous)
+    assert.match(context.error.value, /排班数据不完整/)
+  }
+  for (const status of [401,403]) {
+    const { context, load } = boardLoader(previous)
+    let calls = 0
+    context.axios.get = async () => { calls++; throw { response: { status, data: { error: '无权查看' } } } }
+    await assert.rejects(load())
+    assert.equal(context.blocked.value, true)
+    assert.equal(context.board.value, null)
+    assert.equal(await load(), undefined)
+    assert.equal(calls, 1, 'permission refusals must not be retried')
+  }
+})
+
+test('visibility and network hints probe the API without disabling a reachable cached board', () => {
+  const calls = []
+  const context = vm.createContext({ active: true, document: { hidden: false }, navigator: { onLine: false },
+    online: { value: true }, polling: { start: () => calls.push('probe'), pause: () => calls.push('pause') } })
+  vm.runInContext(panelSource.slice(panelSource.indexOf('function visibilityChanged()'), panelSource.indexOf('watch(\n  () => JSON.stringify(coverageQuery')), context)
+  context.visibilityChanged()
+  assert.equal(context.online.value, true)
+  assert.deepEqual(calls, ['probe'])
+  context.document.hidden = true
+  context.visibilityChanged()
+  context.active = false
+  context.document.hidden = false
+  context.visibilityChanged()
+  assert.deepEqual(calls, ['probe','pause','pause'])
 })
 
 test('schedule has one active cached panel, all rows in page flow, and responsive cards without table scrollers', () => {

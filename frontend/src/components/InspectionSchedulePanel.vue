@@ -92,8 +92,10 @@
             : error
               ? '数据未更新 · 暂停编辑'
               : !online
-                ? '离线保留结果 · 暂停编辑'
-                : `已同步 ${updatedTime || '—'}`
+                ? '连接未确认 · 暂停编辑'
+                : !board
+                  ? '正在准备排班数据…'
+                  : `已同步 ${updatedTime || '—'}`
         }}<em v-if="board && !board.can_edit"> · 只读</em></span
       >
     </div>
@@ -245,9 +247,11 @@
               {{
                 error
                   ? '暂时无法读取，请重试。'
-                  : keyword || region || state
-                    ? '没有匹配的站点，请调整筛选条件。'
-                    : '当前没有纳入本计划的名单站点。'
+                  : !board
+                    ? '排班数据尚未加载，正在连接服务器…'
+                    : keyword || region || state
+                      ? '没有匹配的站点，请调整筛选条件。'
+                      : '当前没有纳入本计划的名单站点。'
               }}
             </td>
           </tr>
@@ -758,8 +762,10 @@ const error = ref(''),
   keyword = ref(''),
   region = ref(''),
   state = ref('')
+// Browser network hints can be false even while this server remains reachable.
+// Only a completed board request determines whether cached data is safe to edit.
 const updatedTime = ref(''),
-  online = ref(navigator.onLine)
+  online = ref(true)
 const dialog = ref(null),
   selection = ref(null),
   selectedIds = ref([]),
@@ -1126,7 +1132,7 @@ const clearFilters = () => {
 }
 
 async function loadBoard() {
-  if (disposed || !active || blocked.value || !online.value) return
+  if (disposed || !active || blocked.value) return
   const ticket = ++serial
   controller?.abort()
   controller = new AbortController()
@@ -1138,6 +1144,10 @@ async function loadBoard() {
       timeout: 15000,
     })
     if (disposed || ticket !== serial) return
+    if (!response.data?.success || !Array.isArray(response.data.rows) ||
+        !Array.isArray(response.data.columns) || !response.data.columns.length || !response.data.period) {
+      throw Object.assign(new Error(response.data?.error || '排班数据不完整，请重试。'), { code: 'INVALID_SCHEDULE_RESPONSE' })
+    }
     board.value = response.data
     shelf.value = (response.data.shelf || []).filter(shelfHasCapacity)
     if (!shelf.value.some((item) => item.key === pickedShelf.value)) pickedShelf.value = null
@@ -1150,13 +1160,16 @@ async function loadBoard() {
       notice.value = '原站点已不在当前可见计划名单内，已关闭编辑，请核对站点档案。'
     }
     error.value = ''
+    online.value = true
     lastSyncedAt = Date.now()
     updatedTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     if (region.value && !regions.value.includes(region.value)) region.value = ''
     return true
   } catch (err) {
     if (disposed || ticket !== serial || err.code === 'ERR_CANCELED') return
-    error.value = err.response?.data?.error || '排班表读取失败，保留上次结果，请重试。'
+    online.value = false
+    error.value = err.response?.data?.error || (err.code === 'INVALID_SCHEDULE_RESPONSE'
+      ? err.message : '排班表读取失败，保留上次结果，请重试。')
     if ([401, 403].includes(err.response?.status)) {
       blocked.value = true
       board.value = null
@@ -1329,15 +1342,13 @@ const polling = createAdaptivePolling({
     active &&
     !disposed &&
     !document.hidden &&
-    online.value &&
     !blocked.value &&
     !saving.value &&
     !shelfSaving.value &&
     !dialog.value?.open,
 })
 function visibilityChanged() {
-  online.value = navigator.onLine
-  if (!active || document.hidden || !online.value) polling.pause()
+  if (!active || document.hidden) polling.pause()
   else polling.start({ immediate: true })
 }
 watch(
@@ -1353,7 +1364,7 @@ watch(
     dragged.value = null
     error.value = ''
     notice.value = ''
-    loading.value = online.value
+    loading.value = true
     clearTimeout(switchTimer)
     switchTimer = setTimeout(() => {
       loadBoard().catch(() => {})
@@ -1371,7 +1382,6 @@ onMounted(() => {
 })
 onActivated(() => {
   active = true
-  online.value = navigator.onLine
   if (!shelfSaving.value && (!board.value || error.value || Date.now() - lastSyncedAt >= 60000)) {
     loadBoard().catch(() => {})
   }
