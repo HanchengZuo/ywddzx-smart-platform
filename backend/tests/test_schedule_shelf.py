@@ -265,7 +265,7 @@ class ShelfDatabaseTests(unittest.TestCase):
         sql=(Path(__file__).resolve().parents[1]/'db/init/540_video_schedule_rows.sql').read_text()
         self.cur.execute(sql);self.cur.execute(sql);self.admin.commit()
         cards=self.board(dict(mode='online',year=2026,month=10))['shelf']
-        self.assertEqual(len(cards),2)
+        self.assertEqual(len(cards),3,'the same person has independent cards on different dates')
         self.assertTrue(all(c['source_column_key']=='row' for c in cards))
         self.assertEqual({tuple(c['ids']) for c in cards},{(2,),(3,)})
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_shelf_events WHERE action='row_upgrade' AND actor_name='系统升级'")
@@ -313,7 +313,7 @@ class ShelfDatabaseTests(unittest.TestCase):
         self.cur.execute("SELECT COUNT(*) AS n FROM inspection_schedule_tasks WHERE status='pending'")
         self.assertEqual(self.cur.fetchone()['n'],0)
 
-    def test_expiration_is_audited_nonblocking_and_cannot_place_old_or_future_cards(self):
+    def test_expiration_is_audited_nonblocking_and_preserves_future_cards(self):
         self.save(); item = self.park()
         self.cur.execute("UPDATE inspection_schedule_shelf SET scheduled_date='2026-10-19' WHERE id=%s",(item['id'],))
         self.cur.execute("INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,name,source_station_name,source_column_key) VALUES('online','2026-10-21','[3]','旧未来待选','金朝','row')")
@@ -328,19 +328,20 @@ class ShelfDatabaseTests(unittest.TestCase):
             blocker.rollback(); lock.close(); blocker.close()
         self.assertEqual(self.board()['shelf'],[])
         self.cur.execute("SELECT actor_id,actor_name FROM inspection_schedule_shelf_events WHERE action='expired'")
-        self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(actor_id=None,actor_name='系统自动清理')]*2)
+        self.assertEqual([dict(r) for r in self.cur.fetchall()],[dict(actor_id=None,actor_name='系统自动清理')])
+        self.assertEqual(self.board(dict(mode='online',year=2026,month=10))['shelf'][0]['day'],'2026-10-21')
         self.assertEqual(self.place(item).status_code,409)
         self.cur.execute('SELECT COUNT(*) AS n FROM inspection_schedule_shelf')
         self.assertEqual(self.cur.fetchone()['n'],2,'history is archived, not deleted')
 
-    def test_future_plan_cannot_be_parked_and_clear_rejects_new_shelf_revision(self):
+    def test_future_plan_can_be_parked_and_clear_rejects_new_shelf_revision(self):
         self.save()
         self.cur.execute("UPDATE inspection_schedule_cells SET scheduled_date='2026-10-21'")
         self.admin.commit()
-        self.assertEqual(self.dispatch('park',cells=self.row_cells(1,1)).status_code,409)
-        self.cur.execute("UPDATE inspection_schedule_cells SET scheduled_date='2026-10-20'")
-        self.admin.commit()
-        item = self.park()
+        parked=self.dispatch('park',cells=self.row_cells(1,1))
+        self.assertEqual(parked.status_code,200,parked.json)
+        item=parked.json['board']['shelf'][0]
+        self.assertEqual(item['day'],'2026-10-21')
         board = self.board()
         self.cur.execute('UPDATE inspection_schedule_shelf SET revision=revision+1 WHERE id=%s',(item['id'],))
         self.admin.commit()

@@ -30,8 +30,8 @@ def park_saved(cur,actor,chosen,start,end,selected,*,clear=True,action='parked')
         if cell['assignees']:
             if not cell['scheduled_date']:
                 raise ValueError('旧排班缺少计划日期，请先补齐日期后再调度。')
-            if cell['scheduled_date'] != today().isoformat():
-                raise ScheduleConflict('今日调度待选区仅可调度今日计划，其他日期请直接编辑整行排班。')
+            if cell['scheduled_date'] < today().isoformat():
+                raise ScheduleConflict('过期计划不能移入调度待选区，请直接核对历史排班。')
             key=(row['station_id'], 'row',
                  cell['scheduled_date'], tuple(sorted(p['id'] for p in cell['assignees'])))
             buckets[key].append(cell)
@@ -67,17 +67,17 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         version=integer(data.get('revision'),'待选版本')
         cur.execute('SELECT * FROM inspection_schedule_shelf WHERE id=%s FOR UPDATE',(sid,))
         saved=cur.fetchone()
-        if not saved or saved['mode']!=field_mode(chosen['mode']) or saved['scheduled_date']!=today() or not start<=today()<end:
-            raise ScheduleConflict('待选安排不是当前模式的今日安排，请载入今日调度待选区。')
+        if not saved or saved['mode']!=field_mode(chosen['mode']) or saved['scheduled_date']<today() or not start<=saved['scheduled_date']<end:
+            raise ScheduleConflict('待选安排不在当前模式或周期内，或已经过期，请重新载入调度待选区。')
         if saved['status']!='waiting' or saved['revision']!=version:
             raise ScheduleConflict('这条待选安排已被其他用户处理，请查看最新排班。')
         if action=='place':
             # The board was read under the cross-worker dispatch lock. Check the
             # live, deduplicated capacity, not a client badge or an old shelf ID.
             available=next((card for card in board['shelf']
-                            if sorted(card['ids'])==sorted(saved['inspector_ids'])),None)
+                            if card['day']==saved['scheduled_date'].isoformat() and sorted(card['ids'])==sorted(saved['inspector_ids'])),None)
             if not available or available['remaining']<=0:
-                raise ScheduleConflict('该组或人员今日待派站数已为0，不能继续派站。请调整站数目标或撤下未开始的今日排班后再试。')
+                raise ScheduleConflict('该组或人员在所选日期的待派站数已为0，不能继续派站。请调整站数目标或撤下该日未开始的排班后再试。')
             # Preserve occupied destinations in the same transaction so a two-way swap cannot lose a plan.
             displaced=park_saved(cur,actor,chosen,start,end,selected,clear=False,action='displaced')
             cache={}
@@ -113,7 +113,7 @@ def apply_dispatch(cur,actor,data,chosen,start,end):
         cards=park_saved(cur,actor,chosen,start,end,selected,action='cleared_to_shelf')
         stations=len({row['station_id'] for _,row,_ in selected})
         return dict(parked_count=len(cards),cleared_count=len(selected),cleared_station_count=stations,discarded_count=0,
-                    message=f'已撤下 {stations} 站今日未完成排班，转入今日调度待选区 {len(cards)} 项；原有待选安排、实际检查及其他日期安排保持不变。')
+                    message=f'已撤下 {stations} 站今日未完成排班，转入调度待选区 {len(cards)} 项；原有待选安排、实际检查及其他日期安排保持不变。')
     raise ValueError('请选择移入待选区、安排、移除或清空今日排班。')
 
 

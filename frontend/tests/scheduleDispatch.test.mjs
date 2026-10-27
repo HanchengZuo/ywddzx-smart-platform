@@ -158,13 +158,15 @@ test('personal inbox lives in desktop and mobile headers, not the page body', ()
   assert.match(app, /scheduleAgenda.value = payload.schedule_agenda/)
 })
 
-test('smart apply requires explicit replacement, keeps the modal open, and recalculates the independent plan', async () => {
+test('smart batch apply requires explicit replacement and preserves adopted results in the modal', async () => {
   const calls=[]
   const saved={day:'2026-10-22',groups:[{station_id:1}],current_assignments:[{name:'外勤甲组',stations:[{station_id:1}]}]}
   const context=vm.createContext({
     AbortController,serial:0,controller:undefined,disposed:false,
     preview:{value:{groups:[{station_id:1}],token:'server-token'}},
     day:{value:'2026-10-22'},offlineCount:{value:2},onlineCount:{value:3},
+    selectedDates:{value:['2026-10-22']},previews:{value:{'2026-10-22':{groups:[{station_id:1}],token:'server-token'}}},batchReady:{value:true},
+    showDay: date => {context.preview.value=context.previews.value[date]},
     quotaSettings:{value:{offline_count:2,online_count:3,revision:0}},
     loading:{value:false},saving:{value:false},stale:{value:false},error:{value:''},savedNotice:{value:''},
     replaceConfirmed:{value:true},
@@ -172,21 +174,22 @@ test('smart apply requires explicit replacement, keeps the modal open, and recal
     emit:(event,data)=>calls.push({event,data}),window:{dispatchEvent(){}},Event:class{},
     axios:{post:async(url,body)=>{
       calls.push({url,body})
-      return {data:body.action==='confirm'?saved:{...saved,groups:[],token:'new-token'}}
+      return {data:{results:[saved]}}
     }},
   })
   const script=source('components/AutomaticSchedule.vue')
   vm.runInContext(script.slice(script.indexOf('async function createPreview()'),script.indexOf('onBeforeUnmount(() =>')),context)
   await context.confirm()
-  assert.deepEqual(calls.filter(c=>c.body).map(c=>c.body.action),['confirm','preview'])
+  assert.deepEqual(calls.filter(c=>c.body).map(c=>c.body.action),['confirm'])
   assert.equal(context.preview.value.current_assignments[0].name,'外勤甲组')
-  assert.equal(context.preview.value.groups.length,0)
-  assert.equal(calls[0].body.strategy,'replace_today')
+  assert.equal(context.preview.value.groups.length,1)
+  assert.equal(calls[0].url,'/api/inspection-schedule/auto/batch')
+  assert.equal(calls[0].body.tokens['2026-10-22'],'server-token')
   assert.equal(calls[0].body.replace_confirmed,true)
   assert.equal(context.replaceConfirmed.value,false)
-  assert.match(context.savedNotice.value,/已应用/)
+  assert.match(context.savedNotice.value,/已采用 1 天/)
   assert.equal(context.saving.value,false)
-  assert.equal(context.stale.value,false)
+  assert.equal(context.stale.value,true)
 })
 
 function dispatchHarness(mode = 'offline', fail = false) {
@@ -284,16 +287,20 @@ test('one completed video item locks the whole row against drag and drops', asyn
   assert.match(context.notice.value,/整行已锁定/)
 })
 
-test('today shelf refuses to drag a future or mixed-day row, without clearing any cells', () => {
+test('dispatch accepts future rows and preserves each cell date but rejects past rows', () => {
   for (const mode of ['offline','online']) {
     const {context,calls,row} = dispatchHarness(mode)
     row.cells.b.scheduled_date = '2026-10-21'
     let prevented = false
-    context.startAssignmentDrag({preventDefault() {prevented=true}},row)
-    assert.equal(prevented,true)
-    assert.equal(context.dragged.value,null)
+    const event={preventDefault() {prevented=true},dataTransfer:{setData(){}}}
+    context.startAssignmentDrag(event,row)
+    assert.equal(prevented,false)
+    assert.equal(context.dragged.value.kind,'plan')
     assert.equal(calls.length,0)
     assert.equal(row.cells.a.assignees.length,1)
+    row.cells.b.scheduled_date='2026-10-19'
+    context.startAssignmentDrag(event,row)
+    assert.equal(prevented,true)
   }
 })
 
@@ -329,10 +336,12 @@ test('zero-capacity or vanished shelf cards cannot start dragging or be dropped 
 
 test('daily grouping remains disabled while any roster member is unconfirmed', () => {
   const script = source('components/DailyInspectionTeams.vue')
-  const context = vm.createContext({computed: fn => ({get value() {return fn()}}),
-    context: {value: {working:true,unconfirmed:['甲'],people:[{}]}}, managers:{value:[{id:2}]},managerModes:{value:{2:'offline'}}})
-  vm.runInContext(script.slice(script.indexOf('const ready ='),script.indexOf('const displayGroups ='))+';globalThis.result=ready',context)
-  assert.equal(context.result.value,false)
-  context.context.value.unconfirmed=[]
-  assert.equal(context.result.value,true)
+  const context = vm.createContext({})
+  vm.runInContext(script.slice(script.indexOf('const dayReady ='),script.indexOf('const batchReady ='))+';globalThis.check=dayReady',context)
+  const session={context:{working:true,unconfirmed:['甲'],people:[{id:2,position:'管理人员'}]},managerModes:{2:'offline'}}
+  assert.equal(context.check(session),false)
+  session.context.unconfirmed=[]
+  assert.equal(context.check(session),true)
+  session.managerModes={}
+  assert.equal(context.check(session),false)
 })

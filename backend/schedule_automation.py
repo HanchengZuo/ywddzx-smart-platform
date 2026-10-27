@@ -12,7 +12,8 @@ from annual_metering_plan import plan_state
 from schedule_row_state import today_assignments
 from schedule_smart import planning_board, replacement_summary, protected_daily_counts, apply_smart_plan
 from schedule_quotas import read_quotas, save_quotas
-from staff_availability import available_people, excluded_reason
+from staff_availability import available_people, excluded_reason, STAFF
+from schedule_dates import planning_days, eligible_dates
 from staff_actuals import actuals_window, assert_actuals_window
 from staff_daily_teams import group_assignments, team_days
 from schedule_routes import ORIGIN_ADDRESS, ORIGIN_POINT, coordinate, regional_coverage, regional_targets
@@ -63,13 +64,13 @@ def balanced_allocation(people, demands, loads):
     return result
 
 
-def proposal(cur, actor, day, options=None, *, driving_plan=None):
+def proposal(cur, actor, day, options=None, *, driving_plan=None, reserved=()):
     require_workday(cur, day)
-    if day != today(): raise ValueError('一键排班只安排今天，请刷新日期。')
     options = options or {}
     if options.get('strategy') not in (None,'replace_today'):
         raise ValueError('请选择有效的排班策略。')
     smart=options.get('strategy')=='replace_today'
+    replacing=options.get('replace_days', (day,)) if smart else ()
     quota_settings=read_quotas(cur)
     if smart and 'quota_revision' in options and (type(options['quota_revision']) is not int or options['quota_revision']!=quota_settings['revision']):
         raise ScheduleConflict('站数配置已被其他用户修改，请重新打开智能排班后调整。')
@@ -93,8 +94,8 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
         board = read_board(cur, chosen, start, end)
         boards[mode]=board
         board_tokens[mode] = board['board_token']
-        if smart: board=planning_board(board,day)
-        if mode == 'offline': coverage = regional_coverage(board['rows'],day)
+        if smart: board=planning_board(board,day,reserved=reserved,replace_days=replacing)
+        if mode == 'offline': coverage = regional_coverage(board['rows'],today())
         demands[mode] = []
         for row in board['rows']:
             if row.get('locked'): continue
@@ -125,16 +126,16 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
         warnings.append('以下外勤组当前无人拥有准驾证，未派现场任务，请先调整：'+'、'.join(unlicensed_teams))
     missing = [s['station_name'] for s in demands['offline'] if not coordinate(s)]
     if missing: warnings.append('以下站点缺少有效坐标，未自动派现场任务：'+'、'.join(missing))
-    if not field_teams: warnings.append('请先在人员档期保存今日外勤组，现场排班只按完整且至少1人拥有准驾证的外勤组安排。')
+    if not field_teams: warnings.append('请先在人员档期保存所选日期外勤组，现场排班只按完整且至少1人拥有准驾证的外勤组安排。')
     valid = [s for s in demands['offline'] if coordinate(s)]
-    metering = plan_state(cur,day.year,day.month,ignore_plan_day=day if smart else None)
+    metering = plan_state(cur,day.year,day.month,ignore_plan_days=replacing)
     annual_period = period(dict(mode='annual',year=day.year))
     periods['annual']=annual_period
     annual_board=read_board(cur,*annual_period)
     boards['annual']=annual_board
     board_tokens['annual']=annual_board['board_token']
-    if smart: annual_board=planning_board(annual_board,day)
-    ordinary=planning_board(boards['offline'],day) if smart else read_board(cur,*periods['offline'])
+    if smart: annual_board=planning_board(annual_board,day,reserved=reserved,replace_days=replacing)
+    ordinary=planning_board(boards['offline'],day,reserved=reserved,replace_days=replacing) if smart else read_board(cur,*periods['offline'])
     quarter_rows={r['station_id']:r for r in ordinary['rows']}
     by_id={s['station_id']:s for s in valid}
     priority=[]
@@ -150,7 +151,9 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
             address=row['address'],longitude=row['longitude'],latitude=row['latitude'],cells=[dict(station_id=row['station_id'],column_key=c['key'],revision=qrow['cells'][c['key']]['revision'],label=c['label'])
               for c in ordinary['columns'] if qrow['cells'][c['key']]['status']=='unassigned'],covered=any(c['status']=='completed' for c in qrow['cells'].values()))
         priority.append(dict(candidate,metering_cells=annual_cells,metering_priority=True))
-    limits={r['region']:r['remaining'] for r in metering['regions']}
+    batch_metering = Counter(region for region, _ in {
+        (g['region'],g['station_id']) for g in reserved if g.get('metering_cells') and g['day'][:7]==day.strftime('%Y-%m')})
+    limits={r['region']:max(0,r['remaining']-batch_metering[r['region']]) for r in metering['regions']}
     required=[]
     used=defaultdict(int)
     protected=protected_daily_counts(boards.values(),day) if smart else {}
@@ -204,7 +207,8 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
             loads[p['id']] = after
     evidence = dict(actor=actor['id'], day=day.isoformat(), groups=groups, quotas=quotas, coverage=coverage,
                     board_tokens=board_tokens, metering=metering, algorithm='metering-coverage-driving-v3',
-                    team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'),quota_revision=quota_settings['revision'])
+                    team_revision=saved_team.get('revision', 0),strategy=options.get('strategy'),quota_revision=quota_settings['revision'],
+                    replacing=[d.isoformat() for d in replacing])
     token = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return dict(day=day.isoformat(), quarter=f'{day.year}年第{quarter}季度', groups=groups, token=token,
         offline_count=quotas['offline'], online_count=quotas['online'], quota_settings=quota_settings, origin=origin, origin_address=ORIGIN_ADDRESS,
@@ -218,11 +222,35 @@ def proposal(cur, actor, day, options=None, *, driving_plan=None):
                      api_requests=0, source='database', dataset_id=driving.get('dataset_id')),
         route_method='先补齐当月计量年度计划配额，再均衡片区季度覆盖率，最后优先组合预计驾车时间短的站点；同耗时时参考行驶距离，不使用直线距离。只读取每周更新的路网数据库，每对站点采一个方向、往返共用估算。仅统计组内站间行车，不包含办公室出发、返程或现场检查耗时，实际出行请以导航为准。',
         available_count=len(eligible), cell_count=sum(len(g['cells'])+len(g.get('metering_cells',[])) for g in groups),
-        excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or ('尚未保存今日巡检分组或分工与实绩冲突' if smart else '当天已有站点安排或巡检实绩'))
+        excluded=[dict(name=p['display_name'], reason=excluded_reason(p) or ('尚未保存所选日期巡检分组或分工与实绩冲突' if smart else '当天已有站点安排或巡检实绩'))
                   for p in people if p not in eligible]), periods
 
 
 def register_schedule_automation(app, *, connect, has_permission, driving_service=None):
+    from schedule_batch import register_batch_scheduling
+    register_batch_scheduling(app, connect=connect, has_permission=has_permission, driving_service=driving_service,
+                              build_proposal=proposal)
+
+    @app.get('/api/inspection-schedule/inspection-dates')
+    def station_planning_dates():
+        actor=getattr(g,'current_user',None)
+        if not actor: return jsonify(success=False,error='请先登录。'),401
+        conn=cur=None
+        try:
+            conn=connect();cur=conn.cursor()
+            if not has_permission(cur,actor,VIEW_PERMISSION): raise PermissionError('当前账号无权查看巡检排班。')
+            dates=eligible_dates(cur,[name for name,_ in STAFF],grouped=True,as_of=today())
+            response=jsonify(success=True,dates=dates,today=today().isoformat())
+            response.headers['Cache-Control']='private, no-store'
+            return response
+        except PermissionError as exc:
+            return jsonify(success=False,error=str(exc)),403
+        except Exception:
+            logging.exception('Station planning dates failed')
+            return jsonify(success=False,error='巡检安排日期暂时无法读取。'),500
+        finally:
+            if cur: cur.close()
+            if conn: conn.close()
     @app.get('/api/inspection-schedule/quotas')
     def schedule_station_quotas():
         actor=getattr(g,'current_user',None)

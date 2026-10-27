@@ -555,7 +555,7 @@ async function save() {
     selection.value = null
     notice.value = wasHistorical
       ? '历史档期已保存，原始巡检记录保持不变。'
-      : '档期已保存；未派站人员的分组和今日调度待选区已同步更新。'
+      : '档期已保存；未派站人员的分组和调度待选区已同步更新。'
     window.dispatchEvent(new Event('inspection-schedule-changed'))
     window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
     await load()
@@ -575,18 +575,25 @@ async function save() {
   }
 }
 async function onTeamsSaved(data) {
-  if (!data.adjusted) week.value = data.day
+  // Switching weeks destroys the board's dialog component. Defer that jump
+  // until it closes so multi-date drafts can still be reviewed after adoption.
+  if (!data.adjusted) teamsFocusDay = data.day
   await nextTick()
   clearTimeout(timer)
   await load()
-  notice.value = '今日巡检分组已保存，可在表格查看各人的带队分组。'
+  notice.value = `已保存 ${data.results?.length || 1} 天巡检分组，可在表格查看各日的带队安排。`
 }
+let teamsFocusDay = ''
 function teamsOpened() {
   teamsOpen.value = true
   polling.pause()
 }
 function teamsClosed() {
   teamsOpen.value = false
+  if (teamsFocusDay) {
+    week.value = teamsFocusDay
+    teamsFocusDay = ''
+  }
   polling.start()
 }
 const polling = createAdaptivePolling({

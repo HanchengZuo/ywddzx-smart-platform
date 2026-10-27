@@ -1,6 +1,6 @@
 <template>
   <button type="button" class="team-trigger" @click="open">
-    {{ canEdit ? '一键安排今日巡检' : '查看今日巡检分组' }}
+    {{ canEdit ? '一键安排巡检' : '查看巡检分组' }}
   </button>
   <Teleport to="body">
     <dialog
@@ -14,10 +14,10 @@
         <div>
           <small>DAILY INSPECTION TEAMS</small>
           <h3 id="daily-team-title">
-            今日巡检安排 <span>{{ context?.day }}</span>
+            巡检安排 <span>{{ activeDay || '选择日期' }}</span>
           </h3>
         </div>
-        <button type="button" :disabled="saving" aria-label="关闭今日巡检安排" @click="close">
+        <button type="button" :disabled="saving" aria-label="关闭巡检安排" @click="close">
           ×
         </button>
       </header>
@@ -27,19 +27,26 @@
         @dismiss="warningToast = ''"
       />
       <div class="team-body">
-        <p class="method">
-          今日未设置的档期默认有空，提前设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
+        <PlanningDateSelection :model-value="selectedDates" :options="dateOptions" :disabled="loading || saving" @update:model-value="selectDates" />
+        <nav v-if="selectedDates.length > 1" class="planning-day-tabs" aria-label="逐日配置巡检方案">
+          <button v-for="date in selectedDates" :key="date" type="button" :class="{ active: activeDay === date }" :disabled="loading || saving" @click="activateDay(date)">
+            {{ date }}<small>{{ sessionFor(date)?.preview ? '待采用草案' : sessionFor(date)?.context?.updated_at ? '已保存安排' : '待确定分工' }}</small>
+          </button>
+        </nav>
+        <details class="planning-help"><summary>安排规则与实绩保护</summary><p class="method">
+          仅当天未设置的档期默认有空；未来日期必须全部确认有空/没空，已设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
           17:00
           前的当日记录不影响档期展示；但外勤组任一成员在派工后登记了对应站点、检查表的巡检记录，该组立即锁定。未开工的外勤组可以调整组员，采用后同步站点排班与个人待办。已有派工的带队人、视频人员仍须先撤下派工才能更换分工。每组只能有一位管理人员，且至少1人持准驾证，优先配2人。
-        </p>
-        <p v-if="loading" role="status" class="empty">正在核对今日档期与已有安排…</p>
+        </p></details>
+        <p v-if="loading" role="status" class="empty">正在核对所选日期档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <template v-if="context">
           <p v-if="context.unconfirmed?.length" class="warning" role="status">
-            今日档期已确认 {{ context.confirmed_count }}/{{ context.total_count }} 人。请先为
+            所选日期档期已确认 {{ context.confirmed_count }}/{{ context.total_count }} 人。请先为
             {{ context.unconfirmed.join('、') }} 选择有空或没空，全部确认后才能一键安排。
           </p>
-          <p v-if="!context.working" class="warning">今天不是已发布的工作日，不能新安排巡检。</p>
+          <p v-if="!context.working" class="warning">该日不是已发布的工作日，不能新安排巡检。</p>
+          <p v-if="!context.people.length" class="warning">该日没有有空且账号匹配的人员，请取消选择该日期，或先调整人员档期。</p>
           <details
             v-if="editable && context.working"
             class="manager-step"
@@ -50,7 +57,7 @@
               <div>
                 <strong>确定管理人员分工</strong
                 ><small
-                  >今天有空的 {{ managers.length }} 位管理人员 ·
+                  >该日有空的 {{ managers.length }} 位管理人员 ·
                   {{ students.length }} 位大学生</small
                 >
               </div>
@@ -69,7 +76,7 @@
               <select
                 v-model="managerModes[person.id]"
                 :disabled="loading || saving || personLocked(person)"
-                :aria-label="person.display_name + '今日巡检方式'"
+                :aria-label="person.display_name + '所选日期巡检方式'"
                 @change="invalidate"
               >
                 <option value="">请选择分工</option>
@@ -82,7 +89,7 @@
               </select>
             </div>
             <p v-if="!managers.length" class="warning">
-              今天没有有空的管理人员，大学生只能安排视频巡检，不会形成无带队人的外勤组。
+              该日没有有空的管理人员，大学生只能安排视频巡检，不会形成无带队人的外勤组。
             </p>
             <p class="method">
               准驾证安全要求优先：现场组至少1人持证，条件允许时优先配2人，再尽量均分现场、视频人数及各组人数。已有站点安排或实绩优先保留，因此受约束时可能无法完全均分。请先在用户数据管理维护准驾证属性，未配置视为无证。
@@ -90,10 +97,10 @@
             <button
               type="button"
               class="primary"
-              :disabled="!ready || loading || saving"
+              :disabled="!batchReady || loading || saving"
               @click="createPreview"
             >
-              智能生成今日巡检方案
+              智能生成巡检方案（{{ selectedDates.length }}天）
             </button>
             <p v-if="hasDispatchedMembers" class="method">
               已派站的外勤组和视频人员将原样保留，仅重新生成其他有空人员的方案。
@@ -103,13 +110,13 @@
             <div class="step-heading">
               <b>02</b>
               <div>
-                <strong>{{ preview ? '待采用的今日巡检方案' : '当前生效的今日巡检安排' }}</strong
+                <strong>{{ preview ? '待采用的所选日期巡检方案' : '当前生效的所选日期巡检安排' }}</strong
                 ><small>{{
                   preview
-                    ? '仅为草案 · 调整不自动生效，采用后覆盖今日安排'
+                    ? '仅为草案 · 调整不自动生效，采用后覆盖所选日期安排'
                     : context.updated_at
                       ? context.updated_by_name + ' · ' + context.updated_at + ' 保存'
-                      : '今日尚未安排分组'
+                      : '所选日期尚未安排分组'
                 }}</small>
               </div>
             </div>
@@ -125,7 +132,7 @@
                     >有空待编组 <span>{{ unassignedPeople.length }} 人</span></strong
                   >
                   <p>
-                    来自今日档期中有空、尚未编组且没有站点派工的人员。{{
+                    来自所选日期档期中有空、尚未编组且没有站点派工的人员。{{
                       editable ? '可拖动或点击姓名加入下方分组。' : '当前为只读查看。'
                     }}
                   </p>
@@ -236,7 +243,7 @@
               {{
                 saving
                   ? '正在采用方案…'
-                  : '拖动姓名可调整草案，手机或键盘可先点姓名，再点目标组“移至”。管理人员只能移至内勤或独立带队，离开外勤时原组大学生自动转内勤。所有调整须点击“采用方案并覆盖今日安排”才生效。'
+                  : '拖动姓名可调整草案，手机或键盘可先点姓名，再点目标组“移至”。管理人员只能移至内勤或独立带队，离开外勤时原组大学生自动转内勤。所有调整须点击“采用方案并覆盖所选日期安排”才生效。'
               }}
               <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
                 取消选择
@@ -245,8 +252,8 @@
             <p v-else-if="!displayGroups.length" class="empty">
               {{
                 editable
-                  ? '完成上方管理人员分工后，点击“智能生成今日巡检方案”。'
-                  : '今日暂未保存巡检分组。'
+                  ? '完成所选各日管理人员分工后，点击“智能生成巡检方案”。'
+                  : '所选日期暂未保存巡检分组。'
               }}
             </p>
             <p
@@ -285,10 +292,10 @@
           v-if="editable"
           type="button"
           class="primary"
-          :disabled="!preview || !context?.working || loading || saving || unsafeGroups.length > 0"
+          :disabled="!batchAdoptable || loading || saving"
           @click="confirm"
         >
-          {{ saving ? '采用中…' : '采用方案并覆盖今日安排' }}
+          {{ saving ? '整批采用中…' : '采用已调整方案（' + batchDraftCount + '天）' }}
         </button>
       </footer>
     </dialog>
@@ -299,6 +306,8 @@ import axios from 'axios'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { fieldDriverCount, currentTeamDraft, movePreviewMember } from '@/utils/dailyTeamPreview'
 import TransientNotice from '@/components/TransientNotice.vue'
+import PlanningDateSelection from '@/components/PlanningDateSelection.vue'
+import { dateSelection, preferredPlanningDay, planSession, personnelApplyPlan } from '@/utils/datedPlans'
 const props = defineProps({ canEdit: { type: Boolean, default: false } })
 const emit = defineEmits(['saved', 'opened', 'closed'])
 const dialog = ref(null),
@@ -309,6 +318,16 @@ const dialog = ref(null),
   saving = ref(false),
   error = ref(''),
   success = ref('')
+const dateOptions = ref([]), selectedDates = ref([]), activeDay = ref(''), sessions = ref({})
+const sessionFor = day => planSession(day, activeDay.value, { context: context.value, preview: preview.value, managerModes: managerModes.value }, sessions.value)
+const dayReady = session => session?.context?.working && session.context.unconfirmed?.length === 0 && session.context.people.length > 0 &&
+  session.context.people.filter(p => p.position === '管理人员').every(p => session.managerModes[p.id])
+const batchReady = computed(() => selectedDates.value.length > 0 && selectedDates.value.every(day => dayReady(sessionFor(day))))
+const batchDraftCount = computed(() => selectedDates.value.filter(day => sessionFor(day)?.preview).length)
+const batchAdoptable = computed(() => batchDraftCount.value > 0 && selectedDates.value.every(day => {
+  const session = sessionFor(day)
+  return !session?.preview || (session.context.working && session.preview.groups.every(group => group.mode !== 'offline' || fieldDriverCount(group, session.context.people) > 0))
+}))
 const editable = computed(() => props.canEdit && context.value?.can_edit)
 const warningToast = ref(''),
   warningSequence = ref(0)
@@ -332,13 +351,6 @@ const managers = computed(() =>
 )
 const students = computed(() =>
   (context.value?.people || []).filter((p) => p.position === '大学生'),
-)
-const ready = computed(
-  () =>
-    context.value?.working &&
-    context.value.unconfirmed?.length === 0 &&
-    context.value.people.length &&
-    managers.value.every((p) => managerModes.value[p.id]),
 )
 const displayGroups = computed(() => {
   const groups = preview.value?.groups || context.value?.groups || []
@@ -452,116 +464,113 @@ function invalidate() {
   error.value = ''
   success.value = ''
 }
-async function open() {
-  warningToast.value = ''
+function saveActive() {
+  if (activeDay.value && context.value) sessions.value[activeDay.value] = sessionFor(activeDay.value)
+}
+function initialSession(data) {
+  const members = data.groups.flatMap(group => group.members)
+  return { context: data, preview: null, managerModes: Object.fromEntries(data.people.filter(p => p.position === '管理人员')
+    .map(p => [p.id, lockedMode(p) || members.find(member => member.id === p.id)?.mode || ''])) }
+}
+function activateDay(date, persist = true) {
+  if (persist) saveActive()
+  activeDay.value = date
+  const session = sessions.value[date]
+  context.value = session?.context || null
+  preview.value = session?.preview || null
+  managerModes.value = session?.managerModes || {}
   selectedStudent.value = draggingStudent.value = null
-  context.value = null
-  preview.value = null
-  error.value = ''
-  success.value = ''
-  dialog.value.showModal()
-  emit('opened')
-  await load()
+}
+async function selectDates(values) {
+  saveActive()
+  selectedDates.value = dateSelection(values, dateOptions.value)
+  const next = selectedDates.value.includes(activeDay.value) ? activeDay.value : selectedDates.value[0] || ''
+  const missing = selectedDates.value.filter(day => !sessions.value[day])
+  activateDay(next, false)
+  const ticket = ++serial
+  controller?.abort()
+  controller = new AbortController()
+  loading.value = true
+  try {
+    if (missing.length) {
+      const { data } = await axios.get('/api/staff-availability/today-inspection', {
+        params: { dates: JSON.stringify(missing) }, signal: controller.signal, timeout: 30000,
+      })
+      if (disposed || ticket !== serial) return
+      for (const result of data.results) sessions.value[result.day] = initialSession(result)
+    }
+    activateDay(next, false)
+    error.value = ''
+  } catch (err) {
+    if (!disposed && ticket === serial && err.code !== 'ERR_CANCELED') error.value = err.response?.data?.error || '所选日期档期读取失败，请重新选择。'
+  } finally { if (ticket === serial) loading.value = false }
+}
+async function open() {
+  warningToast.value = ''; success.value = ''; error.value = ''
+  selectedStudent.value = draggingStudent.value = null
+  context.value = preview.value = null
+  sessions.value = {}; selectedDates.value = []; activeDay.value = ''; dateOptions.value = []
+  dialog.value.showModal(); emit('opened')
+  const ticket = ++serial
+  controller?.abort(); controller = new AbortController(); loading.value = true
+  try {
+    const { data } = await axios.get('/api/staff-availability/inspection-dates', { signal: controller.signal, timeout: 15000 })
+    if (disposed || ticket !== serial) return
+    dateOptions.value = data.dates
+    const first = preferredPlanningDay(data.dates)
+    await selectDates(first ? [first] : [])
+  } catch (err) {
+    if (!disposed && ticket === serial && err.code !== 'ERR_CANCELED') error.value = err.response?.data?.error || '可安排日期读取失败，请重新打开。'
+  } finally { if (ticket === serial) loading.value = false }
 }
 async function load() {
-  const ticket = ++serial
-  controller?.abort()
-  controller = new AbortController()
-  loading.value = true
-  try {
-    const { data } = await axios.get('/api/staff-availability/today-inspection', {
-      signal: controller.signal,
-      timeout: 15000,
-    })
-    if (ticket !== serial || disposed) return
-    context.value = data
-    const old = data.groups.flatMap((g) => g.members)
-    managerModes.value = Object.fromEntries(
-      data.people
-        .filter((p) => p.position === '管理人员')
-        .map((p) => [p.id, lockedMode(p) || old.find((a) => a.id === p.id)?.mode || '']),
-    )
-  } catch (err) {
-    if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
-      error.value = err.response?.data?.error || '今日档期读取失败，请关闭后重试。'
-  } finally {
-    if (ticket === serial) loading.value = false
-  }
+  if (!activeDay.value) return
+  delete sessions.value[activeDay.value]
+  context.value = preview.value = null
+  await selectDates(selectedDates.value)
 }
 async function createPreview() {
-  if (!editable.value || !ready.value || loading.value || saving.value) return
+  if (!editable.value || !batchReady.value || loading.value || saving.value) return
+  saveActive()
   const ticket = ++serial
-  controller?.abort()
-  controller = new AbortController()
-  loading.value = true
-  error.value = ''
-  success.value = ''
-  preview.value = null
-  draggingStudent.value = selectedStudent.value = null
+  controller?.abort(); controller = new AbortController(); loading.value = true
+  error.value = ''; success.value = ''
   try {
-    const { data } = await axios.post(
-      '/api/staff-availability/today-inspection',
-      {
-        action: 'preview',
-        day: context.value.day,
-        revision: context.value.revision,
-        manager_modes: managerModes.value,
-      },
-      { signal: controller.signal, timeout: 15000 },
-    )
-    if (ticket === serial && !disposed) {
-      context.value.people = data.people
-      context.value.excluded = data.excluded
-      preview.value = data
+    const { data } = await axios.post('/api/staff-availability/today-inspection', {
+      action: 'preview', plans: selectedDates.value.map(day => {
+        const session = sessions.value[day]
+        return { day, revision: session.context.revision, manager_modes: session.managerModes }
+      }),
+    }, { signal: controller.signal, timeout: 90000 })
+    if (disposed || ticket !== serial) return
+    for (const result of data.results) {
+      const session = sessions.value[result.day]
+      session.context.people = result.people; session.context.excluded = result.excluded; session.preview = result
     }
+    activateDay(activeDay.value, false)
   } catch (err) {
-    if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
-      error.value = err.response?.data?.error || '分组预览失败，请重新打开核对。'
-  } finally {
-    if (ticket === serial) loading.value = false
-  }
+    if (!disposed && ticket === serial && err.code !== 'ERR_CANCELED') error.value = err.response?.data?.error || '批量方案生成失败，未保存任何安排。'
+  } finally { if (ticket === serial) loading.value = false }
 }
 async function submit() {
-  if (!editable.value || saving.value || loading.value || !preview.value) return
-  saving.value = true
-  error.value = ''
+  if (!editable.value || saving.value || loading.value || !batchAdoptable.value) return
+  saveActive()
+  const plans = selectedDates.value.map(day => personnelApplyPlan(sessions.value[day])).filter(Boolean)
+  saving.value = true; error.value = ''
   try {
-    const { data } = await axios.post(
-      '/api/staff-availability/today-inspection',
-      {
-        action: 'apply',
-        source: preview.value.source,
-        day: context.value.day,
-        revision: context.value.revision,
-        manager_modes: preview.value.manager_modes || managerModes.value,
-        seed: preview.value?.seed,
-        token: preview.value?.token,
-        moves: preview.value.moves || [],
-      },
-      { timeout: 30000 },
-    )
-    if (!disposed) {
-      preview.value = null
-      await load()
-      success.value =
-        '已采用今日人员安排，站点排班、个人待办及今日调度待选区已同步。未开工的外勤组可继续调整组员。'
-      emit('saved', data)
-      window.dispatchEvent(new Event('inspection-schedule-changed'))
-      window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
-    }
+    const { data } = await axios.post('/api/staff-availability/today-inspection', { action: 'apply', plans }, { timeout: 120000 })
+    if (disposed) return
+    for (const result of data.results) sessions.value[result.day] = initialSession(result)
+    activateDay(activeDay.value, false)
+    success.value = '已采用 ' + data.results.length + ' 天巡检安排，各日分组、站点任务和调度待选区已同步。'
+    emit('saved', { ...context.value, results: data.results })
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
   } catch (err) {
-    if (!disposed) {
-      preview.value = null
-      await load()
-      warn(err.response?.data?.error || '保存结果未能确认，已重新读取当前安排，请核对后调整。')
-    }
-  } finally {
-    saving.value = false
-  }
+    if (!disposed) warn(err.response?.data?.error || '批量保存未能确认，请重新读取后核对；不会部分采用。')
+  } finally { saving.value = false }
 }
-function confirm() {
-  submit()
-}
+function confirm() { submit() }
 function close() {
   if (saving.value) return
   serial++
@@ -589,6 +598,12 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.planning-help { margin:0 0 16px; padding:10px 12px; border:1px solid #cadbe5; border-radius:8px; background:#f7fafc; }
+.planning-help summary { cursor:pointer; font-weight:600; font-size:13px; color:#375f77; }
+.planning-day-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+.planning-day-tabs button { display:grid; gap:5px; padding:10px 14px; border:1px solid #b8ccd9; border-radius:10px; background:#f6f9fc; color:#365b75; cursor:pointer; }
+.planning-day-tabs button.active { color:white; background:#206b83; border-color:#206b83; }
+.planning-day-tabs small { font-size:11px; opacity:.85; }
 .dispatch-lock {
   display: block;
   margin: -4px 0 12px;

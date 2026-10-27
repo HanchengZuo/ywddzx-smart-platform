@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
 import { shelfHasCapacity } from '../src/utils/inspectionSchedule.js'
+import { dateSelection, preferredPlanningDay } from '../src/utils/datedPlans.js'
 const source = (file) => readFileSync(new URL('../src/' + file, import.meta.url), 'utf8')
 const ref = (value = null) => ({ value })
 
@@ -17,11 +18,14 @@ test('only positive whole remaining station counts are dispatchable', () => {
   assert.doesNotMatch(script,/角标仅作提醒，仍可额外手动派站/)
 })
 
-test('smart opening reads globally saved station targets before calculating any proposal', async () => {
+test('smart opening reads saved targets and eligible dates but waits for explicit preview', async () => {
   const script = source('components/AutomaticSchedule.vue'),
     calls = []
   const context = vm.createContext({
     day: ref(''),
+    dateOptions: ref([]), selectedDates: ref([]), previews: ref({}),
+    stale: ref(false),replaceConfirmed:ref(false),dateSelection,preferredPlanningDay,
+    selectDates: values => { context.selectedDates.value=values },
     preview: ref(),
     quotaSettings: ref(),
     savedNotice: ref(''),
@@ -38,7 +42,7 @@ test('smart opening reads globally saved station targets before calculating any 
     axios: {
       get: async (url) => {
         calls.push(url)
-        return { data: { offline_count: 4, online_count: 6, revision: 2 } }
+        return { data: url.endsWith('inspection-dates') ? {dates:[{day:'2026-10-22'}]} : { offline_count: 4, online_count: 6, revision: 2 } }
       },
     },
     createPreview: () => calls.push([context.offlineCount.value, context.onlineCount.value]),
@@ -48,11 +52,13 @@ test('smart opening reads globally saved station targets before calculating any 
     context,
   )
   await context.open()
-  assert.deepEqual(calls, ['/api/inspection-schedule/quotas', [4, 6]])
+  assert.deepEqual(calls, ['/api/inspection-schedule/quotas', '/api/inspection-schedule/inspection-dates'])
+  assert.equal(context.offlineCount.value,4)
+  assert.equal(context.selectedDates.value[0],'2026-10-22')
   assert.equal(context.quotaSettings.value.revision, 2)
 })
 
-test('calculating changed targets saves the shared revision and refreshes the scheduling board', async () => {
+test('batch preview sends all selected dates without saving station targets or mutating the board', async () => {
   const script = source('components/AutomaticSchedule.vue'),
     calls = []
   const context = vm.createContext({
@@ -60,6 +66,8 @@ test('calculating changed targets saves the shared revision and refreshes the sc
     offlineCount: ref(4),
     onlineCount: ref(3),
     day: ref('2026-10-22'),
+    selectedDates:ref(['2026-10-22','2026-10-23']),previews:ref({}),
+    showDay: day => {context.preview.value=context.previews.value[day]},
     serial: 0,
     controller: undefined,
     disposed: false,
@@ -79,7 +87,7 @@ test('calculating changed targets saves the shared revision and refreshes the sc
       post: async (_url, body) => {
         calls.push(body)
         return {
-          data: { groups: [], quota_settings: { offline_count: 4, online_count: 3, revision: 1 } },
+          data: { results: body.dates.map(day=>({day,groups:[],token:day})), quota_settings: { offline_count: 2, online_count: 3, revision: 0 } },
         }
       },
     },
@@ -92,17 +100,20 @@ test('calculating changed targets saves the shared revision and refreshes the sc
     context,
   )
   await context.createPreview()
-  assert.equal(calls[0].save_quotas, true)
+  assert.equal(calls[0].save_quotas, undefined)
+  assert.equal(calls[0].action,'preview')
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].dates)),['2026-10-22','2026-10-23'])
   assert.equal(calls[0].quota_revision, 0)
-  assert.equal(calls[1], 'inspection-schedule-changed')
-  assert.equal(context.quotaSettings.value.revision, 1)
+  assert.equal(calls.length,1)
+  assert.equal(context.quotaSettings.value.revision, 0)
+  assert.equal(Object.keys(context.previews.value).length,2)
   await context.createPreview()
-  assert.equal(calls[2].save_quotas, false)
-  assert.equal(calls[2].quota_revision, 1)
-  assert.equal(calls.length, 3)
+  assert.equal(calls[1].save_quotas, undefined)
+  assert.equal(calls[1].quota_revision, 0)
+  assert.equal(calls.length, 2)
 })
 
-test('waiting cards show names and numeric red badges, not old station names or dates', () => {
+test('waiting cards show names, dispatch dates and red counts but not old station names', () => {
   const script = source('components/InspectionSchedulePanel.vue')
   const card = script.slice(
     script.indexOf('v-for="item in shelf"'),
@@ -111,7 +122,8 @@ test('waiting cards show names and numeric red badges, not old station names or 
   assert.match(card, /item.name/)
   assert.match(card, /class="shelf-count"/)
   assert.match(card, /item.remaining \?\? 0/)
-  assert.doesNotMatch(card, /item.sourceName|item.day/)
+  assert.doesNotMatch(card, /item.sourceName/)
+  assert.match(card, /planningDateLabel\(item.day\)/)
   assert.match(script, /background: #d93445/)
   const { descriptor } = parse(script)
   assert.deepEqual(

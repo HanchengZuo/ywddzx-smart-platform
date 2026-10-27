@@ -6,34 +6,35 @@ from schedule_quotas import read_quotas
 
 
 def shelf_items(cur, mode, start, end, *, quotas=None):
-    day = today()
-    if not start <= day < end:
+    start = max(start, today())
+    if start >= end:
         return []
     cur.execute('''SELECT id,revision,mode,scheduled_date::text AS day,inspector_ids AS ids,
       plan_team,name,source_station_name AS "sourceName",source_station_id,source_column_key,
       to_char(updated_at,'YYYY-MM-DD HH24:MI:SS') AS updated_at
       FROM inspection_schedule_shelf WHERE mode=%s AND status='waiting'
-        AND scheduled_date=%s ORDER BY id''', (mode,day))
+        AND scheduled_date>=%s AND scheduled_date<%s ORDER BY scheduled_date,id''', (mode,start,end))
     cards=list(cur.fetchall())
     if not cards: return []
     quotas=quotas or read_quotas(cur)
     # Quarterly and annual field plans share station capacity; count a station
     # once even when all six/nine checklist cells contain the same assignment.
-    cur.execute('''SELECT c.mode,c.station_id,c.inspector_ids,s.region,s.station_name
+    cur.execute('''SELECT c.mode,c.station_id,c.inspector_ids,c.scheduled_date::text AS day,s.region,s.station_name
       FROM inspection_schedule_cells c JOIN stations s ON s.id=c.station_id
-      WHERE c.scheduled_date=%s AND c.year=%s AND jsonb_array_length(c.inspector_ids)>0
-        AND ((%s='online' AND c.mode='online' AND c.period_number=%s AND s.include_online_plan)
+      WHERE c.scheduled_date>=%s AND c.scheduled_date<%s
+        AND c.year=EXTRACT(YEAR FROM c.scheduled_date) AND jsonb_array_length(c.inspector_ids)>0
+        AND ((%s='online' AND c.mode='online' AND c.period_number=EXTRACT(MONTH FROM c.scheduled_date) AND s.include_online_plan)
           OR (%s='offline' AND c.mode IN ('offline','annual') AND s.include_offline_plan
-            AND c.period_number=CASE WHEN c.mode='annual' THEN 1 ELSE %s END))''',
-      (day,day.year,mode,day.month,mode,(day.month-1)//3+1))
+            AND c.period_number=CASE WHEN c.mode='annual' THEN 1 ELSE EXTRACT(QUARTER FROM c.scheduled_date) END))''',
+      (start,end,mode,mode))
     used={}
     for row in cur.fetchall():
         if not roster_position(row,row['mode']): continue
-        key=tuple(sorted(row['inspector_ids']))
+        key=(row['day'],tuple(sorted(row['inspector_ids'])))
         used.setdefault(key,set()).add(row['station_id'])
     unique={}
     for row in cards:
-        key=tuple(sorted(row['ids']))
+        key=(row['day'],tuple(sorted(row['ids'])))
         # Prefer an explicit parked record; the reusable personnel card remains
         # durable underneath. Source evidence stays in storage, never on the UI.
         if key not in unique or (unique[key]['source_column_key']=='personnel' and row['source_column_key']!='personnel'):
@@ -51,11 +52,11 @@ def expire_shelf(cur, *, already_locked=False):
         if not cur.fetchone()['acquired']:
             return
     cur.execute('''UPDATE inspection_schedule_shelf SET status='discarded',revision=revision+1,
-      updated_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE status='waiting' AND scheduled_date<>%s
+      updated_by=NULL,updated_at=CURRENT_TIMESTAMP WHERE status='waiting' AND scheduled_date<%s
       RETURNING id,scheduled_date,name''', (today(),))
     for row in cur.fetchall():
         event(cur, dict(id=None, real_name='系统自动清理'), row['id'], 'expired',
-              dict(day=row['scheduled_date'].isoformat(), name=row['name'], reason='非当日待选安排自动清理'))
+              dict(day=row['scheduled_date'].isoformat(), name=row['name'], reason='过期待选安排自动清理，未来安排保留'))
 
 
 def event(cur, actor, shelf_id, action, details):
@@ -114,6 +115,6 @@ def seed_daily_shelf(cur, actor, day, groups, revision):
             team=dict(name=group['name'],leader_id=group['leader_id'],members=people,day=day.isoformat(),revision=revision) if group['mode']=='offline' else None
             name=team['name'] if team else people[0]['display_name']
             cur.execute('''INSERT INTO inspection_schedule_shelf(mode,scheduled_date,inspector_ids,plan_team,name,
-              source_station_name,source_column_key,created_by,updated_by) VALUES(%s,%s,%s,%s,%s,'今日人员分组','personnel',%s,%s) RETURNING id''',
+              source_station_name,source_column_key,created_by,updated_by) VALUES(%s,%s,%s,%s,%s,'人员分组','personnel',%s,%s) RETURNING id''',
               (group['mode'],day,json.dumps(ids),json.dumps(team,ensure_ascii=False),name,actor['id'],actor['id']))
             event(cur,actor,cur.fetchone()['id'],'personnel_ready',dict(inspector_ids=ids,day=day.isoformat(),name=name))
