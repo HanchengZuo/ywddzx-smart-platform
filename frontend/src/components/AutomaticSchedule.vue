@@ -1,5 +1,5 @@
 <template>
-  <button v-if="allowed" type="button" class="auto-trigger" @click="open">今日智能排班</button>
+  <button v-if="allowed" type="button" class="auto-trigger" @click="open">智能排班</button>
   <Teleport to="body"
     ><dialog
       ref="dialog"
@@ -12,20 +12,27 @@
         <div>
           <small>SMART DISPATCH / 人员方案驱动</small>
           <h3 id="auto-schedule-title">
-            今日智能排班 <span>{{ day }}</span>
+            智能排班 <span>{{ day || '选择日期' }}</span>
           </h3>
         </div>
-        <button type="button" :disabled="saving" aria-label="关闭今日智能排班" @click="close">
+        <button type="button" :disabled="saving" aria-label="关闭智能排班" @click="close">
           ×
         </button>
       </header>
       <div class="auto-body">
+        <PlanningDateSelection :model-value="selectedDates" :options="dateOptions" :disabled="loading || saving"
+          hint="只列出人员档期已保存巡检安排的日期。多日方案按日期先后计算，避开本批次已选站点。" @update:model-value="selectDates" />
+        <nav v-if="selectedDates.length > 1" class="planning-day-tabs" aria-label="查看各日智能排班方案">
+          <button v-for="date in selectedDates" :key="date" type="button" :class="{ active: date === day }" :disabled="loading || saving" @click="showDay(date)">
+            {{ date }}<small>{{ previews[date] ? previews[date].groups.length + '个站点任务' : '待计算' }}</small>
+          </button>
+        </nav>
         <div class="smart-flow" aria-label="智能排班步骤">
           <span><b>01</b> 人员档期方案</span><span><b>02</b> 算法推荐站点</span
-          ><span><b>03</b> 应用到今日排班</span>
+          ><span><b>03</b> 采用所选日期方案</span>
         </div>
         <p class="method">
-          以人员档期已保存的现场组和视频人员为基础，不因今日手动派工而减少候选人员或改变方案。应用时替换今日尚未开始的排班；已开始整行和其他日期计划保留。现场先补足当月计量年度计划，再均衡季度片区覆盖，优先组合高德预计驾车时间短的站点；无有效坐标不自动派现场站点。
+          以人员档期已保存的现场组和视频人员为基础，不因该日手动派工而减少候选人员或改变方案。应用时替换所选日期尚未开始的排班；已开始整行和其他日期计划保留。现场先补足当月计量年度计划，再均衡季度片区覆盖，优先组合高德预计驾车时间短的站点；无有效坐标不自动派现场站点。
         </p>
         <div class="quota-controls">
           <label
@@ -46,7 +53,7 @@
               :disabled="loading || saving"
               @input="stale = true"
           /></label>
-          <small>包含已开始的今日站点；调整后点击“计算智能方案”全局保存，并更新待选区角标</small>
+          <small>按日期独立计数；采用方案时统一保存站数目标，并更新各日调度待选区角标</small>
           <small v-if="quotaSettings"
             >{{ quotaSettings.updated_by_name }} {{ quotaSettings.updated_at }} 保存</small
           >
@@ -57,7 +64,7 @@
         <template v-if="preview">
           <section class="personnel-basis">
             <div class="basis-heading">
-              <h4>人员档期 · 今日分工依据</h4>
+              <h4>人员档期 · 当日分工依据</h4>
               <small
                 >{{ preview.personnel?.updated_by_name || '尚未保存' }}
                 {{ preview.personnel?.updated_at || '' }}</small
@@ -70,7 +77,7 @@
               </div>
             </div>
             <p v-if="!preview.personnel?.groups?.length" class="method">
-              请先前往人员档期保存今日现场/视频分组，再计算智能方案。
+              请先前往人员档期保存所选日期现场/视频分组，再计算智能方案。
             </p>
           </section>
           <details class="coverage-panel" :class="{ 'basis-applied': basis.metering.applied }" open>
@@ -139,7 +146,7 @@
             </summary>
             <p class="basis-explanation">{{ basis.coverage.detail }}</p>
             <p>
-              本季度有任一现场检查记录即计覆盖，不依赖审核。忽略今日未开始的手动计划，未来计划仍受保护；先补齐低覆盖片区，再按驾车时间组合站点，不按直线距离。
+              本季度有任一现场检查记录即计覆盖，不依赖审核。忽略所选日期未开始的旧计划，保留未选日期的计划；先补齐低覆盖片区，再按驾车时间组合站点，不按直线距离。
             </p>
             <div class="coverage-grid">
               <div
@@ -159,8 +166,8 @@
             </div>
             <p v-if="!preview.regional_coverage?.length">暂无可供比较的现场片区覆盖数据。</p>
           </details>
-          <section class="scheme-summary" aria-label="今日智能排班方案概况">
-            <h4 class="upcoming-title">今日智能排班方案 <small>仅预览，不自动修改排班表</small></h4>
+          <section class="scheme-summary" aria-label="智能排班方案概况">
+            <h4 class="upcoming-title">智能排班方案 <small>仅预览，不自动修改排班表</small></h4>
             <div class="preview-summary">
               <span
                 ><b>{{ preview.available_count }}</b> 可派工人员</span
@@ -229,7 +236,7 @@
             </section></template
           >
           <p v-if="!preview.groups.length" class="empty">
-            当前没有可应用的新增组合。请核对今日已保存的人员分工、未检查站点及已开始任务；当前已确认派工可在独立窗口查看。
+            当前没有可应用的新增组合。请核对所选日期已保存的人员分工、未检查站点及已开始任务；当前已确认派工可在独立窗口查看。
           </p>
           <p v-for="warning in preview.warnings" :key="warning" class="method">{{ warning }}</p>
           <p v-if="preview.driving?.applicable" class="driving-source">
@@ -244,7 +251,7 @@
           </details>
         </template>
         <section v-if="preview?.groups.length" class="replace-confirmation">
-          <strong>应用将替换今日尚未开始的排班</strong>
+          <strong>应用将替换所选 {{ selectedDates.length }} 天尚未开始的排班</strong>
           <p>
             当前可替换 {{ preview.replacement?.stations || 0 }} 个站点任务，保留已开始的
             {{ preview.replacement?.protected || 0 }}
@@ -260,16 +267,16 @@
         </section>
       </div>
       <footer>
-        <span>实际安排请从“今日已确认排班”独立窗口查看。</span
-        ><button type="button" :disabled="loading || saving" @click="createPreview">
+        <span>实际安排可在排班表按对应周期查看；今日任务仍可从“今日已确认排班”查看。</span
+        ><button type="button" :disabled="loading || saving || !selectedDates.length" @click="createPreview">
           计算智能方案</button
         ><button
           type="button"
           class="primary"
-          :disabled="loading || saving || !preview?.groups.length || stale || !replaceConfirmed"
+          :disabled="loading || saving || !batchReady || stale || !replaceConfirmed"
           @click="confirm"
         >
-          {{ saving ? '正在原子替换…' : '应用方案并替换今日排班' }}
+          {{ saving ? '正在整批保存…' : '采用所选' + selectedDates.length + '天方案' }}
         </button>
       </footer>
     </dialog></Teleport
@@ -281,6 +288,8 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { shanghaiToday } from '@/utils/staffScheduling'
 import { groupScheduleProposals } from '@/utils/scheduleProposals'
 import { scheduleBasis } from '@/utils/scheduleBasis'
+import PlanningDateSelection from '@/components/PlanningDateSelection.vue'
+import { dateSelection, preferredPlanningDay } from '@/utils/datedPlans'
 const emit = defineEmits(['scheduled'])
 let permissions = {}
 try {
@@ -299,6 +308,14 @@ const dialog = ref(null),
   savedNotice = ref(''),
   stale = ref(false),
   day = ref(shanghaiToday())
+const dateOptions = ref([]), selectedDates = ref([]), previews = ref({})
+const batchReady = computed(() => selectedDates.value.length > 0 && selectedDates.value.every(date => previews.value[date]?.groups.length))
+function showDay(date) { day.value = date; preview.value = previews.value[date] || null }
+function selectDates(values) {
+  selectedDates.value = dateSelection(values, dateOptions.value)
+  previews.value = {}; preview.value = null; stale.value = true; replaceConfirmed.value = false
+  day.value = selectedDates.value.includes(day.value) ? day.value : selectedDates.value[0] || ''
+}
 const offlineCount = ref(2),
   onlineCount = ref(3)
 const quotaSettings = ref(null)
@@ -319,6 +336,7 @@ let controller,
   serial = 0
 async function open() {
   day.value = shanghaiToday()
+  dateOptions.value = []; selectedDates.value = []; previews.value = {}
   preview.value = null
   quotaSettings.value = null
   savedNotice.value = ''
@@ -337,7 +355,11 @@ async function open() {
     quotaSettings.value = data
     offlineCount.value = data.offline_count
     onlineCount.value = data.online_count
-    await createPreview()
+    const datesResponse = await axios.get('/api/inspection-schedule/inspection-dates', { signal: controller.signal, timeout: 15000 })
+    if (ticket !== serial || disposed) return
+    dateOptions.value = datesResponse.data.dates
+    const first = preferredPlanningDay(dateOptions.value)
+    selectDates(first ? [first] : [])
   } catch (err) {
     if (ticket === serial && !disposed && err.code !== 'ERR_CANCELED')
       error.value = err.response?.data?.error || '站数配置读取失败，请关闭后重新打开。'
@@ -365,7 +387,7 @@ function backdrop(event) {
   }
 }
 async function createPreview() {
-  if (!quotaSettings.value) {
+  if (!quotaSettings.value || !selectedDates.value.length) {
     error.value = '请重新打开智能排班，读取最新站数配置后再计算。'
     return
   }
@@ -378,24 +400,21 @@ async function createPreview() {
   replaceConfirmed.value = false
   try {
     const { data } = await axios.post(
-      '/api/inspection-schedule/auto',
+      '/api/inspection-schedule/auto/batch',
       {
         action: 'preview',
-        strategy: 'replace_today',
-        day: day.value,
+        dates: selectedDates.value,
         offline_count: offlineCount.value,
         online_count: onlineCount.value,
         quota_revision: quotaSettings.value.revision,
-        save_quotas:
-          offlineCount.value !== quotaSettings.value.offline_count ||
-          onlineCount.value !== quotaSettings.value.online_count,
       },
-      { signal: controller.signal, timeout: 90000 },
+      { signal: controller.signal, timeout: 180000 },
     )
     if (ticket === serial && !disposed) {
       const changed = data.quota_settings?.revision !== quotaSettings.value.revision
       if (data.quota_settings) quotaSettings.value = data.quota_settings
-      preview.value = data
+      previews.value = Object.fromEntries(data.results.map(result => [result.day, result]))
+      showDay(day.value)
       stale.value = false
       if (changed) window.dispatchEvent(new Event('inspection-schedule-changed'))
     }
@@ -411,7 +430,7 @@ async function confirm() {
     saving.value ||
     loading.value ||
     stale.value ||
-    !preview.value?.groups.length ||
+    !batchReady.value ||
     !replaceConfirmed.value
   )
     return
@@ -419,25 +438,26 @@ async function confirm() {
   error.value = ''
   try {
     const { data } = await axios.post(
-      '/api/inspection-schedule/auto',
+      '/api/inspection-schedule/auto/batch',
       {
         action: 'confirm',
-        strategy: 'replace_today',
         replace_confirmed: replaceConfirmed.value,
-        day: day.value,
-        token: preview.value.token,
+        dates: selectedDates.value,
+        tokens: Object.fromEntries(selectedDates.value.map(date => [date, previews.value[date].token])),
+        quota_revision: quotaSettings.value.revision,
         offline_count: offlineCount.value,
         online_count: onlineCount.value,
       },
-      { timeout: 120000 },
+      { timeout: 180000 },
     )
     if (!disposed) {
-      savedNotice.value = `今日智能方案已应用，个人待办已同步。可关闭本窗口，从“今日已确认排班”查看实际安排。`
-      preview.value = { ...data, groups: [], cell_count: 0 }
-      emit('scheduled', data)
+      savedNotice.value = `已采用 ${data.results.length} 天智能方案，所选日期已整批保存，个人待办已同步。`
+      if (data.quota_settings) quotaSettings.value = data.quota_settings
+      previews.value = Object.fromEntries(data.results.map(result => [result.day, result]))
+      showDay(day.value); stale.value = true; replaceConfirmed.value = false
+      emit('scheduled', { ...data.results[0], results: data.results })
       window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
       window.dispatchEvent(new Event('inspection-schedule-changed'))
-      await createPreview()
     }
   } catch (err) {
     if (!disposed) {
@@ -456,6 +476,10 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped>
+.planning-day-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
+.planning-day-tabs button { display:grid; gap:5px; padding:10px 14px; border:1px solid #b5cddd; border-radius:10px; background:#f3f7fb; color:#315a78; cursor:pointer; }
+.planning-day-tabs button.active { color:white; background:#206b83; border-color:#206b83; }
+.planning-day-tabs small { font-size:11px; opacity:.85; }
 .driving-summary {
   display: flex;
   align-items: center;

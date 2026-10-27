@@ -37,10 +37,11 @@ for (const file of ['views/management/UserDataManagementView.vue', 'components/U
       assert.match(source, /user.has_driving_permit === true/)
       assert.match(source, /has_driving_permit: isSupervisorRole\(form.role\) && form.has_driving_permit/)
     } else if (file.includes('DailyInspectionTeams')) {
-      assert.match(source, /unsafeGroups.length > 0/)
+      assert.match(source, /!batchAdoptable/)
+      assert.match(source, /fieldDriverCount\(group, session.context.people\) > 0/)
       assert.match(source, /driverCount\(group\)/)
       assert.match(source, /movePreviewMember/)
-      assert.match(source, /moves: preview.value.moves/)
+      assert.match(source, /personnelApplyPlan\(sessions.value\[day\]\)/)
     }
   })
 }

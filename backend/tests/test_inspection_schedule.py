@@ -73,7 +73,7 @@ class ScheduleDatabaseTest(unittest.TestCase):
         self.config = core.get_db_config()
         if not self.config['dbname'].startswith('test_schedule_'):
             raise RuntimeError('Refusing non-test database')
-        for module in ('schedule_common', 'schedule_period', 'annual_metering_plan', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store'):
+        for module in ('schedule_common', 'schedule_period', 'annual_metering_plan', 'staff_availability', 'staff_daily_team_http', 'inspection_schedule', 'inspection_schedule_tasks', 'schedule_automation', 'inspection_schedule_dispatch', 'schedule_shelf_store', 'schedule_smart', 'schedule_batch'):
             clock = patch(module + '.today', return_value=date(2026, 10, 19)); clock.start(); self.addCleanup(clock.stop)
         clock = patch('schedule_common.shanghai_now',return_value=datetime(2026,10,19,18,tzinfo=ZoneInfo('Asia/Shanghai')))
         clock.start(); self.addCleanup(clock.stop)

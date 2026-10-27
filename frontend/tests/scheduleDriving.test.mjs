@@ -33,10 +33,10 @@ test('grouped cards preserve driving order, complete leg evidence and server tok
 
 test('driving requests remain server-side, failures make an old preview non-applicable, and existing replacement confirmation remains', () => {
   assert.doesNotMatch(source, /restapi\.amap|AMAP_KEY|AMAP_WEB_SERVICE_KEY|cluster_max_km/)
-  assert.match(source, /timeout: 90000/)
+  assert.match(source, /timeout: 180000/)
   assert.match(source, /stale\.value = true/)
-  assert.match(source, /!preview\?\.groups\.length \|\| stale \|\| !replaceConfirmed/)
-  assert.match(source, /token: preview\.value\.token/)
+  assert.match(source, /!batchReady \|\| stale \|\| !replaceConfirmed/)
+  assert.match(source, /tokens: Object.fromEntries\(selectedDates.value.map/)
   assert.match(source, /每周一09:30自动更新/)
   assert.match(source, /站对只采一个方向/)
   assert.match(source, /此处只读数据库/)

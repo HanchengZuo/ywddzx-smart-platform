@@ -195,7 +195,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     required_ids=[c['table_id'] for c in columns if column_available(c,stations[0],chosen['mode'])]
     if not refresh_team and (record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id])):
-        raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入今日调度待选区。')
+        raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入调度待选区。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date,plan_team FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
     existing = cur.fetchone() or dict(inspector_ids=[], revision=0, scheduled_date=None, plan_team=None)
@@ -261,7 +261,7 @@ def validate_edits(cur, edits, chosen, start, end):
         stations = eligible_stations(cur, chosen, sid)
         if len(stations) != 1: raise PermissionError('本站不在排班名单内，或已关闭对应计划纳入。')
         if sid in linked_locks or any((sid,c['table_id']) in actual for c in columns if column_available(c,stations[0],chosen['mode'])):
-            raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入今日调度待选区。')
+            raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入调度待选区。')
         expected = {c['key'] for c in columns if column_available(c, stations[0], chosen['mode']) and (sid, c['table_id']) not in actual}
         if keys != expected:
             raise ScheduleConflict('请按站点整行安排所有尚未检查的检查表，已完成的实际记录保持不变。')

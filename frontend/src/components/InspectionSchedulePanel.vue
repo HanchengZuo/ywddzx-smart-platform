@@ -182,13 +182,13 @@
           : '每站一人，安全、计量、现场整行统一安排。'
       }}</span>
       <button type="button" class="secondary-button" @click="openShelf">
-        今日调度待选区（{{ shelf.length }}）
+        调度待选区（{{ shelf.length }}）
       </button>
       <button
         type="button"
         class="secondary-button"
         :disabled="loading || shelfSaving || !hasTodayPlans || !canEdit"
-        title="撤下今日未完成计划并转入今日调度待选区，保留原有待选安排和实际记录"
+        title="撤下今日未完成计划并转入调度待选区，保留原有待选安排和实际记录"
         @click="clearToday"
       >
         一键清空今日{{ mode === 'annual' ? '计量现场' : mode === 'offline' ? '现场' : '视频' }}排班
@@ -388,17 +388,17 @@
     >
       <header>
         <div>
-          <strong>今日调度待选区</strong
+          <strong>调度待选区</strong
           ><small>{{
             fieldMode === 'offline' ? '外勤组 · 整站改派' : '视频 · 整站同人改派'
           }}</small>
         </div>
-        <button type="button" aria-label="收起今日调度待选区" @click="shelfOpen = false">×</button>
+        <button type="button" aria-label="收起调度待选区" @click="shelfOpen = false">×</button>
       </header>
       <details class="shelf-help">
         <summary>调度说明</summary>
         <p>
-          同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。剩余为0时不再显示，也不能继续从待选区派站；撤下未开始的计划或提高站数目标后会重新出现。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。今日全局共享，跨日自动清空，历史调度留痕保留。
+          同日同组或同人只显示一张卡片，红色角标为剩余待派站数，采用智能排班中保存的站数目标；同站多表只计一次，现场与计量共享计数。剩余为0时不再显示，也不能继续从待选区派站；撤下未开始的计划或提高站数目标后会重新出现。拖到目标站整行直接保存，任一检查项已完成则整行锁定。一键清空今日排班只将未开始站点转入本区，原有待选安排保留。同一日期全局共享，过去日期自动清理，未来待选安排保留，历史调度留痕保留。
         </p>
       </details>
       <div
@@ -416,11 +416,11 @@
         @keydown.enter.self="pickedShelf = pickedShelf === item.key ? null : item.key"
         @keydown.space.self.prevent="pickedShelf = pickedShelf === item.key ? null : item.key"
       >
-        <strong>{{ item.name }}</strong>
+        <strong>{{ item.name }}<small class="shelf-date">{{ planningDateLabel(item.day) }}</small></strong>
         <span
           class="shelf-count"
           :aria-label="`剩余待派 ${item.remaining ?? 0} 站`"
-          :title="`目标 ${item.target ?? 0} 站，今日已派 ${item.assigned ?? 0} 站`"
+          :title="`${item.day} · 目标 ${item.target ?? 0} 站，已派 ${item.assigned ?? 0} 站`"
           >{{ item.remaining ?? 0 }}</span
         >
         <button type="button" aria-label="移除待选安排" @click.stop="removeShelf(item.key)">
@@ -665,7 +665,7 @@
                 :disabled="saving || changed"
                 @click="stageCurrentSelection"
               >
-                加入今日调度待选区
+                加入调度待选区
               </button>
               <button
                 v-if="stageableSelection"
@@ -720,6 +720,7 @@ import {
   watch,
 } from 'vue'
 import { createAdaptivePolling } from '@/utils/adaptivePolling'
+import { planningDateLabel, datePeriod } from '@/utils/datedPlans'
 import {
   coverageQuery as coveragePeriodQuery,
   currentCoveragePeriod,
@@ -740,7 +741,7 @@ import {
   shelfHasCapacity,
 } from '@/utils/inspectionSchedule'
 
-const props = defineProps({ mode: { type: String, required: true } })
+const props = defineProps({ mode: { type: String, required: true }, focusDay: { type: String, default: '' } })
 const fieldMode = props.mode === 'annual' ? 'offline' : props.mode
 const title =
   props.mode === 'annual'
@@ -751,7 +752,7 @@ const title =
 function coverageQuery(value) {
   return value.mode === 'annual' ? { mode: 'annual', year: value.year } : coveragePeriodQuery(value)
 }
-const draft = ref({ ...currentCoveragePeriod(), mode: props.mode })
+const draft = ref({ ...currentCoveragePeriod(), ...datePeriod(props.focusDay), mode: props.mode })
 const years = Array.from({ length: 101 }, (_, i) => 2100 - i)
 const board = ref(null),
   loading = ref(false),
@@ -927,7 +928,7 @@ function planPayload(row) {
     cells.some(
       (c) =>
         row.cells[c.column_key].assignees.length &&
-        row.cells[c.column_key].scheduled_date !== board.value.today,
+        (!row.cells[c.column_key].scheduled_date || row.cells[c.column_key].scheduled_date < board.value.today),
     )
   )
     return null
@@ -997,7 +998,7 @@ async function dropOn(row, event) {
     return
   }
   if (item.kind === 'plan') {
-    notice.value = '请先将今日计划拖入今日调度待选区，再选择目标站点。'
+    notice.value = '请先将计划拖入调度待选区，再选择目标站点。'
     return
   }
   const current = shelf.value.find((card) => card.id === item.id)
@@ -1420,6 +1421,7 @@ function invalidateLinkedBoard() {
 </script>
 
 <style scoped>
+.shelf-date { display:block; font-size:12px; margin-top:5px; color:#456a80; font-weight:500; }
 .matrix-cell.exception {
   background: #dce2e9;
   border-color: #9eacb9;

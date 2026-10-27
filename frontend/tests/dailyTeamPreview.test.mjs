@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { reactive } from 'vue'
+import { personnelApplyPlan } from '../src/utils/datedPlans.js'
 import {
   movePreviewStudent,
   movePreviewMember,
@@ -238,7 +239,7 @@ test('the preview drop handler makes no request or successful-save event until c
   assert.equal(context.saving.value, false)
 })
 
-test('adoption sends only member move choices and original evidence then reloads without closing the dialog', async () => {
+test('batch adoption sends per-date choices and tokens, then refreshes without closing', async () => {
   const { preview, people } = fixture()
   const moved = { ...movePreviewMember(preview, people, 10, null), source: 'generated' },
     calls = []
@@ -251,6 +252,11 @@ test('adoption sends only member move choices and original evidence then reloads
     success: { value: '' },
     context: { value: { day: '2026-10-20', revision: 4 } },
     managerModes: { value: { 1: 'offline', 2: 'offline' } },
+    selectedDates: { value: ['2026-10-20'] }, activeDay: { value: '2026-10-20' }, sessions: { value: {} },
+    batchAdoptable: { value: true }, personnelApplyPlan,
+    saveActive: () => { context.sessions.value['2026-10-20'] = { context: context.context.value, preview: moved } },
+    initialSession: data => ({ context: data, preview: null }),
+    activateDay: day => { context.context.value = context.sessions.value[day].context; context.preview.value = null },
     disposed: false,
     load: async () => calls.push('reload'),
     window: { dispatchEvent() {} },
@@ -259,7 +265,7 @@ test('adoption sends only member move choices and original evidence then reloads
     axios: {
       post: async (url, body) => {
         calls.push({ url, body })
-        return { data: { groups: moved.groups } }
+        return { data: { results: [{ day: '2026-10-20', groups: moved.groups }] } }
       },
     },
   })
@@ -274,13 +280,13 @@ test('adoption sends only member move choices and original evidence then reloads
   await context.submit()
   const body = JSON.parse(JSON.stringify(calls[0].body))
   assert.equal(body.action, 'apply')
-  assert.equal(body.source, 'generated')
-  assert.deepEqual(body.moves, [{ person_id: 10, leader_id: null }])
-  assert.equal(body.seed, 'seed')
-  assert.equal(body.token, 'token')
-  assert.equal(body.groups, undefined)
-  assert.equal(body.revision, 4)
-  assert.equal(calls[1], 'reload')
-  assert.equal(calls[2][0], 'saved')
+  const plan = body.plans[0]
+  assert.equal(plan.source, 'generated')
+  assert.deepEqual(plan.moves, [{ person_id: 10, leader_id: null }])
+  assert.equal(plan.seed, 'seed')
+  assert.equal(plan.token, 'token')
+  assert.equal(plan.groups, undefined)
+  assert.equal(plan.revision, 4)
+  assert.equal(calls[1][0], 'saved')
   assert.equal(context.preview.value, null)
 })

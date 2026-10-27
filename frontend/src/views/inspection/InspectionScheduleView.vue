@@ -58,7 +58,7 @@
         </div>
       </nav>
       <KeepAlive :max="3">
-        <InspectionSchedulePanel :key="activeMode + ':' + refreshKey" :mode="activeMode" />
+        <InspectionSchedulePanel :key="activeMode + ':' + refreshKey" :mode="activeMode" :focus-day="focusDay" />
       </KeepAlive>
       <details class="schedule-help surface">
         <summary>统计口径与使用说明</summary>
@@ -78,7 +78,7 @@
           未启用、缺失或重复定义的检查表列不可安排。现场选择人员档期已保存的完整外勤组；视频整站由一位检查人完成安全、计量、现场。本站任一适用检查项已检查即整行只读，包括编辑、多选、拖拽及一键清空；季度与年度中同组同日的联动计划也锁定。过期未检查计划变黄，但原派工信息和个人视频待办仍保留。排班全局共享，保存操作人与时间，整批校验；切换筛选清空勾选，避免误改隐藏项目。
         </p>
         <p>
-          今日智能排班基于人员档期已保存的现场组和视频人员，忽略今日未开始的手动派工来计算方案。现场默认每组2站、视频每人3站，可调整1至10站，已开始的今日站点计入该组/人的数量。确认替换范围后，同事务撤下今日未开始的安排并应用方案；已开始整行、原始记录及其他日期计划保留，失败全部回滚。现场先补当月计量目标，再均衡季度片区覆盖，最后按高德预计驾车时间组合站点；同耗时再参考行驶距离，不使用直线距离。实际派工在“今日已确认排班”独立窗口按现场/视频查看，右上角“今日安排”仍为个人待办。
+          智能排班可选择人员档期已保存巡检分组的今天及未来日期，支持多选。先按日确定管理人员分工并保存人员方案，再批量计算站点；同一覆盖周期内，本批次按日期先后避开已选站点。现场默认每组2站、视频每人3站，可调整1至10站，各日名额独立计算。确认后同事务替换所选日期未开始的安排，已开始整行和未选日期计划保留，失败全部回滚。现场先补所选月份的计量目标，再均衡季度片区覆盖，最后按数据库中的预计驾车时间组合站点。调度待选卡片显示所属日期，未来卡片不会跨日清除；请切换到对应季度、年度或月份查看。当日实际派工仍可在“今日已确认排班”查看，右上角“今日安排”仍为个人待办。
         </p>
       </details>
     </template>
@@ -93,12 +93,14 @@ import AutomaticSchedule from '@/components/AutomaticSchedule.vue'
 import MeteringAnnualPlan from '@/components/MeteringAnnualPlan.vue'
 import TodayInspectionDispatch from '@/components/TodayInspectionDispatch.vue'
 import { scrollScheduleToFilters } from '@/utils/scheduleViewport'
+const focusDay = ref('')
 const refreshKey = ref(0),
   dispatchNotice = ref('')
 function onScheduled(data) {
+  focusDay.value = data.day
   refreshKey.value++
   activeMode.value = 'offline'
-  dispatchNotice.value = `${data.day} ${data.strategy === 'replace_today' ? '今日智能方案已应用' : '排班已保存'}，本次安排 ${data.groups.length} 个站点任务，已同步个人待办；已开始站点及其他日期计划保持不变。`
+  dispatchNotice.value = `${data.results?.length || 1} 天智能方案已采用，本次安排 ${(data.results || [data]).reduce((n, result) => n + result.groups.length, 0)} 个站点任务，已同步个人待办；已开始站点及未选日期的计划保持不变。`
 }
 const modes = [
   { key: 'offline', label: '现场检查排班', period: '按季度' },

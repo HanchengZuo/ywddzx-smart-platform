@@ -1,16 +1,34 @@
 """Smart planning projections and atomic replacement of unstarted daily intent."""
 from inspection_schedule import read_board, save_cell
 from schedule_row_state import today_assignments
+from schedule_common import today, day_value
+from schedule_period import period
 
 
-def planning_board(board,day):
+def planning_board(board,day, *, reserved=(), replace_days=()):
+    replacing = {d.isoformat() for d in replace_days} | {day.isoformat()}
     rows=[]
     for row in board['rows']:
         cells={}
         for key,cell in row['cells'].items():
-            clear=not row['locked'] and cell['status']=='assigned' and (cell['scheduled_date'] or '')<=day.isoformat()
+            planned = cell.get('scheduled_date') or ''
+            clear=not row['locked'] and cell['status']=='assigned' and (planned in replacing or planned < today().isoformat())
             cells[key]=dict(cell,status='unassigned',assignees=[],plan_team=None,scheduled_date=None,overdue=False) if clear else dict(cell)
         rows.append(dict(row,cells=cells))
+    if reserved:
+        chosen,start,end = period(board['period'])
+        lookup = {row['station_id']: row for row in rows}
+        for group in reserved:
+            if not start <= day_value(group['day']) < end: continue
+            mode = chosen['mode']
+            cells = group.get('metering_cells', []) if mode == 'annual' else group['cells'] if mode == group['mode'] else []
+            row = lookup.get(group['station_id'])
+            if not row: continue
+            for entry in cells:
+                key = entry['column_key']
+                if key in row['cells'] and row['cells'][key]['status']=='unassigned':
+                    row['cells'][key] = dict(row['cells'][key], status='assigned', scheduled_date=group['day'],
+                                            assignees=[dict(id=uid) for uid in group['inspector_ids']])
     return dict(board,rows=rows)
 
 
