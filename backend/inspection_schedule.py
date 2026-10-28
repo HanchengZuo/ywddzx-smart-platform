@@ -164,7 +164,7 @@ def integer(value, label, minimum=1):
     return value
 
 
-def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, refresh_team=False):
+def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, refresh_team=False, withdraw_personnel=False):
     station_id = integer(data.get('station_id'), '站点')
     key = data.get('column_key')
     if not isinstance(key, str) or key not in {entry[0] for entry in COLUMNS[chosen['mode']]}:
@@ -174,6 +174,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
     if not isinstance(ids, list) or len(ids) > 100:
         raise ValueError('请选择督导组检查人，最多100人。')
     ids = sorted({integer(value, '检查人') for value in ids})
+    if withdraw_personnel and ids:
+        raise ScheduleConflict('人员退出同步只能撤下原计划，不能转派其他人员。')
     if chosen['mode'] == 'online' and len(ids) > 1:
         raise ValueError('视频检查每个站点只能安排一位检查人。')
     day = day_value(data.get('scheduled_date')) if ids else None
@@ -181,7 +183,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
         if not start <= day < end: raise ValueError('计划日期必须位于所选季度或月份内。')
         require_workday(cur, day)
     lock_schedule(cur)
-    if video_exceptions(cur, chosen, [station_id]):
+    if not withdraw_personnel and video_exceptions(cur, chosen, [station_id]):
         raise ScheduleConflict('本站本月已登记视频异常免检，原派工已留存，不能调整或移入待选区。')
     cell_key = (chosen['mode'], chosen['year'], period_number(chosen), station_id, key)
     # Cross-worker serialization plus a revision check avoids lost updates and ABA on clears.
@@ -194,7 +196,7 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
     if not column_available(column, stations[0], chosen['mode']):
         raise PermissionError('检查表未启用或定义不唯一，不能安排。')
     required_ids=[c['table_id'] for c in columns if column_available(c,stations[0],chosen['mode'])]
-    if not refresh_team and (record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id])):
+    if not (refresh_team or withdraw_personnel) and (record_cells(cur,[station_id],required_ids,start,end) or station_id in linked_started_stations(cur,chosen,[station_id])):
         raise ScheduleConflict('该站已有检查项完成，整行已锁定，不能调整或移入调度待选区。')
     cur.execute('''SELECT inspector_ids,revision,scheduled_date,plan_team FROM inspection_schedule_cells
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s FOR UPDATE''', cell_key)
@@ -208,7 +210,13 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
             raise ValueError('只能选择当前启用的督导组管理人员或督导组组员，请重新选择。')
         if availability_cache is not None and day not in availability_cache:
             availability_cache[day] = {p['id']: p for p in available_people(cur, day) if p['id']}
-        validate_people(cur, ids, day, field_mode(chosen['mode']), availability_cache.get(day) if availability_cache is not None else None)
+        people = availability_cache.get(day) if availability_cache is not None else None
+        if refresh_team:
+            # Group execution was checked under the record-table lock. Unrelated
+            # personal records must not veto a change to an unstarted field task.
+            people = people or {p['id']: p for p in available_people(cur, day) if p['id']}
+            people = {uid: dict(p, actual_modes=[]) for uid, p in people.items()}
+        validate_people(cur, ids, day, field_mode(chosen['mode']), people)
     team = field_team(cur, day, ids) if ids and chosen['mode'] != 'online' else None
     if refresh_team and (not team or not existing['plan_team'] or existing['scheduled_date'] != day
                          or team['leader_id'] != existing['plan_team']['leader_id']):
@@ -231,7 +239,8 @@ def save_cell(cur, actor, data, chosen, start, end, availability_cache=None, *, 
        json.dumps(existing['plan_team'], ensure_ascii=False), json.dumps(team, ensure_ascii=False)))
     dispatch_event_id = cur.fetchone()['id']
     dispatch_tasks(cur, actor, chosen, stations[0], column, ids, day, start, team, dispatch_event_id,
-                   replace_team=refresh_team)
+                   replace_team=refresh_team or withdraw_personnel,
+                   reconcile_day=existing['scheduled_date'] if refresh_team or withdraw_personnel else None)
     if chosen['mode'] != 'online' and not (availability_cache or {}).get('metering_sync'):
         sync_metering_row(cur, actor, chosen, stations[0], ids, day, existing, availability_cache)
     return saved_revision
@@ -316,13 +325,35 @@ def sync_field_team_plans(cur, actor, day):
                 if not cell['assignees'] or cell['scheduled_date'] != day.isoformat() or not team:
                     continue
                 group = groups.get(team['leader_id'])
-                if not group: raise ScheduleConflict('已有派工的外勤带队组不能删除，请先撤销其站点安排。')
+                if not group:
+                    save_cell(cur, actor, dict(station_id=row['station_id'],column_key=column['key'],revision=cell['revision'],
+                              inspector_ids=[]),chosen,start,end,cache,withdraw_personnel=True)
+                    continue
                 if {p['id'] for p in cell['assignees']} == {p['id'] for p in group['members']}:
                     continue
                 save_cell(cur, actor, dict(station_id=row['station_id'],column_key=column['key'],revision=cell['revision'],
                           inspector_ids=[p['id'] for p in group['members']],scheduled_date=day.isoformat()),
                           chosen,start,end,cache,refresh_team=True)
     refresh_field_shelf(cur,actor,day,groups,saved.get('revision',0))
+
+
+def sync_personnel_plans(cur, actor, day, before, after, *, departing_ids=()):
+    """Retire a departing video person's whole station rows, then refresh field ownership.
+
+    Caller holds the schedule and record-table locks and validates execution first.
+    No historical dispatch/task/event or unrelated date is deleted.
+    """
+    online = {p['id'] for p in after if p['mode'] == 'online'}
+    departing = ({p['id'] for p in before if p['mode'] == 'online'} | set(departing_ids)) - online
+    if departing:
+        chosen,start,end = period(dict(mode='online',year=day.year,month=day.month))
+        cur.execute('''SELECT station_id,column_key,revision FROM inspection_schedule_cells
+          WHERE mode='online' AND scheduled_date=%s AND inspector_ids @> ANY(%s::jsonb[]) FOR UPDATE''',
+          (day, [json.dumps([uid]) for uid in departing]))
+        rows = cur.fetchall()
+        for cell in rows:
+            save_cell(cur,actor,dict(cell,inspector_ids=[]),chosen,start,end,withdraw_personnel=True)
+    sync_field_team_plans(cur,actor,day)
 
 
 def sync_metering_row(cur, actor, chosen, station, ids, day, previous, cache):

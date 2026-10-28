@@ -57,7 +57,7 @@ def personal_agenda(cur, user_id, summary=None):
                 online=counts.get('online', dict(count=0, overdue=0)))
 
 
-def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id, *, replace_team=False):
+def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, event_id, *, replace_team=False, reconcile_day=None):
     if chosen['mode']=='annual':
         # Both annual columns are field-team day tasks, never monthly video carry-over.
         # Their distinct column keys use a stable year key so date moves cancel the old task too.
@@ -65,14 +65,16 @@ def dispatch_tasks(cur, actor, chosen, station, column, ids, day, start, team, e
     key = (chosen['mode'], chosen['year'], chosen.get('quarter', chosen.get('month')), station['id'], column['key'])
     cur.execute(f'''UPDATE inspection_schedule_tasks task SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s AND status='completed'
+      AND (%s::date IS NULL OR scheduled_date=%s)
       AND NOT EXISTS(SELECT 1 FROM inspections ins WHERE ins.id=task.completion_inspection_id
         AND ins.station_id=task.station_id AND ins.inspection_table_id=task.table_id
-        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')})''', key)
+        AND ins.inspection_date>=task.period_start AND ins.inspection_date<{coverage_end_sql('task')})''', (*key,reconcile_day,reconcile_day))
     cur.execute('''UPDATE inspection_schedule_tasks SET status='cancelled',cancelled_at=CURRENT_TIMESTAMP
       WHERE mode=%s AND year=%s AND period_number=%s AND station_id=%s AND column_key=%s
+      AND (%s::date IS NULL OR scheduled_date=%s)
       AND (status='pending' OR (%s AND status IN ('completed','expired'))) AND (scheduled_date IS DISTINCT FROM %s OR NOT(user_id=ANY(%s))
         OR team_ids<>%s::jsonb OR plan_team IS DISTINCT FROM %s::jsonb)''',
-      (*key, replace_team, day, ids, json.dumps(ids), json.dumps(team,ensure_ascii=False)))
+      (*key, reconcile_day, reconcile_day, replace_team, day, ids, json.dumps(ids), json.dumps(team,ensure_ascii=False)))
     if not ids:
         return
     for uid in ids:

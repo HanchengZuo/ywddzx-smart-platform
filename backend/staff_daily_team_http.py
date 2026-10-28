@@ -9,9 +9,10 @@ from flask import g, jsonify, request
 from schedule_common import ScheduleConflict, day_value, lock_schedule, require_workday, today
 from staff_availability import STAFF, VIEW, EDIT, available_people, excluded_reason, ensure_today_availability
 from staff_actuals import actuals_window, assert_actuals_window
-from inspection_schedule import sync_field_team_plans
+from inspection_schedule import sync_personnel_plans
 from staff_daily_teams import (adjust_preview, adjust_members, clean_assignments, group_assignments, move_student, propose_teams, save_teams,
-                              team_days, validate_dispatched_teams, validate_team_changes, annotate_dispatch_locks)
+                              team_days, validate_team_changes, annotate_dispatch_locks)
+from staff_dispatch_execution import execution_locks
 from driving_permits import validate_driving_teams
 from schedule_dates import planning_days, eligible_dates
 from schedule_shelf_store import seed_daily_shelf
@@ -34,12 +35,18 @@ def context(cur, day):
     eligible = [p for p in people if p['id'] and p['available'] is True]
     permits = {p['id']: p.get('has_driving_permit') is True for p in people if p['id']}
     assignments = [dict(p, has_driving_permit=permits.get(p['id'], False)) for p in saved.get('assignments', [])]
+    execution = execution_locks(cur, day)
+    assigned = {p['id']: p for p in assignments}
+    for p in people:
+        if p['id'] in assigned or p['station_modes']:
+            p['execution_modes'] = (['offline'] if p['id'] in execution['field_members'] else []) + (
+                ['online'] if p['id'] in execution['video_members'] else [])
     assigned_ids = {p['id'] for p in assignments}
     unconfirmed = [p['display_name'] for p in people if p['available'] is None]
     return dict(day=day.isoformat(), working=bool(calendar and calendar['working']), people=eligible,
                 unassigned_people=[p for p in eligible if p['id'] not in assigned_ids and not p['station_modes']],
                 unconfirmed=unconfirmed, confirmed_count=len(people)-len(unconfirmed), total_count=len(people),
-                revision=saved.get('revision', 0), groups=annotate_dispatch_locks(cur,day,group_assignments(assignments)),
+                revision=saved.get('revision', 0), groups=annotate_dispatch_locks(cur,day,group_assignments(assignments),execution=execution),
                 updated_by_name=saved.get('updated_by_name', ''), updated_at=saved.get('updated_at', ''),
                 excluded=[dict(name=p['display_name'], reason=excluded_reason(p))
                           for p in people if p not in eligible])
@@ -61,6 +68,7 @@ def process_day(cur, actor, data, can_edit):
         cur.execute('SELECT id FROM users WHERE TRIM(real_name)=ANY(%s) ORDER BY id FOR SHARE', ([name for name, _ in STAFF],))
         cur.fetchall()
     result = context(cur, day)
+    before = stored_assignments(result)
     if day > today() and result['unconfirmed']:
         raise ScheduleConflict('该日期人员档期尚未全部确认，请先完成全部有空/没空设置。')
     if type(data.get('revision')) is not int or data['revision'] != result['revision']:
@@ -104,7 +112,6 @@ def process_day(cur, actor, data, can_edit):
             assignments = adjust_preview(result['people'], assignments, data.get('student_leaders', {}))
             assignments = adjust_members(result['people'], assignments, data.get('moves', []))
             assignments = clean_assignments(assignments)
-            validate_dispatched_teams(cur, day, assignments)
             before = stored_assignments(result)
             validate_team_changes(cur,day,before,assignments)
             validate_driving_teams(result['people'], assignments)
@@ -114,7 +121,7 @@ def process_day(cur, actor, data, can_edit):
                                          if p['id'] not in {a['id'] for a in assignments}],
                       token=token, seed=seed, source='generated', manager_modes=data.get('manager_modes'))
     if data['action'] != 'preview':
-        sync_field_team_plans(cur, actor, day)
+        sync_personnel_plans(cur, actor, day, before, clean_assignments(assignments))
         fresh = context(cur, day)
         fresh['current_token'] = proposal_token(actor, fresh, stored_assignments(fresh))
         result.update(fresh)

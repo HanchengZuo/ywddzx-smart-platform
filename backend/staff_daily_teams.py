@@ -6,6 +6,7 @@ from datetime import timedelta
 from schedule_common import ScheduleConflict
 from driving_permits import require_field_driver, validate_driving_teams
 from inspection_schedule_catalog import roster_position
+from staff_dispatch_execution import execution_locks, change_modes
 
 
 def clean_assignments(assignments):
@@ -18,7 +19,7 @@ def join_unassigned(people, before, member_id, leader_id):
     if not person or person.get('station_modes'):
         raise ValueError('只能加入今日有空、尚未编组且没有站点派工的人员。')
     mode = 'online' if leader_id is None else 'offline'
-    if {m['mode'] for m in person.get('actual_modes', [])} - {mode}:
+    if change_modes(person) - {mode}:
         raise ScheduleConflict('该人员已有另一种巡检实绩，不能调整到此组。')
     if person['position'] == '管理人员':
         if leader_id not in (None, member_id):
@@ -83,9 +84,7 @@ def move_student(people, before, student_id, leader_id):
     if person['leader_id'] == leader_id and person['mode'] == ('offline' if leader else 'online'):
         return result
     mode = 'offline' if leader else 'online'
-    if 'online' in eligible.get('station_modes', []) and mode != 'online':
-        raise ScheduleConflict('该学生已有视频站点派工，调整前请先撤销其视频安排。')
-    if {m['mode'] for m in eligible.get('actual_modes', [])} - {mode}:
+    if change_modes(eligible) - {mode}:
         raise ScheduleConflict('该学生已有另一种巡检实绩，不能改到此组。')
     person.update(mode=mode, leader_id=leader_id, group_name=leader['group_name'] if leader else '内勤视频组')
     return result
@@ -132,9 +131,7 @@ def move_member(people, before, member_id, leader_id):
             source = eligible.get(changed['id'])
             if not source:
                 raise ScheduleConflict('原组成员档期已变化，请重新载入方案。')
-            if 'online' in source.get('station_modes', []):
-                raise ScheduleConflict('相关人员已有今日站点派工，请先撤下全部今日排班。')
-            if {m['mode'] for m in source.get('actual_modes', [])} - {changed['mode']}:
+            if change_modes(source) - {changed['mode']}:
                 raise ScheduleConflict('相关人员已有另一种巡检实绩，不能调整到此组。')
     return result
 
@@ -166,52 +163,6 @@ def propose_teams(people, before, manager_modes, seed):
     return frozen + random_teams(free, choices, seed)
 
 
-def validate_dispatched_teams(cur, day, assignments):
-    groups = {g['leader_id']: {p['id'] for p in g['members']} for g in group_assignments(assignments) if g['mode']=='offline'}
-    cur.execute("""SELECT DISTINCT plan_team FROM inspection_schedule_cells WHERE mode IN ('offline','annual')
-      AND scheduled_date=%s AND inspector_ids<>'[]'::jsonb AND jsonb_typeof(plan_team)='object'""", (day,))
-    for row in cur.fetchall():
-        team = row['plan_team']
-        if team['leader_id'] not in groups:
-            raise ScheduleConflict('外勤带队组已有站点安排，请先撤下该组派工，再调整带队人员。')
-
-
-def started_field_leaders(cur, day):
-    """Only a planned member's post-dispatch record/issue locks field membership.
-
-    Deliberately independent of the 17:00 staff-board actuals display window.
-    A new issue can belong to a reused monthly record created before dispatch.
-    """
-    cur.execute('''SELECT DISTINCT (c.plan_team->>'leader_id')::int AS leader_id
-      FROM inspection_schedule_cells c
-      LEFT JOIN LATERAL (
-        SELECT ev.created_at FROM inspection_schedule_events ev
-        WHERE ev.mode=c.mode AND ev.year=c.year AND ev.period_number=c.period_number
-          AND ev.station_id=c.station_id AND ev.column_key=c.column_key
-          AND ev.after_date=c.scheduled_date AND ev.after_ids<>'[]'::jsonb
-          AND ev.after_team->>'leader_id'=c.plan_team->>'leader_id'
-          AND (ev.before_ids='[]'::jsonb OR ev.before_date IS DISTINCT FROM ev.after_date
-            OR ev.before_team->>'leader_id' IS DISTINCT FROM ev.after_team->>'leader_id')
-        ORDER BY ev.id DESC LIMIT 1
-      ) dispatch ON TRUE
-      JOIN inspection_schedule_tasks task
-        ON task.mode='offline' AND task.year=c.year AND task.period_number=c.period_number
-        AND task.station_id=c.station_id AND task.column_key=c.column_key
-        AND task.scheduled_date=c.scheduled_date AND task.team_ids=c.inspector_ids
-        AND task.status IN ('pending','completed','expired')
-      WHERE c.mode IN ('offline','annual') AND c.scheduled_date=%s AND c.inspector_ids<>'[]'::jsonb
-        AND jsonb_typeof(c.plan_team)='object'
-        AND EXISTS(SELECT 1 FROM inspections ins WHERE ins.station_id=c.station_id AND ins.inspection_table_id=task.table_id
-          AND ins.inspection_date>=make_date(c.year,CASE WHEN c.mode='annual' THEN 1 ELSE (c.period_number-1)*3+1 END,1)
-          AND ins.inspection_date<make_date(c.year,CASE WHEN c.mode='annual' THEN 1 ELSE (c.period_number-1)*3+1 END,1)
-            + CASE WHEN c.mode='annual' THEN INTERVAL '1 year' ELSE INTERVAL '3 months' END
-          AND ((c.inspector_ids @> jsonb_build_array(ins.inspector_id) AND ins.created_at>=COALESCE(dispatch.created_at,c.updated_at))
-            OR EXISTS(SELECT 1 FROM issues issue WHERE issue.inspection_id=ins.id
-              AND c.inspector_ids @> jsonb_build_array(issue.inspector_id) AND issue.created_at>=COALESCE(dispatch.created_at,c.updated_at))))''',
-                (day,))
-    return {row['leader_id'] for row in cur.fetchall()}
-
-
 def dispatched_members(cur, day):
     """Video assignees and field leaders stay bound to existing station intent."""
     cur.execute("""SELECT DISTINCT c.inspector_ids,c.plan_team,c.mode,s.region,s.station_name
@@ -228,9 +179,10 @@ def dispatched_members(cur, day):
     return ids,leaders
 
 
-def annotate_dispatch_locks(cur,day,groups):
-    ids,leaders=dispatched_members(cur,day)
-    started = started_field_leaders(cur, day)
+def annotate_dispatch_locks(cur,day,groups, *, execution=None):
+    _,leaders=dispatched_members(cur,day)
+    execution = execution if execution is not None else execution_locks(cur, day)
+    started = execution['field_leaders']
     for group in groups:
         field = group['mode'] == 'offline'
         assigned = field and group['leader_id'] in leaders
@@ -239,19 +191,18 @@ def annotate_dispatch_locks(cur,day,groups):
         group['has_dispatch']=assigned
         group['lock_reason']='派工后已有组员在分派站点登记对应巡检记录，组员已锁定。' if locked else ''
         for p in group['members']:
-            leader_bound = assigned and p['id'] == group['leader_id']
             p['field_dispatched'] = assigned
-            p['dispatch_locked']=bool(locked or p['id'] in ids or leader_bound)
+            p['dispatch_locked']=bool(locked or p['id'] in execution['video_members'])
             p['lock_reason'] = group['lock_reason'] if locked else (
-                '已有视频站点派工，请先撤下该人员的视频排班。' if p['id'] in ids else
-                '带队组已有站点派工，调整带队前请先撤下该组派工。' if leader_bound else '')
+                '派工后已在分派的视频任务站点登记对应巡检记录，不能调整人员或标记没空。'
+                if p['id'] in execution['video_members'] else '')
     return groups
 
 
 def validate_team_changes(cur,day,before,after):
-    """Field members lock on execution, while leaders/video retain dispatch ownership."""
-    ids,leaders=dispatched_members(cur,day)
-    started = started_field_leaders(cur, day)
+    """Only executed field teams/video assignees are immutable; sync unstarted intent later."""
+    execution = execution_locks(cur, day)
+    started = execution['field_leaders']
     current={p['id']:p for p in before}
     proposed={p['id']:p for p in after}
     for group in group_assignments(before):
@@ -260,15 +211,11 @@ def validate_team_changes(cur,day,before,after):
             new={p['id'] for p in after if p['mode']=='offline' and p['leader_id']==group['leader_id']}
             if old!=new:
                 raise ScheduleConflict(f"{group['name']}派工后已有组员在分派站点登记巡检记录，不能调入或调出组员。")
-    for leader in leaders:
-        old, new = current.get(leader), proposed.get(leader)
-        if old and (not new or new['mode'] != 'offline' or new['leader_id'] != leader):
-            raise ScheduleConflict('外勤带队组已有站点安排，请先撤下该组派工，再调整带队人员。')
-    for uid in ids:
+    for uid in execution['video_members']:
         old=current.get(uid)
         new=proposed.get(uid)
         if old and (not new or (old['mode'],old['leader_id'])!=(new['mode'],new['leader_id'])):
-            raise ScheduleConflict(f"{old['display_name']}已有今日站点派工，不能调整分组；请先撤下其全部今日排班。")
+            raise ScheduleConflict(f"{old['display_name']}派工后已登记对应的视频巡检记录，不能调整分组或标记没空。")
 
 
 def adjust_preview(people, assignments, student_leaders):
@@ -297,7 +244,7 @@ def random_teams(people, manager_modes, seed):
         mode = manager_modes[str(p['id'])]
         if mode not in ('offline', 'online'):
             raise ValueError('管理人员分工只能选择现场或视频巡检。')
-        locked = set(p.get('station_modes', [])) | {m['mode'] for m in p.get('actual_modes', [])}
+        locked = change_modes(p) | (set(p.get('station_modes', [])) if 'execution_modes' not in p else set())
         if locked - {mode}:
             raise ValueError(f"{p['display_name']}已有另一种站点排班或巡检实绩，不能更换检查方式。")
         if mode == 'offline': leaders.append(p)
@@ -308,7 +255,7 @@ def random_teams(people, manager_modes, seed):
     rng.shuffle(students)
     fixed, flexible = defaultdict(list), []
     for p in students:
-        modes = set(p.get('station_modes', [])) | {m['mode'] for m in p.get('actual_modes', [])}
+        modes = change_modes(p) | (set(p.get('station_modes', [])) if 'execution_modes' not in p else set())
         if len(modes) > 1:
             raise ValueError(f"{p['display_name']}当日已有混合巡检记录，请先核对，不能自动安排。")
         if modes: fixed[next(iter(modes))].append(p)

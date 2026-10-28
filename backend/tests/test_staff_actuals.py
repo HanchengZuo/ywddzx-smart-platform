@@ -124,7 +124,7 @@ class ActualsDatabaseTests(unittest.TestCase):
         with self.at(10):
             result=self.save(station_id=2,scheduled_date='2026-10-19')
             self.assertEqual(result.status_code,200,result.json)
-            self.assertEqual(self.availability(available=False).status_code,409,'existing plans remain protected')
+            self.assertEqual(self.availability(available=False).status_code,200,'unstarted field leader may leave; old station intent is retired')
             self.assertEqual(self.detail()['cell']['actual_modes'],[])
 
     def test_release_unions_task_evidence_and_unrelated_personal_work_and_deduplicates(self):
@@ -136,7 +136,7 @@ class ActualsDatabaseTests(unittest.TestCase):
         self.cur.execute('INSERT INTO issues(inspection_id,inspector_id) VALUES(%s,2)',(a,));self.admin.commit()
         with self.at(16):
             cell=self.detail()['cell']
-            self.assertFalse(cell['has_actual']);self.assertFalse(cell['read_only'])
+            self.assertFalse(cell['has_actual']);self.assertTrue(cell['read_only'], 'matching post-dispatch work locks before the display cutoff')
             self.assertEqual(cell['dispatch']['completed'],0)
             self.assertTrue(all(t['record_count']==0 and not t['records'] for t in cell['tasks']))
             self.assertEqual(self.board()['rows'][0]['cells']['odor']['status'],'completed','station cells stay real-time')
@@ -175,7 +175,7 @@ class ActualsDatabaseTests(unittest.TestCase):
             result=self.client.post('/api/inspection-schedule/auto',json=dict(action='confirm',day='2026-10-19',token=preview['token']))
             self.assertEqual(result.status_code,409,result.json)
             result=self.client.put('/api/staff-availability',json=dict(available=False,cells=[dict(person_name='步雪琼',day='2026-10-19',revision=old)]))
-            self.assertEqual(result.status_code,409,result.json)
+            self.assertEqual(result.status_code,200,result.json)
         self.cur.execute('SELECT 1 FROM inspection_schedule_cells');self.assertIsNone(self.cur.fetchone())
 
     def test_no_actual_after_release_remains_editable_and_preconfigured_busy_is_not_erased(self):

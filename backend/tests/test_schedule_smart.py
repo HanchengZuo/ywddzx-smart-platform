@@ -183,6 +183,8 @@ class SmartDatabaseTests(unittest.TestCase):
         students=[p for p in video['members'] if p['position']=='大学生']
         selected=students[0];other=students[1]
         self.assertEqual(self.assign(dict(video,members=[selected])).status_code,200)
+        self.admin.commit()
+        self.record(station=1,table=7,inspector=selected['id'],day='2026-10-19')
         leader=next(g['leader_id'] for g in saved['groups'] if g['mode']=='offline')
         self.assertEqual(self.post('move',revision=1,student_id=selected['id'],leader_id=leader).status_code,409)
         self.assertEqual(self.post('move',revision=1,student_id=other['id'],leader_id=leader).status_code,200)

@@ -160,7 +160,7 @@ test('preview refuses managers, busy/missing students, invalid leaders and cross
               property === 'station_modes' ? ['offline'] : [{ mode: 'offline', count: 1 }],
           },
     )
-    if(property === 'actual_modes') assert.throws(() => movePreviewStudent(preview, locked, 10, null), /派工或巡检实绩/)
+    if(property === 'actual_modes') assert.throws(() => movePreviewStudent(preview, locked, 10, null), /巡检实绩/)
     else assert.equal(movePreviewStudent(preview, locked, 10, null).student_leaders['10'], null)
     assert.equal(movePreviewStudent(preview, locked, 10, 2).student_leaders['10'], 2)
   }
@@ -187,13 +187,37 @@ test('unstarted field groups receive returned-free members without mutating save
   assert.throws(()=>movePreviewMember(draft,people,20,1),/有空/)
 })
 
-test('pending field plans allow transfers; video plans and actual mode conflicts remain protected', () => {
+test('pending field and video plans allow transfers, while executed task modes remain protected', () => {
   const {preview,people}=fixture()
   const field=people.map(p=>p.id===10?{...p,station_modes:['offline']}:p)
   assert.equal(movePreviewMember(preview,field,10,2).moves[0].leader_id,2)
   assert.equal(movePreviewMember(preview,field,10,null).moves[0].leader_id,null)
   const video=people.map(p=>p.id===10?{...p,station_modes:['online']}:p)
-  assert.throws(()=>movePreviewMember(preview,video,10,2),/派工/)
+  assert.equal(movePreviewMember(preview,video,10,2).moves[0].leader_id,2)
+  const executed=people.map(p=>p.id===10?{...p,execution_modes:['online']}:p)
+  assert.throws(()=>movePreviewMember(preview,executed,10,2),/实绩/)
+})
+
+test('an unstarted dispatched leader can leave and their draft team dissolves without mutating saved intent', () => {
+  const {preview,people}=fixture()
+  preview.groups[0].has_dispatch=true
+  preview.groups[0].members.forEach(p=>{p.field_dispatched=true;p.dispatch_locked=false})
+  const changed=movePreviewMember(preview,people,1,null)
+  assert.ok(!changed.groups.some(g=>g.leader_id===1))
+  assert.deepEqual(changed.groups.find(g=>g.mode==='online').members.map(p=>p.id),[1,10])
+  assert.equal(preview.groups[0].members.length,2)
+})
+
+test('unrelated released records do not veto unstarted video-to-field moves, but server execution locks do', () => {
+  const {preview,people}=fixture()
+  const source=preview.groups[0].members.find(p=>p.id===10)
+  source.mode='online';source.leader_id=null;source.group_name='内勤视频组'
+  preview.groups[0].members=preview.groups[0].members.filter(p=>p.id!==10)
+  preview.groups.push({name:'内勤视频组',mode:'online',leader_id:null,members:[source]})
+  const released=people.map(p=>p.id===10?{...p,station_modes:['online'],actual_modes:[{mode:'online'}],execution_modes:[]}:p)
+  assert.equal(movePreviewMember(preview,released,10,2).groups.find(g=>g.leader_id===2).members.length,2)
+  source.dispatch_locked=true;source.lock_reason='派工后已登记对应视频巡检实绩'
+  assert.throws(()=>movePreviewMember(preview,released,10,2),/实绩/)
 })
 
 test('the preview drop handler makes no request or successful-save event until confirm, with drag data fallback', async () => {

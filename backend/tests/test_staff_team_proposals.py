@@ -79,10 +79,10 @@ class ProposalDatabaseTests(unittest.TestCase):
         adopted=self.post('apply',revision=1,source='generated',seed=generated['seed'],token=generated['token'])
         self.assertEqual(adopted.status_code,200,adopted.json)
         current=self.current()
-        self.assertEqual(self.adopt(current,[dict(person_id=2,leader_id=None)]).status_code,409)
         outsider=next(p for g in current['groups'] if g['mode']=='online' for p in g['members'] if p['position']=='大学生')
         self.assertEqual(self.adopt(current,[dict(person_id=outsider['id'],leader_id=2)]).status_code,200)
-        self.assertEqual(self.post(revision=3,manager_modes={'2':'online','3':'offline','6':'online'}).status_code,409)
+        self.assertEqual(self.adopt(self.current(),[dict(person_id=2,leader_id=None)]).status_code,200)
+        self.assertEqual(self.post(revision=4,manager_modes={'2':'online','3':'offline','6':'online'}).status_code,200)
 
     def test_busy_leader_dissolves_group_and_retires_parked_cards_without_touching_records(self):
         saved=self.confirm().json
@@ -117,15 +117,19 @@ class ProposalDatabaseTests(unittest.TestCase):
         self.assertNotIn(student['id'],remaining);self.assertNotIn(6,remaining)
         self.assertTrue(all(remaining[p['id']]['mode']==p['mode'] for g in before['groups'] for p in g['members'] if p['id'] in remaining))
 
-    def test_any_dispatched_field_member_or_video_person_cannot_be_marked_busy(self):
+    def test_executed_field_members_or_video_person_cannot_be_marked_busy(self):
         saved=self.confirm().json
         field=next(g for g in saved['groups'] if g['leader_id']==2)
         self.assertEqual(self.assign(field).status_code,200)
+        self.admin.commit()
+        self.record(station=1,table=1,inspector=2,day='2026-10-19')
         for p in field['members']:
             self.assertEqual(self.availability(name=p['display_name'],available=False).status_code,409)
         video=next(g for g in saved['groups'] if g['mode']=='online')
         selected=next(p for p in video['members'] if p['position']=='大学生')
         self.assertEqual(self.assign(dict(video,members=[selected]),sid=2).status_code,200)
+        self.admin.commit()
+        self.record(station=2,table=7,inspector=selected['id'],day='2026-10-19')
         self.assertEqual(self.availability(name=selected['display_name'],available=False).status_code,409)
         self.assertEqual(self.availability(name='芦斌',available=False).status_code,200)
 

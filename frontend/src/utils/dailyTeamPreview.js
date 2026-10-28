@@ -19,11 +19,8 @@ export function movePreviewStudent(preview, people, studentId, leaderId) {
   )
   if (leaderId !== null && !leader) throw new Error('请选择预览中的外勤带队组或内勤视频组。')
   const mode = leader ? 'offline' : 'online'
-  if (
-    ((eligible.station_modes || []).includes('online') && mode !== 'online') ||
-    (eligible.actual_modes || []).some((m) => m.mode !== mode)
-  )
-    throw new Error('该学生已有另一种站点派工或巡检实绩，不能调整到此组。')
+  if ((eligible.execution_modes || (eligible.actual_modes || []).map(m => m.mode)).some(m => m !== mode))
+    throw new Error('该学生已在对应任务站点产生巡检实绩，不能调整到此组。')
   const groups = new Map(preview.groups.map((group) => [group.name, { ...group, members: [] }]))
   for (const person of assignments) {
     const member =
@@ -95,7 +92,7 @@ export function movePreviewMember(preview, people, personId, leaderId) {
       person.lock_reason ||
         source?.lock_reason ||
         target?.lock_reason ||
-        '相关组派工后已有巡检实绩，或人员已有视频派工，不能调整。',
+        '相关组或视频人员派工后已有对应任务的巡检实绩，不能调整。',
     )
   const manager = person.position === '管理人员'
   if (manager && leaderId !== null && leaderId !== person.id)
@@ -114,11 +111,10 @@ export function movePreviewMember(preview, people, personId, leaderId) {
     const info = eligible.get(p.id)
     if (
       !info ||
-      (info.station_modes?.includes('online') && chosenMode !== 'online') ||
       p.dispatch_locked
     )
       throw new Error('相关组员的档期或派工已变化，请重新载入。')
-    if (info.actual_modes?.some((m) => m.mode !== chosenMode))
+    if ((info.execution_modes || (info.actual_modes || []).map(m => m.mode)).some(m => m !== chosenMode))
       throw new Error('相关人员已有另一种巡检实绩，不能调整到此组。')
     return {
       ...p,
