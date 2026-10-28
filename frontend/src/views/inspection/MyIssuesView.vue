@@ -578,7 +578,7 @@
             </div>
 
             <div v-if="shouldShowReviewPhotoUpload" class="form-item">
-              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult)" class="optional-field-tag">选填</span></label>
+              <label>复核照片 <span v-if="!reviewRequiresPhoto(actionForm.reviewResult, actionDrawer.item?.checklist_mode)" class="optional-field-tag">选填</span></label>
               <InspectionPhotoUpload ref="reviewPhotoUploadRef" v-model="actionForm.reviewPhotoFile" id-prefix="review-photo"
                 label="复核照片" :disabled="submittingAction"
                 :active="actionDrawer.visible && !previewState.visible && !standardDetailState.visible"
@@ -1115,11 +1115,13 @@ const reviewOutcomeHint = computed(() => {
       description: '提交后该问题重新进入待整改，站经理再次提交后会回到待复核。' + (reviewAllowsPhoto(actionForm.value.reviewResult) ? '复核照片选填，可用于说明退回原因。' : '')
     }
   }
-  if (reviewRequiresPhoto(actionForm.value.reviewResult)) {
+  if (actionForm.value.reviewResult === '整改通过') {
     return {
       type: 'closed',
       title: '将完成问题闭环',
-      description: '确认整改有效后，请上传能够反映复核结果的照片。'
+      description: reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode)
+        ? '确认整改有效后，请上传能够反映复核结果的照片。'
+        : '视频检查表的复核照片为选填，可不上传；提交后问题将变为已闭环。'
     }
   }
 
@@ -1393,7 +1395,7 @@ const submitAction = async () => {
       showActionToast('请选择督导组复核结果。', 'error')
       return
     }
-    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult)
+    const reviewPhotoRequired = reviewRequiresPhoto(actionForm.value.reviewResult, actionDrawer.value.item?.checklist_mode)
     if (reviewPhotoRequired && !actionForm.value.reviewPhotoFile) {
       showActionToast('请上传复核照片。', 'error')
       return

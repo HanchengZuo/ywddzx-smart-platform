@@ -97,6 +97,19 @@ test('only ordinary approval requires a photo; both rejection paths return', () 
   assert.equal(isReviewReturned('通过站级无法整改'), false)
 })
 
+test('video approval photo is optional but upload remains available; offline or unknown attributes remain mandatory', () => {
+  assert.equal(reviewRequiresPhoto('整改通过', 'online'), false)
+  assert.equal(reviewAllowsPhoto('整改通过'), true)
+  for (const mode of ['offline', undefined, null, '', 'invalid']) {
+    assert.equal(reviewRequiresPhoto('整改通过', mode), true)
+  }
+  for (const mode of ['online','offline']) {
+    for (const result of ['整改不通过','通过站级无法整改','驳回站级无法整改']) {
+      assert.equal(reviewRequiresPhoto(result,mode),false)
+    }
+  }
+})
+
 test('ordinary rejection allows an optional photo without changing unable-result branches', () => {
   assert.equal(reviewAllowsPhoto('整改通过'), true)
   assert.equal(reviewAllowsPhoto('整改不通过'), true)

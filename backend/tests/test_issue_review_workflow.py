@@ -47,6 +47,15 @@ class IssueReviewWorkflowTests(unittest.TestCase):
         self.assertTrue(transition["photo_allowed"])
         self.assertFalse(transition["returns_to_station"])
 
+    def test_video_approval_photo_is_optional_without_changing_closure_or_other_branches(self):
+        for station in ('已整改', '站经无法整改'):
+            transition = resolve_issue_review_transition('整改通过', station, 'online')
+            self.assertFalse(transition['photo_required'])
+            self.assertTrue(transition['photo_allowed'])
+            self.assertEqual(transition['new_status'], '已闭环')
+        for mode in ('offline', None, '', 'invalid'):
+            self.assertTrue(resolve_issue_review_transition('整改通过', '已整改', mode)['photo_required'])
+
     def test_retired_unable_results_are_rejected(self):
         for value in ("站级无法整改", "站经无法整改", "站经理无法整改"):
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -85,13 +94,16 @@ class IssueReviewWorkflowTests(unittest.TestCase):
 
 class ReviewSubmissionTests(unittest.TestCase):
     def submit(self, result='整改不通过', photo=False, station_result='已整改',
-               status='待复核', role='supervisor', audit='approved', user_id=17):
+               status='待复核', role='supervisor', audit='approved', user_id=17,
+               checklist_mode='offline', posted_mode=None):
         conn, cur = MagicMock(), MagicMock()
         conn.cursor.return_value = cur
         user = dict(id=17, username='reviewer', real_name='复核人员', role=role)
         cur.fetchone.side_effect = [user, dict(id=42, status=status,
-            rectification_result=station_result, audit_status=audit)]
+            rectification_result=station_result, audit_status=audit, checklist_mode=checklist_mode)]
         data = dict(user_id='17', review_result=result, review_note='')
+        if posted_mode is not None:
+            data['checklist_mode'] = posted_mode
         if photo:
             data['review_photo'] = (BytesIO(b'image-data'), 'review.png')
         with ExitStack() as stack:
@@ -178,6 +190,30 @@ class ReviewSubmissionTests(unittest.TestCase):
                 self.assertEqual(code, expected)
                 saved.assert_not_called(); event.assert_not_called(); conn.commit.assert_not_called()
 
+    def test_video_approval_accepts_no_photo_or_saves_optional_photo_for_both_rectification_branches(self):
+        for station in ('已整改', '站经无法整改'):
+            for photo in (False, True):
+                with self.subTest(station=station, photo=photo):
+                    body, code, cur, conn, saved, event = self.submit(result='整改通过', station_result=station,
+                        checklist_mode='online', photo=photo)
+                    self.assertEqual((code,body['status'],body['returned_to_station']),(200,'已闭环',False))
+                    path = 'rectifications/review.jpg' if photo else None
+                    self.assertEqual(cur.execute.call_args.args[1],('整改通过','',path,'已闭环',42))
+                    self.assertEqual(event.call_args.args[-1],path)
+                    self.assertEqual(saved.call_count,int(photo))
+                    conn.commit.assert_called_once()
+
+    def test_client_cannot_waive_offline_photo_or_bypass_review_guards_by_claiming_video(self):
+        for args, code in [({'checklist_mode':'offline','posted_mode':'online'},400),
+                           ({'checklist_mode':None,'posted_mode':'online'},400),
+                           ({'checklist_mode':'online','role':'station_manager'},403),
+                           ({'checklist_mode':'online','audit':'pending'},409),
+                           ({'checklist_mode':'online','status':'已闭环'},400)]:
+            with self.subTest(args=args):
+                _, status, _, conn, saved, event = self.submit(result='整改通过', **args)
+                self.assertEqual(status,code)
+                saved.assert_not_called(); event.assert_not_called(); conn.commit.assert_not_called()
+
     def test_invalid_state_branch_or_permission_does_not_save_optional_photo(self):
         for args, expected in [({'status':'待整改'}, 400), ({'station_result':'站经无法整改'}, 400),
                                ({'audit':'pending'}, 409), ({'audit':'rejected'}, 400),
@@ -202,9 +238,11 @@ class UnableClosureDatabaseTests(unittest.TestCase):
         self.cur.execute(f'CREATE SCHEMA {self.schema}; SET search_path TO {self.schema}')
         self.cur.execute('''CREATE TABLE users(id int PRIMARY KEY,username text,real_name text,role text);
           INSERT INTO users VALUES(17,'reviewer','复核人员','supervisor');
-          CREATE TABLE issues(id int PRIMARY KEY,status text,rectification_result text,audit_status text,
+          CREATE TABLE inspection_tables(id int PRIMARY KEY,table_name text,checklist_mode text);
+          INSERT INTO inspection_tables VALUES(1,'名字含视频但属性为现场','offline');
+          CREATE TABLE issues(id int PRIMARY KEY,inspection_table_id int REFERENCES inspection_tables(id),status text,rectification_result text,audit_status text,
             review_result text,review_note text,review_at timestamp,review_photo_path text);
-          INSERT INTO issues(id,status,rectification_result,audit_status) VALUES(42,'待复核','站经无法整改','approved');
+          INSERT INTO issues(id,inspection_table_id,status,rectification_result,audit_status) VALUES(42,1,'待复核','站经无法整改','approved');
           CREATE TABLE inspection_issue_flow_history(id serial PRIMARY KEY,issue_id int REFERENCES issues(id),round_no int,
             action_type text,from_status text,to_status text,result text,note text,photo_path text,
             actor_user_id int REFERENCES users(id),actor_username text,actor_name text,actor_role text);
@@ -220,9 +258,10 @@ class UnableClosureDatabaseTests(unittest.TestCase):
     def connect(self):
         return psycopg2.connect(**self.config, cursor_factory=RealDictCursor, options=f'-c search_path={self.schema}')
 
-    def submit(self):
-        with core_app.app.test_request_context('/api/issues/42/review',method='POST',data=dict(
-            review_result='整改通过',review_note='',review_photo=(BytesIO(b'fixture-only'),'review.png'))):
+    def submit(self, *, photo=True, claimed_mode=None):
+        data = dict(review_result='整改通过',review_note='',checklist_mode=claimed_mode or '')
+        if photo: data['review_photo'] = (BytesIO(b'fixture-only'),'review.png')
+        with core_app.app.test_request_context('/api/issues/42/review',method='POST',data=data):
             value = core_app.submit_review(42)
             response, code = value if isinstance(value,tuple) else (value,200)
             return response.get_json(), code
@@ -262,6 +301,34 @@ class UnableClosureDatabaseTests(unittest.TestCase):
             codes = sorted(code for _,code in pool.map(lambda _:self.submit(),range(2)))
         self.assertEqual(codes,[200,400])
         self.cur.execute("SELECT COUNT(*) n FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
+        self.assertEqual(self.cur.fetchone()['n'],1)
+
+    def test_video_without_photo_closes_using_database_attribute_not_table_name(self):
+        self.cur.execute("UPDATE inspection_tables SET checklist_mode='online',table_name='自定义检查表' WHERE id=1")
+        self.admin.commit()
+        with self.dependencies():
+            body, code = self.submit(photo=False, claimed_mode='offline')
+        self.assertEqual((code,body['status']),(200,'已闭环'))
+        self.cur.execute('SELECT status,review_result,review_photo_path FROM issues WHERE id=42')
+        self.assertEqual(dict(self.cur.fetchone()),dict(status='已闭环',review_result='整改通过',review_photo_path=None))
+        self.cur.execute("SELECT photo_path,result,to_status FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
+        self.assertEqual(dict(self.cur.fetchone()),dict(photo_path=None,result='整改通过',to_status='已闭环'))
+
+    def test_video_optional_photo_is_still_stored(self):
+        self.cur.execute("UPDATE inspection_tables SET checklist_mode='online' WHERE id=1"); self.admin.commit()
+        with self.dependencies():
+            _, code = self.submit(photo=True)
+        self.assertEqual(code,200)
+        self.cur.execute("SELECT photo_path FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
+        self.assertEqual(self.cur.fetchone()['photo_path'],'rectifications/fixture.jpg')
+
+    def test_offline_without_photo_cannot_be_overridden_by_video_form_field(self):
+        with self.dependencies():
+            body, code = self.submit(photo=False, claimed_mode='online')
+        self.assertEqual(code,400); self.assertEqual(body['error'],'请上传复核照片。')
+        self.cur.execute('SELECT status,review_result FROM issues WHERE id=42')
+        self.assertEqual(dict(self.cur.fetchone()),dict(status='待复核',review_result=None))
+        self.cur.execute('SELECT COUNT(*) n FROM inspection_issue_flow_history')
         self.assertEqual(self.cur.fetchone()['n'],1)
 
 
