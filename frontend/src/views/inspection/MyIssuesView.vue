@@ -1,5 +1,5 @@
 <template>
-  <div class="page-shell my-issues-page">
+  <div ref="pageRef" class="page-shell my-issues-page">
     <div class="page-header card-surface">
       <div>
         <div class="page-kicker">巡检系统</div>
@@ -150,29 +150,29 @@
       </div>
 
       <div v-else class="mobile-issue-cards">
-        <div v-for="item in paginatedData" :key="item.id" class="mobile-issue-card card-surface"
-          :class="{ 'is-review-returned': isReturnedForRectification(item) }">
+        <div v-for="item in paginatedData" :key="item.id" :data-issue-id="item.id" class="mobile-issue-card card-surface"
+          :class="{ 'is-review-returned': isReturnedForRectification(item), 'is-review-card': isReviewQueue }">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
               <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
               <span :class="issueStatusClass(item)">{{ issueStatusLabel(item) }}</span>
             </div>
-            <div class="mobile-card-code">规范ID：{{ item.standard_id || '暂无' }}</div>
+            <div class="mobile-card-code">{{ isReviewQueue ? `问题ID：${item.id}` : `规范ID：${item.standard_id || '暂无'}` }}</div>
           </div>
 
           <div class="mobile-card-body">
             <div class="mobile-card-row"><span>站点</span><strong>{{ item.station }}</strong></div>
 
-            <div class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
+            <div v-if="!isReviewQueue" class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
             <div v-if="currentRole === 'station_manager'" class="mobile-card-row">
               <span>检查表签名状态</span>
               <strong>{{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}</strong>
             </div>
-            <div class="mobile-card-row"><span>规范ID</span><strong>{{ item.standard_id || '暂无' }}</strong></div>
+            <div class="mobile-card-row"><span>规范ID</span><div class="mobile-card-value" :class="{ 'is-emphasized': !isReviewQueue }">{{ item.standard_id || '暂无' }}</div></div>
             <div class="mobile-card-row mobile-card-row-top">
               <span>规范详情</span>
               <div class="mobile-card-standard-box">
-                <div class="mobile-card-standard-preview multiline-clamp">{{ getStandardDetailPreview(item.standard_detail_text)
+                <div class="mobile-card-standard-preview" :class="{ 'multiline-clamp': !isReviewQueue }">{{ getStandardDetailPreview(item.standard_detail_text, isReviewQueue ? 1 : 3)
                 }}</div>
                 <button class="text-link-btn" type="button" @click="openStandardDetail(item)">查看详情</button>
               </div>
@@ -202,7 +202,7 @@
                 <span>整改说明</span>
                 <div class="mobile-card-text">{{ item.rectification_note || '暂无' }}</div>
               </div>
-              <div class="mobile-card-row"><span>整改时间</span><strong>{{ item.rectification_at || '暂无' }}</strong></div>
+              <div class="mobile-card-row"><span>整改时间</span><div class="mobile-card-value">{{ item.rectification_at || '暂无' }}</div></div>
             </template>
             <div v-if="item.review_at" class="mobile-card-row"><span>复核时间</span><strong>{{ item.review_at }}</strong></div>
           </div>
@@ -335,7 +335,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in paginatedData" :key="item.id">
+              <tr v-for="item in paginatedData" :key="item.id" :data-issue-id="item.id">
                 <td v-if="isMyIssueColumnVisible('id')">{{ item.id }}</td>
                 <td v-if="isMyIssueColumnVisible('month')">{{ item.month || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('time')" class="nowrap-col">{{ item.time || '暂无' }}</td>
@@ -640,7 +640,8 @@ import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFil
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { captureIssueListPosition, restoreIssueListPosition } from '@/utils/myIssueViewport'
 import axios from 'axios'
 import {
   clearFileInputsById,
@@ -686,6 +687,8 @@ const myIssuesEmptyDescription = computed(() => (
 const loading = ref(false)
 const submittingAction = ref(false)
 const issues = ref([])
+const pageRef = ref(null)
+let actionListPosition = null
 const isReturnedForRectification = (item) => Boolean(rectificationReturnKind(item))
 const returnTitle = (item) => item?.appeal_rejected
   ? item.appeal_timed_out ? '申诉审核超时，系统已拒绝申诉，请继续整改（不可再次申诉）' : `${item.appeal_rejected_by_stage || '上级'}未通过申诉，请继续整改（不可再次申诉）`
@@ -1141,7 +1144,7 @@ const resolveImage = (path) => {
 
 
 
-const fetchMyIssues = async () => {
+const fetchMyIssues = async ({ preserveList = false } = {}) => {
   const userId = localStorage.getItem('user_id') || ''
   if (!userId) {
     showActionToast('当前登录信息缺失，请重新登录。', 'error')
@@ -1152,9 +1155,10 @@ const fetchMyIssues = async () => {
   listController?.abort()
   listController = new AbortController()
   listError.value = ''
-  if (isReviewQueue.value) issues.value = []
+  if (isReviewQueue.value && !preserveList) issues.value = []
   try {
-    loading.value = true
+    // Keep the list mounted after submission so its scroll range cannot collapse.
+    loading.value = !preserveList
     const response = await axios.get('/api/my-issues', {
       params: isReviewQueue.value ? {
         ...reviewRequestParams(isMobileReview.value ? mobileReviewFilters(appliedFilters.value) : appliedFilters.value, page.value, pageSize.value),
@@ -1234,6 +1238,7 @@ const openActionDrawer = (item) => {
     return
   }
   clearReviewFile()
+  actionListPosition = isReviewQueue.value ? captureIssueListPosition(pageRef.value, item.id) : null
   actionDrawer.value = {
     visible: true,
     item
@@ -1413,8 +1418,11 @@ const submitAction = async () => {
       `/api/issues/${actionDrawer.value.item.id}/review`,
       formData
     )
-    await fetchMyIssues()
+    await fetchMyIssues({ preserveList: true })
     closeActionDrawer()
+    await nextTick()
+    if (initialized) restoreIssueListPosition(pageRef.value, actionListPosition)
+    actionListPosition = null
     showActionToast(response.data.message || '复核提交成功。', 'success')
   } catch (error) {
     showActionToast(error?.response?.data?.error || '提交失败，请稍后重试。', 'error')
@@ -1857,11 +1865,23 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.mobile-card-row strong {
+.mobile-card-row strong,
+.mobile-card-value {
   font-size: 14px;
-  font-weight: 700;
   color: #0f172a;
   text-align: right;
+}
+
+.mobile-card-row strong,
+.mobile-card-value.is-emphasized,
+.is-review-card .mobile-card-text {
+  font-weight: 700;
+}
+
+.mobile-card-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 400;
 }
 
 .mobile-card-row-top {
@@ -1932,6 +1952,33 @@ onBeforeUnmount(() => {
   width: 100%;
   text-align: left;
   white-space: pre-line;
+}
+
+.is-review-card .mobile-card-standard-box {
+  min-width: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.is-review-card .mobile-card-standard-preview {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.is-review-card .mobile-card-standard-box .text-link-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.5;
 }
 
 .mobile-card-images {
