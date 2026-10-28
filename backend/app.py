@@ -6356,7 +6356,7 @@ def resolve_issue_review_transition(value, rectification_result=None):
         if canonical_issue_result(rectification_result) not in ISSUE_RESULT_OPTIONS:
             raise ValueError("站点尚未提交有效整改结果，不能进行复核。")
         unable = canonical_issue_result(rectification_result) == "站经无法整改"
-        allowed = {"通过站级无法整改", "驳回站级无法整改"} if unable else {"整改通过", "整改不通过"}
+        allowed = {"通过站级无法整改", "驳回站级无法整改", "整改通过"} if unable else {"整改通过", "整改不通过"}
         if review_result not in allowed:
             raise ValueError("复核选项与站点提交的整改结果不匹配，请刷新后重新选择。")
     if review_result in {"整改通过", "通过站级无法整改"}:

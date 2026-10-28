@@ -1,7 +1,12 @@
 import unittest
+import os
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from io import BytesIO
 from unittest.mock import MagicMock, patch
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 import app as core_app
 from app import classify_non_oil_rectification, resolve_issue_review_transition
@@ -20,9 +25,16 @@ class IssueReviewWorkflowTests(unittest.TestCase):
         self.assertTrue(rejected['returns_to_station'])
 
     def test_cross_branch_reviews_are_rejected(self):
-        for result, station in [('整改通过', '站经无法整改'), ('整改不通过', '站经无法整改'), ('通过站级无法整改', '已整改'), ('驳回站级无法整改', '已整改'), ('整改通过', '')]:
+        for result, station in [('整改不通过', '站经无法整改'), ('通过站级无法整改', '已整改'), ('驳回站级无法整改', '已整改'), ('整改通过', '')]:
             with self.subTest(result=result, station=station), self.assertRaises(ValueError):
                 resolve_issue_review_transition(result, station)
+
+    def test_unable_application_can_be_approved_as_rectified_without_changing_the_station_submission(self):
+        for station in ('站经无法整改', '站级无法整改', '站经理无法整改'):
+            with self.subTest(station=station):
+                transition = resolve_issue_review_transition('整改通过', station)
+                self.assertEqual(transition, dict(review_result='整改通过', new_status='已闭环',
+                    photo_required=True, photo_allowed=True, returns_to_station=False))
 
     def test_legacy_ordinary_approval_is_compatible(self):
         self.assertEqual(resolve_issue_review_transition('已整改', '已整改')['review_result'], '整改通过')
@@ -146,6 +158,26 @@ class ReviewSubmissionTests(unittest.TestCase):
                 saved.assert_not_called()
                 self.assertIsNone(event.call_args.args[-1])
 
+    def test_unable_application_rectified_approval_closes_and_records_current_round_photo(self):
+        for role in ('supervisor', 'supervisor_manager'):
+            with self.subTest(role=role):
+                body, code, cur, conn, saved, event = self.submit(result='整改通过', station_result='站经无法整改', photo=True, role=role)
+                self.assertEqual(code, 200)
+                self.assertEqual(body['status'], '已闭环')
+                self.assertFalse(body['returned_to_station'])
+                self.assertEqual(cur.execute.call_args.args[1], ('整改通过', '', 'rectifications/review.jpg', '已闭环', 42))
+                self.assertEqual(event.call_args.args[3:], ('review_submitted', '待复核', '已闭环', '整改通过', '', 'rectifications/review.jpg'))
+                saved.assert_called_once()
+                conn.commit.assert_called_once()
+
+    def test_unable_rectified_approval_still_requires_photo_and_uses_existing_authorization_and_state_guards(self):
+        for args, expected in [({}, 400), ({'photo':True, 'role':'station_manager'}, 403),
+                               ({'photo':True, 'audit':'pending'}, 409), ({'photo':True, 'status':'已闭环'}, 400)]:
+            with self.subTest(args=args):
+                _, code, _, conn, saved, event = self.submit(result='整改通过', station_result='站经无法整改', **args)
+                self.assertEqual(code, expected)
+                saved.assert_not_called(); event.assert_not_called(); conn.commit.assert_not_called()
+
     def test_invalid_state_branch_or_permission_does_not_save_optional_photo(self):
         for args, expected in [({'status':'待整改'}, 400), ({'station_result':'站经无法整改'}, 400),
                                ({'audit':'pending'}, 409), ({'audit':'rejected'}, 400),
@@ -156,6 +188,81 @@ class ReviewSubmissionTests(unittest.TestCase):
                 saved.assert_not_called()
                 event.assert_not_called()
                 conn.commit.assert_not_called()
+
+
+@unittest.skipUnless(os.getenv('INSPECTION_SCHEDULE_DB_TEST') == '1', 'isolated database opt-in')
+class UnableClosureDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.config = core_app.get_db_config()
+        if not self.config['dbname'].startswith('test_schedule_'):
+            raise RuntimeError('Refusing non-test database')
+        self.schema = 'review_' + uuid.uuid4().hex
+        self.admin = psycopg2.connect(**self.config, cursor_factory=RealDictCursor)
+        self.cur = self.admin.cursor()
+        self.cur.execute(f'CREATE SCHEMA {self.schema}; SET search_path TO {self.schema}')
+        self.cur.execute('''CREATE TABLE users(id int PRIMARY KEY,username text,real_name text,role text);
+          INSERT INTO users VALUES(17,'reviewer','复核人员','supervisor');
+          CREATE TABLE issues(id int PRIMARY KEY,status text,rectification_result text,audit_status text,
+            review_result text,review_note text,review_at timestamp,review_photo_path text);
+          INSERT INTO issues(id,status,rectification_result,audit_status) VALUES(42,'待复核','站经无法整改','approved');
+          CREATE TABLE inspection_issue_flow_history(id serial PRIMARY KEY,issue_id int REFERENCES issues(id),round_no int,
+            action_type text,from_status text,to_status text,result text,note text,photo_path text,
+            actor_user_id int REFERENCES users(id),actor_username text,actor_name text,actor_role text);
+          INSERT INTO inspection_issue_flow_history(issue_id,round_no,action_type,from_status,to_status,result)
+            VALUES(42,1,'rectification_submitted','待整改','待复核','站经无法整改');''')
+        self.admin.commit()
+
+    def tearDown(self):
+        self.admin.rollback()
+        self.cur.execute(f'DROP SCHEMA {self.schema} CASCADE'); self.admin.commit()
+        self.cur.close(); self.admin.close()
+
+    def connect(self):
+        return psycopg2.connect(**self.config, cursor_factory=RealDictCursor, options=f'-c search_path={self.schema}')
+
+    def submit(self):
+        with core_app.app.test_request_context('/api/issues/42/review',method='POST',data=dict(
+            review_result='整改通过',review_note='',review_photo=(BytesIO(b'fixture-only'),'review.png'))):
+            value = core_app.submit_review(42)
+            response, code = value if isinstance(value,tuple) else (value,200)
+            return response.get_json(), code
+
+    def dependencies(self):
+        stack = ExitStack()
+        stack.enter_context(patch.object(core_app,'get_authenticated_request_user_id',return_value=17))
+        stack.enter_context(patch.object(core_app,'get_db_connection',side_effect=self.connect))
+        stack.enter_context(patch.object(core_app,'ensure_issue_inspector_schema'))
+        # No real upload or business file is created during database verification.
+        stack.enter_context(patch.object(core_app,'save_uploaded_file',return_value='rectifications/fixture.jpg'))
+        return stack
+
+    def test_closure_commits_canonical_result_and_audit_without_rewriting_station_request(self):
+        with self.dependencies():
+            body, code = self.submit()
+        self.assertEqual((code,body['status'],body['returned_to_station']),(200,'已闭环',False))
+        self.cur.execute('SELECT status,rectification_result,review_result,review_note,review_photo_path FROM issues WHERE id=42')
+        self.assertEqual(dict(self.cur.fetchone()),dict(status='已闭环',rectification_result='站经无法整改',review_result='整改通过',review_note='',review_photo_path='rectifications/fixture.jpg'))
+        self.cur.execute("SELECT round_no,from_status,to_status,result,photo_path,actor_user_id FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
+        self.assertEqual(dict(self.cur.fetchone()),dict(round_no=1,from_status='待复核',to_status='已闭环',result='整改通过',photo_path='rectifications/fixture.jpg',actor_user_id=17))
+        self.assertEqual(classify_non_oil_rectification(dict(status='已闭环',rectification_result='站经无法整改',review_result='整改通过')),'completed')
+
+    def test_history_failure_rolls_back_status_and_review_fields(self):
+        self.cur.execute("ALTER TABLE inspection_issue_flow_history ADD CHECK(action_type<>'review_submitted') NOT VALID")
+        self.admin.commit()
+        with self.dependencies():
+            _, code = self.submit()
+        self.assertEqual(code,500)
+        self.cur.execute('SELECT status,review_result,review_at,review_photo_path FROM issues WHERE id=42')
+        self.assertEqual(dict(self.cur.fetchone()),dict(status='待复核',review_result=None,review_at=None,review_photo_path=None))
+        self.cur.execute('SELECT COUNT(*) n FROM inspection_issue_flow_history')
+        self.assertEqual(self.cur.fetchone()['n'],1)
+
+    def test_concurrent_reviews_close_once_without_duplicate_review_events(self):
+        with self.dependencies(), ThreadPoolExecutor(max_workers=2) as pool:
+            codes = sorted(code for _,code in pool.map(lambda _:self.submit(),range(2)))
+        self.assertEqual(codes,[200,400])
+        self.cur.execute("SELECT COUNT(*) n FROM inspection_issue_flow_history WHERE action_type='review_submitted'")
+        self.assertEqual(self.cur.fetchone()['n'],1)
 
 
 if __name__ == "__main__":
