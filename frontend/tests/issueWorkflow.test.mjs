@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   reviewOptionsFor,
+  reviewOptionLabel,
   reviewRequiresPhoto,
   reviewAllowsPhoto,
   isReviewReturned,
@@ -78,10 +79,14 @@ test('reviewing a submitted round retains its photo and explanation', () => {
   assert.equal(draft.rectificationPhotoPreview, 'resolved:/photo.jpg')
 })
 
-test('review options are exclusive to the station submission branch', () => {
+test('unable applications also offer the canonical rectified approval with a clear closed-state label', () => {
   assert.deepEqual(reviewOptionsFor('已整改'), ['整改通过', '整改不通过'])
-  for (const value of ['站级无法整改', '站经无法整改'])
-    assert.deepEqual(reviewOptionsFor(value), ['通过站级无法整改', '驳回站级无法整改'])
+  for (const value of ['站级无法整改', '站经无法整改', '站经理无法整改']) {
+    assert.deepEqual(reviewOptionsFor(value), ['通过站级无法整改', '驳回站级无法整改', '整改通过'])
+    assert.equal(reviewOptionLabel('整改通过', value), '整改通过（问题状态变更为已闭环）')
+  }
+  assert.equal(reviewOptionLabel('整改通过', '已整改'), '整改通过')
+  assert.equal(reviewOptionLabel('通过站级无法整改', '站经无法整改'), '通过站级无法整改')
 })
 test('only ordinary approval requires a photo; both rejection paths return', () => {
   assert.ok(reviewRequiresPhoto('整改通过'))

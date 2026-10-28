@@ -561,7 +561,7 @@
               <label>督导组复核结果</label>
               <select v-model="actionForm.reviewResult">
                 <option value="">请选择</option>
-                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ result }}</option>
+                <option v-for="result in reviewOptionsFor(actionDrawer.item.rectification_result)" :key="result" :value="result">{{ reviewOptionLabel(result, actionDrawer.item.rectification_result) }}</option>
               </select>
             </div>
 
@@ -634,7 +634,7 @@ import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
-import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
+import { isUnableRectification, isReviewReturned, reviewOptionsFor, reviewOptionLabel, reviewRequiresPhoto, reviewAllowsPhoto, rectificationDraftFor, rectificationReturnKind, rectificationReturnNotices } from '../../utils/issueWorkflow'
 import FilterMultiSelect from '../../components/FilterMultiSelect.vue'
 import { reviewFilterDefinitions, mobileReviewFilterDefinitions, mobileReviewFilters, emptyReviewFilters, issueTagLabel, matchesMyIssue, reviewRequestParams } from '../../utils/myIssueFilters'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
