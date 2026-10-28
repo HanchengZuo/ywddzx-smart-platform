@@ -35542,7 +35542,7 @@ def scheduling_map_scope(cur, user):
 
 
 register_scheduling_map(app, connect=get_db_connection, has_permission=has_permission, scope=scheduling_map_scope)
-from inspection_schedule import register_inspection_schedule
+from inspection_schedule import register_inspection_schedule, sync_personnel_plans
 
 
 register_inspection_schedule(app, connect=get_db_connection, has_permission=has_permission)
@@ -35551,7 +35551,7 @@ register_schedule_dispatch(app, connect=get_db_connection, has_permission=has_pe
 from staff_availability import register_staff_availability
 from schedule_automation import register_schedule_automation
 from inspection_schedule_tasks import register_schedule_tasks
-register_staff_availability(app, connect=get_db_connection, has_permission=has_permission)
+register_staff_availability(app, connect=get_db_connection, has_permission=has_permission, sync_plans=sync_personnel_plans)
 from staff_daily_team_http import register_staff_daily_teams
 register_staff_daily_teams(app, connect=get_db_connection, has_permission=has_permission)
 from driving_matrix import DrivingService

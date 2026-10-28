@@ -7,13 +7,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from flask import Flask
 from staff_availability import register_staff_availability
+from inspection_schedule import sync_personnel_plans
 from tests import test_staff_scheduling as staff_tests
 
 
 class DetailAuthenticationTests(unittest.TestCase):
     def test_anonymous_does_not_connect(self):
         app = Flask(__name__); connect = MagicMock()
-        register_staff_availability(app,connect=connect,has_permission=lambda *_:True)
+        register_staff_availability(app,connect=connect,has_permission=lambda *_:True,sync_plans=sync_personnel_plans)
         self.assertEqual(app.test_client().get('/api/staff-availability/detail').status_code,401)
         connect.assert_not_called()
 
@@ -100,12 +101,12 @@ class HistoryDatabaseTests(unittest.TestCase):
         self.record(day='2026-10-19',inspector=2)
         self.assertEqual(self.detail(day='2026-10-19')['cell']['reason'],'培训')
 
-    def test_actual_record_arriving_after_the_board_prevents_a_stale_edit(self):
+    def test_unrelated_actual_without_station_dispatch_does_not_lock_a_grouped_person(self):
         self.clock('2026-10-20')
         before=self.cell();self.assertFalse(before['read_only'])
         record=self.record(day='2026-10-20',inspector=2)
-        self.assertEqual(self.availability(day='2026-10-20',available=True).status_code,409)
-        cell=self.detail()['cell'];self.assertTrue(cell['read_only']);self.assertTrue(cell['has_actual'])
+        self.assertEqual(self.availability(day='2026-10-20',available=True).status_code,200)
+        cell=self.detail()['cell'];self.assertFalse(cell['read_only']);self.assertTrue(cell['has_actual'])
         detail=self.detail();self.assertEqual(detail['records'][0]['id'],record)
 
     def test_reassignment_preserves_every_original_task_and_group_snapshot(self):
@@ -157,14 +158,14 @@ class HistoryDatabaseTests(unittest.TestCase):
             self.assertTrue(cell['read_only'])
             self.assertEqual(cell['tasks'][0]['plan_team']['members'],members)
 
-    def test_personal_issue_participation_also_makes_actual_read_only(self):
+    def test_unrelated_personal_issue_remains_visible_but_does_not_lock_unstarted_group(self):
         self.clock('2026-10-20')
         record=self.record(day='2026-10-20',inspector=4,table=7)
         self.cur.execute('INSERT INTO issues(inspection_id,inspector_id) VALUES(%s,2)',(record,));self.admin.commit()
         detail=self.detail()
-        self.assertTrue(detail['cell']['read_only'])
+        self.assertFalse(detail['cell']['read_only'])
         self.assertEqual(detail['records'][0]['id'],record)
-        self.assertEqual(self.availability(day='2026-10-20',available=False).status_code,409)
+        self.assertEqual(self.availability(day='2026-10-20',available=False).status_code,200)
 
     def test_detail_permission_validation_and_failure_are_safe(self):
         self.permissions.discard('view_staff_availability')

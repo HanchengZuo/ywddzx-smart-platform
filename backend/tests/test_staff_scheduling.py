@@ -10,6 +10,7 @@ from tests import test_inspection_schedule as schedule_tests
 from staff_availability import STAFF, VIEW, EDIT, register_staff_availability, save_availability
 from schedule_automation import balanced_allocation, register_schedule_automation
 from inspection_schedule_tasks import register_schedule_tasks, task_count
+from inspection_schedule import sync_personnel_plans
 
 
 class BalanceTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class BalanceTests(unittest.TestCase):
 
     def test_authentication_precedes_database_for_all_new_routes(self):
         app = Flask(__name__); connect = MagicMock()
-        register_staff_availability(app, connect=connect, has_permission=lambda *_: True)
+        register_staff_availability(app, connect=connect, has_permission=lambda *_: True, sync_plans=sync_personnel_plans)
         register_schedule_automation(app, connect=connect, has_permission=lambda *_: True)
         register_schedule_tasks(app, connect=connect)
         for path, method in [('/api/staff-availability', 'get'), ('/api/staff-availability', 'put'), ('/api/inspection-schedule/auto', 'post'), ('/api/my-schedule-tasks', 'get')]:
@@ -64,7 +65,7 @@ class StaffDatabaseTests(unittest.TestCase):
         app = self.client.application
         from tests.driving_fakes import fake_driving_service
         self.driving_service = fake_driving_service()
-        register_staff_availability(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions)
+        register_staff_availability(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions, sync_plans=sync_personnel_plans)
         register_schedule_automation(app, connect=self.connect, has_permission=lambda _, actor, key: key in self.permissions,
                                      driving_service=self.driving_service)
         register_schedule_tasks(app, connect=self.connect)
@@ -138,7 +139,6 @@ class StaffDatabaseTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.json)
         self.assertEqual(response.json['saved_count'], 12)
         self.assertEqual(self.counts(), dict(cells=12, tasks=12))
-        self.assertEqual(self.availability(day='2026-10-20', available=False).status_code, 409)
         self.cur.execute('ALTER TABLE inspection_schedule_tasks ADD CHECK(false) NOT VALID'); self.admin.commit()
         with self.assertLogs(level='ERROR'):
             self.assertEqual(self.save(station_id=3).status_code, 500)
@@ -196,7 +196,7 @@ class StaffDatabaseTests(unittest.TestCase):
             with other.cursor() as cur:
                 cur.execute("SET LOCAL lock_timeout='100ms'")
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
-                    save_availability(cur, self.actor, dict(available=False, cells=[dict(person_name='孔德辰', day='2026-10-19', revision=0)]))
+                    save_availability(cur, self.actor, dict(available=False, cells=[dict(person_name='孔德辰', day='2026-10-19', revision=0)]), sync_plans=sync_personnel_plans)
         finally: conn.close(); other.close()
 
     def test_staff_history_is_actual_record_data_not_audit_or_plan(self):

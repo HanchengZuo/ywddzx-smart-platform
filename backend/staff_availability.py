@@ -7,6 +7,7 @@ from flask import g, jsonify, request
 from roles import SUPERVISOR_ROLES
 from staff_daily_teams import (team_days, team_members, without_member, validate_team_changes,
                               save_teams, group_assignments)
+from staff_dispatch_execution import execution_locks
 from schedule_shelf_store import seed_daily_shelf
 from staff_schedule_history import dispatch_history, personal_records, cell_read_only_reason
 from staff_actuals import actuals_window, assert_actuals_window, merge_actual_modes
@@ -155,7 +156,7 @@ def validate_people(cur, ids, day, mode, people=None):
             raise ScheduleConflict(f"{p['display_name']}当天已安排或执行另一种检查，不能同时安排现场和视频。")
 
 
-def save_availability(cur, actor, data):
+def save_availability(cur, actor, data, *, sync_plans):
     edits = data.get('cells')
     if not isinstance(edits, list) or len(edits) != 1:
         raise ValueError('请逐个设置人员档期，每次只能保存一个单元格。')
@@ -175,6 +176,7 @@ def save_availability(cur, actor, data):
         raise ValueError('请选择有空或没空；原因最多4个字。')
     reason = '' if available else reason.strip()
     lock_schedule(cur)
+    cur.execute('LOCK TABLE inspections, issues IN SHARE MODE')
     people = {p['display_name']: p for p in roster_people(cur)}
     edit = edits[0]
     if not isinstance(edit, dict): raise ValueError('档期单元格不合法。')
@@ -191,11 +193,9 @@ def save_availability(cur, actor, data):
     if cell['read_only_reason']:
         raise ScheduleConflict(cell['read_only_reason'])
     if not historical and not available and people[name]['id']:
-        cur.execute('''SELECT 1 FROM inspection_schedule_cells WHERE scheduled_date=%s
-          AND inspector_ids @> %s::jsonb LIMIT 1''', (day, json.dumps([people[name]['id']])))
-        if cur.fetchone(): raise ScheduleConflict(f'{name}当天已有排班，请先改派或取消排班，再标记没空。')
         saved = team_days(cur, day, day + timedelta(days=1)).get(day.isoformat(), {})
         before = saved.get('assignments', [])
+        after = before
         if any(p['id'] == people[name]['id'] for p in before):
             after = without_member(before, people[name]['id'])
             validate_team_changes(cur, day, before, after)
@@ -207,12 +207,17 @@ def save_availability(cur, actor, data):
                 if p['mode'] != old[p['id']]['mode']:
                     if p['id'] not in current_people:
                         raise ScheduleConflict('原组成员账号已变化，请先核对今日巡检安排。')
-                    if current_people[p['id']]['actual_modes']:
+                    if current_people[p['id']]['actual_modes'] and not current_people[p['id']]['station_modes']:
                         raise ScheduleConflict('原外勤组成员已有巡检实绩，不能自动调整为视频巡检。')
             revision = save_teams(cur, actor, day, after, before)
+            sync_plans(cur,actor,day,before,after,departing_ids=[people[name]['id']])
             seed_daily_shelf(cur, actor, day, group_assignments(after), revision)
+        else:
+            sync_plans(cur,actor,day,before,after,departing_ids=[people[name]['id']])
     if (previous['available'] == available and previous['reason'] == reason and previous['history_status'] == history_status
-            and not previous.get('is_default')): return
+            and not previous.get('is_default')):
+        assert_actuals_window(window,today())
+        return
     cur.execute('''INSERT INTO staff_availability(person_name,day,available,reason,revision,updated_by,history_status,is_default)
       VALUES(%s,%s,%s,%s,1,%s,%s,FALSE) ON CONFLICT(person_name,day) DO UPDATE SET available=EXCLUDED.available,
       reason=EXCLUDED.reason,history_status=EXCLUDED.history_status,is_default=FALSE,
@@ -224,7 +229,7 @@ def save_availability(cur, actor, data):
     assert_actuals_window(window,today())
 
 
-def staff_cell(day, saved, assigned, direct_actual, history, *, window=None):
+def staff_cell(day, saved, assigned, direct_actual, history, *, window=None, execution_locked=None):
     window = window or actuals_window(today())
     work = history.get('summary', {})
     actual = merge_actual_modes(direct_actual if day<=window.as_of else [],work)
@@ -238,6 +243,8 @@ def staff_cell(day, saved, assigned, direct_actual, history, *, window=None):
         dispatch={k:v for k,v in work.items() if k!='_actual_record_ids'},
         actuals_pending=day==window.today and window.as_of<window.today,
         has_actual=bool(actual))
+    if execution_locked is not None and (assigned or work.get('has_dispatch')):
+        value['execution_locked'] = execution_locked
     value['read_only_reason'] = cell_read_only_reason(value,day,today())
     value['read_only'] = bool(value['read_only_reason'])
     return value
@@ -259,7 +266,11 @@ def single_staff_cell(cur, person, day, saved=None, *, details=False, window=Non
     teams = team_members(team_days(cur,day,day+timedelta(days=1)))
     assigned = next((teams[(uid,day.isoformat())] for uid in ids if (uid,day.isoformat()) in teams),None)
     actual = daily_modes(cur,ids,day,min(day+timedelta(days=1),window.as_of+timedelta(days=1)),include_ids=True)
-    cell = staff_cell(day,saved,assigned,[r for uid in ids for r in actual.get((uid,day.isoformat()),[])],work,window=window)
+    locked = None
+    if day >= window.today:
+        locks = execution_locks(cur, day)
+        locked = bool(set(ids) & (locks['field_members'] | locks['video_members']))
+    cell = staff_cell(day,saved,assigned,[r for uid in ids for r in actual.get((uid,day.isoformat()),[])],work,window=window,execution_locked=locked)
     return dict(cell,tasks=work.get('tasks',[])) if details else cell
 
 
@@ -282,6 +293,7 @@ def staff_board(cur, week):
     teams = team_days(cur, start, end)
     members = team_members(teams)
     actual = daily_modes(cur,history_ids,start,min(end,window.as_of+timedelta(days=1)),include_ids=True)
+    locks = {d['day']: execution_locks(cur, day_value(d['day'])) for d in days if day_value(d['day']) >= window.today}
     for p in people:
         p['cells'] = {}
         for d in days:
@@ -289,14 +301,16 @@ def staff_board(cur, week):
             assigned = next((members[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in members),None)
             work = next((history[(uid,d['day'])] for uid in p['history_ids'] if (uid,d['day']) in history),{})
             p['cells'][d['day']] = staff_cell(day_value(d['day']),v,assigned,
-                [mode for uid in p['history_ids'] for mode in actual.get((uid,d['day']),[])],work,window=window)
+                [mode for uid in p['history_ids'] for mode in actual.get((uid,d['day']),[])],work,window=window,
+                execution_locked=bool(set(p['history_ids']) & (locks[d['day']]['field_members'] | locks[d['day']]['video_members']))
+                  if d['day'] in locks else None)
     return dict(week=start.isoformat(), today=today().isoformat(), days=days, calendar_known=known, people=people,
                 today_summary=today_summary(cur,today(),window=window,
                     **(dict(actual=actual,history=history) if start<=window.today<end else {})),**window.metadata(),
                 daily_teams=list(teams.values()))
 
 
-def register_staff_availability(app, *, connect, has_permission):
+def register_staff_availability(app, *, connect, has_permission, sync_plans):
     @app.get('/api/staff-availability/detail')
     def staff_availability_detail():
         actor = getattr(g,'current_user',None)
@@ -341,7 +355,7 @@ def register_staff_availability(app, *, connect, has_permission):
                 if not can_edit: raise PermissionError('当前账号不能编辑人员档期。')
                 data = request.get_json(silent=True)
                 if not isinstance(data, dict): raise ValueError('请提交有效的档期数据。')
-                save_availability(cur, actor, data); conn.commit()
+                save_availability(cur, actor, data, sync_plans=sync_plans); conn.commit()
                 result = dict(message='人员档期已保存。')
             else:
                 result = staff_board(cur, day_value(request.args.get('week', today().isoformat())))

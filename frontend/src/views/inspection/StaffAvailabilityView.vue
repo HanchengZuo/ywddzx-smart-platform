@@ -165,7 +165,7 @@
       <footer class="staff-footer">
         <strong>逐格维护 · 修改留痕</strong>
         <span
-          >档期与排班由所有获授权用户共享。历史补录保留来源；已有派工或分组的人员不能直接标记没空，以免与已确认的安排冲突。</span
+          >档期与排班由所有获授权用户共享。对应任务未产生实绩时可调整分组或标记没空，系统同步所选日期的排班与个人待办；历史记录保留。</span
         >
       </footer>
     </section>
@@ -261,7 +261,7 @@
                     历史补录仅修改此人的档期显示，不会新增、删除或修改实际巡检记录。选择“自动记录”可恢复按原始巡检记录展示。
                   </p>
                   <p v-else class="edit-hint">
-                    尚未派站可直接标记没空，并自动退出今日分组；若为外勤带队管理人员，原组大学生转入内勤视频组。已派站或已有实绩仍受保护，其他日期安排不变。
+                    对应任务未发生实绩即可标记没空。普通外勤成员退出不影响原组任务；带队人退出则解散原组、撤下计划，大学生转内勤待分配。内勤人员的所选日期整站视频任务自动撤下。原安排与变更留痕，其他日期及历史未完成任务不受影响。
                   </p>
                 </template>
                 <p v-else-if="detail" class="edit-hint readonly-explanation">
@@ -502,7 +502,7 @@ async function loadDetail() {
       : '此档期尚未设置。'
     originalRecords.value = ''
     editable.value = Boolean(
-      data.can_edit && !value.read_only && !value.has_actual && !value.actual_modes?.length,
+      data.can_edit && !value.read_only,
     )
   } catch (err) {
     if (!disposed && ticket === detailSerial && err.code !== 'ERR_CANCELED')

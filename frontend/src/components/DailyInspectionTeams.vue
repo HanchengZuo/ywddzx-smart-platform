@@ -36,7 +36,7 @@
         <details class="planning-help"><summary>安排规则与实绩保护</summary><p class="method">
           仅当天未设置的档期默认有空；未来日期必须全部确认有空/没空，已设置的没空及原因保持不变；仅安排有空且账号匹配的人员。上海时间
           17:00
-          前的当日记录不影响档期展示；但外勤组任一成员在派工后登记了对应站点、检查表的巡检记录，该组立即锁定。未开工的外勤组可以调整组员，采用后同步站点排班与个人待办。已有派工的带队人、视频人员仍须先撤下派工才能更换分工。每组只能有一位管理人员，且至少1人持准驾证，优先配2人。
+          前的当日记录不影响档期展示；但外勤组任一成员或视频检查人在派工后登记了对应任务的巡检记录，将立即锁定相关人员。尚未开工即使已派站也可调组或在档期表标记没空：普通外勤成员退出不影响原组站点任务；带队人离开则解散原组、撤下原组计划，大学生转内勤待分配。内勤转出或没空会撤下其所选日期的整站视频任务。采用后统一同步排班与个人待办，历史记录保留。每组只能有一位管理人员，至少1人持准驾证，优先配2人。
         </p></details>
         <p v-if="loading" role="status" class="empty">正在核对所选日期档期与已有安排…</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -68,14 +68,16 @@
                   >{{ person.display_name }}
                   <em v-if="person.has_driving_permit" class="permit-tag">准驾证</em></strong
                 ><small v-if="lockedMode(person)"
-                  >已有{{
+                  >对应{{
                     lockedMode(person) === 'offline' ? '现场' : '视频'
-                  }}站点安排或实绩，不可冲突</small
+                  }}任务已有实绩，不可冲突</small
+                ><small v-else-if="fieldDispatched(person)"
+                  >生成时保留已派站外勤组；可在下方拖动调整</small
                 >
               </div>
               <select
                 v-model="managerModes[person.id]"
-                :disabled="loading || saving || personLocked(person)"
+                :disabled="loading || saving || personLocked(person) || fieldDispatched(person)"
                 :aria-label="person.display_name + '所选日期巡检方式'"
                 @change="invalidate"
               >
@@ -103,7 +105,7 @@
               智能生成巡检方案（{{ selectedDates.length }}天）
             </button>
             <p v-if="hasDispatchedMembers" class="method">
-              已派站的外勤组和视频人员将原样保留，仅重新生成其他有空人员的方案。
+              智能生成保留已派站外勤组和已有任务实绩的人员；未开工人员仍可在下方拖动调整后采用。
             </p>
           </details>
           <section class="result-step">
@@ -211,9 +213,7 @@
                   >
                     {{ person.display_name }}<small v-if="person.id === group.leader_id">带队</small
                     ><small v-if="person.has_driving_permit" class="permit-tag">准驾</small
-                    ><small v-if="personLocked(person)">{{
-                      groupLocked(group) ? '实绩锁定' : '派工绑定'
-                    }}</small>
+                    ><small v-if="personLocked(person)">实绩锁定</small>
                   </button>
                 </div>
                 <button
@@ -227,6 +227,14 @@
                 </button>
               </article>
             </div>
+            <section v-if="editable && selectedPerson && !personLocked(selectedPerson)" class="member-availability">
+              <div><strong>{{ selectedPerson.display_name }} · {{ activeDay }}</strong><p>也可直接将此人设为没空，所选日期的分组与任务会同步调整。</p></div>
+              <form @submit.prevent="markSelectedBusy">
+                <label>原因（选填）<input v-model.trim="busyReason" maxlength="4" :disabled="saving || loading" placeholder="最多4字" /></label>
+                <button type="submit" :disabled="saving || loading">{{ saving ? '保存中…' : '设为没空' }}</button>
+              </form>
+              <p v-if="preview" class="draft-warning">本次操作将放弃此日期尚未采用的草案，按当前生效安排处理；其他日期草案保留。</p>
+            </section>
             <div v-if="editable && videoManagers.length" class="restore-leaders">
               <span>有空的内勤或待编组管理人员可独立带队：</span>
               <button
@@ -243,7 +251,7 @@
               {{
                 saving
                   ? '正在采用方案…'
-                  : '拖动姓名可调整草案，手机或键盘可先点姓名，再点目标组“移至”。管理人员只能移至内勤或独立带队，离开外勤时原组大学生自动转内勤。所有调整须点击“采用方案并覆盖所选日期安排”才生效。'
+                  : '拖动姓名可调整草案，手机或键盘可先点姓名，再点目标组“移至”。管理人员只能移至内勤或独立带队，离开外勤时原组大学生自动转内勤。分组草案须采用后才生效；“设为没空”为独立保存操作。'
               }}
               <button v-if="selectedStudent" type="button" @click="selectedStudent = null">
                 取消选择
@@ -303,7 +311,7 @@
 </template>
 <script setup>
 import axios from 'axios'
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { fieldDriverCount, currentTeamDraft, movePreviewMember } from '@/utils/dailyTeamPreview'
 import TransientNotice from '@/components/TransientNotice.vue'
 import PlanningDateSelection from '@/components/PlanningDateSelection.vue'
@@ -341,6 +349,7 @@ const hasDispatchedMembers = computed(() =>
 )
 const personLocked = (p) =>
   lockGroups.value.some((g) => g.members.some((m) => m.id === p.id && m.dispatch_locked))
+const fieldDispatched = p => lockGroups.value.some(g => g.mode === 'offline' && g.members.some(m => m.id === p.id && m.field_dispatched))
 const groupLocked = (g) =>
   g.mode === 'offline' &&
   lockGroups.value.some(
@@ -375,6 +384,10 @@ const unsafeGroups = computed(() =>
 )
 const draggingStudent = ref(null),
   selectedStudent = ref(null)
+const busyReason = ref('')
+const selectedPerson = computed(() => [...displayGroups.value.flatMap(g => g.members), ...unassignedPeople.value]
+  .find(p => p.id === selectedStudent.value))
+watch(selectedStudent, () => { busyReason.value = '' })
 function startStudentDrag(event, person) {
   if (!editable.value || loading.value || saving.value || personLocked(person)) {
     event.preventDefault()
@@ -407,7 +420,7 @@ async function dropStudent(group, event) {
     warn(
       person.lock_reason ||
         group.lock_reason ||
-        '相关外勤组已有派工后的巡检实绩，或人员已有视频派工，暂不能调整。',
+        '相关外勤组或视频人员已有派工后的任务实绩，暂不能调整。',
     )
     draggingStudent.value = selectedStudent.value = null
     return
@@ -452,8 +465,7 @@ let controller,
 function lockedMode(person) {
   const modes = [
     ...new Set([
-      ...(person.station_modes || []),
-      ...(person.actual_modes || []).map((m) => m.mode),
+      ...(person.execution_modes || (person.actual_modes || []).map((m) => m.mode)),
     ]),
   ]
   return modes.length === 1 ? modes[0] : ''
@@ -589,6 +601,30 @@ function backdrop(event) {
     event.clientY > r.bottom
   )
     close()
+}
+async function markSelectedBusy() {
+  const person = selectedPerson.value
+  if (!person || !editable.value || personLocked(person) || saving.value || loading.value) return
+  const saved = context.value.people.find(p => p.id === person.id)
+  if (!saved) return
+  saving.value = true
+  try {
+    await axios.put('/api/staff-availability', {
+      available: false, reason: busyReason.value,
+      cells: [{ person_name: saved.display_name, day: activeDay.value, revision: saved.revision }],
+    }, { timeout: 30000 })
+    if (disposed) return
+    await load()
+    success.value = `${person.display_name}已设为没空，所选日期的分组、排班与待办已同步。`
+    emit('saved', { ...context.value, adjusted: true })
+    window.dispatchEvent(new Event('inspection-schedule-changed'))
+    window.dispatchEvent(new Event('inspection-sign-pending-refresh'))
+  } catch (err) {
+    if (!disposed) {
+      warn(err.response?.data?.error || '没空设置未能确认，请核对最新安排后重试。')
+      await load()
+    }
+  } finally { saving.value = false }
 }
 onBeforeUnmount(() => {
   disposed = true
@@ -964,6 +1000,13 @@ footer > span {
   font-size: 12px;
   line-height: 1.6;
 }
+.member-availability { margin:16px 0; padding:15px; border:1px solid #e5c4c8; border-radius:12px; background:#fff7f6; color:#713542; }
+.member-availability p { margin:6px 0; font-size:13px; line-height:1.6; }
+.member-availability form { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-top:12px; }
+.member-availability label { display:grid; gap:6px; font-size:12px; }
+.member-availability input { min-width:0; width:130px; padding:9px; border:1px solid #d9b7bd; border-radius:8px; background:#fff; font:inherit; }
+.member-availability button { padding:10px 16px; border-color:#a94352; background:#a94352; color:#fff; }
+.member-availability .draft-warning { margin-top:10px; color:#8a5d27; }
 @media (max-width: 600px) {
   .team-dialog {
     width: calc(100vw - 16px);

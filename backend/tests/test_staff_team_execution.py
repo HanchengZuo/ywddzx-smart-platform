@@ -176,8 +176,8 @@ class TeamExecutionTests(unittest.TestCase):
         self.assertNotIn(p['id'],{p['id'] for p in self.current()['unassigned_people']})
         snapshot=self.current()
         self.assertEqual(self.adopt(snapshot,[dict(person_id=99999,leader_id=2)]).status_code,400)
-        self.assertEqual(self.adopt(snapshot,[dict(person_id=p['id'],leader_id=2)]).status_code,409)
-        self.assertEqual(self.current()['revision'],1)
+        self.assertEqual(self.adopt(snapshot,[dict(person_id=p['id'],leader_id=2)]).status_code,200)
+        self.assertEqual(self.current()['revision'],2)
 
     def test_generation_consumes_pool_without_duplicating_saved_or_preview_participants(self):
         _, outsider=self.dispatched()

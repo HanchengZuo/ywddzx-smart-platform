@@ -96,6 +96,8 @@ def personal_records(cur, ids, day):
 
 
 def cell_read_only_reason(value, day, as_of):
+    if day >= as_of and 'execution_locked' in value:
+        return '派工后已在对应任务站点登记巡检实绩，人员安排已锁定，仅可查看详情。' if value['execution_locked'] else ''
     if value.get('has_actual'):
         return '已有实际巡检记录，仅可查看实绩和原派工详情，不能修改档期。'
     if day < as_of:
