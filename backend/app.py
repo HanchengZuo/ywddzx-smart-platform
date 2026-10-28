@@ -6346,7 +6346,7 @@ def canonical_issue_result(value):
     return ISSUE_RESULT_ALIASES.get(normalized, normalized)
 
 
-def resolve_issue_review_transition(value, rectification_result=None):
+def resolve_issue_review_transition(value, rectification_result=None, checklist_mode=None):
     review_result = canonical_issue_result(value)
     if review_result == "已整改":
         review_result = "整改通过"
@@ -6363,7 +6363,7 @@ def resolve_issue_review_transition(value, rectification_result=None):
         return {
             "review_result": review_result,
             "new_status": "已闭环" if review_result == "整改通过" else "站级无法整改",
-            "photo_required": review_result == "整改通过",
+            "photo_required": review_result == "整改通过" and checklist_mode != "online",
             "photo_allowed": review_result == "整改通过",
             "returns_to_station": False,
         }
@@ -27501,6 +27501,7 @@ def get_my_issues():
                     issue_inspector.real_name AS inspector,
                     s.station_name AS station,
                     t.table_name AS inspection_table_name,
+                    t.checklist_mode,
                     i.standard_id,
                     i.standard_detail_text,
                     i.internal_standard_id,
@@ -35357,10 +35358,6 @@ def submit_review(issue_id):
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
-    review_photo_required = transition["photo_required"]
-    if review_photo_required and (not review_photo or not review_photo.filename):
-        return jsonify({"success": False, "error": "请上传复核照片。"}), 400
-
     conn = None
     cur = None
 
@@ -35391,12 +35388,13 @@ def submit_review(issue_id):
 
         cur.execute(
             """
-            SELECT id, status, rectification_result
-                , COALESCE(audit_status, 'pending') AS audit_status
-            FROM issues
-            WHERE id = %s
+            SELECT i.id, i.status, i.rectification_result,
+                COALESCE(i.audit_status, 'pending') AS audit_status, t.checklist_mode
+            FROM issues i
+            LEFT JOIN inspection_tables t ON t.id = i.inspection_table_id
+            WHERE i.id = %s
             LIMIT 1
-            FOR UPDATE;
+            FOR UPDATE OF i;
             """,
             (issue_id,),
         )
@@ -35422,11 +35420,15 @@ def submit_review(issue_id):
             )
 
         try:
-            transition = resolve_issue_review_transition(review_result, issue.get("rectification_result") or "")
+            transition = resolve_issue_review_transition(review_result, issue.get("rectification_result") or "", issue.get("checklist_mode"))
         except ValueError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
         review_result = transition["review_result"]
         new_status = transition["new_status"]
+        # The persisted checklist attribute, never a submitted form value or a
+        # table-name suffix, determines whether a review photo is mandatory.
+        if transition["photo_required"] and (not review_photo or not review_photo.filename):
+            return jsonify({"success": False, "error": "请上传复核照片。"}), 400
         review_photo_path = None
         if transition["photo_allowed"] and review_photo and review_photo.filename:
             review_photo_path = save_uploaded_file(review_photo, "rectifications")
