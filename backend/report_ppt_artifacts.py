@@ -111,13 +111,15 @@ def attach_export(directory, manifest, destination):
     destination.with_suffix('.preview.json').write_text(json.dumps(manifest))
 
 
-def export_preview_manifest(path, storage_root):
+def export_preview_manifest(path, storage_root, *, report_type=None, report=None):
     if not path:
         return None
     try:
         manifest = json.loads(Path(path).with_suffix('.preview.json').read_text())
         key = manifest.get('artifact_key','')
         if not re.fullmatch('[a-f0-9]{64}',key) or manifest.get('version') != COMPATIBILITY_VERSION:
+            return None
+        if report is not None and key != artifact_key(report_type, report, storage_root):
             return None
         directory = Path(storage_root) / 'report_presentations' / ('compatible-' + key)
         actual = _read_artifact(directory, verify_pages=False)
