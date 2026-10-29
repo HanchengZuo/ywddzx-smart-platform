@@ -22,22 +22,21 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    'safety_detail': '安全质量问题再分类、原因与建议',
     "equipment_topics": "设备设施高频、特性与重点问题选题",
     "quality_flow": "质量计量问题环节分类",
     "non_oil_category": "非油其他问题分类",
     "non_oil_key": "非油重点问题分类",
     "quality_insights": "质量计量选题、管理追溯与工作计划",
-    "safety_insights": "安全质量典型问题、分析与建议",
     "finance_insights": "财务检查结果分析与建议",
     "equipment_insights": "设备设施典型问题、分析与建议",
     "service_insights": "现场服务重点问题、总结与建议",
     "non_oil_insights": "非油典型问题、归因分析与改善建议",
 }
 INSIGHT_FIELDS = {
+    'safety_detail': {'groups': list, 'causes': list, 'suggestions': list},
     "equipment_topics": {"issue_ids": list},
     "quality_insights": {"management_trace": dict, "work_plan": list, "prohibited_decisions": list},
-    "safety_insights": {"typical_issues": list, "category_highlights": list,
-                        "problem_analysis": list, "work_suggestions": list},
     "finance_insights": {"result_analysis": list, "content_suggestions": list},
     "equipment_insights": {"typical_issue": dict, "problem_analysis": list, "work_suggestions": list},
     "service_insights": {"region_highlights": list, "problem_summary": list, "next_steps": list},

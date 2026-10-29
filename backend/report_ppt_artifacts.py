@@ -40,6 +40,9 @@ def artifact_key(report_type, report, storage_root):
     if report_type == 'equipment_facilities':
         from equipment_report_presentation import TEMPLATE_FILE as EQUIPMENT_TEMPLATE, RENDERER_VERSION
         source_hash = _digest_file(EQUIPMENT_TEMPLATE) + RENDERER_VERSION
+    if report_type == 'safety_quality':
+        from safety_report_presentation import TEMPLATE_FILE as SAFETY_TEMPLATE, RENDERER_VERSION
+        source_hash = _digest_file(SAFETY_TEMPLATE) + RENDERER_VERSION
     value = [COMPATIBILITY_VERSION, FONT_ENVIRONMENT, report_type, report, source_hash]
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
 

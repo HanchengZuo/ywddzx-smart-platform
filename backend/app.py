@@ -70,7 +70,6 @@ from ai_utils import (
     generate_non_oil_report_insights,
     generate_on_site_service_report_insights,
     generate_quality_measurement_report_insights,
-    generate_safety_quality_report_insights,
     generate_standard_recommendations,
 )
 from ai_usage import get_ai_pricing_table, AI_USAGE_PRICING
@@ -7316,7 +7315,7 @@ QUALITY_MEASUREMENT_REPORT_SOURCE_NOTE = (
 SAFETY_QUALITY_REPORT_VIDEO_TABLE = "质量安全环保检查表（视频）"
 SAFETY_QUALITY_REPORT_ONSITE_TABLE = "质量安全环保检查表（现场）"
 SAFETY_QUALITY_REPORT_SOURCE_NOTE = (
-    "仅统计所选月份内审核通过的问题；视频扫站与四不两直现场检查分别汇总、分别分析。"
+    "仅统计所选范围内审核通过的问题；现场、视频分别分析，受检站点包含已确认完成的零问题巡检。"
 )
 FINANCE_REPORT_TABLE = "财务检查表（现场）"
 FINANCE_REPORT_SOURCE_NOTE = (
@@ -7344,16 +7343,6 @@ NON_OIL_REPORT_UNIT_ORDER = [
     "浦东", "闵普徐", "松金", "嘉青", "南汇", "宝静", "奉贤", "崇明",
     "中油奉贤", "中油同盛", "中油康桥", "中油农工商", "中油上海", "中油港汇",
     "中石油上港", "中油浦东", "中油华鑫", "中油中燃",
-]
-SAFETY_QUALITY_REPORT_REGION_ORDER = [
-    "浦东片区",
-    "松金片区",
-    "闵普徐片区",
-    "嘉青片区",
-    "崇明片区",
-    "宝静片区",
-    "南汇片区",
-    "奉贤片区",
 ]
 
 
@@ -7537,7 +7526,7 @@ REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE = "on_site_service"
 REPORT_SNAPSHOT_TYPE_EQUIPMENT_FACILITIES = "equipment_facilities"
 REPORT_SNAPSHOT_TYPE_NON_OIL = "non_oil"
 QUALITY_MEASUREMENT_REPORT_DATA_POLICY_VERSION = "period-history-v54-quality-v1"
-SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "period-history-v54-safety-v1"
+SAFETY_QUALITY_REPORT_DATA_POLICY_VERSION = "safety-template-v121"
 FINANCE_REPORT_DATA_POLICY_VERSION = "period-history-v54-finance-v1"
 EQUIPMENT_FACILITIES_REPORT_DATA_POLICY_VERSION = "period-history-v54-equipment-v1"
 ON_SITE_SERVICE_REPORT_DATA_POLICY_VERSION = "period-history-v54-service-v1"
@@ -8598,6 +8587,7 @@ def list_inspection_report_snapshots(cur, report_type, limit=100):
 def build_inspection_report_generation_context(report):
     source = report or {}
     return {
+        "safety_settings": source.get("safety_settings") or {},
         "source_selection": source.get("source_selection") or {},
         "issue_selection": source.get("issue_selection") or {},
         "issue_library": source.get("issue_library_snapshot") or [],
@@ -10158,344 +10148,9 @@ def filter_quality_measurement_report_rows(candidate_rows):
     ]
 
 
-def serialize_safety_quality_report_issue(row, mode, category_field):
-    unit_type, unit_name = identify_report_secondary_unit(row)
-    return {
-        "issue_id": int(row.get("id") or 0),
-        "station_id": row.get("station_id"),
-        "station_name": str(row.get("station_name") or "").strip(),
-        "unit_type": unit_type,
-        "unit_name": unit_name,
-        "mode": mode,
-        "category_name": normalize_report_category(
-            get_report_standard_field_value(row.get("standard_detail_text"), category_field),
-            f"未设置{category_field}",
-        ),
-        "description": str(row.get("description") or "").strip(),
-        "issue_photo": row.get("issue_photo") or "",
-        "is_prohibited": is_prohibited_report_issue(row.get("standard_detail_text")),
-        "is_marked_typical": bool(row.get("is_excellent")),
-    }
 
 
-def build_safety_quality_category_distribution(issues):
-    counts = OrderedDict()
-    for issue in issues:
-        category_name = issue.get("category_name") or "未设置分类"
-        counts[category_name] = counts.get(category_name, 0) + 1
-    total = len(issues)
-    distribution = [
-        {
-            "name": name,
-            "count": count,
-            "percentage": round((count / total * 100) if total else 0, 1),
-        }
-        for name, count in counts.items()
-    ]
-    distribution.sort(key=lambda item: (-item["count"], item["name"]))
-    return distribution
-
-
-def build_safety_quality_scope_section(month_start, rows, mode, label, table_name, category_field):
-    issues = [
-        serialize_safety_quality_report_issue(row, mode, category_field)
-        for row in rows
-    ]
-    grouped = OrderedDict()
-    station_ids = set()
-    for issue in issues:
-        if issue.get("station_id") is not None:
-            station_ids.add(issue["station_id"])
-        unit_key = f"{issue['unit_type']}:{issue['unit_name']}"
-        if unit_key not in grouped:
-            grouped[unit_key] = {
-                "unit_type": issue["unit_type"],
-                "unit_name": issue["unit_name"],
-                "station_ids": set(),
-                "issue_count": 0,
-            }
-        if issue.get("station_id") is not None:
-            grouped[unit_key]["station_ids"].add(issue["station_id"])
-        grouped[unit_key]["issue_count"] += 1
-
-    region_order = {
-        name: index for index, name in enumerate(SAFETY_QUALITY_REPORT_REGION_ORDER)
-    }
-    holding_order = {name: index for index, name in enumerate(REPORT_HOLDING_UNITS)}
-
-    def unit_sort_key(item):
-        if item["unit_type"] == "region":
-            return (0, region_order.get(item["unit_name"], 999), item["unit_name"])
-        if item["unit_type"] == "holding":
-            return (1, holding_order.get(item["unit_name"], 999), item["unit_name"])
-        return (2, 999, item["unit_name"])
-
-    total_issues = len(issues)
-    units = []
-    for group in sorted(grouped.values(), key=unit_sort_key):
-        issue_count = int(group["issue_count"])
-        units.append(
-            {
-                "unit_type": group["unit_type"],
-                "unit_name": group["unit_name"],
-                "station_count": len(group["station_ids"]),
-                "issue_count": issue_count,
-                "percentage": round(
-                    (issue_count / total_issues * 100) if total_issues else 0,
-                    1,
-                ),
-            }
-        )
-
-    region_count = len(
-        {
-            item["unit_name"]
-            for item in units
-            if item["unit_type"] == "region"
-            and item["unit_name"] in REPORT_MANAGEMENT_REGIONS
-        }
-    )
-    unit_phrases = []
-    for item in units:
-        shared_word = "共" if item["unit_type"] == "region" else ""
-        unit_phrases.append(
-            f"{item['unit_name']}{item['station_count']}个站点，"
-            f"{shared_word}{item['issue_count']}项，占比{item['percentage']:.1f}%"
-        )
-
-    if total_issues:
-        scope_label = "各片区及控（参）股单位" if any(
-            item["unit_type"] == "holding" for item in units
-        ) else "各片区"
-        narrative = (
-            f"{month_start.month}月份，对{region_count}个片区开展检查工作，"
-            f"检查站点{len(station_ids)}座，发现问题{total_issues}项；"
-            f"{scope_label}发现问题数依次为{'、'.join(unit_phrases)}。"
-        )
-    else:
-        narrative = (
-            f"{month_start.month}月份，{label}暂无审核通过的问题数据。"
-        )
-
-    distribution = build_safety_quality_category_distribution(issues)
-    category_prefix = f"{label}发现问题"
-    return {
-        "mode": mode,
-        "label": label,
-        "table_name": table_name,
-        "category_field": category_field,
-        "region_count": region_count,
-        "station_count": len(station_ids),
-        "total_issue_count": total_issues,
-        "narrative": narrative,
-        "units": units,
-        "category_distribution": distribution,
-        "category_text": build_report_business_flow_sentence(
-            total_issues,
-            distribution,
-            category_prefix,
-        ),
-        "_issues": issues,
-    }
-
-
-def build_safety_quality_ai_context(month_start, sections):
-    context_sections = []
-    for section in sections:
-        category_items = []
-        for category in section.get("category_distribution") or []:
-            category_name = category["name"]
-            category_issues = [
-                {
-                    "issue_id": issue["issue_id"],
-                    "station_name": issue["station_name"],
-                    "unit_name": issue["unit_name"],
-                    "category_name": issue["category_name"],
-                    "description": issue["description"][:300],
-                    "has_photo": bool(issue["issue_photo"]),
-                    "is_marked_typical": issue["is_marked_typical"],
-                }
-                for issue in section.get("_issues") or []
-                if issue["category_name"] == category_name and issue["description"]
-            ]
-            category_items.append(
-                {
-                    "category_name": category_name,
-                    "count": category["count"],
-                    "percentage": category["percentage"],
-                    "issues": category_issues,
-                }
-            )
-        context_sections.append(
-            {
-                "mode": section["mode"],
-                "label": section["label"],
-                "category_field": section["category_field"],
-                "total_issue_count": section["total_issue_count"],
-                "categories": category_items,
-            }
-        )
-    return {
-        "month": month_start.strftime("%Y-%m"),
-        "month_label": format_report_month_label(month_start),
-        "sections": context_sections,
-    }
-
-
-def build_local_safety_typical_issue(section):
-    distribution = section.get("category_distribution") or []
-    issues = section.get("_issues") or []
-    if not distribution or not issues:
-        return None
-    top_category = distribution[0]["name"]
-    category_issues = [
-        issue for issue in issues if issue["category_name"] == top_category
-    ]
-    selected = category_issues
-    return {
-        "mode": section["mode"],
-        "title": top_category,
-        "issue_ids": [issue["issue_id"] for issue in selected],
-        "summary": f"{top_category}是本月{section['label']}中出现频次较高的问题类别。",
-        "ai_generated": False,
-    }
-
-
-def build_safety_quality_typical_findings(sections, ai_payload):
-    ai_entries = {}
-    if isinstance(ai_payload, dict):
-        for item in ai_payload.get("typical_issues") or []:
-            if not isinstance(item, dict):
-                continue
-            mode = str(item.get("mode") or "").strip().lower()
-            if mode in {"video", "onsite"}:
-                ai_entries[mode] = item
-
-    result = []
-    for section in sections:
-        issues = section.get("_issues") or []
-        issue_map = {issue["issue_id"]: issue for issue in issues}
-        ai_entry = ai_entries.get(section["mode"])
-        selected = []
-        if ai_entry:
-            for issue_id in normalize_report_ai_issue_ids(ai_entry.get("issue_ids")):
-                if issue_id in issue_map:
-                    selected.append(issue_map[issue_id])
-                if len(selected) >= 300:
-                    break
-
-        local_entry = build_local_safety_typical_issue(section)
-        ai_generated = bool(selected)
-        if not selected and local_entry:
-            selected = [
-                issue_map[issue_id]
-                for issue_id in local_entry["issue_ids"]
-                if issue_id in issue_map
-            ]
-        if not selected:
-            result.append(
-                {
-                    "mode": section["mode"],
-                    "label": section["label"],
-                    "title": "暂无典型问题",
-                    "summary": "当前月份暂无可用于典型问题分析的数据。",
-                    "issue_count": 0,
-                    "station_count": 0,
-                    "unit_names": [],
-                    "percentage": 0,
-                    "representative_issue": None,
-                    "ai_generated": False,
-                }
-            )
-            continue
-
-        station_ids = {
-            issue["station_id"] for issue in selected if issue.get("station_id") is not None
-        }
-        unit_names = list(
-            OrderedDict.fromkeys(
-                issue["unit_name"] for issue in selected if issue.get("unit_name")
-            )
-        )
-        representative_issue = next(
-            (issue for issue in selected if issue.get("issue_photo")),
-            selected[0],
-        )
-        title = str((ai_entry or {}).get("title") or "").strip()
-        summary = str((ai_entry or {}).get("summary") or "").strip()
-        if not title and local_entry:
-            title = local_entry["title"]
-        if not summary and local_entry:
-            summary = local_entry["summary"]
-        result.append(
-            {
-                "mode": section["mode"],
-                "label": section["label"],
-                "title": title or selected[0]["category_name"],
-                "summary": summary,
-                "issue_count": len(selected),
-                "station_count": len(station_ids),
-                "unit_names": unit_names,
-                "percentage": round(
-                    len(selected) / section["total_issue_count"] * 100,
-                    1,
-                ) if section["total_issue_count"] else 0,
-                "representative_issue": representative_issue,
-                "ai_generated": ai_generated,
-            }
-        )
-    return result
-
-
-def build_safety_quality_category_highlights(sections, ai_payload):
-    ai_map = {}
-    if isinstance(ai_payload, dict):
-        for item in ai_payload.get("category_highlights") or []:
-            if not isinstance(item, dict):
-                continue
-            mode = str(item.get("mode") or "").strip().lower()
-            category_name = str(item.get("category_name") or "").strip()
-            if mode in {"video", "onsite"} and category_name:
-                ai_map[(mode, category_name)] = item
-
-    result = []
-    for section in sections:
-        section_issues = section.get("_issues") or []
-        issue_map = {issue["issue_id"]: issue for issue in section_issues}
-        for category in section.get("category_distribution") or []:
-            category_name = category["name"]
-            category_issues = [
-                issue for issue in section_issues
-                if issue["category_name"] == category_name
-            ]
-            category_ids = {issue["issue_id"] for issue in category_issues}
-            ai_entry = ai_map.get((section["mode"], category_name))
-            selected = []
-            if ai_entry:
-                for issue_id in normalize_report_ai_issue_ids(ai_entry.get("issue_ids")):
-                    if issue_id in category_ids and issue_id in issue_map:
-                        selected.append(issue_map[issue_id])
-                    if len(selected) >= 3:
-                        break
-            ai_generated = bool(selected)
-            if not selected:
-                selected = select_local_report_issues(category_issues, 2)
-            result.append(
-                {
-                    "mode": section["mode"],
-                    "label": section["label"],
-                    "category_name": category_name,
-                    "category_count": category["count"],
-                    "summary": str((ai_entry or {}).get("summary") or "").strip()
-                    or f"{category_name}需重点关注现场执行和日常监督。",
-                    "issues": selected,
-                    "ai_generated": ai_generated,
-                }
-            )
-    return result
-
-
-def normalize_safety_quality_ai_text_items(raw_items, local_items):
+def normalize_report_ai_text_items(raw_items, local_items):
     normalized = []
     if isinstance(raw_items, list):
         for item in raw_items[:5]:
@@ -10514,129 +10169,6 @@ def normalize_safety_quality_ai_text_items(raw_items, local_items):
     return normalized or local_items
 
 
-def build_safety_quality_deep_analysis(month_start, sections, ai_result):
-    ai_payload = (ai_result or {}).get("payload")
-    top_categories = []
-    for section in sections:
-        top_categories.extend(
-            item["name"] for item in (section.get("category_distribution") or [])[:2]
-        )
-    focus_text = join_chinese_list(list(OrderedDict.fromkeys(top_categories))) or "安全质量关键环节"
-    local_analysis = [
-        {
-            "title": "共性问题仍有重复",
-            "content": f"本月问题主要集中在{focus_text}，反映部分站点对关键标准的理解和执行仍不够稳定。",
-            "ai_generated": False,
-        },
-        {
-            "title": "现场执行需要强化",
-            "content": "视频扫站与现场检查反映的问题应共同纳入整改闭环，避免同类问题在不同站点重复出现。",
-            "ai_generated": False,
-        },
-        {
-            "title": "监督复核需要前移",
-            "content": "片区和专业条线应加强日常抽查、复核和趋势分析，及时识别高频风险并开展针对性治理。",
-            "ai_generated": False,
-        },
-    ]
-    next_month = 1 if month_start.month == 12 else month_start.month + 1
-    local_suggestions = [
-        {
-            "title": "开展高频问题专项复盘",
-            "content": f"围绕{focus_text}组织专题复盘，明确问题标准、整改要求和复核责任。",
-            "ai_generated": False,
-        },
-        {
-            "title": "强化现场与视频联动",
-            "content": "将视频发现的苗头性问题纳入现场抽查重点，并用现场检查结果反向校准视频检查关注点。",
-            "ai_generated": False,
-        },
-        {
-            "title": f"部署{next_month}月监督检查",
-            "content": "结合本月高频问题和整改进度安排下月检查，持续跟踪重复问题和重点风险。",
-            "ai_generated": False,
-        },
-    ]
-    problem_analysis = normalize_safety_quality_ai_text_items(
-        ai_payload.get("problem_analysis") if isinstance(ai_payload, dict) else None,
-        local_analysis,
-    )
-    work_suggestions = normalize_safety_quality_ai_text_items(
-        ai_payload.get("work_suggestions") if isinstance(ai_payload, dict) else None,
-        local_suggestions,
-    )
-    typical_findings = build_safety_quality_typical_findings(sections, ai_payload)
-    category_highlights = build_safety_quality_category_highlights(sections, ai_payload)
-    return {
-        "ai_generated": bool(
-            any(item.get("ai_generated") for item in typical_findings)
-            or any(item.get("ai_generated") for item in category_highlights)
-            or any(item.get("ai_generated") for item in problem_analysis)
-            or any(item.get("ai_generated") for item in work_suggestions)
-        ),
-        "ai_message": (ai_result or {}).get("message") or "",
-        "typical_findings": typical_findings,
-        "category_highlights": category_highlights,
-        "problem_analysis": problem_analysis,
-        "work_suggestions": work_suggestions,
-    }
-
-
-def build_safety_quality_report_payload(month_start, rows):
-    video_rows = [
-        row for row in rows
-        if row.get("table_name") == SAFETY_QUALITY_REPORT_VIDEO_TABLE
-    ]
-    onsite_rows = [
-        row for row in rows
-        if row.get("table_name") == SAFETY_QUALITY_REPORT_ONSITE_TABLE
-    ]
-    sections = [
-        build_safety_quality_scope_section(
-            month_start,
-            video_rows,
-            "video",
-            "视频扫站方面",
-            SAFETY_QUALITY_REPORT_VIDEO_TABLE,
-            "检查内容",
-        ),
-        build_safety_quality_scope_section(
-            month_start,
-            onsite_rows,
-            "onsite",
-            "四不两直现场检查方面",
-            SAFETY_QUALITY_REPORT_ONSITE_TABLE,
-            "检查主题",
-        ),
-    ]
-    unique_station_ids = {
-        row.get("station_id") for row in rows if row.get("station_id") is not None
-    }
-    public_sections = []
-    for section in sections:
-        public_section = dict(section)
-        public_section.pop("_issues", None)
-        public_sections.append(public_section)
-    return {
-        "month": month_start.strftime("%Y-%m"),
-        "month_label": format_report_month_label(month_start),
-        "title": f"{month_start.month}月安全质量检查报告",
-        "target_tables": [
-            SAFETY_QUALITY_REPORT_VIDEO_TABLE,
-            SAFETY_QUALITY_REPORT_ONSITE_TABLE,
-        ],
-        "data_scope_note": SAFETY_QUALITY_REPORT_SOURCE_NOTE,
-        "summary": {
-            "station_count": len(unique_station_ids),
-            "total_issue_count": len(rows),
-            "video_station_count": sections[0]["station_count"],
-            "video_issue_count": sections[0]["total_issue_count"],
-            "onsite_station_count": sections[1]["station_count"],
-            "onsite_issue_count": sections[1]["total_issue_count"],
-            "generated_at": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M"),
-        },
-        "sections": public_sections,
-    }, sections
 
 
 ON_SITE_SERVICE_AREAS = ["暖心服务", "快捷服务", "整洁舒心", "其他管理"]
@@ -12092,11 +11624,11 @@ def build_equipment_deep_analysis(
         },
     ] if issues else []
     ai_payload = (ai_result or {}).get("payload")
-    problem_analysis = normalize_safety_quality_ai_text_items(
+    problem_analysis = normalize_report_ai_text_items(
         ai_payload.get("problem_analysis") if isinstance(ai_payload, dict) else None,
         local_analysis,
     )
-    work_suggestions = normalize_safety_quality_ai_text_items(
+    work_suggestions = normalize_report_ai_text_items(
         ai_payload.get("work_suggestions") if isinstance(ai_payload, dict) else None,
         local_suggestions,
     )
@@ -28509,196 +28041,90 @@ def generate_quality_measurement_report_job(
         close_db_resources(cur, conn)
 
 
-def generate_safety_quality_report_job(
-    task_id,
-    user_id,
-    report_month,
-    snapshot_scope_key,
-    generation_options=None,
-):
-    month_start, month_end = resolve_inspection_report_period(
-        REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,
-        report_month,
-        generation_options,
-    )
-    conn = None
-    cur = None
-    rows = []
-    user = None
+def fetch_safety_report_inputs(cur, user, start, end, cumulative=False):
+    from safety_report_data import TABLES
+    clauses = ["REPLACE(t.table_name, %s, '') IN (%s,%s)"]
+    params = [DISPLAY_REMOVED_STATION_PHRASE, TABLES['onsite'], TABLES['video']]
+    allowed = append_inspection_table_scope_filter(cur, user, clauses, params, "i.inspection_table_id",
+        "limit_plan_inspection_table_scope", permissions=REPORT_SHARED_SCOPE_PERMISSIONS)
+    allowed = append_station_region_scope_filter(cur, user, clauses, params, "s.region",
+        "limit_plan_station_region_scope", permissions=REPORT_SHARED_SCOPE_PERMISSIONS) and allowed
+    if not allowed: return [], [], []
+    clauses.append("COALESCE(ins.inspection_date::date,i.created_at::date)<%s")
+    params.append(end)
+    if cumulative:
+        clauses.append("i.created_at::date<%s")
+        params.append(end)
+    if not cumulative:
+        clauses.extend(["COALESCE(ins.inspection_date::date,i.created_at::date)>=%s",
+                        "COALESCE(i.audit_status,'pending')='approved'"])
+        params.append(start)
+    cur.execute(f"""SELECT i.id,i.station_id,i.standard_id,i.standard_detail_text,i.description,
+        i.photo_path AS issue_photo,i.status,i.audit_status,i.audited_at,
+        i.rectification_at,i.review_at,i.review_result,ins.station_manager_signed_at,
+        s.station_name,s.region,t.table_name,t.checklist_mode,
+        COALESCE(ins.inspection_date::date,i.created_at::date) AS report_date
+        FROM issues i JOIN inspections ins ON ins.id=i.inspection_id
+        JOIN stations s ON s.id=i.station_id JOIN inspection_tables t ON t.id=i.inspection_table_id
+        WHERE {' AND '.join(clauses)} ORDER BY i.id""", params)
+    rows = [dict(row) for row in cur.fetchall()]
+    if cumulative:
+        cur.execute("""SELECT issue_id,action_type,to_status,created_at FROM inspection_issue_flow_history
+            WHERE issue_id=ANY(%s) AND created_at<%s ORDER BY created_at,id""",
+            ([row['id'] for row in rows], end))
+        return rows, [], [dict(row) for row in cur.fetchall()]
+    # Include completed zero-issue visits, not unfinished draft inspection headers.
+    visit_clauses = ["REPLACE(t.table_name,%s,'') IN (%s,%s)", "ins.inspection_date::date >= %s",
+                     "ins.inspection_date::date < %s", "ins.inspector_completion_status='已确认完成'"]
+    visit_params = [DISPLAY_REMOVED_STATION_PHRASE,TABLES['onsite'],TABLES['video'],start,end]
+    append_inspection_table_scope_filter(cur,user,visit_clauses,visit_params,"ins.inspection_table_id",
+        "limit_plan_inspection_table_scope",permissions=REPORT_SHARED_SCOPE_PERMISSIONS)
+    append_station_region_scope_filter(cur,user,visit_clauses,visit_params,"s.region",
+        "limit_plan_station_region_scope",permissions=REPORT_SHARED_SCOPE_PERMISSIONS)
+    cur.execute(f"""SELECT DISTINCT ins.station_id,s.station_name,s.region,t.checklist_mode
+        FROM inspections ins JOIN stations s ON s.id=ins.station_id
+        JOIN inspection_tables t ON t.id=ins.inspection_table_id
+        WHERE {' AND '.join(visit_clauses)} ORDER BY ins.station_id,t.checklist_mode""",visit_params)
+    return rows, [dict(row) for row in cur.fetchall()], []
+
+
+def generate_safety_quality_report_job(task_id,user_id,report_month,snapshot_scope_key,generation_options=None):
+    from safety_report_analysis import load_settings,normalize_settings,build_report
+    from safety_report_data import backlog
+    start,end=resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,report_month,generation_options)
+    update_inspection_report_job(task_id,"running",12,"正在读取安全现场、视频问题与巡检记录")
+    conn=get_db_connection();cur=conn.cursor()
     try:
-        update_inspection_report_job(
-            task_id,
-            "running",
-            12,
-            "正在读取安全质量视频与现场审核通过问题",
-        )
-        conn = get_db_connection()
-        cur = conn.cursor()
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            raise ValueError("生成任务所属用户不存在。")
-        if not has_permission(cur, user, "view_inspection_reports"):
+        user=get_user_by_id(cur,user_id)
+        if not user or not has_permission(cur,user,"view_inspection_reports"):
             raise PermissionError("当前账号无权生成巡检报告。")
-        _, source_selection = resolve_inspection_report_source_selection(
-            cur,
-            user,
-            REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,
-            month_start,
-            month_end,
-            generation_options,
-        )
-
-        where_clauses = [
-            "COALESCE(ins.inspection_date::date, i.created_at::date) >= %s",
-            "COALESCE(ins.inspection_date::date, i.created_at::date) < %s",
-            "REPLACE(t.table_name, %s, '') IN (%s, %s)",
-            "COALESCE(i.audit_status, 'pending') = 'approved'",
-        ]
-        params = [
-            month_start,
-            month_end,
-            DISPLAY_REMOVED_STATION_PHRASE,
-            SAFETY_QUALITY_REPORT_VIDEO_TABLE,
-            SAFETY_QUALITY_REPORT_ONSITE_TABLE,
-        ]
-        table_scope_allowed = append_inspection_table_scope_filter(
-            cur,
-            user,
-            where_clauses,
-            params,
-            "i.inspection_table_id",
-            "limit_plan_inspection_table_scope",
-            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
-        )
-        region_scope_allowed = append_station_region_scope_filter(
-            cur,
-            user,
-            where_clauses,
-            params,
-            "s.region",
-            "limit_plan_station_region_scope",
-            permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
-        )
-        append_inspection_report_station_filter(
-            where_clauses,
-            params,
-            "i.station_id",
-            generation_options,
-        )
-        if table_scope_allowed and region_scope_allowed:
-            where_clause = f"WHERE {' AND '.join(where_clauses)}"
-            cur.execute(
-                sql.SQL(
-                    """
-                    SELECT
-                        i.id,
-                        i.station_id,
-                        s.station_name,
-                        s.region,
-                        s.address,
-                        t.table_name,
-                        t.checklist_mode,
-                        i.standard_id,
-                        i.standard_detail_text,
-                        i.description,
-                        i.photo_path AS issue_photo,
-                        COALESCE(i.is_excellent, FALSE) AS is_excellent,
-                        COALESCE(ins.inspection_date::date, i.created_at::date) AS report_date
-                    FROM issues i
-                    JOIN inspections ins ON i.inspection_id = ins.id
-                    JOIN stations s ON i.station_id = s.id
-                    JOIN inspection_tables t ON i.inspection_table_id = t.id
-                    {where_clause}
-                    ORDER BY t.table_name ASC, s.region ASC NULLS LAST, s.station_name ASC, i.id ASC;
-                    """
-                ).format(where_clause=sql.SQL(where_clause)),
-                params,
-            )
-            allowed_tables = {
-                SAFETY_QUALITY_REPORT_VIDEO_TABLE,
-                SAFETY_QUALITY_REPORT_ONSITE_TABLE,
-            }
-            for raw_row in cur.fetchall():
-                row = dict(raw_row)
-                table_name = str(
-                    sanitize_display_string(row.get("table_name")) or ""
-                ).strip()
-                if table_name not in allowed_tables:
-                    continue
-                row["table_name"] = table_name
-                rows.append(row)
+        saved = (generation_options or {}).get('safety_settings')
+        settings=normalize_settings(saved if saved is not None else load_settings(cur)['settings'])
+        rows,visits,_=fetch_safety_report_inputs(cur,user,start,end)
+        historical,_,history=fetch_safety_report_inputs(cur,user,start,end,cumulative=True)
+        pending=backlog(historical,history,end,settings['station_ids'])
         conn.commit()
-    finally:
-        close_db_resources(cur, conn)
-
-    update_inspection_report_job(
-        task_id,
-        "running",
-        38,
-        f"已汇总 {len(rows)} 条审核通过问题，正在分别统计视频与现场数据",
-    )
-    report, private_sections = build_safety_quality_report_payload(month_start, rows)
-    report["source_selection"] = source_selection
-    insight_result = None
-    if rows:
-        update_inspection_report_job(
-            task_id,
-            "running",
-            52,
-            "正在调用所选大模型筛选典型问题、重点问题并生成分析建议",
-        )
-        ai_context = build_safety_quality_ai_context(month_start, private_sections)
-        set_report_ai_evidence(rows)
-        insight_result = generate_safety_quality_report_insights(ai_context)
-    else:
-        update_inspection_report_job(
-            task_id,
-            "running",
-            72,
-            "当前月份暂无审核通过问题，正在生成空白统计报告",
-        )
-
-    update_inspection_report_job(
-        task_id,
-        "running",
-        84,
-        "AI 分析已完成，正在编排安全质量报告六个章节",
-    )
-    report["deep_analysis"] = build_safety_quality_deep_analysis(
-        month_start,
-        private_sections,
-        insight_result,
-    )
-
-    conn = None
-    cur = None
+    finally: close_db_resources(cur,conn)
+    usage_results=[]
+    def usage(result):
+        usage_results.append(result)
+        update_inspection_report_job(task_id,"running",min(82,40+len(usage_results)),
+            f"正在编排安全问题再分类与建议，已处理 {len(usage_results)} 批，历史结果自动复用")
+    update_inspection_report_job(task_id,"running",38,f"已读取 {len(rows)} 项审核通过问题，正在分析现场与视频")
+    report=build_report(start,end,rows,visits,pending,settings,usage)
+    report['summary']['generated_at']=datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+    update_inspection_report_job(task_id,"running",90,"安全报告分析完成，正在保存模板数据")
+    conn=get_db_connection();cur=conn.cursor()
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            raise ValueError("生成任务所属用户不存在。")
-        if rows and insight_result:
-            record_ai_usage_log(
-                cur,
-                user,
-                insight_result,
-                "AI报告生成",
-                "安全质量报告分析",
-                f"{report.get('month_label')} · 问题{len(rows)}项",
-            )
-        save_inspection_report_snapshot(
-            cur,
-            REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,
-            report_month,
-            snapshot_scope_key,
-            report,
-            user,
-            generation_options,
-        )
+        user=get_user_by_id(cur,user_id)
+        for result in usage_results:
+            record_ai_usage_log(cur,user,result,"AI报告生成","安全报告分类与建议",report['month_label'])
+        save_inspection_report_snapshot(cur,REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,report_month,
+            snapshot_scope_key,report,user,generation_options)
         conn.commit()
-    finally:
-        close_db_resources(cur, conn)
+    except Exception:
+        conn.rollback();raise
+    finally: close_db_resources(cur,conn)
 
 
 def generate_on_site_service_report_job(
@@ -30030,6 +29456,9 @@ def queue_or_get_inspection_report_job(
 
     task_id = uuid.uuid4().hex
     normalized_generation_options["workspace_revision"] = get_report_workspace(cur, report_type)["revision"]
+    if report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
+        from safety_report_analysis import load_settings, normalize_settings
+        normalized_generation_options['safety_settings'] = normalize_settings(load_settings(cur)['settings'])
     cur.execute(
         """
         INSERT INTO inspection_report_jobs (
@@ -35575,6 +35004,11 @@ register_system_manual(app)
 
 from help_document_http import register_help_documents
 register_help_documents(app, connect=get_db_connection, has_permission=has_permission)
+
+from safety_report_http import register_safety_report
+register_safety_report(app, connect=get_db_connection, authorize=get_authorized_inspection_report_user,
+    period=resolve_inspection_report_period, fetch_inputs=fetch_safety_report_inputs,
+    has_permission=has_permission, save_workspace=save_report_workspace, log_usage=record_ai_usage_log)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

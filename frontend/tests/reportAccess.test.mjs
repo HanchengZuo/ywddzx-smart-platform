@@ -40,7 +40,7 @@ test('month labels contain no day boundaries; only actual historical months are 
 test('department view hides mutation/history UI and returns before loading mutable panels', () => {
   const source = readFileSync(new URL('../src/views/inspection/ReportGeneratorView.vue', import.meta.url), 'utf8')
   assert.match(source, /<nav v-if="!isDepartmentView" class="studio-workflow"/)
-  assert.match(source, /v-if="!isDepartmentView && \(isQualityMeasurementReport \|\| hasIssueLibrary\)/)
+  assert.match(source, /v-if="!isDepartmentView && \(isQualityMeasurementReport \|\| isSafetyQualityReport \|\| hasIssueLibrary\)/)
   const earlyReturn = source.slice(source.indexOf('if (isDepartmentView.value) {'), source.indexOf('applyWorkspaceSettings(response.data'))
   assert.match(earlyReturn, /report.value.snapshot\?\.date_from/)
   assert.match(earlyReturn, /return/)

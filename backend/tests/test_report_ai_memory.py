@@ -293,7 +293,6 @@ class MemoryPostgresTest(unittest.TestCase):
         from unittest.mock import MagicMock
         function_names = {
             "quality_insights": "generate_quality_measurement_report_insights",
-            "safety_insights": "generate_safety_quality_report_insights",
             "finance_insights": "generate_finance_report_insights",
             "equipment_insights": "generate_equipment_facilities_report_insights",
             "service_insights": "generate_on_site_service_report_insights",
@@ -315,7 +314,33 @@ class MemoryPostgresTest(unittest.TestCase):
                     self.assertEqual(first["payload"], second["payload"], operation)
                 finally:
                     end_report_ai_memory(token)
-        self.assertEqual(client.chat.completions.create.call_count, 6)
+        self.assertEqual(client.chat.completions.create.call_count, 5)
+
+    def test_safety_native_analysis_persists_across_jobs_and_manual_changes_need_no_ai(self):
+        from safety_report_analysis import generate_analysis, effective_analysis, cached_analysis
+        from psycopg2.extras import RealDictCursor
+        from unittest.mock import MagicMock
+        client = MagicMock(); client.with_options.return_value = client
+        payload = {'groups': [{'name': '接地缺失', 'issue_ids': [1], 'summary': '接地连接缺失'}],
+            'causes': ['可能维护不到位，需核实。'], 'suggestions': []}
+        client.chat.completions.create.return_value.choices[0].message.content = json.dumps(payload)
+        context = {'mode': 'onsite', 'category': '设备设施', 'issues': [{'issue_id': 1, 'description': '接地缺失'}]}
+        with patch('ai_utils.get_deepseek_client', return_value=client), patch('ai_routing._loader', None):
+            for attempt in range(2):
+                memory = self.new_job('safety_quality')
+                token = begin_report_ai_memory(self.connect, memory.task_id, 'safety_quality')
+                try:
+                    result = generate_analysis(context)
+                    self.assertEqual(result['usage']['ai_called'], attempt == 0)
+                finally: end_report_ai_memory(token)
+            conn = self.connect()
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                saved = cached_analysis(cur, [{'issue_id': 1}], 'onsite', '设备设施')
+            conn.close()
+            self.assertEqual(saved['groups'], payload['groups'])
+            value = effective_analysis(saved, [{'issue_id': 1}], {'assignments': {'1': '人工分类'}})
+            self.assertEqual(value['groups'][0]['name'], '人工分类')
+        self.assertEqual(client.chat.completions.create.call_count, 1)
 
     def test_context_scope_snapshot_and_existing_classification_reuse_logging(self):
         memory = self.new_job()

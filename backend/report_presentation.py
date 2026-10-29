@@ -127,6 +127,9 @@ class InspectionReportPresentation:
         self._image_aspect_cache = {}
 
     def build(self, output_path):
+        if self.report_type == 'safety_quality':
+            from safety_report_presentation import build_safety_presentation
+            return build_safety_presentation(self.report, output_path, self.storage_root)
         if self.report_type == "quality_measurement":
             self._build_quality_measurement()
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -139,7 +142,6 @@ class InspectionReportPresentation:
         self._add_scope_overview()
         builders = {
             "quality_measurement": self._build_quality_measurement,
-            "safety_quality": self._build_safety_quality,
             "finance": self._build_finance,
             "on_site_service": self._build_on_site_service,
             "equipment_facilities": self._build_equipment_facilities,
@@ -1930,54 +1932,6 @@ class InspectionReportPresentation:
             if renderer:
                 renderer(slide_data)
 
-    def _build_safety_quality(self):
-        summary = self.report.get("summary") or {}
-        self._add_section("CHAPTER 01", "总体情况", "视频扫站与四不两直现场检查分线统计。")
-        self._add_narrative_slide(
-            "安全质量检查概览",
-            "视频扫站和现场检查分别统计，图表中的站点数与审核通过问题数来自当前报告快照。",
-            metrics=[
-                ("视频站点", summary.get("video_station_count"), "座"),
-                ("视频问题", summary.get("video_issue_count"), "项"),
-                ("现场站点", summary.get("onsite_station_count"), "座"),
-                ("现场问题", summary.get("onsite_issue_count"), "项"),
-            ],
-        )
-        for section in self.report.get("sections") or []:
-            self._add_chart_slides(
-                f"{section.get('label')} · 单位分布",
-                section.get("units") or [],
-                name_key="unit_name",
-                value_keys=("issue_count", "station_count"),
-                series_names=("问题数量", "检查站点"),
-                narrative=section.get("narrative") or "",
-            )
-            self._add_chart_slides(
-                f"{section.get('label')} · {section.get('category_field') or '问题分类'}",
-                section.get("category_distribution") or [],
-                narrative=section.get("category_text") or "",
-            )
-        deep = self.report.get("deep_analysis") or {}
-        self._add_section("CHAPTER 02", "典型问题与重点问题", "AI辅助筛选高频典型问题与分类重点问题。")
-        for finding in deep.get("typical_findings") or []:
-            self._add_issue_slides(
-                f"{finding.get('label') or finding.get('mode') or '典型问题'}",
-                finding.get("issues") or ([finding.get("representative_issue")] if finding.get("representative_issue") else []),
-                ai=bool(finding.get("ai_generated")),
-                subtitle=finding.get("summary") or "",
-                max_issues=8,
-            )
-        for highlight in (deep.get("category_highlights") or [])[:10]:
-            self._add_issue_slides(
-                f"{highlight.get('label') or ''} · {highlight.get('category_name') or '重点问题'}",
-                highlight.get("issues") or [],
-                ai=bool(highlight.get("ai_generated")),
-                subtitle=highlight.get("summary") or "",
-                max_issues=6,
-            )
-        self._add_section("CHAPTER 03", "问题分析与工作建议")
-        self._add_analysis_cards("问题分析", deep.get("problem_analysis") or [], ai=True)
-        self._add_analysis_cards("工作建议", deep.get("work_suggestions") or [], ai=True)
 
     def _build_finance(self):
         summary = self.report.get("summary") or {}
