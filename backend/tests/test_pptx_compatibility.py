@@ -139,6 +139,24 @@ class PptCompatibilityTests(unittest.TestCase):
             path.with_suffix('.preview.json').write_text(json.dumps({'version':COMPATIBILITY_VERSION,'artifact_key':'../../etc'}))
             self.assertIsNone(export_preview_manifest(path,root))
 
+    def test_safety_export_reuse_checks_current_renderer_key_without_deleting_history(self):
+        import json
+        from report_ppt_artifacts import FONT_ENVIRONMENT
+        with tempfile.TemporaryDirectory() as root:
+            key='a'*64;directory=Path(root)/'report_presentations'/('compatible-'+key)
+            directory.mkdir(parents=True)
+            manifest={'version':COMPATIBILITY_VERSION,'fonts':FONT_ENVIRONMENT,'slide_count':31,'artifact_key':key}
+            (directory/'report.pptx').write_bytes(b'temporary fixture')
+            (directory/'manifest.json').write_text(json.dumps(manifest))
+            export=Path(root)/'export.pptx';export.write_bytes(b'temporary fixture')
+            export.with_suffix('.preview.json').write_text(json.dumps(manifest))
+            with patch('report_ppt_artifacts.artifact_key',return_value=key):
+                self.assertEqual(export_preview_manifest(export,root,report_type='safety_quality',report={}),manifest)
+            with patch('report_ppt_artifacts.artifact_key',return_value='b'*64):
+                self.assertIsNone(export_preview_manifest(export,root,report_type='safety_quality',report={}))
+            self.assertTrue(export.is_file())
+            self.assertEqual(export_preview_manifest(export,root),manifest)
+
     def test_font_installation_changes_derived_cache_key(self):
         from report_ppt_artifacts import font_environment_key, artifact_key
         with tempfile.TemporaryDirectory() as root:

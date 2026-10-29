@@ -23,6 +23,8 @@ from safety_report_analysis import (validate_analysis, analysis_context, normali
     effective_analysis, build_report, photo_examples, load_settings, save_settings)
 from safety_report_http import register_safety_report, config_categories
 from safety_report_presentation import build_safety_presentation, TEMPLATE_FILE
+from safety_report_presentation import video_typical_narrative
+from safety_template_styles import editable_plot
 
 
 def raw_issue(issue_id=1, mode='onsite', **extra):
@@ -277,6 +279,81 @@ class SafetyHttpTest(unittest.TestCase):
 
 
 class SafetyPresentationTest(unittest.TestCase):
+    def test_overview_preserves_indented_paragraph_red_metrics_integer_chart_and_no_extra_table(self):
+        from pptx.oxml.ns import qn
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)/'report.pptx'
+            report = fixture_report(); build_safety_presentation(report, path, root)
+            prs = Presentation(path)
+            for index in (2, 3):
+                slide = prs.slides[index]
+                body = next(s for s in slide.shapes if s.has_text_frame and s.text.startswith(('（一）', '（二）')))
+                self.assertEqual(len(body.text_frame.paragraphs), 2)
+                self.assertIn('各管理片区及合资公司问题数量如下：', body.text)
+                self.assertIn('浦东片区', body.text)
+                a, b = body.text_frame.paragraphs
+                self.assertEqual(a._p.find(qn('a:pPr')).get('indent'), b._p.find(qn('a:pPr')).get('indent'))
+                self.assertGreater(int(a._p.find(qn('a:pPr')).get('indent')), 0)
+                red = [r.text for r in b.runs if str(r.font.color.rgb) == 'FF0000']
+                self.assertTrue(any(text.startswith('，站均问题') and text.endswith('个') for text in red))
+                self.assertEqual(len(red), 3)
+                self.assertEqual(len({r.font.size for r in b.runs}), 1)
+                self.assertFalse(any(s.has_table for s in slide.shapes))
+                shape = next(s for s in slide.shapes if s.has_chart); chart = shape.chart
+                self.assertIn('问题数量分布图', chart.chart_title.text_frame.text)
+                self.assertEqual([s.name for s in chart.series], ['站点数量', '问题数量'])
+                self.assertEqual([str(s.format.fill.fore_color.rgb) for s in chart.series], ['4F81BD', 'C0504D'])
+                self.assertTrue(all(node.get('formatCode') == '0' for node in chart._chartSpace.xpath('.//c:dLbls/c:numFmt')))
+                self.assertLess(body.top+body.height, shape.top)
+
+    def test_distribution_reuses_native_3d_chart_with_titles_percentages_and_template_frames(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)/'report.pptx';build_safety_presentation(fixture_report(), path, root)
+            prs = Presentation(path)
+            for index, mode in [(7, '现场'), (8, '视频')]:
+                slide = prs.slides[index]
+                text = '\n'.join(s.text for s in slide.shapes if s.has_text_frame)
+                self.assertIn('本月检查共发现'+mode+'问题', text)
+                self.assertIn('类问题：', text)
+                chart = next(s.chart for s in slide.shapes if s.has_chart)
+                self.assertEqual(len(chart._chartSpace.xpath('.//c:pie3DChart')), 1)
+                self.assertEqual(len(chart._chartSpace.xpath('.//c:view3D')), 1)
+                self.assertEqual(chart.chart_title.text_frame.text, mode+'巡查问题汇总分析')
+                self.assertFalse(chart._chartSpace.xpath('.//c:ser/c:dLbls'))
+                labels = chart._chartSpace.xpath('.//c:pie3DChart/c:dLbls')[0]
+                self.assertEqual(labels.find('{*}showVal').get('val'), '0')
+                self.assertEqual(labels.find('{*}showPercent').get('val'), '1')
+                with editable_plot(chart): self.assertTrue(chart.series[0].values)
+                self.assertEqual(len(chart._chartSpace.xpath('.//c:pie3DChart')), 1)
+                self.assertTrue(any(s.name.startswith('矩形') for s in slide.shapes))
+
+    def test_typical_appears_once_with_frames_arrows_station_above_summary_and_no_video_station(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)/'report.pptx'
+            build_safety_presentation(fixture_report(settings={'typical_issue_ids': {'onsite': 1, 'video': 2}}), path, root)
+            prs = Presentation(path)
+            headings = [s.text for slide in prs.slides for s in slide.shapes if s.has_text_frame and s.top<914400]
+            self.assertEqual(headings.count('二、检查发现-典型问题'), 1)
+            slide = prs.slides[5]
+            onsite = next(s for s in slide.shapes if s.name=='文本框 1')
+            video = next(s for s in slide.shapes if s.name=='文本框 4')
+            self.assertTrue(onsite.text.startswith('测试站加油站\n'))
+            self.assertNotIn('测试站', video.text)
+            self.assertTrue(video.text.startswith('9月视频扫站巡查过程中'))
+            self.assertIn('总计出现1次', video.text)
+            self.assertEqual(len([s for s in slide.shapes if s.name.startswith('矩形')]), 2)
+            self.assertEqual(len(slide._element.xpath('.//a:buChar[@char="▶"]')), 2)
+
+    def test_video_typical_uses_top_half_of_manifestation_categories_not_raw_table_categories(self):
+        report = {'month_label': '2026年09月', 'safety_issues': [{'issue_id': i,'mode': 'video'} for i in range(1,11)],
+            'safety_analysis': {'video:__typical__': {'groups': [
+                {'name': '最少表现', 'issue_ids': [10]}, {'name': '最多表现', 'issue_ids': [1,2,3,4]},
+                {'name': '第二表现', 'issue_ids': [5,6,7]}, {'name': '第三表现', 'issue_ids': [8,9]},
+                {'name': '无关问题', 'issue_ids': [999]}]}}}
+        self.assertEqual(video_typical_narrative(report), '9月视频扫站巡查过程中，发现最多表现、第二表现，总计出现7次。')
+        report['month_label'] = '2026年08月01日至2026年09月30日'
+        self.assertTrue(video_typical_narrative(report).startswith(report['month_label']))
+
     def test_native_editable_static_pages_and_geometry(self):
         with tempfile.TemporaryDirectory() as root:
             Image.new('RGB', (150, 600), 'steelblue').save(Path(root)/'photo.jpg')

@@ -30871,7 +30871,9 @@ def create_inspection_report_powerpoint_export():
             (user["id"], report_type, snapshot.get("id"), snapshot.get('generated_at')),
         )
         active_task = cur.fetchone()
-        if active_task and (active_task['status'] != 'completed' or export_preview_manifest(resolve_storage_abs_path(active_task.get('file_path')),STORAGE_ROOT)):
+        preview_options = {'report_type': report_type, 'report': report_payload} if report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY else {}
+        if active_task and (active_task['status'] != 'completed' or export_preview_manifest(
+            resolve_storage_abs_path(active_task.get('file_path')),STORAGE_ROOT, **preview_options)):
             conn.commit()
             return jsonify(
                 {
