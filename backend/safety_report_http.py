@@ -1,7 +1,7 @@
 """Safety-only shared configuration. Reads and saves never generate a report."""
 import uuid
 from flask import Blueprint, jsonify, request
-from safety_report_data import serialize, scope, period_label, category_rows, distribution, unit, ONSITE_PAGES, VIDEO_PAGES
+from safety_report_data import serialize, scope, period_label, category_rows, focus_topics, unit, ONSITE_PAGES, VIDEO_PAGES
 from safety_report_analysis import (load_settings, normalize_settings, save_settings, cached_analysis,
     effective_analysis, analyze)
 from report_ai_memory import fingerprint, begin_report_ai_memory, end_report_ai_memory, report_ai_generation_log
@@ -16,10 +16,10 @@ def config_categories(issues, settings):
     options = [('onsite', '__typical__', '现场典型问题'), ('video', '__typical__', '视频典型问题')]
     options += [('onsite', key, title) for key, title, _ in ONSITE_PAGES]
     options += [('video', key, title) for key, title in VIDEO_PAGES]
-    focus_options = distribution([row for row in issues if row['mode'] == 'onsite'], 'category_name')
+    focus_options = focus_topics(issues)
     focus = settings['focus_category']
     if focus not in {item['name'] for item in focus_options}: focus = focus_options[0]['name'] if focus_options else ''
-    if focus: options.append(('onsite', 'content:' + focus, '1. 月度重点：' + focus))
+    if focus: options.append(('onsite', 'topic:' + focus, '1. 月度重点：' + focus))
     return options, focus_options, focus
 
 
@@ -51,8 +51,8 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                 for mode, issue_id in new['typical_issue_ids'].items():
                     if issue_id != settings['typical_issue_ids'].get(mode) and not any(row['issue_id'] == issue_id and row['mode'] == mode for row in eligible):
                         raise ValueError('典型问题必须来自对应现场或视频问题库。')
-                if new['focus_category'] != settings['focus_category'] and new['focus_category'] and new['focus_category'] not in {row['category_name'] for row in eligible if row['mode'] == 'onsite'}:
-                    raise ValueError('月度重点类别不在当前现场数据中。')
+                if new['focus_category'] != settings['focus_category'] and new['focus_category'] and new['focus_category'] not in {row['topic'] for row in eligible if row['mode'] == 'onsite'}:
+                    raise ValueError('月度重点检查主题不在当前现场数据中。')
                 for key, value in new['classifications'].items():
                     mode, category = key.split(':', 1)
                     allowed = {row['issue_id'] for row in category_rows(eligible, mode, category)}
@@ -116,7 +116,7 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             issues = selected_issues(all_issues, settings)
             mode, category = source.get('mode'), str(source.get('category') or '')
             options, focuses, _ = config_categories(issues, settings)
-            allowed = {(m, c) for m, c, _ in options} | {('onsite', 'content:' + item['name']) for item in focuses}
+            allowed = {(m, c) for m, c, _ in options} | {('onsite', 'topic:' + item['name']) for item in focuses}
             if (mode, category) not in allowed: raise ValueError('请选择当前报告的有效分析类别。')
             chosen = category_rows(issues, mode, category)
             conn.commit(); conn.close(); conn = None

@@ -317,14 +317,15 @@ class MemoryPostgresTest(unittest.TestCase):
         self.assertEqual(client.chat.completions.create.call_count, 5)
 
     def test_safety_native_analysis_persists_across_jobs_and_manual_changes_need_no_ai(self):
-        from safety_report_analysis import generate_analysis, effective_analysis, cached_analysis
+        from safety_report_analysis import generate_analysis, effective_analysis, cached_analysis, analysis_context, analyze
         from psycopg2.extras import RealDictCursor
         from unittest.mock import MagicMock
         client = MagicMock(); client.with_options.return_value = client
         payload = {'groups': [{'name': '接地缺失', 'issue_ids': [1], 'summary': '接地连接缺失'}],
             'causes': ['可能维护不到位，需核实。'], 'suggestions': []}
         client.chat.completions.create.return_value.choices[0].message.content = json.dumps(payload)
-        context = {'mode': 'onsite', 'category': '设备设施', 'issues': [{'issue_id': 1, 'description': '接地缺失'}]}
+        issues = [{'issue_id': 1, 'description': '接地缺失', 'category_name': '油罐操作井', 'topic': '设备设施'}]
+        context = analysis_context(issues, 'onsite', '设备设施')
         with patch('ai_utils.get_deepseek_client', return_value=client), patch('ai_routing._loader', None):
             for attempt in range(2):
                 memory = self.new_job('safety_quality')
@@ -333,11 +334,21 @@ class MemoryPostgresTest(unittest.TestCase):
                     result = generate_analysis(context)
                     self.assertEqual(result['usage']['ai_called'], attempt == 0)
                 finally: end_report_ai_memory(token)
+            memory = self.new_job('safety_quality')
+            token = begin_report_ai_memory(self.connect, memory.task_id, 'safety_quality')
+            try:
+                usage = []
+                focused_result = analyze(issues, 'onsite', 'topic:设备设施', usage.append)
+                self.assertEqual(focused_result['groups'], payload['groups'])
+                self.assertFalse(usage[0]['usage']['ai_called'])
+            finally: end_report_ai_memory(token)
             conn = self.connect()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 saved = cached_analysis(cur, [{'issue_id': 1}], 'onsite', '设备设施')
+                focused = cached_analysis(cur, [{'issue_id': 1}], 'onsite', 'topic:设备设施')
             conn.close()
             self.assertEqual(saved['groups'], payload['groups'])
+            self.assertEqual(focused['groups'], saved['groups'])
             value = effective_analysis(saved, [{'issue_id': 1}], {'assignments': {'1': '人工分类'}})
             self.assertEqual(value['groups'][0]['name'], '人工分类')
         self.assertEqual(client.chat.completions.create.call_count, 1)

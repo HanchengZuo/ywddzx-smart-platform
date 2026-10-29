@@ -17,10 +17,9 @@ from safety_report_data import ONSITE_PAGES, VIDEO_PAGES, category_rows
 from safety_report_analysis import photo_examples
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-121-1'
+RENDERER_VERSION = 'safety-native-121-2'
 FONT = 'Microsoft YaHei'
 COLORS = ['4472C4', 'C0504D', '70AD47', '8064A2', 'F79646', '4BACC6', 'A5A5A5', '264478']
-KEEP_OTHER_CONTINUATION = False
 
 
 def remove(shape):
@@ -176,7 +175,7 @@ def evidence_page(slide, title, issues, analysis, chosen, intro, root):
 
 
 def build_safety_presentation(report, output_path, storage_root=None):
-    if report.get('safety_template_version') != 1:
+    if report.get('safety_template_version') != 2:
         raise ValueError('安全质量报告已更换模板，请先重新生成报告。')
     prs=Presentation(TEMPLATE_FILE); source=list(prs.slides); root=Path(storage_root or '.')
     if len(source)!=31: raise ValueError('安全报告模板页数异常。')
@@ -206,13 +205,12 @@ def build_safety_presentation(report, output_path, storage_root=None):
     distribution_page(source[10],sections['onsite'],report['analysis_causes']['onsite'])
     distribution_page(source[11],sections['video'],report['analysis_causes']['video'])
     issues=report['safety_issues'];analyses=report['safety_analysis'];focus=report['focus_category']
-    key='onsite:content:'+focus;value=analyses.get(key,{})
-    selected=category_rows(issues,'onsite','content:'+focus)
+    key='onsite:topic:'+focus;value=analyses.get(key,{})
+    selected=category_rows(issues,'onsite','topic:'+focus)
     names='、'.join(g['name'] for g in value.get('groups',[])[:4])
     evidence_page(source[12],'1.月度重点工作类问题',selected,value,photo_examples(selected,value,3),
         f'本月重点工作类为{focus or "暂无"}，共{len(selected)}项。主要问题集中在{names or "暂无对应问题"}方面。',root)
-    targets=[(13,'设备设施',0),(14,'设备设施',3),(15,'污染防治',0),(16,'能力培训和意识',0),(17,'风险合规',0),(18,'其他隐患类',0)]
-    if KEEP_OTHER_CONTINUATION: targets.append((19,'其他隐患类',3))
+    targets=[(13,'设备设施',0),(14,'设备设施',3),(15,'污染防治',0),(16,'能力培训和意识',0),(17,'风险合规',0),(18,'其他隐患类',0),(19,'其他隐患类',3)]
     titles={key:title for key,title,_ in ONSITE_PAGES}
     for page,category,offset in targets:
         selected=category_rows(issues,'onsite',category);value=analyses.get('onsite:'+category,{})
@@ -241,8 +239,6 @@ def build_safety_presentation(report, output_path, storage_root=None):
         textbox(source[page],narrative,.55,1.2,12.2,2.5,17)
         series=(('待签名','pending_sign'),('待整改','pending_rectification'))
         chart(source[page],rows,.55,3.85,12.2,2.5,series);value_table(source[page],rows,series)
-    if not KEEP_OTHER_CONTINUATION:
-        node=prs.slides._sldIdLst[19];prs.part.drop_rel(node.rId);prs.slides._sldIdLst.remove(node)
     _normalize_package_fonts(prs)
     output_path=Path(output_path);output_path.parent.mkdir(parents=True,exist_ok=True);prs.save(output_path)
     return {'ppt_path':str(output_path),'slide_count':len(prs.slides)}
