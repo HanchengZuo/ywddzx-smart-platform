@@ -8,7 +8,7 @@ TABLES = {'onsite': '质量安全环保检查表（现场）', 'video': '质量�
 UNIT_ORDER = ['浦东', '闵普徐', '松金', '嘉青', '南汇', '宝静', '奉贤', '崇明']
 ONSITE_PAGES = [('设备设施', '2. 设备设施类问题', 2), ('污染防治', '3. 污染防治类问题', 1),
     ('能力培训和意识', '4. 能力培训和意识类问题', 1), ('风险合规', '5. 风险合规类问题', 1),
-    ('其他隐患类', '6. 其他对生产经营有影响的问题', 1)]
+    ('其他隐患类', '6. 其他对生产经营有影响的问题', 2)]
 VIDEO_PAGES = [('设备维修作业', '7. 设备检维修作业类问题'), ('卸油作业', '8. 卸油作业类问题'),
     ('现场加油作业', '9. 现场加油作业类问题'), ('油品质量控制', '10. 油品质量控制类问题')]
 ALIASES = [('车间站队组织开展危害因素辨识', '危害因素识别'), ('组织开展隐患排查工作', '隐患排查治理'),
@@ -23,7 +23,7 @@ def fields(value):
     """A field starts only at a labelled line; multiline scoring requirements stay intact."""
     result, key = {}, None
     labels = {'序号', '类别', '检查主题', '检查项', '检查内容', '依据', '评分项', '分值', '评分说明',
-        '检查方式', '规范ID', '考核标准', '评分标准', '适用范围', '规范标签', '是否禁止项'}
+        '检查方式', '检查方法', '总分值', '规范ID', '考核标准', '评分标准', '适用范围', '规范标签', '是否禁止项'}
     for line in str(value or '').replace('\\n', '\n').splitlines():
         match = re.match(r'^\s*([^：:]{1,32})[：:](.*)$', line)
         if match and match[1].strip() in labels:
@@ -78,6 +78,10 @@ def groups(rows, key):
     result = defaultdict(list)
     for row in rows: result[row[key]].append(row)
     return dict(result)
+
+
+def focus_topics(rows):
+    return distribution([row for row in rows if row['mode'] == 'onsite'], 'topic')
 
 
 def period_label(start, end):
@@ -169,6 +173,7 @@ def backlog(rows, history, end, station_ids=None):
 def category_rows(rows, mode, category):
     candidates = [row for row in rows if row['mode'] == mode]
     if category == '__typical__': return candidates
+    if category.startswith('topic:'): return [row for row in candidates if row['topic'] == category[6:]]
     if category.startswith('content:'): return [row for row in candidates if row['category_name'] == category[8:]]
     if category == '风险合规': return [row for row in candidates if row['topic'] in ('风险隐患', '合规性管理')]
     return [row for row in candidates if row['topic'] == category]

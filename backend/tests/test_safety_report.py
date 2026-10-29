@@ -18,10 +18,10 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from safety_report_data import serialize, scope, period_label, pending_at, backlog, category_rows
+from safety_report_data import serialize, scope, period_label, pending_at, backlog, category_rows, focus_topics
 from safety_report_analysis import (validate_analysis, analysis_context, normalize_settings,
     effective_analysis, build_report, photo_examples, load_settings, save_settings)
-from safety_report_http import register_safety_report
+from safety_report_http import register_safety_report, config_categories
 from safety_report_presentation import build_safety_presentation, TEMPLATE_FILE
 
 
@@ -39,20 +39,39 @@ def mock_analysis(issues, *args):
         'causes': ['可能存在日常检查遗漏，需核实。'] if issues else [], 'suggestions': []}
 
 
-def fixture_report(photo=''):
-    rows = [raw_issue(), raw_issue(2, 'video'), raw_issue(3)]
-    rows[1]['standard_detail_text'] = '序号：2\n检查内容：加油站设备维修作业\n评分说明：执行检维修许可。'
+def fixture_report(photo='', rows=None, settings=None):
+    if rows is None:
+        rows = [raw_issue(), raw_issue(2, 'video'), raw_issue(3)]
+        rows[1]['standard_detail_text'] = '序号：2\n检查内容：加油站设备维修作业\n评分说明：执行检维修许可。'
+    else: rows = copy.deepcopy(rows)
     for row in rows: row['issue_photo'] = photo
     with patch('safety_report_analysis.analyze', side_effect=mock_analysis), patch(
         'safety_report_analysis.generate_analysis', return_value={'payload': {'groups': [], 'causes': [],
         'suggestions': [{'title': '强化设施维护', 'content': '开展接地连接专项检查，核实问题整改。'}]}}):
         report = build_report(date(2026, 9, 1), date(2026, 10, 1), rows, [],
-            {'onsite': [{'unit_name': '浦东', 'pending_sign': 2, 'pending_rectification': 1}], 'video': []}, normalize_settings({}))
+            {'onsite': [{'unit_name': '浦东', 'pending_sign': 2, 'pending_rectification': 1}], 'video': []}, normalize_settings(settings or {}))
     report['summary'].update(date_from='2026-09-01', date_to='2026-09-30')
     return report
 
 
+def focus_fixture_rows():
+    rows = [raw_issue(i, standard_detail_text=f'检查主题：设备设施\n检查内容：设备子项{i}\n评分说明：设备规范') for i in range(1, 5)]
+    rows += [raw_issue(i, standard_detail_text='检查主题：污染防治\n检查内容：环保设施配置齐全，有效运行。\n评分说明：环保规范') for i in range(5, 8)]
+    rows += [raw_issue(i, 'video', standard_detail_text='检查内容：设备维修作业') for i in range(8, 16)]
+    return rows
+
+
 class SafetyDataTest(unittest.TestCase):
+    def test_focus_counts_topics_not_content_or_video_and_preserves_exact_risk_topic(self):
+        rows = [serialize(row) for row in focus_fixture_rows()]
+        self.assertEqual(focus_topics(rows), [
+            {'name': '设备设施', 'count': 4, 'percentage': 57.14},
+            {'name': '污染防治', 'count': 3, 'percentage': 42.86}])
+        self.assertEqual([row['issue_id'] for row in category_rows(rows, 'onsite', 'topic:设备设施')], [1, 2, 3, 4])
+        risks = [dict(rows[0], topic='风险隐患'), dict(rows[1], topic='合规性管理')]
+        self.assertEqual(len(category_rows(risks, 'onsite', 'topic:风险隐患')), 1)
+        self.assertEqual(len(category_rows(risks, 'onsite', '风险合规')), 2)
+
     def test_content_aliases_and_ordinal_other(self):
         from safety_report_data import ALIASES
         for prefix, alias in ALIASES:
@@ -60,8 +79,9 @@ class SafetyDataTest(unittest.TestCase):
             value = serialize(row)
             self.assertEqual(value['category_name'], alias)
             self.assertEqual(value['requirement'], '第一行\n第二行\n10分：完整达标')
-        row['standard_detail_text'] = '序号：50\n检查主题：其他对生产经营有影响的问题隐患\n评分说明：评分'
+        row['standard_detail_text'] = '序号：50\n类别：基础项\n检查主题：其他对生产经营有影响的问题隐患\n总分值：30\n评分说明：评分'
         self.assertEqual((serialize(row)['topic'], serialize(row)['category_name']), ('其他隐患类', '其他'))
+        self.assertEqual(serialize(row)['requirement'], '评分')
         row = raw_issue(2, 'video'); row['standard_detail_text'] = '序号：13\n检查内容：原其他项目'
         self.assertEqual(serialize(row)['category_name'], '其他隐患类')
 
@@ -99,6 +119,38 @@ class SafetyDataTest(unittest.TestCase):
 
 
 class SafetyAnalysisTest(unittest.TestCase):
+    def test_monthly_focus_uses_top_topic_while_slide_11_distribution_stays_content_based(self):
+        report = fixture_report(rows=focus_fixture_rows())
+        self.assertEqual(report['focus_category'], '设备设施')
+        self.assertEqual(report['sections'][0]['detail_distribution'][0]['name'], '环保设施')
+        selected = report['safety_analysis']['onsite:topic:设备设施']['groups'][0]['issue_ids']
+        self.assertEqual(selected, [1, 2, 3, 4])
+        self.assertEqual(report['safety_template_version'], 2)
+
+    def test_manual_topic_focus_and_assignments_are_preserved(self):
+        settings = {'focus_category': '污染防治', 'classifications': {'onsite:topic:污染防治': {
+            'assignments': {'5': '人工环保分类'}, 'summaries': {'人工环保分类': '人工环保摘要'}}}}
+        report = fixture_report(rows=focus_fixture_rows(), settings=settings)
+        self.assertEqual(report['focus_category'], '污染防治')
+        group = next(group for group in report['safety_analysis']['onsite:topic:污染防治']['groups'] if group['name'] == '人工环保分类')
+        self.assertEqual((group['issue_ids'], group['summary']), ([5], '人工环保摘要'))
+        self.assertEqual(report['safety_settings']['classifications'], settings['classifications'])
+
+    def test_old_content_focus_falls_back_to_top_topic_without_deleting_saved_overrides(self):
+        settings = {'focus_category': '环保设施', 'classifications': {'onsite:content:环保设施': {
+            'assignments': {'5': '原人工分类'}, 'summaries': {}}}}
+        report = fixture_report(rows=focus_fixture_rows(), settings=settings)
+        self.assertEqual(report['focus_category'], '设备设施')
+        self.assertEqual(report['safety_settings']['classifications'], settings['classifications'])
+        self.assertNotIn('onsite:content:环保设施', report['safety_analysis'])
+
+    def test_topic_validation_and_same_topic_memory_signatures(self):
+        rows = [serialize(row) for row in focus_fixture_rows()]
+        self.assertEqual(normalize_settings({'focus_category': '设备设施'}, rows)['focus_category'], '设备设施')
+        with self.assertRaises(ValueError): normalize_settings({'focus_category': '环保设施'}, rows)
+        selected = category_rows(rows, 'onsite', 'topic:设备设施')
+        self.assertEqual(analysis_context(selected, 'onsite', 'topic:设备设施'), analysis_context(selected, 'onsite', '设备设施'))
+
     def test_ai_ids_complete_unique_and_no_unrelated_refs(self):
         issues = [serialize(raw_issue())]
         valid = mock_analysis(issues)
@@ -144,6 +196,38 @@ class SafetyHttpTest(unittest.TestCase):
             save_workspace=self.workspace, log_usage=MagicMock())
         self.client = self.app.test_client()
 
+    def test_configuration_focus_options_and_ai_scopes_use_topics(self):
+        issues = [serialize(row) for row in focus_fixture_rows()]
+        options, topics, focus = config_categories(issues, normalize_settings({}))
+        self.assertEqual(focus, '设备设施')
+        self.assertEqual([row['name'] for row in topics], ['设备设施', '污染防治'])
+        self.assertIn(('onsite', 'topic:设备设施', '1. 月度重点：设备设施'), options)
+        self.assertFalse(any(category.startswith('content:') for _, category, _ in options))
+        with patch('safety_report_http.load_settings', return_value={'settings': {}, 'revision': 0}), patch(
+            'safety_report_http.cached_analysis', return_value={}):
+            config = self.client.get('/api/inspection-reports/safety-config').get_json()
+            for value, status in [('设备设施', 200), ('油罐操作井', 400)]:
+                with self.subTest(value=value), patch('safety_report_http.save_settings') as save:
+                    response = self.client.put('/api/inspection-reports/safety-config', json={
+                        'settings': {'focus_category': value}, 'revision': 0, 'data_signature': config['data_signature']})
+                    self.assertEqual(response.status_code, status)
+                    if status == 400: save.assert_not_called()
+
+    def test_explicit_topic_reclassification_uses_only_eligible_topic_and_rejects_content_scope(self):
+        from report_ai_memory import fingerprint
+        self.permission.return_value = True
+        with patch('safety_report_http.load_settings', return_value={'settings': {}, 'revision': 0}), patch(
+            'safety_report_http.begin_report_ai_memory', return_value=None), patch(
+            'safety_report_http.analyze', return_value={}) as analyze:
+            request = {'mode': 'onsite', 'category': 'topic:设备设施', 'revision': 0,
+                'data_signature': fingerprint([serialize(raw_issue())])}
+            self.assertEqual(self.client.post('/api/inspection-reports/safety-analysis', json=request).status_code, 200)
+            self.assertEqual(analyze.call_args.args[0][0]['topic'], '设备设施')
+            analyze.reset_mock()
+            request['category'] = 'content:油罐操作井'
+            self.assertEqual(self.client.post('/api/inspection-reports/safety-analysis', json=request).status_code, 400)
+            analyze.assert_not_called()
+
     def test_read_and_save_never_call_ai_and_preserve_server_identity(self):
         with patch('safety_report_http.load_settings', return_value={'settings': {}, 'revision': 0}), patch(
             'safety_report_http.cached_analysis', return_value={}), patch('safety_report_http.analyze', side_effect=AssertionError('AI')):
@@ -183,8 +267,8 @@ class SafetyPresentationTest(unittest.TestCase):
             output = Path(root)/'safety.pptx'
             result = build_safety_presentation(report, output, root)
             prs = Presentation(output); template = Presentation(TEMPLATE_FILE)
-            self.assertEqual(result['slide_count'], 30)
-            for before, after in [(1, 1), (4, 4), (6, 6), (9, 9), (24, 23), (26, 25), (30, 29)]:
+            self.assertEqual(result['slide_count'], 31)
+            for before, after in [(1, 1), (4, 4), (6, 6), (9, 9), (24, 24), (26, 26), (30, 30)]:
                 self.assertEqual([s.text for s in template.slides[before].shapes if s.has_text_frame],
                     [s.text for s in prs.slides[after].shapes if s.has_text_frame])
             charts = [s.chart for slide in prs.slides for s in slide.shapes if s.has_chart]
@@ -203,6 +287,31 @@ class SafetyPresentationTest(unittest.TestCase):
 
     def test_old_snapshot_requires_regeneration_instead_of_stale_ppt(self):
         with self.assertRaises(ValueError): build_safety_presentation({}, '/tmp/should-not-exist-safety.pptx')
+        old = fixture_report(); old['safety_template_version'] = 1
+        with self.assertRaises(ValueError): build_safety_presentation(old, '/tmp/should-not-exist-safety.pptx')
+
+    def test_focus_slide_uses_theme_and_other_hazards_keep_two_distinct_photo_pages(self):
+        import re
+        with tempfile.TemporaryDirectory() as root:
+            Image.new('RGB', (600, 300), 'steelblue').save(Path(root)/'photo.jpg')
+            rows = focus_fixture_rows() + [raw_issue(i, standard_detail_text='序号：50\n检查主题：其他对生产经营有影响的问题隐患\n评分说明：其他隐患规范') for i in range(20, 26)]
+            report = fixture_report('photo.jpg', rows=rows, settings={'focus_category': '设备设施'})
+            output = Path(root)/'safety.pptx'
+            build_safety_presentation(report, output, root)
+            prs = Presentation(output)
+            text = '\n'.join(shape.text for shape in prs.slides[12].shapes if shape.has_text_frame)
+            self.assertIn('本月重点工作类为设备设施，共4项', text)
+            self.assertEqual(len(prs.slides), 31)
+            photo_ids = []
+            for index in (18, 19):
+                page = prs.slides[index]
+                self.assertEqual(sum(shape.shape_type == 13 and shape.top > 914400 for shape in page.shapes), 3)
+                ids = list(map(int, re.findall(r'问题ID (\d+)', page.notes_slide.notes_text_frame.text)))
+                self.assertEqual(len(ids), 3)
+                photo_ids.extend(ids)
+            self.assertEqual(sorted(photo_ids), list(range(20, 26)))
+            focus_ids = set(map(int, re.findall(r'问题ID (\d+)', prs.slides[12].notes_slide.notes_text_frame.text)))
+            self.assertTrue(focus_ids.issubset({1, 2, 3, 4}))
 
 
 @unittest.skipUnless(os.environ.get('REPORT_AI_MEMORY_TEST_DSN'), 'requires isolated PostgreSQL test DSN')

@@ -141,8 +141,11 @@
             <template v-else>
               <div class="safety-focus">
                 <label
-                  >月度重点工作类<select v-model="draft.focus_category" @change="switchFocus">
-                    <option value="">自动采用问题数量最高的现场检查内容类别</option>
+                  >月度重点工作类<select
+                    :value="safetyFocusSelection(draft.focus_category, data.focus_categories)"
+                    @change="setFocus($event.target.value)"
+                  >
+                    <option value="">自动采用问题数量最高的现场检查主题</option>
                     <option
                       v-for="item in data.focus_categories"
                       :key="item.name"
@@ -153,7 +156,7 @@
                   </select></label
                 >
                 <p>
-                  概览按检查内容统计；详情沿用模板固定检查主题和编号。风险合规合并风险隐患、合规性管理。
+                  月度重点与现场分类详情按检查主题选取；第11页问题分布仍按检查内容统计。详情保留模板固定编号，风险合规合并风险隐患、合规性管理。
                 </p>
               </div>
               <div class="safety-analysis-layout">
@@ -254,7 +257,11 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
-import { manualClassificationChanges } from '@/utils/safetyReportConfig'
+import {
+  manualClassificationChanges,
+  safetyFocusSelection,
+  safetyFocusCategory,
+} from '@/utils/safetyReportConfig'
 const props = defineProps({
   month: String,
   dateFrom: String,
@@ -414,19 +421,13 @@ function toggleStation(id, checked) {
     ? [...new Set([...draft.value.station_ids, id])]
     : draft.value.station_ids.filter((i) => i !== id)
 }
-function switchFocus() {
+function setFocus(value) {
+  draft.value.focus_category = value
   const focus = draft.value.focus_category || data.value.focus_categories[0]?.name
   if (!focus) return
-  const key = `onsite:content:${focus}`
+  const category = safetyFocusCategory(focus, data.value.issues)
+  const key = category.key
   if (!categories.value.some((c) => c.key === key)) {
-    const category = {
-      key,
-      mode: 'onsite',
-      category: `content:${focus}`,
-      name: `1. 月度重点：${focus}`,
-      issues: modeIssues('onsite').filter((i) => i.category_name === focus),
-      analysis: {},
-    }
     categories.value.push(category)
     ensureCategory(category)
     analysisBaseline.value[key] = clone(draft.value.classifications[key])

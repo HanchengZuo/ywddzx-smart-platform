@@ -18,3 +18,18 @@ export function manualClassificationChanges(draft, baseline, saved) {
   }
   return result
 }
+
+export function safetyFocusSelection(saved, topics = []) {
+  return topics.some((topic) => topic.name === saved) ? saved : ''
+}
+
+export function safetyFocusCategory(topic, issues = []) {
+  return {
+    key: `onsite:topic:${topic}`,
+    mode: 'onsite',
+    category: `topic:${topic}`,
+    name: `1. 月度重点：${topic}`,
+    issues: issues.filter((issue) => issue.mode === 'onsite' && issue.topic === topic),
+    analysis: {},
+  }
+}
