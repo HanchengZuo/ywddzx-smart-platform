@@ -10,19 +10,19 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.chart.data import CategoryChartData
+from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx_compatibility import _normalize_package_fonts
 from safety_report_data import ONSITE_PAGES, VIDEO_PAGES, unit_key, unit_label, category_rows
 from safety_report_analysis import photo_examples
-from safety_template_styles import paragraph, fit_size, update_chart, frame_props, split_arrow, clone_pie_chart, compact_pie_layout
+from safety_template_styles import (paragraph, fit_size, update_chart, frame_props, split_arrow,
+    clone_pie_chart, compact_pie_layout, evidence_textbox, evidence_text_height, fit_evidence_layout,
+    EVIDENCE_INTRO_BOX, EVIDENCE_CAPTION_BOXES, EVIDENCE_REQUIREMENTS_BOX)
 from safety_video_themes import selected_video_group
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-1213-1'
+RENDERER_VERSION = 'safety-native-1214-1'
 FONT = 'Microsoft YaHei'
-COLORS = ['4472C4', 'C0504D', '70AD47', '8064A2', 'F79646', '4BACC6', 'A5A5A5', '264478']
 
 
 def remove(shape):
@@ -78,49 +78,8 @@ def set_bar(slide, title):
             shape.text_frame.text = title
             for p in shape.text_frame.paragraphs:
                 for run in p.runs:
-                    run.font.name = FONT; run.font.size = Pt(19); run.font.bold = True
+                    run.font.name = FONT; run.font.size = Pt(22); run.font.bold = True
                     run.font.color.rgb = RGBColor(255,255,255)
-
-
-def chart(slide, rows, x, y, w, h, series=(('问题数量','count'),), pie=False):
-    if not rows:
-        textbox(slide, '当前范围暂无对应数据。', x, y+1, w, .5, 17, '64748B', align=PP_ALIGN.CENTER)
-        return
-    data = CategoryChartData(); data.categories = [r.get('name') or r.get('unit_name') or '' for r in rows]
-    for label, key in series: data.add_series(label, [float(row.get(key) or 0) for row in rows])
-    obj = slide.shapes.add_chart(XL_CHART_TYPE.PIE if pie else XL_CHART_TYPE.COLUMN_CLUSTERED,
-        Inches(x), Inches(y), Inches(w), Inches(h), data).chart
-    obj.has_legend = pie
-    if pie:
-        obj.legend.position = XL_LEGEND_POSITION.RIGHT; obj.legend.font.name = FONT; obj.legend.font.size = Pt(10)
-    else:
-        obj.category_axis.tick_labels.font.name = FONT; obj.category_axis.tick_labels.font.size = Pt(9)
-        obj.value_axis.minimum_scale = 0; obj.value_axis.tick_labels.font.name = FONT; obj.value_axis.tick_labels.font.size = Pt(10)
-        if not any(float(r.get(key) or 0) for r in rows for _, key in series): obj.value_axis.maximum_scale = 1
-    for plot in obj.plots:
-        plot.has_data_labels = True
-        labels = plot.data_labels; labels.font.name = FONT; labels.font.size = Pt(10)
-        labels.show_percentage = pie; labels.show_value = not pie; labels.number_format = '0%' if pie else '0.########'
-        labels.number_format_is_linked = False
-    for index, item in enumerate(obj.series):
-        if not pie:
-            item.format.fill.solid(); item.format.fill.fore_color.rgb = RGBColor.from_string(COLORS[index%len(COLORS)])
-        else:
-            for i, point in enumerate(item.points):
-                point.format.fill.solid(); point.format.fill.fore_color.rgb = RGBColor.from_string(COLORS[i%len(COLORS)])
-
-
-def value_table(slide, rows, series, y=6.45):
-    if not rows: return
-    table = slide.shapes.add_table(len(series)+1, len(rows)+1, Inches(.55), Inches(y), Inches(12.2), Inches(.76)).table
-    values = [['指标']+[r['unit_name'] for r in rows]] + [[label]+[str(r.get(key) or 0) for r in rows] for label,key in series]
-    for i,line in enumerate(values):
-        for j,value in enumerate(line):
-            cell=table.cell(i,j); cell.text=value; cell.margin_left=cell.margin_right=Inches(.01)
-            cell.margin_top=cell.margin_bottom=Inches(.01)
-            for p in cell.text_frame.paragraphs:
-                p.alignment=PP_ALIGN.CENTER
-                for run in p.runs: run.font.name=FONT; run.font.size=Pt(8)
 
 
 def photo(slide, issue, root, x, y, w, h):
@@ -133,11 +92,10 @@ def photo(slide, issue, root, x, y, w, h):
                 width,height=image.size
                 output=BytesIO();image.save(output,format='JPEG',quality=92);output.seek(0)
             scale=min(w/width,h/height)
-            slide.shapes.add_picture(output, Inches(x+(w-width*scale)/2), Inches(y+(h-height*scale)/2),
+            return slide.shapes.add_picture(output, Inches(x+(w-width*scale)/2), Inches(y+(h-height*scale)/2),
                 width=Inches(width*scale),height=Inches(height*scale))
-            return
         except (OSError,ValueError): pass
-    textbox(slide,'暂无可用问题照片',x,y+h/2-.2,w,.4,15,'64748B',align=PP_ALIGN.CENTER)
+    return textbox(slide,'暂无可用问题照片',x,y+h/2-.2,w,.4,15,'64748B',align=PP_ALIGN.CENTER)
 
 
 def overview(slide, section):
@@ -268,19 +226,104 @@ def typical_page(slide,report,root):
             p=paragraph(caption,[(text,'000000')],size,first=True,bold=True);p.line_spacing=1.15
 
 
+def evidence_layout(slide):
+    def box(shape): return (shape.left, shape.top, shape.width, shape.height)
+    captions=sorted((s for s in slide.shapes if s.has_text_frame
+        and any(p.text.strip().endswith('加油站') for p in s.text_frame.paragraphs)
+        and s.top>Inches(2)),key=lambda s:s.left)
+    pictures=sorted((s for s in slide.shapes if s.shape_type==13 and s.top>Inches(1.6)),key=lambda s:s.left)
+    requirement=next((s for s in slide.shapes if s.has_text_frame and s.text.startswith('规范要求')),None)
+    intro=next((s for s in slide.shapes if s.has_text_frame and Inches(1.6)<s.top<Inches(2)),None)
+    if len(captions)==len(pictures)==3:
+        caption_boxes=[box(s) for s in captions];photo_boxes=[box(s) for s in pictures]
+        station_first=captions[0].text_frame.paragraphs[0].text.strip().endswith('加油站')
+    else:
+        caption_boxes=list(EVIDENCE_CAPTION_BOXES)
+        photo_boxes=[(x,Inches(2.79),w,Inches(2.2)) for x,_,w,_ in caption_boxes]
+        station_first=False
+    return (box(intro) if intro is not None else EVIDENCE_INTRO_BOX,caption_boxes,photo_boxes,
+        box(requirement) if requirement is not None else EVIDENCE_REQUIREMENTS_BOX,
+        requirement.line.width if requirement is not None else Pt(1),station_first,
+        frame_props(intro) if intro is not None else None)
+
+
+def confirmed_requirement(issue):
+    text=str(issue.get('requirement') or '').strip()
+    return text if issue.get('requirement_status') in ('ready','manual') else ''
+
+
 def evidence_page(slide, title, issues, analysis, chosen, intro, root):
+    intro_box,captions,pictures,norm_box,border,station_first,intro_props=evidence_layout(slide)
+    lookup={row['issue_id']:row for row in issues}
+    selected=[{**lookup[item['issue_id']],'caption':item.get('caption')}
+        for item in chosen if item.get('issue_id') in lookup][:3]
+    lines=[f"{i+1}. "+(confirmed_requirement(issue).replace('\r',' ').replace('\n',' ')
+        or '暂无已确认的规范要求。') for i,issue in enumerate(selected)]
+    if lines:lines[0]='规范要求：'+lines[0]
+    else:lines=['规范要求：当前范围暂无可对应的已确认规范要求。']
+    descriptions=[]
+    for issue in selected:
+        station=str(issue.get('station_name') or '').strip()
+        if station and not station.endswith('加油站'):station+='加油站'
+        descriptions.append((issue.get('caption') or issue.get('description') or '暂无问题描述。',station or '暂无站点信息'))
+    spacing=intro_props.find(f"{qn('a:lnSpc')}/{qn('a:spcPct')}") if intro_props is not None else None
+    intro_leading=int(spacing.get('val'))/100000 if spacing is not None else 1.25
+    layout=fit_evidence_layout(intro,descriptions,lines,intro_box,captions,pictures,norm_box,intro_leading)
     clear_dynamic(slide);set_bar(slide,title)
-    textbox(slide,intro,.5,1.65,12.3,.78,17)
-    selected=chosen[:3]
+    heading=evidence_textbox(slide,layout['intro'],'safety-evidence-intro')
+    p=paragraph(heading,[(intro,'262626')],layout['intro_size'],first=True,bold=True,props=intro_props)
+    p.line_spacing=intro_leading
     if not selected:
         textbox(slide,'当前范围暂无可展示的问题证据。',.6,3.3,12.1,.6,18,'64748B',align=PP_ALIGN.CENTER)
     for i,issue in enumerate(selected):
-        x=.5+i*4.18
-        photo(slide,issue,root,x,2.55,3.95,2.25)
-        textbox(slide,(issue.get('caption') or issue['description'])+'\n'+issue['station_name'],x,4.9,3.95,.85,14,align=PP_ALIGN.CENTER)
-        requirement=issue.get('requirement') or '该规范未维护评分说明，请核查原规范。'
-        textbox(slide,f'规范要求 {i+1}：\n'+requirement,x,5.94,3.95,1.31,12,'A12626')
-        slide.notes_slide.notes_text_frame.text += f"\n照片{i+1}：问题ID {issue['issue_id']}，{issue['station_name']}\n问题原文：{issue['description']}\n评分说明：{requirement}\n"
+        image=photo(slide,issue,root,*(v/914400 for v in layout['photos'][i]))
+        image.name=f'safety-evidence-photo-{i+1}'
+        caption=evidence_textbox(slide,layout['captions'][i],f'safety-evidence-caption-{i+1}')
+        description,station=descriptions[i]
+        spans=[(description,'000000',False),(station,'3F95D2',True)]
+        if station_first:spans.reverse()
+        for j,(text,color,bold) in enumerate(spans):
+            p=paragraph(caption,[(text,color)],layout['caption_size'],first=j==0,bold=bold,align=PP_ALIGN.CENTER)
+            p.line_spacing=1;p.space_after=Pt(6 if j==0 else 0)
+        requirement=confirmed_requirement(issue) or '暂无已确认的规范要求。'
+        slide.notes_slide.notes_text_frame.text += (f"\n照片{i+1}：问题ID {issue['issue_id']}，{station}"
+            f"\n问题原文：{issue.get('description') or ''}\n规范要求：{requirement}\n")
+    norm=evidence_textbox(slide,layout['norm'],'safety-evidence-requirements',border=border)
+    for i,text in enumerate(lines):
+        p=paragraph(norm,[(text,'C00000')],layout['norm_size'],first=i==0,bold=True,align=PP_ALIGN.LEFT)
+        p.line_spacing=layout['norm_leading']
+
+
+def backlog_page(slide, rows, mode, cutoff):
+    body=next(s for s in slide.shapes if s.has_text_frame and s.text.startswith(('（一）','（二）')))
+    graph=next(s for s in slide.shapes if s.has_chart)
+    heading_props,body_props=frame_props(body),frame_props(body,1)
+    body.height=graph.top-Inches(.12)-body.top
+    onsite=mode=='onsite';name='现场' if onsite else '视频'
+    heading=[(('（一）' if onsite else '（二）')+'各管理片区及合资公司','262626'),(name,'FF0000'),
+        (('检查' if onsite else '')+f'问题整改情况（数据截至{cutoff}）','262626')]
+    narrative='整改情况如下：'+('；'.join(f"{unit_label(r['unit_name'])}待签名{int(r.get('pending_sign') or 0)}项、"
+        f"待整改{int(r.get('pending_rectification') or 0)}项" for r in rows)+'。' if rows else '当前范围暂无待签名或待整改问题。')
+    # Preserve the source's first-line indent and fixed chart rectangle. Dense
+    # unit lists compact only the narrative, without clipping or extra tables.
+    width=body.width/914400-.59375
+    heading_height=evidence_text_height([''.join(text for text,_ in heading)],width,16,line_height=28)
+    size=line_height=None
+    for candidate in range(16,9,-1):
+        for factor in (1.75,1.5,1.35,1.25):
+            height=evidence_text_height([narrative],width,candidate,line_height=candidate*factor)
+            if heading_height+height-.1<=body.height/914400:
+                size=candidate;line_height=candidate*factor;break
+        if size is not None:break
+    if size is None:raise ValueError('整改统计文字过长，无法完整放入模板的原生图表上方。')
+    body.text_frame.clear();body.text_frame.word_wrap=True
+    p=paragraph(body,heading,16,first=True,props=heading_props);p.line_spacing=Pt(28)
+    spans=[];offset=0
+    for match in re.finditer(r'(?<=待签名)\d+|(?<=待整改)\d+',narrative):
+        spans.extend([(narrative[offset:match.start()],'262626'),(match[0],'FF0000')]);offset=match.end()
+    spans.append((narrative[offset:],'262626'))
+    p=paragraph(body,spans,size,props=body_props);p.line_spacing=Pt(line_height)
+    update_chart(graph,rows,(('待签名','pending_sign'),('待整改','pending_rectification')),preserve_style=True)
 
 
 def build_safety_presentation(report, output_path, storage_root=None):
@@ -309,8 +352,8 @@ def build_safety_presentation(report, output_path, storage_root=None):
     issues=report['safety_issues'];analyses=report['safety_analysis'];focus=report['focus_category']
     key='onsite:topic:'+focus;value=analyses.get(key,{})
     selected=category_rows(issues,'onsite','topic:'+focus)
-    names='、'.join(g['name'] for g in value.get('groups',[])[:4])
-    evidence_page(source[12],'1.月度重点工作类问题',selected,value,photo_examples(selected,value,3),
+    names='、'.join(g['name'] for g in value.get('groups',[])[:3])
+    evidence_page(source[12],'1.月度重点工作类问题',selected,value,photo_examples(selected,value,3,distinct_groups=True),
         f'本月重点工作类为{focus or "暂无"}，共{len(selected)}项。主要问题集中在{names or "暂无对应问题"}方面。',root)
     targets=[(13,'设备设施',0),(14,'设备设施',3),(15,'污染防治',0),(16,'能力培训和意识',0),(17,'风险合规',0),(18,'其他隐患类',0),(19,'其他隐患类',3)]
     titles={key:title for key,title,_ in ONSITE_PAGES}
@@ -334,13 +377,8 @@ def build_safety_presentation(report, output_path, storage_root=None):
         textbox(source[page],body or '当前范围暂无对应问题，无需新增建议。',.65,1.15,12,5.95,21)
     cutoff=(report.get('summary') or {}).get('date_to') or label
     for page,mode in [(27,'onsite'),(28,'video')]:
-        clear_dynamic(source[page]);rows=sorted(report['pending_rectification'].get(mode) or [],key=lambda r:unit_key(r['unit_name']))
-        name='现场' if mode=='onsite' else '视频'
-        narrative=f'各管理片区及合资公司{name}检查问题整改情况（数据截至{cutoff}）\n'
-        narrative+='；'.join(f"{r['unit_name']}待签名{r['pending_sign']}项、待整改{r['pending_rectification']}项" for r in rows)
-        textbox(source[page],narrative,.55,1.2,12.2,2.5,17)
-        series=(('待签名','pending_sign'),('待整改','pending_rectification'))
-        chart(source[page],rows,.55,3.85,12.2,2.5,series);value_table(source[page],rows,series)
+        rows=sorted(report['pending_rectification'].get(mode) or [],key=lambda r:unit_key(r['unit_name']))
+        backlog_page(source[page],rows,mode,cutoff)
     _normalize_package_fonts(prs)
     output_path=Path(output_path);output_path.parent.mkdir(parents=True,exist_ok=True);prs.save(output_path)
     return {'ppt_path':str(output_path),'slide_count':len(prs.slides)}

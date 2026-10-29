@@ -5,6 +5,7 @@ from safety_report_data import serialize, scope, period_label, category_rows, fo
 from safety_report_analysis import (load_settings, normalize_settings, save_settings, cached_analysis,
     effective_analysis, analyze)
 from report_ai_memory import fingerprint, begin_report_ai_memory, end_report_ai_memory, report_ai_generation_log
+from safety_report_examples import cached_representatives, with_representatives, apply_representative_overrides
 
 
 def selected_issues(rows, settings):
@@ -24,7 +25,7 @@ def config_categories(issues, settings, catalog=None):
     return options, focus_options, focus
 
 
-def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage, fetch_topics=None):
+def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage, fetch_topics=None, fetch_requirements=None):
     blueprint = Blueprint('safety_report', __name__)
 
     def read_context(cur, source):
@@ -34,7 +35,19 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
         all_issues = [serialize(row) for row in raw]
         meta = load_settings(cur)
         settings = normalize_settings(meta['settings'])
+        if fetch_requirements:
+            from safety_requirements import attach_requirements, requirements_signature
+            requirements = fetch_requirements(cur,user)
+            all_issues = attach_requirements(all_issues,requirements)
+            settings['requirements_signature'] = requirements_signature(requirements)
         return user, start, end, all_issues, visits, meta, settings
+
+    def selected_analysis(cur, chosen, mode, category, override):
+        value = effective_analysis(cached_analysis(cur,chosen,mode,category),chosen,override)
+        if category != '__typical__':
+            value = cached_representatives(cur,value,chosen,mode,category)
+            value = apply_representative_overrides(value,chosen,override)
+        return value
 
     @blueprint.route('/api/inspection-reports/safety-config', methods=['GET', 'PUT'])
     def configuration():
@@ -45,6 +58,8 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             user, start, end, all_issues, visits, meta, settings = read_context(cur, source)
             if request.method == 'PUT':
                 new = normalize_settings(source.get('settings'))
+                if new['requirements_signature'] != settings['requirements_signature']:
+                    raise ValueError('规范要求已更新，请重新读取配置后再保存。')
                 available_stations = {row['station_id'] for row in all_issues} | {row['station_id'] for row in visits}
                 if new['station_ids'] != settings['station_ids'] and new['station_ids'] is not None and not set(new['station_ids']).issubset(available_stations):
                     raise ValueError('数据来源包含当前范围不可用的站点。')
@@ -67,6 +82,16 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                     for issue_id, name in value.get('assignments', {}).items():
                         if previous.get(issue_id) != name and int(issue_id) not in allowed:
                             raise ValueError('再分类调整包含当前类别以外的问题。')
+                    representatives = value.get('representatives') or {}
+                    old_representatives = settings['classifications'].get(key,{}).get('representatives') or {}
+                    if representatives and (representatives != old_representatives or value.get('assignments',{}) != previous):
+                        chosen = category_rows(eligible,mode,category)
+                        analysis = effective_analysis(cached_analysis(cur,chosen,mode,category),chosen,value)
+                        photos = {row['issue_id'] for row in chosen if row.get('issue_photo')}
+                        members = {g['name']:set(g['issue_ids']) & photos for g in analysis['groups']}
+                        for name,ids in representatives.items():
+                            if name not in members or not set(ids)<=members[name]:
+                                raise ValueError('代表问题必须有照片且属于对应的问题表现分类，请重新选择。')
                 if source.get('data_signature') != fingerprint(all_issues): raise ValueError('问题库已变化，请重新读取后再保存。')
                 save_settings(cur, new, int(source.get('revision', -1)), user)
                 save_workspace(cur, 'safety_quality', user, section='safety_settings')
@@ -86,9 +111,10 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             for mode, category, name in options:
                 chosen = category_rows(issues, mode, category)
                 key = mode + ':' + category
-                value = cached_analysis(cur, chosen, mode, category)
+                override = settings['classifications'].get(key) or {}
+                value = selected_analysis(cur,chosen,mode,category,override)
                 categories.append({'key': key, 'mode': mode, 'category': category, 'name': name,
-                    'issues': chosen, 'analysis': effective_analysis(value, chosen, settings['classifications'].get(key) or {})})
+                    'issues': chosen, 'analysis': value, 'slot_limit': 6 if mode=='onsite' and category in ('设备设施','其他隐患类') else 3})
             conn.commit()
             return jsonify(success=True, settings=settings, meta=meta, issues=issues, categories=categories,
                 stations=sorted(candidates.values(), key=lambda s:(unit_key(s['unit_name']),s['station_name'] or '')), focus_categories=focus_options, focus_category=focus,
@@ -121,9 +147,8 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             allowed = {(m, c) for m, c, _ in options} | {('onsite', 'topic:' + item['name']) for item in focuses}
             if (mode, category) not in allowed: raise ValueError('请选择当前报告的有效检查主题。')
             chosen = category_rows(issues, mode, category)
-            value = cached_analysis(cur, chosen, mode, category)
             key = mode + ':' + category
-            value = effective_analysis(value, chosen, settings['classifications'].get(key) or {})
+            value = selected_analysis(cur,chosen,mode,category,settings['classifications'].get(key) or {})
             conn.commit()
             return jsonify(success=True, analysis=value, issues=chosen, revision=meta['revision'], data_signature=fingerprint(all_issues))
         except PermissionError as exc:
@@ -160,6 +185,11 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             token = begin_report_ai_memory(connect, 'safety-panel-' + uuid.uuid4().hex, 'safety_quality')
             usage = []
             result = analyze(chosen, mode, category, usage.append)
+            override = settings['classifications'].get(mode+':'+category) or {}
+            result = effective_analysis(result,chosen,override)
+            if category != '__typical__':
+                result = with_representatives(result,chosen,mode,category,usage.append)
+                result = apply_representative_overrides(result,chosen,override)
             conn = connect(); cur = conn.cursor()
             for item in usage: log_usage(cur, user, item, 'AI报告生成', '安全报告面板再分类', category)
             conn.commit()

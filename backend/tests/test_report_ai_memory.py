@@ -11,6 +11,7 @@ from datetime import date
 from unittest.mock import patch
 
 import psycopg2
+from psycopg2.extras import RealDictCursor
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import sqlalchemy as sa
@@ -57,7 +58,8 @@ class MemoryUnitTest(unittest.TestCase):
         self.assertFalse(valid_insights(payload, "finance_insights", {1}))
 
     def test_all_six_insight_schemas_registered(self):
-        self.assertEqual(len(INSIGHT_FIELDS), 7)
+        self.assertEqual(len(INSIGHT_FIELDS), 8)
+        self.assertEqual(INSIGHT_FIELDS['safety_examples'], {'selections': list})
         self.assertEqual(INSIGHT_FIELDS['equipment_topics'], {'issue_ids': list})
 
     def test_no_job_context_preserves_non_report_call_behavior(self):
@@ -425,6 +427,33 @@ class MemoryPostgresTest(unittest.TestCase):
             with self.engine.connect() as conn:
                 self.assertEqual(conn.execute(sa.text('SELECT count(*) FROM inspection_report_ai_memory')).scalar(), 0)
         finally: end_report_ai_memory(token)
+
+    def test_safety_representatives_survive_jobs_and_concurrent_requests_charge_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from safety_report_examples import with_representatives, cached_representatives
+        from unittest.mock import MagicMock
+        client=MagicMock();client.with_options.return_value=client
+        client.chat.completions.create.return_value.choices[0].message.content=json.dumps({
+            'selections':[{'name':'接地缺失','issue_ids':[2,1]}]})
+        rows=[{'issue_id':i,'issue_photo':'photo.jpg','description':'接地未连接','station_name':'测试站'} for i in (1,2)]
+        analysis={'complete':True,'groups':[{'name':'接地缺失','summary':'跨接缺失','issue_ids':[1,2]}]}
+        def run(_):
+            memory=self.new_job('safety_quality');token=begin_report_ai_memory(self.connect,memory.task_id,'safety_quality')
+            try:
+                value=with_representatives(analysis,rows,'onsite','设备设施')
+                return value,report_ai_generation_log()['summary']['ai_calls']
+            finally:end_report_ai_memory(token)
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            with ThreadPoolExecutor(max_workers=2) as pool:values=list(pool.map(run,[1,2]))
+            self.assertEqual(client.chat.completions.create.call_count,1)
+            self.assertEqual(sorted(count for _,count in values),[0,1])
+            self.assertEqual(values[0][0],values[1][0])
+            conn=self.connect()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    read=cached_representatives(cur,analysis,rows,'onsite','topic:设备设施')
+                    self.assertEqual(read,values[0][0])
+            finally:conn.close()
 
     def test_context_scope_snapshot_and_existing_classification_reuse_logging(self):
         memory = self.new_job()

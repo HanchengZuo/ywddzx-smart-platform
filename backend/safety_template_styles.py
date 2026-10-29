@@ -9,13 +9,97 @@ from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_LEGEND_POSITION, XL_LABEL_POSITION
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 from pptx_compatibility import _font_properties
 
 FONT = 'Microsoft YaHei'
+
+# Native source-slide 13 geometry, also used to turn the four-photo legacy
+# pages into the report's two consecutive three-photo evidence pages.
+EVIDENCE_INTRO_BOX = (202548, 1549495, 11849067, 976150)
+EVIDENCE_CAPTION_BOXES = (
+    (840899, 4585230, 2678682, 1000274),
+    (4353956, 4585230, 2939090, 1000274),
+    (8277432, 4579483, 3228168, 1000274),
+)
+EVIDENCE_REQUIREMENTS_BOX = (390365, 5873345, 11337483, 876971)
+
+
+def evidence_textbox(slide, box, name, *, border=None):
+    shape = (slide.shapes.add_textbox(*box) if border is None
+        else slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, *box))
+    shape.name = name
+    frame = shape.text_frame
+    frame.word_wrap = True
+    frame.auto_size = MSO_AUTO_SIZE.NONE
+    frame.vertical_anchor = MSO_ANCHOR.TOP
+    frame.margin_left = frame.margin_right = Inches(.1)
+    frame.margin_top = frame.margin_bottom = Inches(.05)
+    level = OxmlElement('a:lvl1pPr')
+    level.set('hangingPunct', '0')
+    level.set('eaLnBrk', '1')
+    frame._txBody.find(qn('a:lstStyle')).append(level)
+    if border is not None:
+        shape.fill.background()
+        shape.line.color.rgb = RGBColor.from_string('C00000')
+        shape.line.width = border
+        shape.line.dash_style = MSO_LINE_DASH_STYLE.LONG_DASH
+    return shape
+
+
+def evidence_text_height(texts, width, size, leading=1.5, paragraph_gap=0, line_height=None):
+    """Estimate wrapped native paragraphs with the template's text insets."""
+    columns = max(1, (width * 72 - 14.4) / size)
+    # Reserve a full CJK cell even for Latin/digits: Office's automatic spacing
+    # around mixed scripts can otherwise add an unbudgeted wrapped line.
+    lines = sum(sum(max(1, math.ceil(len(line) / columns))
+        for line in text.splitlines() or ['']) for text in texts)
+    # Percentage spacing multiplies the CJK font's line box, not its point size.
+    # Explicit point spacing (backlog paragraphs) already includes that factor.
+    line_height = line_height if line_height is not None else size * leading * 1.25
+    return (lines * line_height + size * .25
+        + paragraph_gap * max(0, len(texts)-1) + 7.2) / 72
+
+
+def fit_evidence_layout(intro, descriptions, requirements, intro_box, captions, pictures, norm_box, intro_leading):
+    """Fit complete native text around a positive-height photo row."""
+    footer=norm_box[1]+norm_box[3]
+    fallback_footer=max(footer,EVIDENCE_REQUIREMENTS_BOX[1]+EVIDENCE_REQUIREMENTS_BOX[3])
+    for bottom in dict.fromkeys((footer,fallback_footer)):
+        for shrink in range(10):
+            intro_size=max(11,20-shrink);caption_size=max(11,16-shrink);norm_size=max(11,18-shrink)
+            for compact in (False,True):
+                intro_height=Inches(evidence_text_height([intro],intro_box[2]/914400,intro_size,intro_leading))
+                intro_height=max(intro_height,Inches(.3) if compact else intro_box[3])
+                intro_end=intro_box[1]+intro_height
+                for leading in (1.5,1.35,1.25,1.15,1):
+                    norm_height=Inches(evidence_text_height(requirements,norm_box[2]/914400,norm_size,leading))
+                    norm_height=max(norm_height,Inches(.3) if compact else norm_box[3])
+                    norm_top=bottom-norm_height
+                    caption_boxes=[];photo_boxes=[]
+                    for texts,caption,picture in zip(descriptions,captions,pictures):
+                        x,y,w,h=caption
+                        height=Inches(evidence_text_height(texts,w/914400,caption_size,1,6))
+                        height=max(height,Inches(.3) if compact else h)
+                        top=min(y+h-height,norm_top-Inches(.08)-height)
+                        px,py,pw,ph=picture
+                        photo_top=max(py,intro_end+Inches(.06))
+                        if top-Inches(.06)-photo_top<Inches(.25):
+                            photo_top=intro_end+Inches(.06)
+                        photo_height=min(ph,top-Inches(.06)-photo_top)
+                        if photo_height<Inches(.25):break
+                        caption_boxes.append((x,top,w,height))
+                        photo_boxes.append((px,photo_top,pw,photo_height))
+                    else:
+                        if norm_top<intro_end+Inches(.1):continue
+                        return {'intro':(*intro_box[:3],intro_height),'captions':caption_boxes,'photos':photo_boxes,
+                            'norm':(norm_box[0],norm_top,norm_box[2],norm_height),'intro_size':intro_size,
+                            'caption_size':caption_size,'norm_size':norm_size,'norm_leading':leading}
+    raise ValueError('证据文字过长，无法完整放入固定31页模板，请先精简概述或已确认的规范要求。')
 
 
 def paragraph(shape, spans, size, *, first=False, bold=False, props=None, align=None, bullet=False):
@@ -77,13 +161,40 @@ def editable_plot(chart):
         for plot in plots: plot.tag = qn('c:pie3DChart')
 
 
-def update_chart(shape, rows, series, *, pie=False, title=None):
+def update_chart(shape, rows, series, *, pie=False, title=None, preserve_style=False):
     data = CategoryChartData(number_format='0')
     data.categories = [row.get('unit_name') or row.get('name') or '' for row in rows] or ['暂无数据']
     for label, key in series:
         data.add_series(label, [int(row.get(key) or 0) for row in rows] or [0], number_format='0')
     with editable_plot(shape.chart) as chart:
         chart.replace_data(data)
+        if preserve_style:
+            # Backlog charts already own the required title, legend, axes,
+            # series formatting and workbooks. Only their data and integer
+            # formats change, not the template's 14 pt/16.8 pt native styles.
+            for node in chart._chartSpace.xpath('.//c:dLbl'):
+                node.getparent().remove(node)
+            for plot in chart.plots:
+                plot.has_data_labels = True
+                labels = plot.data_labels
+                labels.show_value = bool(rows)
+                labels.show_percentage = False
+                labels.number_format = '0'
+                labels.number_format_is_linked = False
+            for node in chart._chartSpace.xpath('.//c:ser/c:dLbls/c:numFmt'):
+                node.set('formatCode', '0'); node.set('sourceLinked', '0')
+            for node in chart._chartSpace.xpath('.//c:ser/c:dLbls/c:showVal'):
+                node.set('val', '1' if rows else '0')
+            chart.value_axis.minimum_scale = 0
+            if not any(int(row.get(key) or 0) for row in rows for _, key in series):
+                chart.value_axis.maximum_scale = 1
+            else:
+                chart.value_axis.maximum_scale = None
+            chart.value_axis.tick_labels.number_format = '0'
+            chart.value_axis.tick_labels.number_format_is_linked = False
+            for node in chart._chartSpace.xpath('.//c:numCache/c:formatCode'):
+                node.text = '0'
+            return
         # Old per-point labels/legend overrides can carry template values or
         # category indexes that are no longer valid after replacing the data.
         for node in chart._chartSpace.xpath('.//c:dLbl | .//c:ser/c:dLbls | .//c:legendEntry'):
@@ -101,6 +212,7 @@ def update_chart(shape, rows, series, *, pie=False, title=None):
         chart.legend.font.name = FONT; chart.legend.font.size = Pt(11 if pie else 9)
         for plot in chart.plots:
             plot.has_data_labels = bool(rows)
+            if not rows:continue
             labels = plot.data_labels
             labels.show_value = not pie; labels.show_percentage = pie
             labels.show_category_name = False; labels.show_series_name = False

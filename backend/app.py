@@ -28041,6 +28041,36 @@ def generate_quality_measurement_report_job(
         close_db_resources(cur, conn)
 
 
+def fetch_safety_standard_catalog(cur, user):
+    """Read all labelled standard fields, not only the registration-visible subset."""
+    from safety_report_data import TABLES
+    clauses = ["REPLACE(t.table_name,%s,'') IN (%s,%s)"]
+    params = [DISPLAY_REMOVED_STATION_PHRASE,TABLES['onsite'],TABLES['video']]
+    if not append_inspection_table_scope_filter(cur,user,clauses,params,'t.id',
+            'limit_plan_inspection_table_scope',permissions=REPORT_SHARED_SCOPE_PERMISSIONS):
+        return []
+    cur.execute('SELECT t.id,t.table_code,t.table_name,t.checklist_mode FROM inspection_tables t WHERE '
+        +' AND '.join(clauses)+' ORDER BY t.id',params)
+    result = []
+    for table in cur.fetchall():
+        physical = get_physical_table_name_by_code(table['table_code'])
+        if not physical or not checklist_physical_table_exists(cur,physical): continue
+        metadata = get_checklist_field_meta(cur,table['id'])
+        cur.execute(sql.SQL('SELECT * FROM {} ORDER BY standard_id').format(sql.Identifier(physical)))
+        mode = 'video' if table['checklist_mode']=='online' else 'onsite'
+        for row in cur.fetchall():
+            standard_id = str(row['standard_id'])
+            result.append({'key':mode+':'+standard_id,'mode':mode,'external_standard_id':standard_id,
+                'fields':{'检查表':table['table_name'],'规范ID':standard_id,
+                    **{label:('' if row.get(key) is None else str(row[key]).strip()) for key,label in metadata}}})
+    return result
+
+
+def fetch_safety_requirements(cur, user):
+    from safety_requirements import load_requirements
+    return load_requirements(cur,fetch_safety_standard_catalog(cur,user))
+
+
 def fetch_safety_report_topics(cur, user):
     from safety_report_data import TABLES
     cur.execute("SELECT id,table_code FROM inspection_tables WHERE REPLACE(table_name,%s,'')=%s AND is_active=TRUE ORDER BY id LIMIT 1",
@@ -28112,6 +28142,7 @@ def fetch_safety_report_inputs(cur, user, start, end, cumulative=False):
 def generate_safety_quality_report_job(task_id,user_id,report_month,snapshot_scope_key,generation_options=None):
     from safety_report_analysis import load_settings,normalize_settings,build_report
     from safety_report_data import backlog
+    from safety_requirements import ensure_requirements, requirements_signature
     start,end=resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY,report_month,generation_options)
     update_inspection_report_job(task_id,"running",12,"正在读取安全现场、视频问题与巡检记录")
     conn=get_db_connection();cur=conn.cursor()
@@ -28124,15 +28155,22 @@ def generate_safety_quality_report_job(task_id,user_id,report_month,snapshot_sco
         rows,visits,_=fetch_safety_report_inputs(cur,user,start,end)
         historical,_,history=fetch_safety_report_inputs(cur,user,start,end,cumulative=True)
         pending=backlog(historical,history,end,settings['station_ids'])
+        catalog=fetch_safety_standard_catalog(cur,user)
         conn.commit()
     finally: close_db_resources(cur,conn)
     usage_results=[]
     def usage(result):
+        if 'requirements_counts' in result:
+            from report_ai_memory import record_safety_requirements_result
+            record_safety_requirements_result(result)
         usage_results.append(result)
         update_inspection_report_job(task_id,"running",min(82,40+len(usage_results)),
             f"正在编排安全问题再分类与建议，已处理 {len(usage_results)} 批，历史结果自动复用")
+    update_inspection_report_job(task_id,"running",25,"正在准备规范要求，未变化的规范直接复用历史内容")
+    requirements,_=ensure_requirements(get_db_connection,catalog,user,log_usage=usage)
+    settings['requirements_signature']=requirements_signature(requirements)
     update_inspection_report_job(task_id,"running",38,f"已读取 {len(rows)} 项审核通过问题，正在分析现场与视频")
-    report=build_report(start,end,rows,visits,pending,settings,usage)
+    report=build_report(start,end,rows,visits,pending,settings,usage,requirements=requirements)
     report['summary']['generated_at']=datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
     update_inspection_report_job(task_id,"running",90,"安全报告分析完成，正在保存模板数据")
     conn=get_db_connection();cur=conn.cursor()
@@ -29479,7 +29517,9 @@ def queue_or_get_inspection_report_job(
     normalized_generation_options["workspace_revision"] = get_report_workspace(cur, report_type)["revision"]
     if report_type == REPORT_SNAPSHOT_TYPE_SAFETY_QUALITY:
         from safety_report_analysis import load_settings, normalize_settings
+        from safety_requirements import requirements_signature
         normalized_generation_options['safety_settings'] = normalize_settings(load_settings(cur)['settings'])
+        normalized_generation_options['safety_settings']['requirements_signature']=requirements_signature(fetch_safety_requirements(cur,user))
     cur.execute(
         """
         INSERT INTO inspection_report_jobs (
@@ -35032,7 +35072,12 @@ from safety_report_http import register_safety_report
 register_safety_report(app, connect=get_db_connection, authorize=get_authorized_inspection_report_user,
     period=resolve_inspection_report_period, fetch_inputs=fetch_safety_report_inputs,
     has_permission=has_permission, save_workspace=save_report_workspace, log_usage=record_ai_usage_log,
-    fetch_topics=fetch_safety_report_topics)
+    fetch_topics=fetch_safety_report_topics, fetch_requirements=fetch_safety_requirements)
+
+from safety_requirements_http import register_safety_requirements
+register_safety_requirements(app,connect=get_db_connection,authorize=get_authorized_inspection_report_user,
+    has_permission=has_permission,fetch_catalog=fetch_safety_standard_catalog,
+    save_workspace=save_report_workspace,log_usage=record_ai_usage_log)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
