@@ -16,6 +16,7 @@ function setup(responses, confirmations = [true], mode = 'yes') {
     submitting: { value: false }, photoProcessing: { value: false }, normalizedHasIssue: { value: mode },
     form: { value: { stationId: 1, description: '新问题', isHighlight: mode === 'highlight', inspectionTableId: 2 } },
     selectedStandards: { value: [{ inspection_table_id: 2 }] },
+    stations: { value: [] }, stationLocationRef: { value: { confirm: async () => true } },
     imageFile: { value: new Blob(['photo'], { type: 'image/png' }) },
     localStorage: { getItem: () => '7' },
     showSubmitToast: (...args) => toasts.push(args), resetForm: () => reset++,
@@ -34,6 +35,31 @@ function setup(responses, confirmations = [true], mode = 'yes') {
     notifications, reset: () => reset, dialogs: () => dialogs }
 }
 const success = { data: { message: '登记成功' } }
+test('location reminder cancellation keeps draft and photo, unlocks form, and does not submit', async () => {
+  const state = setup([success])
+  const photo = state.context.imageFile.value
+  state.context.stations.value = [{ id: 1, station_name: '所选站点', longitude: 121.5, latitude: 31.2 }]
+  state.context.stationLocationRef.value.confirm = async station => {
+    assert.equal(station.id, 1)
+    return false
+  }
+  await state.submit()
+  assert.equal(state.requests.length, 0)
+  assert.equal(state.reset(), 0)
+  assert.equal(state.context.form.value.description, '新问题')
+  assert.equal(state.context.imageFile.value, photo)
+  assert.equal(state.context.submitting.value, false)
+  state.context.stationLocationRef.value.confirm = async () => true
+  await state.submit()
+  assert.equal(state.requests.length, 1)
+})
+test('invalid registration is rejected before requesting location', async () => {
+  const state = setup([success])
+  state.context.form.value.stationId = ''
+  state.context.stationLocationRef.value.confirm = () => assert.fail('No location for invalid draft')
+  await state.submit()
+  assert.equal(state.requests.length, 0)
+})
 test('cancel duplicate preserves draft and releases submit state without retry', async () => {
   const state = setup([duplicate()], [false])
   await state.submit()

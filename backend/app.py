@@ -27500,6 +27500,8 @@ def get_my_issues():
                     s.station_manager_name AS station_manager,
                     issue_inspector.real_name AS inspector,
                     s.station_name AS station,
+                    s.longitude AS station_longitude,
+                    s.latitude AS station_latitude,
                     t.table_name AS inspection_table_name,
                     t.checklist_mode,
                     i.standard_id,
