@@ -22,6 +22,8 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    'safety_requirements': '安全质量规范要求准备',
+    'safety_examples': '安全质量分类代表问题选题',
     'safety_detail': '安全质量问题再分类、原因与建议',
     "equipment_topics": "设备设施高频、特性与重点问题选题",
     "quality_flow": "质量计量问题环节分类",
@@ -34,6 +36,7 @@ STAGE_LABELS = {
     "non_oil_insights": "非油典型问题、归因分析与改善建议",
 }
 INSIGHT_FIELDS = {
+    'safety_examples': {'selections': list},
     'safety_detail': {'groups': list, 'causes': list, 'suggestions': list},
     "equipment_topics": {"issue_ids": list},
     "quality_insights": {"management_trace": dict, "work_plan": list, "prohibited_decisions": list},
@@ -364,6 +367,19 @@ def set_report_ai_evidence(rows, settings=None):
 def report_ai_generation_log():
     memory = _current.get()
     return memory.snapshot() if memory else None
+
+
+def record_safety_requirements_result(result):
+    """Include the separately persisted standard library in a report job's log."""
+    memory = _current.get()
+    if not memory: return
+    counts, usage = result.get('requirements_counts') or {}, result.get('usage') or {}
+    reused = bool(result.get('cache_hit'))
+    memory.record('safety_requirements', 'cache_hit' if reused else 'ai_result' if result.get('generated') else 'error',
+        result.get('message') or f"规范要求准备：本批生成{counts.get('generated',0)}条，复用{counts.get('reused',0)}条。",
+        ai_called=bool(usage.get('ai_called')),request_count=int(usage.get('request_count') or 0),
+        model=usage.get('model') or '',cost_est=usage.get('total_cost_est',0),
+        generated_standards=int(counts.get('generated',0)),reused_standards=int(counts.get('reused',0)))
 
 
 def record_classification_reuse(operation, classification_map, rows):

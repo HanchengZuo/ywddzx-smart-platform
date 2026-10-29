@@ -3,17 +3,22 @@ export function manualClassificationChanges(draft, baseline, saved) {
   const result = JSON.parse(JSON.stringify(saved || {}))
   for (const [key, value] of Object.entries(draft || {})) {
     const entry = (result[key] ||= { assignments: {}, summaries: {} })
-    for (const field of ['assignments', 'summaries']) {
-      entry[field] ||= {}
-      const before = baseline[key]?.[field] || {},
+    for (const field of ['assignments', 'summaries', 'representatives']) {
+      const before = baseline?.[key]?.[field] || {},
         after = value[field] || {}
       for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
-        if (before[id] === after[id]) continue
-        if (after[id]) entry[field][id] = after[id]
-        else delete entry[field][id]
+        if (JSON.stringify(before[id]) === JSON.stringify(after[id])) continue
+        if (after[id] !== undefined && (field === 'representatives' || after[id])) {
+          entry[field] ||= {}
+          entry[field][id] = Array.isArray(after[id]) ? [...after[id]] : after[id]
+        } else if (entry[field]) delete entry[field][id]
       }
     }
-    if (!Object.keys(entry.assignments).length && !Object.keys(entry.summaries).length)
+    if (
+      !['assignments', 'summaries', 'representatives'].some(
+        (field) => Object.keys(entry[field] || {}).length,
+      )
+    )
       delete result[key]
   }
   return result
@@ -30,6 +35,7 @@ export function safetyFocusCategory(topic, issues = []) {
     category: `topic:${topic}`,
     name: `1. 月度重点：${topic}`,
     issues: issues.filter((issue) => issue.mode === 'onsite' && issue.topic === topic),
+    slot_limit: 3,
     analysis: {},
   }
 }
@@ -48,7 +54,7 @@ export function safetyAnalysisReady(category) {
   if (!category?.issues?.length || category.analysis?.complete === false) return false
   const ids = new Set(category.issues.map((issue) => Number(issue.issue_id)))
   const classified = (category.analysis?.groups || []).flatMap((group) =>
-    group.issue_ids.map(Number),
+    (group.issue_ids || []).map(Number),
   )
   return (
     classified.length === ids.size &&
@@ -66,7 +72,141 @@ export function safetySubgroups(category, override = {}) {
   }
   return [...counts]
     .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-CN'))
+    .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+export function safetyClassificationDraft(category, saved = {}) {
+  const result = { assignments: {}, summaries: {}, representatives: {} }
+  for (const group of category?.analysis?.groups || []) {
+    for (const id of group.issue_ids || []) result.assignments[id] = group.name
+    result.summaries[group.name] = group.summary || ''
+    result.representatives[group.name] = [...(group.representative_issue_ids || [])]
+  }
+  for (const field of Object.keys(result))
+    Object.assign(result[field], JSON.parse(JSON.stringify(saved[field] || {})))
+  for (const name of Object.keys(result.representatives))
+    result.representatives[name] = safetyRepresentativeIds(category, result, name)
+  return result
+}
+
+export function safetyGroupingEdited(draft = {}, baseline = {}) {
+  return ['assignments', 'summaries'].some((field) => {
+    const before = baseline[field] || {},
+      after = draft[field] || {}
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])].some(
+      (key) => before[key] !== after[key],
+    )
+  })
+}
+
+export function safetyMoveIssue(override, id, name) {
+  override.assignments[id] = name
+  for (const [group, ids] of Object.entries(override.representatives || {}))
+    if (group !== name && ids.some((value) => Number(value) === Number(id)))
+      override.representatives[group] = ids.filter((value) => Number(value) !== Number(id))
+}
+
+export function safetyFixedCategories(categories = [], mode) {
+  return categories.filter(
+    (item) =>
+      item.mode === mode && item.category !== '__typical__' && !item.category.startsWith('topic:'),
+  )
+}
+
+export function safetySlotLimit(category) {
+  if (category?.category?.startsWith('topic:')) return 3
+  if ([3, 6].includes(category?.slot_limit)) return category.slot_limit
+  return category?.mode === 'onsite' &&
+    ['devices', 'other', '设备设施', '其他隐患类'].includes(category.category)
+    ? 6
+    : 3
+}
+
+export function safetySelectedGroup(groups, selected = '') {
+  return (
+    groups.find((group) => group.name === selected && group.count)?.name ||
+    groups.find((group) => group.count)?.name ||
+    groups[0]?.name ||
+    ''
+  )
+}
+
+export function safetyRepresentativeIds(category, override, name, limit = 6) {
+  const eligible = new Set(
+    (category?.issues || [])
+      .filter((issue) => override?.assignments?.[issue.issue_id] === name)
+      .map((issue) => Number(issue.issue_id)),
+  )
+  return [...new Set((override?.representatives?.[name] || []).map(Number))]
+    .filter((id) => eligible.has(id))
+    .slice(0, limit)
+}
+
+export function safetyRepresentativeOrder(category, override, name, limit = 6, manual = {}) {
+  const group = category?.analysis?.groups?.find((item) => item.name === name)
+  const ready = category?.analysis?.representatives_ready
+  const explicit =
+    manual.representatives?.[name] ||
+    (group?.representative_source === 'manual' ? override?.representatives?.[name] : [])
+  const priority = safetyRepresentativeIds(
+    category,
+    ready
+      ? override
+      : { assignments: override?.assignments, representatives: { [name]: explicit } },
+    name,
+  )
+  const eligible = (category?.issues || [])
+    .filter((issue) => override?.assignments?.[issue.issue_id] === name && issue.issue_photo)
+    .map((issue) => Number(issue.issue_id))
+  const fallback = ready
+    ? [
+        ...(group?.ai_representative_issue_ids || group?.representative_issue_ids || []).map(
+          Number,
+        ),
+        ...eligible.sort((a, b) => a - b),
+      ]
+    : []
+  return [...new Set([...priority, ...fallback])]
+    .filter((id) => eligible.includes(id))
+    .slice(0, limit)
+}
+
+// Match report slots: one image per top monthly group; fixed sections fill in rounds.
+export function safetyPptPicks(category, override, monthly = false, manual = {}) {
+  const groups = safetySubgroups(category, override).filter((group) => group.count)
+  const choices = (monthly ? groups.slice(0, 3) : groups).map((group) => ({
+    name: group.name,
+    ids: safetyRepresentativeOrder(category, override, group.name, 6, manual),
+  }))
+  const result = [],
+    limit = safetySlotLimit(category)
+  for (let round = 0; round < (monthly ? 1 : limit); round++) {
+    for (const group of choices) {
+      if (group.ids[round] !== undefined)
+        result.push({ name: group.name, issue_id: group.ids[round] })
+      if (result.length === limit) return result
+    }
+  }
+  return result
+}
+
+export function safetyRequirementChanges(standards = [], draft = {}) {
+  return standards
+    .filter((row) => Object.hasOwn(draft, row.key) && draft[row.key] !== (row.requirement || ''))
+    .map((row) => ({
+      key: row.key,
+      source_signature: row.source_signature,
+      revision: row.revision,
+      requirement: draft[row.key],
+    }))
+}
+
+export function safetyUpdatedAt(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 }
 
 export function safetyIssueSearch(issues, keyword) {

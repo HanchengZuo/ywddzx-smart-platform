@@ -24,7 +24,9 @@ const categoriesChanged = (current = [], saved = []) => {
   const previous = new Map(saved.map(item => [Number(item.issue_id), String(item.effective_category || '')]))
   return current.some(item => previous.get(Number(item.issue_id)) !== String(item.effective_category || ''))
 }
-const safetySettings = (value = {}) => ({ ...value, typical_video_category: value.typical_video_category || '' })
+const safetySettings = (value = {}) => ({ ...value,
+  typical_video_category: value.typical_video_category || '',
+  requirements_signature: value.requirements_signature || '' })
 
 // Compare effective inputs, not save timestamps, actor names, AI provenance or revision counters.
 export function reportConfigurationDiffers(report, current) {

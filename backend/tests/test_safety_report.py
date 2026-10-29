@@ -47,7 +47,10 @@ def fixture_report(photo='', rows=None, settings=None):
         rows[1]['standard_detail_text'] = '序号：2\n检查内容：加油站设备维修作业\n评分说明：执行检维修许可。'
     else: rows = copy.deepcopy(rows)
     for row in rows: row['issue_photo'] = photo
-    with patch('safety_report_analysis.analyze', side_effect=mock_analysis), patch(
+    def examples(context):
+        return {'payload':{'selections':[{'name':g['name'],'issue_ids':[r['issue_id'] for r in g['issues']][:6]}
+            for g in context['groups']]}}
+    with patch('safety_report_examples.generate_representatives', side_effect=examples), patch('safety_report_analysis.analyze', side_effect=mock_analysis), patch(
         'safety_report_analysis.generate_analysis', return_value={'payload': {'groups': [], 'causes': [],
         'suggestions': [{'title': '强化设施维护', 'content': '开展接地连接专项检查，核实问题整改。'}]}}):
         report = build_report(date(2026, 9, 1), date(2026, 10, 1), rows, [],

@@ -21,9 +21,14 @@
           </div>
         </dl>
       </article>
+      <SafetyRequirementsPanel
+        :can-generate="canGenerate"
+        :busy="busy || saving || analyzing || !!active"
+        @saved="requirementsSaved"
+      />
       <div class="safety-panels">
         <article>
-          <small class="safety-step-label">02 · 典型选题</small>
+          <small class="safety-step-label">03 · 典型选题</small>
           <h3>现场与视频典型问题</h3>
           <p>
             现场选一个代表问题；视频按较高层级风险归类，默认展示占比最高的一类，可切换类别并查看关联问题。
@@ -31,7 +36,7 @@
           <button :disabled="busy" @click="open('typical')">查看与调整典型问题</button>
         </article>
         <article>
-          <small class="safety-step-label">03 · 月度重点</small>
+          <small class="safety-step-label">04 · 月度重点</small>
           <h3>月度重点与问题再分类</h3>
           <p>
             当前重点：{{
@@ -39,6 +44,12 @@
             }}。先选择检查主题，再查看或生成该主题的问题表现分类。
           </p>
           <button :disabled="busy" @click="open('analysis')">查看与调整分析</button>
+        </article>
+        <article>
+          <small class="safety-step-label">05 · 固定章节证据</small>
+          <h3>现场与视频分类证据</h3>
+          <p>分别维护现场五类与视频四类固定章节，查看问题子类、规范要求和代表照片顺序。</p>
+          <button :disabled="busy" @click="open('evidence')">查看与调整固定章节</button>
         </article>
       </div>
       <small class="safety-saved">{{ savedLabel }}</small>
@@ -332,7 +343,40 @@
               </div>
             </template>
             <template v-else>
-              <div class="safety-focus">
+              <div v-if="active === 'evidence'" class="safety-focus">
+                <div class="safety-scope-modes" role="group" aria-label="固定章节检查方式">
+                  <button
+                    v-for="mode in modes"
+                    :key="mode.key"
+                    :class="{ selected: evidenceMode === mode.key }"
+                    :aria-pressed="evidenceMode === mode.key"
+                    :disabled="analyzing || saving"
+                    @click="selectEvidenceMode(mode.key)"
+                  >
+                    {{ mode.label }}检查
+                  </button>
+                </div>
+                <label
+                  >固定报告类别<select
+                    :value="categoryKey"
+                    :disabled="analyzing || saving"
+                    @change="selectEvidenceCategory($event.target.value)"
+                  >
+                    <option
+                      v-for="category in fixedCategories"
+                      :key="category.key"
+                      :value="category.key"
+                    >
+                      {{ category.name }}（{{ category.issues.length }}项 ·
+                      {{ safetySlotLimit(category) }}张）
+                    </option>
+                  </select></label
+                >
+                <p>
+                  先选择现场或视频，再进入固定类别。设备设施及其他隐患最多六张，其余章节最多三张。
+                </p>
+              </div>
+              <div v-else class="safety-focus">
                 <div class="safety-focus-select">
                   <label
                     >检查主题<select
@@ -367,127 +411,26 @@
               <div v-else-if="focusError" class="safety-analysis-empty" role="alert">
                 <h3>主题分析暂未读取成功</h3>
                 <p>{{ focusError }}</p>
-                <button @click="loadFocus(true)">重新读取</button>
+                <button @click="loadCategory(currentCategory, true)">重新读取</button>
               </div>
-              <div v-else-if="!currentCategory?.issues.length" class="safety-analysis-empty">
-                <h3>当前范围暂无该主题的问题</h3>
-                <p>请选择有问题数据的检查主题。</p>
-              </div>
-              <div v-else-if="!safetyAnalysisReady(currentCategory)" class="safety-analysis-empty">
-                <span class="safety-pending-mark">AI</span>
-                <h3>{{ focusName }} · 尚未完成再分类</h3>
-                <p v-if="currentCategory.analysis?.classified_count">
-                  已读取 {{ currentCategory.analysis.classified_count }}/{{
-                    currentCategory.issues.length
-                  }}
-                  条问题的历史分析，请补齐剩余分类后再查看。
-                </p>
-                <p v-else>
-                  该主题有 {{ currentCategory.issues.length }} 条问题。先调用 AI
-                  对问题描述进行再分类，完成后左侧显示分类、右侧显示关联问题。
-                </p>
-                <button
-                  class="safety-primary"
-                  :disabled="!canGenerate || analyzing || busy"
-                  @click="analyze"
-                >
-                  {{ analyzing ? '正在进行 AI 再分类…' : '调用 AI 再分类' }}
-                </button>
-                <small>{{
-                  canGenerate
-                    ? '优先复用已有结果，只处理缺少的分析。'
-                    : '当前账号无生成 AI 报告权限，无法发起 AI 分析。'
-                }}</small>
-              </div>
-              <div v-else class="safety-analysis-layout">
-                <nav class="safety-subgroup-nav" aria-label="所选主题的问题表现分类">
-                  <small>问题表现分类</small>
-                  <button :class="{ selected: selectedGroup === '' }" @click="selectedGroup = ''">
-                    全部问题<span>{{ currentCategory.issues.length }}</span>
-                  </button>
-                  <button
-                    v-for="group in subgroups"
-                    :key="group.name"
-                    :class="{ selected: selectedGroup === group.name }"
-                    @click="selectedGroup = group.name"
-                  >
-                    {{ group.name }}<span>{{ group.count }}</span>
-                  </button>
-                  <div class="safety-new-group">
-                    <input
-                      v-model="newGroupName"
-                      maxlength="50"
-                      placeholder="新增分类名称"
-                      aria-label="新增问题表现分类"
-                      @keyup.enter="addGroup"
-                    /><button :disabled="!newGroupName.trim()" @click="addGroup">添加分类</button>
-                  </div>
-                </nav>
-                <section class="safety-analysis-content">
-                  <div class="safety-analysis-heading">
-                    <div>
-                      <small>{{ focusName }} · AI 再分类已完成</small>
-                      <h3>
-                        {{ selectedGroup || '全部问题' }} <span>{{ focusIssues.length }}项</span>
-                      </h3>
-                    </div>
-                    <span class="safety-ready-badge">可人工调整</span>
-                  </div>
-                  <label v-if="selectedGroup" class="safety-group-summary"
-                    >分类共性描述<textarea
-                      v-model="currentOverride.summaries[selectedGroup]"
-                      maxlength="160"
-                      rows="2"
-                    ></textarea>
-                  </label>
-                  <p v-else class="safety-edit-hint">
-                    选择左侧分类可编辑共性描述；每条问题可调整到其他分类。
-                  </p>
-                  <input
-                    v-model="issueKeyword"
-                    type="search"
-                    placeholder="搜索问题ID、站点或问题描述"
-                    aria-label="搜索主题内问题"
-                  />
-                  <div v-for="issue in focusIssues" :key="issue.issue_id" class="safety-issue">
-                    <button
-                      v-if="issue.issue_photo"
-                      class="safety-photo"
-                      :aria-label="'放大问题' + issue.issue_id + '的照片'"
-                      @click="emit('photo', issue)"
-                    >
-                      <img
-                        :src="resolveImage(issue.issue_photo)"
-                        :alt="'问题 ' + issue.issue_id"
-                        loading="lazy"
-                      />
-                    </button>
-                    <span v-else class="safety-missing-photo">暂无照片</span>
-                    <div>
-                      <b>#{{ issue.issue_id }} · {{ issue.station_name }}</b>
-                      <p>{{ issue.description }}</p>
-                      <small>{{ issue.category_name }}</small>
-                      <label
-                        >问题表现分类<select
-                          :value="assignment(issue.issue_id)"
-                          @change="setAssignment(issue.issue_id, $event.target.value)"
-                        >
-                          <option v-for="group in subgroups" :key="group.name" :value="group.name">
-                            {{ group.name }}
-                          </option>
-                        </select></label
-                      >
-                      <details>
-                        <summary>评分说明</summary>
-                        {{ issue.requirement || '原规范未维护评分说明' }}
-                      </details>
-                    </div>
-                  </div>
-                  <div v-if="!focusIssues.length" class="safety-no-items">
-                    此分类下暂无符合条件的问题。
-                  </div>
-                </section>
-              </div>
+              <SafetyEvidencePanel
+                v-else-if="currentCategory"
+                :category="currentCategory"
+                :override="currentOverride"
+                :manual="currentManual"
+                :monthly="active === 'analysis'"
+                :can-generate="canGenerate"
+                :grouping-dirty="groupingDirty"
+                :busy="analyzing || saving || busy"
+                :resolve-image="resolveImage"
+                @generate="analyze"
+                @photo="emit('photo', $event)"
+                @assignment="setAssignment"
+                @summary="setSummary"
+                @representatives="setRepresentatives"
+                @add-group="addGroup"
+              />
+              <p v-else class="safety-no-items">当前范围暂无可选类别。</p>
             </template>
           </div>
           <footer>
@@ -505,7 +448,7 @@
                 analyzing ||
                 busy ||
                 focusReading ||
-                (active === 'analysis' && !!focusError)
+                (['analysis', 'evidence'].includes(active) && !!focusError)
               "
               @click="save"
             >
@@ -521,12 +464,18 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
+import SafetyRequirementsPanel from './SafetyRequirementsPanel.vue'
+import SafetyEvidencePanel from './SafetyEvidencePanel.vue'
 import {
   manualClassificationChanges,
   safetyFocusCategory,
   safetyFocusName,
   safetyAnalysisReady,
-  safetySubgroups,
+  safetyClassificationDraft,
+  safetyFixedCategories,
+  safetySlotLimit,
+  safetyGroupingEdited,
+  safetyMoveIssue,
   safetyIssueSearch,
   videoTypicalGroups,
   videoTypicalSelection,
@@ -549,8 +498,7 @@ const data = ref(null),
 const analysisBaseline = ref({})
 const typicalMode = ref('onsite'),
   issueKeyword = ref(''),
-  selectedGroup = ref(''),
-  newGroupName = ref('')
+  evidenceMode = ref('onsite')
 const focusReading = ref(false),
   focusError = ref('')
 const error = ref(''),
@@ -564,6 +512,7 @@ const titles = {
   source: '本次报告数据来源',
   typical: '典型问题与代表案例',
   analysis: '月度重点与问题再分类',
+  evidence: '现场与视频固定章节证据',
 }
 const modes = [
   { key: 'onsite', label: '现场' },
@@ -597,10 +546,21 @@ const visibleStations = computed(() =>
 )
 const currentCategory = computed(() => categories.value.find((c) => c.key === categoryKey.value))
 const currentOverride = computed(() => draft.value.classifications[categoryKey.value])
+const manualChanges = computed(() =>
+  manualClassificationChanges(
+    draft.value.classifications,
+    analysisBaseline.value,
+    data.value?.settings.classifications,
+  ),
+)
+const currentManual = computed(() => manualChanges.value[categoryKey.value] || {})
+const groupingDirty = computed(() =>
+  safetyGroupingEdited(currentOverride.value, analysisBaseline.value[categoryKey.value]),
+)
+const fixedCategories = computed(() => safetyFixedCategories(categories.value, evidenceMode.value))
 const focusName = computed(() =>
   safetyFocusName(draft.value.focus_category, data.value?.focus_categories),
 )
-const subgroups = computed(() => safetySubgroups(currentCategory.value, currentOverride.value))
 const typicalCandidates = computed(() =>
   safetyIssueSearch(modeIssues(typicalMode.value), issueKeyword.value),
 )
@@ -620,16 +580,6 @@ const videoCandidates = computed(() => {
     issueKeyword.value,
   )
 })
-const focusIssues = computed(() =>
-  safetyIssueSearch(
-    (currentCategory.value?.issues || []).filter(
-      (issue) =>
-        !selectedGroup.value ||
-        currentOverride.value?.assignments[issue.issue_id] === selectedGroup.value,
-    ),
-    issueKeyword.value,
-  ),
-)
 const modeIssues = (mode) => (data.value?.issues || []).filter((i) => i.mode === mode)
 function typical(mode) {
   const list = modeIssues(mode),
@@ -691,16 +641,21 @@ function adopt(value) {
   data.value = value
   emit('change', value.settings)
 }
-async function load() {
+async function load(keepVisible = false) {
   const id = ++sequence
   controller?.abort()
   controller = new AbortController()
   focusSequence++
   focusController?.abort()
   focusReading.value = false
-  if (!props.dateFrom || !props.dateTo || props.dateFrom > props.dateTo) return
   active.value = ''
-  loading.value = true
+  loading.value = keepVisible !== true
+  if (!props.dateFrom || !props.dateTo || props.dateFrom > props.dateTo) {
+    data.value = null
+    loading.value = false
+    emit('change', null)
+    return
+  }
   error.value = ''
   emit('change', null)
   try {
@@ -716,29 +671,27 @@ async function load() {
     if (id === sequence) loading.value = false
   }
 }
-function ensureCategory(category) {
-  const override = (draft.value.classifications[category.key] ||= {
-    assignments: {},
-    summaries: {},
-  })
-  override.assignments ||= {}
-  override.summaries ||= {}
-  for (const group of category.analysis?.groups || []) {
-    for (const id of group.issue_ids)
-      if (!override.assignments[id]) override.assignments[id] = group.name
-    if (!override.summaries[group.name]) override.summaries[group.name] = group.summary
-  }
+function ensureCategory(category, manual = data.value.settings.classifications) {
+  draft.value.classifications[category.key] = safetyClassificationDraft(
+    category,
+    manual[category.key],
+  )
+}
+async function requirementsSaved() {
+  emit('saved')
+  await load(true)
 }
 async function open(name) {
   draft.value = clone(data.value.settings)
+  draft.value.classifications ||= {}
+  draft.value.typical_issue_ids ||= {}
   categories.value = clone(data.value.categories)
   for (const category of categories.value) ensureCategory(category)
   analysisBaseline.value = clone(draft.value.classifications)
-  categoryKey.value = categories.value.at(-1)?.key || ''
+  categoryKey.value = ''
   typicalMode.value = 'onsite'
+  evidenceMode.value = 'onsite'
   issueKeyword.value = ''
-  selectedGroup.value = ''
-  newGroupName.value = ''
   focusLoaded = new Set()
   focusError.value = ''
   keyword.value = ''
@@ -748,6 +701,7 @@ async function open(name) {
   await nextTick()
   dialog.value?.focus()
   if (name === 'analysis') loadFocus()
+  else if (name === 'evidence') selectEvidenceMode('onsite')
 }
 function close() {
   if (saving.value || analyzing.value) return
@@ -782,26 +736,38 @@ function toggleStation(id, checked) {
 function setFocus(value) {
   if (analyzing.value) return
   draft.value.focus_category = value
-  selectedGroup.value = ''
   issueKeyword.value = ''
-  newGroupName.value = ''
   loadFocus()
 }
-async function loadFocus(force = false) {
+function selectEvidenceMode(mode) {
+  if (analyzing.value || saving.value) return
+  evidenceMode.value = mode
+  const options = fixedCategories.value
+  selectEvidenceCategory((options.find((item) => item.issues.length) || options[0])?.key || '')
+}
+function selectEvidenceCategory(key) {
+  if (analyzing.value || saving.value) return
+  categoryKey.value = key
+  loadCategory(currentCategory.value)
+}
+function loadFocus() {
+  const focus = focusName.value
+  const category = focus ? safetyFocusCategory(focus, data.value.issues) : null
+  if (category && !categories.value.some((item) => item.key === category.key)) {
+    categories.value.push(category)
+    ensureCategory(category)
+    analysisBaseline.value[category.key] = clone(draft.value.classifications[category.key])
+  }
+  categoryKey.value = category?.key || ''
+  return loadCategory(currentCategory.value)
+}
+async function loadCategory(category, force = false) {
   const id = ++focusSequence
   focusController?.abort()
   focusReading.value = false
   focusError.value = ''
-  const focus = focusName.value
-  if (!focus) return
-  const category = safetyFocusCategory(focus, data.value.issues)
+  if (!category) return
   const key = category.key
-  if (!categories.value.some((c) => c.key === key)) {
-    categories.value.push(category)
-    ensureCategory(category)
-    analysisBaseline.value[key] = clone(draft.value.classifications[key])
-  }
-  categoryKey.value = key
   if (focusLoaded.has(key) && !force) return
   focusController = new AbortController()
   focusReading.value = true
@@ -809,23 +775,29 @@ async function loadFocus(force = false) {
   dialogError.value = ''
   try {
     const response = await axios.get('/api/inspection-reports/safety-analysis', {
-      params: { ...params(), mode: 'onsite', category: category.category },
+      params: { ...params(), mode: category.mode, category: category.category },
       signal: focusController.signal,
     })
-    if (id !== focusSequence || active.value !== 'analysis') return
+    if (
+      id !== focusSequence ||
+      !['analysis', 'evidence'].includes(active.value) ||
+      categoryKey.value !== key
+    )
+      return
     if (
       response.data.revision !== data.value.meta.revision ||
       response.data.data_signature !== data.value.data_signature
     )
       throw new Error('数据或配置已有更新，请关闭弹窗并重新读取配置，避免覆盖其他用户的保存。')
     const entry = categories.value.find((item) => item.key === key)
+    const manual = manualChanges.value
     entry.issues = response.data.issues
     entry.analysis = response.data.analysis
-    draft.value.classifications[key] = clone(
-      data.value.settings.classifications[key] || { assignments: {}, summaries: {} },
+    analysisBaseline.value[key] = safetyClassificationDraft(
+      entry,
+      data.value.settings.classifications[key],
     )
-    ensureCategory(entry)
-    analysisBaseline.value[key] = clone(draft.value.classifications[key])
+    ensureCategory(entry, manual)
     focusLoaded.add(key)
   } catch (err) {
     if (id === focusSequence && !axios.isCancel(err))
@@ -834,22 +806,29 @@ async function loadFocus(force = false) {
     if (id === focusSequence) focusReading.value = false
   }
 }
-const assignment = (id) => currentOverride.value?.assignments[id] || ''
 function setAssignment(id, name) {
+  if (analyzing.value || saving.value || props.busy) return
   const value = name.trim()
-  if (value) currentOverride.value.assignments[id] = value
-  else delete currentOverride.value.assignments[id]
+  if (value) safetyMoveIssue(currentOverride.value, id, value)
 }
-function addGroup() {
-  const name = newGroupName.value.trim()
-  if (!name || !currentOverride.value) return
+function setSummary(name, value) {
+  if (!analyzing.value && !saving.value && !props.busy)
+    currentOverride.value.summaries[name] = value
+}
+function setRepresentatives(name, ids) {
+  if (!analyzing.value && !saving.value && !props.busy)
+    currentOverride.value.representatives[name] = ids
+}
+function addGroup(name) {
+  if (analyzing.value || saving.value || props.busy || !name || !currentOverride.value) return
   currentOverride.value.summaries[name] ||= ''
-  selectedGroup.value = name
-  newGroupName.value = ''
 }
 async function analyze() {
   if (
     !props.canGenerate ||
+    props.busy ||
+    saving.value ||
+    groupingDirty.value ||
     analyzing.value ||
     focusReading.value ||
     !currentCategory.value?.issues.length
@@ -871,53 +850,69 @@ async function analyze() {
       },
       { timeout: 300000 },
     )
-    if (loadSequence !== sequence || active.value !== 'analysis') return
-    c.analysis = response.data.analysis
-    draft.value.classifications[c.key] = clone(
-      data.value.settings.classifications[c.key] || { assignments: {}, summaries: {} },
+    if (
+      loadSequence !== sequence ||
+      !['analysis', 'evidence'].includes(active.value) ||
+      categoryKey.value !== c.key
     )
-    ensureCategory(c)
-    analysisBaseline.value[c.key] = clone(draft.value.classifications[c.key])
-    selectedGroup.value = ''
+      return
+    const manual = manualChanges.value
+    c.analysis = response.data.analysis
+    analysisBaseline.value[c.key] = safetyClassificationDraft(
+      c,
+      data.value.settings.classifications[c.key],
+    )
+    ensureCategory(c, manual)
     issueKeyword.value = ''
   } catch (err) {
-    dialogError.value = err.response?.data?.error || 'AI 分析未完成，原保存配置不变。请稍后重试。'
+    if (loadSequence === sequence && ['analysis', 'evidence'].includes(active.value))
+      dialogError.value = err.response?.data?.error || 'AI 分析未完成，原保存配置不变。请稍后重试。'
   } finally {
     analyzing.value = false
   }
 }
 async function save() {
+  if (
+    saving.value ||
+    analyzing.value ||
+    props.busy ||
+    focusReading.value ||
+    (['analysis', 'evidence'].includes(active.value) && focusError.value)
+  )
+    return
   saving.value = true
+  const loadSequence = sequence
   dialogError.value = ''
   try {
     // Viewing AI evidence does not turn every generated grouping into a manual override.
     const settings = clone(draft.value)
-    settings.classifications =
-      active.value === 'analysis'
-        ? manualClassificationChanges(
-            settings.classifications,
-            analysisBaseline.value,
-            data.value.settings.classifications,
-          )
-        : data.value.settings.classifications
+    settings.classifications = ['analysis', 'evidence'].includes(active.value)
+      ? manualClassificationChanges(
+          settings.classifications,
+          analysisBaseline.value,
+          data.value.settings.classifications,
+        )
+      : data.value.settings.classifications
     const response = await axios.put('/api/inspection-reports/safety-config', {
       ...params(),
       settings,
       revision: data.value.meta.revision,
       data_signature: data.value.data_signature,
     })
+    if (loadSequence !== sequence) return
     adopt(response.data)
     active.value = ''
     emit('saved')
     previousFocus?.focus()
   } catch (err) {
-    dialogError.value = err.response?.data?.error || '配置保存失败，请重试。'
+    if (loadSequence === sequence)
+      dialogError.value = err.response?.data?.error || '配置保存失败，请重试。'
   } finally {
     saving.value = false
   }
 }
 watch(
-  () => [props.dateFrom, props.dateTo, props.generatedAt],
+  () => [props.month, props.dateFrom, props.dateTo, props.generatedAt],
   () => {
     clearTimeout(timer)
     timer = setTimeout(load, 180)
@@ -1007,7 +1002,7 @@ onBeforeUnmount(() => {
 }
 .safety-panels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 16px;
 }
@@ -1307,6 +1302,17 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   margin-bottom: 0;
 }
+.safety-scope-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.safety-scope-modes button.selected {
+  background: #175c78;
+  color: #fff;
+  border-color: #175c78;
+}
 .safety-focus-select {
   display: flex;
   align-items: flex-end;
@@ -1535,6 +1541,11 @@ onBeforeUnmount(() => {
 .safety-dialog :focus-visible {
   outline: 3px solid #64a6d1;
   outline-offset: 2px;
+}
+@media (min-width: 701px) and (max-width: 1000px) {
+  .safety-panels {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 700px) {
   .safety-overlay {

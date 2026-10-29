@@ -1,0 +1,87 @@
+import copy
+import unittest
+from unittest.mock import MagicMock, patch
+from safety_report_examples import (validate_selections, with_representatives, cached_representatives,
+    apply_representative_overrides)
+from safety_report_analysis import photo_examples, normalize_settings
+from report_ai_memory import fingerprint
+
+
+def issue(i):
+    return {'issue_id':i,'issue_photo':'photo.jpg','description':f'接地未有效连接{i}',
+        'station_name':f'测试{i}','category_name':'设备设施'}
+
+
+def selection(context):
+    return {'selections':[{'name':g['name'],'issue_ids':[r['issue_id'] for r in reversed(g['issues'])][:6]}
+        for g in context['groups']], 'selection_signature':fingerprint(context)}
+
+
+class RepresentativeTest(unittest.TestCase):
+    def test_ai_ranks_all_candidates_in_bounded_batches_and_reranks_finalists(self):
+        rows=[issue(i) for i in range(1,87)]
+        value={'complete':True,'groups':[{'name':'接地缺失','summary':'接地连接不规范','issue_ids':list(range(1,87))}]}
+        with patch('safety_report_examples.generate_representatives',side_effect=lambda c:{'payload':selection(c)}) as ai:
+            result=with_representatives(value,rows,'onsite','设备设施')
+        self.assertTrue(result['representatives_ready'])
+        self.assertEqual(ai.call_count,4)
+        self.assertTrue(all(sum(len(g['issues']) for g in call.args[0]['groups'])<=40 for call in ai.call_args_list))
+        self.assertEqual(result['groups'][0]['representative_issue_ids'],[81,82,83,84,85,86])
+        self.assertNotIn('representative_issue_ids',value['groups'][0])
+
+    def test_read_cached_rankings_never_calls_ai_and_requires_same_classification_evidence(self):
+        rows=[issue(1),issue(2)]
+        analysis={'complete':True,'groups':[{'name':'接地','summary':'接地不规范','issue_ids':[1,2]}]}
+        store={}
+        def collect(context):
+            result=selection(context);store[fingerprint(context)]=result
+            return {'payload':result}
+        with patch('safety_report_examples.generate_representatives',side_effect=collect):
+            generated=with_representatives(analysis,rows,'onsite','topic:设备设施')
+        cur=MagicMock()
+        def execute(sql,params):cur.fetchone.return_value={'payload':store[params[0]]} if params[0] in store else None
+        cur.execute.side_effect=execute
+        with patch('safety_report_examples.generate_representatives',side_effect=AssertionError('paidAI')):
+            self.assertEqual(cached_representatives(cur,analysis,rows,'onsite','设备设施'),generated)
+            changed=copy.deepcopy(analysis);changed['groups'][0]['summary']='人工已修改的共性描述'
+            self.assertFalse(cached_representatives(cur,changed,rows,'onsite','设备设施')['representatives_ready'])
+            self.assertFalse(cached_representatives(cur,{**analysis,'complete':False},rows,'onsite','设备设施')['representatives_ready'])
+
+    def test_references_must_match_their_own_group_unique_exact_integer_and_expected_count(self):
+        context={'groups':[{'name':'A','issues':[issue(1),issue(2)]},{'name':'B','issues':[issue(3)]}]}
+        valid={'selections':[{'name':'A','issue_ids':[2,1]},{'name':'B','issue_ids':[3]}]}
+        validate_selections(valid,context)
+        for replacements in ([1,3],[1,1],['1',2],[1],[],[1,2,3]):
+            bad=copy.deepcopy(valid);bad['selections'][0]['issue_ids']=replacements
+            with self.assertRaises(ValueError):validate_selections(bad,context)
+        bad=copy.deepcopy(valid);bad['selections'][1]['name']='A'
+        with self.assertRaises(ValueError):validate_selections(bad,context)
+
+    def test_manual_picks_override_ai_without_leaking_between_classes_or_duplicating_photos(self):
+        rows=[issue(i) for i in range(1,8)]
+        analysis={'groups':[{'name':'A','summary':'A','issue_ids':[1,2,3,4],'representative_issue_ids':[4,3,2,1]},
+            {'name':'B','summary':'B','issue_ids':[5,6],'representative_issue_ids':[6,5]},
+            {'name':'C','summary':'C','issue_ids':[7],'representative_issue_ids':[7]}]}
+        actual=apply_representative_overrides(analysis,rows,{'representatives':{'A':[1],'B':[2,5]}})
+        self.assertEqual(actual['groups'][0]['representative_issue_ids'],[1,4,3,2])
+        self.assertEqual(actual['groups'][1]['representative_issue_ids'],[5,6])
+        self.assertEqual([r['issue_id'] for r in photo_examples(rows,actual,3,distinct_groups=True)],[1,5,7])
+        six=photo_examples(rows,actual,6)
+        self.assertEqual([r['issue_id'] for r in six],[1,5,7,4,6,3])
+        self.assertEqual(len({r['issue_id'] for r in six}),6)
+        self.assertNotIn('representative_source',analysis['groups'][0])
+
+    def test_empty_photo_sources_do_not_call_ai_or_invent_examples(self):
+        rows=[{**issue(1),'issue_photo':''}]
+        analysis={'complete':True,'groups':[{'name':'A','summary':'A','issue_ids':[1]}]}
+        with patch('safety_report_examples.generate_representatives',side_effect=AssertionError('paidAI')):
+            result=with_representatives(analysis,rows,'onsite','设备设施')
+        self.assertTrue(result['representatives_ready'])
+        self.assertEqual(photo_examples(rows,result,3),[])
+
+    def test_manual_selection_input_validation_and_normalization(self):
+        raw={'classifications':{'onsite:设备设施':{'representatives':{'接地':[1,2]}}}}
+        self.assertEqual(normalize_settings(raw)['classifications'],raw['classifications'])
+        self.assertEqual(normalize_settings({'classifications':{'onsite:设备设施':{'representatives':{'接地':[]}}}})['classifications']['onsite:设备设施']['representatives']['接地'],[])
+        for ids in ([1,1],['1'],list(range(7))):
+            with self.assertRaises(ValueError):normalize_settings({'classifications':{'onsite:设备设施':{'representatives':{'接地':ids}}}})
