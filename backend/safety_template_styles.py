@@ -7,9 +7,12 @@ from pptx.oxml import parse_xml
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_LEGEND_POSITION, XL_LABEL_POSITION
+from pptx.enum.chart import XL_CHART_TYPE
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
-from pptx.util import Pt
+from pptx.util import Inches, Pt
 from pptx_compatibility import _font_properties
 
 FONT = 'Microsoft YaHei'
@@ -29,7 +32,7 @@ def paragraph(shape, spans, size, *, first=False, bold=False, props=None, align=
             if node.tag in {qn('a:buNone'), qn('a:buFont'), qn('a:buChar')}:
                 pr.remove(node)
         font = OxmlElement('a:buFont'); font.set('typeface', FONT)
-        char = OxmlElement('a:buChar'); char.set('char', '▶')
+        char = OxmlElement('a:buChar'); char.set('char', '■' if bullet=='square' else '▶')
         # OOXML requires bullet properties before tabs/default run properties.
         before = next((n for n in pr if n.tag in {qn('a:tabLst'), qn('a:defRPr'), qn('a:extLst')}), None)
         index = pr.index(before) if before is not None else len(pr)
@@ -116,7 +119,7 @@ def update_chart(shape, rows, series, *, pie=False, title=None):
             layout=chart._chartSpace.xpath('.//c:plotArea/c:layout')[0]
             manual=OxmlElement('c:manualLayout')
             for tag, value in [('xMode','factor'),('yMode','factor'),('wMode','factor'),('hMode','factor'),
-                ('x','.12'),('y','.28'),('w','.74'),('h','.60')]:
+                ('x','.12'),('y','.12'),('w','.74'),('h','.76')]:
                 node=OxmlElement('c:'+tag);node.set('val',value);manual.append(node)
             layout.append(manual)
         else:
@@ -140,3 +143,72 @@ def update_chart(shape, rows, series, *, pie=False, title=None):
 
 def frame_props(shape, index=0):
     return deepcopy(shape.text_frame.paragraphs[index]._p.find(qn('a:pPr')))
+
+
+def split_arrow(slide, x, y, size=.18):
+    """Wingdings' half-hollow arrow as native geometry, not a font fallback."""
+    for suffix, points, color in [('upper',[(0,0),(100,50),(22,50)],'FFFFFF'),
+            ('lower',[(0,100),(100,50),(22,50)],'000000')]:
+        builder=slide.shapes.build_freeform(0,0,scale=Inches(size)/100)
+        builder.move_to(*points[0]);builder.add_line_segments(points[1:],close=True)
+        shape=builder.convert_to_shape(Inches(x),Inches(y));shape.name='safety-split-arrow-'+suffix
+        shape.fill.solid();shape.fill.fore_color.rgb=RGBColor.from_string(color)
+        shape.line.color.rgb=RGBColor.from_string('000000');shape.line.width=Pt(.65)
+
+
+def clone_pie_chart(slide, source, x, y, w, h):
+    # Each chart owns its workbook; sharing a ChartPart would silently replace
+    # the distribution page's data when updating the analysis page.
+    data=CategoryChartData();data.categories=['暂无数据'];data.add_series('问题数量',[0])
+    shape=slide.shapes.add_chart(XL_CHART_TYPE.PIE,Inches(x),Inches(y),Inches(w),Inches(h),data)
+    chart=shape.chart
+    external=deepcopy(chart._chartSpace.find(qn('c:externalData')))
+    for child in list(chart._chartSpace):chart._chartSpace.remove(child)
+    for child in source.chart._chartSpace:
+        if child.tag!=qn('c:externalData'):chart._chartSpace.append(deepcopy(child))
+    chart._chartSpace.append(external)
+    return shape
+
+
+def compact_pie_layout(slide, shape, rows, title):
+    """Keep the title, editable 3D plot and legend in explicit, adjacent bands.
+
+    Office/WPS/LibreOffice reserve different amounts of whitespace for a native
+    3D chart's title and legend. Independent native text/shapes avoid that gap.
+    """
+    shape.chart.has_title=False;shape.chart.has_legend=False
+    for node in shape.chart._chartSpace.xpath('.//c:plotArea/c:layout'):
+        for child in list(node):node.remove(child)
+    x,w=shape.left/914400,shape.width/914400
+    heading=slide.shapes.add_textbox(Inches(x),Inches(1.36),Inches(w),Inches(.42))
+    heading.name='safety-pie-title'
+    paragraph(heading,[(title,'595959')],16,first=True,bold=True,align=PP_ALIGN.CENTER)
+    columns=3 if len(rows)>6 else 2
+    legend_rows=max(1,math.ceil(len(rows)/columns))
+    from unicodedata import east_asian_width
+    cell=w/columns
+    row_heights=[]
+    font_size=9 if len(rows)>6 else 10
+    for row in range(legend_rows):
+        names=rows[row*columns:(row+1)*columns]
+        lines=max([math.ceil(sum(1 if east_asian_width(c) in 'WF' else .55 for c in item['name']) * font_size / ((cell-.15)*72)) for item in names] or [1])
+        row_heights.append(max(.24,lines*font_size*1.25/72+.03))
+    legend_height=sum(row_heights)
+    legend_top=7.12-legend_height
+    shape.top=Inches(1.86);shape.height=Inches(legend_top-1.94)
+    palette=['4F81BD','C0504D','9BBB59','8064A2','4BACC6','F79646','A5A5A5','264478']
+    for i,row in enumerate(rows):
+        left=x+(i%columns)*cell;top=legend_top+sum(row_heights[:i//columns])
+        key=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(left),Inches(top+.07),Inches(.09),Inches(.09))
+        key.name='safety-pie-key';key.fill.solid();key.fill.fore_color.rgb=RGBColor.from_string(palette[i%len(palette)]);key.line.fill.background()
+        label=slide.shapes.add_textbox(Inches(left+.13),Inches(top),Inches(cell-.15),Inches(row_heights[i//columns]))
+        label.name='safety-pie-label'
+        label.text_frame.margin_left=label.text_frame.margin_right=0
+        label.text_frame.margin_top=label.text_frame.margin_bottom=0
+        paragraph(label,[(row['name'],'595959')],font_size,first=True)
+    if len(rows)>10:
+        labels=shape.chart._chartSpace.xpath('.//c:pie3DChart/c:dLbls')[0]
+        for index,row in enumerate(rows):
+            if row.get('percentage',100)>=3:continue
+            entry=OxmlElement('c:dLbl');idx=OxmlElement('c:idx');idx.set('val',str(index));entry.append(idx)
+            hidden=OxmlElement('c:delete');hidden.set('val','1');entry.append(hidden);labels.insert(0,entry)

@@ -1,7 +1,7 @@
 """Safety-only shared configuration. Reads and saves never generate a report."""
 import uuid
 from flask import Blueprint, jsonify, request
-from safety_report_data import serialize, scope, period_label, category_rows, focus_topics, focus_topic_options, unit, ONSITE_PAGES, VIDEO_PAGES
+from safety_report_data import serialize, scope, period_label, category_rows, focus_topics, focus_topic_options, unit, unit_key, ONSITE_PAGES, VIDEO_PAGES
 from safety_report_analysis import (load_settings, normalize_settings, save_settings, cached_analysis,
     effective_analysis, analyze)
 from report_ai_memory import fingerprint, begin_report_ai_memory, end_report_ai_memory, report_ai_generation_log
@@ -49,6 +49,12 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                 if new['station_ids'] != settings['station_ids'] and new['station_ids'] is not None and not set(new['station_ids']).issubset(available_stations):
                     raise ValueError('数据来源包含当前范围不可用的站点。')
                 eligible = selected_issues(all_issues, new)
+                if new['typical_video_category'] and new['typical_video_category'] != settings['typical_video_category']:
+                    video = category_rows(eligible,'video','__typical__')
+                    analysis = cached_analysis(cur,video,'video','__typical__')
+                    analysis = effective_analysis(analysis,video,new['classifications'].get('video:__typical__') or {})
+                    if not analysis.get('complete') or new['typical_video_category'] not in {g['name'] for g in analysis['groups']}:
+                        raise ValueError('视频典型问题类别已变化，请先读取完整分类后再选择。')
                 for mode, issue_id in new['typical_issue_ids'].items():
                     if issue_id != settings['typical_issue_ids'].get(mode) and not any(row['issue_id'] == issue_id and row['mode'] == mode for row in eligible):
                         raise ValueError('典型问题必须来自对应现场或视频问题库。')
@@ -85,7 +91,7 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                     'issues': chosen, 'analysis': effective_analysis(value, chosen, settings['classifications'].get(key) or {})})
             conn.commit()
             return jsonify(success=True, settings=settings, meta=meta, issues=issues, categories=categories,
-                stations=list(candidates.values()), focus_categories=focus_options, focus_category=focus,
+                stations=sorted(candidates.values(), key=lambda s:(unit_key(s['unit_name']),s['station_name'] or '')), focus_categories=focus_options, focus_category=focus,
                 summary={'region_count': len({row['unit_name'] for row in candidates.values() if settings['station_ids'] is None or row['station_id'] in settings['station_ids']}),
                     'station_count': len({row['station_id'] for row in issues} | {row['station_id'] for row in selected_visits}),
                     'issue_count': len(issues), 'onsite_count': sections[0]['total_issue_count'], 'video_count': sections[1]['total_issue_count']},

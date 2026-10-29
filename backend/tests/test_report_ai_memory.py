@@ -377,6 +377,35 @@ class MemoryPostgresTest(unittest.TestCase):
                 finally: end_report_ai_memory(token)
         self.assertEqual(client.chat.completions.create.call_count, 2)
 
+    def test_video_theme_policy_does_not_reuse_old_fine_groups_but_new_results_are_persistent(self):
+        from safety_report_analysis import generate_analysis, analysis_context, cached_analysis
+        from safety_video_themes import VIDEO_POLICY
+        from psycopg2.extras import RealDictCursor
+        from unittest.mock import MagicMock
+        client=MagicMock();client.with_options.return_value=client
+        payload={'groups':[{'name':'检维修未布置消防隔离','summary':'作业未设置隔离或消防防护','issue_ids':[1]}],
+            'causes':['可能执行不到位'],'suggestions':[]}
+        client.chat.completions.create.return_value.choices[0].message.content=json.dumps(payload)
+        rows=[{'issue_id':1,'description':'检修未围挡','category_name':'设备维修作业','topic':'设备维修作业'}]
+        context=analysis_context(rows,'video','__typical__')
+        old={k:v for k,v in context.items() if k not in ('classification_policy','grouping_guidance')}
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            for number,ctx in enumerate([old,context,context]):
+                memory=self.new_job('safety_quality');token=begin_report_ai_memory(self.connect,memory.task_id,'safety_quality')
+                try:result=generate_analysis(ctx)
+                finally:end_report_ai_memory(token)
+                if number==2:self.assertFalse(result['usage']['ai_called'])
+                conn=self.connect()
+                try:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        saved=cached_analysis(cur,rows,'video','__typical__')
+                        self.assertEqual(saved['complete'],number>0)
+                        if number>0:
+                            self.assertEqual(result['payload']['analysis_policy'],VIDEO_POLICY)
+                            self.assertEqual(saved['groups'][0]['name'],'作业隔离与消防防护不到位')
+                finally:conn.close()
+        self.assertEqual(client.chat.completions.create.call_count,2)
+
     def test_failed_safety_repair_is_not_cached_and_failed_calls_remain_in_log(self):
         from safety_report_analysis import generate_analysis, analysis_context
         from unittest.mock import MagicMock

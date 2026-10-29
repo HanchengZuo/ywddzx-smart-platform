@@ -89,3 +89,23 @@ export function safetyIssueSearch(issues, keyword) {
         ),
       )
 }
+
+export function videoTypicalGroups(category) {
+  const eligible = new Set((category?.issues || []).map((i) => Number(i.issue_id)))
+  return (category?.analysis?.groups || [])
+    .map((group) => {
+      const issue_ids = [...new Set(group.issue_ids.map(Number))].filter((id) => eligible.has(id))
+      return {
+        ...group,
+        issue_ids,
+        count: issue_ids.length,
+        percentage: eligible.size ? ((100 * issue_ids.length) / eligible.size).toFixed(1) : '0.0',
+      }
+    })
+    .filter((group) => group.count)
+    .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+export function videoTypicalSelection(saved, groups) {
+  return groups.find((group) => group.name === saved) || groups[0] || null
+}

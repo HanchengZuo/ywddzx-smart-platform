@@ -10,6 +10,8 @@ import {
   safetyAnalysisReady,
   safetySubgroups,
   safetyIssueSearch,
+  videoTypicalGroups,
+  videoTypicalSelection,
 } from '../src/utils/safetyReportConfig.js'
 import { reportConfigurationDiffers } from '../src/utils/reportConfiguration.js'
 
@@ -142,4 +144,53 @@ test('candidate search keeps mode filtering and searches ID, station and descrip
     [],
   )
   assert.deepEqual(safetyIssueSearch(rows, ' '), rows)
+})
+
+test('video chooses a category by frequency or saved name, not a single issue', () => {
+  const groups = videoTypicalGroups({
+    issues: [{ issue_id: 1 }, { issue_id: 2 }, { issue_id: 3 }],
+    analysis: {
+      groups: [
+        { name: '着装', issue_ids: [3] },
+        { name: '隔离', issue_ids: [1, 2, 999] },
+      ],
+    },
+  })
+  assert.deepEqual(
+    groups.map((g) => [g.name, g.count, g.percentage]),
+    [
+      ['隔离', 2, '66.7'],
+      ['着装', 1, '33.3'],
+    ],
+  )
+  assert.equal(videoTypicalSelection('', groups).name, '隔离')
+  assert.equal(videoTypicalSelection('着装', groups).name, '着装')
+  assert.equal(videoTypicalSelection('旧分类', groups).name, '隔离')
+})
+
+test('new default video selection does not mark an unchanged legacy snapshot dirty', () => {
+  const settings = {
+    station_ids: null,
+    typical_issue_ids: {},
+    focus_category: '',
+    classifications: {},
+  }
+  const dates = { date_from: '2026-09-01', date_to: '2026-09-30' }
+  const report = { month: '2026-09', snapshot: dates, safety_settings: settings }
+  assert.equal(
+    reportConfigurationDiffers(report, {
+      ...dates,
+      type: 'safety_quality',
+      safety_settings: { ...settings, typical_video_category: '' },
+    }),
+    false,
+  )
+  assert.equal(
+    reportConfigurationDiffers(report, {
+      ...dates,
+      type: 'safety_quality',
+      safety_settings: { ...settings, typical_video_category: '着装' },
+    }),
+    true,
+  )
 })

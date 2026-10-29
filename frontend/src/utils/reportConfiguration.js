@@ -24,6 +24,7 @@ const categoriesChanged = (current = [], saved = []) => {
   const previous = new Map(saved.map(item => [Number(item.issue_id), String(item.effective_category || '')]))
   return current.some(item => previous.get(Number(item.issue_id)) !== String(item.effective_category || ''))
 }
+const safetySettings = (value = {}) => ({ ...value, typical_video_category: value.typical_video_category || '' })
 
 // Compare effective inputs, not save timestamps, actor names, AI provenance or revision counters.
 export function reportConfigurationDiffers(report, current) {
@@ -42,7 +43,7 @@ export function reportConfigurationDiffers(report, current) {
   }
   if (current.type === 'safety_quality') {
     return current.safety_settings !== null && current.safety_settings !== undefined
-      && !equal(current.safety_settings, context.safety_settings || report.safety_settings || {})
+      && !equal(safetySettings(current.safety_settings), safetySettings(context.safety_settings || report.safety_settings || {}))
   }
   if (current.type === 'equipment_facilities') {
     const library = context.issue_library || report.issue_library_snapshot
