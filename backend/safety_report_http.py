@@ -1,7 +1,7 @@
 """Safety-only shared configuration. Reads and saves never generate a report."""
 import uuid
 from flask import Blueprint, jsonify, request
-from safety_report_data import serialize, scope, period_label, category_rows, focus_topics, unit, ONSITE_PAGES, VIDEO_PAGES
+from safety_report_data import serialize, scope, period_label, category_rows, focus_topics, focus_topic_options, unit, ONSITE_PAGES, VIDEO_PAGES
 from safety_report_analysis import (load_settings, normalize_settings, save_settings, cached_analysis,
     effective_analysis, analyze)
 from report_ai_memory import fingerprint, begin_report_ai_memory, end_report_ai_memory, report_ai_generation_log
@@ -12,18 +12,19 @@ def selected_issues(rows, settings):
     return [row for row in rows if ids is None or row['station_id'] in ids]
 
 
-def config_categories(issues, settings):
+def config_categories(issues, settings, catalog=None):
     options = [('onsite', '__typical__', '现场典型问题'), ('video', '__typical__', '视频典型问题')]
     options += [('onsite', key, title) for key, title, _ in ONSITE_PAGES]
     options += [('video', key, title) for key, title in VIDEO_PAGES]
-    focus_options = focus_topics(issues)
+    ranked = focus_topics(issues)
+    focus_options = focus_topic_options(issues, catalog)
     focus = settings['focus_category']
-    if focus not in {item['name'] for item in focus_options}: focus = focus_options[0]['name'] if focus_options else ''
+    if focus not in {item['name'] for item in ranked}: focus = ranked[0]['name'] if ranked else ''
     if focus: options.append(('onsite', 'topic:' + focus, '1. 月度重点：' + focus))
     return options, focus_options, focus
 
 
-def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage):
+def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage, fetch_topics=None):
     blueprint = Blueprint('safety_report', __name__)
 
     def read_context(cur, source):
@@ -74,7 +75,7 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                 candidates.setdefault(station_id, {'station_id': station_id, 'station_name': row.get('station_name'),
                     'unit_name': row.get('unit_name') or unit(row), 'onsite_count': 0, 'video_count': 0})
             for row in all_issues: candidates[row['station_id']][row['mode'] + '_count'] += 1
-            options, focus_options, focus = config_categories(issues, settings)
+            options, focus_options, focus = config_categories(issues, settings, fetch_topics(cur, user) if fetch_topics else None)
             categories = []
             for mode, category, name in options:
                 chosen = category_rows(issues, mode, category)
@@ -99,6 +100,36 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             if conn: conn.rollback()
             app.logger.exception('Safety configuration failed')
             return jsonify(success=False, error='安全报告配置读取或保存失败，请重试。'), 500
+        finally:
+            if conn: conn.close()
+
+    @blueprint.get('/api/inspection-reports/safety-analysis')
+    def read_analysis():
+        conn = None
+        try:
+            conn = connect(); cur = conn.cursor()
+            _, _, _, all_issues, _, meta, settings = read_context(cur, request.args)
+            issues = selected_issues(all_issues, settings)
+            mode, category = request.args.get('mode'), str(request.args.get('category') or '')
+            options, focuses, _ = config_categories(issues, settings)
+            allowed = {(m, c) for m, c, _ in options} | {('onsite', 'topic:' + item['name']) for item in focuses}
+            if (mode, category) not in allowed: raise ValueError('请选择当前报告的有效检查主题。')
+            chosen = category_rows(issues, mode, category)
+            value = cached_analysis(cur, chosen, mode, category)
+            key = mode + ':' + category
+            value = effective_analysis(value, chosen, settings['classifications'].get(key) or {})
+            conn.commit()
+            return jsonify(success=True, analysis=value, issues=chosen, revision=meta['revision'], data_signature=fingerprint(all_issues))
+        except PermissionError as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False, error=str(exc)), 403
+        except (ValueError, TypeError) as exc:
+            if conn: conn.rollback()
+            return jsonify(success=False, error=str(exc)), 400
+        except Exception:
+            if conn: conn.rollback()
+            app.logger.exception('Safety analysis read failed')
+            return jsonify(success=False, error='主题分析读取失败，请稍后重试。'), 500
         finally:
             if conn: conn.close()
 

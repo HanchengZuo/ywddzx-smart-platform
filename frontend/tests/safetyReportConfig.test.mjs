@@ -6,6 +6,10 @@ import {
   manualClassificationChanges,
   safetyFocusSelection,
   safetyFocusCategory,
+  safetyFocusName,
+  safetyAnalysisReady,
+  safetySubgroups,
+  safetyIssueSearch,
 } from '../src/utils/safetyReportConfig.js'
 import { reportConfigurationDiffers } from '../src/utils/reportConfiguration.js'
 
@@ -81,4 +85,61 @@ test('safety configuration compiles with actual Vue bindings and no automatic AI
   assert.match(source, /:disabled="!canGenerate \|\| analyzing/)
   assert.match(source, /\/safety-analysis/)
   assert.match(source, /signal: controller.signal/)
+})
+
+test('monthly theme defaults to highest frequency and excludes empty catalog entries', () => {
+  const options = [
+    { name: '空主题', count: 0 },
+    { name: '污染防治', count: 3 },
+    { name: '设备设施', count: 4 },
+  ]
+  assert.equal(safetyFocusName('', options), '设备设施')
+  assert.equal(safetyFocusName('污染防治', options), '污染防治')
+  assert.equal(safetyFocusName('空主题', options), '设备设施')
+  assert.equal(safetyFocusName('', []), '')
+})
+
+test('analysis is ready only with complete unique coverage, never from manual overrides alone', () => {
+  const category = {
+    issues: [{ issue_id: 1 }, { issue_id: 2 }],
+    analysis: { groups: [{ issue_ids: [1, 2] }] },
+  }
+  assert.equal(safetyAnalysisReady(category), true)
+  category.analysis.groups[0].issue_ids = [1, 1]
+  assert.equal(safetyAnalysisReady(category), false)
+  category.analysis.groups[0].issue_ids = [1, 99]
+  assert.equal(safetyAnalysisReady(category), false)
+  category.analysis.groups[0].issue_ids = [1, 2]
+  category.analysis.complete = false
+  assert.equal(safetyAnalysisReady(category), false)
+  assert.equal(safetyAnalysisReady({ issues: [], analysis: { groups: [] } }), false)
+})
+
+test('subgroup navigation is isolated to selected theme and supports manual empty categories', () => {
+  const category = { issues: [{ issue_id: 1 }, { issue_id: 2 }] }
+  const manual = {
+    assignments: { 1: '接地', 2: '接地', 3: '其他主题' },
+    summaries: { 接地: '接地缺失', 新类别: '' },
+  }
+  assert.deepEqual(safetySubgroups(category, manual), [
+    { name: '接地', count: 2 },
+    { name: '新类别', count: 0 },
+  ])
+})
+
+test('candidate search keeps mode filtering and searches ID, station and description locally', () => {
+  const rows = [
+    { issue_id: 8534, station_name: '龚路', description: '接地缺失', mode: 'onsite' },
+    { issue_id: 9001, station_name: '乐都', description: '警示标志', mode: 'video' },
+  ]
+  for (const query of ['8534', '龚路', '接地'])
+    assert.deepEqual(safetyIssueSearch(rows, query), [rows[0]])
+  assert.deepEqual(
+    safetyIssueSearch(
+      rows.filter((i) => i.mode === 'video'),
+      '接地',
+    ),
+    [],
+  )
+  assert.deepEqual(safetyIssueSearch(rows, ' '), rows)
 })
