@@ -747,6 +747,9 @@
         </div>
       </div>
 
+      <TableHorizontalNavigator :target="tableScrollRef" :disabled="tableFullscreen || isMobileView || columnSettingsOpen"
+        :refresh-key="`${tableZoom}:${visibleIssueColumns.length}:${page}`" />
+
       <div class="pagination-bar">
         <div class="pagination-summary">共 {{ totalRecords }} 条</div>
         <div class="pagination-controls">
@@ -1332,6 +1335,7 @@ import { isSupervisorRole } from '@/utils/roles'
 import { reviewOptionsFor } from '../../utils/issueWorkflow'
 import FilterSummary from '@/components/FilterSummary.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
+import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 import { computed, nextTick, ref, shallowRef, watch, onMounted, onBeforeUnmount } from 'vue'
 import axios from 'axios'
