@@ -625,12 +625,14 @@
     </div>
   </div>
   <AppealSubmitDialog v-if="appealItem" :item="appealItem" @close="appealItem = null" @submitted="appealSubmitted" />
+  <StationLocationReminder ref="stationLocationRef" />
 </template>
 
 <script setup>
 import { useRouter } from 'vue-router'
 import { isSupervisorRole } from '@/utils/roles'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
+import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import InspectionPhotoUpload from '../../components/InspectionPhotoUpload.vue'
 import InspectionPhotoPreview from '../../components/InspectionPhotoPreview.vue'
 import WorkflowDeadline from '../../components/WorkflowDeadline.vue'
@@ -686,6 +688,7 @@ const myIssuesEmptyDescription = computed(() => (
 ))
 const loading = ref(false)
 const submittingAction = ref(false)
+const stationLocationRef = ref(null)
 const issues = ref([])
 const pageRef = ref(null)
 let actionListPosition = null
@@ -1405,6 +1408,10 @@ const submitAction = async () => {
       showActionToast('请上传复核照片。', 'error')
       return
     }
+
+    const item = actionDrawer.value.item
+    if (!await stationLocationRef.value.confirm({ id: item.station_id, station_name: item.station,
+      longitude: item.station_longitude, latitude: item.station_latitude })) return
 
     const formData = new FormData()
     formData.append('user_id', userId)

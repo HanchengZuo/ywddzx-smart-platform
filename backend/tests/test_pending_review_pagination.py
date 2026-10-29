@@ -40,7 +40,7 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 stack.enter_context(patch('app.get_authenticated_request_user_id', return_value=7))
                 conn = MagicMock(); cur = conn.cursor.return_value
                 cur.fetchone.side_effect = [{'id': 7, 'role': role}, {'total': 11}]
-                cur.fetchall.return_value = [{'id': 1, 'checklist_mode': 'online'}]
+                cur.fetchall.return_value = [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}]
                 stack.enter_context(patch('app.get_db_connection', return_value=conn))
                 tags = stack.enter_context(patch('app.attach_internal_standard_tags_to_issue_rows'))
                 stack.enter_context(patch('app.normalize_issue_row_for_response', side_effect=lambda row, *args: row))
@@ -55,10 +55,13 @@ class PendingReviewPaginationTests(unittest.TestCase):
                 self.assertIn('WITH page_ids AS MATERIALIZED', query)
                 self.assertIn('LIMIT %s OFFSET %s', query)
                 self.assertIn('t.checklist_mode', query)
+                self.assertIn('s.longitude AS station_longitude', query)
+                self.assertIn('s.latitude AS station_latitude', query)
+                self.assertEqual((result['items'][0]['station_longitude'], result['items'][0]['station_latitude']), (121.5, 31.2))
                 self.assertEqual(result['items'][0]['checklist_mode'],'online')
                 self.assertEqual(params[-2:], [5, 10])
                 self.assertEqual(params[:-2], ['%接地%', '%接地%'])
-                self.assertEqual(tags.call_args.args[1], [{'id': 1, 'checklist_mode': 'online'}])
+                self.assertEqual(tags.call_args.args[1], [{'id': 1, 'checklist_mode': 'online', 'station_longitude': 121.5, 'station_latitude': 31.2}])
                 conn.commit.assert_not_called()
 
     def test_invalid_keyword_has_clear_error_and_does_not_query_the_queue(self):

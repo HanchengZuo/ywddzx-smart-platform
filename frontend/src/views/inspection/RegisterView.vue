@@ -273,6 +273,7 @@
     </div>
 
     <RegistrationDuplicateDialog v-if="duplicateWarning" :warning="duplicateWarning" @resolve="resolveDuplicateWarning" />
+    <StationLocationReminder ref="stationLocationRef" />
   </div>
 </template>
 
@@ -281,6 +282,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RegisterStandardSummary from '@/components/RegisterStandardSummary.vue'
 import InspectionPhotoUpload from '@/components/InspectionPhotoUpload.vue'
 import RegistrationDuplicateDialog from '@/components/RegistrationDuplicateDialog.vue'
+import StationLocationReminder from '@/components/StationLocationReminder.vue'
 import { standardCode, isStandardSelected, toggleStandardId, buildRegistrationSelections, registrationIssueCount, restoreStandardIds } from '@/utils/registerStandardSelection'
 import { createLatestRequest } from '@/utils/latestRequest'
 import axios from 'axios'
@@ -351,6 +353,7 @@ const showSubmitToast = (message, type = 'info') => {
 }
 const createdTime = ref('')
 const submitting = ref(false)
+const stationLocationRef = ref(null)
 const stations = ref([])
 const standards = ref([])
 const standardFields = ref([])
@@ -1095,6 +1098,8 @@ const handleSubmit = async () => {
       submitMessageTimer = null
     }
     submitMessage.value = ''
+
+    if (!await stationLocationRef.value.confirm(stations.value.find(item => String(item.id) === String(form.value.stationId)))) return
 
     const formData = new FormData()
     formData.append('inspector_id', inspectorId)
