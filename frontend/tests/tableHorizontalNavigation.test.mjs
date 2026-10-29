@@ -8,7 +8,7 @@ const options = { rect: { left: 300, right: 1400, top: 300, bottom: 5000 },
   viewport: { left: 272, right: 1440, top: 76, bottom: 900 }, scrollWidth: 4000, clientWidth: 1100, scrollLeft: 0 }
 test('long table has an accessible bottom-of-viewport control at its actual table width', () => {
   const state = horizontalNavigationState(options)
-  assert.deepEqual(state, { visible: true, max: 2900, value: 0, left: 300, top: 836, width: 1100 })
+  assert.deepEqual(state, { visible: true, max: 2900, value: 0, left: 300, top: 864, width: 1100 })
   assert.equal(horizontalNavigationState({ ...options, rect: { ...options.rect, top: -2200 } }).visible, true)
 })
 test('native scrollbar takes over at the table end; offscreen and non-overflowing tables never show a duplicate', () => {
@@ -23,7 +23,7 @@ test('native scrollbar takes over at the table end; offscreen and non-overflowin
 test('sidebar resizing and clipped table bounds keep the bar inside the active workspace', () => {
   const state = horizontalNavigationState({ ...options, rect: { left: 40, right: 1600, top: -50, bottom: 3000 },
     viewport: { left: 272, right: 1200, top: 76, bottom: 720 } })
-  assert.equal(state.left, 272); assert.equal(state.width, 928); assert.equal(state.top, 656)
+  assert.equal(state.left, 272); assert.equal(state.width, 928); assert.equal(state.top, 684)
   assert.equal(state.visible, true)
 })
 test('column changes clamp positions without fabricating extra scroll range', () => {
@@ -31,7 +31,7 @@ test('column changes clamp positions without fabricating extra scroll range', ()
   assert.equal(horizontalNavigationState({ ...options, scrollLeft: -5 }).value, 0)
   assert.equal(horizontalNavigationState({ ...options, scrollWidth: 1000, scrollLeft: 3000 }).max, 0)
 })
-test('keyboard and buttons support bounded quick browsing without hijacking tab or vertical navigation', () => {
+test('keyboard supports bounded quick browsing without hijacking tab or vertical navigation', () => {
   for (const [key, expected] of [['Home', 0], ['End', 2900], ['ArrowLeft', 420], ['ArrowRight', 580], ['PageUp', 0], ['PageDown', 1380]]) {
     assert.equal(horizontalNavigationDestination(key, 500, 2900, 1100), expected)
   }
@@ -50,6 +50,11 @@ test('navigator compiles with real bindings, accessible controls, batched observ
   assert.match(source, /observer\?\.disconnect\(\)/)
   assert.match(source, /source.removeEventListener\('scroll', schedule\)/)
   assert.match(source, /aria-label="问题清单横向位置"/)
+  assert.doesNotMatch(descriptor.template.content, /<(?:span|button|svg)\b/)
+  assert.doesNotMatch(source, /movePage|navigation-label|box-shadow|linear-gradient/)
+  assert.match(source, /height: 24px/)
+  assert.match(source, /slider-runnable-track \{ height: 6px/)
+  assert.match(source, /slider-thumb \{ width: 60px; height: 8px/)
   assert.doesNotMatch(source, /setInterval|MutationObserver|addEventListener\('wheel'/)
   const page = readFileSync(new URL('../src/views/inspection/IssuesView.vue', import.meta.url), 'utf8')
   assert.match(page, /:disabled="tableFullscreen \|\| isMobileView \|\| columnSettingsOpen"/)

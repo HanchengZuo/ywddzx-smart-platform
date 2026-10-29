@@ -1,4 +1,4 @@
-export const HORIZONTAL_NAV_HEIGHT = 52
+export const HORIZONTAL_NAV_HEIGHT = 24
 
 export function horizontalNavigationState({ rect, viewport, scrollWidth, clientWidth, scrollLeft }) {
   const max = Math.max(0, scrollWidth - clientWidth)
