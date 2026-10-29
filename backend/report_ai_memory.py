@@ -107,7 +107,7 @@ class ReportMemory:
             "task_id": self.task_id,
             "events": copy.deepcopy(self.events),
             "summary": {
-                "ai_calls": sum(bool(e.get("ai_called")) for e in self.events),
+                "ai_calls": sum(int(e.get('request_count', bool(e.get('ai_called'))) or 0) for e in self.events),
                 "reuse_steps": sum(e["outcome"] in {"cache_hit", "classification_reuse"}
                                   for e in self.events),
                 "reused_classifications": sum(e.get("issue_count", 0) for e in self.events
@@ -168,8 +168,12 @@ class ReportMemory:
                     issue_count=len(issue_ids(context)))
         try:
             result = function(context)
-        except Exception:
+        except Exception as exc:
+            usage = getattr(exc, 'ai_usage', {})
             self.record(operation, "error", "AI处理异常，未保存可复用结果。",
+                        ai_called=bool(usage.get('ai_called')), request_count=usage.get('request_count', 0),
+                        repair_count=usage.get('repair_count', 0), model=model,
+                        pricing_known=usage.get('pricing_known', True), cost_est=usage.get('total_cost_est', 0),
                         elapsed_ms=round((time.monotonic() - started) * 1000))
             raise
         usage = result.get("usage") or {}
@@ -177,6 +181,8 @@ class ReportMemory:
                     "AI处理完成，成功结果已进入持久化复用流程。" if successful(result)
                     else "AI未返回有效结果；本地兜底不会作为成功AI记忆保存。",
                     issue_count=len(issue_ids(context)), ai_called=bool(usage.get("ai_called")),
+                    request_count=usage.get('request_count', int(bool(usage.get('ai_called')))),
+                    repair_count=usage.get('repair_count', 0),
                     model=model, elapsed_ms=round((time.monotonic() - started) * 1000),
                     input_tokens_est=usage.get("input_tokens_est", 0),
                     output_tokens_est=usage.get("output_tokens_est", 0),

@@ -353,6 +353,50 @@ class MemoryPostgresTest(unittest.TestCase):
             self.assertEqual(value['groups'][0]['name'], '人工分类')
         self.assertEqual(client.chat.completions.create.call_count, 1)
 
+    def test_repaired_safety_partition_is_reused_and_counts_actual_requests(self):
+        from safety_report_analysis import generate_analysis, analysis_context
+        from unittest.mock import MagicMock
+        client = MagicMock(); client.with_options.return_value = client
+        original = {'groups': [{'name': '接地', 'summary': '接地缺失', 'issue_ids': [1]}],
+            'causes': ['可能检查遗漏，需核实'], 'suggestions': []}
+        repair = {'assignments': {'R1': {'name': '维护', 'summary': '维护遗漏'}}}
+        responses = []
+        for value in [original, repair]:
+            response = MagicMock(); response.choices[0].message.content = json.dumps(value); responses.append(response)
+        client.chat.completions.create.side_effect = responses
+        context = analysis_context([{'issue_id': i, 'description': '缺失', 'category_name': '接地', 'topic': '设备设施'} for i in (1, 2)], 'onsite', '设备设施')
+        with patch('ai_utils.get_deepseek_client', return_value=client), patch('ai_routing._loader', None):
+            for attempt in range(2):
+                memory = self.new_job('safety_quality')
+                token = begin_report_ai_memory(self.connect, memory.task_id, 'safety_quality')
+                try:
+                    result = generate_analysis(context)
+                    self.assertEqual(set(i for g in result['payload']['groups'] for i in g['issue_ids']), {1, 2})
+                    self.assertEqual(report_ai_generation_log()['summary']['ai_calls'], 2 if attempt == 0 else 0)
+                    if attempt: self.assertFalse(result['usage']['ai_called'])
+                finally: end_report_ai_memory(token)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
+    def test_failed_safety_repair_is_not_cached_and_failed_calls_remain_in_log(self):
+        from safety_report_analysis import generate_analysis, analysis_context
+        from unittest.mock import MagicMock
+        client = MagicMock(); client.with_options.return_value = client
+        response = MagicMock(); response.choices[0].message.content = '{}'
+        client.chat.completions.create.return_value = response
+        context = analysis_context([{'issue_id': i, 'description': '缺失', 'category_name': '接地', 'topic': '设备设施'} for i in range(10)], 'onsite', '设备设施')
+        memory = self.new_job('safety_quality')
+        token = begin_report_ai_memory(self.connect, memory.task_id, 'safety_quality')
+        try:
+            with patch('ai_utils.get_deepseek_client', return_value=client), patch('ai_routing._loader', None):
+                with self.assertRaisesRegex(ValueError, '未完成核验'): generate_analysis(context)
+            log = report_ai_generation_log()
+            self.assertEqual(log['summary']['ai_calls'], 5)
+            self.assertEqual(log['events'][-1]['outcome'], 'error')
+            self.assertEqual(log['events'][-1]['repair_count'], 4)
+            with self.engine.connect() as conn:
+                self.assertEqual(conn.execute(sa.text('SELECT count(*) FROM inspection_report_ai_memory')).scalar(), 0)
+        finally: end_report_ai_memory(token)
+
     def test_context_scope_snapshot_and_existing_classification_reuse_logging(self):
         memory = self.new_job()
         token = begin_report_ai_memory(self.connect, memory.task_id, "finance")

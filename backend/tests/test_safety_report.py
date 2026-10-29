@@ -240,6 +240,23 @@ class SafetyHttpTest(unittest.TestCase):
                 self.assertEqual(save.call_args.args[-1]['id'], 7)
                 self.workspace.assert_called_once()
 
+    def test_topic_analysis_read_is_readonly_permission_checked_and_never_calls_ai(self):
+        from report_ai_memory import fingerprint
+        analysis = {'groups': [], 'complete': False, 'classified_count': 0, 'issue_count': 1}
+        with patch('safety_report_http.load_settings', return_value={'settings': {}, 'revision': 3}), patch(
+            'safety_report_http.cached_analysis', return_value=analysis), patch('safety_report_http.analyze') as ai:
+            result = self.client.get('/api/inspection-reports/safety-analysis?mode=onsite&category=topic:设备设施')
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.get_json()['revision'], 3)
+            self.assertEqual(result.get_json()['data_signature'], fingerprint([serialize(raw_issue())]))
+            self.assertFalse(result.get_json()['analysis']['complete'])
+            self.assertEqual(len(result.get_json()['issues']), 1)
+            self.assertEqual(self.client.get('/api/inspection-reports/safety-analysis?mode=onsite&category=topic:不存在').status_code, 400)
+            ai.assert_not_called(); self.workspace.assert_not_called()
+            self.permission.assert_not_called()  # Page authorization is enough for a free read.
+        self.authorize.side_effect = PermissionError('无查看权限')
+        self.assertEqual(self.client.get('/api/inspection-reports/safety-analysis').status_code, 403)
+
     def test_no_page_permission_and_no_generation_permission(self):
         self.authorize.side_effect = PermissionError('无查看权限')
         self.assertEqual(self.client.get('/api/inspection-reports/safety-config').status_code, 403)

@@ -32,8 +32,9 @@
           <small>MONTHLY FOCUS</small>
           <h3>月度重点与问题再分类</h3>
           <p>
-            当前重点：{{ data.focus_category || '暂无现场问题' }}。查看 AI
-            依据，调整每条问题的表现分类及共性描述。
+            当前重点：{{
+              data.focus_category || '暂无现场问题'
+            }}。先选择检查主题，再查看或生成该主题的问题表现分类。
           </p>
           <button :disabled="busy" @click="open('analysis')">查看与调整分析</button>
         </article>
@@ -104,147 +105,276 @@
               </div>
             </template>
             <template v-else-if="active === 'typical'">
-              <div class="safety-typicals">
-                <article v-for="mode in modes" :key="mode.key">
-                  <h3>{{ mode.label }}典型问题</h3>
-                  <label
-                    >代表案例<select
-                      :value="typicalSelection(mode.key)"
-                      @change="setTypical(mode.key, $event.target.value)"
+              <div class="safety-choice-layout">
+                <nav class="safety-mode-nav" aria-label="典型问题检查方式">
+                  <small>检查方式</small>
+                  <button
+                    v-for="mode in modes"
+                    :key="mode.key"
+                    :class="{ selected: typicalMode === mode.key }"
+                    @click="selectTypicalMode(mode.key)"
+                  >
+                    <span
+                      ><b>{{ mode.label }}检查</b
+                      ><small>{{ modeIssues(mode.key).length }} 条候选问题</small></span
                     >
-                      <option value="">自动采用最高频问题表现中的代表案例</option>
-                      <option
-                        v-for="issue in modeIssues(mode.key)"
-                        :key="issue.issue_id"
-                        :value="issue.issue_id"
+                    <span class="mode-count">{{ modeIssues(mode.key).length }}</span>
+                  </button>
+                  <p>现场、视频各选一条。保存只记录选择，不调用 AI。</p>
+                </nav>
+                <section class="safety-choice-content">
+                  <div class="safety-list-heading">
+                    <div>
+                      <small>典型案例选择</small>
+                      <h3>{{ typicalMode === 'onsite' ? '现场' : '视频' }}问题库</h3>
+                    </div>
+                    <button @click="setTypical(typicalMode, '')">使用自动推荐</button>
+                  </div>
+                  <div class="safety-current-choice">
+                    <span>当前选用</span>
+                    <strong v-if="typical(typicalMode)"
+                      >#{{ typical(typicalMode).issue_id }} ·
+                      {{ typical(typicalMode).station_name }}</strong
+                    >
+                    <strong v-else>生成报告时自动推荐，也可在下方人工选择</strong>
+                    <small>{{ typicalSelection(typicalMode) ? '人工选择' : '自动推荐' }}</small>
+                  </div>
+                  <input
+                    v-model="issueKeyword"
+                    type="search"
+                    placeholder="搜索问题ID、站点或问题描述"
+                    aria-label="搜索典型问题"
+                  />
+                  <p class="safety-list-count">
+                    {{ typicalCandidates.length }} 条问题 · 点击照片可放大
+                  </p>
+                  <ul class="safety-candidate-list">
+                    <li
+                      v-for="issue in typicalCandidates"
+                      :key="issue.issue_id"
+                      :class="[
+                        'safety-candidate',
+                        { chosen: typical(typicalMode)?.issue_id === issue.issue_id },
+                      ]"
+                    >
+                      <input
+                        :id="'safety-typical-' + issue.issue_id"
+                        type="radio"
+                        :name="'safety-typical-' + typicalMode"
+                        :checked="typical(typicalMode)?.issue_id === issue.issue_id"
+                        @change="setTypical(typicalMode, issue.issue_id)"
+                      />
+                      <label
+                        :for="'safety-typical-' + issue.issue_id"
+                        class="safety-candidate-copy"
                       >
-                        #{{ issue.issue_id }} · {{ issue.station_name }} ·
-                        {{ issue.description.slice(0, 55) }}
-                      </option>
-                    </select></label
-                  >
-                  <template v-if="typical(mode.key)"
-                    ><button class="safety-photo" @click="emit('photo', typical(mode.key))">
-                      <img :src="resolveImage(typical(mode.key).issue_photo)" alt="典型问题照片" />
-                    </button>
-                    <p>{{ typical(mode.key).description }}</p>
-                    <small
-                      >{{ typical(mode.key).station_name }} · #{{
-                        typical(mode.key).issue_id
-                      }}</small
-                    ></template
-                  >
-                  <p v-else>尚无可用典型问题，生成报告时 AI 自动分析；也可从上方手动指定。</p>
-                </article>
+                        <span
+                          ><b>#{{ issue.issue_id }}</b
+                          ><strong>{{ issue.station_name }}</strong
+                          ><em v-if="typical(typicalMode)?.issue_id === issue.issue_id"
+                            >已选用</em
+                          ></span
+                        >
+                        <p>{{ issue.description }}</p>
+                        <small>{{ issue.topic }}</small>
+                      </label>
+                      <button
+                        v-if="issue.issue_photo"
+                        class="safety-photo safety-list-photo"
+                        :aria-label="'放大问题' + issue.issue_id + '的照片'"
+                        @click="emit('photo', issue)"
+                      >
+                        <img
+                          :src="resolveImage(issue.issue_photo)"
+                          :alt="'问题 ' + issue.issue_id"
+                          loading="lazy"
+                        />
+                      </button>
+                      <span v-else class="safety-missing-photo">暂无照片</span>
+                    </li>
+                  </ul>
+                  <div v-if="!typicalCandidates.length" class="safety-no-items">
+                    没有符合条件的问题，请调整关键词。
+                  </div>
+                </section>
               </div>
             </template>
             <template v-else>
               <div class="safety-focus">
-                <label
-                  >月度重点工作类<select
-                    :value="safetyFocusSelection(draft.focus_category, data.focus_categories)"
-                    @change="setFocus($event.target.value)"
-                  >
-                    <option value="">自动采用问题数量最高的现场检查主题</option>
-                    <option
-                      v-for="item in data.focus_categories"
-                      :key="item.name"
-                      :value="item.name"
+                <div class="safety-focus-select">
+                  <label
+                    >检查主题<select
+                      :value="focusName"
+                      :disabled="analyzing"
+                      @change="setFocus($event.target.value)"
                     >
-                      {{ item.name }}（{{ item.count }}项）
-                    </option>
-                  </select></label
-                >
+                      <option v-if="!focusName" value="" disabled>当前范围暂无现场问题</option>
+                      <option
+                        v-for="item in data.focus_categories"
+                        :key="item.name"
+                        :value="item.name"
+                        :disabled="!item.count"
+                      >
+                        {{ item.label || item.name }}（{{ item.count }}项）
+                      </option>
+                    </select></label
+                  >
+                  <button :disabled="analyzing || !focusName" @click="setFocus('')">
+                    恢复最高频主题
+                  </button>
+                </div>
                 <p>
-                  月度重点与现场分类详情按检查主题选取；第11页问题分布仍按检查内容统计。详情保留模板固定编号，风险合规合并风险隐患、合规性管理。
+                  选择现场检查表的检查主题，再查看该主题下的问题表现分类。首次或数据变化后需完成 AI
+                  再分类，之后可调整分类及描述。
                 </p>
               </div>
-              <div class="safety-analysis-layout">
-                <nav aria-label="分析类别">
-                  <button
-                    v-for="category in categories"
-                    :key="category.key"
-                    :class="{ selected: category.key === categoryKey }"
-                    @click="categoryKey = category.key"
-                  >
-                    {{ category.name }}<span>{{ category.issues.length }}</span>
+              <div v-if="focusReading" class="safety-analysis-empty" role="status">
+                <h3>正在读取已保存的主题分析</h3>
+                <p>只读取历史结果，不调用 AI。</p>
+              </div>
+              <div v-else-if="focusError" class="safety-analysis-empty" role="alert">
+                <h3>主题分析暂未读取成功</h3>
+                <p>{{ focusError }}</p>
+                <button @click="loadFocus(true)">重新读取</button>
+              </div>
+              <div v-else-if="!currentCategory?.issues.length" class="safety-analysis-empty">
+                <h3>当前范围暂无该主题的问题</h3>
+                <p>请选择有问题数据的检查主题。</p>
+              </div>
+              <div v-else-if="!safetyAnalysisReady(currentCategory)" class="safety-analysis-empty">
+                <span class="safety-pending-mark">AI</span>
+                <h3>{{ focusName }} · 尚未完成再分类</h3>
+                <p v-if="currentCategory.analysis?.classified_count">
+                  已读取 {{ currentCategory.analysis.classified_count }}/{{
+                    currentCategory.issues.length
+                  }}
+                  条问题的历史分析，请补齐剩余分类后再查看。
+                </p>
+                <p v-else>
+                  该主题有 {{ currentCategory.issues.length }} 条问题。先调用 AI
+                  对问题描述进行再分类，完成后左侧显示分类、右侧显示关联问题。
+                </p>
+                <button
+                  class="safety-primary"
+                  :disabled="!canGenerate || analyzing || busy"
+                  @click="analyze"
+                >
+                  {{ analyzing ? '正在进行 AI 再分类…' : '调用 AI 再分类' }}
+                </button>
+                <small>{{
+                  canGenerate
+                    ? '优先复用已有结果，只处理缺少的分析。'
+                    : '当前账号无生成 AI 报告权限，无法发起 AI 分析。'
+                }}</small>
+              </div>
+              <div v-else class="safety-analysis-layout">
+                <nav class="safety-subgroup-nav" aria-label="所选主题的问题表现分类">
+                  <small>问题表现分类</small>
+                  <button :class="{ selected: selectedGroup === '' }" @click="selectedGroup = ''">
+                    全部问题<span>{{ currentCategory.issues.length }}</span>
                   </button>
+                  <button
+                    v-for="group in subgroups"
+                    :key="group.name"
+                    :class="{ selected: selectedGroup === group.name }"
+                    @click="selectedGroup = group.name"
+                  >
+                    {{ group.name }}<span>{{ group.count }}</span>
+                  </button>
+                  <div class="safety-new-group">
+                    <input
+                      v-model="newGroupName"
+                      maxlength="50"
+                      placeholder="新增分类名称"
+                      aria-label="新增问题表现分类"
+                      @keyup.enter="addGroup"
+                    /><button :disabled="!newGroupName.trim()" @click="addGroup">添加分类</button>
+                  </div>
                 </nav>
-                <article v-if="currentCategory" class="safety-analysis-content">
+                <section class="safety-analysis-content">
                   <div class="safety-analysis-heading">
                     <div>
-                      <h3>{{ currentCategory.name }}</h3>
-                      <small>分类与共性描述用于报告选图及文字，可保存人工调整。</small>
+                      <small>{{ focusName }} · AI 再分类已完成</small>
+                      <h3>
+                        {{ selectedGroup || '全部问题' }} <span>{{ focusIssues.length }}项</span>
+                      </h3>
                     </div>
-                    <button
-                      :disabled="!canGenerate || analyzing || !currentCategory.issues.length"
-                      @click="analyze"
-                    >
-                      {{ analyzing ? 'AI 分析中…' : 'AI 分析此类问题' }}
-                    </button>
+                    <span class="safety-ready-badge">可人工调整</span>
                   </div>
-                  <p v-if="!canGenerate">
-                    当前账号无生成 AI 报告权限，可查看与保存人工调整，不能发起 AI 调用。
+                  <label v-if="selectedGroup" class="safety-group-summary"
+                    >分类共性描述<textarea
+                      v-model="currentOverride.summaries[selectedGroup]"
+                      maxlength="160"
+                      rows="2"
+                    ></textarea>
+                  </label>
+                  <p v-else class="safety-edit-hint">
+                    选择左侧分类可编辑共性描述；每条问题可调整到其他分类。
                   </p>
-                  <p v-if="!currentCategory.issues.length">当前范围暂无此类问题。</p>
-                  <div v-for="group in groupNames" :key="group" class="safety-summary">
-                    <label
-                      >{{ group }} · 共性描述<textarea
-                        v-model="currentOverride.summaries[group]"
-                        maxlength="160"
-                        :placeholder="group"
-                        rows="2"
-                      ></textarea>
-                    </label>
-                  </div>
-                  <div
-                    v-for="issue in currentCategory.issues"
-                    :key="issue.issue_id"
-                    class="safety-issue"
-                  >
+                  <input
+                    v-model="issueKeyword"
+                    type="search"
+                    placeholder="搜索问题ID、站点或问题描述"
+                    aria-label="搜索主题内问题"
+                  />
+                  <div v-for="issue in focusIssues" :key="issue.issue_id" class="safety-issue">
                     <button
                       v-if="issue.issue_photo"
                       class="safety-photo"
+                      :aria-label="'放大问题' + issue.issue_id + '的照片'"
                       @click="emit('photo', issue)"
                     >
                       <img
                         :src="resolveImage(issue.issue_photo)"
-                        :alt="`问题 ${issue.issue_id}`"
+                        :alt="'问题 ' + issue.issue_id"
                         loading="lazy"
                       />
                     </button>
+                    <span v-else class="safety-missing-photo">暂无照片</span>
                     <div>
                       <b>#{{ issue.issue_id }} · {{ issue.station_name }}</b>
                       <p>{{ issue.description }}</p>
-                      <small>{{ issue.category_name }}</small
-                      ><label
-                        >问题表现分类<input
+                      <small>{{ issue.category_name }}</small>
+                      <label
+                        >问题表现分类<select
                           :value="assignment(issue.issue_id)"
-                          maxlength="50"
-                          list="safety-group-names"
-                          placeholder="尚未分类，可输入新类别"
-                          @input="setAssignment(issue.issue_id, $event.target.value)"
-                      /></label>
+                          @change="setAssignment(issue.issue_id, $event.target.value)"
+                        >
+                          <option v-for="group in subgroups" :key="group.name" :value="group.name">
+                            {{ group.name }}
+                          </option>
+                        </select></label
+                      >
                       <details>
                         <summary>评分说明</summary>
                         {{ issue.requirement || '原规范未维护评分说明' }}
                       </details>
                     </div>
                   </div>
-                  <datalist id="safety-group-names">
-                    <option v-for="name in groupNames" :key="name" :value="name"></option>
-                  </datalist>
-                </article>
+                  <div v-if="!focusIssues.length" class="safety-no-items">
+                    此分类下暂无符合条件的问题。
+                  </div>
+                </section>
               </div>
             </template>
           </div>
           <footer>
             <div>
-              <small>保存不生成报告。AI 分析优先复用历史；分析结果需保存后再重新生成报告。</small
+              <small>AI 结果自动记忆；人工调整需保存，再重新生成报告。保存本身不调用 AI。</small
               ><small>{{ savedLabel }}</small>
             </div>
             <button :disabled="saving || analyzing" @click="close">取消</button
-            ><button class="safety-primary" :disabled="saving || analyzing || busy" @click="save">
+            ><button
+              class="safety-primary"
+              :disabled="
+                saving ||
+                analyzing ||
+                busy ||
+                focusReading ||
+                (active === 'analysis' && !!focusError)
+              "
+              @click="save"
+            >
               {{ saving ? '正在保存…' : '保存配置' }}
             </button>
           </footer>
@@ -259,8 +389,11 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
 import {
   manualClassificationChanges,
-  safetyFocusSelection,
   safetyFocusCategory,
+  safetyFocusName,
+  safetyAnalysisReady,
+  safetySubgroups,
+  safetyIssueSearch,
 } from '@/utils/safetyReportConfig'
 const props = defineProps({
   month: String,
@@ -278,6 +411,12 @@ const data = ref(null),
   saving = ref(false),
   analyzing = ref(false)
 const analysisBaseline = ref({})
+const typicalMode = ref('onsite'),
+  issueKeyword = ref(''),
+  selectedGroup = ref(''),
+  newGroupName = ref('')
+const focusReading = ref(false),
+  focusError = ref('')
 const error = ref(''),
   dialogError = ref(''),
   active = ref(''),
@@ -307,6 +446,9 @@ let sequence = 0,
   timer,
   controller,
   previousFocus
+let focusSequence = 0,
+  focusController,
+  focusLoaded = new Set()
 const savedLabel = computed(() =>
   data.value?.meta?.updated_by_name
     ? `最近保存：${data.value.meta.updated_by_name} · ${data.value.meta.updated_at}`
@@ -319,9 +461,23 @@ const visibleStations = computed(() =>
 )
 const currentCategory = computed(() => categories.value.find((c) => c.key === categoryKey.value))
 const currentOverride = computed(() => draft.value.classifications[categoryKey.value])
-const groupNames = computed(() => [
-  ...new Set(Object.values(currentOverride.value?.assignments || {}).filter(Boolean)),
-])
+const focusName = computed(() =>
+  safetyFocusName(draft.value.focus_category, data.value?.focus_categories),
+)
+const subgroups = computed(() => safetySubgroups(currentCategory.value, currentOverride.value))
+const typicalCandidates = computed(() =>
+  safetyIssueSearch(modeIssues(typicalMode.value), issueKeyword.value),
+)
+const focusIssues = computed(() =>
+  safetyIssueSearch(
+    (currentCategory.value?.issues || []).filter(
+      (issue) =>
+        !selectedGroup.value ||
+        currentOverride.value?.assignments[issue.issue_id] === selectedGroup.value,
+    ),
+    issueKeyword.value,
+  ),
+)
 const modeIssues = (mode) => (data.value?.issues || []).filter((i) => i.mode === mode)
 function typical(mode) {
   const list = modeIssues(mode),
@@ -344,6 +500,10 @@ function setTypical(mode, value) {
   if (value) draft.value.typical_issue_ids[mode] = Number(value)
   else delete draft.value.typical_issue_ids[mode]
 }
+function selectTypicalMode(mode) {
+  typicalMode.value = mode
+  issueKeyword.value = ''
+}
 function adopt(value) {
   data.value = value
   emit('change', value.settings)
@@ -352,6 +512,9 @@ async function load() {
   const id = ++sequence
   controller?.abort()
   controller = new AbortController()
+  focusSequence++
+  focusController?.abort()
+  focusReading.value = false
   if (!props.dateFrom || !props.dateTo || props.dateFrom > props.dateTo) return
   active.value = ''
   loading.value = true
@@ -375,6 +538,8 @@ function ensureCategory(category) {
     assignments: {},
     summaries: {},
   })
+  override.assignments ||= {}
+  override.summaries ||= {}
   for (const group of category.analysis?.groups || []) {
     for (const id of group.issue_ids)
       if (!override.assignments[id]) override.assignments[id] = group.name
@@ -387,16 +552,26 @@ async function open(name) {
   for (const category of categories.value) ensureCategory(category)
   analysisBaseline.value = clone(draft.value.classifications)
   categoryKey.value = categories.value.at(-1)?.key || ''
+  typicalMode.value = 'onsite'
+  issueKeyword.value = ''
+  selectedGroup.value = ''
+  newGroupName.value = ''
+  focusLoaded = new Set()
+  focusError.value = ''
   keyword.value = ''
   dialogError.value = ''
   active.value = name
   previousFocus = document.activeElement
   await nextTick()
   dialog.value?.focus()
+  if (name === 'analysis') loadFocus()
 }
 function close() {
   if (saving.value || analyzing.value) return
   active.value = ''
+  focusSequence++
+  focusController?.abort()
+  focusReading.value = false
   previousFocus?.focus()
 }
 function trapFocus(event) {
@@ -422,8 +597,19 @@ function toggleStation(id, checked) {
     : draft.value.station_ids.filter((i) => i !== id)
 }
 function setFocus(value) {
+  if (analyzing.value) return
   draft.value.focus_category = value
-  const focus = draft.value.focus_category || data.value.focus_categories[0]?.name
+  selectedGroup.value = ''
+  issueKeyword.value = ''
+  newGroupName.value = ''
+  loadFocus()
+}
+async function loadFocus(force = false) {
+  const id = ++focusSequence
+  focusController?.abort()
+  focusReading.value = false
+  focusError.value = ''
+  const focus = focusName.value
   if (!focus) return
   const category = safetyFocusCategory(focus, data.value.issues)
   const key = category.key
@@ -433,6 +619,37 @@ function setFocus(value) {
     analysisBaseline.value[key] = clone(draft.value.classifications[key])
   }
   categoryKey.value = key
+  if (focusLoaded.has(key) && !force) return
+  focusController = new AbortController()
+  focusReading.value = true
+  focusError.value = ''
+  dialogError.value = ''
+  try {
+    const response = await axios.get('/api/inspection-reports/safety-analysis', {
+      params: { ...params(), mode: 'onsite', category: category.category },
+      signal: focusController.signal,
+    })
+    if (id !== focusSequence || active.value !== 'analysis') return
+    if (
+      response.data.revision !== data.value.meta.revision ||
+      response.data.data_signature !== data.value.data_signature
+    )
+      throw new Error('数据或配置已有更新，请关闭弹窗并重新读取配置，避免覆盖其他用户的保存。')
+    const entry = categories.value.find((item) => item.key === key)
+    entry.issues = response.data.issues
+    entry.analysis = response.data.analysis
+    draft.value.classifications[key] = clone(
+      data.value.settings.classifications[key] || { assignments: {}, summaries: {} },
+    )
+    ensureCategory(entry)
+    analysisBaseline.value[key] = clone(draft.value.classifications[key])
+    focusLoaded.add(key)
+  } catch (err) {
+    if (id === focusSequence && !axios.isCancel(err))
+      focusError.value = err.response?.data?.error || err.message || '主题分析读取失败。'
+  } finally {
+    if (id === focusSequence) focusReading.value = false
+  }
 }
 const assignment = (id) => currentOverride.value?.assignments[id] || ''
 function setAssignment(id, name) {
@@ -440,9 +657,24 @@ function setAssignment(id, name) {
   if (value) currentOverride.value.assignments[id] = value
   else delete currentOverride.value.assignments[id]
 }
+function addGroup() {
+  const name = newGroupName.value.trim()
+  if (!name || !currentOverride.value) return
+  currentOverride.value.summaries[name] ||= ''
+  selectedGroup.value = name
+  newGroupName.value = ''
+}
 async function analyze() {
+  if (
+    !props.canGenerate ||
+    analyzing.value ||
+    focusReading.value ||
+    !currentCategory.value?.issues.length
+  )
+    return
   analyzing.value = true
   dialogError.value = ''
+  const loadSequence = sequence
   try {
     const c = currentCategory.value
     const response = await axios.post(
@@ -456,9 +688,15 @@ async function analyze() {
       },
       { timeout: 300000 },
     )
+    if (loadSequence !== sequence || active.value !== 'analysis') return
     c.analysis = response.data.analysis
-    draft.value.classifications[c.key] = { assignments: {}, summaries: {} }
+    draft.value.classifications[c.key] = clone(
+      data.value.settings.classifications[c.key] || { assignments: {}, summaries: {} },
+    )
     ensureCategory(c)
+    analysisBaseline.value[c.key] = clone(draft.value.classifications[c.key])
+    selectedGroup.value = ''
+    issueKeyword.value = ''
   } catch (err) {
     dialogError.value = err.response?.data?.error || 'AI 分析未完成，原保存配置不变。请稍后重试。'
   } finally {
@@ -507,6 +745,8 @@ onBeforeUnmount(() => {
   sequence++
   controller?.abort()
   clearTimeout(timer)
+  focusSequence++
+  focusController?.abort()
 })
 </script>
 
@@ -637,7 +877,7 @@ onBeforeUnmount(() => {
   padding: 24px;
   min-height: 160px;
 }
-.safety-dialog input:not([type='checkbox']),
+.safety-dialog input:not([type='checkbox']):not([type='radio']),
 .safety-dialog select,
 .safety-dialog textarea {
   width: 100%;
@@ -672,18 +912,170 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-top: 18px;
 }
-.safety-typicals {
+.safety-choice-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  grid-template-columns: 205px minmax(0, 1fr);
+  gap: 22px;
 }
-.safety-typicals article {
-  border: 1px solid #cbdbe8;
+.safety-mode-nav,
+.safety-subgroup-nav {
+  align-self: start;
+  padding: 14px;
+  background: #f2f6fa;
+  border: 1px solid #d2e0eb;
   border-radius: 12px;
-  padding: 18px;
 }
-.safety-typicals img {
-  height: 240px !important;
+.safety-mode-nav > small,
+.safety-subgroup-nav > small {
+  display: block;
+  margin: 0 0 12px;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+.safety-mode-nav > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 12px;
+  margin-bottom: 10px;
+  text-align: left;
+}
+.safety-mode-nav button small {
+  display: block;
+  font-size: 11px;
+  margin-top: 5px;
+  font-weight: 400;
+}
+.safety-mode-nav button.selected {
+  background: #194d6b;
+  border-color: #194d6b;
+  color: #fff;
+}
+.safety-mode-nav button.selected small {
+  color: #c3e4ed;
+}
+.mode-count {
+  background: #e5f0f6;
+  color: #215a77;
+  border-radius: 7px;
+  padding: 4px 7px;
+  font-size: 13px;
+}
+.safety-mode-nav p,
+.safety-edit-hint {
+  color: #5a7387;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.safety-choice-content,
+.safety-analysis-content {
+  min-width: 0;
+}
+.safety-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.safety-list-heading h3 {
+  margin: 5px 0 14px;
+  font-size: 20px;
+}
+.safety-current-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  background: #edf6f7;
+  border: 1px solid #bcdce0;
+  border-radius: 9px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.safety-current-choice > span {
+  color: #4f737b;
+}
+.safety-current-choice > strong {
+  flex: 1;
+}
+.safety-list-count {
+  font-size: 12px;
+  color: #5a7387;
+  margin: 14px 0 8px;
+}
+.safety-candidate-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.safety-candidate {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 110px;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #d1dee8;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: #fff;
+}
+.safety-candidate.chosen {
+  border-color: #2583a0;
+  background: #f0f8fb;
+  box-shadow: inset 3px 0 #2583a0;
+}
+.safety-candidate input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #17637e;
+  cursor: pointer;
+}
+.safety-candidate-copy {
+  cursor: pointer;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.safety-candidate-copy > span {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.safety-candidate-copy b {
+  color: #17637e;
+}
+.safety-candidate-copy em,
+.safety-ready-badge {
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  color: #196d62;
+  background: #dff0eb;
+  border-radius: 5px;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+.safety-candidate-copy p {
+  margin: 8px 0;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+.safety-list-photo,
+.safety-missing-photo {
+  width: 110px;
+}
+.safety-missing-photo {
+  display: grid;
+  place-items: center;
+  height: 82px;
+  font-size: 12px;
+  background: #f1f5f8;
+  color: #73889a;
+  border-radius: 8px;
 }
 .safety-photo {
   padding: 0 !important;
@@ -691,10 +1083,13 @@ onBeforeUnmount(() => {
   background: transparent !important;
 }
 .safety-photo img {
+  display: block;
   max-width: 100%;
   width: 100%;
   height: 110px;
   object-fit: contain;
+  background: #edf2f5;
+  border-radius: 7px;
 }
 .safety-focus {
   padding: 16px;
@@ -704,11 +1099,55 @@ onBeforeUnmount(() => {
 }
 .safety-focus p {
   font-size: 13px;
+  line-height: 1.7;
   margin-bottom: 0;
+}
+.safety-focus-select {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.safety-focus-select label {
+  flex: 1;
+  font-weight: 600;
+}
+.safety-focus-select > button {
+  flex-shrink: 0;
+}
+.safety-analysis-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 42px 24px;
+  text-align: center;
+  border: 1px dashed #b9cddd;
+  border-radius: 12px;
+  background: #f8fbfd;
+}
+.safety-analysis-empty h3 {
+  font-size: 19px;
+  margin: 16px 0 0;
+}
+.safety-analysis-empty p {
+  max-width: 620px;
+  color: #526c7e;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.safety-analysis-empty > small {
+  margin-top: 14px;
+}
+.safety-pending-mark {
+  padding: 12px;
+  background: #e1edf5;
+  border-radius: 12px;
+  color: #246c91;
+  font-weight: 700;
 }
 .safety-analysis-layout {
   display: grid;
-  grid-template-columns: 230px 1fr;
+  grid-template-columns: 230px minmax(0, 1fr);
   gap: 20px;
 }
 .safety-analysis-layout nav {
@@ -722,6 +1161,14 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  overflow-wrap: anywhere;
+}
+.safety-subgroup-nav > button span {
+  border-radius: 5px;
+  background: #e3edf2;
+  color: #335e75;
+  padding: 1px 6px;
+  align-self: start;
 }
 .safety-analysis-layout nav button.selected {
   background: #175c78;
@@ -735,13 +1182,36 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 .safety-analysis-heading h3 {
-  margin-top: 0;
+  margin: 8px 0 0;
+  font-size: 20px;
 }
-.safety-summary {
+.safety-analysis-heading h3 span {
+  font-size: 14px;
+  color: #658296;
+  margin-left: 6px;
+}
+.safety-group-summary {
+  display: block;
   padding: 12px;
   background: #f2f7fa;
   margin-top: 12px;
   border-radius: 8px;
+}
+.safety-new-group {
+  border-top: 1px solid #d0dfe8;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.safety-new-group button {
+  margin-top: 8px;
+  width: 100%;
+  justify-content: center !important;
+}
+.safety-no-items {
+  padding: 25px 12px;
+  text-align: center;
+  color: #698092;
+  font-size: 14px;
 }
 .safety-issue {
   display: grid;
@@ -753,6 +1223,7 @@ onBeforeUnmount(() => {
 .safety-issue p {
   white-space: pre-line;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .safety-issue label {
   display: block;
@@ -813,7 +1284,7 @@ onBeforeUnmount(() => {
     padding: 16px;
   }
   .safety-panels,
-  .safety-typicals {
+  .safety-choice-layout {
     grid-template-columns: 1fr;
   }
   .safety-source dl {
@@ -827,12 +1298,10 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
   .safety-analysis-layout nav {
-    flex-direction: row;
-    overflow-x: auto;
+    flex-direction: column;
   }
   .safety-analysis-layout nav button {
-    flex-shrink: 0;
-    max-width: 220px;
+    width: 100%;
   }
   .safety-analysis-heading {
     align-items: flex-start;
@@ -840,6 +1309,50 @@ onBeforeUnmount(() => {
   }
   .safety-issue {
     grid-template-columns: 80px 1fr;
+  }
+  .safety-issue .safety-missing-photo {
+    width: 80px;
+  }
+  .safety-mode-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .safety-mode-nav > small,
+  .safety-mode-nav > p {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+  .safety-mode-nav > button {
+    margin: 0;
+    padding: 12px 8px;
+  }
+  .safety-mode-nav .mode-count {
+    display: none;
+  }
+  .safety-candidate {
+    grid-template-columns: 18px minmax(0, 1fr) 76px;
+    gap: 8px;
+    padding: 10px;
+  }
+  .safety-candidate .safety-list-photo,
+  .safety-candidate .safety-missing-photo {
+    width: 76px;
+  }
+  .safety-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 14px;
+  }
+  .safety-focus-select {
+    flex-wrap: wrap;
+  }
+  .safety-focus-select label {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+  .safety-analysis-empty {
+    padding: 22px 14px;
   }
   .safety-dialog footer {
     flex-wrap: wrap;

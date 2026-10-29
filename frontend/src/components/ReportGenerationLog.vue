@@ -32,7 +32,7 @@
       <template v-else>
         <p class="log-note">
           历史复用不会发起新的 AI
-          请求。调用次数按应用请求记录，服务重试不单独计数；费用为估算值，以服务商账单为准。
+          请求。调用次数包含应用发起的补充核验请求；费用为估算值，以服务商账单为准。
         </p>
         <ol>
           <li v-for="event in events" :key="event.sequence">
@@ -45,11 +45,15 @@
               <p>{{ event.message }}</p>
               <div class="event-meta">
                 <span v-if="event.issue_count !== undefined">问题 {{ event.issue_count }} 项</span>
+                <span v-if="event.request_count > 1">请求 {{ event.request_count }} 次</span>
+                <span v-if="event.repair_count">补充核验 {{ event.repair_count }} 次</span>
                 <span v-if="event.elapsed_ms !== undefined"
                   >耗时 {{ (event.elapsed_ms / 1000).toFixed(1) }} 秒</span
                 >
                 <span v-if="event.model">{{ aiModelDisplayName(event.model) }}</span>
-                <span v-if="event.ai_called && event.pricing_known === false">未配置费用单价，以厂家账单为准</span>
+                <span v-if="event.ai_called && event.pricing_known === false"
+                  >未配置费用单价，以厂家账单为准</span
+                >
                 <span v-else-if="event.ai_called"
                   >估算费用 ¥{{ Number(event.cost_est || 0).toFixed(6) }}</span
                 >

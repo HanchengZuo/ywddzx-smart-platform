@@ -1,5 +1,6 @@
 """Strict evidence-bound safety analysis, shared manual overrides and persistent AI memory."""
 import json
+import time
 from zoneinfo import ZoneInfo
 from psycopg2.extras import Json
 from ai_routing import ai_scene, current_model, create_ai_completion
@@ -48,16 +49,38 @@ def validate_analysis(payload, issues, kind='classify'):
 @remember_report_ai('safety_detail', PROMPT, prompt_context, current_model)
 def generate_analysis(context):
     from ai_utils import get_deepseek_client, extract_json_from_ai_text, with_ai_usage_meta
+    from safety_report_reconciliation import reconcile
     client = get_deepseek_client()
     if not client: raise ValueError('请先配置安全报告使用的大模型，再生成AI分析。')
-    response = create_ai_completion(client.with_options(timeout=90, max_retries=0),
-        messages=[{'role': 'system', 'content': PROMPT}, {'role': 'user', 'content': prompt_context(context)}],
-        max_tokens=4500, extra_body={'thinking': {'type': 'disabled'}})
-    text = response.choices[0].message.content
-    payload = validate_analysis(extract_json_from_ai_text(text), context.get('issues') or [], context.get('kind', 'classify'))
-    payload['analysis_scope'] = context.get('mode', '') + ':' + context.get('category', '') if context.get('kind', 'classify') == 'classify' else 'advice'
-    return with_ai_usage_meta({'generated': True, 'payload': payload}, prompt_text=PROMPT+prompt_context(context),
-        completion_text=text, ai_called=True, success=True)
+    prompts, completions = [], []
+    deadline = time.monotonic() + 180
+    def request(system, evidence, tokens):
+        remaining = deadline - time.monotonic()
+        if len(prompts) >= 9 or remaining <= 1:
+            raise ValueError('安全问题分析已达到本批核验时限或请求上限，请稍后重试。')
+        body = prompt_context(evidence)
+        prompts.append(system + body)
+        response = create_ai_completion(client.with_options(timeout=min(90 if len(prompts) == 1 else 35, remaining), max_retries=0),
+            messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': body}],
+            max_tokens=tokens, extra_body={'thinking': {'type': 'disabled'}})
+        text = response.choices[0].message.content or ''
+        completions.append(text)
+        return extract_json_from_ai_text(text)
+    def usage(success):
+        result = with_ai_usage_meta({}, prompt_text='\n'.join(prompts), completion_text='\n'.join(completions),
+            ai_called=bool(prompts), success=success)['usage']
+        result.update(request_count=len(prompts), repair_count=max(0, len(prompts)-1))
+        return result
+    try:
+        payload = request(PROMPT, context, 7200 if context.get('kind', 'classify') == 'classify' else 4500)
+        if context.get('kind', 'classify') == 'classify': payload = reconcile(context, payload, request)
+        payload = validate_analysis(payload, context.get('issues') or [], context.get('kind', 'classify'))
+        payload['analysis_scope'] = context.get('mode', '') + ':' + context.get('category', '') if context.get('kind', 'classify') == 'classify' else 'advice'
+        return {'generated': True, 'payload': payload, 'usage': usage(True)}
+    except Exception as exc:
+        error = ValueError(str(exc) if isinstance(exc, ValueError) else '安全报告AI服务暂未完成分析，请稍后重试。')
+        error.ai_usage = usage(False)
+        raise error from exc
 
 
 def analysis_context(issues, mode, category):
@@ -69,7 +92,7 @@ def analysis_context(issues, mode, category):
 
 
 def analyze(issues, mode, category, log_usage=None):
-    if not issues: return {'groups': [], 'causes': [], 'suggestions': []}
+    if not issues: return {'groups': [], 'causes': [], 'suggestions': [], 'complete': False, 'classified_count': 0, 'issue_count': 0}
     issues = sorted(issues, key=lambda row: row['issue_id'])
     merged, causes = {}, []
     for offset in range(0, len(issues), 40):
@@ -84,7 +107,7 @@ def analyze(issues, mode, category, log_usage=None):
         for text in payload['causes']:
             if text not in causes: causes.append(text)
     return {'groups': sorted(merged.values(), key=lambda item: (-len(item['issue_ids']), item['name'])),
-            'causes': causes[:3], 'suggestions': []}
+            'causes': causes[:3], 'suggestions': [], 'complete': True, 'classified_count': len(issues), 'issue_count': len(issues)}
 
 
 def load_settings(cur):
@@ -156,7 +179,9 @@ def cached_analysis(cur, issues, mode, category):
             entry = merged.setdefault(group['name'], dict(group, issue_ids=[]))
             entry['issue_ids'].extend(group['issue_ids'])
         causes.extend(text for text in payload['causes'] if text not in causes)
-    return {'groups': sorted(merged.values(), key=lambda item: (-len(item['issue_ids']), item['name'])), 'causes': causes[:3]}
+    classified = {issue_id for group in merged.values() for issue_id in group['issue_ids']}
+    return {'groups': sorted(merged.values(), key=lambda item: (-len(item['issue_ids']), item['name'])), 'causes': causes[:3],
+        'complete': bool(issues) and len(classified) == len(issues), 'classified_count': len(classified), 'issue_count': len(issues)}
 
 
 def effective_analysis(analysis, issues, override):

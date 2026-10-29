@@ -28041,6 +28041,27 @@ def generate_quality_measurement_report_job(
         close_db_resources(cur, conn)
 
 
+def fetch_safety_report_topics(cur, user):
+    from safety_report_data import TABLES
+    cur.execute("SELECT id,table_code FROM inspection_tables WHERE REPLACE(table_name,%s,'')=%s AND is_active=TRUE ORDER BY id LIMIT 1",
+        (DISPLAY_REMOVED_STATION_PHRASE, TABLES['onsite']))
+    table = cur.fetchone()
+    if not table: return []
+    physical = get_physical_table_name_by_code(table['table_code'])
+    if not physical or not checklist_physical_table_exists(cur, physical): return []
+    cur.execute("SELECT field_key FROM inspection_table_fields WHERE inspection_table_id=%s AND TRIM(field_label)='检查主题' ORDER BY sort_order,id LIMIT 1", (table['id'],))
+    field = cur.fetchone()
+    if not field: return []
+    cur.execute(sql.SQL('SELECT {} AS topic FROM {} ORDER BY standard_id').format(sql.Identifier(field['field_key']),sql.Identifier(physical)))
+    result = {}
+    for row in cur.fetchall():
+        label = str(row['topic'] or '').strip()
+        if not label: continue
+        name = '其他隐患类' if label == '其他对生产经营有影响的问题隐患' else label
+        result.setdefault(name, {'name': name, 'label': label})
+    return list(result.values())
+
+
 def fetch_safety_report_inputs(cur, user, start, end, cumulative=False):
     from safety_report_data import TABLES
     clauses = ["REPLACE(t.table_name, %s, '') IN (%s,%s)"]
@@ -35008,7 +35029,8 @@ register_help_documents(app, connect=get_db_connection, has_permission=has_permi
 from safety_report_http import register_safety_report
 register_safety_report(app, connect=get_db_connection, authorize=get_authorized_inspection_report_user,
     period=resolve_inspection_report_period, fetch_inputs=fetch_safety_report_inputs,
-    has_permission=has_permission, save_workspace=save_report_workspace, log_usage=record_ai_usage_log)
+    has_permission=has_permission, save_workspace=save_report_workspace, log_usage=record_ai_usage_log,
+    fetch_topics=fetch_safety_report_topics)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

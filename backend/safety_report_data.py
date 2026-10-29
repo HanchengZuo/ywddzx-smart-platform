@@ -84,6 +84,16 @@ def focus_topics(rows):
     return distribution([row for row in rows if row['mode'] == 'onsite'], 'topic')
 
 
+def focus_topic_options(rows, catalog=None):
+    counts = {item['name']: item for item in focus_topics(rows)}
+    options = {}
+    for item in catalog or []:
+        options.setdefault(item['name'], {'name': item['name'], 'label': item.get('label') or item['name'],
+            'count': counts.get(item['name'], {}).get('count', 0)})
+    for name, item in counts.items(): options.setdefault(name, {**item, 'label': name})
+    return list(options.values())
+
+
 def period_label(start, end):
     last = end - timedelta(days=1)
     if (start.year, start.month) == (last.year, last.month): return f'{start.year}年{start.month:02d}月'
