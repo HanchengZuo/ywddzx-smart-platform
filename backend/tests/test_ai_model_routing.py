@@ -191,7 +191,6 @@ class RoutingTests(unittest.TestCase):
             'non_oil_key': ai_utils.classify_non_oil_key_issues,
             'non_oil_insights': ai_utils.generate_non_oil_report_insights,
             'equipment_insights': ai_utils.generate_equipment_facilities_report_insights,
-            'safety_insights': ai_utils.generate_safety_quality_report_insights,
             'finance_insights': ai_utils.generate_finance_report_insights,
             'service_insights': ai_utils.generate_on_site_service_report_insights,
         }
@@ -212,6 +211,11 @@ class RoutingTests(unittest.TestCase):
             for kind in ('high', 'special', 'severe'):
                 result = equipment_report_analysis.choose_topics({'kind': kind, 'issues': [{'issue_id': 1}]})
                 self.assertEqual(result['usage']['model'], overrides['equipment_' + kind])
+            from safety_report_analysis import generate_analysis
+            client.chat.completions.create.return_value.choices[0].message.content = '{"groups":[],"causes":[],"suggestions":[{"title":"建议","content":"措施"}]}'
+            result = generate_analysis({'kind': 'advice'})
+            self.assertEqual(result['usage']['model'], overrides['safety_insights'])
+            self.assertEqual(client.chat.completions.create.call_args.kwargs['model'], overrides['safety_insights'])
             client.chat.completions.create.return_value.choices[0].message.content = '{"paragraphs":[{"text":"依据","sources":["S1"]}]}'
             _, usage = expert_qa.generate('依据是什么', [{'id': 'S1'}], client=client)
             self.assertEqual(usage['model'], overrides['expert_qa'])

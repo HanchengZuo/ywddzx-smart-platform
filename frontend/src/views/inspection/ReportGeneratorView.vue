@@ -129,12 +129,17 @@
       />
     </section>
 
-    <section v-if="!isDepartmentView && (isQualityMeasurementReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface" :data-report="selectedReportType">
+    <section v-if="!isDepartmentView && (isQualityMeasurementReport || isSafetyQualityReport || hasIssueLibrary) && !templateUnavailable" class="report-config-workspace card-surface" :data-report="selectedReportType">
       <header class="report-config-heading">
         <div><span>REPORT CONFIGURATION</span><h3>{{ currentReportType.name }} · 专属配置</h3><p>所有用户共享最新保存设置；保存不调用 AI，重新生成后应用到报告。</p></div>
         <span class="shared-config-badge">全局共享</span>
       </header>
       <div class="report-config-sections">
+    <SafetyReportConfig v-if="isSafetyQualityReport" :month="selectedMonth"
+      :date-from="reportDateFrom" :date-to="reportDateTo" :generated-at="reportGeneratedAt"
+      :resolve-image="resolveImage" :can-generate="canGenerateReports" :busy="loading"
+      @change="safetySettings = $event" @saved="refreshWorkspaceMeta"
+      @photo="openImagePreview($event.issue_photo, `问题 #${$event.issue_id}`)" />
     <section v-if="isQualityMeasurementReport && !templateUnavailable" class="report-source-panel card-surface">
       <div class="report-source-main">
         <div class="report-source-icon" aria-hidden="true">
@@ -1982,6 +1987,7 @@ import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 import ReportGenerationLog from '@/components/ReportGenerationLog.vue'
 import NonOilRectificationPeriod from '@/components/NonOilRectificationPeriod.vue'
 import EquipmentReportTopics from '@/components/EquipmentReportTopics.vue'
+import SafetyReportConfig from '@/components/SafetyReportConfig.vue'
 import { defaultRectificationPeriod, historicalRectificationPeriod, rectificationPeriodError } from '@/utils/nonOilRectificationPeriod'
 import { reportConfigurationDiffers } from '@/utils/reportConfiguration'
 import { readReportViewMode, saveReportViewMode } from '@/utils/reportViewMode'
@@ -2282,12 +2288,13 @@ const hasSavedReportChanges = computed(() => {
     source: { mode: sourceSelectionMode.value, station_ids: selectedSourceStationIds.value },
     selection_rules: selectionSettings.value, flow_classifications: flowClassifications.value,
     rectification_period: nonOilRectificationPeriod.value, issue_library: nonOilIssueLibrary.value,
-    equipment_analysis: equipmentTopicSelection.value,
+    equipment_analysis: equipmentTopicSelection.value, safety_settings: safetySettings.value,
     category_classifications: nonOilClassifications.value, key_classifications: nonOilKeyClassifications.value
   })
 })
 const isQualityMeasurementReport = computed(() => selectedReportType.value === 'quality_measurement')
 const isSafetyQualityReport = computed(() => selectedReportType.value === 'safety_quality')
+const safetySettings = ref(null)
 const isFinanceReport = computed(() => selectedReportType.value === 'finance')
 const isOnSiteServiceReport = computed(() => selectedReportType.value === 'on_site_service')
 const isEquipmentFacilitiesReport = computed(() => selectedReportType.value === 'equipment_facilities')

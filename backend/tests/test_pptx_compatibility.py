@@ -102,9 +102,11 @@ class PptCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch('non_oil_report_presentation._render_presentation_preview',side_effect=render) as renderer:
             for kind in ('quality_measurement','safety_quality','finance','on_site_service','equipment_facilities','non_oil'):
                 with self.subTest(kind=kind):
-                    directory,manifest=build_artifact(kind,report,root)
+                    from tests.test_safety_report import fixture_report
+                    payload = fixture_report() if kind == 'safety_quality' else report
+                    directory,manifest=build_artifact(kind,payload,root)
                     calls=renderer.call_count
-                    reused,again=build_artifact(kind,report,root)
+                    reused,again=build_artifact(kind,payload,root)
                     self.assertEqual(renderer.call_count,calls)
                     self.assertEqual((reused,again),(directory,manifest))
                     exported=Path(root)/(kind+'.pptx'); attach_export(directory,manifest,exported)

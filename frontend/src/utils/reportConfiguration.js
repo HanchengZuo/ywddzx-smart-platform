@@ -40,6 +40,10 @@ export function reportConfigurationDiffers(report, current) {
     const relevant = (current.flow_classifications || []).filter(item => selection.mode !== 'custom' || stationIds.has(Number(item.station_id)))
     return categoriesChanged(relevant, context.flow_classifications || report.flow_classifications)
   }
+  if (current.type === 'safety_quality') {
+    return current.safety_settings !== null && current.safety_settings !== undefined
+      && !equal(current.safety_settings, context.safety_settings || report.safety_settings || {})
+  }
   if (current.type === 'equipment_facilities') {
     const library = context.issue_library || report.issue_library_snapshot
     const included = rows => ids(rows.filter(item => item.included !== false).map(item => item.issue_id))
