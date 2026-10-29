@@ -76,7 +76,7 @@ def reconcile(context, payload, request):
         items = [{'reference': ref, **{key: issues[issue_id].get(key, '')
             for key in ('description', 'category_name', 'topic')}} for ref, issue_id in references.items()]
         value = request(REPAIR_PROMPT, {'mode': context.get('mode'), 'category': context.get('category'),
-            'existing_groups': existing_groups(), 'items': items}, 3000)
+            'existing_groups': existing_groups(), 'items': items, 'grouping_guidance': context.get('grouping_guidance','')}, 3000)
         stats['supplemental_requests'] += 1
         mappings = value.get('assignments', {}) if isinstance(value, dict) else {}
         if isinstance(mappings, dict):
@@ -88,7 +88,7 @@ def reconcile(context, payload, request):
     # A small, bounded last resort has no model-authored references at all.
     remaining = sorted(set(issues) - set(assigned))
     for issue_id in remaining[:3]:
-        value = request(SINGLE_PROMPT, {'existing_groups': existing_groups(),
+        value = request(SINGLE_PROMPT, {'existing_groups': existing_groups(), 'grouping_guidance': context.get('grouping_guidance',''),
             **{key: issues[issue_id].get(key, '') for key in ('description', 'category_name', 'topic')}}, 900)
         stats['supplemental_requests'] += 1
         info = _group(value)

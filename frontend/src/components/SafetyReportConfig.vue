@@ -7,7 +7,7 @@
     <template v-else-if="data">
       <article class="safety-source">
         <div>
-          <small>DATA SOURCE</small>
+          <small class="safety-step-label">01 · 数据范围</small>
           <h3>本次报告数据来源</h3>
           <p>仅采用审核通过问题；受检站点包含已确认完成的零问题巡检。现场与视频分别统计。</p>
         </div>
@@ -23,13 +23,15 @@
       </article>
       <div class="safety-panels">
         <article>
-          <small>TYPICAL ISSUES</small>
+          <small class="safety-step-label">02 · 典型选题</small>
           <h3>现场与视频典型问题</h3>
-          <p>AI 按问题表现频次归类，各选一个代表案例；可人工替换。</p>
+          <p>
+            现场选一个代表问题；视频按较高层级风险归类，默认展示占比最高的一类，可切换类别并查看关联问题。
+          </p>
           <button :disabled="busy" @click="open('typical')">查看与调整典型问题</button>
         </article>
         <article>
-          <small>MONTHLY FOCUS</small>
+          <small class="safety-step-label">03 · 月度重点</small>
           <h3>月度重点与问题再分类</h3>
           <p>
             当前重点：{{
@@ -120,9 +122,16 @@
                     >
                     <span class="mode-count">{{ modeIssues(mode.key).length }}</span>
                   </button>
-                  <p>现场、视频各选一条。保存只记录选择，不调用 AI。</p>
+                  <p>
+                    {{
+                      typicalMode === 'onsite'
+                        ? '现场：选择一个代表问题及照片。'
+                        : '视频：选择一个风险类别，查看该类别的全部问题；报告自动选取该类别的代表照片。'
+                    }}
+                  </p>
+                  <div class="safety-mode-note">保存只记录选择；重新生成后应用到报告。</div>
                 </nav>
-                <section class="safety-choice-content">
+                <section v-if="typicalMode === 'onsite'" class="safety-choice-content">
                   <div class="safety-list-heading">
                     <div>
                       <small>典型案例选择</small>
@@ -196,6 +205,129 @@
                   <div v-if="!typicalCandidates.length" class="safety-no-items">
                     没有符合条件的问题，请调整关键词。
                   </div>
+                </section>
+                <section v-else class="safety-choice-content">
+                  <div class="safety-list-heading">
+                    <div>
+                      <small>以风险控制缺陷归类，不按相似措辞重复拆类</small>
+                      <h3>视频高频问题类别</h3>
+                    </div>
+                    <button
+                      v-if="videoReady"
+                      :disabled="analyzing"
+                      @click="chooseVideoCategory('')"
+                    >
+                      跟随最高频类别
+                    </button>
+                  </div>
+                  <div v-if="!videoCategory?.issues.length" class="safety-analysis-empty">
+                    <h3>当前范围暂无视频问题</h3>
+                  </div>
+                  <div v-else-if="!videoReady" class="safety-analysis-empty">
+                    <span class="safety-pending-mark">AI</span>
+                    <h3>尚未完成视频风险归类</h3>
+                    <p>
+                      将同义的隔离、围栏和消防防护缺失合并统计。读取历史不调用
+                      AI；首次使用新版分类或问题变化后，请先完成归类。
+                    </p>
+                    <p v-if="videoCategory.analysis?.classified_count">
+                      已读取 {{ videoCategory.analysis.classified_count }}/{{
+                        videoCategory.issues.length
+                      }}
+                      条历史分类。
+                    </p>
+                    <button
+                      class="safety-primary"
+                      :disabled="!canGenerate || analyzing || busy"
+                      @click="analyzeVideo"
+                    >
+                      {{ analyzing ? '正在归类，请稍候…' : '调用 AI 归类视频问题' }}
+                    </button>
+                    <small v-if="!canGenerate"
+                      >需要“生成AI报告”权限才能发起归类，查看和保存选择不调用 AI。</small
+                    >
+                  </div>
+                  <template v-else>
+                    <div class="safety-current-choice">
+                      <span>报告选用</span><strong>{{ selectedVideoGroup?.name }}</strong
+                      ><small
+                        >{{ selectedVideoGroup?.count }}项 · {{ selectedVideoGroup?.percentage }}% ·
+                        {{ videoHasManualSelection ? '人工选择' : '自动最高频' }}</small
+                      >
+                    </div>
+                    <div
+                      class="safety-video-groups"
+                      role="radiogroup"
+                      aria-label="视频典型问题类别"
+                    >
+                      <label
+                        v-for="group in videoGroups"
+                        :key="group.name"
+                        :class="[
+                          'safety-video-group',
+                          { chosen: selectedVideoGroup?.name === group.name },
+                        ]"
+                      >
+                        <input
+                          type="radio"
+                          name="safety-video-category"
+                          :value="group.name"
+                          :checked="selectedVideoGroup?.name === group.name"
+                          @change="chooseVideoCategory(group.name)"
+                        />
+                        <span
+                          ><b>{{ group.name }}</b
+                          ><small>{{ group.count }}项 · {{ group.percentage }}%</small></span
+                        >
+                      </label>
+                    </div>
+                    <div class="safety-video-evidence-heading">
+                      <h4>
+                        该类别关联问题 <span>{{ selectedVideoGroup?.count }}项</span>
+                      </h4>
+                      <p>{{ selectedVideoGroup?.summary }}</p>
+                    </div>
+                    <input
+                      v-model="issueKeyword"
+                      type="search"
+                      placeholder="在该类别中搜索问题ID、站点或描述"
+                      aria-label="搜索视频类别内问题"
+                    />
+                    <p class="safety-list-count">
+                      {{ videoCandidates.length }} 条问题 · 仅展示所选类别 · 点击照片可放大
+                    </p>
+                    <ul class="safety-candidate-list">
+                      <li
+                        v-for="issue in videoCandidates"
+                        :key="issue.issue_id"
+                        class="safety-candidate safety-video-evidence"
+                      >
+                        <div class="safety-candidate-copy">
+                          <span
+                            ><b>#{{ issue.issue_id }}</b
+                            ><strong>{{ issue.station_name }}</strong></span
+                          >
+                          <p>{{ issue.description }}</p>
+                          <small>{{ issue.category_name }}</small>
+                        </div>
+                        <button
+                          v-if="issue.issue_photo"
+                          class="safety-photo safety-list-photo"
+                          :aria-label="'放大问题' + issue.issue_id + '的照片'"
+                          @click="emit('photo', issue)"
+                        >
+                          <img
+                            :src="resolveImage(issue.issue_photo)"
+                            :alt="'问题 ' + issue.issue_id"
+                            loading="lazy"
+                          /></button
+                        ><span v-else class="safety-missing-photo">暂无照片</span>
+                      </li>
+                    </ul>
+                    <div v-if="!videoCandidates.length" class="safety-no-items">
+                      没有符合条件的问题，请调整关键词。
+                    </div>
+                  </template>
                 </section>
               </div>
             </template>
@@ -360,7 +492,9 @@
           </div>
           <footer>
             <div>
-              <small>AI 结果自动记忆；人工调整需保存，再重新生成报告。保存本身不调用 AI。</small
+              <small
+                >保存配置不会调用
+                AI。人工选择保存后，需重新生成报告才能应用；所有用户共享最新配置。</small
               ><small>{{ savedLabel }}</small>
             </div>
             <button :disabled="saving || analyzing" @click="close">取消</button
@@ -394,6 +528,8 @@ import {
   safetyAnalysisReady,
   safetySubgroups,
   safetyIssueSearch,
+  videoTypicalGroups,
+  videoTypicalSelection,
 } from '@/utils/safetyReportConfig'
 const props = defineProps({
   month: String,
@@ -468,6 +604,22 @@ const subgroups = computed(() => safetySubgroups(currentCategory.value, currentO
 const typicalCandidates = computed(() =>
   safetyIssueSearch(modeIssues(typicalMode.value), issueKeyword.value),
 )
+const videoCategory = computed(() => categories.value.find((c) => c.key === 'video:__typical__'))
+const videoReady = computed(() => safetyAnalysisReady(videoCategory.value))
+const videoGroups = computed(() => videoTypicalGroups(videoCategory.value))
+const selectedVideoGroup = computed(() =>
+  videoTypicalSelection(draft.value.typical_video_category, videoGroups.value),
+)
+const videoHasManualSelection = computed(() =>
+  videoGroups.value.some((g) => g.name === draft.value.typical_video_category),
+)
+const videoCandidates = computed(() => {
+  const ids = new Set(selectedVideoGroup.value?.issue_ids || [])
+  return safetyIssueSearch(
+    modeIssues('video').filter((i) => ids.has(i.issue_id)),
+    issueKeyword.value,
+  )
+})
 const focusIssues = computed(() =>
   safetyIssueSearch(
     (currentCategory.value?.issues || []).filter(
@@ -503,6 +655,37 @@ function setTypical(mode, value) {
 function selectTypicalMode(mode) {
   typicalMode.value = mode
   issueKeyword.value = ''
+}
+function chooseVideoCategory(name) {
+  draft.value.typical_video_category = name
+  issueKeyword.value = ''
+}
+async function analyzeVideo() {
+  if (!props.canGenerate || props.busy || analyzing.value || !videoCategory.value?.issues.length)
+    return
+  const loadSequence = sequence
+  analyzing.value = true
+  dialogError.value = ''
+  try {
+    const { data: response } = await axios.post(
+      '/api/inspection-reports/safety-analysis',
+      {
+        ...params(),
+        mode: 'video',
+        category: '__typical__',
+        revision: data.value.meta.revision,
+        data_signature: data.value.data_signature,
+      },
+      { timeout: 300000 },
+    )
+    if (loadSequence !== sequence || active.value !== 'typical') return
+    videoCategory.value.analysis = response.analysis
+  } catch (err) {
+    if (loadSequence === sequence)
+      dialogError.value = err.response?.data?.error || '视频问题归类未完成，请稍后重试。'
+  } finally {
+    analyzing.value = false
+  }
 }
 function adopt(value) {
   data.value = value
@@ -754,6 +937,11 @@ onBeforeUnmount(() => {
 .safety-config {
   color: #294b65;
 }
+.safety-step-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
 .safety-source {
   display: flex;
   flex-wrap: wrap;
@@ -827,6 +1015,17 @@ onBeforeUnmount(() => {
   border: 1px solid #c4d7e5;
   border-radius: 14px;
   padding: 22px;
+  background: linear-gradient(120deg, #f4f8fb, #fff);
+  border-top: 3px solid #32708d;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.safety-panels article:last-child {
+  border-top-color: #438b82;
+}
+.safety-panels article > button {
+  margin-top: auto;
 }
 .safety-saved {
   display: block;
@@ -852,6 +1051,8 @@ onBeforeUnmount(() => {
   border-radius: 18px;
   box-shadow: 0 24px 90px #061d3d66;
   overflow: hidden;
+  font-size: 15px;
+  line-height: 1.6;
 }
 .safety-dialog header {
   display: flex;
@@ -867,6 +1068,10 @@ onBeforeUnmount(() => {
 }
 .safety-dialog small {
   color: #5a7387;
+  font-size: 13px;
+}
+.safety-dialog button {
+  font-size: 14px;
 }
 .safety-dialog .safety-close {
   font-size: 25px;
@@ -944,7 +1149,7 @@ onBeforeUnmount(() => {
 }
 .safety-mode-nav button small {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 5px;
   font-weight: 400;
 }
@@ -966,7 +1171,7 @@ onBeforeUnmount(() => {
 .safety-mode-nav p,
 .safety-edit-hint {
   color: #5a7387;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
 }
 .safety-choice-content,
@@ -992,7 +1197,7 @@ onBeforeUnmount(() => {
   background: #edf6f7;
   border: 1px solid #bcdce0;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
   margin-bottom: 12px;
 }
 .safety-current-choice > span {
@@ -1002,7 +1207,7 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 .safety-list-count {
-  font-size: 12px;
+  font-size: 14px;
   color: #5a7387;
   margin: 14px 0 8px;
 }
@@ -1050,7 +1255,7 @@ onBeforeUnmount(() => {
 }
 .safety-candidate-copy em,
 .safety-ready-badge {
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 600;
   color: #196d62;
@@ -1098,7 +1303,7 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 .safety-focus p {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.7;
   margin-bottom: 0;
 }
@@ -1250,7 +1455,67 @@ onBeforeUnmount(() => {
 .safety-dialog footer small {
   display: block;
   margin: 3px 0;
-  font-size: 12px;
+  font-size: 13px;
+}
+.safety-mode-note {
+  border-top: 1px solid #d2dfe7;
+  margin-top: 16px;
+  padding-top: 12px;
+  color: #527184;
+  font-size: 14px;
+}
+.safety-video-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+.safety-video-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #c8d8e4;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.safety-video-group.chosen {
+  background: #eaf5f8;
+  border-color: #227f9a;
+  box-shadow: inset 3px 0 #227f9a;
+}
+.safety-video-group input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: #17637e;
+  margin: 3px 0 0;
+}
+.safety-video-group small {
+  display: block;
+  margin-top: 5px;
+}
+.safety-video-evidence-heading {
+  padding: 14px 16px;
+  background: #f3f7fa;
+  border-radius: 9px;
+  margin: 16px 0 10px;
+}
+.safety-video-evidence-heading h4 {
+  font-size: 16px;
+  margin: 0;
+}
+.safety-video-evidence-heading h4 span {
+  color: #17637e;
+  margin-left: 8px;
+}
+.safety-video-evidence-heading p {
+  color: #48697e;
+  font-size: 14px;
+  margin-bottom: 0;
+}
+.safety-candidate.safety-video-evidence {
+  grid-template-columns: minmax(0, 1fr) 110px;
 }
 .safety-dialog .safety-primary {
   background: #17637e;
@@ -1322,6 +1587,20 @@ onBeforeUnmount(() => {
   .safety-mode-nav > p {
     grid-column: 1 / -1;
     margin: 0;
+  }
+  .safety-mode-note {
+    display: none;
+  }
+  .safety-current-choice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .safety-video-groups {
+    grid-template-columns: 1fr;
+  }
+  .safety-candidate.safety-video-evidence {
+    grid-template-columns: minmax(0, 1fr) 76px;
   }
   .safety-mode-nav > button {
     margin: 0;

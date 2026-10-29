@@ -5,7 +5,9 @@ from zoneinfo import ZoneInfo
 import re
 
 TABLES = {'onsite': '质量安全环保检查表（现场）', 'video': '质量安全环保检查表（视频）'}
-UNIT_ORDER = ['浦东', '闵普徐', '松金', '嘉青', '南汇', '宝静', '奉贤', '崇明']
+REGION_ORDER = ['浦东', '闵普徐', '松金', '嘉青', '南汇', '宝静', '奉贤', '崇明']
+UNIT_ORDER = REGION_ORDER + ['中油奉贤', '中油同盛', '中油康桥', '中油农工商', '中油上海',
+    '中油港汇', '中石油上港', '中油浦东', '中油华鑫', '中油中燃（海滨油库）']
 ONSITE_PAGES = [('设备设施', '2. 设备设施类问题', 2), ('污染防治', '3. 污染防治类问题', 1),
     ('能力培训和意识', '4. 能力培训和意识类问题', 1), ('风险合规', '5. 风险合规类问题', 1),
     ('其他隐患类', '6. 其他对生产经营有影响的问题', 2)]
@@ -35,14 +37,25 @@ def fields(value):
 
 
 def unit(row):
-    name = str(row.get('region') or '').replace('闵浦徐', '闵普徐').strip()
+    return unit_name(row.get('region'))
+
+
+def unit_name(value):
+    name = str(value or '').replace('闵浦徐', '闵普徐').strip()
     # Use the actual archive affiliation, never infer an equity company from a station's name.
     base = name.replace('管理片区', '').replace('片区', '').removesuffix('公司')
+    if base in ('中油中燃', '中油中燃(海滨油库)', '中油中燃（海滨油库）'): base = UNIT_ORDER[-1]
     return base or '未设置所属单位'
 
 
 def unit_key(name):
+    name = unit_name(name)
     return (UNIT_ORDER.index(name) if name in UNIT_ORDER else len(UNIT_ORDER), name)
+
+
+def unit_label(name):
+    name = unit_name(name)
+    return name + '片区' if name in REGION_ORDER else name
 
 
 def serialize(row):
@@ -116,7 +129,7 @@ def scope(rows, visits, mode, label):
         'percentage': round(data['count'] / total * 100, 1) if total else 0,
         'average_issue_count': round(data['count'] / len(data['stations']), 1) if data['stations'] else 0}
         for name, data in sorted(units.items(), key=lambda item: unit_key(item[0]))]
-    regions = sum(name in UNIT_ORDER for name in units)
+    regions = sum(name in REGION_ORDER for name in units)
     average = round(total / len(stations), 1) if stations else 0
     title = '现场检查' if mode == 'onsite' else '视频扫站检查'
     intro = f'{label}，对{regions}个管理片区、{len(units)-regions}个合资公司开展{title}，共计检查加油站{len(stations)}座，发现问题{total}项，站均问题{average:.1f}个。'

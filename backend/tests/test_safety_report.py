@@ -318,7 +318,7 @@ class SafetyPresentationTest(unittest.TestCase):
                 chart = next(s.chart for s in slide.shapes if s.has_chart)
                 self.assertEqual(len(chart._chartSpace.xpath('.//c:pie3DChart')), 1)
                 self.assertEqual(len(chart._chartSpace.xpath('.//c:view3D')), 1)
-                self.assertEqual(chart.chart_title.text_frame.text, mode+'巡查问题汇总分析')
+                self.assertIn(mode+'巡查问题汇总分析',[s.text for s in slide.shapes if s.has_text_frame])
                 self.assertFalse(chart._chartSpace.xpath('.//c:ser/c:dLbls'))
                 labels = chart._chartSpace.xpath('.//c:pie3DChart/c:dLbls')[0]
                 self.assertEqual(labels.find('{*}showVal').get('val'), '0')
@@ -342,17 +342,41 @@ class SafetyPresentationTest(unittest.TestCase):
             self.assertTrue(video.text.startswith('9月视频扫站巡查过程中'))
             self.assertIn('总计出现1次', video.text)
             self.assertEqual(len([s for s in slide.shapes if s.name.startswith('矩形')]), 2)
-            self.assertEqual(len(slide._element.xpath('.//a:buChar[@char="▶"]')), 2)
+            arrows=[s for s in slide.shapes if s.name.startswith('safety-split-arrow-')]
+            self.assertEqual(len(arrows),4)
+            self.assertEqual(sorted(str(s.fill.fore_color.rgb) for s in arrows),['000000','000000','FFFFFF','FFFFFF'])
+            self.assertTrue(all(r.font.bold for r in onsite.text_frame.paragraphs[-1].runs))
 
-    def test_video_typical_uses_top_half_of_manifestation_categories_not_raw_table_categories(self):
+    def test_video_typical_uses_only_the_highest_category_and_supports_saved_selection(self):
         report = {'month_label': '2026年09月', 'safety_issues': [{'issue_id': i,'mode': 'video'} for i in range(1,11)],
             'safety_analysis': {'video:__typical__': {'groups': [
                 {'name': '最少表现', 'issue_ids': [10]}, {'name': '最多表现', 'issue_ids': [1,2,3,4]},
                 {'name': '第二表现', 'issue_ids': [5,6,7]}, {'name': '第三表现', 'issue_ids': [8,9]},
                 {'name': '无关问题', 'issue_ids': [999]}]}}}
-        self.assertEqual(video_typical_narrative(report), '9月视频扫站巡查过程中，发现最多表现、第二表现，总计出现7次。')
+        self.assertEqual(video_typical_narrative(report), '9月视频扫站巡查过程中，发现最多表现，总计出现4次。')
+        report['safety_settings']={'typical_video_category':'第二表现'}
+        self.assertEqual(video_typical_narrative(report), '9月视频扫站巡查过程中，发现第二表现，总计出现3次。')
         report['month_label'] = '2026年08月01日至2026年09月30日'
         self.assertTrue(video_typical_narrative(report).startswith(report['month_label']))
+
+    def test_analysis_pages_have_two_red_square_sections_and_independent_native_3d_workbooks(self):
+        with tempfile.TemporaryDirectory() as root:
+            path=Path(root)/'report.pptx';build_safety_presentation(fixture_report(),path,root)
+            prs=Presentation(path)
+            for page,source in [(10,7),(11,8)]:
+                slide=prs.slides[page]
+                body=next(s for s in slide.shapes if s.has_text_frame and s.text.startswith('问题分布'))
+                self.assertIn('问题分布：如右图所示',body.text)
+                self.assertIn('产生原因：',body.text)
+                self.assertNotIn('占比较高问题分析',body.text)
+                self.assertEqual(len(body._element.xpath('.//a:buChar[@char="■"]')),2)
+                self.assertTrue(all(n.get('val')=='FF0000' for n in body._element.xpath('.//a:buClr/a:srgbClr')))
+                graphs=[s for s in slide.shapes if s.has_chart]
+                self.assertEqual(len(graphs),1)
+                self.assertTrue(graphs[0].chart._chartSpace.xpath('.//c:pie3DChart'))
+                original=next(s for s in prs.slides[source].shapes if s.has_chart)
+                self.assertIsNot(graphs[0].chart.part,original.chart.part)
+                self.assertIsNot(graphs[0].chart.part.chart_workbook.xlsx_part,original.chart.part.chart_workbook.xlsx_part)
 
     def test_native_editable_static_pages_and_geometry(self):
         with tempfile.TemporaryDirectory() as root:

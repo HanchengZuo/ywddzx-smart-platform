@@ -12,13 +12,15 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.chart.data import CategoryChartData
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx_compatibility import _normalize_package_fonts
-from safety_report_data import ONSITE_PAGES, VIDEO_PAGES, UNIT_ORDER, category_rows
+from safety_report_data import ONSITE_PAGES, VIDEO_PAGES, unit_key, unit_label, category_rows
 from safety_report_analysis import photo_examples
-from safety_template_styles import paragraph, fit_size, update_chart, frame_props
+from safety_template_styles import paragraph, fit_size, update_chart, frame_props, split_arrow, clone_pie_chart, compact_pie_layout
+from safety_video_themes import selected_video_group
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-1212-1'
+RENDERER_VERSION = 'safety-native-1213-1'
 FONT = 'Microsoft YaHei'
 COLORS = ['4472C4', 'C0504D', '70AD47', '8064A2', 'F79646', '4BACC6', 'A5A5A5', '264478']
 
@@ -144,7 +146,8 @@ def overview(slide, section):
     graph=next(s for s in slide.shapes if s.has_chart)
     heading_props, body_props=frame_props(body), frame_props(body,1)
     body.height=graph.top-Inches(.12)-body.top
-    details='；'.join(f"{r['unit_name']+('片区' if r['unit_name'] in UNIT_ORDER else '')}{r['station_count']}个站点，共{r['issue_count']}项，占比{r['percentage']:.1f}%" for r in section['units'])
+    units=sorted(section['units'],key=lambda r:unit_key(r['unit_name']))
+    details='；'.join(f"{unit_label(r['unit_name'])}{r['station_count']}个站点，共{r['issue_count']}项，占比{r['percentage']:.1f}%" for r in units)
     narrative=section['overview']+'各管理片区及合资公司问题数量如下：'+(details+'。' if details else '当前范围暂无问题记录。')
     size=fit_size([narrative],body.width/914400,body.height/914400,18,reserved=32)
     body.text_frame.clear();body.text_frame.word_wrap=True
@@ -155,20 +158,36 @@ def overview(slide, section):
     spans.append((narrative[offset:],'111111'))
     p=paragraph(body,spans,size,bold=True,props=body_props)
     p.line_spacing=Pt(size*1.45)
-    update_chart(graph,section['units'],(('站点数量','station_count'),('问题数量','issue_count')))
+    update_chart(graph,units,(('站点数量','station_count'),('问题数量','issue_count')))
 
 
-def distribution_page(slide, section, causes=None):
+def distribution_page(slide, section, causes=None, pie_source=None):
     if causes is None:
         return template_distribution_page(slide,section)
-    clear_dynamic(slide)
-    rows=section['detail_distribution'] if causes is not None else section['category_distribution']
-    text=f"本次检查共发现{'现场' if section['mode']=='onsite' else '视频'}问题{section['total_issue_count']}项。\n"
-    text+='\n'.join(f"{r['name']}：{r['count']}项，占比{r['percentage']:.2f}%。" for r in rows)
-    if causes is not None:
-        text='问题分布\n'+text+'\n产生原因\n'+'\n'.join(f'{i+1}. {value}' for i,value in enumerate(causes))
-    textbox(slide,text,.5,1.16,6.1,5.85,18 if causes is None else 15)
-    chart(slide,rows,6.8,1.4,6.05,5.6,pie=True)
+    body=next(s for s in slide.shapes if s.has_text_frame and '问题分布' in s.text)
+    distribution_props, cause_props, item_props=frame_props(body,1),frame_props(body,2),frame_props(body,3)
+    for shape in list(slide.shapes):
+        if shape.has_chart:
+            refs=shape._element.xpath('.//c:chart/@r:id')
+            remove(shape)
+            for rid in refs:slide.part.drop_rel(rid)
+    body.left=Inches(.55);body.top=Inches(1.35);body.width=Inches(6.2);body.height=Inches(5.76)
+    rows=section['detail_distribution'];mode='现场' if section['mode']=='onsite' else '视频'
+    detail='、'.join(f"{r['name']}（{r['count']}项）" for r in rows)
+    text=f'问题分布：如右图所示，{mode}检查问题主要集中在{detail}，共{len(rows)}个方面。' if rows else f'问题分布：当前范围暂无{mode}问题。'
+    reasons=[f'（{i+1}）{value}' for i,value in enumerate(causes)] or ['当前范围暂无可分析的原因。']
+    size=fit_size([text,'产生原因：',*reasons],5.85,5.76,16,leading=1.5,reserved=30)
+    body.text_frame.clear();body.text_frame.word_wrap=True
+    p=paragraph(body,[(text,'000000')],size,first=True,bold=True,props=distribution_props,bullet='square')
+    p.line_spacing=1.35;p.space_after=Pt(10)
+    p=paragraph(body,[('产生原因：','000000')],size,bold=True,props=cause_props,bullet='square')
+    p.line_spacing=1.35;p.space_after=Pt(4)
+    for reason in reasons:
+        p=paragraph(body,[(reason,'000000')],size,bold=True,props=item_props)
+        p.line_spacing=1.35;p.space_after=Pt(5)
+    graph=clone_pie_chart(slide,pie_source,6.85,1.4,6.25,5.76)
+    update_chart(graph,rows,(('问题数量','count'),),pie=True,title=mode+'检查问题分布')
+    compact_pie_layout(slide,graph,rows,mode+'检查问题分布')
 
 
 def template_distribution_page(slide, section):
@@ -191,23 +210,18 @@ def template_distribution_page(slide, section):
         p.line_spacing=1.3;p.space_after=Pt(8)
     graph.left=Inches(6.15);graph.top=Inches(1.28);graph.width=Inches(6.95);graph.height=Inches(5.95)
     update_chart(graph,rows,(('问题数量','count'),),pie=True,title=f'{mode}巡查问题汇总分析')
+    compact_pie_layout(slide,graph,rows,f'{mode}巡查问题汇总分析')
 
 
 def video_typical_narrative(report):
-    issues={r['issue_id'] for r in report['safety_issues'] if r['mode']=='video'}
-    groups=[]
-    for group in report['safety_analysis'].get('video:__typical__',{}).get('groups',[]):
-        ids=set(group['issue_ids'])&issues
-        if ids: groups.append({**group,'ids':ids})
-    groups.sort(key=lambda g:(-len(g['ids']),g['name']))
-    top=groups[:math.ceil(len(groups)/2)]
+    chosen=selected_video_group(report['safety_issues'],report['safety_analysis'].get('video:__typical__',{}),
+        report.get('safety_settings',{}).get('typical_video_category',''))
     label=report['month_label']
     match=re.fullmatch(r'\d{4}年0?(\d+)月',label)
     if match:label=str(int(match[1]))+'月'
-    if not top:return f'{label}视频扫站巡查过程中，暂无可统计的典型问题。'
-    names='、'.join(g['name'].rstrip('。；') for g in top)
-    count=len(set().union(*(g['ids'] for g in top)))
-    return f'{label}视频扫站巡查过程中，发现{names}，总计出现{count}次。'
+    if not chosen:return f'{label}视频扫站巡查过程中，暂无可统计的典型问题。'
+    description=chosen.get('summary') or chosen['name']
+    return f"{label}视频扫站巡查过程中，发现{description.rstrip('。；')}，总计出现{len(chosen['issue_ids'])}次。"
 
 
 def typical_page(slide,report,root):
@@ -217,10 +231,23 @@ def typical_page(slide,report,root):
     for mode in ('onsite','video'):
         finding=findings.get(mode,{});issue=(finding.get('issues') or [{}])[0]
         left=mode=='onsite';x=.95 if left else 7.0
+        if not left:
+            chosen=selected_video_group(report['safety_issues'],report['safety_analysis'].get('video:__typical__',{}),
+                report.get('safety_settings',{}).get('typical_video_category',''))
+            if not chosen:issue={}
+            elif issue.get('issue_id') not in chosen['issue_ids']:
+                examples=photo_examples(report['safety_issues'],{'groups':[chosen]},1)
+                issue=(examples or [{}])[0]
         title=next(s for s in slide.shapes if s.has_text_frame and s.text.startswith(('现场' if left else '视频')+'巡查典型问题'))
         props=frame_props(title);title.height=Inches(.5)
+        for node in list(props) if props is not None else []:
+            if node.tag.rsplit('}',1)[-1] in ('buFont','buChar','buNone'):props.remove(node)
+        if props is not None:props.set('marL','0');props.set('indent','0')
+        if props is not None:props.append(OxmlElement('a:buNone'))
+        title.left=Inches(1.02 if left else 7.18);title.width=Inches(5.05)
         title.text_frame.clear()
-        paragraph(title,[(('现场' if left else '视频')+'巡查典型问题：','111111')],20,first=True,bold=True,props=props,bullet=True)
+        paragraph(title,[(('现场' if left else '视频')+'巡查典型问题：','000000')],20,first=True,bold=True,props=props)
+        split_arrow(slide,.80 if left else 6.96,1.45)
         caption=next(s for s in slide.shapes if s.has_text_frame and s.name==('文本框 1' if left else '文本框 4'))
         caption.text_frame.clear()
         text=(finding.get('summary') or '暂无可用问题描述。') if left else video_typical_narrative(report)
@@ -234,11 +261,11 @@ def typical_page(slide,report,root):
             caption.left=Inches(.98)
             name=issue.get('station_name','')
             if name and not name.endswith('加油站'):name+='加油站'
-            paragraph(caption,[(name or '暂无典型站点','111111')],17,first=True,align=PP_ALIGN.CENTER)
-            p=paragraph(caption,[(text,'111111')],size);p.line_spacing=1.12
+            paragraph(caption,[(name or '暂无典型站点','000000')],17,first=True,bold=True,align=PP_ALIGN.CENTER)
+            p=paragraph(caption,[(text,'000000')],size,bold=True);p.line_spacing=1.12
         else:
             caption.left=Inches(7.0)
-            p=paragraph(caption,[(text,'111111')],size,first=True);p.line_spacing=1.15
+            p=paragraph(caption,[(text,'000000')],size,first=True,bold=True);p.line_spacing=1.15
 
 
 def evidence_page(slide, title, issues, analysis, chosen, intro, root):
@@ -277,8 +304,8 @@ def build_safety_presentation(report, output_path, storage_root=None):
     overview(source[2],sections['onsite']);overview(source[3],sections['video'])
     typical_page(source[5],report,root)
     distribution_page(source[7],sections['onsite']);distribution_page(source[8],sections['video'])
-    distribution_page(source[10],sections['onsite'],report['analysis_causes']['onsite'])
-    distribution_page(source[11],sections['video'],report['analysis_causes']['video'])
+    distribution_page(source[10],sections['onsite'],report['analysis_causes']['onsite'],next(s for s in source[7].shapes if s.has_chart))
+    distribution_page(source[11],sections['video'],report['analysis_causes']['video'],next(s for s in source[8].shapes if s.has_chart))
     issues=report['safety_issues'];analyses=report['safety_analysis'];focus=report['focus_category']
     key='onsite:topic:'+focus;value=analyses.get(key,{})
     selected=category_rows(issues,'onsite','topic:'+focus)
@@ -295,7 +322,7 @@ def build_safety_presentation(report, output_path, storage_root=None):
     for page,(category,title) in enumerate(VIDEO_PAGES,20):
         selected=category_rows(issues,'video',category);value=analyses.get('video:'+category,{})
         unit_counts=Counter(row['unit_name'] for row in selected)
-        most=sorted(unit_counts.items(),key=lambda item:(-item[1],item[0]))[:1]
+        most=sorted(unit_counts.items(),key=lambda item:(-item[1],unit_key(item[0])))[:1]
         share=f"其中{most[0][0]}存在{most[0][1]}项，占比{most[0][1]/len(selected)*100:.1f}%。" if most else ''
         names='、'.join(g['name'] for g in value.get('groups',[])[:4])
         evidence_page(source[page],title,selected,value,photo_examples(selected,value,3),
@@ -307,7 +334,7 @@ def build_safety_presentation(report, output_path, storage_root=None):
         textbox(source[page],body or '当前范围暂无对应问题，无需新增建议。',.65,1.15,12,5.95,21)
     cutoff=(report.get('summary') or {}).get('date_to') or label
     for page,mode in [(27,'onsite'),(28,'video')]:
-        clear_dynamic(source[page]);rows=report['pending_rectification'].get(mode) or []
+        clear_dynamic(source[page]);rows=sorted(report['pending_rectification'].get(mode) or [],key=lambda r:unit_key(r['unit_name']))
         name='现场' if mode=='onsite' else '视频'
         narrative=f'各管理片区及合资公司{name}检查问题整改情况（数据截至{cutoff}）\n'
         narrative+='；'.join(f"{r['unit_name']}待签名{r['pending_sign']}项、待整改{r['pending_rectification']}项" for r in rows)
