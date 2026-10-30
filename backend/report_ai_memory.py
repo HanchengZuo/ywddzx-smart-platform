@@ -98,6 +98,9 @@ class ReportMemory:
         conn = self.connect()
         try:
             # Advisory session locks must not leave a transaction open during AI.
+            # Request-scoped factories have already run SELECT set_config for
+            # the actor. Finish that initialization before enabling autocommit.
+            conn.commit()
             conn.autocommit = True
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 yield cur
@@ -378,6 +381,7 @@ def record_safety_requirements_result(result):
     memory.record('safety_requirements', 'cache_hit' if reused else 'ai_result' if result.get('generated') else 'error',
         result.get('message') or f"规范要求准备：本批生成{counts.get('generated',0)}条，复用{counts.get('reused',0)}条。",
         ai_called=bool(usage.get('ai_called')),request_count=int(usage.get('request_count') or 0),
+        repair_count=int(usage.get('repair_count') or 0),
         model=usage.get('model') or '',cost_est=usage.get('total_cost_est',0),
         generated_standards=int(counts.get('generated',0)),reused_standards=int(counts.get('reused',0)))
 

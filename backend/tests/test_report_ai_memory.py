@@ -455,6 +455,36 @@ class MemoryPostgresTest(unittest.TestCase):
                     self.assertEqual(read,values[0][0])
             finally:conn.close()
 
+    def test_request_actor_initialization_finishes_before_autocommit_and_keeps_actor(self):
+        from psycopg2.extensions import TRANSACTION_STATUS_IDLE
+        def request_connection():
+            conn=self.connect()
+            with conn.cursor() as cur:cur.execute("SELECT set_config('app.actor_id','7',false)")
+            return conn
+        job=self.new_job('safety_quality')
+        memory=ReportMemory(request_connection,job.task_id,'safety_quality')
+        with memory.connection() as cur:
+            self.assertEqual(cur.connection.get_transaction_status(),TRANSACTION_STATUS_IDLE)
+            cur.execute("SELECT current_setting('app.actor_id') AS actor")
+            self.assertEqual(cur.fetchone()['actor'],'7')
+            self.assertEqual(cur.connection.get_transaction_status(),TRANSACTION_STATUS_IDLE)
+        with memory.locked('request-actor-test') as cur:
+            cur.execute("SELECT current_setting('app.actor_id') AS actor")
+            self.assertEqual(cur.fetchone()['actor'],'7')
+        memory.record('测试','info','请求上下文可使用持久化记忆。')
+
+    def test_safety_requirements_repair_count_and_actual_calls_are_recorded(self):
+        from report_ai_memory import record_safety_requirements_result
+        job=self.new_job('safety_quality')
+        token=begin_report_ai_memory(self.connect,job.task_id,'safety_quality')
+        try:
+            record_safety_requirements_result({'generated':True,'requirements_counts':{'generated':1,'reused':0},
+                'usage':{'ai_called':True,'request_count':2,'repair_count':1,'model':'deepseek-flash'}})
+            log=report_ai_generation_log()
+            self.assertEqual(log['summary']['ai_calls'],2)
+            self.assertEqual(log['events'][-1]['repair_count'],1)
+        finally:end_report_ai_memory(token)
+
     def test_context_scope_snapshot_and_existing_classification_reuse_logging(self):
         memory = self.new_job()
         token = begin_report_ai_memory(self.connect, memory.task_id, "finance")

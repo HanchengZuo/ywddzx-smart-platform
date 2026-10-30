@@ -198,6 +198,65 @@ test('requirements and evidence components compile, have no all-issues navigatio
   assert.match(sourceOf('SafetyEvidencePanel'), /规范要求/)
 })
 
+test('exclusive tools use the requested row-major two-by-two order and requirements open in a dialog', () => {
+  const source = sourceOf('SafetyReportConfig')
+  const positions = [
+    '02 · 典型选题',
+    '<SafetyRequirementsPanel',
+    '04 · 月度重点',
+    '05 · 固定章节证据',
+  ].map((label) => source.indexOf(label))
+  assert.ok(
+    positions.every(
+      (position, index) => position >= 0 && (!index || position > positions[index - 1]),
+    ),
+  )
+  assert.match(source, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
+  const requirements = sourceOf('SafetyRequirementsPanel')
+  assert.match(requirements, /03 · 规范要求/)
+  assert.match(requirements, /<Teleport to="body">/)
+  assert.match(requirements, /role="dialog"/)
+  assert.match(requirements, /@keydown\.tab="trapFocus"/)
+  assert.doesNotMatch(requirements, /收起规范要求|aria-expanded/)
+})
+
+test('closing the requirements dialog retains unsaved edits and reopening makes no AI request', async () => {
+  const calls = []
+  const harness = componentHarness(
+    'SafetyRequirementsPanel',
+    { canGenerate: true, busy: false },
+    {
+      async get() {
+        calls.push('get')
+        return {
+          data: {
+            can_generate: true,
+            standards: [{ key: 'onsite:1', requirement: '原要求', status: 'ready' }],
+          },
+        }
+      },
+      async post() {
+        throw new Error('no paid AI while opening')
+      },
+    },
+  )
+  try {
+    const s = harness.state
+    await s.toggle()
+    await vue.nextTick()
+    assert.equal(s.expanded.value, true)
+    s.draft.value['onsite:1'] = '未保存要求'
+    s.close()
+    assert.equal(s.expanded.value, false)
+    await s.toggle()
+    assert.equal(s.draft.value['onsite:1'], '未保存要求')
+    assert.deepEqual(calls, ['get'])
+    assert.equal(s.changes.value.length, 1)
+  } finally {
+    harness.dispose()
+  }
+})
+
 test('materialized representatives never create manual choices, while explicit order and empty selections do', () => {
   const category = evidenceFixture(),
     baseline = { [category.key]: safetyClassificationDraft(category) }
@@ -495,6 +554,47 @@ test('requirements conflicts retain edits without emitting saved or retrying AI'
     assert.equal(s.draft.value['1'], '未保存修订')
     assert.equal(s.changes.value.length, 1)
     assert.deepEqual(harness.events, [])
+  } finally {
+    harness.dispose()
+  }
+})
+
+test('failed requirements generation refreshes completed batches without retrying AI', async () => {
+  const calls = []
+  const harness = componentHarness(
+    'SafetyRequirementsPanel',
+    { canGenerate: true, busy: false },
+    {
+      async post() {
+        calls.push('post')
+        throw { response: { data: { error: '规范13021需核对参数' } } }
+      },
+      async get() {
+        calls.push('get')
+        return {
+          data: {
+            can_generate: true,
+            library_signature: 'after',
+            standards: [{ key: 'onsite:1', requirement: '已生成要求', status: 'ready' }],
+          },
+        }
+      },
+    },
+  )
+  try {
+    const s = harness.state
+    s.adopt({
+      can_generate: true,
+      catalog_signature: 'source',
+      library_signature: 'before',
+      standards: [{ key: 'onsite:1', requirement: '', status: 'missing' }],
+    })
+    await s.generate()
+    assert.deepEqual(calls, ['post', 'get'])
+    assert.equal(s.error.value, '规范13021需核对参数')
+    assert.equal(s.draft.value['onsite:1'], '已生成要求')
+    assert.equal(s.pendingCount.value, 0)
+    assert.deepEqual(harness.events, [['saved']])
   } finally {
     harness.dispose()
   }

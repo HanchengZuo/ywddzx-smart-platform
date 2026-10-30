@@ -21,21 +21,21 @@
           </div>
         </dl>
       </article>
-      <SafetyRequirementsPanel
-        :can-generate="canGenerate"
-        :busy="busy || saving || analyzing || !!active"
-        @saved="requirementsSaved"
-      />
-      <div class="safety-panels">
-        <article>
-          <small class="safety-step-label">03 · 典型选题</small>
+      <div class="safety-panels" aria-label="报告专属配置工具">
+        <article class="safety-tool safety-tool-typical">
+          <small class="safety-step-label">02 · 典型选题</small>
           <h3>现场与视频典型问题</h3>
           <p>
             现场选一个代表问题；视频按较高层级风险归类，默认展示占比最高的一类，可切换类别并查看关联问题。
           </p>
           <button :disabled="busy" @click="open('typical')">查看与调整典型问题</button>
         </article>
-        <article>
+        <SafetyRequirementsPanel
+          :can-generate="canGenerate"
+          :busy="busy || saving || analyzing || !!active"
+          @saved="requirementsSaved"
+        />
+        <article class="safety-tool safety-tool-focus">
           <small class="safety-step-label">04 · 月度重点</small>
           <h3>月度重点与问题再分类</h3>
           <p>
@@ -45,7 +45,7 @@
           </p>
           <button :disabled="busy" @click="open('analysis')">查看与调整分析</button>
         </article>
-        <article>
+        <article class="safety-tool safety-tool-evidence">
           <small class="safety-step-label">05 · 固定章节证据</small>
           <h3>现场与视频分类证据</h3>
           <p>分别维护现场五类与视频四类固定章节，查看问题子类、规范要求和代表照片顺序。</p>
@@ -943,20 +943,21 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 18px;
   padding: 24px;
-  border: 1px solid #c4d7e5;
+  border: 1px solid #b9cddc;
+  border-left: 4px solid #205977;
   border-radius: 16px;
-  background: #f5f9fc;
+  background: linear-gradient(110deg, #edf4f8, #fff);
 }
 .safety-source > div {
   flex: 1;
 }
 .safety-config h3 {
   margin: 6px 0 10px;
-  font-size: 19px;
+  font-size: 20px;
   color: #173951;
 }
 .safety-config p {
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.7;
   margin: 6px 0 16px;
 }
@@ -983,11 +984,21 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(5, 1fr);
   width: 100%;
   margin: 0;
-  border-top: 1px solid #cddce8;
-  padding-top: 18px;
+  border: 1px solid #cddce8;
+  border-radius: 10px;
+  padding: 16px 0;
+  background: #fff;
+}
+.safety-source dl > div {
+  padding: 0 20px;
+  border-right: 1px solid #d7e3eb;
+}
+.safety-source dl > div:last-child {
+  border-right: 0;
 }
 .safety-source dt {
-  font-size: 13px;
+  font-size: 14px;
+  color: #47667b;
 }
 .safety-source dd {
   margin: 6px 0 0;
@@ -1002,25 +1013,60 @@ onBeforeUnmount(() => {
 }
 .safety-panels {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 18px;
+  border: 1px solid #b9cddc;
+  border-radius: 16px;
+  background: #bfd2df;
+  overflow: hidden;
 }
-.safety-panels article {
-  border: 1px solid #c4d7e5;
-  border-radius: 14px;
-  padding: 22px;
-  background: linear-gradient(120deg, #f4f8fb, #fff);
-  border-top: 3px solid #32708d;
+.safety-panels > .safety-tool {
+  border: 0;
+  margin: 0;
+  border-radius: 0;
+  padding: 25px 28px;
+  background: #fff;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.7;
 }
-.safety-panels article:last-child {
-  border-top-color: #438b82;
+.safety-tool .safety-step-label {
+  line-height: 1.4;
+  padding: 4px 9px;
+  border-radius: 5px;
+  color: #255c7e;
+  background: #e8f1f8;
+  margin-bottom: 10px;
 }
-.safety-panels article > button {
+.safety-tool-focus .safety-step-label {
+  background: #eef1f4;
+  color: #415f74;
+}
+.safety-tool-evidence .safety-step-label {
+  background: #e5f1ee;
+  color: #22675d;
+}
+.safety-tool > button {
   margin-top: auto;
+  min-height: 44px;
+  font-size: 15px;
+  line-height: 1.5;
+  box-sizing: border-box;
+  border-color: #9dbbd0;
+  box-shadow: 0 2px 5px #17395108;
+}
+.safety-tool > button:hover:not(:disabled) {
+  background: #edf5f9;
+  border-color: #4c809e;
+}
+.safety-tool p {
+  max-width: 64ch;
+  margin-bottom: 20px;
+  color: #496579;
 }
 .safety-saved {
   display: block;
@@ -1565,7 +1611,13 @@ onBeforeUnmount(() => {
   }
   .safety-source dl {
     grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
+    gap: 16px 0;
+  }
+  .safety-source dl > div {
+    padding: 0 12px;
+  }
+  .safety-source dl > div:nth-child(3) {
+    border-right: 0;
   }
   .safety-stations {
     grid-template-columns: 1fr;
