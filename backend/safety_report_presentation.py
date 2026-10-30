@@ -21,7 +21,10 @@ from safety_template_styles import (paragraph, fit_size, update_chart, frame_pro
 from safety_video_themes import selected_video_group
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-1214-1'
+RENDERER_VERSION = 'safety-native-1218-1'
+# Keep template indexes while composing, then move chapter three behind all
+# chapter-two evidence. Only the slide ID order changes, not relationships.
+SLIDE_ORDER = (*range(9), *range(12,24), 9, 10, 11, *range(24,31))
 FONT = 'Microsoft YaHei'
 
 
@@ -82,7 +85,7 @@ def set_bar(slide, title):
                     run.font.color.rgb = RGBColor(255,255,255)
 
 
-def photo(slide, issue, root, x, y, w, h):
+def photo(slide, issue, root, x, y, w, h, *, bottom=False):
     raw = str(issue.get('issue_photo') or '').lstrip('/')
     path = (root / raw).resolve()
     if raw and path.is_relative_to(root.resolve()) and path.is_file():
@@ -92,7 +95,7 @@ def photo(slide, issue, root, x, y, w, h):
                 width,height=image.size
                 output=BytesIO();image.save(output,format='JPEG',quality=92);output.seek(0)
             scale=min(w/width,h/height)
-            return slide.shapes.add_picture(output, Inches(x+(w-width*scale)/2), Inches(y+(h-height*scale)/2),
+            return slide.shapes.add_picture(output, Inches(x+(w-width*scale)/2), Inches(y+(h-height*scale)*(1 if bottom else .5)),
                 width=Inches(width*scale),height=Inches(height*scale))
         except (OSError,ValueError): pass
     return textbox(slide,'暂无可用问题照片',x,y+h/2-.2,w,.4,15,'64748B',align=PP_ALIGN.CENTER)
@@ -133,16 +136,22 @@ def distribution_page(slide, section, causes=None, pie_source=None):
     rows=section['detail_distribution'];mode='现场' if section['mode']=='onsite' else '视频'
     detail='、'.join(f"{r['name']}（{r['count']}项）" for r in rows)
     text=f'问题分布：如右图所示，{mode}检查问题主要集中在{detail}，共{len(rows)}个方面。' if rows else f'问题分布：当前范围暂无{mode}问题。'
-    reasons=[f'（{i+1}）{value}' for i,value in enumerate(causes)] or ['当前范围暂无可分析的原因。']
-    size=fit_size([text,'产生原因：',*reasons],5.85,5.76,16,leading=1.5,reserved=30)
+    reasons=[f'（{i+1}）{sentence(value)}' for i,value in enumerate(causes)] or ['当前范围暂无可分析的原因。']
+    size=10
+    for candidate in range(16,9,-1):
+        height=sum(evidence_text_height([value],5.65,candidate,line_height=candidate*1.5)-.1
+            for value in [text,'产生原因：',*reasons])
+        if height+30/72<=5.76:
+            size=candidate;break
+    line_height=Pt(size*1.5)
     body.text_frame.clear();body.text_frame.word_wrap=True
     p=paragraph(body,[(text,'000000')],size,first=True,bold=True,props=distribution_props,bullet='square')
-    p.line_spacing=1.35;p.space_after=Pt(10)
+    p.line_spacing=line_height;p.space_after=Pt(10)
     p=paragraph(body,[('产生原因：','000000')],size,bold=True,props=cause_props,bullet='square')
-    p.line_spacing=1.35;p.space_after=Pt(4)
+    p.line_spacing=line_height;p.space_after=Pt(4)
     for reason in reasons:
         p=paragraph(body,[(reason,'000000')],size,bold=True,props=item_props)
-        p.line_spacing=1.35;p.space_after=Pt(5)
+        p.line_spacing=line_height;p.space_after=Pt(5)
     graph=clone_pie_chart(slide,pie_source,6.85,1.4,6.25,5.76)
     update_chart(graph,rows,(('问题数量','count'),),pie=True,title=mode+'检查问题分布')
     compact_pie_layout(slide,graph,rows,mode+'检查问题分布')
@@ -252,15 +261,28 @@ def confirmed_requirement(issue):
     return text if issue.get('requirement_status') in ('ready','manual') else ''
 
 
+def sentence(text):
+    return str(text or '').strip().rstrip('。.;；，,!?！？')+'。'
+
+
+def requirement_paragraph(issues):
+    unique={}
+    for issue in issues:
+        value=re.sub(r'\s+',' ',confirmed_requirement(issue)).strip() or '暂无已确认的规范要求。'
+        key=re.sub(r'\s+','',value).rstrip('。.;；')
+        unique.setdefault(key,value.rstrip('。.;；'))
+    values=list(unique.values())
+    if not values:return '规范要求：当前范围暂无可对应的已确认规范要求。'
+    if len(values)==1:return '规范要求：'+values[0]+'。'
+    return '规范要求：'+'；'.join(f'{index+1}. {text}' for index,text in enumerate(values))+'。'
+
+
 def evidence_page(slide, title, issues, analysis, chosen, intro, root):
     intro_box,captions,pictures,norm_box,border,station_first,intro_props=evidence_layout(slide)
     lookup={row['issue_id']:row for row in issues}
     selected=[{**lookup[item['issue_id']],'caption':item.get('caption')}
         for item in chosen if item.get('issue_id') in lookup][:3]
-    lines=[f"{i+1}. "+(confirmed_requirement(issue).replace('\r',' ').replace('\n',' ')
-        or '暂无已确认的规范要求。') for i,issue in enumerate(selected)]
-    if lines:lines[0]='规范要求：'+lines[0]
-    else:lines=['规范要求：当前范围暂无可对应的已确认规范要求。']
+    lines=[requirement_paragraph(selected)]
     descriptions=[]
     for issue in selected:
         station=str(issue.get('station_name') or '').strip()
@@ -276,7 +298,7 @@ def evidence_page(slide, title, issues, analysis, chosen, intro, root):
     if not selected:
         textbox(slide,'当前范围暂无可展示的问题证据。',.6,3.3,12.1,.6,18,'64748B',align=PP_ALIGN.CENTER)
     for i,issue in enumerate(selected):
-        image=photo(slide,issue,root,*(v/914400 for v in layout['photos'][i]))
+        image=photo(slide,issue,root,*(v/914400 for v in layout['photos'][i]),bottom=True)
         image.name=f'safety-evidence-photo-{i+1}'
         caption=evidence_textbox(slide,layout['captions'][i],f'safety-evidence-caption-{i+1}')
         description,station=descriptions[i]
@@ -292,6 +314,44 @@ def evidence_page(slide, title, issues, analysis, chosen, intro, root):
     for i,text in enumerate(lines):
         p=paragraph(norm,[(text,'C00000')],layout['norm_size'],first=i==0,bold=True,align=PP_ALIGN.LEFT)
         p.line_spacing=layout['norm_leading']
+
+
+def suggestions_page(slide, items, *, rectification=False):
+    """Retain native headings/indentation, fitting complete AI text before drawing."""
+    body=max((s for s in slide.shapes if s.has_text_frame and s.top>Inches(1)),
+        key=lambda s:s.width*s.height)
+    heading_props=frame_props(body)
+    item_props=frame_props(body,1 if rectification else 0)
+    content_props=frame_props(body,2 if rectification else 1)
+    entries=[]
+    if rectification:entries.append(('针对问题整改的建议',True,heading_props))
+    for index,item in enumerate(items):
+        title=str(item.get('title') or '').strip()
+        title=re.sub(r'^(?:[一二三四五六七八九十]+、|\d+[、.])\s*','',title)
+        heading=title if rectification else f'{"一二三四"[index]}、{title}'
+        entries.append((heading,True,item_props))
+        entries.extend((line.strip(),False,content_props) for line in str(item.get('content') or '').splitlines() if line.strip())
+    if not items:entries.append(('当前范围暂无对应问题，无需新增建议。',False,content_props))
+    width=body.width/914400-.55
+    available=body.height/914400
+    selected=None
+    for size in range(16,9,-1):
+        for leading in (1.5,1.35,1.2,1.1):
+            line_height=size*leading
+            height=sum(evidence_text_height([text],width,size,line_height=line_height)-.1 for text,_,_ in entries)
+            if height+.12<=available:
+                selected=(size,line_height);break
+        if selected:break
+    if not selected:raise ValueError('工作建议文字过长，无法完整放入模板，请精简建议后重试。')
+    size,line_height=selected
+    body.name='safety-rectification-suggestions' if rectification else 'safety-work-suggestions'
+    body.text_frame.clear();body.text_frame.word_wrap=True
+    from pptx.enum.text import MSO_AUTO_SIZE, MSO_ANCHOR
+    body.text_frame.auto_size=MSO_AUTO_SIZE.NONE
+    body.text_frame.vertical_anchor=MSO_ANCHOR.TOP
+    for index,(text,heading,props) in enumerate(entries):
+        p=paragraph(body,[(text,'262626')],size,first=index==0,bold=heading,props=props,bullet='square' if heading else False)
+        p.line_spacing=Pt(line_height)
 
 
 def backlog_page(slide, rows, mode, cutoff):
@@ -371,14 +431,14 @@ def build_safety_presentation(report, output_path, storage_root=None):
         evidence_page(source[page],title,selected,value,photo_examples(selected,value,3),
             f'本月{category}问题共{len(selected)}项。{share}问题主要集中在{names or "暂无对应问题"}。',root)
     for page,key in [(25,'work_suggestions'),(29,'rectification_suggestions')]:
-        clear_dynamic(source[page])
-        items=report.get(key) or []
-        body='\n\n'.join(f"{i+1}、{item['title']}\n{item['content']}" for i,item in enumerate(items))
-        textbox(source[page],body or '当前范围暂无对应问题，无需新增建议。',.65,1.15,12,5.95,21)
+        suggestions_page(source[page],report.get(key) or [],rectification=page==29)
     cutoff=(report.get('summary') or {}).get('date_to') or label
     for page,mode in [(27,'onsite'),(28,'video')]:
         rows=sorted(report['pending_rectification'].get(mode) or [],key=lambda r:unit_key(r['unit_name']))
         backlog_page(source[page],rows,mode,cutoff)
     _normalize_package_fonts(prs)
+    slide_ids=list(prs.slides._sldIdLst)
+    for node in slide_ids:prs.slides._sldIdLst.remove(node)
+    for index in SLIDE_ORDER:prs.slides._sldIdLst.append(slide_ids[index])
     output_path=Path(output_path);output_path.parent.mkdir(parents=True,exist_ok=True);prs.save(output_path)
     return {'ppt_path':str(output_path),'slide_count':len(prs.slides)}

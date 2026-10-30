@@ -22,7 +22,7 @@ from safety_report_data import serialize, scope, period_label, pending_at, backl
 from safety_report_analysis import (validate_analysis, analysis_context, normalize_settings,
     effective_analysis, build_report, photo_examples, load_settings, save_settings)
 from safety_report_http import register_safety_report, config_categories
-from safety_report_presentation import build_safety_presentation, TEMPLATE_FILE
+from safety_report_presentation import build_safety_presentation, TEMPLATE_FILE, SLIDE_ORDER
 from safety_report_presentation import video_typical_narrative
 from safety_template_styles import editable_plot
 
@@ -367,7 +367,7 @@ class SafetyPresentationTest(unittest.TestCase):
             path=Path(root)/'report.pptx';build_safety_presentation(fixture_report(),path,root)
             prs=Presentation(path)
             for page,source in [(10,7),(11,8)]:
-                slide=prs.slides[page]
+                slide=prs.slides[SLIDE_ORDER.index(page)]
                 body=next(s for s in slide.shapes if s.has_text_frame and s.text.startswith('问题分布'))
                 self.assertIn('问题分布：如右图所示',body.text)
                 self.assertIn('产生原因：',body.text)
@@ -391,10 +391,10 @@ class SafetyPresentationTest(unittest.TestCase):
             self.assertEqual(result['slide_count'], 31)
             for before, after in [(1, 1), (4, 4), (6, 6), (9, 9), (24, 24), (26, 26), (30, 30)]:
                 self.assertEqual([s.text for s in template.slides[before].shapes if s.has_text_frame],
-                    [s.text for s in prs.slides[after].shapes if s.has_text_frame])
+                    [s.text for s in prs.slides[SLIDE_ORDER.index(after)].shapes if s.has_text_frame])
             charts = [s.chart for slide in prs.slides for s in slide.shapes if s.has_chart]
             self.assertGreater(len(charts), 5)
-            self.assertEqual(len([s for s in prs.slides[11].shapes if s.has_chart]), 1)
+            self.assertEqual(len([s for s in prs.slides[SLIDE_ORDER.index(11)].shapes if s.has_chart]), 1)
             self.assertTrue(any(s.shape_type == 13 for s in prs.slides[5].shapes))
             for slide in prs.slides:
                 for shape in slide.shapes:
@@ -420,18 +420,18 @@ class SafetyPresentationTest(unittest.TestCase):
             output = Path(root)/'safety.pptx'
             build_safety_presentation(report, output, root)
             prs = Presentation(output)
-            text = '\n'.join(shape.text for shape in prs.slides[12].shapes if shape.has_text_frame)
+            text = '\n'.join(shape.text for shape in prs.slides[SLIDE_ORDER.index(12)].shapes if shape.has_text_frame)
             self.assertIn('本月重点工作类为设备设施，共4项', text)
             self.assertEqual(len(prs.slides), 31)
             photo_ids = []
             for index in (18, 19):
-                page = prs.slides[index]
+                page = prs.slides[SLIDE_ORDER.index(index)]
                 self.assertEqual(sum(shape.shape_type == 13 and shape.top > 914400 for shape in page.shapes), 3)
                 ids = list(map(int, re.findall(r'问题ID (\d+)', page.notes_slide.notes_text_frame.text)))
                 self.assertEqual(len(ids), 3)
                 photo_ids.extend(ids)
             self.assertEqual(sorted(photo_ids), list(range(20, 26)))
-            focus_ids = set(map(int, re.findall(r'问题ID (\d+)', prs.slides[12].notes_slide.notes_text_frame.text)))
+            focus_ids = set(map(int, re.findall(r'问题ID (\d+)', prs.slides[SLIDE_ORDER.index(12)].notes_slide.notes_text_frame.text)))
             self.assertTrue(focus_ids.issubset({1, 2, 3, 4}))
 
 
