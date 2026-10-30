@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from flask import Flask, g, request
 import app as core
 from issue_appeals import appeal_table_allowed, can_decide, register_issue_appeals, APPEAL_LABELS
@@ -39,6 +39,93 @@ class AppealRulesTests(unittest.TestCase):
         self.assertFalse(catalog['defaults']['quality_safety'])
         for action, label in APPEAL_LABELS.items():
             self.assertEqual(core.serialize_issue_flow_history_event({'action_type': action})['action_label'], label)
+
+
+class AppealStageFilteringTests(unittest.TestCase):
+    def setUp(self):
+        self.conn=MagicMock();self.cur=self.conn.cursor.return_value
+        self.user={'id':7,'role':'station_manager','station_id':11}
+        app=Flask(__name__)
+        @app.before_request
+        def identity():g.current_user=self.user
+        namespace=dict(vars(core))
+        namespace.update(get_db_connection=lambda:self.conn,close_db_resources=MagicMock())
+        register_issue_appeals(app,namespace)
+        self.client=app.test_client()
+
+    def test_stage_filter_is_added_to_existing_scope_and_pagination_with_separate_counts(self):
+        for stage in ('area_pending','quality_pending',''):
+            with self.subTest(stage=stage):
+                self.cur.reset_mock();self.conn.reset_mock()
+                self.cur.fetchone.side_effect=[{'total':3},{'active':3,'area_pending':2,'quality_pending':1,'unread_ended':4}]
+                self.cur.fetchall.side_effect=[[],[]]
+                response=self.client.get('/api/issue-appeals',query_string={'stage':stage,'keyword':'接地','page':2})
+                self.assertEqual(response.status_code,200,response.json)
+                self.assertEqual(response.json['counts'],{'active':3,'area_pending':2,'quality_pending':1,'unread_ended':4,'total':7})
+                count,rows,*_=self.cur.execute.call_args_list
+                self.assertIn('i.station_id = %s',count.args[0])
+                self.assertIn('i.station_id = %s',rows.args[0])
+                self.assertEqual(count.args[1],[11]+([stage] if stage else [])+['接地','%接地%','%接地%'])
+                self.assertEqual(rows.args[1],[7]+count.args[1]+[20,20])
+                self.assertEqual('a.status = %s' in count.args[0],bool(stage))
+                self.conn.commit.assert_called_once();self.conn.rollback.assert_not_called()
+
+    def test_archive_ignores_active_stage_and_invalid_stage_rolls_back_without_querying(self):
+        self.cur.fetchone.side_effect=[{'total':0},{'active':0,'area_pending':0,'quality_pending':0,'unread_ended':0}]
+        self.cur.fetchall.side_effect=[[],[]]
+        self.assertEqual(self.client.get('/api/issue-appeals?archive=1&stage=area_pending').status_code,200)
+        self.assertIn("a.status NOT IN ('area_pending','quality_pending')",self.cur.execute.call_args_list[0].args[0])
+        self.assertNotIn('a.status = %s',self.cur.execute.call_args_list[0].args[0])
+        self.cur.reset_mock();self.conn.reset_mock()
+        response=self.client.get('/api/issue-appeals?stage=approved')
+        self.assertEqual(response.status_code,400)
+        self.conn.rollback.assert_called_once();self.conn.commit.assert_not_called();self.cur.execute.assert_not_called()
+        self.user=None
+        self.assertEqual(self.client.get('/api/issue-appeals?stage=quality_pending').status_code,401)
+
+
+@unittest.skipUnless(os.environ.get('ISSUE_LIFECYCLE_DB_TEST') == '1', 'Requires isolated PostgreSQL')
+class AppealStageDatabaseTests(unittest.TestCase):
+    def test_real_queries_classify_before_pagination_inside_original_station_scope(self):
+        conn=core.get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                # Temporary tables shadow business tables only on this connection.
+                cur.execute('''CREATE TEMP TABLE stations(id int,station_name text,region text);
+                  CREATE TEMP TABLE inspections(id int);
+                  CREATE TEMP TABLE inspection_tables(id int,table_name text);
+                  CREATE TEMP TABLE issues(id int,station_id int,inspection_id int,inspection_table_id int,
+                    description text,standard_id text,photo_path text,status text,created_at timestamptz DEFAULT now());
+                  CREATE TEMP TABLE inspection_issue_appeals(id int,issue_id int,status text,updated_at timestamptz DEFAULT now(),
+                    created_at timestamptz DEFAULT now(),area_at timestamptz,quality_at timestamptz,
+                    area_by int,quality_by int,submitted_by int,review_deadline_at timestamptz,
+                    review_started_at timestamptz,review_phase text,review_policy jsonb);
+                  CREATE TEMP TABLE inspection_issue_appeal_reads(appeal_id int,user_id int,read_version timestamptz);
+                  INSERT INTO stations VALUES (1,'站一','浦东'),(2,'站二','松金');
+                  INSERT INTO inspections VALUES (1);
+                  INSERT INTO inspection_tables VALUES (1,'测试检查表');
+                  INSERT INTO issues(id,station_id,inspection_id,inspection_table_id) VALUES (1,1,1,1),(2,2,1,1);
+                  INSERT INTO inspection_issue_appeals(id,issue_id,status)
+                    SELECT n,1,CASE WHEN n<=23 THEN 'area_pending' ELSE 'quality_pending' END FROM generate_series(1,27) n;
+                  INSERT INTO inspection_issue_appeals(id,issue_id,status) VALUES (28,1,'rejected'),(29,2,'area_pending');''')
+            app=Flask(__name__)
+            @app.before_request
+            def identity():g.current_user={'id':7,'role':'station_manager','station_id':1}
+            wrapper=SimpleNamespace(cursor=conn.cursor,commit=lambda:None,rollback=lambda:None,close=lambda:None)
+            namespace=dict(vars(core));namespace['get_db_connection']=lambda:wrapper
+            register_issue_appeals(app,namespace)
+            client=app.test_client()
+            for stage,page,total,length in [('area_pending',1,23,20),('area_pending',2,23,3),('quality_pending',1,4,4)]:
+                response=client.get('/api/issue-appeals',query_string={'stage':stage,'page':page})
+                self.assertEqual(response.status_code,200,response.json)
+                self.assertEqual(response.json['total'],total)
+                self.assertEqual(len(response.json['items']),length)
+                self.assertTrue(all(row['status']==stage and row['station_name']=='站一' for row in response.json['items']))
+                self.assertEqual(response.json['counts'],{'active':27,'area_pending':23,'quality_pending':4,'unread_ended':1,'total':28})
+            archived=client.get('/api/issue-appeals?archive=1').json
+            self.assertEqual([row['id'] for row in archived['items']],[28])
+        finally:
+            conn.rollback();conn.close()
 
 
 @unittest.skipUnless(os.environ.get('ISSUE_LIFECYCLE_DB_TEST') == '1', 'Local PostgreSQL only; all data changes rolled back')
@@ -132,6 +219,24 @@ class AppealDatabaseTests(unittest.TestCase):
         response = self.post(f"/api/issues/{self.issue['id']}/appeals", reason='问题事实与检查结论不符')
         self.assertEqual(response.status_code, 200, response.json)
         return response.json['id']
+
+    def test_stage_tabs_follow_handoff_without_changing_station_or_area_visibility(self):
+        aid=self.start()
+        def read(stage,identity='station'):
+            response=self.client.get('/api/issue-appeals',query_string={'stage':stage},headers={'X-Test-Identity':identity})
+            self.assertEqual(response.status_code,200,response.json)
+            return response.json
+        initial=read('area_pending')
+        self.assertIn(aid,[item['id'] for item in initial['items']])
+        self.assertTrue(all(item['status']=='area_pending' for item in initial['items']))
+        self.assertNotIn(aid,[item['id'] for item in read('quality_pending')['items']])
+        self.assertEqual(self.decide(aid,'area','area_pending').status_code,200)
+        self.assertNotIn(aid,[item['id'] for item in read('area_pending')['items']])
+        final=read('quality_pending')
+        self.assertIn(aid,[item['id'] for item in final['items']])
+        self.assertEqual(final['counts']['active'],final['counts']['area_pending']+final['counts']['quality_pending'])
+        for identity in ('wrong_station','wrong_area'):
+            self.assertNotIn(aid,[item['id'] for item in read('quality_pending',identity)['items']])
 
     def state(self):
         self.cur.execute('SELECT status FROM issues WHERE id=%s', (self.issue['id'],))

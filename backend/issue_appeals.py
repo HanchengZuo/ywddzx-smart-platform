@@ -54,6 +54,8 @@ def appeal_notification_counts(cur, user, namespace):
     where, params = appeal_scope(core, cur, user)
     predicate = ' AND '.join(where) or 'TRUE'
     cur.execute(f'''SELECT count(*) FILTER (WHERE a.status IN ('area_pending','quality_pending')) AS active,
+      count(*) FILTER (WHERE a.status='area_pending') AS area_pending,
+      count(*) FILTER (WHERE a.status='quality_pending') AS quality_pending,
       count(*) FILTER (WHERE a.status NOT IN ('area_pending','quality_pending') AND NOT EXISTS (
         SELECT 1 FROM inspection_issue_appeal_reads r WHERE r.appeal_id=a.id AND r.user_id=%s
         AND r.read_version >= a.updated_at)) AS unread_ended
@@ -104,6 +106,12 @@ def register_issue_appeals(app, namespace):
             where, params = appeal_scope(core, cur, user)
             archive = request.args.get('archive') == '1'
             where.append("a.status NOT IN ('area_pending','quality_pending')" if archive else "a.status IN ('area_pending','quality_pending')")
+            stage = request.args.get('stage', '')
+            if not archive and stage:
+                if stage not in ACTIVE:
+                    raise ValueError('请选择有效的待处理申诉阶段。')
+                where.append('a.status = %s')
+                params.append(stage)
             keyword = request.args.get('keyword', '').strip()[:200]
             if keyword:
                 where.append('(i.id::text = %s OR s.station_name ILIKE %s OR i.description ILIKE %s)')
