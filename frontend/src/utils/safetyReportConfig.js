@@ -249,3 +249,11 @@ export function videoTypicalGroups(category) {
 export function videoTypicalSelection(saved, groups) {
   return groups.find((group) => group.name === saved) || groups[0] || null
 }
+
+export function videoTypicalIssue(issues, group, saved) {
+  const ids = new Set(group?.issue_ids || [])
+  const photos = issues
+    .filter((issue) => issue.mode === 'video' && ids.has(issue.issue_id) && issue.issue_photo)
+    .sort((a, b) => a.issue_id - b.issue_id)
+  return photos.find((issue) => issue.issue_id === saved) || photos[0] || null
+}

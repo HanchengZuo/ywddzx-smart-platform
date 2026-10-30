@@ -2,7 +2,7 @@ from datetime import date
 import unittest
 from unittest.mock import patch, MagicMock
 from flask import Flask
-from safety_video_themes import VIDEO_POLICY, VIDEO_GUIDANCE, normalize_video_groups, selected_video_group
+from safety_video_themes import VIDEO_POLICY, VIDEO_GUIDANCE, normalize_video_groups, selected_video_group, selected_video_issue
 from safety_report_analysis import analysis_context, analyze, build_report, normalize_settings, validate_analysis
 from safety_report_data import UNIT_ORDER, REGION_ORDER, unit_key, unit_label, serialize, scope
 from safety_report_http import register_safety_report
@@ -95,8 +95,64 @@ class VideoThemeTest(unittest.TestCase):
             typical_page(prs.slides[5],report,Path('/tmp'))
         self.assertEqual(photo.call_args_list[-1].args[1]['issue_id'],7)
 
+    def test_video_photo_choice_stays_in_theme_and_uses_only_photographed_issues(self):
+        rows=[serialize(raw_issue(i,'video',issue_photo='' if i==3 else f'{i}.jpg')) for i in (2,1,3,4)]
+        group={'issue_ids':[1,2,3]}
+        for selection,expected in ((None,1),(2,2),(3,1),(4,1),(999,1)):
+            self.assertEqual(selected_video_issue(rows,group,selection)['issue_id'],expected)
+        self.assertIsNone(selected_video_issue(rows,{'issue_ids':[3]},2))
+        self.assertIsNone(selected_video_issue(rows,None,2))
+
+    def test_saved_manual_video_photo_reaches_ppt_without_changing_category_narrative(self):
+        from tests.test_safety_report import fixture_report
+        from safety_report_presentation import typical_page, TEMPLATE_FILE, video_typical_narrative
+        from pptx import Presentation
+        from pathlib import Path
+        rows=[raw_issue(1),raw_issue(2,'video'),raw_issue(3,'video')]
+        report=fixture_report('example.jpg',rows=rows,settings={'typical_issue_ids':{'video':3}})
+        finding=next(f for f in report['typical_findings'] if f['mode']=='video')
+        self.assertEqual(finding['issues'][0]['issue_id'],3)
+        self.assertEqual(finding['issue_count'],2)
+        self.assertEqual(finding['summary'],report['safety_analysis']['video:__typical__']['groups'][0]['summary'])
+        self.assertIn('总计出现2次',video_typical_narrative(report))
+        with patch('safety_report_presentation.photo') as photo:
+            typical_page(Presentation(TEMPLATE_FILE).slides[5],report,Path('/tmp'))
+        self.assertEqual(photo.call_args_list[-1].args[1]['issue_id'],3)
+
 
 class VideoThemeHttpTest(unittest.TestCase):
+    def test_manual_video_photo_save_validates_theme_photo_and_rolls_back_invalid_choices(self):
+        conn=MagicMock(); app=Flask(__name__)
+        rows=[raw_issue(1,'video',issue_photo='1.jpg'),raw_issue(2,'video',issue_photo='2.jpg'),
+            raw_issue(3,'video'),raw_issue(4,'video',issue_photo='4.jpg')]
+        stored={'settings':{},'revision':0}
+        register_safety_report(app,connect=lambda:conn,authorize=lambda c:{'id':1},
+            period=lambda *a:(date(2026,9,1),date(2026,10,1)),fetch_inputs=lambda *a:(rows,[],[]),
+            has_permission=lambda *a:False,save_workspace=MagicMock(),log_usage=MagicMock())
+        choice={'groups':[{'name':'隔离','summary':'防护不足','issue_ids':[1,2,3]},
+            {'name':'着装','summary':'着装问题','issue_ids':[4]}],'complete':True}
+        request={'settings':{'typical_issue_ids':{'video':2}},'revision':0,
+            'data_signature':fingerprint([serialize(row) for row in rows])}
+        def persist(cur,settings,*args):stored.update(settings=settings,revision=1)
+        with patch('safety_report_http.load_settings',side_effect=lambda *args:stored.copy()),patch(
+            'safety_report_http.cached_analysis',return_value=choice),patch('safety_report_http.save_settings',side_effect=persist) as save,patch(
+            'safety_report_http.analyze',side_effect=AssertionError('paid AI')):
+            client=app.test_client()
+            response=client.put('/api/inspection-reports/safety-config',json=request)
+            self.assertEqual(response.status_code,200,response.json)
+            self.assertEqual(client.get('/api/inspection-reports/safety-config').json['settings']['typical_issue_ids']['video'],2)
+            for invalid in (3,4,999):
+                conn.reset_mock();save.reset_mock()
+                request['settings']['typical_issue_ids']['video']=invalid
+                response=client.put('/api/inspection-reports/safety-config',json=request)
+                self.assertEqual(response.status_code,400,response.json)
+                conn.rollback.assert_called_once();conn.commit.assert_not_called();save.assert_not_called()
+            request['settings']['typical_issue_ids']['video']=2
+            request['settings']['typical_video_category']='着装'
+            self.assertEqual(client.put('/api/inspection-reports/safety-config',json=request).status_code,400)
+            request['settings']['typical_issue_ids']={}
+            self.assertEqual(client.put('/api/inspection-reports/safety-config',json=request).status_code,200)
+
     def test_only_complete_current_categories_can_be_saved_without_calling_ai(self):
         conn=MagicMock(); app=Flask(__name__); rows=[raw_issue(1,'video')]
         register_safety_report(app,connect=lambda:conn,authorize=lambda c:{'id':1},
