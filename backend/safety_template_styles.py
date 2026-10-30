@@ -9,6 +9,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_LEGEND_POSITION, XL_LABEL_POSITION
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
@@ -66,39 +67,29 @@ def evidence_text_height(texts, width, size, leading=1.5, paragraph_gap=0, line_
 
 
 def fit_evidence_layout(intro, descriptions, requirements, intro_box, captions, pictures, norm_box, intro_leading):
-    """Fit complete native text around a positive-height photo row."""
-    footer=norm_box[1]+norm_box[3]
-    fallback_footer=max(footer,EVIDENCE_REQUIREMENTS_BOX[1]+EVIDENCE_REQUIREMENTS_BOX[3])
-    for bottom in dict.fromkeys((footer,fallback_footer)):
+    """Give photos the remaining space instead of reserving empty source boxes."""
+    bottom=max(norm_box[1]+norm_box[3],EVIDENCE_REQUIREMENTS_BOX[1]+EVIDENCE_REQUIREMENTS_BOX[3])
+    gap=Inches(.16)
+    width=(norm_box[2]-2*gap)//3
+    # Prefer a large evidence row. Only unusually long, complete source text
+    # may reduce it after trying compact text sizes and line spacing.
+    for minimum_photo in (2.4,1.6,.8,.25):
         for shrink in range(10):
             intro_size=max(11,20-shrink);caption_size=max(11,16-shrink);norm_size=max(11,18-shrink)
-            for compact in (False,True):
-                intro_height=Inches(evidence_text_height([intro],intro_box[2]/914400,intro_size,intro_leading))
-                intro_height=max(intro_height,Inches(.3) if compact else intro_box[3])
-                intro_end=intro_box[1]+intro_height
-                for leading in (1.5,1.35,1.25,1.15,1):
-                    norm_height=Inches(evidence_text_height(requirements,norm_box[2]/914400,norm_size,leading))
-                    norm_height=max(norm_height,Inches(.3) if compact else norm_box[3])
-                    norm_top=bottom-norm_height
-                    caption_boxes=[];photo_boxes=[]
-                    for texts,caption,picture in zip(descriptions,captions,pictures):
-                        x,y,w,h=caption
-                        height=Inches(evidence_text_height(texts,w/914400,caption_size,1,6))
-                        height=max(height,Inches(.3) if compact else h)
-                        top=min(y+h-height,norm_top-Inches(.08)-height)
-                        px,py,pw,ph=picture
-                        photo_top=max(py,intro_end+Inches(.06))
-                        if top-Inches(.06)-photo_top<Inches(.25):
-                            photo_top=intro_end+Inches(.06)
-                        photo_height=min(ph,top-Inches(.06)-photo_top)
-                        if photo_height<Inches(.25):break
-                        caption_boxes.append((x,top,w,height))
-                        photo_boxes.append((px,photo_top,pw,photo_height))
-                    else:
-                        if norm_top<intro_end+Inches(.1):continue
-                        return {'intro':(*intro_box[:3],intro_height),'captions':caption_boxes,'photos':photo_boxes,
-                            'norm':(norm_box[0],norm_top,norm_box[2],norm_height),'intro_size':intro_size,
-                            'caption_size':caption_size,'norm_size':norm_size,'norm_leading':leading}
+            intro_height=Inches(evidence_text_height([intro],intro_box[2]/914400,intro_size,intro_leading))
+            photo_top=intro_box[1]+intro_height+Inches(.06)
+            heights=[Inches(evidence_text_height(texts,width/914400,caption_size,1,6)) for texts in descriptions]
+            for leading in (1.35,1.25,1.15,1):
+                norm_height=Inches(evidence_text_height(requirements,norm_box[2]/914400,norm_size,leading))
+                norm_top=bottom-norm_height
+                caption_top=norm_top-Inches(.08)-max(heights,default=0)
+                photo_height=caption_top-Inches(.04)-photo_top
+                if photo_height<Inches(minimum_photo):continue
+                caption_boxes=[(norm_box[0]+i*(width+gap),caption_top,width,h) for i,h in enumerate(heights)]
+                photo_boxes=[(box[0],photo_top,width,photo_height) for box in caption_boxes]
+                return {'intro':(*intro_box[:3],intro_height),'captions':caption_boxes,'photos':photo_boxes,
+                    'norm':(norm_box[0],norm_top,norm_box[2],norm_height),'intro_size':intro_size,
+                    'caption_size':caption_size,'norm_size':norm_size,'norm_leading':leading}
     raise ValueError('证据文字过长，无法完整放入固定31页模板，请先精简概述或已确认的规范要求。')
 
 
@@ -219,6 +210,9 @@ def update_chart(shape, rows, series, *, pie=False, title=None, preserve_style=F
             labels.number_format = '0.00%' if pie else '0'
             labels.number_format_is_linked = False
             labels.font.name = FONT; labels.font.size = Pt(11 if pie else 9)
+            if pie:
+                labels.font.bold = True
+                labels.font.color.rgb = RGBColor.from_string('262626')
             labels.position = XL_LABEL_POSITION.OUTSIDE_END
             for body in chart._chartSpace.xpath('.//c:dLbls/c:txPr/a:bodyPr'):
                 body.set('wrap', 'none'); body.set('horzOverflow', 'overflow')
@@ -298,7 +292,7 @@ def compact_pie_layout(slide, shape, rows, title):
     columns=3 if len(rows)>6 else 2
     legend_rows=max(1,math.ceil(len(rows)/columns))
     from unicodedata import east_asian_width
-    cell=w/columns
+    cell=(w-.24*(columns-1))/columns
     row_heights=[]
     font_size=9 if len(rows)>6 else 10
     for row in range(legend_rows):
@@ -309,18 +303,67 @@ def compact_pie_layout(slide, shape, rows, title):
     legend_top=7.12-legend_height
     shape.top=Inches(1.86);shape.height=Inches(legend_top-1.94)
     palette=['4F81BD','C0504D','9BBB59','8064A2','4BACC6','F79646','A5A5A5','264478']
-    for i,row in enumerate(rows):
-        left=x+(i%columns)*cell;top=legend_top+sum(row_heights[:i//columns])
-        key=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(left),Inches(top+.07),Inches(.09),Inches(.09))
-        key.name='safety-pie-key';key.fill.solid();key.fill.fore_color.rgb=RGBColor.from_string(palette[i%len(palette)]);key.line.fill.background()
-        label=slide.shapes.add_textbox(Inches(left+.13),Inches(top),Inches(cell-.15),Inches(row_heights[i//columns]))
-        label.name='safety-pie-label'
-        label.text_frame.margin_left=label.text_frame.margin_right=0
-        label.text_frame.margin_top=label.text_frame.margin_bottom=0
-        paragraph(label,[(row['name'],'595959')],font_size,first=True)
+    for row_index in range(legend_rows):
+        items=rows[row_index*columns:(row_index+1)*columns]
+        widths=[min(cell,.3+sum(1 if east_asian_width(c) in 'WF' else .55 for c in item['name'])*font_size/72) for item in items]
+        left=x+(w-sum(widths)-.24*max(0,len(items)-1))/2
+        top=legend_top+sum(row_heights[:row_index])
+        for column,(row,item_width) in enumerate(zip(items,widths)):
+            index=row_index*columns+column
+            key=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(left),Inches(top+.07),Inches(.09),Inches(.09))
+            key.name='safety-pie-key';key.fill.solid();key.fill.fore_color.rgb=RGBColor.from_string(palette[index%len(palette)]);key.line.fill.background()
+            label=slide.shapes.add_textbox(Inches(left+.13),Inches(top),Inches(item_width-.13),Inches(row_heights[row_index]))
+            label.name='safety-pie-label'
+            label.text_frame.margin_left=label.text_frame.margin_right=0
+            label.text_frame.margin_top=label.text_frame.margin_bottom=0
+            label.text_frame.word_wrap=True
+            paragraph(label,[(row['name'],'595959')],font_size,first=True)
+            left+=item_width+.24
+    # Explicit labels override theme colors and 3D shading in older WPS and
+    # LibreOffice. Never hide small percentages merely because a pie is dense.
+    for labels in shape.chart._chartSpace.xpath('.//c:pie3DChart/c:dLbls'):
+        props=OxmlElement('c:spPr')
+        fill=OxmlElement('a:solidFill');color=OxmlElement('a:srgbClr');color.set('val','FFFFFF');fill.append(color);props.append(fill)
+        line=OxmlElement('a:ln');line.append(OxmlElement('a:noFill'));props.append(line);props.append(OxmlElement('a:effectLst'))
+        old=labels.find(qn('c:spPr'))
+        if old is not None:labels.remove(old)
+        before=labels.find(qn('c:txPr'))
+        labels.insert(labels.index(before) if before is not None else 0,props)
     if len(rows)>10:
-        labels=shape.chart._chartSpace.xpath('.//c:pie3DChart/c:dLbls')[0]
-        for index,row in enumerate(rows):
-            if row.get('percentage',100)>=3:continue
-            entry=OxmlElement('c:dLbl');idx=OxmlElement('c:idx');idx.set('val',str(index));entry.append(idx)
-            hidden=OxmlElement('c:delete');hidden.set('val','1');entry.append(hidden);labels.insert(0,entry)
+        pie_percentage_callouts(slide,shape,rows)
+
+
+def pie_percentage_callouts(slide, shape, rows):
+    """Readable editable labels outside dense pies, never on their 3D walls."""
+    x,y,w,h=(value/914400 for value in (shape.left,shape.top,shape.width,shape.height))
+    with editable_plot(shape.chart):shape.chart.plots[0].has_data_labels=False
+    shape.left=Inches(x+.7);shape.width=Inches(w-1.4)
+    total=sum(max(0,int(row.get('count') or 0)) for row in rows)
+    if not total:return
+    cx=x+w/2;cy=y+h*.44;rx=(w-1.4)*.44;ry=h*.29
+    sides={False:[],True:[]};offset=0
+    for index,row in enumerate(rows):
+        count=max(0,int(row.get('count') or 0))
+        angle=(offset+count/2)/total*2*math.pi-math.pi/2;offset+=count
+        px=cx+rx*math.cos(angle);py=cy+ry*math.sin(angle)
+        sides[px>=cx].append((py,px,index,count))
+    for right,items in sides.items():
+        items.sort()
+        gap=min(.3,(h-.15)/max(1,len(items)))
+        positions=[]
+        for py,_,_,_ in items:
+            positions.append(max(y+.04,py-.12,positions[-1]+gap if positions else y+.04))
+        overflow=max(0,positions[-1]+.24-(y+h)) if positions else 0
+        positions=[value-overflow for value in positions]
+        for (py,px,index,count),top in zip(items,positions):
+            left=x+w-.66 if right else x
+            edge=left if right else left+.66
+            leader=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,Inches(px),Inches(py),Inches(edge),Inches(top+.12))
+            leader.name='safety-pie-leader'
+            leader.line.color.rgb=RGBColor.from_string('7F7F7F');leader.line.width=Pt(.6)
+            label=slide.shapes.add_textbox(Inches(left),Inches(top),Inches(.66),Inches(.24))
+            label.name=f'safety-pie-percentage-{index}'
+            frame=label.text_frame;frame.margin_left=frame.margin_right=frame.margin_top=frame.margin_bottom=0
+            frame.word_wrap=False;frame.auto_size=MSO_AUTO_SIZE.NONE
+            label.fill.solid();label.fill.fore_color.rgb=RGBColor.from_string('FFFFFF')
+            paragraph(label,[(f'{count/total*100:.2f}%','262626')],10,first=True,bold=True,align=PP_ALIGN.CENTER)

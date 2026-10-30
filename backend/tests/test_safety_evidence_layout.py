@@ -14,7 +14,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 from safety_report_data import UNIT_ORDER, VIDEO_PAGES, unit_key, unit_label
-from safety_report_presentation import (RENDERER_VERSION, TEMPLATE_FILE, backlog_page,
+from safety_report_presentation import (RENDERER_VERSION, SLIDE_ORDER, TEMPLATE_FILE, backlog_page,
     build_safety_presentation, evidence_layout, evidence_page)
 from safety_template_styles import evidence_text_height
 from tests.test_safety_report import fixture_report, raw_issue
@@ -26,6 +26,10 @@ def geometry(shape):
 
 def named(slide, prefix):
     return sorted((s for s in slide.shapes if s.name.startswith(prefix)), key=lambda s:s.left)
+
+
+def rendered(prs, source_index):
+    return prs.slides[SLIDE_ORDER.index(source_index)]
 
 
 def photo_ids(slide):
@@ -93,21 +97,21 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
         cls.temp.cleanup()
 
     def test_all_31_slides_and_static_text_geometry_are_preserved(self):
-        self.assertEqual(RENDERER_VERSION,'safety-native-1214-1')
+        self.assertEqual(RENDERER_VERSION,'safety-native-1218-1')
         self.assertEqual(len(self.prs.slides),31)
         for index in (1,4,6,9,24,26,30):
-            before=self.template.slides[index];after=self.prs.slides[index]
+            before=self.template.slides[index];after=rendered(self.prs,index)
             self.assertEqual([(s.text,geometry(s)) for s in before.shapes if s.has_text_frame],
                 [(s.text,geometry(s)) for s in after.shapes if s.has_text_frame])
         for index in range(12,24):
             before=next(s for s in self.template.slides[index].shapes if s.has_text_frame and s.top<Inches(.8))
-            after=next(s for s in self.prs.slides[index].shapes if s.has_text_frame and s.top<Inches(.8))
+            after=next(s for s in rendered(self.prs,index).shapes if s.has_text_frame and s.top<Inches(.8))
             self.assertEqual((before.text,geometry(before)),(after.text,geometry(after)))
 
     def test_every_evidence_page_has_native_blue_bold_station_paragraphs(self):
         for index in range(12,24):
             with self.subTest(slide=index+1):
-                captions=named(self.prs.slides[index],'safety-evidence-caption-')
+                captions=named(rendered(self.prs,index),'safety-evidence-caption-')
                 self.assertEqual(len(captions),3)
                 for caption in captions:
                     paragraphs=caption.text_frame.paragraphs
@@ -121,28 +125,29 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
                     self.assertTrue(all(Pt(11)<=r.font.size<=Pt(16) for p in paragraphs for r in p.runs))
                     self.assertIs(station,paragraphs[0] if index>=20 else paragraphs[1])
 
-    def test_photo_and_caption_geometry_follow_native_source_slots_without_overlap(self):
+    def test_photo_and_caption_geometry_share_expanded_columns_without_overlap(self):
         for index in range(12,24):
             with self.subTest(slide=index+1):
-                slide=self.prs.slides[index]
-                _,caption_boxes,photo_boxes,norm_box,_,_,_=evidence_layout(self.template.slides[index])
+                slide=rendered(self.prs,index)
+                _,_,_,norm_box,_,_,_=evidence_layout(self.template.slides[index])
                 captions=named(slide,'safety-evidence-caption-')
                 pictures=named(slide,'safety-evidence-photo-')
                 norm=named(slide,'safety-evidence-requirements')[0]
                 self.assertEqual(len(pictures),3)
                 self.assertEqual((norm.left,norm.width),(norm_box[0],norm_box[2]))
-                self.assertAlmostEqual(norm.top+norm.height,norm_box[1]+norm_box[3],delta=2)
-                for caption,picture,cap_box,pic_box in zip(captions,pictures,caption_boxes,photo_boxes):
-                    self.assertEqual((caption.left,caption.width),(cap_box[0],cap_box[2]))
+                self.assertLessEqual(norm.top+norm.height,self.prs.slide_height)
+                for caption,picture in zip(captions,pictures):
+                    self.assertGreater(caption.width,Inches(3.9))
                     self.assertGreater(caption.height,0)
-                    self.assertLessEqual(caption.top,cap_box[1])
                     self.assertLessEqual(caption.top+caption.height+Inches(.079),norm.top)
                     self.assertEqual(picture.shape_type,13)
                     self.assertGreater(picture.height,0)
-                    self.assertGreaterEqual(picture.left,pic_box[0]-1)
-                    self.assertLessEqual(picture.left+picture.width,pic_box[0]+pic_box[2]+1)
-                    self.assertGreaterEqual(picture.top,pic_box[1]-1)
-                    self.assertLessEqual(picture.top+picture.height+Inches(.059),caption.top)
+                    self.assertGreaterEqual(picture.left,caption.left-1)
+                    self.assertLessEqual(picture.left+picture.width,caption.left+caption.width+1)
+                    self.assertLessEqual(picture.top+picture.height+Inches(.039),caption.top)
+                    self.assertAlmostEqual(picture.top+picture.height+Inches(.04),caption.top,delta=2)
+                    if picture.image.size[0]<picture.image.size[1]:
+                        self.assertGreater(picture.height,Inches(2.4))
                     width,height=picture.image.size
                     self.assertAlmostEqual(picture.width/picture.height,width/height,places=4)
 
@@ -167,7 +172,7 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
                 for issue,caption,picture in zip(issues,named(slide,'safety-evidence-caption-'),named(slide,'safety-evidence-photo-')):
                     self.assertGreater(picture.height,0)
                     self.assertGreaterEqual(picture.top,heading.top+heading.height+Inches(.059))
-                    self.assertLessEqual(picture.top+picture.height+Inches(.059),caption.top)
+                    self.assertLessEqual(picture.top+picture.height+Inches(.039),caption.top)
                     self.assertLessEqual(caption.top+caption.height+Inches(.079),norm.top)
                     paragraphs=caption.text_frame.paragraphs
                     self.assertIn(summary,[p.text for p in paragraphs])
@@ -185,7 +190,7 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
         lookup={row['issue_id']:row for row in self.report['safety_issues']}
         for index in range(12,24):
             with self.subTest(slide=index+1):
-                slide=self.prs.slides[index]
+                slide=rendered(self.prs,index)
                 norms=[s for s in slide.shapes if s.has_text_frame and s.text.startswith('规范要求')]
                 self.assertEqual(len(norms),1)
                 norm=norms[0]
@@ -196,19 +201,19 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
                 self.assertTrue(norm._element.xpath('./p:spPr/a:noFill'))
                 ids=photo_ids(slide)
                 self.assertEqual(len(ids),3)
-                for number,(paragraph,issue_id) in enumerate(zip(norm.text_frame.paragraphs,ids),1):
+                self.assertEqual(len(norm.text_frame.paragraphs),1)
+                for number,issue_id in enumerate(ids,1):
                     issue=lookup[issue_id]
                     expected=issue['requirement'] if issue.get('requirement_status') in ('ready','manual') else '暂无已确认的规范要求。'
-                    self.assertEqual(paragraph.text,('规范要求：' if number==1 else '')+f'{number}. '+expected)
-                    self.assertTrue(all(r.font.bold and str(r.font.color.rgb)=='C00000' for r in paragraph.runs))
-                    self.assertEqual(paragraph.line_spacing,1.5)
+                    self.assertIn(f'{number}. '+expected.rstrip('。'),norm.text)
+                self.assertTrue(all(r.font.bold and str(r.font.color.rgb)=='C00000' for r in norm.text_frame.paragraphs[0].runs))
                 self.assertNotIn('旧评分',norm.text)
 
     def test_ranked_examples_monthly_distinct_classes_and_two_page_round_robin(self):
-        self.assertEqual(photo_ids(self.prs.slides[12]),[3,5,6])
-        self.assertEqual(photo_ids(self.prs.slides[13]),[3,5,6])
-        self.assertEqual(photo_ids(self.prs.slides[14]),[1,4,2])
-        self.assertEqual(photo_ids(self.prs.slides[18])+photo_ids(self.prs.slides[19]),[21,20,19,18,17,16])
+        self.assertEqual(photo_ids(rendered(self.prs,12)),[3,5,6])
+        self.assertEqual(photo_ids(rendered(self.prs,13)),[3,5,6])
+        self.assertEqual(photo_ids(rendered(self.prs,14)),[1,4,2])
+        self.assertEqual(photo_ids(rendered(self.prs,18))+photo_ids(rendered(self.prs,19)),[21,20,19,18,17,16])
         report=copy.deepcopy(self.report)
         report['safety_analysis']['onsite:topic:设备设施']['groups']=[
             group('首类',[1,2,3,4],[4,3,2,1]),group('次类',[5,6],[6,5])]
@@ -217,8 +222,8 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
         monthly=next(call for call in render.call_args_list if call.args[1]=='1.月度重点工作类问题')
         self.assertEqual([row['issue_id'] for row in monthly.args[4]],[4,6])
         prs=Presentation(self.root/'sparse-monthly.pptx')
-        self.assertEqual(photo_ids(prs.slides[12]),[4,6])
-        self.assertEqual(len(named(prs.slides[12],'safety-evidence-caption-')),2)
+        self.assertEqual(photo_ids(rendered(prs,12)),[4,6])
+        self.assertEqual(len(named(rendered(prs,12),'safety-evidence-caption-')),2)
 
     def test_monthly_intro_names_only_the_first_three_groups(self):
         report=copy.deepcopy(self.report)
@@ -226,7 +231,7 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
             group('第二类',[3,4]),group('第三类',[5]),group('第四类不应进入概述',[6])]
         output=self.root/'three-monthly-classes.pptx'
         build_safety_presentation(report,output,self.root)
-        intro=named(Presentation(output).slides[12],'safety-evidence-intro')[0].text
+        intro=named(rendered(Presentation(output),12),'safety-evidence-intro')[0].text
         for name in ('第一类','第二类','第三类'):self.assertIn(name,intro)
         self.assertNotIn('第四类',intro)
 
@@ -240,7 +245,7 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
         evidence_page(slide,'2. 设备设施类问题',issues,{},chosen,'实际检查概述。',self.root)
         norm=named(slide,'safety-evidence-requirements')[0]
         self.assertEqual([p.text for p in norm.text_frame.paragraphs],[
-            '规范要求：1. 暂无已确认的规范要求。','2. 暂无已确认的规范要求。','3. 实际规范应保持有效。'])
+            '规范要求：1. 暂无已确认的规范要求；2. 实际规范应保持有效。'])
         self.assertNotIn('旧评分',norm.text)
         self.assertNotIn('副本',norm.text)
         self.assertNotIn('旧评分',slide.notes_slide.notes_text_frame.text)
@@ -251,11 +256,11 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
             'requirement':f'规范{i}：'+('设施应保持完好并定期核查。'*18), 'requirement_status':'ready'} for i in range(1,4)]
         evidence_page(slide,'2. 设备设施类问题',issues,{},issues,'实际检查概述。',self.root)
         norm=named(slide,'safety-evidence-requirements')[0]
-        self.assertEqual(len(norm.text_frame.paragraphs),3)
+        self.assertEqual(len(norm.text_frame.paragraphs),1)
         self.assertGreater(norm.height,Inches(.9591))
-        for issue,p in zip(issues,norm.text_frame.paragraphs):
-            self.assertIn(issue['requirement'],p.text)
-            self.assertNotIn('…',p.text)
+        for issue in issues:
+            self.assertIn(issue['requirement'].rstrip('。'),norm.text)
+            self.assertNotIn('…',norm.text)
         self.assertTrue(all(s.top+s.height<norm.top for s in named(slide,'safety-evidence-caption-')))
         self.assertTrue(all(s.height>0 for s in named(slide,'safety-evidence-photo-')))
 
