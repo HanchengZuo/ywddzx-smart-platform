@@ -49,10 +49,13 @@ SYSTEM_PROMPT = (
     '不得按规范ID硬套示例，不得跨规范复制；只有该条输入自身明确支持对应内容和参数时才能采用。'
 )
 _PARAMETERS = re.compile(
-    r'[+-]?[A-Za-z]*\d+(?:\.\d+)?(?:[A-Za-z%℃°Ωμ²³]+(?:[/·][A-Za-z²³]+)*'
+    r'(?P<value>[+-]?[A-Za-z]*[ \t]*\d+(?:\.\d+)?)[ \t]*(?P<unit>[A-Za-z%℃°Ωμ²³]+(?:[/·][A-Za-z²³]+)*'
     r'|平方毫米|平方厘米|平方米|立方米|毫米|厘米|千米|米|千克|公斤|分钟|小时|秒|伏|欧姆|升|年|月|天|次'
     r'|台|个|支|具|条|处|根|块|只|组|套|辆|座|项|人|名|本|张|件|路|级|档)?'
 )
+_UNIT_ALIASES = {'毫米':'mm', '厘米':'cm', '米':'m', '千米':'km', '千克':'kg', '公斤':'kg',
+    '升':'L', '分钟':'min', '小时':'h', '秒':'s', '伏':'V', '欧姆':'Ω', '°C':'℃',
+    '平方毫米':'mm²', '平方厘米':'cm²', '平方米':'m²', '立方米':'m³'}
 _SCORING = re.compile(r'评分|扣分|得分|满分|(?:扣|得|加|减)\s*(?:\d+(?:\.\d+)?|[一二三四五六七八九十百零两]+)\s*分|\d+(?:\.\d+)?\s*分(?:[，。；,;：:]|$)')
 
 
@@ -66,6 +69,30 @@ class RequirementsBusy(RuntimeError):
 
 class RequirementsGenerationError(RuntimeError):
     """AI failed or returned unsupported/unverifiable output; never cached."""
+
+
+class RequirementsContentError(ValueError):
+    """References are verified; only these known entries need content repair."""
+    def __init__(self, errors, valid):
+        self.errors, self.valid = errors, valid
+        super().__init__('；'.join(errors.values()))
+
+
+def technical_parameters(text):
+    # Read field values directly. JSON escaping can turn a newline followed by
+    # a number into a bogus Latin model code such as "n12".
+    return {re.sub(r'[ \t]', '', match['value']) + _UNIT_ALIASES.get(match['unit'], match['unit'] or '')
+        for match in _PARAMETERS.finditer(str(text).replace('−','-'))}
+
+
+def field_parameters(fields):
+    result = set()
+    for value in fields.values():
+        if isinstance(value, dict): result.update(field_parameters(value))
+        elif isinstance(value, list):
+            for item in value: result.update(field_parameters({'value':item}))
+        elif value is not None: result.update(technical_parameters(value))
+    return result
 
 
 def _json(value):
@@ -238,24 +265,30 @@ def validate_requirements(payload, catalog):
     if not isinstance(items, list) or len(items) != len(catalog):
         raise ValueError('AI规范要求存在缺失或多余条目。')
     expected = {row['key']: row for row in catalog}
-    result = {}
+    result, sources = {}, {}
     for item in items:
         if not isinstance(item, dict) or set(item) != REFERENCE_FIELDS or not isinstance(item.get('key'), str):
             raise ValueError('AI规范要求引用字段无效。')
         source = expected.get(item['key'])
-        if (not source or item['key'] in result or any(item[name] != source[name]
+        if (not source or item['key'] in sources or any(item[name] != source[name]
                 for name in REFERENCE_FIELDS - {'requirement'})):
             raise ValueError('AI规范要求重复或引用了范围外的规范。')
-        text = _text(item['requirement'])
-        if _SCORING.search(text) or '```' in text:
-            raise ValueError('AI返回了评分说明而非规范要求。')
-        # Reject invented numeric models/units too; the prompt also forbids
-        # unsupported qualitative facts and treating evidence as instructions.
-        evidence = _json(source['fields'])
-        supported = set(_PARAMETERS.findall(evidence))
-        if any(token not in supported for token in _PARAMETERS.findall(text)):
-            raise ValueError('AI规范要求包含原始字段未支持的技术参数。')
-        result[item['key']] = text
+        sources[item['key']] = item
+    errors = {}
+    for key,item in sources.items():
+        source = expected[key]
+        try:
+            text = _text(item['requirement'])
+            if _SCORING.search(text) or '```' in text:
+                raise ValueError('应提炼正向要求，不得包含评分、扣分或代码格式。')
+            unsupported = technical_parameters(text) - field_parameters(source['fields'])
+            if unsupported:
+                values = '、'.join(sorted(unsupported))[:100]
+                raise ValueError(f'参数“{values}”未在该条原始字段中找到，不可推断或补写。')
+            result[key] = text
+        except ValueError as exc:
+            errors[key] = f"规范{source['external_standard_id']}：{exc}"
+    if errors: raise RequirementsContentError(errors,result)
     return result
 
 
@@ -270,37 +303,54 @@ def _unique_object(pairs):
 
 @ai_scene('safety_insights')
 def generate_requirements(catalog, *, timeout=REQUEST_TIMEOUT):
-    """One bounded, non-retrying request, no report-memory/model-scoped cache."""
+    """One request plus at most one targeted content repair, within one deadline."""
     catalog = _catalog(catalog)
     if not catalog or len(_batches(catalog)) != 1:
         raise ValueError('一次AI调用必须包含一个有效的完整字段批次。')
     if not isinstance(timeout, (int, float)) or not 0 < timeout <= REQUEST_TIMEOUT:
         raise ValueError('规范要求AI调用超时设置无效。')
-    prompt = _json({'standards': catalog})
     client = get_ai_client()
     if client is None:
         raise RequirementsGenerationError('请先配置安全报告使用的大模型，再生成规范要求。')
-    completion, called = '', False
-    try:
-        called = True
-        response = create_ai_completion(client.with_options(timeout=timeout, max_retries=0),
-            messages=[{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': prompt}],
-            max_tokens=6000, extra_body={'thinking': {'type': 'disabled'}})
+    prompts, completions = [], []
+    deadline = time.monotonic()+timeout
+    def request_rows(rows, feedback=None):
+        remaining = timeout if not prompts else deadline-time.monotonic()
+        if remaining<=1: raise RequirementsGenerationError('规范要求内容修正已达到本批时限，请稍后继续；历史条目不变。')
+        body = _json({'standards':rows,**({'validation_feedback':feedback} if feedback else {})})
+        prompts.append(SYSTEM_PROMPT+body)
+        response = create_ai_completion(client.with_options(timeout=remaining,max_retries=0),
+            messages=[{'role':'system','content':SYSTEM_PROMPT}, {'role':'user','content':body}],
+            max_tokens=6000,extra_body={'thinking':{'type':'disabled'}})
         choice = response.choices[0]
-        completion = choice.message.content or ''
-        if choice.finish_reason != 'stop' or len(completion.encode('utf-8')) > 64000:
+        text = choice.message.content or ''
+        completions.append(text)
+        if choice.finish_reason!='stop' or len(text.encode('utf-8'))>64000:
             raise ValueError('AI规范要求未完整返回。')
-        payload = json.loads(completion, object_pairs_hook=_unique_object)
-        validate_requirements(payload, catalog)
-        usage = build_ai_usage_meta(current_model(), SYSTEM_PROMPT + prompt, completion,
-                                    ai_called=True, success=True)
-        usage.update(request_count=1, repair_count=0)
-        return {'generated': True, 'payload': payload, 'usage': usage}
+        # A JSON code fence is presentation, not a changed reference or fact.
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text.strip(), flags=re.IGNORECASE)
+        return json.loads(text,object_pairs_hook=_unique_object)
+    def usage(success):
+        value=build_ai_usage_meta(current_model(),'\n'.join(prompts),'\n'.join(completions),
+            ai_called=bool(prompts),success=success)
+        value.update(request_count=len(prompts),repair_count=max(0,len(prompts)-1))
+        return value
+    try:
+        payload=request_rows(catalog)
+        try:
+            validate_requirements(payload,catalog)
+        except RequirementsContentError as invalid:
+            rejected=[row for row in catalog if row['key'] in invalid.errors]
+            repaired=request_rows(rejected,invalid.errors)
+            accepted={**invalid.valid,**validate_requirements(repaired,rejected)}
+            payload={'standards':[{name:row[name] for name in REFERENCE_FIELDS-{'requirement'}}
+                | {'requirement':accepted[row['key']]} for row in catalog]}
+            validate_requirements(payload,catalog)
+        return {'generated':True,'payload':payload,'usage':usage(True)}
     except Exception as exc:
-        error = RequirementsGenerationError('AI规范要求生成失败或内容未通过核验，请稍后重试；未保存无效结果。')
-        error.ai_usage = build_ai_usage_meta(current_model(), SYSTEM_PROMPT + prompt, completion,
-                                           ai_called=called, success=False)
-        error.ai_usage.update(request_count=int(called), repair_count=0)
+        detail=str(exc) if isinstance(exc,(RequirementsContentError,RequirementsGenerationError)) else ''
+        error = RequirementsGenerationError('AI规范要求生成未完成；'+(detail+' 已保存条目仍可复用。' if detail else '服务或返回格式未通过核验，已保存条目仍可复用，请稍后重试。'))
+        error.ai_usage=usage(False)
         raise error from exc
     finally:
         client.close()

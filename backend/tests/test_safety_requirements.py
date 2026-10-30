@@ -173,6 +173,66 @@ class RequirementsUnitTest(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 requirements.validate_requirements(payload, catalog)
 
+    def test_parameter_equivalence_uses_field_values_not_json_escapes_or_spacing(self):
+        catalog=self.catalog[:1]
+        catalog[0]['fields']['技术参数']='超过 10 台时总量不少于5块；间距大于1.5m；小于100 mm；\nM 12螺栓，温度−40℃。'
+        payload=ai_result(catalog)['payload']
+        payload['standards'][0]['requirement']='超过10台时不少于5块，间距大于1.5米且小于100毫米，使用M12螺栓，温度-40°C。'
+        requirements.validate_requirements(payload,catalog)
+        self.assertEqual(requirements.technical_parameters('M 12、10 台、1.5米、100 毫米'),{'M12','10台','1.5m','100mm'})
+        for text in ('超过11台','间距大于1.5千米','小于100厘米','温度40℃','M16螺栓'):
+            payload['standards'][0]['requirement']=text
+            with self.subTest(text=text),self.assertRaises(requirements.RequirementsContentError):
+                requirements.validate_requirements(payload,catalog)
+        catalog[0]['fields']['技术参数']='\n12台设备应正常运行'
+        payload=ai_result(catalog)['payload']
+        payload['standards'][0]['requirement']='12台设备应正常运行'
+        requirements.validate_requirements(payload,catalog)
+
+    def test_content_repair_targets_only_rejected_standards_and_counts_both_requests(self):
+        catalog=self.catalog[:2]
+        valid=ai_result(catalog)['payload']
+        broken=copy.deepcopy(valid)
+        broken['standards'][0]['requirement']='应使用M99螺栓'
+        repair={'standards':[valid['standards'][0]]}
+        responses=[SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(
+            content=json.dumps(value,ensure_ascii=False)))]) for value in (broken,repair)]
+        client=MagicMock()
+        with patch.object(requirements,'get_ai_client',return_value=client),patch.object(
+                requirements,'create_ai_completion',side_effect=responses) as completion:
+            result=requirements.generate_requirements(catalog)
+        self.assertEqual(requirements.validate_requirements(result['payload'],catalog),
+            requirements.validate_requirements(valid,catalog))
+        self.assertEqual((result['usage']['request_count'],result['usage']['repair_count']),(2,1))
+        feedback=json.loads(completion.call_args_list[1].kwargs['messages'][1]['content'])
+        self.assertEqual([r['key'] for r in feedback['standards']],[valid['standards'][0]['key']])
+        self.assertIn('M99',feedback['validation_feedback'][valid['standards'][0]['key']])
+        self.assertLessEqual(client.with_options.call_args_list[1].kwargs['timeout'],requirements.REQUEST_TIMEOUT)
+
+    def test_failed_content_repair_is_bounded_and_reports_norm_id_without_accepting_unsupported_data(self):
+        payload=ai_result(self.catalog[:1])['payload']
+        payload['standards'][0]['requirement']='应使用M99螺栓'
+        response=SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(content=json.dumps(payload)))])
+        with patch.object(requirements,'get_ai_client',return_value=MagicMock()),patch.object(
+                requirements,'create_ai_completion',return_value=response) as completion:
+            with self.assertRaises(requirements.RequirementsGenerationError) as error:
+                requirements.generate_requirements(self.catalog[:1])
+        self.assertEqual(completion.call_count,2)
+        self.assertEqual(error.exception.ai_usage['request_count'],2)
+        self.assertFalse(error.exception.ai_usage['success'])
+        self.assertIn(self.catalog[0]['external_standard_id'],str(error.exception))
+        self.assertIn('M99',str(error.exception))
+
+    def test_json_fence_is_supported_without_relaxing_reference_checks(self):
+        payload=ai_result(self.catalog)['payload']
+        response=SimpleNamespace(choices=[SimpleNamespace(finish_reason='stop',message=SimpleNamespace(
+            content='```json\n'+json.dumps(payload)+'\n```'))])
+        with patch.object(requirements,'get_ai_client',return_value=MagicMock()),patch.object(
+                requirements,'create_ai_completion',return_value=response) as completion:
+            result=requirements.generate_requirements(self.catalog)
+        self.assertEqual(result['payload'],payload)
+        self.assertEqual(completion.call_count,1)
+
     def test_signature_content_not_actor_time_revision_and_attachment_never_falls_back(self):
         rows = empty_rows(self.catalog)
         row = rows[0]
@@ -335,6 +395,16 @@ class RequirementsLocalCatalogTest(unittest.TestCase):
                 self.assertTrue(all(sum(len(requirements._json(row).encode('utf-8')) for row in batch)
                                     <= requirements.BATCH_BYTES for batch in batches))
                 self.assertEqual(requirements.catalog_signature(catalog), requirements.catalog_signature(normalized))
+                # The first failed production batch starts at 13016. These
+                # equivalent presentations must validate against its real text.
+                examples={'13016':'加油机数量超过10台时，灭火毯总量不少于5块。',
+                    '13020':'间距小于100毫米的卸油管线法兰应设置跨接并接地。',
+                    '13021':'人体静电释放报警器距卸油口间距大于1.5米。'}
+                for row in normalized:
+                    if row['mode']!='onsite' or row['external_standard_id'] not in examples:continue
+                    payload={'standards':[{name:row[name] for name in requirements.REFERENCE_FIELDS-{'requirement'}}
+                        | {'requirement':examples[row['external_standard_id']]}]}
+                    requirements.validate_requirements(payload,[row])
                 print('Read-only local catalog:', json.dumps({
                     'standards': len(normalized), 'batches': len(batches),
                     'catalog_bytes': len(requirements._json(catalog).encode('utf-8')),
