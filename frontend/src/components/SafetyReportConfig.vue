@@ -26,7 +26,7 @@
           <small class="safety-step-label">02 · 典型选题</small>
           <h3>现场与视频典型问题</h3>
           <p>
-            现场选一个代表问题；视频按较高层级风险归类，默认展示占比最高的一类，可切换类别并查看关联问题。
+            现场选一个代表问题；视频默认采用最高频风险类别，可切换类别并指定该类别的 PPT 展示照片。
           </p>
           <button :disabled="busy" @click="open('typical')">查看与调整典型问题</button>
         </article>
@@ -52,7 +52,10 @@
           <button :disabled="busy" @click="open('evidence')">查看与调整固定章节</button>
         </article>
       </div>
-      <small class="safety-saved">{{ savedLabel }}</small>
+      <div class="safety-saved" role="status">
+        <span class="safety-saved-mark" aria-hidden="true"></span>
+        <span>{{ savedLabel }}</span>
+      </div>
     </template>
     <Teleport to="body">
       <div v-if="active" class="safety-overlay" @click.self="close" @keydown.esc.stop="close">
@@ -137,7 +140,7 @@
                     {{
                       typicalMode === 'onsite'
                         ? '现场：选择一个代表问题及照片。'
-                        : '视频：选择一个风险类别，查看该类别的全部问题；报告自动选取该类别的代表照片。'
+                        : '视频：先选风险类别，再从该类别的问题中选择一张 PPT 展示照片。'
                     }}
                   </p>
                   <div class="safety-mode-note">保存只记录选择；重新生成后应用到报告。</div>
@@ -298,6 +301,25 @@
                       </h4>
                       <p>{{ selectedVideoGroup?.summary }}</p>
                     </div>
+                    <div class="safety-current-choice" aria-live="polite">
+                      <span>PPT 展示照片</span>
+                      <strong v-if="typical('video')"
+                        >#{{ typical('video').issue_id }} ·
+                        {{ typical('video').station_name }}</strong
+                      >
+                      <strong v-else>该类别暂无可用照片，请选择其他类别</strong>
+                      <small>{{ typicalSelection('video') ? '人工选择' : '自动推荐' }}</small>
+                      <button
+                        :disabled="!typicalSelection('video')"
+                        @click="setTypical('video', '')"
+                      >
+                        恢复自动选图
+                      </button>
+                    </div>
+                    <p class="safety-list-count">
+                      选择一条有照片的问题用于
+                      PPT。文字仍汇总所选类别，保存并重新生成后应用照片选择。
+                    </p>
                     <input
                       v-model="issueKeyword"
                       type="search"
@@ -311,16 +333,33 @@
                       <li
                         v-for="issue in videoCandidates"
                         :key="issue.issue_id"
-                        class="safety-candidate safety-video-evidence"
+                        :class="[
+                          'safety-candidate',
+                          { chosen: typical('video')?.issue_id === issue.issue_id },
+                        ]"
                       >
-                        <div class="safety-candidate-copy">
+                        <input
+                          :id="'safety-video-photo-' + issue.issue_id"
+                          type="radio"
+                          name="safety-video-photo"
+                          :checked="typical('video')?.issue_id === issue.issue_id"
+                          :disabled="!issue.issue_photo"
+                          @change="setTypical('video', issue.issue_id)"
+                        />
+                        <label
+                          :for="'safety-video-photo-' + issue.issue_id"
+                          class="safety-candidate-copy"
+                        >
                           <span
                             ><b>#{{ issue.issue_id }}</b
-                            ><strong>{{ issue.station_name }}</strong></span
+                            ><strong>{{ issue.station_name }}</strong
+                            ><em v-if="typical('video')?.issue_id === issue.issue_id"
+                              >PPT 选用</em
+                            ></span
                           >
                           <p>{{ issue.description }}</p>
                           <small>{{ issue.category_name }}</small>
-                        </div>
+                        </label>
                         <button
                           v-if="issue.issue_photo"
                           class="safety-photo safety-list-photo"
@@ -479,6 +518,7 @@ import {
   safetyIssueSearch,
   videoTypicalGroups,
   videoTypicalSelection,
+  videoTypicalIssue,
 } from '@/utils/safetyReportConfig'
 const props = defineProps({
   month: String,
@@ -584,6 +624,7 @@ const modeIssues = (mode) => (data.value?.issues || []).filter((i) => i.mode ===
 function typical(mode) {
   const list = modeIssues(mode),
     manual = draft.value.typical_issue_ids[mode]
+  if (mode === 'video') return videoTypicalIssue(list, selectedVideoGroup.value, manual)
   const chosen = list.find((i) => i.issue_id === manual)
   if (chosen) return chosen
   const groups =
@@ -596,6 +637,7 @@ function typical(mode) {
 }
 function typicalSelection(mode) {
   const id = draft.value.typical_issue_ids[mode]
+  if (mode === 'video') return typical(mode)?.issue_id === id ? id : ''
   return modeIssues(mode).some((issue) => issue.issue_id === id) ? id : ''
 }
 function setTypical(mode, value) {
@@ -608,6 +650,7 @@ function selectTypicalMode(mode) {
 }
 function chooseVideoCategory(name) {
   draft.value.typical_video_category = name
+  delete draft.value.typical_issue_ids.video
   issueKeyword.value = ''
 }
 async function analyzeVideo() {
@@ -1069,8 +1112,24 @@ onBeforeUnmount(() => {
   color: #496579;
 }
 .safety-saved {
-  display: block;
-  margin: 14px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 16px 0 0;
+  padding: 12px 15px;
+  border: 1px solid #dce6ed;
+  border-radius: 10px;
+  background: #f4f8fb;
+  color: #496579;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.7;
+}
+.safety-saved-mark {
+  flex: 0 0 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4c839a;
 }
 .safety-overlay {
   position: fixed;
@@ -1509,6 +1568,12 @@ onBeforeUnmount(() => {
   margin: 3px 0;
   font-size: 13px;
 }
+.safety-dialog footer small:last-child {
+  color: #496579;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.7;
+}
 .safety-mode-note {
   border-top: 1px solid #d2dfe7;
   margin-top: 16px;
@@ -1565,9 +1630,6 @@ onBeforeUnmount(() => {
   color: #48697e;
   font-size: 14px;
   margin-bottom: 0;
-}
-.safety-candidate.safety-video-evidence {
-  grid-template-columns: minmax(0, 1fr) 110px;
 }
 .safety-dialog .safety-primary {
   background: #17637e;
@@ -1661,9 +1723,6 @@ onBeforeUnmount(() => {
   }
   .safety-video-groups {
     grid-template-columns: 1fr;
-  }
-  .safety-candidate.safety-video-evidence {
-    grid-template-columns: minmax(0, 1fr) 76px;
   }
   .safety-mode-nav > button {
     margin: 0;

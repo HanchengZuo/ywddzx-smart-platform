@@ -25,6 +25,7 @@ import {
   safetyIssueSearch,
   videoTypicalGroups,
   videoTypicalSelection,
+  videoTypicalIssue,
 } from '../src/utils/safetyReportConfig.js'
 import { reportConfigurationDiffers } from '../src/utils/reportConfiguration.js'
 
@@ -403,7 +404,7 @@ test('evidence component selects nonempty groups, supports manual ordering, and 
     assert.equal(s.keyword.value, '')
     harness.props.monthly = true
     s.toggleRepresentative(5, true)
-    assert.deepEqual(harness.events.at(-1), ['representatives', '标志', [5]])
+    assert.deepEqual(harness.events.at(-1), ['representatives', '标志', [6, 5]])
     harness.props.category.analysis.representatives_ready = false
     await vue.nextTick()
     assert.equal(s.ready.value, true)
@@ -865,6 +866,107 @@ test('video chooses a category by frequency or saved name, not a single issue', 
   assert.equal(videoTypicalSelection('', groups).name, '隔离')
   assert.equal(videoTypicalSelection('着装', groups).name, '着装')
   assert.equal(videoTypicalSelection('旧分类', groups).name, '隔离')
+})
+
+test('monthly evidence shows ordered candidates while only the first per top subgroup reaches PPT', () => {
+  const category = evidenceFixture()
+  const harness = componentHarness('SafetyEvidencePanel', {
+    category: { ...category, slot_limit: 3 },
+    override: safetyClassificationDraft(category),
+    monthly: true,
+  })
+  try {
+    const s = harness.state
+    assert.deepEqual(s.representatives.value, [4, 2, 1])
+    s.moveRepresentative(1, -1)
+    const [, name, order] = harness.events.at(-1)
+    assert.deepEqual(order, [2, 4, 1])
+    harness.props.override.representatives[name] = order
+    harness.props.manual = { representatives: { [name]: order } }
+    assert.deepEqual(
+      s.pptPicks.value.map((pick) => pick.issue_id),
+      [2, 6, 8],
+    )
+    assert.equal(s.pptPicks.value.filter((pick) => pick.name === name).length, 1)
+    s.resetRepresentatives()
+    assert.deepEqual(harness.events.at(-1), ['representatives', name, []])
+  } finally {
+    harness.dispose()
+  }
+})
+
+test('video photo selection persists without AI and resets when switching the risk category', async () => {
+  const value = configFixture(),
+    calls = []
+  value.issues = [4, 2, 3, 5].map((id) => ({
+    issue_id: id,
+    mode: 'video',
+    station_name: '测试站',
+    description: `问题${id}`,
+    issue_photo: id === 3 ? '' : `${id}.jpg`,
+  }))
+  value.categories.push({
+    key: 'video:__typical__',
+    mode: 'video',
+    category: '__typical__',
+    issues: value.issues,
+    analysis: {
+      complete: true,
+      groups: [
+        { name: '隔离', summary: '隔离不足', issue_ids: [4, 2, 3] },
+        { name: '着装', summary: '着装不规范', issue_ids: [5] },
+      ],
+    },
+  })
+  const harness = componentHarness(
+    'SafetyReportConfig',
+    {
+      canGenerate: false,
+      month: '2026-09',
+      dateFrom: '2026-09-01',
+      dateTo: '2026-09-30',
+    },
+    {
+      async get() {
+        return { data: structuredClone(value) }
+      },
+      async put(url, body) {
+        calls.push(body)
+        value.settings = JSON.parse(JSON.stringify(body.settings))
+        return { data: structuredClone(value) }
+      },
+      async post() {
+        throw new Error('must not call AI')
+      },
+    },
+  )
+  try {
+    const s = harness.state
+    await s.load()
+    await s.open('typical')
+    s.selectTypicalMode('video')
+    assert.equal(s.typical('video').issue_id, 2)
+    assert.equal(videoTypicalIssue(value.issues, s.selectedVideoGroup.value, 3).issue_id, 2)
+    assert.equal(videoTypicalIssue(value.issues, s.selectedVideoGroup.value, 5).issue_id, 2)
+    s.setTypical('video', 4)
+    assert.equal(s.typicalSelection('video'), 4)
+    await s.save()
+    assert.equal(calls[0].settings.typical_issue_ids.video, 4)
+    await s.open('typical')
+    assert.equal(s.typical('video').issue_id, 4)
+    s.issueKeyword.value = '不存在'
+    assert.equal(s.videoCandidates.value.length, 0)
+    assert.equal(s.typical('video').issue_id, 4)
+    s.chooseVideoCategory('着装')
+    assert.equal(s.typicalSelection('video'), '')
+    assert.equal(s.typical('video').issue_id, 5)
+    s.setTypical('video', 5)
+    s.setTypical('video', '')
+    assert.equal(s.typicalSelection('video'), '')
+    assert.equal(s.typical('video').issue_id, 5)
+  } finally {
+    harness.dispose()
+  }
 })
 
 test('new default video selection does not mark an unchanged legacy snapshot dirty', () => {

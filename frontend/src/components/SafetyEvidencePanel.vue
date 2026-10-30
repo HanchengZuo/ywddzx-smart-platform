@@ -98,20 +98,24 @@
             <p>
               {{
                 monthly
-                  ? '每类优先指定一项；仅前三子类用于月度重点。未指定时沿用已保存的默认顺序。'
+                  ? `每类最多列出 ${slots} 项优先顺序，首项用于 PPT；仅前三子类各展示一张照片，其余为后续候选。`
                   : `每类最多优先指定 ${slots} 项，按顺序选用；其余图位沿用已保存的默认顺序补齐。`
               }}
             </p>
             <p>清空优先选择会恢复默认推荐，不会排除该类所有问题。下列顺序包含默认补位。</p>
             <ol v-if="representatives.length">
-              <li v-for="(id, index) in representatives" :key="id">
+              <li
+                v-for="(id, index) in representatives"
+                :key="id"
+                :class="{ 'ppt-pick': isPptPick(id) }"
+              >
+                <b class="representative-position">{{ String(index + 1).padStart(2, '0') }}</b>
                 <strong>#{{ id }}</strong
                 ><span
                   >{{ chosenRepresentatives.includes(id) ? '优先顺序' : '默认补位' }} ·
                   {{ isPptPick(id) ? '当前 PPT 选用' : '后续候选' }}</span
                 >
                 <button
-                  v-if="!monthly"
                   :disabled="busy || index === 0"
                   :aria-label="`将问题${id}上移`"
                   @click="moveRepresentative(index, -1)"
@@ -119,7 +123,6 @@
                   上移
                 </button>
                 <button
-                  v-if="!monthly"
                   :disabled="busy || index === representatives.length - 1"
                   :aria-label="`将问题${id}下移`"
                   @click="moveRepresentative(index, 1)"
@@ -194,14 +197,13 @@
               >
               <label class="evidence-select"
                 ><input
-                  :type="monthly ? 'radio' : 'checkbox'"
+                  type="checkbox"
                   :name="`representative-${category.key}-${selectedGroup}`"
                   :checked="chosenRepresentatives.includes(Number(issue.issue_id))"
                   :disabled="
                     busy ||
                     !issue.issue_photo ||
-                    (!monthly &&
-                      chosenRepresentatives.length >= slots &&
+                    (chosenRepresentatives.length >= slots &&
                       !chosenRepresentatives.includes(Number(issue.issue_id)))
                   "
                   @change="toggleRepresentative(issue.issue_id, $event.target.checked)"
@@ -267,7 +269,7 @@ const representatives = computed(() =>
     props.category,
     props.override,
     selectedGroup.value,
-    props.monthly ? 1 : slots.value,
+    slots.value,
     props.manual,
   ),
 )
@@ -289,12 +291,7 @@ const representativesManual = computed(
 )
 const chosenRepresentatives = computed(() =>
   props.category?.analysis?.representatives_ready || representativesManual.value
-    ? safetyRepresentativeIds(
-        props.category,
-        props.override,
-        selectedGroup.value,
-        props.monthly ? 1 : slots.value,
-      )
+    ? safetyRepresentativeIds(props.category, props.override, selectedGroup.value, slots.value)
     : [],
 )
 const summaryManual = computed(() =>
@@ -331,12 +328,9 @@ const isPptPick = (id) => pptPicks.value.some((pick) => pick.issue_id === Number
 function toggleRepresentative(id, checked) {
   if (props.busy) return
   const value = Number(id)
-  const list =
-    props.monthly && checked
-      ? [value]
-      : checked
-        ? [...new Set([...chosenRepresentatives.value, value])].slice(0, slots.value)
-        : chosenRepresentatives.value.filter((item) => item !== value)
+  const list = checked
+    ? [...new Set([...chosenRepresentatives.value, value])].slice(0, slots.value)
+    : chosenRepresentatives.value.filter((item) => item !== value)
   emit('representatives', selectedGroup.value, list)
 }
 function resetRepresentatives() {
@@ -528,6 +522,21 @@ const requirementStatus = (status) =>
 .representative-order li > span {
   flex: 1;
   font-size: 14px;
+}
+.representative-position {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: #edf3f7;
+  color: #536e80;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.ppt-pick .representative-position {
+  background: #dceef0;
+  color: #17637e;
 }
 .representative-order li button {
   padding: 6px 10px;

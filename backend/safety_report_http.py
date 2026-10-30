@@ -6,6 +6,7 @@ from safety_report_analysis import (load_settings, normalize_settings, save_sett
     effective_analysis, analyze)
 from report_ai_memory import fingerprint, begin_report_ai_memory, end_report_ai_memory, report_ai_generation_log
 from safety_report_examples import cached_representatives, with_representatives, apply_representative_overrides
+from safety_video_themes import selected_video_group, selected_video_issue
 
 
 def selected_issues(rows, settings):
@@ -73,6 +74,14 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                 for mode, issue_id in new['typical_issue_ids'].items():
                     if issue_id != settings['typical_issue_ids'].get(mode) and not any(row['issue_id'] == issue_id and row['mode'] == mode for row in eligible):
                         raise ValueError('典型问题必须来自对应现场或视频问题库。')
+                    if mode=='video' and (issue_id != settings['typical_issue_ids'].get(mode)
+                            or new['typical_video_category'] != settings['typical_video_category']):
+                        video = category_rows(eligible,'video','__typical__')
+                        analysis = selected_analysis(cur,video,'video','__typical__',new['classifications'].get('video:__typical__') or {})
+                        group = selected_video_group(video,analysis,new['typical_video_category'])
+                        photo = selected_video_issue(video,group,issue_id)
+                        if not analysis.get('complete') or not photo or photo['issue_id'] != issue_id:
+                            raise ValueError('视频典型照片必须来自当前所选类别且有照片，请重新选择。')
                 if new['focus_category'] != settings['focus_category'] and new['focus_category'] and new['focus_category'] not in {row['topic'] for row in eligible if row['mode'] == 'onsite'}:
                     raise ValueError('月度重点检查主题不在当前现场数据中。')
                 for key, value in new['classifications'].items():

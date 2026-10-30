@@ -39,3 +39,11 @@ def selected_video_group(issues, analysis, selection=''):
         if ids: choices.append({**group, 'issue_ids': sorted(ids)})
     choices.sort(key=lambda g: (-len(g['issue_ids']), g['name']))
     return next((g for g in choices if g['name']==selection), choices[0] if choices else None)
+
+
+def selected_video_issue(issues, group, selection=None):
+    """Choose a photo within the active theme; stale/manual IDs never cross themes."""
+    members = set((group or {}).get('issue_ids', []))
+    photos = sorted((row for row in issues if row['mode']=='video'
+        and row['issue_id'] in members and row.get('issue_photo')), key=lambda row:row['issue_id'])
+    return next((row for row in photos if row['issue_id']==selection), photos[0] if photos else None)
