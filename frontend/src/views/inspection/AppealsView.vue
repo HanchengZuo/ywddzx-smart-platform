@@ -3,7 +3,7 @@
     <header class="surface page-heading"><div><span class="eyebrow">巡检系统</span><h2>申诉空间</h2><p>站点发起 → 所属片区初审 → 授权质安部终审</p></div><span class="scope-note">仅展示当前账号可查看的数据</span></header>
     <div v-if="notice" class="notice" role="status">{{ notice }}<button @click="notice = ''" aria-label="关闭提示">×</button></div>
     <form class="surface filters" @submit.prevent="page = 1; load()">
-      <div class="tabs"><button type="button" :class="{ active: !archive }" @click="setArchive(false)">待处理申诉 <span v-if="counts.active" class="count-badge">{{ counts.active }}</span></button><button type="button" :class="{ active: archive }" @click="setArchive(true)">已结束记录 <span v-if="counts.unread_ended" class="count-badge">{{ counts.unread_ended }}</span></button></div>
+      <div class="tabs" aria-label="申诉分类"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: stage === tab.key }" :aria-pressed="stage === tab.key" @click="setStage(tab.key)">{{ tab.label }} <span v-if="counts[tab.count]" class="count-badge">{{ counts[tab.count] }}</span></button></div>
       <label>搜索问题或站点<input v-model="keyword" placeholder="问题ID、站点名称、问题描述" /></label><button class="primary" :disabled="loading">开始筛选</button>
     </form>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -58,7 +58,13 @@ const reviewDeadlineHint = (item, expired = false) => {
 const route = useRoute()
 const router = useRouter()
 const items = ref([]), total = ref(0), page = ref(1), archive = ref(false), keyword = ref('')
-const counts = ref({ active: 0, unread_ended: 0, total: 0 }), expanded = ref(new Set()), reading = ref(null), qualityReviewers = ref([])
+const stage = ref('area_pending')
+const tabs = [
+  { key: 'area_pending', label: '待片区处理申诉', count: 'area_pending' },
+  { key: 'quality_pending', label: '待质安部处理申诉', count: 'quality_pending' },
+  { key: 'ended', label: '已结束记录', count: 'unread_ended' },
+]
+const counts = ref({ active: 0, area_pending: 0, quality_pending: 0, unread_ended: 0, total: 0 }), expanded = ref(new Set()), reading = ref(null), qualityReviewers = ref([])
 const loading = ref(false), error = ref(''), notice = ref(''), selected = ref(null), decision = ref(''), reason = ref(''), saving = ref(false), decisionError = ref(''), photo = ref('')
 const labels = { area_pending: '待片区初审', quality_pending: '待质安部终审', approved: '申诉通过', rejected: '申诉被拒绝', cancelled: '申诉已取消' }
 const imageUrl = path => !path ? '' : /^https?:\/\//.test(path) || path.startsWith('/storage/') ? path : `/storage/${path.replace(/^\//, '')}`
@@ -68,7 +74,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await axios.get('/api/issue-appeals', { params: { page: page.value, archive: archive.value ? 1 : 0, keyword: keyword.value } })
+    const { data } = await axios.get('/api/issue-appeals', { params: { page: page.value, archive: archive.value ? 1 : 0, stage: archive.value ? undefined : stage.value, keyword: keyword.value } })
     if (id !== requestId) return
     items.value = data.items
     total.value = data.total
@@ -77,7 +83,7 @@ async function load() {
   } catch (err) { if (id === requestId) error.value = err.response?.data?.error || '申诉记录读取失败。' }
   finally { if (id === requestId) loading.value = false }
 }
-function setArchive(value) { archive.value = value; page.value = 1; load() }
+function setStage(value) { stage.value = value; archive.value = value === 'ended'; page.value = 1; return load() }
 async function viewResult(item) {
   if (reading.value !== null) return
   if (expanded.value.has(item.id)) { expanded.value.delete(item.id); return }
@@ -124,7 +130,7 @@ onBeforeUnmount(() => { requestId++; window.removeEventListener('keydown', keydo
 h2,h3 { margin: 8px 0; } p { line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .scope-note,.muted,.count { color: #64748b; font-size: 13px; }
 .filters { display: flex; align-items: end; flex-wrap: wrap; gap: 16px; }
-.tabs { display: flex; gap: 6px; align-self: center; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; align-self: center; }
 .tabs button { display: inline-flex; align-items: center; gap: 8px; }
 .count-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; padding: 2px 6px; border-radius: 20px; background: #dc3545; color: white; font-size: 12px; line-height: 1.5; }
 .result-toggle { margin: 8px 0 18px; display: flex; align-items: center; gap: 12px; }

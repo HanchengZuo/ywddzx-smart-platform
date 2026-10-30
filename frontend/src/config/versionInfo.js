@@ -15,6 +15,14 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v12.2', date: '2026-10-30', title: '申诉空间按处理阶段分类',
+    summary: '待处理申诉拆为待片区处理与待质安部处理，原有权限与处理流程保持不变。',
+    items: [
+      '按当前初审、终审阶段分别展示待片区处理申诉和待质安部处理申诉，各自显示可见范围内的数量，切换分类后重新分页查询。',
+      '保留已结束记录、已读提醒和菜单总数口径，不调整任何角色权限、数据范围、审核决定或流程时限。'
+    ]
+  },
+  {
     version: 'v12.1.8', date: '2026-10-30', title: '安全报告章节顺序调整',
     summary: '第三章过渡页及现场、视频重点问题分析页整体后移至视频重点问题第十类之后。',
     items: [
