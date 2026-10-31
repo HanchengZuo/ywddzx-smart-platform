@@ -14,6 +14,30 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.3 浏览器消息推送（本地开发，尚未发布）
+
+公共功能新增“通知中心”，右上角提供入口；管理系统新增“消息通知管理”，独立权限 `manage_web_push` 默认仅 root 拥有，可在用户权限中分配。账号通知偏好对所有用户默认开启（未保存偏好时视为开启），但不能代替浏览器授权；不弹出系统权限对话框强行索取授权，仅提示用户前往通知中心主动开通。
+
+通知中心可查看当前设备与其他设备最近状态，开关账号通知、停用当前设备、发送当前设备测试通知。管理页可筛选用户开通情况、查看设备类型/浏览器/最近上报与发送记录，选择最多200位用户发送消息；后台自动向这些用户的全部有效订阅设备投递。未访问、未授权、已拒绝、不支持、需要主屏幕安装不混为“成功开通”。推送关闭不影响站内通知查看。v12.3提供管理员手动发送、设备测试和可复用投递队列；尚未自动订阅所有巡检/申诉/排班业务事件，避免未经明确规则定义就群发业务提醒。
+
+**启用前准备**：安装 `backend/requirements.txt`，执行迁移 `20261101_001`（保持现有迁移入口），并准备稳定的 VAPID 身份。可在后端环境执行：
+
+```bash
+python -m web_push_keys --output /安全位置/web-push.env --subject mailto:管理员的真实联系邮箱
+```
+
+生成器只创建不存在的0600文件，拒绝覆盖，不向终端输出私钥。将文件中的 `WEB_PUSH_ENABLED`、`WEB_PUSH_VAPID_PRIVATE_KEY`、`WEB_PUSH_SUBJECT` 作为后端部署环境变量注入，或保存在现有受保护的项目 `.env` 中；Compose已加入对应变量。运行部署脚本时可先 `set -a`、`source /安全位置/web-push.env`、`set +a`，随后通过既有 `deploy.sh` 部署。不要将私钥提交Git，也不要每次启动重新生成；同一身份必须跨Gunicorn进程与重启保持一致。订阅内容使用 `APP_SECRET_KEY` 派生的独立Fernet密钥加密，备份恢复须保留原服务端密钥；VAPID或服务端加密密钥改变后，需要设备重新开启订阅。
+
+网站须使用HTTPS（localhost可用于开发）。Service Worker `/push-sw.js` 仅处理push与点击，不缓存登录页、业务API、照片或离线业务内容；PWA manifest与主屏幕图标已添加。生产Nginx需加载已更新的 `deploy/nginx/ywddzx-cache.conf`，确保worker不缓存、不把缺失worker回退为index.html。订阅API仅接受已知标准浏览器推送服务域名，禁止任意URL/内网端点和HTTP重定向，验证P-256公钥与认证密钥；管理API不暴露端点或订阅密钥。
+
+发送走数据库持久化outbox，业务请求只入队；Gunicorn `post_worker_init` 后启动独立轻量线程，每30秒扫描一次，每轮最多10条。`FOR UPDATE SKIP LOCKED`、2分钟租约及受限3次尝试协调多进程，网络调用不持有业务事务锁；404/410使对应订阅失效，暂时性网络、429和5xx延后重试。正常关闭网页无需保持登录令牌才能收到通用系统提醒，但点击查看正文仍要鉴权。完全退出浏览器、系统省电限制或无法连接FCM/APNs/Mozilla/WNS推送服务时不保证接收；TTL为24小时，站内消息仍保留。工作进程在“服务已接收、未保存结果”时崩溃可能造成重投，通知使用稳定tag减少重复显示，不宣称严格exactly-once。
+
+同一浏览器资料用高熵设备凭据绑定最后登录的账号，切换账号时更新归属与订阅版本，旧账号队列会跳过；Root代入账号时不登记设备或发送推送。锁屏只显示通用系统提醒，不显示消息正文、站名或问题内容。后台“推送服务已接收”不等于设备显示，“确认收到”是用户本人反馈而非自动实收证明。
+
+iOS/iPadOS 16.4及以上须先在Safari分享菜单“添加到主屏幕”，再从该图标进入后点击开启通知。华为等品牌及内置浏览器按能力检测，不凭品牌一概判定：不支持时提示更换受支持浏览器，能力存在但网络或系统限制导致失败时显示诊断与测试入口。[Apple标准支持说明](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)、[WebKit主屏幕与用户授权说明](https://webkit.org/blog/13878/)、[Mozilla后台运行说明](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Offline_and_background_operation)。
+
+本地验证使用 `WEB_PUSH_TEST_DSN='dbname=test_... host=... user=... password=...' python -m unittest tests.test_web_push`，测试仅在独立schema中建表并清理、禁止非test_数据库；发送器/网络均为模拟，不会真实推送或向AI付费。前端执行 `node --test tests/*.test.mjs` 与 `npm run build`。真实闭页/锁屏实收仍需管理员配置VAPID后，用户亲自在Windows、macOS、Android及iOS设备授权、测试并确认收到，不能由自动化测试替代。
+
 ## 服务器部署
 
 在服务器项目根目录执行 `bash deploy.sh`（也可执行 `./deploy.sh`），一次完成前端和后端更新，无需分别运行旧脚本。脚本只拉取一次代码（仅允许快进），加载服务器 `.env` 并检查生产配置，然后依次构建发布前端到 `/var/www/ywddzx`、移除不再需要的 Vite 开发容器、重建后端、等待迁移及 Gunicorn 启动、验证运行时数据库结构。兼容 `docker compose` 和旧版 `docker-compose`；前端使用 `npm ci --include=dev` 按锁文件安装构建依赖，后端版本从 `frontend/package.json` 读取并覆盖过时的环境值。

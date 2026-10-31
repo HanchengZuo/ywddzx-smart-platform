@@ -211,6 +211,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '统一或按调用场景切换大模型厂家与型号。'
       },
       {
+        key: '/management/notifications',
+        path: '/management/notifications',
+        title: '消息通知管理',
+        description: '管理浏览器推送订阅、用户开通情况和消息发送记录。'
+      },
+      {
         key: '/management/ai-usage',
         path: '/management/ai-usage',
         title: 'AI调用统计',

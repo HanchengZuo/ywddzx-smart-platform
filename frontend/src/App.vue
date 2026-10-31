@@ -319,6 +319,10 @@
 
       <div v-if="canViewCommonSection" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">公共功能</div>
+        <button class="nav-item" :class="{ active: isActive('/notifications'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/notifications')" :title="sidebarCollapsed ? '通知中心' : ''">
+          <span class="nav-item-icon">信</span><span v-if="!sidebarCollapsed">通知中心</span>
+        </button>
         <button v-if="canViewHelpDocuments" class="nav-item" :class="{ active: isActive('/help-documents'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/help-documents')" :title="sidebarCollapsed ? '帮助文档' : ''">
           <span class="nav-item-icon">助</span>
@@ -395,6 +399,10 @@
           <span class="nav-item-icon">模</span>
           <span v-if="!sidebarCollapsed">大模型管理</span>
         </button>
+        <button v-if="canManageWebPush" class="nav-item" :class="{ active: isActive('/management/notifications'), collapsed: sidebarCollapsed }" type="button"
+          @click="go('/management/notifications')" :title="sidebarCollapsed ? '消息通知管理' : ''">
+          <span class="nav-item-icon">讯</span><span v-if="!sidebarCollapsed">消息通知管理</span>
+        </button>
         <button v-if="canManageAiUsage" class="nav-item"
           :class="{ active: isActive('/management/ai-usage'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/management/ai-usage')" :title="sidebarCollapsed ? 'AI调用统计' : ''">
@@ -462,6 +470,7 @@
             </div>
           </div>
           <ScheduleTaskInbox v-if="!authState.mustChangePassword && (isSupervisor || scheduleTaskPendingCount > 0)" :key="authState.userId" :count="scheduleTaskPendingCount" :agenda="scheduleAgenda" @count="scheduleTaskPendingCount = $event" />
+          <button class="header-passkey-button" type="button" @click="go('/notifications')">通知</button>
           <div class="header-user-card">
             <div class="header-user-avatar">{{ currentUsername.slice(0, 1) }}</div>
             <div class="header-user-text">
@@ -490,6 +499,7 @@
       <main class="content">
         <router-view v-if="!authState.mustChangePassword" />
       </main>
+      <PushNotificationBridge v-if="!authState.mustChangePassword && !isImpersonating" :key="authState.userId" :user-id="authState.userId" />
     </div>
 
     <div v-if="authState.mustChangePassword" class="force-password-overlay" role="dialog" aria-modal="true">
@@ -639,6 +649,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import PushNotificationBridge from './components/PushNotificationBridge.vue'
 import axios from 'axios'
 import { createAdaptivePolling } from './utils/adaptivePolling'
 import { useRoute, useRouter } from 'vue-router'
@@ -1004,7 +1015,8 @@ const canViewAssessmentSection = computed(() => (
 const canViewVehicle = computed(() => (isRoot.value || isSupervisor.value) && isPageVisible('/vehicle'))
 const canViewFeedback = computed(() => isPageVisible('/feedback'))
 const canViewHelpDocuments = computed(() => isPageVisible('/help-documents'))
-const canViewCommonSection = computed(() => canViewHelpDocuments.value || canViewFeedback.value)
+const canViewNotifications = computed(() => true)
+const canViewCommonSection = computed(() => canViewHelpDocuments.value || canViewFeedback.value || canViewNotifications.value)
 const canManageUsers = computed(() => isRoot.value && isPageVisible('/management/users'))
 const canManageSecurity = computed(() => hasPermissionKey('manage_security') && isPageVisible('/management/security'))
 const canManageStations = computed(() => hasPermissionKey('manage_stations') && isPageVisible('/management/stations'))
@@ -1015,6 +1027,7 @@ const canManageAutoAudit = computed(() => hasPermissionKey('manage_auto_audit_ru
 const canManageBackups = computed(() => isRoot.value && isPageVisible('/management/backups'))
 const canManageAiUsage = computed(() => hasPermissionKey('manage_ai_usage') && isPageVisible('/management/ai-usage'))
 const canManageAiModels = computed(() => hasPermissionKey('manage_ai_models') && isPageVisible('/management/ai-models'))
+const canManageWebPush = computed(() => hasPermissionKey('manage_web_push') && isPageVisible('/management/notifications'))
 const canManagePageVisibility = computed(() => hasPermissionKey('manage_page_visibility'))
 const canViewManagementSection = computed(() => (
   canManageUsers.value ||
@@ -1026,6 +1039,7 @@ const canViewManagementSection = computed(() => (
   canManageAutoAudit.value ||
   canManageBackups.value ||
   canManageAiModels.value ||
+  canManageWebPush.value ||
   canManageAiUsage.value ||
   canManagePageVisibility.value
 ))
