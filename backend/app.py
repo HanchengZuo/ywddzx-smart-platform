@@ -18645,8 +18645,8 @@ def logout_authenticated_user():
 def get_root_impersonation_actor():
     current_user = get_current_request_user()
     if is_root_user(current_user):
-        if getattr(g, "auth_payload", {}).get("amr") != "passkey":
-            raise PermissionError("账号切换需要Root通过Passkey登录。")
+        if getattr(g, "auth_payload", {}).get("amr") not in {"passkey", "totp"}:
+            raise PermissionError("账号切换需要Root通过Passkey或Authenticator验证码登录。")
         return current_user
     impersonator = getattr(g, "impersonator", None)
     if is_root_user(impersonator):

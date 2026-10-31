@@ -4,9 +4,9 @@
 
 > 本文档以当前代码中的实际逻辑为准，重点说明巡检系统的功能和状态流转。
 
-## Root 的 Microsoft Authenticator 登录（新增，未发布）
+## Root 的 Microsoft Authenticator 登录
 
-仅用户名为 `root` 且角色为 root、状态正常的账号支持这一备用入口。先使用现有 Passkey 登录，打开右上角“Passkey”，在 Microsoft Authenticator 专属面板中进行 Passkey 身份复核，扫描二维码（应用内选择“其他帐户”），输入6位验证码确认启用。也可在面板查看手动录入密钥。登录页不改动：用户名仍填 root，验证码直接填原密码框；其他账号及 root 原有普通密码直登限制不变。验证码登录不是“密码+验证码”双因素认证，也不具备 Passkey 的抗钓鱼能力。账号切换等原本要求 Passkey 登录的高敏入口仍保留原限制。
+仅用户名为 `root` 且角色为 root、状态正常的账号支持这一备用入口。先使用现有 Passkey 登录，打开右上角“Passkey”，在 Microsoft Authenticator 专属面板中进行 Passkey 身份复核，扫描二维码（应用内选择“其他帐户”），输入6位验证码确认启用。也可在面板查看手动录入密钥。登录页不改动：用户名仍填 root，验证码直接填原密码框；其他账号及 root 原有普通密码直登限制不变。验证码登录不是“密码+验证码”双因素认证，也不具备 Passkey 的抗钓鱼能力。root 通过 Passkey 或 Authenticator 验证码登录后均可切换账号；绑定及停用 Authenticator 仍须通过 Passkey 身份复核。
 
 二维码和密钥仅在生成绑定流程时返回，5分钟有效，必须验证后启用；错误确认最多5次，重新生成会使旧流程失效。采用标准SHA-1/30秒/6位OATH-TOTP，允许前后一个时间步的误差；绑定时使用的验证码已消耗，不能紧接着重复用于登录，需等待下一组或使用Passkey。凭据以Fernet认证加密保存，密钥从服务端 `APP_SECRET_KEY` 域隔离派生，不写日志或浏览器存储、不调用外部二维码服务。保留服务端密钥才能恢复数据库内绑定，改变 `APP_SECRET_KEY` 后原绑定不可用，须用Passkey重新绑定。建议备份Passkey，不能删除最后一个Passkey。
 

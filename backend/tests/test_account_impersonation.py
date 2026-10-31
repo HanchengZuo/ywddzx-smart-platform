@@ -112,6 +112,29 @@ class AccountImpersonationTests(unittest.TestCase):
         self.assertNotIn("phone", payload)
         self.assertNotIn("password_hash", payload)
 
+    def test_root_authenticator_session_can_switch_accounts(self):
+        with app.test_request_context("/api/auth/impersonation/accounts"):
+            g.current_user = self.root
+            g.auth_payload = {"amr": "totp"}
+            self.assertEqual(get_root_impersonation_actor(), self.root)
+
+    def test_authenticator_method_does_not_grant_non_root_switching(self):
+        with app.test_request_context("/api/auth/impersonation/accounts"):
+            g.current_user = self.target
+            g.auth_payload = {"amr": "totp"}
+            with self.assertRaisesRegex(PermissionError, "仅Root账号"):
+                get_root_impersonation_actor()
+
+    def test_root_sessions_without_verified_login_method_cannot_switch(self):
+        for method in (None, "password", "impersonation", "unknown"):
+            with self.subTest(method=method), app.test_request_context(
+                "/api/auth/impersonation/accounts"
+            ):
+                g.current_user = self.root
+                g.auth_payload = {"amr": method}
+                with self.assertRaisesRegex(PermissionError, "Passkey或Authenticator"):
+                    get_root_impersonation_actor()
+
 
 if __name__ == "__main__":
     unittest.main()
