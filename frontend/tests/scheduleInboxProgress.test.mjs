@@ -10,6 +10,22 @@ const source = readFileSync(
 )
 const ref = (value = null) => ({ value })
 
+test('a notification opens only the visible header inbox, not both desktop and mobile instances', () => {
+  const code = source.match(/function openFromNotification\(\) \{[\s\S]*?\n\}/)[0]
+  let opens = 0
+  const context = vm.createContext({
+    trigger: ref({ getClientRects: () => [] }),
+    open: () => {
+      opens++
+    },
+  })
+  vm.runInContext(code + ';openFromNotification()', context)
+  assert.equal(opens, 0)
+  context.trigger.value = { getClientRects: () => [{}] }
+  vm.runInContext('openFromNotification()', context)
+  assert.equal(opens, 1)
+})
+
 test('station progress includes completed sibling tables and separates dates and field/video tasks', () => {
   const data = [
     { id: 1, station_id: 1, mode: 'offline', scheduled_date: '2026-10-22', status: 'completed' },

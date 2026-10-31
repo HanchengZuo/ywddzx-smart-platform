@@ -28,7 +28,7 @@ def deliver_one(connect, secret, config=None, sender=send, recipients=None):
                     or device['user_id']!=job['user_id'] or device['revision']!=job['device_revision']):
                 cur.execute("UPDATE web_push_deliveries SET status='skipped',last_error='设备、账号或通知偏好已变化',updated_at=now() WHERE id=%s",(job['id'],))
                 conn.commit();return True
-            cur.execute('SELECT kind,source,entity_id,push_hint FROM web_push_messages WHERE id=%s',(job['message_id'],))
+            cur.execute('SELECT kind,source,entity_id,push_hint,event_key FROM web_push_messages WHERE id=%s',(job['message_id'],))
             message=cur.fetchone()
             if message['kind']=='business':
                 from web_push_business import delivery_allowed
@@ -83,6 +83,11 @@ def start_push_worker(connect, secret, logger, *, recipients=None):
                     process_signature_changes(connect,recipients)
                 except Exception:
                     logger.error('Business notification scan rolled back; retrying later')
+                try:
+                    from web_push_schedule import process_schedule_changes
+                    process_schedule_changes(connect)
+                except Exception:
+                    logger.error('Daily schedule notification scan rolled back; retrying later')
             try:
                 # Bound each scan; skip startup network calls when keys are absent.
                 for _ in range(10):

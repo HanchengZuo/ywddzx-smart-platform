@@ -65,7 +65,7 @@ class BusinessPushTests(unittest.TestCase):
         self.execute("UPDATE issues SET audit_status='approved' WHERE id=1")
         self.scan();self.assertEqual(len(self.rows('SELECT * FROM web_push_messages')),1)
         detail=self.call('/api/management/notifications').json
-        self.assertEqual(len(detail['sources']),3)
+        self.assertEqual(len(detail['sources']),4)
         self.assertEqual(detail['records'][0]['inbox_only'],1)
         message=detail['records'][0]['id']
         self.assertEqual(self.call(f'/api/management/notifications/{message}/deliveries').json['items'][0]['status'],'inbox_only')

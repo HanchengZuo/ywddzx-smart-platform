@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { setImmediate } from 'node:timers'
 import { pushCapability, pushDeviceStatus } from '../src/utils/webPush.js'
 
 const capable = {
@@ -206,4 +207,76 @@ test('unprepared Safari workers never attempt permission after an asynchronous i
   vm.createContext(context)
   vm.runInContext(source + ';globalThis.enable=enableDevice', context)
   await assert.rejects(context.enable('AQ'), /尚在准备/)
+})
+
+test('a stalled browser device lock aborts without posting or leaving subsequent refreshes queued', async () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  const timers = [],
+    requests = []
+  const context = {
+    window: { ...capable },
+    navigator: {
+      ...capable.navigator,
+      locks: {
+        request: (name, { signal }) =>
+          new Promise((_, reject) =>
+            signal.addEventListener('abort', () => reject(new Error('aborted'))),
+          ),
+      },
+    },
+    axios: {
+      post: (...args) => {
+        requests.push(args)
+      },
+    },
+    AbortController,
+    Promise,
+    Error,
+    setTimeout: (callback) => {
+      timers.push(callback)
+      return timers.length
+    },
+    clearTimeout() {},
+  }
+  vm.createContext(context)
+  vm.runInContext(source + ';globalThis.sync=syncDevice', context)
+  const first = context.sync()
+  await new Promise((resolve) => setImmediate(resolve))
+  timers.at(-1)()
+  await assert.rejects(first, /同步超时/)
+  const second = context.sync()
+  await new Promise((resolve) => setImmediate(resolve))
+  timers.at(-1)()
+  await assert.rejects(second, /同步超时/)
+  assert.deepEqual(requests, [])
+})
+
+test('storage-only version resets recover the notification device identity without restoring auth data', () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  const storage = new Map([['token', 'old-login-token']])
+  const context = {
+    localStorage: {
+      getItem: (key) => storage.get(key),
+      setItem: (key, value) => storage.set(key, value),
+    },
+    document: { cookie: '' },
+    window: { location: { protocol: 'https:' } },
+    crypto: { getRandomValues: (bytes) => bytes.fill(42) },
+    Uint8Array,
+    btoa,
+    Promise,
+    Error,
+  }
+  vm.createContext(context)
+  vm.runInContext(source + ';globalThis.key=currentDeviceKey', context)
+  const original = context.key()
+  assert.match(context.document.cookie, /SameSite=Strict; Secure/)
+  storage.clear()
+  assert.equal(context.key(), original)
+  assert.equal(storage.get('web_push_device_key'), original)
+  assert.equal(storage.has('token'), false)
 })

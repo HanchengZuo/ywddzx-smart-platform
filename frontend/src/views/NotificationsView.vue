@@ -6,7 +6,35 @@
         <h2>通知中心</h2>
         <p>一个账号，多台设备。授权后，系统消息可通过浏览器推送抵达。</p>
       </div>
-      <button @click="refresh" :disabled="busy">刷新状态</button>
+      <div class="notification-refresh-control">
+        <button
+          class="notification-refresh"
+          @click="refresh"
+          :disabled="refreshing || busy"
+          :aria-busy="refreshing"
+        >
+          <svg
+            :class="{ spinning: refreshing }"
+            width="17"
+            height="17"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5L4 10m16 4-3 3A7 7 0 0 1 5 12"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span aria-live="polite">{{
+            refreshing ? '正在同步' : refreshDone ? '状态已更新' : '刷新状态'
+          }}</span>
+        </button>
+        <small v-if="lastUpdated">最近同步 {{ lastUpdated }}</small>
+      </div>
     </header>
     <p v-if="error" class="notification-error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notification-success" role="status">{{ notice }}</p>
@@ -20,7 +48,7 @@
           ><input
             type="checkbox"
             :checked="enabled"
-            :disabled="busy"
+            :disabled="busy || refreshing"
             @change="setEnabled($event.target.checked)"
           />账号推送偏好 {{ enabled ? '允许' : '暂停' }}</label
         >
@@ -57,13 +85,17 @@
       <div class="notification-actions">
         <button
           class="primary"
-          :disabled="busy || !configured || !pushReady || capability.code !== 'supported'"
+          :disabled="
+            busy || refreshing || !configured || !pushReady || capability.code !== 'supported'
+          "
           @click="enable"
         >
           开启 / 修复当前设备订阅</button
-        ><button :disabled="busy || !device?.active || !enabled" @click="testPush">
+        ><button :disabled="busy || refreshing || !device?.active || !enabled" @click="testPush">
           发送测试通知</button
-        ><button :disabled="busy || !device?.active" @click="disable">停用当前设备</button>
+        ><button :disabled="busy || refreshing || !device?.active" @click="disable">
+          停用当前设备
+        </button>
       </div>
     </section>
     <section class="notification-surface">
@@ -72,19 +104,25 @@
           <h3>
             我的订阅设备 <small>{{ devices.length }}</small>
           </h3>
-          <p>显示最近上报的状态；离线设备的浏览器权限可能已发生变化。</p>
+          <p>
+            只展示有效订阅，同一浏览器订阅不重复显示。不同电脑或浏览器仍独立保留；离线设备权限以最近上报为准。
+          </p>
         </div>
       </header>
       <div class="notification-device-grid">
         <article v-for="entry in devices" :key="entry.id" class="notification-device">
-          <strong>{{ entry.platform }} · {{ entry.browser }}</strong
+          <strong
+            >{{ entry.platform }} · {{ entry.browser }}
+            <small v-if="entry.id === device?.id" class="notification-current-device"
+              >当前设备</small
+            ></strong
           ><span>{{ pushDeviceStatus(entry) }}</span
           ><small>最近连接 {{ formatTime(entry.last_seen_at) }}</small
           ><small>最近发送 {{ formatTime(entry.last_sent_at) }}</small>
           <p v-if="entry.last_error">{{ entry.last_error }}</p>
         </article>
         <p v-if="!devices.length" class="notification-muted">
-          暂无设备上报，请刷新或尝试开启订阅。
+          暂无有效订阅设备，请在当前设备开启通知。停用及历史上报仍保留在管理记录中。
         </p>
       </div>
     </section>
@@ -119,15 +157,22 @@
             >{{ item.sender_name }} · {{ item.kind === 'test' ? '设备测试' : '系统通知' }}</small
           >
           <div>
+            <button v-if="item.source === 'daily_schedule'" @click="openTodayArrangement">
+              查看今日安排
+            </button>
             <RouterLink
               v-if="businessPath(item)"
               :to="businessPath(item)"
               class="notification-action-link"
               >前往办理</RouterLink
             >
-            <button v-if="!item.read_at" :disabled="busy" @click="mark(item, false)">
+            <button v-if="!item.read_at" :disabled="busy || refreshing" @click="mark(item, false)">
               标为已读</button
-            ><button v-if="!item.confirmed_at" :disabled="busy" @click="mark(item, true)">
+            ><button
+              v-if="!item.confirmed_at"
+              :disabled="busy || refreshing"
+              @click="mark(item, true)"
+            >
               确认收到系统推送
             </button>
           </div>
@@ -137,9 +182,11 @@
         暂无系统消息，可以先发送一条当前设备测试通知。
       </p>
       <nav class="notification-pagination">
-        <button :disabled="busy || page <= 1" @click="changePage(-1)">上一页</button
+        <button :disabled="busy || refreshing || page <= 1" @click="changePage(-1)">上一页</button
         ><span>{{ page }} / {{ Math.max(1, Math.ceil(total / 20)) }}</span
-        ><button :disabled="busy || page * 20 >= total" @click="changePage(1)">下一页</button>
+        ><button :disabled="busy || refreshing || page * 20 >= total" @click="changePage(1)">
+          下一页
+        </button>
       </nav>
     </section>
   </div>
@@ -174,6 +221,10 @@ const items = ref([]),
   unread = ref(0),
   page = ref(1),
   busy = ref(false),
+  refreshing = ref(false),
+  reading = ref(false),
+  refreshDone = ref(false),
+  lastUpdated = ref(''),
   error = ref(''),
   notice = ref('')
 const capability = ref(pushCapability())
@@ -186,24 +237,41 @@ const permissionLabel = computed(
 const formatTime = (value) =>
   value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无'
 let alive = true,
-  timer
+  timer,
+  feedbackTimer,
+  readController,
+  readSerial = 0
 async function read() {
-  const [inbox, allDevices] = await Promise.all([
-    axios.get('/api/notifications', { params: { page: page.value } }),
-    axios.get('/api/notifications/devices'),
-  ])
-  if (!alive) return
-  const data = inbox.data
-  items.value = data.items
-  total.value = data.total
-  unread.value = data.unread
-  enabled.value = data.enabled
-  configured.value = data.configured
-  publicKey.value = data.public_key
-  devices.value = allDevices.data.items
+  const serial = ++readSerial
+  readController?.abort()
+  readController = new AbortController()
+  reading.value = true
+  try {
+    const options = { signal: readController.signal, timeout: 10000 }
+    const [inbox, allDevices] = await Promise.all([
+      axios.get('/api/notifications', { ...options, params: { page: page.value } }),
+      axios.get('/api/notifications/devices', options),
+    ])
+    if (!alive || serial !== readSerial) return
+    const data = inbox.data
+    items.value = data.items
+    total.value = data.total
+    unread.value = data.unread
+    enabled.value = data.enabled
+    configured.value = data.configured
+    publicKey.value = data.public_key
+    devices.value = [
+      ...new Map(
+        allDevices.data.items.filter((entry) => entry.active).map((entry) => [entry.id, entry]),
+      ).values(),
+    ]
+    lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  } finally {
+    if (alive && serial === readSerial) reading.value = false
+  }
 }
 async function action(operation) {
-  if (busy.value) return
+  if (busy.value || refreshing.value) return
   busy.value = true
   error.value = ''
   try {
@@ -214,18 +282,35 @@ async function action(operation) {
     if (alive) busy.value = false
   }
 }
-const refresh = () =>
-  action(async () => {
+async function refresh() {
+  if (refreshing.value || busy.value) return
+  refreshing.value = true
+  refreshDone.value = false
+  error.value = ''
+  clearTimeout(feedbackTimer)
+  try {
     capability.value = pushCapability()
     await read()
-    device.value = await syncDevice()
+    const current = await syncDevice()
+    if (!alive) return
+    device.value = current
     pushReady.value = isPushPrepared()
     await read()
-  })
+    refreshDone.value = true
+    feedbackTimer = setTimeout(() => {
+      refreshDone.value = false
+    }, 2500)
+  } catch (err) {
+    if (alive && err.code !== 'ERR_CANCELED')
+      error.value = err.response?.data?.error || err.message || '状态更新失败，请重试。'
+  } finally {
+    if (alive) refreshing.value = false
+  }
+}
 const enable = () =>
   action(async () => {
     device.value = await enableDevice(publicKey.value)
-    await axios.put('/api/notifications/preference', { enabled: true })
+    await axios.put('/api/notifications/preference', { enabled: true }, { timeout: 10000 })
     await read()
     notice.value = '当前设备已订阅，请发送测试通知确认实际接收。'
   })
@@ -238,36 +323,48 @@ const disable = () =>
   })
 const setEnabled = (value) =>
   action(async () => {
-    await axios.put('/api/notifications/preference', { enabled: value })
+    await axios.put('/api/notifications/preference', { enabled: value }, { timeout: 10000 })
     await read()
   })
 const testPush = () =>
   action(async () => {
-    await axios.post('/api/notifications/test', {
-      device_key: currentDeviceKey(),
-      request_id: newRequestId(),
-    })
+    await axios.post(
+      '/api/notifications/test',
+      {
+        device_key: currentDeviceKey(),
+        request_id: newRequestId(),
+      },
+      { timeout: 10000 },
+    )
     page.value = 1
     await read()
     notice.value = '测试通知已进入队列，通常30秒左右开始投递。收到系统通知后请确认。'
   })
 const mark = (item, confirm) =>
   action(async () => {
-    await axios.post(`/api/notifications/${item.id}/read`, { confirm })
+    await axios.post(`/api/notifications/${item.id}/read`, { confirm }, { timeout: 10000 })
     await read()
   })
 const changePage = (offset) => {
+  if (busy.value || refreshing.value) return
   page.value += offset
   return action(read)
 }
+const openTodayArrangement = () => window.dispatchEvent(new Event('inspection-tasks-open'))
 onMounted(() => {
   refresh()
   timer = setInterval(() => {
-    if (!document.hidden && !busy.value) action(read)
+    if (!document.hidden && !busy.value && !refreshing.value && !reading.value)
+      read().catch(() => {
+        /* A background refresh preserves the last successful display. */
+      })
   }, 15000)
 })
 onBeforeUnmount(() => {
   alive = false
+  readSerial++
+  readController?.abort()
   clearInterval(timer)
+  clearTimeout(feedbackTimer)
 })
 </script>

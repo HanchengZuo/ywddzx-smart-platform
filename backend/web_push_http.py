@@ -62,7 +62,7 @@ def register_web_push(app, *, connect, has_permission):
         except Exception:
             if conn: conn.rollback()
             # Subscription endpoints and auth keys must never enter exception logs.
-            app.logger.error('Web Push operation failed; check configuration and migration 20261101_002')
+            app.logger.error('Web Push operation failed; check configuration and migration 20261101_003')
             return jsonify(error='消息通知服务暂不可用，请检查配置和数据库升级。'),503
         finally:
             if conn: conn.close()
@@ -136,12 +136,17 @@ def register_web_push(app, *, connect, has_permission):
             encrypted=seal(subscription,app.config['SECRET_KEY']) if subscription else None
             endpoint_hash=digest(subscription['endpoint']) if subscription else None
             if endpoint_hash:
-                cur.execute('SELECT id,user_id FROM web_push_devices WHERE endpoint_hash=%s AND device_hash<>%s FOR UPDATE',(endpoint_hash,token))
+                cur.execute('SELECT * FROM web_push_devices WHERE endpoint_hash=%s AND device_hash<>%s FOR UPDATE',(endpoint_hash,token))
                 old=cur.fetchone()
                 if old:
                     if old['user_id']!=user['id']: raise ValueError('此浏览器订阅已被其他账号绑定，请停用后重新授权。')
-                    cur.execute('''UPDATE web_push_devices SET active=FALSE,subscription_cipher=NULL,endpoint_hash=NULL,
-                      revision=%s WHERE id=%s''',(str(uuid.uuid4()),old['id']))
+                    if not existing:
+                        # A cleared local device key is not a new browser subscription.
+                        cur.execute('UPDATE web_push_devices SET device_hash=%s WHERE id=%s',(token,old['id']))
+                        existing=old
+                    else:
+                        cur.execute('''UPDATE web_push_devices SET active=FALSE,subscription_cipher=NULL,endpoint_hash=NULL,
+                          revision=%s WHERE id=%s''',(str(uuid.uuid4()),old['id']))
             # Preserve the revision on a routine heartbeat so pending messages remain valid.
             from web_push import unseal
             same=False

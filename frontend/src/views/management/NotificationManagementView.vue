@@ -55,7 +55,11 @@
         </article>
       </div>
       <p class="notification-muted">
-        本次只接入以上三类业务，不补发上线前的历史待签名积压。账号暂停通知或没有有效设备时，仍保留站内消息及未投递原因。
+        已接入以上
+        {{
+          sources.length
+        }}
+        类业务，不补发上线前的历史待办积压。账号暂停通知或没有有效设备时，仍保留站内消息及未投递原因。
       </p>
     </section>
     <div v-if="!configured" class="notification-guidance">

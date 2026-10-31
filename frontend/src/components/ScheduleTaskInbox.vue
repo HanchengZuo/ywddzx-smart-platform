@@ -1,5 +1,12 @@
 <template>
-  <button type="button" class="task-banner" :class="{ compact }" :title="agendaLabel" @click="open">
+  <button
+    ref="trigger"
+    type="button"
+    class="task-banner"
+    :class="{ compact }"
+    :title="agendaLabel"
+    @click="open"
+  >
     <span class="task-icon">班</span
     ><span
       ><strong
@@ -288,6 +295,7 @@ const props = defineProps({
 const emit = defineEmits(['count'])
 const titleId = 'schedule-inbox-' + useId()
 const router = useRouter(),
+  trigger = ref(null),
   dialog = ref(null),
   tasks = ref([]),
   total = ref(props.count),
@@ -433,9 +441,14 @@ function scheduleChanged() {
   if (dialog.value?.open) load()
 }
 function open() {
+  if (dialog.value?.open) return
   dialog.value.showModal()
   load()
   polling.start()
+}
+function openFromNotification() {
+  // Header contains desktop and mobile instances; only the visible one may open.
+  if (trigger.value?.getClientRects().length) open()
 }
 function close() {
   serial++
@@ -479,6 +492,7 @@ onMounted(() => {
   window.addEventListener('offline', visibility)
   window.addEventListener('inspection-schedule-changed', scheduleChanged)
   window.addEventListener('inspection-sign-pending-refresh', scheduleChanged)
+  window.addEventListener('inspection-tasks-open', openFromNotification)
 })
 onBeforeUnmount(() => {
   disposed = true
@@ -492,6 +506,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('offline', visibility)
   window.removeEventListener('inspection-schedule-changed', scheduleChanged)
   window.removeEventListener('inspection-sign-pending-refresh', scheduleChanged)
+  window.removeEventListener('inspection-tasks-open', openFromNotification)
 })
 </script>
 <style scoped>

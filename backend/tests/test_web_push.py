@@ -116,6 +116,9 @@ class PushDatabaseTests(unittest.TestCase):
               CREATE TABLE issues(id int PRIMARY KEY,inspection_id int REFERENCES inspections ON DELETE CASCADE,
                 station_id int,inspection_table_id int,audit_status text);
               CREATE TABLE inspection_issue_appeals(id int PRIMARY KEY,issue_id int REFERENCES issues,status text);
+              CREATE TABLE staff_daily_teams(day date PRIMARY KEY,assignments jsonb NOT NULL DEFAULT '[]');
+              CREATE TABLE inspection_schedule_tasks(id bigserial PRIMARY KEY,user_id int REFERENCES users,scheduled_date date,
+                mode text,station_id int,station_name text,column_key text,table_id int,table_name text,plan_team jsonb,status text DEFAULT 'pending');
               -- Clock behavior itself is protected by the existing quality-deadline integration suite.
               CREATE FUNCTION refresh_quality_acceptance(integer) RETURNS void LANGUAGE sql AS 'SELECT';
               CREATE FUNCTION is_quality_deadline_table(integer) RETURNS boolean LANGUAGE sql AS 'SELECT $1=1';
@@ -125,8 +128,12 @@ class PushDatabaseTests(unittest.TestCase):
             path=Path(__file__).parents[1]/'migrations/versions/20261101_001_web_push.py'
             spec=importlib.util.spec_from_file_location('push_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
             migration.op=SimpleNamespace(execute=cur.execute);migration.upgrade()
+
             path=Path(__file__).parents[1]/'migrations/versions/20261101_002_business_push.py'
             spec=importlib.util.spec_from_file_location('business_push_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+            migration.op=SimpleNamespace(execute=cur.execute);migration.upgrade()
+            path=Path(__file__).parents[1]/'migrations/versions/20261101_003_schedule_push.py'
+            spec=importlib.util.spec_from_file_location('schedule_push_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
             migration.op=SimpleNamespace(execute=cur.execute);migration.upgrade()
 
     @classmethod
@@ -193,6 +200,30 @@ class PushDatabaseTests(unittest.TestCase):
         devices=self.call('/api/management/notifications/users/2/devices').json
         self.assertEqual(len(devices['items']),2)
         self.assertNotIn('subscription_cipher',json.dumps(devices));self.assertNotIn('endpoint',json.dumps(devices))
+
+    def test_recovered_browser_key_reuses_device_and_delivery_history_without_merging_other_devices(self):
+        sub=subscription('same-browser')
+        def heartbeat(key):
+            return self.call('/api/notifications/device','post',user=2,json={'device_key':key,
+                'capability':'supported','permission':'granted','subscription':sub})
+        original=heartbeat(self.key).json['device']
+        self.dispatch()
+        recovered=heartbeat(b64(bytes(range(1,33))))
+        self.assertEqual(recovered.status_code,200,recovered.json)
+        self.assertEqual(recovered.json['device']['id'],original['id'])
+        with self.connect() as conn,conn.cursor() as cur:
+            cur.execute('SELECT count(*) AS n FROM web_push_devices');self.assertEqual(cur.fetchone()['n'],1)
+            cur.execute('SELECT d.revision=q.device_revision AS same FROM web_push_deliveries q JOIN web_push_devices d ON d.id=q.device_id')
+            self.assertTrue(cur.fetchone()['same'])
+        self.register(key=b64(bytes(range(2,34))),suffix='another-computer')
+        self.assertEqual(len(self.call('/api/notifications/devices',user=2).json['items']),2)
+
+    def test_retired_observations_are_inactive_and_audit_history_is_preserved(self):
+        self.register()
+        self.call('/api/notifications/device','delete',user=2,json={'device_key':self.key})
+        self.register(key=b64(bytes(range(1,33))),suffix='replacement')
+        self.assertEqual(len([d for d in self.call('/api/notifications/devices',user=2).json['items'] if d['active']]),1)
+        self.assertEqual(len(self.call('/api/management/notifications/users/2/devices').json['items']),2)
 
     def test_ownership_rebind_skips_old_account_jobs_and_scopes_personal_inbox(self):
         original=self.register();identifier=self.dispatch()
