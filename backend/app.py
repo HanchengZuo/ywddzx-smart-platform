@@ -693,6 +693,7 @@ def build_server_resource_snapshot():
 
 # === Permission constants ===
 from issue_appeals import APPEAL_LABELS, register_issue_appeals, appeal_notification_counts
+from root_authenticator import authenticate as authenticate_root_totp, eligible as root_totp_eligible, register_root_authenticator
 from issue_flow_presentation import present_flow_rows, flow_event_presentation
 from quality_deadlines import register_quality_deadlines
 
@@ -2207,7 +2208,8 @@ def create_auth_token(user, authentication_method="password"):
         "username": user["username"],
         "role": user["role"],
         "av": int(user.get("auth_version") or 1),
-        "amr": "passkey" if authentication_method == "passkey" else "password",
+        "amr": ("totp" if authentication_method == "totp" and root_totp_eligible(user)
+                else "passkey" if authentication_method == "passkey" else "password"),
         "iat": issued_at,
         "exp": expires_at,
     }
@@ -18521,7 +18523,8 @@ def login():
                 401,
             )
 
-        if not verify_user_password(user, password):
+        totp_authenticated = authenticate_root_totp(cur, user, password, app.config["SECRET_KEY"])
+        if not totp_authenticated and not verify_user_password(user, password):
             rate_error = None
             try:
                 record_password_login_failure(
@@ -18545,7 +18548,7 @@ def login():
                 401,
             )
 
-        if user.get("role") == "root" and count_user_passkeys(cur, user["id"]) > 0:
+        if not totp_authenticated and user.get("role") == "root" and count_user_passkeys(cur, user["id"]) > 0:
             clear_successful_password_login(
                 cur,
                 app.config["SECRET_KEY"],
@@ -18558,13 +18561,13 @@ def login():
                     {
                         "success": False,
                         "code": "PASSKEY_ONLY_ACCOUNT",
-                        "error": "root账号仅支持Passkey登录。",
+                        "error": "root账号不支持普通密码直登，请使用Passkey或已绑定的Authenticator验证码。",
                     }
                 ),
                 403,
             )
 
-        if user.get("role") == "root":
+        if user.get("role") == "root" and not totp_authenticated:
             clear_successful_password_login(
                 cur,
                 app.config["SECRET_KEY"],
@@ -18599,18 +18602,25 @@ def login():
             "UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = %s;",
             (user["id"],),
         )
+        if totp_authenticated:
+            record_security_event(cur, user, "root_authenticator_login", "success", target=user,
+                request_ip=client_ip, user_agent=request.headers.get("User-Agent"))
         conn.commit()
-        token = create_auth_token(user, "password")
+        authentication_method = "totp" if totp_authenticated else "password"
+        token = create_auth_token(user, authentication_method)
         touch_online_user_presence(user)
         return build_authenticated_response(
             {
                 "success": True,
                 "token": token,
                 "expires_in": get_auth_token_ttl_seconds(user),
-                "user": build_auth_user_payload(cur, user, "password"),
+                "user": build_auth_user_payload(cur, user, authentication_method),
             },
             token,
         )
+    except AuthenticationRateLimitExceeded as exc:
+        if conn: conn.commit()
+        return authentication_rate_limit_response(exc)
     except Exception:
         logging.exception("Login service failed.")
         return (
@@ -18986,6 +18996,7 @@ def list_current_user_passkeys():
                 "passkey_only": user.get("role") == "root",
                 "requires_password_for_changes": user.get("role") != "root" or not items,
                 "backup_recommended": user.get("role") == "root" and len(items) < 2,
+                "root_authenticator_available": root_totp_eligible(user),
             }
         )
     except Exception:
@@ -35078,6 +35089,20 @@ from safety_requirements_http import register_safety_requirements
 register_safety_requirements(app,connect=get_db_connection,authorize=get_authorized_inspection_report_user,
     has_permission=has_permission,fetch_catalog=fetch_safety_standard_catalog,
     save_workspace=save_report_workspace,log_usage=record_ai_usage_log)
+
+def record_root_authenticator_event(cur, user, action, result):
+    record_security_event(cur,user,action,result,target=user,request_ip=get_request_client_ip(),
+        user_agent=request.headers.get('User-Agent'))
+
+
+def revoke_root_authenticator_sessions(user_id):
+    invalidate_auth_caches_for_user(user_id)
+    remove_online_user_presence(user_id)
+
+
+register_root_authenticator(app,connect=get_db_connection,fetch_user=fetch_auth_user_by_id,
+    verify_management=lambda token,user:verify_short_passkey_token(token,user,token_type='management'),
+    audit=record_root_authenticator_event,invalidate=revoke_root_authenticator_sessions)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

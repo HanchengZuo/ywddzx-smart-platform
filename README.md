@@ -4,6 +4,16 @@
 
 > 本文档以当前代码中的实际逻辑为准，重点说明巡检系统的功能和状态流转。
 
+## Root 的 Microsoft Authenticator 登录（新增，未发布）
+
+仅用户名为 `root` 且角色为 root、状态正常的账号支持这一备用入口。先使用现有 Passkey 登录，打开右上角“Passkey”，在 Microsoft Authenticator 专属面板中进行 Passkey 身份复核，扫描二维码（应用内选择“其他帐户”），输入6位验证码确认启用。也可在面板查看手动录入密钥。登录页不改动：用户名仍填 root，验证码直接填原密码框；其他账号及 root 原有普通密码直登限制不变。验证码登录不是“密码+验证码”双因素认证，也不具备 Passkey 的抗钓鱼能力。账号切换等原本要求 Passkey 登录的高敏入口仍保留原限制。
+
+二维码和密钥仅在生成绑定流程时返回，5分钟有效，必须验证后启用；错误确认最多5次，重新生成会使旧流程失效。采用标准SHA-1/30秒/6位OATH-TOTP，允许前后一个时间步的误差；绑定时使用的验证码已消耗，不能紧接着重复用于登录，需等待下一组或使用Passkey。凭据以Fernet认证加密保存，密钥从服务端 `APP_SECRET_KEY` 域隔离派生，不写日志或浏览器存储、不调用外部二维码服务。保留服务端密钥才能恢复数据库内绑定，改变 `APP_SECRET_KEY` 后原绑定不可用，须用Passkey重新绑定。建议备份Passkey，不能删除最后一个Passkey。
+
+数据库行锁在多个Gunicorn进程间防止重复使用验证码；登录复用现有IP/账号限流，另加root验证码账号级共享预算以防更换IP持续猜测。启用或停用后递增账号会话版本并要求重新登录；绑定、启用、停用及验证码登录记录安全审计但不记录验证码、密钥或二维码。需安装新增依赖并执行迁移 `20261031_001` 后使用，不在导入模块时建表或自动启用绑定。
+
+参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
+
 ## 服务器部署
 
 在服务器项目根目录执行 `bash deploy.sh`（也可执行 `./deploy.sh`），一次完成前端和后端更新，无需分别运行旧脚本。脚本只拉取一次代码（仅允许快进），加载服务器 `.env` 并检查生产配置，然后依次构建发布前端到 `/var/www/ywddzx`、移除不再需要的 Vite 开发容器、重建后端、等待迁移及 Gunicorn 启动、验证运行时数据库结构。兼容 `docker compose` 和旧版 `docker-compose`；前端使用 `npm ci --include=dev` 按锁文件安装构建依赖，后端版本从 `frontend/package.json` 读取并覆盖过时的环境值。

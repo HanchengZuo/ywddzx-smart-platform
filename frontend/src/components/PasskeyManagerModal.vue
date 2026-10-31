@@ -20,9 +20,11 @@
 
       <div class="passkey-summary">
         <div><span>已绑定</span><strong>{{ passkeys.length }}</strong><small>个Passkey</small></div>
-        <div><span>登录规则</span><strong>{{ passkeyOnly ? '仅Passkey' : '双方式' }}</strong><small>{{ passkeyOnly ? '密码登录已关闭' : '密码或Passkey' }}</small></div>
+        <div><span>登录规则</span><strong>{{ passkeyOnly ? '安全登录' : '双方式' }}</strong><small>{{ passkeyOnly ? '普通密码直登关闭' : '密码或Passkey' }}</small></div>
         <div><span>设备保护</span><strong>本机验证</strong><small>生物识别或设备密码</small></div>
       </div>
+
+      <RootAuthenticatorPanel v-if="rootAuthenticatorAvailable" :external-busy="Boolean(busyAction)" @busy="rootAuthenticatorBusy = $event" @session-invalidated="emit('session-invalidated', $event)" />
 
       <section class="passkey-add-panel">
         <div>
@@ -82,6 +84,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import RootAuthenticatorPanel from './RootAuthenticatorPanel.vue'
 import {
   friendlyPasskeyError,
   getPasskeyUnavailableMessage,
@@ -100,10 +103,12 @@ const currentPassword = ref('')
 const passkeyOnly = ref(false)
 const requiresPasswordForChanges = ref(true)
 const backupRecommended = ref(false)
+const rootAuthenticatorAvailable = ref(false)
+const rootAuthenticatorBusy = ref(false)
 const message = reactive({ text: '', type: 'success' })
 const clientAvailable = computed(() => passkeyClientAvailable())
 const unavailableMessage = computed(() => getPasskeyUnavailableMessage())
-const busy = computed(() => Boolean(busyAction.value))
+const busy = computed(() => Boolean(busyAction.value) || rootAuthenticatorBusy.value)
 
 const setMessage = (text, type = 'success') => Object.assign(message, { text, type })
 const deviceTypeLabel = (item) => item.device_type === 'multi_device' ? '多设备Passkey' : '单设备Passkey'
@@ -116,6 +121,7 @@ const loadPasskeys = async () => {
     passkeyOnly.value = Boolean(response.data.passkey_only)
     requiresPasswordForChanges.value = Boolean(response.data.requires_password_for_changes)
     backupRecommended.value = Boolean(response.data.backup_recommended)
+    rootAuthenticatorAvailable.value = Boolean(response.data.root_authenticator_available)
   } catch (error) {
     setMessage(error?.response?.data?.error || 'Passkey信息读取失败。', 'danger')
   } finally {
