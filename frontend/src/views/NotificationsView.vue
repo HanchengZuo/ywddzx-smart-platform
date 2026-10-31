@@ -22,7 +22,7 @@
             :checked="enabled"
             :disabled="busy"
             @change="setEnabled($event.target.checked)"
-          />账号通知 {{ enabled ? '已开启' : '已关闭' }}</label
+          />账号推送偏好 {{ enabled ? '允许' : '暂停' }}</label
         >
       </header>
       <div class="notification-device-state">
@@ -36,6 +36,9 @@
           </p>
         </div>
       </div>
+      <p v-if="!configured" class="notification-error" role="status">
+        服务器尚未完成推送身份配置，暂无法开通。上面的账号开关仅表示接收偏好，不代表当前设备已经订阅。请管理员完成配置后刷新状态。
+      </p>
       <div class="notification-guidance">
         <strong>{{
           capability.code === 'ios_install_required' ? 'iPhone / iPad 开通指引' : '设备接收说明'
@@ -54,7 +57,7 @@
       <div class="notification-actions">
         <button
           class="primary"
-          :disabled="busy || !configured || capability.code !== 'supported'"
+          :disabled="busy || !configured || !pushReady || capability.code !== 'supported'"
           @click="enable"
         >
           开启 / 修复当前设备订阅</button
@@ -140,6 +143,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import {
   pushCapability,
+  isPushPrepared,
   pushDeviceStatus,
   currentDeviceKey,
   enableDevice,
@@ -149,6 +153,7 @@ import {
 } from '../utils/webPush'
 import '../styles/notifications.css'
 const items = ref([]),
+  pushReady = ref(false),
   devices = ref([]),
   device = ref(null),
   enabled = ref(true),
@@ -201,7 +206,9 @@ async function action(operation) {
 const refresh = () =>
   action(async () => {
     capability.value = pushCapability()
+    await read()
     device.value = await syncDevice()
+    pushReady.value = isPushPrepared()
     await read()
   })
 const enable = () =>

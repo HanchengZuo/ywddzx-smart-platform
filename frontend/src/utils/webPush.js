@@ -79,12 +79,29 @@ async function readyRegistration() {
     clearTimeout(timer)
   }
 }
+let preparedRegistration = null
+let preparation = null
+export const isPushPrepared = () => Boolean(preparedRegistration)
+export function preparePush() {
+  if (pushCapability().code !== 'supported') return Promise.resolve(null)
+  if (preparedRegistration) return Promise.resolve(preparedRegistration)
+  if (!preparation)
+    preparation = readyRegistration()
+      .then((registration) => {
+        preparedRegistration = registration
+        return registration
+      })
+      .finally(() => {
+        preparation = null
+      })
+  return preparation
+}
 export const syncDevice = (options = {}) => deviceOperation(() => syncDeviceUnlocked(options))
 async function syncDeviceUnlocked({ active = true } = {}) {
   const capability = pushCapability()
   let subscription = null
+  const registration = capability.code === 'supported' ? await preparePush() : null
   if (active && capability.code === 'supported' && Notification.permission === 'granted') {
-    const registration = await readyRegistration()
     subscription = (await registration.pushManager.getSubscription())?.toJSON() || null
   }
   const { data } = await axios.post('/api/notifications/device', {
@@ -98,36 +115,29 @@ async function syncDeviceUnlocked({ active = true } = {}) {
 export async function enableDevice(publicKey) {
   if (pushCapability().code !== 'supported') throw new Error(pushCapability().hint)
   if (!publicKey) throw new Error('管理员尚未配置 Web Push，暂不能授权订阅。')
-  // Request permission immediately within the user's click gesture, especially on iOS.
-  const permission = await Notification.requestPermission()
-  if (permission !== 'granted')
-    throw new Error('尚未允许通知。若已拒绝，请在浏览器站点设置中手动允许后重试。')
-  return deviceOperation(async () => {
-    const registration = await readyRegistration()
-    let subscription = await registration.pushManager.getSubscription()
-    const key = publicKeyBytes(publicKey)
-    const previous = subscription?.options?.applicationServerKey
-    if (
-      previous &&
-      btoa(String.fromCharCode(...new Uint8Array(previous))) !== btoa(String.fromCharCode(...key))
-    ) {
-      await subscription.unsubscribe()
-      subscription = null
+  if (!preparedRegistration) throw new Error('设备通知服务尚在准备，请刷新状态后再次点击开启。')
+  try {
+    // Safari must enter the native subscribe call directly from the click handler:
+    // no await, HTTP request, or navigator.locks queue may precede this call.
+    await preparedRegistration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: publicKeyBytes(publicKey),
+    })
+  } catch (error) {
+    if (error.name === 'InvalidStateError') {
+      await (await preparedRegistration.pushManager.getSubscription())?.unsubscribe()
+      throw new Error('已清理旧推送身份，请再次点击“开启”完成新的订阅。', { cause: error })
     }
-    if (!subscription) {
-      try {
-        await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: key,
-        })
-      } catch {
-        throw new Error(
-          '浏览器未能连接推送服务，请检查网络、系统通知和后台运行设置，或尝试其他受支持浏览器。',
-        )
-      }
-    }
-    return syncDeviceUnlocked()
-  })
+    if (error.name === 'NotAllowedError' || Notification.permission === 'denied')
+      throw new Error('尚未允许通知，请在此主屏幕应用或浏览器的系统通知设置中允许，再点击开启。', {
+        cause: error,
+      })
+    throw new Error(
+      '浏览器未能连接推送服务，请检查网络、系统通知和后台运行设置，或尝试其他受支持浏览器。',
+      { cause: error },
+    )
+  }
+  return deviceOperation(() => syncDeviceUnlocked())
 }
 export const disableDevice = () =>
   deviceOperation(async () => {

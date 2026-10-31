@@ -55,6 +55,7 @@ export APP_ENV=production
 export TRUST_PROXY_HEADERS=true
 python3 deploy/ai_environment.py --check
 python3 deploy/amap_environment.py --check
+python3 deploy/web_push_environment.py --check
 
 phase="构建前端"
 echo "[3/5] 构建并发布前端..."
@@ -82,7 +83,7 @@ fi
 
 phase="重建并启动后端"
 echo "[4/5] 重建并启动后端，执行数据库迁移..."
-python3 deploy/amap_environment.py python3 deploy/ai_environment.py "${compose[@]}" up --build --force-recreate -d backend
+python3 deploy/web_push_environment.py python3 deploy/amap_environment.py python3 deploy/ai_environment.py "${compose[@]}" up --build --force-recreate -d backend
 
 phase="检查后端启动与数据库迁移结果"
 echo "[5/5] 检查后端启动与数据库迁移结果..."
@@ -106,6 +107,8 @@ fi
 "${compose[@]}" exec -T backend python /app/ensure_runtime_schema.py
 "${compose[@]}" exec -T backend python -c \
   "from ai_model_settings import catalog; print('后端 AI Key 状态：' + '；'.join(item['name'] + '=' + ('已配置' if item['configured'] else '未配置') for item in catalog()['providers']))"
+"${compose[@]}" exec -T backend python -c \
+  "from web_push import configuration; print('后端 Web Push 状态：' + ('已就绪' if configuration()['ready'] else '未启用或配置无效，浏览器推送不可用'))"
 
 echo "请确认 Nginx server 已 include deploy/nginx/ywddzx-cache.conf 和 ywddzx-security.conf。"
 phase="安装路网定时采集任务"

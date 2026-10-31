@@ -72,7 +72,8 @@ def validate_subscription(value):
     url=urlsplit(endpoint)
     # Never allow user-provided arbitrary destinations (SSRF) or HTTP redirects.
     host=(url.hostname or '').lower()
-    allowed=(host in ('fcm.googleapis.com','updates.push.services.mozilla.com','push.services.mozilla.com','web.push.apple.com')
+    allowed=(host in ('fcm.googleapis.com','updates.push.services.mozilla.com','push.services.mozilla.com')
+        or host.endswith('.push.apple.com')
         or host.endswith('.notify.windows.com'))
     if url.scheme!='https' or not allowed or url.port not in (None,443) or url.username or url.password or url.fragment:
         raise ValueError('当前浏览器的推送服务暂不支持，请使用系统推荐的浏览器。')

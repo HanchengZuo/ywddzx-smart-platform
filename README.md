@@ -14,7 +14,7 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
-## v12.3 浏览器消息推送（本地开发，尚未发布）
+## v12.3 浏览器消息推送
 
 公共功能新增“通知中心”，右上角提供入口；管理系统新增“消息通知管理”，独立权限 `manage_web_push` 默认仅 root 拥有，可在用户权限中分配。账号通知偏好对所有用户默认开启（未保存偏好时视为开启），但不能代替浏览器授权；不弹出系统权限对话框强行索取授权，仅提示用户前往通知中心主动开通。
 
@@ -27,6 +27,8 @@ python -m web_push_keys --output /安全位置/web-push.env --subject mailto:管
 ```
 
 生成器只创建不存在的0600文件，拒绝覆盖，不向终端输出私钥。将文件中的 `WEB_PUSH_ENABLED`、`WEB_PUSH_VAPID_PRIVATE_KEY`、`WEB_PUSH_SUBJECT` 作为后端部署环境变量注入，或保存在现有受保护的项目 `.env` 中；Compose已加入对应变量。运行部署脚本时可先 `set -a`、`source /安全位置/web-push.env`、`set +a`，随后通过既有 `deploy.sh` 部署。不要将私钥提交Git，也不要每次启动重新生成；同一身份必须跨Gunicorn进程与重启保持一致。订阅内容使用 `APP_SECRET_KEY` 派生的独立Fernet密钥加密，备份恢复须保留原服务端密钥；VAPID或服务端加密密钥改变后，需要设备重新开启订阅。
+
+部署脚本现会自动读取持久文件 `/etc/ywddzx/web-push.env`（可通过 `WEB_PUSH_ENV_FILE` 指定），仅接受上述三个固定单行变量、不执行文件内容，文件必须0600。已有环境或项目 `.env` 中的完整身份优先，后续部署不会重新生成、覆盖或旋转密钥；配置只注入后端重建进程，不传给前端构建，也不输出私钥。部署结束核对后端实际就绪状态。首次部署仍须创建身份：服务器可使用已安装依赖的后端环境生成，再将文件安全放至上述路径。iOS/Safari的Service Worker在打开页面时提前准备，用户点击时直接调用原生 `PushManager.subscribe`，不在权限调用前等待队列、网络或再次初始化worker；权限弹窗与设备验证仍由用户本人完成。
 
 网站须使用HTTPS（localhost可用于开发）。Service Worker `/push-sw.js` 仅处理push与点击，不缓存登录页、业务API、照片或离线业务内容；PWA manifest与主屏幕图标已添加。生产Nginx需加载已更新的 `deploy/nginx/ywddzx-cache.conf`，确保worker不缓存、不把缺失worker回退为index.html。订阅API仅接受已知标准浏览器推送服务域名，禁止任意URL/内网端点和HTTP重定向，验证P-256公钥与认证密钥；管理API不暴露端点或订阅密钥。
 
