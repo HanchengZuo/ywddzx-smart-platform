@@ -194,7 +194,7 @@
         <div class="log-filters"><input v-model.trim="logFilters.keyword" placeholder="搜索操作者、目标账号或操作类型" @keyup.enter="loadLogs(1)" /><select v-model="logFilters.action_result"><option value="">全部结果</option><option value="success">成功</option><option value="failure">失败</option></select><button class="btn btn-primary" type="button" @click="loadLogs(1)">查询</button></div>
         <div v-if="logsLoading" class="state-panel"><span class="loading-ring"></span><strong>正在读取安全操作记录</strong></div>
         <div v-else-if="!logs.length" class="state-panel empty"><strong>暂无安全操作记录</strong></div>
-        <div v-else class="log-list"><article v-for="item in logs" :key="item.id"><div class="log-time"><strong>{{ item.created_at }}</strong><span :class="['result-chip', item.action_result]">{{ item.action_result === 'success' ? '成功' : '失败' }}</span></div><div class="log-main"><strong>{{ actionLabel(item.action_type) }}</strong><span>{{ item.actor_username }}（{{ item.actor_role }}） → {{ item.target_username || '系统范围' }}</span><small v-if="item.failure_reason">原因：{{ item.failure_reason }}</small></div><div class="log-source"><span>影响 {{ item.affected_count }} 个账号</span><small>{{ item.request_ip || '无来源IP' }}</small></div></article></div>
+        <div v-else class="log-list"><article v-for="item in logs" :key="item.id"><div class="log-time"><strong>{{ item.created_at }}</strong><span :class="['result-chip', item.action_result]">{{ item.action_result === 'success' ? '成功' : '失败' }}</span></div><div class="log-main"><strong>{{ rootAuthenticatorLabels[item.action_type] || actionLabel(item.action_type) }}</strong><span>{{ item.actor_username }}（{{ item.actor_role }}） → {{ item.target_username || '系统范围' }}</span><small v-if="item.failure_reason">原因：{{ item.failure_reason }}</small></div><div class="log-source"><span>影响 {{ item.affected_count }} 个账号</span><small>{{ item.request_ip || '无来源IP' }}</small></div></article></div>
         <div v-if="logPagination.total" class="pagination-bar"><span>第 {{ logPagination.page }} / {{ logPagination.total_pages }} 页，共 {{ logPagination.total }} 条</span><div><button type="button" :disabled="logPagination.page <= 1" @click="loadLogs(logPagination.page - 1)">上一页</button><button type="button" :disabled="logPagination.page >= logPagination.total_pages" @click="loadLogs(logPagination.page + 1)">下一页</button></div></div>
       </section>
     </template>
@@ -237,6 +237,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
+
+const rootAuthenticatorLabels = {
+  root_authenticator_setup: '创建Authenticator绑定流程',
+  root_authenticator_enable: '启用Authenticator验证码登录',
+  root_authenticator_disable: '停用Authenticator验证码登录',
+  root_authenticator_login: 'Authenticator验证码登录',
+}
 
 const tabs = [
   { key: 'accounts', label: '账号密码安全', icon: '账' },

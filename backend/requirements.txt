@@ -12,4 +12,6 @@ openpyxl
 XlsxWriter==3.2.9
 python-pptx==1.0.2
 webauthn==2.2.0
+cryptography==50.0.2
+qrcode==8.2
 chinesecalendar==1.11.0
