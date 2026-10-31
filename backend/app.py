@@ -1086,6 +1086,13 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True},
     },
     {
+        "key": "manage_web_push",
+        "name": "管理浏览器消息通知",
+        "category": "消息通知管理",
+        "description": "查看全体用户设备订阅状态和推送记录，向指定用户的有效设备发送消息。",
+        "defaults": {"root": True},
+    },
+    {
         "key": "manage_ai_usage",
         "name": "查看 AI 调用统计",
         "category": "AI调用统计",
@@ -35104,5 +35111,10 @@ register_root_authenticator(app,connect=get_db_connection,fetch_user=fetch_auth_
     verify_management=lambda token,user:verify_short_passkey_token(token,user,token_type='management'),
     audit=record_root_authenticator_event,invalidate=revoke_root_authenticator_sessions)
 
+from web_push_http import register_web_push
+register_web_push(app,connect=get_db_connection,has_permission=has_permission)
+
 if __name__ == "__main__":
+    from web_push_worker import start_push_worker
+    start_push_worker(get_db_connection, app.config['SECRET_KEY'], app.logger)
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

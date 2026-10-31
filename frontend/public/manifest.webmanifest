@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "业务督导中心数智管理平台",
+  "short_name": "业务督导中心",
+  "lang": "zh-CN",
+  "start_url": "/notifications",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#163f59",
+  "background_color": "#eef3f8",
+  "icons": [
+    { "src": "/push-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/push-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

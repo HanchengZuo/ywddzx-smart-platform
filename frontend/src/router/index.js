@@ -125,6 +125,14 @@ const routes = [
     component: () => import('../views/management/AiModelManagementView.vue')
   },
   {
+    path: '/notifications',
+    component: () => import('../views/NotificationsView.vue')
+  },
+  {
+    path: '/management/notifications',
+    component: () => import('../views/management/NotificationManagementView.vue')
+  },
+  {
     path: '/management/ai-usage',
     component: () => import('../views/management/AiUsageManagementView.vue')
   },
@@ -172,6 +180,7 @@ const hasPermission = (role, permissions, key) => role === 'root' || Boolean(per
 const canAccessPath = (path, role, permissions) => {
   if (path === '/help-documents') return true
   if (path === '/inspection/appeals') return true
+  if (path === '/notifications') return true
   if (role === 'root') return true
   if (path === '/management/page-visibility') return hasPermission(role, permissions, 'manage_page_visibility')
   if (path === '/management/stations') return hasPermission(role, permissions, 'manage_stations')
@@ -180,6 +189,7 @@ const canAccessPath = (path, role, permissions) => {
   if (path === '/management/auto-audit') return hasPermission(role, permissions, 'manage_auto_audit_rules')
   if (path === '/management/ai-usage') return hasPermission(role, permissions, 'manage_ai_usage')
   if (path === '/management/ai-models') return hasPermission(role, permissions, 'manage_ai_models')
+  if (path === '/management/notifications') return hasPermission(role, permissions, 'manage_web_push')
   if (path === '/management/driving-matrix') return hasPermission(role, permissions, 'view_driving_matrix')
   if (path === '/management/security') return hasPermission(role, permissions, 'manage_security')
   if (path === '/management/inspection-completion') return role === 'root'
