@@ -1,5 +1,6 @@
 """Station appeal transactions. All identity and scope come from the authenticated session."""
 from types import SimpleNamespace
+from datetime import date, datetime, time, timedelta
 from flask import g, jsonify, request
 from quality_deadlines import initialize_appeal_review, capture_quality_handoff
 
@@ -47,6 +48,52 @@ def appeal_scope(core, cur, user):
 APPEAL_JOINS = '''FROM inspection_issue_appeals a JOIN issues i ON i.id=a.issue_id
   JOIN stations s ON s.id=i.station_id JOIN inspections ins ON ins.id=i.inspection_id
   JOIN inspection_tables t ON t.id=i.inspection_table_id'''
+
+
+def append_list_filters(where, params, args, user, timezone, archive):
+    """Append parameterized filters after the caller's unchanged visibility scope."""
+    region = args.get('region', '').strip()[:200]
+    if region:
+        where.append("COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区') = %s")
+        params.append(region)
+    table_id = args.get('table_id', '')
+    if table_id:
+        if not table_id.isascii() or not table_id.isdigit() or not 0 < int(table_id) <= 2147483647:
+            raise ValueError('请选择有效的检查表。')
+        where.append('i.inspection_table_id = %s')
+        params.append(int(table_id))
+    dates = {}
+    for key in ('date_from', 'date_to'):
+        value = args.get(key, '')
+        if not value:
+            continue
+        try:
+            parsed = date.fromisoformat(value)
+            if parsed.isoformat() != value or parsed.year >= 9999:
+                raise ValueError()
+            dates[key] = parsed
+        except ValueError:
+            raise ValueError('请选择有效的申诉日期。') from None
+    if len(dates) == 2 and dates['date_from'] > dates['date_to']:
+        raise ValueError('申诉开始日期不能晚于结束日期。')
+    for key, day in dates.items():
+        if key == 'date_to':
+            day += timedelta(days=1)
+        where.append('a.created_at >= %s' if key == 'date_from' else 'a.created_at < %s')
+        params.append(datetime.combine(day, time.min, tzinfo=timezone))
+    outcome = args.get('outcome', '')
+    if outcome and outcome not in ('approved', 'rejected', 'cancelled'):
+        raise ValueError('请选择有效的申诉处理结果。')
+    if archive and outcome:
+        where.append('a.status = %s')
+        params.append(outcome)
+    unread = args.get('unread', '')
+    if unread not in ('', '0', '1'):
+        raise ValueError('请选择有效的未读筛选条件。')
+    if archive and unread == '1':
+        where.append('''NOT EXISTS (SELECT 1 FROM inspection_issue_appeal_reads r
+          WHERE r.appeal_id=a.id AND r.user_id=%s AND r.read_version >= a.updated_at)''')
+        params.append(user['id'])
 
 
 def appeal_notification_counts(cur, user, namespace):
@@ -114,8 +161,10 @@ def register_issue_appeals(app, namespace):
                 params.append(stage)
             keyword = request.args.get('keyword', '').strip()[:200]
             if keyword:
-                where.append('(i.id::text = %s OR s.station_name ILIKE %s OR i.description ILIKE %s)')
-                params += [keyword, f'%{keyword}%', f'%{keyword}%']
+                where.append('''(i.id::text = %s OR s.station_name ILIKE %s OR i.description ILIKE %s
+                  OR a.reason ILIKE %s OR a.area_reason ILIKE %s OR a.quality_reason ILIKE %s)''')
+                params += [keyword] + [f'%{keyword}%'] * 5
+            append_list_filters(where, params, request.args, user, core.BEIJING_TZ, archive)
             joins = APPEAL_JOINS
             predicate = ' AND '.join(where) or 'TRUE'
             cur.execute(f'SELECT count(*) AS total {joins} WHERE {predicate}', params)
@@ -146,8 +195,20 @@ def register_issue_appeals(app, namespace):
                 for field in ('created_at', 'updated_at', 'area_at', 'quality_at'):
                     if row.get(field):
                         row[field] = row[field].astimezone(core.BEIJING_TZ).strftime('%Y-%m-%d %H:%M')
-            return jsonify(items=rows, total=total, page=page, page_size=size, quality_reviewers=reviewers,
-                           counts=appeal_notification_counts(cur, user, core))
+            response = dict(items=rows, total=total, page=page, page_size=size, quality_reviewers=reviewers,
+                            counts=appeal_notification_counts(cur, user, core))
+            if request.args.get('include_filters') == '1':
+                scope, scope_params = appeal_scope(core, cur, user)
+                # Options share the same row scope; never enumerate another area's stations or tables.
+                cur.execute(f'''SELECT DISTINCT COALESCE(NULLIF(TRIM(s.region), ''), '未填写片区') AS region,
+                  t.id AS table_id, t.table_name {APPEAL_JOINS}
+                  WHERE {' AND '.join(scope) or 'TRUE'} ORDER BY region, table_id''', scope_params)
+                options = cur.fetchall()
+                response['filter_options'] = dict(
+                    regions=list(dict.fromkeys(row['region'] for row in options)),
+                    tables=list({row['table_id']: dict(id=row['table_id'], name=row['table_name']) for row in options}.values()),
+                )
+            return jsonify(**response)
         return run(operation)
 
     @app.post('/api/issue-appeals/<int:appeal_id>/read')
