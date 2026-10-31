@@ -121,29 +121,68 @@ test('notification clicks only open a same-origin authenticated page', async () 
   assert.equal(closed, true)
   assert.deepEqual(opened, ['/notifications'])
 })
-test('permission request happens before any asynchronous registration and denied permission never subscribes', async () => {
+test('Safari subscribe enters the native permission flow directly in the click gesture, not an async queue', async () => {
   const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
     .replace("import axios from 'axios'", '')
     .replaceAll('export ', '')
   const calls = []
+  let gesture = false
+  const registration = {
+    pushManager: {
+      subscribe: () => {
+        calls.push(['subscribe', gesture])
+        return Promise.reject({ name: 'NotAllowedError' })
+      },
+    },
+  }
   const context = {
     axios: {},
     Uint8Array,
     Promise,
     Error,
     window: { ...capable },
-    navigator: { ...capable.navigator },
-    Notification: {
-      requestPermission: () => {
-        calls.push('permission')
-        return Promise.resolve('denied')
+    navigator: {
+      ...capable.navigator,
+      locks: {
+        request: () => {
+          throw Error('must not queue permission')
+        },
+      },
+      serviceWorker: {
+        register: async () => {
+          calls.push(['register'])
+          return registration
+        },
+        ready: Promise.resolve(registration),
       },
     },
+    Notification: {
+      permission: 'default',
+    },
     setTimeout,
+    clearTimeout,
+    atob,
   }
   vm.createContext(context)
-  vm.runInContext(source + ';globalThis.enable=enableDevice', context)
-  const result = context.enable('public-key')
-  assert.deepEqual(calls, ['permission'])
+  vm.runInContext(
+    source + ';globalThis.enable=enableDevice;globalThis.prepare=preparePush',
+    context,
+  )
+  await context.prepare()
+  calls.length = 0
+  gesture = true
+  const result = context.enable('AQ')
+  gesture = false
+  assert.deepEqual(calls, [['subscribe', true]])
   await assert.rejects(result, /尚未允许/)
+})
+
+test('unprepared Safari workers never attempt permission after an asynchronous initialization', async () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  const context = { window: { ...capable }, navigator: { ...capable.navigator }, Promise, Error }
+  vm.createContext(context)
+  vm.runInContext(source + ';globalThis.enable=enableDevice', context)
+  await assert.rejects(context.enable('AQ'), /尚在准备/)
 })

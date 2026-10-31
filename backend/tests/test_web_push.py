@@ -55,9 +55,11 @@ class PushValidationTests(unittest.TestCase):
 
     def test_endpoint_allowlist_blocks_local_network_redirect_destinations_and_invalid_crypto(self):
         value=subscription();self.assertEqual(validate_subscription(value),value)
+        for host in ('web.push.apple.com','updates.push.apple.com'):
+            self.assertEqual(validate_subscription({**value,'endpoint':f'https://{host}/test'})['endpoint'],f'https://{host}/test')
         for endpoint in ('http://fcm.googleapis.com/test','https://localhost/x','https://127.0.0.1/x',
                          'https://169.254.169.254/x','https://fcm.googleapis.com.evil.test/x',
-                         'https://fcm.googleapis.com@evil.test/x','https://fcm.googleapis.com:444/x'):
+                         'https://fcm.googleapis.com@evil.test/x','https://fcm.googleapis.com:444/x','https://web.push.apple.com.evil.test/x'):
             with self.subTest(endpoint=endpoint),self.assertRaises(ValueError):
                 validate_subscription({**value,'endpoint':endpoint})
         for keys in ({'auth':'invalid','p256dh':value['keys']['p256dh']},{'auth':value['keys']['auth'],'p256dh':'invalid'}):
