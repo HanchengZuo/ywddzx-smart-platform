@@ -35113,8 +35113,11 @@ register_root_authenticator(app,connect=get_db_connection,fetch_user=fetch_auth_
 
 from web_push_http import register_web_push
 register_web_push(app,connect=get_db_connection,has_permission=has_permission)
+from web_push_business import recipient_resolver
+push_recipients = recipient_resolver(can_sign=can_sign_inspection_records,has_permission=has_permission,
+    normalize_region=normalize_station_region_value,region_scope=get_effective_station_region_scope_values)
 
 if __name__ == "__main__":
     from web_push_worker import start_push_worker
-    start_push_worker(get_db_connection, app.config['SECRET_KEY'], app.logger)
+    start_push_worker(get_db_connection, app.config['SECRET_KEY'], app.logger, recipients=push_recipients)
     app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)

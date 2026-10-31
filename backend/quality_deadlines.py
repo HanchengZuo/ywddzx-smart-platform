@@ -98,6 +98,8 @@ def capture_quality_handoff(cur, core, appeal, user):
               inspection_id=issue['inspection_id'], issue_id=appeal['issue_id'], appeal_id=appeal['id'],
               stage='quality_pending', deadline_at=timing['review_deadline_at'] if enabled else None, policy=timing['review_policy'] if enabled else {},
               responsible=owners, actor={key: user.get(key) for key in ('id','username','real_name','role')} if user else None)
+    from web_push_business import notify_appeal
+    notify_appeal(cur,appeal['id'],'quality_pending',[owner['id'] for owner in owners])
 
 
 def run_deadline_scan(cur, core, *, scheduled=False):

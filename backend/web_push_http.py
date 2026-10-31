@@ -4,6 +4,8 @@ from datetime import datetime
 from flask import Blueprint, g, jsonify, request
 from psycopg2.extras import RealDictCursor
 from web_push import configuration, device_key, device_labels, digest, seal, validate_subscription
+from web_push_outbox import add_recipients
+from web_push_business import SOURCES
 
 CAPABILITIES={'supported','unsupported','ios_install_required','insecure','unknown'}
 PERMISSIONS={'default','granted','denied','unavailable'}
@@ -31,14 +33,7 @@ def enqueue(cur, user, recipients, title, body, kind, request_id, only_device=No
     message_id=str(uuid.uuid4())
     cur.execute('''INSERT INTO web_push_messages(id,request_id,sender_id,sender_name,title,body,kind)
       VALUES(%s,%s,%s,%s,%s,%s,%s)''',(message_id,request_id,user['id'],user.get('real_name') or user.get('username') or '',title,body,kind))
-    for uid in recipients:
-        cur.execute('INSERT INTO web_push_recipients(message_id,user_id) VALUES(%s,%s)',(message_id,uid))
-    cur.execute('''INSERT INTO web_push_deliveries(message_id,user_id,device_id,device_revision)
-      SELECT %s,d.user_id,d.id,d.revision FROM web_push_devices d JOIN users u ON u.id=d.user_id
-      LEFT JOIN web_push_preferences p ON p.user_id=u.id WHERE d.user_id=ANY(%s)
-      AND d.active AND d.subscription_cipher IS NOT NULL AND u.account_status='active'
-      AND COALESCE(p.enabled,TRUE) AND (%s::uuid IS NULL OR d.id=%s::uuid)''',
-      (message_id,recipients,only_device,only_device))
+    add_recipients(cur,message_id,recipients,only_device)
     return message_id
 
 
@@ -67,7 +62,7 @@ def register_web_push(app, *, connect, has_permission):
         except Exception:
             if conn: conn.rollback()
             # Subscription endpoints and auth keys must never enter exception logs.
-            app.logger.error('Web Push operation failed; check configuration and migration 20261101_001')
+            app.logger.error('Web Push operation failed; check configuration and migration 20261101_002')
             return jsonify(error='消息通知服务暂不可用，请检查配置和数据库升级。'),503
         finally:
             if conn: conn.close()
@@ -92,7 +87,7 @@ def register_web_push(app, *, connect, has_permission):
             page=max(1,min(100000,int(request.args.get('page',1))))
             cur.execute('SELECT enabled FROM web_push_preferences WHERE user_id=%s',(user['id'],))
             preference=cur.fetchone()
-            cur.execute('''SELECT m.id,m.title,m.body,m.kind,m.sender_name,m.created_at,r.read_at,r.confirmed_at,
+            cur.execute('''SELECT m.id,m.title,m.body,m.kind,m.source,m.action_path,m.sender_name,m.created_at,r.read_at,r.confirmed_at,r.delivery_note,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status='accepted') AS accepted,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status IN ('queued','sending')) AS pending,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND d.user_id=r.user_id AND d.status IN ('failed','expired','skipped')) AS failed
@@ -220,16 +215,29 @@ def register_web_push(app, *, connect, has_permission):
             total=cur.fetchone()['n']
             cur.execute(cte+' SELECT * FROM catalog '+where+' ORDER BY id LIMIT 30 OFFSET %s',params+[(page-1)*30])
             rows=cur.fetchall()
-            cur.execute('SELECT count(*) AS n FROM web_push_messages')
+            if request.args.get('recipients_only')=='1':
+                return jsonify(items=rows,total=total,page=page)
+            log_source=request.args.get('log_source','')
+            if log_source not in ('','manual','test',*[entry['key'] for entry in SOURCES]):
+                raise ValueError('消息来源无效。')
+            log_where="WHERE (%s='' OR m.source=%s OR m.kind=%s)"
+            log_args=[log_source]*3
+            cur.execute('SELECT count(*) AS n FROM web_push_messages m '+log_where,log_args)
             records_total=cur.fetchone()['n']
-            cur.execute('''SELECT m.id,m.title,m.body,m.sender_name,m.created_at,m.kind,
+            cur.execute('''SELECT m.id,m.title,m.body,m.sender_name,m.created_at,m.kind,m.source,m.entity_id,m.action_path,
               (SELECT count(*) FROM web_push_recipients r WHERE r.message_id=m.id) AS recipients,
+              (SELECT count(*) FROM web_push_recipients r WHERE r.message_id=m.id
+                AND NOT EXISTS(SELECT 1 FROM web_push_deliveries d WHERE d.message_id=r.message_id AND d.user_id=r.user_id)) AS inbox_only,
               (SELECT count(*) FROM web_push_recipients r WHERE r.message_id=m.id AND r.confirmed_at IS NOT NULL) AS confirmed,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND status='accepted') AS accepted,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND status IN ('queued','sending')) AS pending,
               (SELECT count(*) FROM web_push_deliveries d WHERE d.message_id=m.id AND status IN ('failed','expired','skipped')) AS failed
-              FROM web_push_messages m ORDER BY m.created_at DESC,m.id LIMIT 30 OFFSET %s''',((log_page-1)*30,))
-            return jsonify(items=rows,total=total,page=page,summary=summary,records=cur.fetchall(),
+              FROM web_push_messages m '''+log_where+' ORDER BY m.created_at DESC,m.id LIMIT 30 OFFSET %s',log_args+[(log_page-1)*30])
+            records=cur.fetchall()
+            cur.execute("SELECT source,count(*) AS total,max(created_at) AS latest FROM web_push_messages WHERE kind='business' GROUP BY source")
+            stats={row['source']:dict(total=row['total'],latest=row['latest']) for row in cur.fetchall()}
+            return jsonify(items=rows,total=total,page=page,summary=summary,records=records,
+                sources=[dict(entry,**stats.get(entry['key'],dict(total=0,latest=None))) for entry in SOURCES],
                 records_total=records_total,records_page=log_page,configured=configuration()['ready'])
         return run(operation,True)
 
@@ -243,9 +251,11 @@ def register_web_push(app, *, connect, has_permission):
     @bp.get('/api/management/notifications/<uuid:identifier>/deliveries')
     def deliveries(identifier):
         def operation(cur,user):
-            cur.execute('''SELECT d.status,d.attempts,d.http_status,d.last_error,d.updated_at,u.real_name,u.username,
-              v.platform,v.browser FROM web_push_deliveries d JOIN users u ON u.id=d.user_id
-              JOIN web_push_devices v ON v.id=d.device_id WHERE d.message_id=%s ORDER BY d.id LIMIT 1000''',(str(identifier),))
+            cur.execute('''SELECT COALESCE(d.status,'inbox_only') AS status,d.attempts,d.http_status,d.last_error,d.updated_at,
+              u.real_name,u.username,v.platform,v.browser,r.delivery_note,r.read_at,r.confirmed_at
+              FROM web_push_recipients r JOIN users u ON u.id=r.user_id
+              LEFT JOIN web_push_deliveries d ON d.message_id=r.message_id AND d.user_id=r.user_id
+              LEFT JOIN web_push_devices v ON v.id=d.device_id WHERE r.message_id=%s ORDER BY u.id,d.id LIMIT 1000''',(str(identifier),))
             return jsonify(items=cur.fetchall())
         return run(operation,True)
 

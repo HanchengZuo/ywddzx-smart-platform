@@ -106,11 +106,27 @@ class PushDatabaseTests(unittest.TestCase):
         with conn.cursor() as cur:cur.execute(f'CREATE SCHEMA "{cls.schema}"')
         conn.close()
         with cls.connect() as conn,conn.cursor() as cur:
-            cur.execute('''CREATE TABLE users(id int PRIMARY KEY,username text,real_name text,role text,account_status text);
-              INSERT INTO users VALUES(1,'root','管理员','root','active'),(2,'station','站点','station_manager','active'),
-              (3,'third','另一用户','station_manager','active'),(4,'disabled','停用用户','station_manager','disabled');''')
+            cur.execute('''CREATE TABLE users(id int PRIMARY KEY,username text,real_name text,role text,account_status text,station_id int);
+              INSERT INTO users VALUES(1,'root','管理员','root','active',NULL),(2,'station','站点','station_manager','active',1),
+              (3,'third','另一用户','station_manager','active',2),(4,'disabled','停用用户','station_manager','disabled',1);
+              CREATE TABLE stations(id int PRIMARY KEY,station_name text,region text);
+              CREATE TABLE inspection_tables(id int PRIMARY KEY,table_name text);
+              CREATE TABLE inspections(id int PRIMARY KEY,station_id int REFERENCES stations,inspection_table_id int REFERENCES inspection_tables,
+                inspection_date date,inspector_completion_status text,sign_status text,quality_accept_started_at timestamptz,quality_accept_deadline_at timestamptz);
+              CREATE TABLE issues(id int PRIMARY KEY,inspection_id int REFERENCES inspections ON DELETE CASCADE,
+                station_id int,inspection_table_id int,audit_status text);
+              CREATE TABLE inspection_issue_appeals(id int PRIMARY KEY,issue_id int REFERENCES issues,status text);
+              -- Clock behavior itself is protected by the existing quality-deadline integration suite.
+              CREATE FUNCTION refresh_quality_acceptance(integer) RETURNS void LANGUAGE sql AS 'SELECT';
+              CREATE FUNCTION is_quality_deadline_table(integer) RETURNS boolean LANGUAGE sql AS 'SELECT $1=1';
+              CREATE TABLE clock_switch(enabled boolean); INSERT INTO clock_switch VALUES(TRUE);
+              CREATE FUNCTION quality_effective_deadline(text,timestamptz,timestamptz) RETURNS timestamptz LANGUAGE sql AS
+                'SELECT CASE WHEN (SELECT enabled FROM clock_switch) THEN $2 END';''')
             path=Path(__file__).parents[1]/'migrations/versions/20261101_001_web_push.py'
             spec=importlib.util.spec_from_file_location('push_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+            migration.op=SimpleNamespace(execute=cur.execute);migration.upgrade()
+            path=Path(__file__).parents[1]/'migrations/versions/20261101_002_business_push.py'
+            spec=importlib.util.spec_from_file_location('business_push_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
             migration.op=SimpleNamespace(execute=cur.execute);migration.upgrade()
 
     @classmethod
