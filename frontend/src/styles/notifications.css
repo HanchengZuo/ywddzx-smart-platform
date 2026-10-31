@@ -79,6 +79,11 @@
   border-color: #236f95;
   color: #fff;
 }
+.notification-page button.primary:hover:not(:disabled) {
+  background: #185b7c;
+  border-color: #185b7c;
+  color: #fff;
+}
 .notification-page button:disabled {
   opacity: 0.5;
   cursor: default;
@@ -95,6 +100,58 @@
   color: #fff;
   border-color: #ffffff45;
 }
+.notification-page .notification-hero button:hover:not(:disabled) {
+  background: #ffffff28;
+  border-color: #b5e4eb;
+  color: #fff;
+}
+.notification-refresh-control {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+  flex-shrink: 0;
+}
+.notification-page .notification-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 126px;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.notification-page .notification-refresh:disabled {
+  opacity: 1;
+  color: #d6f1f5;
+  background: #ffffff16;
+  cursor: progress;
+}
+.notification-refresh-control small {
+  color: #c3e1e8;
+  font-size: 11px;
+}
+.notification-refresh .spinning {
+  animation: notification-refresh-spin 1s linear infinite;
+}
+.notification-device .notification-current-device {
+  display: inline-block;
+  padding: 3px 6px;
+  background: #e2f4ec;
+  color: #287761;
+  border-radius: 5px;
+  font-weight: 500;
+}
+@keyframes notification-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notification-refresh .spinning {
+    animation: none;
+  }
+}
 .notification-hero-actions {
   display: flex;
   gap: 10px;
@@ -110,7 +167,7 @@
 }
 .notification-source-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 .notification-source-card {
@@ -125,7 +182,6 @@
 }
 .notification-source-card header,
 .notification-source-card footer {
-  margin-top: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -159,6 +215,7 @@
   margin: 0;
 }
 .notification-source-card footer {
+  margin-top: auto;
   border-top: 1px solid #dce7ee;
   padding-top: 14px;
 }

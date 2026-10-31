@@ -5,6 +5,8 @@ from psycopg2.extras import RealDictCursor
 from web_push_outbox import enqueue_business
 
 SOURCES = (
+    dict(key='daily_schedule',menu='巡检排班 / 今日安排',name='今日巡检安排',recipient='被分配的督导组管理人员与督导组组员本人',
+         trigger='人员分工确认或站点派工发生变化；未来安排在当日提醒',rule='按账号和当日实际安排合并，相同方案不重复通知。'),
     dict(key='appeal_area',menu='申诉空间',name='待片区处理申诉',recipient='站点所属片区的有效片区账号',
          trigger='站点成功提交申诉',rule='按现有片区归属匹配，不扩大数据权限。'),
     dict(key='appeal_quality',menu='申诉空间',name='待质安部处理申诉',recipient='拥有申诉终审权限的有效质安部账号',
@@ -103,6 +105,9 @@ def process_signature_changes(connect, recipients, limit=50):
 
 
 def delivery_allowed(cur, message, user_id, recipients):
+    if message['source']=='daily_schedule':
+        from web_push_schedule import delivery_allowed as schedule_allowed
+        return schedule_allowed(cur,message,user_id)
     if message['source']=='inspection_signature':
         record=signature_record(cur,message['entity_id'])
         return bool(record and record['ready'] and user_id in recipients(cur,'acceptance',record['station_id'],record['region']))

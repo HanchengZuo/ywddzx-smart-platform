@@ -38,22 +38,68 @@ export const newRequestId = () => {
 }
 let deviceQueue = Promise.resolve()
 function deviceOperation(operation) {
-  const next = deviceQueue
-    .catch(() => {})
-    .then(() =>
-      navigator.locks ? navigator.locks.request('ywddzx-push-device', operation) : operation(),
-    )
+  const next = deviceQueue.catch(() => {}).then(() => deviceLock(operation))
   deviceQueue = next
   return next
 }
+async function deviceLock(operation) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20000)
+  try {
+    return await (navigator.locks
+      ? navigator.locks.request('ywddzx-push-device', { signal: controller.signal }, () =>
+          operation(controller.signal),
+        )
+      : operation(controller.signal))
+  } catch (error) {
+    if (controller.signal.aborted)
+      throw new Error('设备状态同步超时，请稍后重试。', { cause: error })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+async function bounded(promise, milliseconds, message) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), milliseconds)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 export function currentDeviceKey() {
   let key = localStorage.getItem('web_push_device_key')
-  if (!/^[A-Za-z0-9_-]{43}$/.test(key || '')) {
+  const valid = (value) => /^[A-Za-z0-9_-]{43}$/.test(value || '')
+  if (!valid(key) && typeof document !== 'undefined') {
+    try {
+      const saved = document.cookie
+        .split(';')
+        .map((part) => part.trim())
+        .find((part) => part.startsWith('ywddzx_push_device='))
+        ?.slice('ywddzx_push_device='.length)
+      if (valid(saved)) key = saved
+    } catch {
+      /* Cookie blocking must not prevent storage-only device registration. */
+    }
+  }
+  if (!valid(key)) {
     key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
       .replaceAll('+', '-')
       .replaceAll('/', '_')
       .replace(/=+$/, '')
-    localStorage.setItem('web_push_device_key', key)
+  }
+  localStorage.setItem('web_push_device_key', key)
+  // Functional browser identity only, never a login credential. Version reloads clear storage, not cookies.
+  try {
+    if (typeof document !== 'undefined')
+      document.cookie = `ywddzx_push_device=${key}; Path=/; Max-Age=31536000; SameSite=Strict${window.location?.protocol === 'https:' ? '; Secure' : ''}`
+  } catch {
+    /* Storage-only browsers still use the existing local identifier. */
   }
   return key
 }
@@ -66,11 +112,13 @@ export function publicKeyBytes(value) {
 export const pushRegistration = () =>
   navigator.serviceWorker.register('/push-sw.js', { scope: '/', updateViaCache: 'none' })
 async function readyRegistration() {
-  await pushRegistration()
   let timer
   try {
     return await Promise.race([
-      navigator.serviceWorker.ready,
+      (async () => {
+        await pushRegistration()
+        return navigator.serviceWorker.ready
+      })(),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('通知服务启动超时，请刷新重试。')), 12000)
       }),
@@ -96,20 +144,32 @@ export function preparePush() {
       })
   return preparation
 }
-export const syncDevice = (options = {}) => deviceOperation(() => syncDeviceUnlocked(options))
-async function syncDeviceUnlocked({ active = true } = {}) {
+export const syncDevice = (options = {}) =>
+  deviceOperation((signal) => syncDeviceUnlocked({ ...options, signal }))
+async function syncDeviceUnlocked({ active = true, signal } = {}) {
   const capability = pushCapability()
   let subscription = null
   const registration = capability.code === 'supported' ? await preparePush() : null
   if (active && capability.code === 'supported' && Notification.permission === 'granted') {
-    subscription = (await registration.pushManager.getSubscription())?.toJSON() || null
+    subscription =
+      (
+        await bounded(
+          registration.pushManager.getSubscription(),
+          8000,
+          '浏览器读取订阅超时，请重试。',
+        )
+      )?.toJSON() || null
   }
-  const { data } = await axios.post('/api/notifications/device', {
-    device_key: currentDeviceKey(),
-    capability: capability.code,
-    permission: window.Notification?.permission || 'unavailable',
-    subscription,
-  })
+  const { data } = await axios.post(
+    '/api/notifications/device',
+    {
+      device_key: currentDeviceKey(),
+      capability: capability.code,
+      permission: window.Notification?.permission || 'unavailable',
+      subscription,
+    },
+    { signal, timeout: 10000 },
+  )
   return data.device
 }
 export async function enableDevice(publicKey) {
@@ -137,14 +197,32 @@ export async function enableDevice(publicKey) {
       { cause: error },
     )
   }
-  return deviceOperation(() => syncDeviceUnlocked())
+  return deviceOperation((signal) => syncDeviceUnlocked({ signal }))
 }
 export const disableDevice = () =>
-  deviceOperation(async () => {
-    await axios.delete('/api/notifications/device', { data: { device_key: currentDeviceKey() } })
+  deviceOperation(async (signal) => {
+    await axios.delete('/api/notifications/device', {
+      data: { device_key: currentDeviceKey() },
+      signal,
+      timeout: 10000,
+    })
     if (navigator.serviceWorker) {
-      const registration = await navigator.serviceWorker.getRegistration('/push-sw.js')
-      await (await registration?.pushManager.getSubscription())?.unsubscribe()
+      const registration = await bounded(
+        navigator.serviceWorker.getRegistration('/push-sw.js'),
+        8000,
+        '浏览器通知状态读取超时，请重试。',
+      )
+      const subscription = await bounded(
+        registration?.pushManager.getSubscription(),
+        8000,
+        '浏览器订阅读取超时，请重试。',
+      )
+      if (subscription)
+        await bounded(
+          subscription.unsubscribe(),
+          8000,
+          '设备推送已停用，浏览器清理超时，请稍后刷新状态。',
+        )
     }
   })
 export const pushDeviceStatus = (device) =>
