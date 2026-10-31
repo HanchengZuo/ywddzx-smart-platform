@@ -50,7 +50,7 @@
             关闭标签页后仍可推送；完全退出浏览器、断网、省电模式或系统拦截可能导致延迟或无法接收。华为及其他品牌手机请以实际能力检测和测试结果为准，不代表安装后必定可用。
           </p>
           <p>
-            系统通知仅展示通用提醒，不展示业务详情。点击后需登录查看正文。开启通知不会自动授权浏览器。
+            系统通知只展示办理提醒及适用的验收截止时间，不展示站名、问题描述等详情。点击后需登录查看正文。开启通知不会自动授权浏览器。
           </p>
         </details>
       </div>
@@ -119,6 +119,12 @@
             >{{ item.sender_name }} · {{ item.kind === 'test' ? '设备测试' : '系统通知' }}</small
           >
           <div>
+            <RouterLink
+              v-if="businessPath(item)"
+              :to="businessPath(item)"
+              class="notification-action-link"
+              >前往办理</RouterLink
+            >
             <button v-if="!item.read_at" :disabled="busy" @click="mark(item, false)">
               标为已读</button
             ><button v-if="!item.confirmed_at" :disabled="busy" @click="mark(item, true)">
@@ -152,6 +158,11 @@ import {
   newRequestId,
 } from '../utils/webPush'
 import '../styles/notifications.css'
+const businessPath = (item) =>
+  item.kind === 'business' &&
+  ['/inspection/appeals', '/inspection/records'].includes(item.action_path)
+    ? item.action_path
+    : ''
 const items = ref([]),
   pushReady = ref(false),
   devices = ref([]),

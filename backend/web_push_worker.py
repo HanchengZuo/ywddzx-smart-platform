@@ -5,7 +5,7 @@ from psycopg2.extras import RealDictCursor
 from web_push import configuration, send, unseal
 
 
-def deliver_one(connect, secret, config=None, sender=send):
+def deliver_one(connect, secret, config=None, sender=send, recipients=None):
     config=configuration() if config is None else config
     if not config['ready']: return False
     conn=connect()
@@ -28,12 +28,21 @@ def deliver_one(connect, secret, config=None, sender=send):
                     or device['user_id']!=job['user_id'] or device['revision']!=job['device_revision']):
                 cur.execute("UPDATE web_push_deliveries SET status='skipped',last_error='设备、账号或通知偏好已变化',updated_at=now() WHERE id=%s",(job['id'],))
                 conn.commit();return True
+            cur.execute('SELECT kind,source,entity_id,push_hint FROM web_push_messages WHERE id=%s',(job['message_id'],))
+            message=cur.fetchone()
+            if message['kind']=='business':
+                from web_push_business import delivery_allowed
+                if not recipients or not delivery_allowed(cur,message,job['user_id'],recipients):
+                    cur.execute("UPDATE web_push_deliveries SET status='skipped',last_error='业务已处理或接收权限已变化',updated_at=now() WHERE id=%s",(job['id'],))
+                    conn.commit();return True
             cur.execute('''UPDATE web_push_deliveries SET status='sending',attempts=attempts+1,lease=%s,
               lease_until=now()+interval '2 minutes',updated_at=now() WHERE id=%s''',(lease,job['id']))
         conn.commit()
-        # Lock-screen payloads contain no problem details, user names or message body.
+        # Only a controlled action/deadline hint may appear on the lock screen.
         payload={'title':'业务督导中心 · 新通知','body':'你有一条系统消息，请登录通知中心查看。',
             'url':'/notifications','tag':'ywddzx-'+str(job['message_id'])}
+        if message['kind']=='business':
+            payload.update(scene=message['source'],hint=message['push_hint'])
         code=None;status='failed';error='推送发送失败，请检查密钥、网络及设备设置。';retry=False
         try:
             response=sender(unseal(device['subscription_cipher'],secret),payload,config)
@@ -64,14 +73,20 @@ def deliver_one(connect, secret, config=None, sender=send):
         conn.close()
 
 
-def start_push_worker(connect, secret, logger):
+def start_push_worker(connect, secret, logger, *, recipients=None):
     """Called after fork only; SKIP LOCKED + leases coordinate Gunicorn workers."""
     def work():
         while True:
+            if recipients:
+                try:
+                    from web_push_business import process_signature_changes
+                    process_signature_changes(connect,recipients)
+                except Exception:
+                    logger.error('Business notification scan rolled back; retrying later')
             try:
                 # Bound each scan; skip startup network calls when keys are absent.
                 for _ in range(10):
-                    if not deliver_one(connect,secret): break
+                    if not deliver_one(connect,secret,recipients=recipients): break
             except Exception:
                 logger.error('Web Push queue scan failed; retrying later')
             threading.Event().wait(30)

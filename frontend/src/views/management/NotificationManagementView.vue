@@ -6,7 +6,10 @@
         <h2>消息通知管理</h2>
         <p>掌握开通情况，面向指定用户的所有有效设备投递。</p>
       </div>
-      <button :disabled="loading" @click="load">刷新统计</button>
+      <div class="notification-hero-actions">
+        <button :disabled="loading" @click="load">刷新统计</button
+        ><button :disabled="!configured" @click="compose = true">发送通知</button>
+      </div>
     </header>
     <p v-if="error" class="notification-error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notification-success" role="status">{{ notice }}</p>
@@ -16,6 +19,45 @@
         ><strong>{{ summary[metric.key] || 0 }}<small>人</small></strong>
       </article>
     </div>
+    <section class="notification-surface">
+      <header class="notification-section-title">
+        <div>
+          <span class="notification-eyebrow">BUSINESS PUSH</span>
+          <h3>已接入的业务提醒</h3>
+          <p>
+            沿用业务红点和办理权限，不改变原有流程。新流转自动通知；办理后未发送的提醒会跳过，避免过期催办。
+          </p>
+        </div>
+        <span class="notification-state enabled">{{ sources.length }} 项自动提醒</span>
+      </header>
+      <div class="notification-source-grid">
+        <article
+          v-for="(source, index) in sources"
+          :key="source.key"
+          class="notification-source-card"
+        >
+          <header>
+            <span>{{ String(index + 1).padStart(2, '0') }} · {{ source.menu }}</span
+            ><span class="notification-state enabled">已接入</span>
+          </header>
+          <h4>{{ source.name }}</h4>
+          <p>{{ source.trigger }}</p>
+          <dl>
+            <dt>接收对象</dt>
+            <dd>{{ source.recipient }}</dd>
+            <dt>通知口径</dt>
+            <dd>{{ source.rule }}</dd>
+          </dl>
+          <footer>
+            <strong>{{ source.total }} <small>条留痕</small></strong
+            ><button @click="filterLogs(source.key)">查看记录</button>
+          </footer>
+        </article>
+      </div>
+      <p class="notification-muted">
+        本次只接入以上三类业务，不补发上线前的历史待签名积压。账号暂停通知或没有有效设备时，仍保留站内消息及未投递原因。
+      </p>
+    </section>
     <div v-if="!configured" class="notification-guidance">
       <strong>服务端尚未配置 Web Push</strong>
       <p>
@@ -41,14 +83,11 @@
           </select></label
         ><button class="primary" :disabled="loading">开始筛选</button>
       </form>
-      <p class="notification-muted">
-        {{ total }} 位符合条件的用户 · 已选择 {{ selected.length }} 位（最多200位）
-      </p>
+      <p class="notification-muted">{{ total }} 位符合条件的用户</p>
       <div class="notification-table-wrap">
         <table>
           <thead>
             <tr>
-              <th>选择</th>
               <th>用户</th>
               <th>角色</th>
               <th>通知状态</th>
@@ -59,13 +98,6 @@
           </thead>
           <tbody>
             <tr v-for="user in users" :key="user.id">
-              <td>
-                <input
-                  type="checkbox"
-                  :checked="selected.some((entry) => entry.id === user.id)"
-                  @change="toggleUser(user, $event.target.checked)"
-                />
-              </td>
               <td>
                 <strong>{{ user.real_name || user.username }}</strong
                 ><small>{{ user.username }}</small>
@@ -92,51 +124,19 @@
     <section class="notification-surface">
       <header class="notification-section-title">
         <div>
-          <h3>发送系统通知</h3>
-          <p>
-            向所选用户的全部有效订阅设备发送。用户未授权、关闭推送或设备不支持时，只保留站内通知。
-          </p>
-        </div>
-      </header>
-      <div class="notification-recipient-tags">
-        <button v-for="user in selected" :key="user.id" @click="toggleUser(user, false)">
-          {{ user.real_name || user.username }} ×</button
-        ><span v-if="!selected.length" class="notification-muted">请先在用户清单选择接收人。</span>
-      </div>
-      <form class="notification-compose" @submit.prevent="send">
-        <label
-          >通知标题<input
-            v-model="title"
-            maxlength="60"
-            required
-            placeholder="例如：巡检业务办理提醒" /></label
-        ><label
-          >通知正文<textarea
-            v-model="body"
-            rows="4"
-            maxlength="1500"
-            required
-            placeholder="填写要通知用户的内容；锁屏仅展示通用提醒，正文登录后可见。"
-          />
-        </label>
-        <footer>
-          <span class="notification-muted"
-            >{{ body.length }} / 1500 字 · 发送行为及操作人均记录</span
-          ><button
-            class="primary"
-            :disabled="sending || !configured || !selected.length || !title.trim() || !body.trim()"
-          >
-            {{ sending ? '正在入队…' : `发送给 ${selected.length} 位用户` }}
-          </button>
-        </footer>
-      </form>
-    </section>
-    <section class="notification-surface">
-      <header class="notification-section-title">
-        <div>
           <h3>消息发送记录</h3>
           <p>服务接收按设备计数，不代表已显示或已阅读；“确认收到”由用户本人反馈。</p>
         </div>
+        <label
+          >消息来源<select v-model="logSource" @change="filterLogs(logSource)">
+            <option value="">全部记录</option>
+            <option v-for="source in sources" :key="source.key" :value="source.key">
+              {{ source.name }}
+            </option>
+            <option value="manual">手动通知</option>
+            <option value="test">设备测试</option>
+          </select></label
+        >
       </header>
       <article v-for="record in records" :key="record.id" class="notification-message">
         <header>
@@ -149,12 +149,15 @@
           ><span>服务已接收 {{ record.accepted }} 台</span
           ><span>排队 / 重试 {{ record.pending }} 台</span
           ><span>失败 / 失效 / 跳过 {{ record.failed }} 台</span
+          ><span>仅站内消息 {{ record.inbox_only || 0 }} 人</span
           ><span class="ok">{{ record.confirmed }} 人确认收到</span>
         </div>
         <footer>
           <small
-            >发送人 {{ record.sender_name }} ·
-            {{ record.kind === 'test' ? '设备测试' : '系统通知' }}</small
+            >发送人 {{ record.sender_name }} · {{ sourceLabel(record)
+            }}<template v-if="!Number(record.recipients)">
+              · 无符合条件的接收账号，未投递</template
+            ></small
           ><button @click="viewDeliveries(record)">查看投递明细</button>
         </footer>
       </article>
@@ -184,8 +187,8 @@
           <p v-if="detail.error" class="notification-error">{{ detail.error }}</p>
           <div v-for="(entry, index) in detail.items" :key="index" class="notification-device">
             <strong
-              >{{ entry.real_name || entry.username || '' }} {{ entry.platform }} ·
-              {{ entry.browser }}</strong
+              >{{ entry.real_name || entry.username || '' }} {{ entry.platform || ''
+              }}<template v-if="entry.browser"> · {{ entry.browser }}</template></strong
             ><span>{{ entry.status ? deliveryLabels[entry.status] : pushDeviceStatus(entry) }}</span
             ><small v-if="entry.last_seen_at">最近上报 {{ formatTime(entry.last_seen_at) }}</small
             ><small v-if="entry.permission"
@@ -194,6 +197,8 @@
               >已尝试 {{ entry.attempts }} 次 · HTTP {{ entry.http_status || '无响应' }}</small
             >
             <p v-if="entry.last_error">{{ entry.last_error }}</p>
+            <small v-if="entry.delivery_note">入队时：{{ entry.delivery_note }}</small>
+            <small v-if="entry.read_at">站内已读 {{ formatTime(entry.read_at) }}</small>
           </div>
           <p v-if="!detail.loading && !detail.items.length" class="notification-muted">
             暂无有效设备投递记录。用户可能尚未授权或订阅。
@@ -201,12 +206,14 @@
         </section>
       </div></Teleport
     >
+    <NotificationCompose v-if="compose" @close="compose = false" @sent="sent" />
   </div>
 </template>
 <script setup>
 import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import axios from 'axios'
-import { newRequestId, pushDeviceStatus } from '../../utils/webPush'
+import { pushDeviceStatus } from '../../utils/webPush'
+import NotificationCompose from '../../components/NotificationCompose.vue'
 import '../../styles/notifications.css'
 const users = ref([]),
   summary = ref({}),
@@ -219,12 +226,11 @@ const users = ref([]),
   keyword = ref(''),
   state = ref(''),
   loading = ref(false),
-  sending = ref(false),
   error = ref(''),
   notice = ref(''),
-  selected = ref([]),
-  title = ref(''),
-  body = ref(''),
+  compose = ref(false),
+  sources = ref([]),
+  logSource = ref(''),
   detail = ref(null)
 const metrics = [
   { key: 'total', label: '有效用户' },
@@ -239,6 +245,7 @@ const deliveryLabels = {
   failed: '发送失败',
   expired: '订阅失效',
   skipped: '已跳过（状态变化）',
+  inbox_only: '仅保留站内消息',
 }
 const permissionLabels = {
   granted: '已允许',
@@ -264,7 +271,6 @@ const roleLabel = (value) =>
 const formatTime = (value) =>
   value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未上报'
 let applied = { keyword: '', status: '' },
-  requestId = newRequestId(),
   generation = 0,
   alive = true
 const detailDialog = ref(null)
@@ -279,20 +285,18 @@ watch(
     } else if (previousFocus?.isConnected) previousFocus.focus()
   },
 )
-watch(
-  [title, body, selected],
-  () => {
-    requestId = newRequestId()
-  },
-  { deep: true },
-)
 async function load() {
   const id = ++generation
   loading.value = true
   error.value = ''
   try {
     const { data } = await axios.get('/api/management/notifications', {
-      params: { ...applied, page: page.value, log_page: logPage.value },
+      params: {
+        ...applied,
+        page: page.value,
+        log_page: logPage.value,
+        log_source: logSource.value,
+      },
     })
     if (!alive || id !== generation) return
     users.value = data.items
@@ -301,6 +305,7 @@ async function load() {
     recordsTotal.value = data.records_total || data.records.length
     total.value = data.total
     configured.value = data.configured
+    sources.value = data.sources || []
   } catch (err) {
     if (alive && id === generation) error.value = err.response?.data?.error || '通知管理读取失败。'
   } finally {
@@ -320,35 +325,20 @@ const changeLogPage = (offset) => {
   logPage.value += offset
   return load()
 }
-function toggleUser(user, checked) {
-  if (sending.value) return
-  if (checked && selected.value.length >= 200) {
-    error.value = '每次最多选择200位用户。'
-    return
-  }
-  selected.value = checked
-    ? [...selected.value.filter((entry) => entry.id !== user.id), user]
-    : selected.value.filter((entry) => entry.id !== user.id)
+const sourceLabel = (record) =>
+  sources.value.find((entry) => entry.key === record.source)?.name ||
+  (record.kind === 'test' ? '设备测试' : record.kind === 'manual' ? '手动通知' : '业务提醒')
+const filterLogs = (source) => {
+  logSource.value = source
+  logPage.value = 1
+  return load()
 }
-async function send() {
-  if (sending.value) return
-  sending.value = true
-  error.value = ''
-  try {
-    const { data } = await axios.post('/api/management/notifications/send', {
-      request_id: requestId,
-      user_ids: selected.value.map((user) => user.id),
-      title: title.value.trim(),
-      body: body.value.trim(),
-    })
-    notice.value = data.message
-    requestId = newRequestId()
-    await load()
-  } catch (err) {
-    error.value = err.response?.data?.error || '发送结果未确认，请重试（相同请求不会重复入队）。'
-  } finally {
-    sending.value = false
-  }
+const sent = (message) => {
+  compose.value = false
+  notice.value = message
+  logSource.value = ''
+  logPage.value = 1
+  return load()
 }
 async function view(url, label) {
   const current = { title: label, items: [], loading: true, error: '' }

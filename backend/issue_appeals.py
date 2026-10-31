@@ -2,7 +2,8 @@
 from types import SimpleNamespace
 from datetime import date, datetime, time, timedelta
 from flask import g, jsonify, request
-from quality_deadlines import initialize_appeal_review, capture_quality_handoff
+from quality_deadlines import initialize_appeal_review, capture_quality_handoff, responsible_users
+from web_push_business import notify_appeal
 
 ACTIVE = ('area_pending', 'quality_pending')
 APPEAL_LABELS = {
@@ -273,6 +274,10 @@ def register_issue_appeals(app, namespace):
             cur.execute("UPDATE issues SET status='申诉中' WHERE id=%s", (issue_id,))
             record_event(cur, user, issue_id, 'appeal_submitted', '待整改', '申诉中', reason)
             cur.execute("SELECT set_config('app.appeal_event','',true)")
+            cur.execute('SELECT region FROM stations WHERE id=%s',(issue['station_id'],))
+            region=cur.fetchone()['region']
+            owners=responsible_users(cur,core,'area_pending',issue['station_id'],region)
+            notify_appeal(cur,appeal_id,'area_pending',[owner['id'] for owner in owners])
             return jsonify(success=True, id=appeal_id, message='问题已进入申诉空间，等待所属片区审核反馈。')
         return run(operation)
 

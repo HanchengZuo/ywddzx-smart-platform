@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v12.3.1', date: '2026-10-31', title: '业务待办联动浏览器推送',
+    summary: '申诉初审、终审和巡检记录待签名接入 Web Push，统一展示业务接入清单与发送留痕。',
+    items: [
+      '站点提交申诉通知所属片区；片区通过转质安部时仅通知具备终审权限的账号，含规则自动流转。',
+      '巡检记录按待签名红点口径触发站点通知，适用质安时限时展示实际验收截止时间；后台去重并跳过已办理的推送。',
+      '消息通知管理新增业务提醒清单、来源筛选和未投递原因，手动发送改为独立弹窗，用户开通表不再放置选择框。'
+    ]
+  },
+  {
     version: 'v12.3', date: '2026-10-31', title: '多设备浏览器消息推送',
     summary: '新增通知中心和消息通知管理，支持 Web Push 多设备订阅、测试推送及后台投递记录。',
     items: [

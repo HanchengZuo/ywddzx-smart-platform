@@ -121,6 +121,27 @@ test('notification clicks only open a same-origin authenticated page', async () 
   assert.equal(closed, true)
   assert.deepEqual(opened, ['/notifications'])
 })
+test('business notifications display only the controlled action/deadline hint, never the message body', async () => {
+  const { handlers, shown } = workerFixture()
+  let pending
+  handlers.push({
+    data: {
+      json: () => ({
+        scene: 'inspection_signature',
+        hint: '请于北京时间 2026-11-05 10:00 前验收。',
+        body: 'secret station and problem',
+        url: 'https://evil.test',
+      }),
+    },
+    waitUntil: (promise) => {
+      pending = promise
+    },
+  })
+  await pending
+  assert.match(shown[0].options.body, /10:00/)
+  assert.ok(!JSON.stringify(shown).includes('secret'))
+  assert.equal(shown[0].options.data.url, '/notifications')
+})
 test('Safari subscribe enters the native permission flow directly in the click gesture, not an async queue', async () => {
   const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
     .replace("import axios from 'axios'", '')
