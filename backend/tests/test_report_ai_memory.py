@@ -485,6 +485,60 @@ class MemoryPostgresTest(unittest.TestCase):
             self.assertEqual(log['events'][-1]['repair_count'],1)
         finally:end_report_ai_memory(token)
 
+    def test_safety_representative_repair_is_persisted_and_reused_across_jobs(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from safety_report_examples import generate_representatives, validate_selections
+        context={'mode':'onsite','category':'设备设施','stage':0,'groups':[
+            {'name':'接地','summary':'连接缺失','issues':[{'issue_id':8534,'description':'接地未连接'}]},
+            {'name':'锈蚀','summary':'设备锈蚀','issues':[{'issue_id':8535,'description':'设备外表锈蚀'}]}]}
+        client=MagicMock();client.with_options.return_value=client
+        responses=[{'selections':[{'name':'接地','issue_ids':[8534]}]}, {'selections':{'G1':[8535]}}]
+        client.chat.completions.create.side_effect=[SimpleNamespace(choices=[
+            SimpleNamespace(message=SimpleNamespace(content=json.dumps(value)))]) for value in responses]
+        with patch('ai_utils.get_deepseek_client',return_value=client), patch('ai_routing._loader',None):
+            for index in range(2):
+                job=self.new_job('safety_quality')
+                token=begin_report_ai_memory(self.connect,job.task_id,'safety_quality')
+                try:
+                    result=generate_representatives(context)
+                    validate_selections(result['payload'],context)
+                    log=report_ai_generation_log()
+                    self.assertEqual(log['summary']['ai_calls'],2 if index==0 else 0)
+                    self.assertEqual(log['summary']['reuse_steps'],index)
+                    self.assertEqual(result['usage']['ai_called'],index==0)
+                    if index==0:self.assertEqual(log['events'][-1]['repair_count'],1)
+                finally:end_report_ai_memory(token)
+        self.assertEqual(client.chat.completions.create.call_count,2)
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT payload FROM inspection_report_ai_memory WHERE operation='safety_examples'")
+            stored=cur.fetchall()
+            self.assertEqual(len(stored),1)
+            validate_selections(stored[0]['payload'],context)
+
+    def test_failed_representative_repair_never_enters_memory_and_counts_actual_requests(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from safety_report_examples import generate_representatives
+        context={'mode':'onsite','category':'设备设施','stage':0,'groups':[
+            {'name':'接地','summary':'连接缺失','issues':[{'issue_id':8534,'description':'接地未连接'}]}]}
+        client=MagicMock();client.with_options.return_value=client
+        client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{}'))])
+        job=self.new_job('safety_quality')
+        token=begin_report_ai_memory(self.connect,job.task_id,'safety_quality')
+        try:
+            with patch('ai_utils.get_deepseek_client',return_value=client), patch('ai_routing._loader',None):
+                with self.assertRaisesRegex(ValueError,'未完成核验'):
+                    generate_representatives(context)
+            log=report_ai_generation_log()
+            self.assertEqual(log['summary']['ai_calls'],3)
+            self.assertEqual(log['events'][-1]['outcome'],'error')
+            self.assertEqual(log['events'][-1]['repair_count'],2)
+        finally:end_report_ai_memory(token)
+        with self.connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT count(*) AS total FROM inspection_report_ai_memory')
+            self.assertEqual(cur.fetchone()['total'],0)
+
     def test_context_scope_snapshot_and_existing_classification_reuse_logging(self):
         memory = self.new_job()
         token = begin_report_ai_memory(self.connect, memory.task_id, "finance")
