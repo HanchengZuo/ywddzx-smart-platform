@@ -280,3 +280,50 @@ test('storage-only version resets recover the notification device identity witho
   assert.equal(storage.get('web_push_device_key'), original)
   assert.equal(storage.has('token'), false)
 })
+
+test('an account switch during native authorization cannot persist a subscription for the new account', async () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  let grant,
+    current = true
+  const requests = [],
+    registration = {
+      pushManager: {
+        subscribe: () =>
+          new Promise((resolve) => {
+            grant = resolve
+          }),
+      },
+    }
+  const context = {
+    axios: {
+      post: (...args) => {
+        requests.push(args)
+      },
+    },
+    window: { ...capable },
+    navigator: {
+      ...capable.navigator,
+      serviceWorker: { register: async () => registration, ready: Promise.resolve(registration) },
+    },
+    Notification: { permission: 'default' },
+    Uint8Array,
+    Promise,
+    Error,
+    setTimeout,
+    clearTimeout,
+    atob,
+  }
+  vm.createContext(context)
+  vm.runInContext(
+    source + ';globalThis.enable=enableDevice;globalThis.prepare=preparePush',
+    context,
+  )
+  await context.prepare()
+  const pending = context.enable('AQ', { isCurrent: () => current })
+  current = false
+  grant({})
+  await assert.rejects(pending, (error) => error.name === 'AbortError')
+  assert.deepEqual(requests, [])
+})

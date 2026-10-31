@@ -14,6 +14,14 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.3.3 登录后直接开通通知
+
+用户正常登录后，系统自动检查当前设备的浏览器能力、通知权限、有效订阅及服务端配置。满足条件且未订阅时自动显示就地开通窗口；点击“立即开启”直接复用通知中心的 `enableDevice`，在原始点击事件中调用原生订阅接口，不先跳转页面或等待网络，适配 Safari 的用户手势要求。浏览器不允许网站无条件自动授权或绕过本人确认，不能保证登录完成后无需点击就弹出原生权限框。[Apple 的直接点击要求](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)。
+
+已开通设备、明确暂停账号推送、已拒绝权限、不支持或不安全环境不反复请求。iPhone / iPad 尚未安装主屏幕应用时，窗口直接显示添加步骤，不尝试无效订阅。选择“稍后设置”仅延后当前登录会话的提示，不关闭账号推送；不保存登录令牌副本，只用UI指纹在sessionStorage区分会话。失败可就地重试，拒绝后提示先调整系统设置；通知中心的开启、修复与测试仍作为第二道入口。
+
+窗口不会覆盖已打开的业务弹窗；授权期间关闭窗口、退出或切换账号后，过期回调不得给新的账号登记设备或更改推送偏好。此版本不增加依赖、数据库迁移或推送业务类型，也不自动发送测试消息。
+
 ## v12.3.2 通知中心交互与今日安排
 
 通知中心“刷新状态”提供独立同步动画、短暂完成反馈和最近同步时间，修复悬停后浅底白字的问题。后台自动读取不再禁用整页操作；请求、Service Worker 准备、读取订阅和设备锁等待均有超时，失败保留最后成功显示并可重试。Safari 原生授权调用仍直接发生在用户点击中，不放进异步设备锁队列。
