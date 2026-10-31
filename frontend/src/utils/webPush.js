@@ -146,7 +146,15 @@ export function preparePush() {
 }
 export const syncDevice = (options = {}) =>
   deviceOperation((signal) => syncDeviceUnlocked({ ...options, signal }))
-async function syncDeviceUnlocked({ active = true, signal } = {}) {
+function assertDeviceContext(isCurrent) {
+  if (!isCurrent()) {
+    const error = new Error('账号或开通窗口已变化，请在当前账号下重新开启通知。')
+    error.name = 'AbortError'
+    throw error
+  }
+}
+async function syncDeviceUnlocked({ active = true, signal, isCurrent = () => true } = {}) {
+  assertDeviceContext(isCurrent)
   const capability = pushCapability()
   let subscription = null
   const registration = capability.code === 'supported' ? await preparePush() : null
@@ -160,6 +168,7 @@ async function syncDeviceUnlocked({ active = true, signal } = {}) {
         )
       )?.toJSON() || null
   }
+  assertDeviceContext(isCurrent)
   const { data } = await axios.post(
     '/api/notifications/device',
     {
@@ -172,7 +181,8 @@ async function syncDeviceUnlocked({ active = true, signal } = {}) {
   )
   return data.device
 }
-export async function enableDevice(publicKey) {
+export async function enableDevice(publicKey, { isCurrent = () => true } = {}) {
+  assertDeviceContext(isCurrent)
   if (pushCapability().code !== 'supported') throw new Error(pushCapability().hint)
   if (!publicKey) throw new Error('管理员尚未配置 Web Push，暂不能授权订阅。')
   if (!preparedRegistration) throw new Error('设备通知服务尚在准备，请刷新状态后再次点击开启。')
@@ -184,6 +194,7 @@ export async function enableDevice(publicKey) {
       applicationServerKey: publicKeyBytes(publicKey),
     })
   } catch (error) {
+    assertDeviceContext(isCurrent)
     if (error.name === 'InvalidStateError') {
       await (await preparedRegistration.pushManager.getSubscription())?.unsubscribe()
       throw new Error('已清理旧推送身份，请再次点击“开启”完成新的订阅。', { cause: error })
@@ -197,7 +208,8 @@ export async function enableDevice(publicKey) {
       { cause: error },
     )
   }
-  return deviceOperation((signal) => syncDeviceUnlocked({ signal }))
+  assertDeviceContext(isCurrent)
+  return deviceOperation((signal) => syncDeviceUnlocked({ signal, isCurrent }))
 }
 export const disableDevice = () =>
   deviceOperation(async (signal) => {
