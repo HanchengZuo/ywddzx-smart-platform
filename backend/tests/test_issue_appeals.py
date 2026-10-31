@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 from flask import Flask, g, request
 import app as core
@@ -65,7 +66,7 @@ class AppealStageFilteringTests(unittest.TestCase):
                 count,rows,*_=self.cur.execute.call_args_list
                 self.assertIn('i.station_id = %s',count.args[0])
                 self.assertIn('i.station_id = %s',rows.args[0])
-                self.assertEqual(count.args[1],[11]+([stage] if stage else [])+['接地','%接地%','%接地%'])
+                self.assertEqual(count.args[1],[11]+([stage] if stage else [])+['接地']+['%接地%']*5)
                 self.assertEqual(rows.args[1],[7]+count.args[1]+[20,20])
                 self.assertEqual('a.status = %s' in count.args[0],bool(stage))
                 self.conn.commit.assert_called_once();self.conn.rollback.assert_not_called()
@@ -83,6 +84,53 @@ class AppealStageFilteringTests(unittest.TestCase):
         self.user=None
         self.assertEqual(self.client.get('/api/issue-appeals?stage=quality_pending').status_code,401)
 
+    def test_filters_are_parameterized_and_options_retain_original_scope(self):
+        self.cur.fetchone.side_effect=[{'total':1},{'active':3,'area_pending':2,'quality_pending':1,'unread_ended':4}]
+        self.cur.fetchall.side_effect=[[],[],[
+            {'region':'浦东','table_id':1,'table_name':'现场检查表'},
+            {'region':'浦东','table_id':2,'table_name':'视频检查表'},
+        ]]
+        response=self.client.get('/api/issue-appeals',query_string={
+            'archive':1,'region':'浦东','table_id':'2','date_from':'2026-10-01',
+            'date_to':'2026-10-31','outcome':'rejected','unread':'1','include_filters':'1',
+        })
+        self.assertEqual(response.status_code,200,response.json)
+        count,rows,*rest=self.cur.execute.call_args_list
+        self.assertIn('i.station_id = %s',count.args[0])
+        self.assertIn('a.created_at >= %s',count.args[0])
+        self.assertIn('a.created_at < %s',count.args[0])
+        self.assertIn('r.read_version >= a.updated_at',count.args[0])
+        self.assertEqual(count.args[1],[11,'浦东',2,
+            datetime(2026,10,1,tzinfo=core.BEIJING_TZ),
+            datetime(2026,11,1,tzinfo=core.BEIJING_TZ),'rejected',7])
+        self.assertEqual(rows.args[1],[7]+count.args[1]+[20,0])
+        options_query=rest[-1]
+        self.assertIn('i.station_id = %s',options_query.args[0])
+        self.assertEqual(options_query.args[1],[11])
+        self.assertEqual(response.json['filter_options'],{'regions':['浦东'],'tables':[
+            {'id':1,'name':'现场检查表'},{'id':2,'name':'视频检查表'}]})
+        self.assertEqual(response.json['counts']['active'],3)
+
+    def test_invalid_filters_roll_back_without_queries(self):
+        for query in ({'date_from':'2026-02-30'}, {'date_from':'2026-10-02','date_to':'2026-10-01'},
+                      {'date_to':'9999-12-31'}, {'table_id':'1 OR TRUE'}, {'table_id':'0'},
+                      {'table_id':'999999999999'}, {'outcome':'pending'}, {'unread':'yes'}):
+            with self.subTest(query=query):
+                self.cur.reset_mock();self.conn.reset_mock()
+                response=self.client.get('/api/issue-appeals',query_string=query)
+                self.assertEqual(response.status_code,400,response.json)
+                self.cur.execute.assert_not_called()
+                self.conn.rollback.assert_called_once()
+                self.conn.commit.assert_not_called()
+
+    def test_database_failure_does_not_commit_or_leak_details(self):
+        self.cur.execute.side_effect=RuntimeError('private database detail')
+        response=self.client.get('/api/issue-appeals')
+        self.assertEqual(response.status_code,500)
+        self.assertNotIn('private database detail',response.json['error'])
+        self.conn.rollback.assert_called_once()
+        self.conn.commit.assert_not_called()
+
 
 @unittest.skipUnless(os.environ.get('ISSUE_LIFECYCLE_DB_TEST') == '1', 'Requires isolated PostgreSQL')
 class AppealStageDatabaseTests(unittest.TestCase):
@@ -96,7 +144,7 @@ class AppealStageDatabaseTests(unittest.TestCase):
                   CREATE TEMP TABLE inspection_tables(id int,table_name text);
                   CREATE TEMP TABLE issues(id int,station_id int,inspection_id int,inspection_table_id int,
                     description text,standard_id text,photo_path text,status text,created_at timestamptz DEFAULT now());
-                  CREATE TEMP TABLE inspection_issue_appeals(id int,issue_id int,status text,updated_at timestamptz DEFAULT now(),
+                  CREATE TEMP TABLE inspection_issue_appeals(id int,issue_id int,status text,reason text,area_reason text,quality_reason text,updated_at timestamptz DEFAULT now(),
                     created_at timestamptz DEFAULT now(),area_at timestamptz,quality_at timestamptz,
                     area_by int,quality_by int,submitted_by int,review_deadline_at timestamptz,
                     review_started_at timestamptz,review_phase text,review_policy jsonb);
@@ -124,6 +172,26 @@ class AppealStageDatabaseTests(unittest.TestCase):
                 self.assertEqual(response.json['counts'],{'active':27,'area_pending':23,'quality_pending':4,'unread_ended':1,'total':28})
             archived=client.get('/api/issue-appeals?archive=1').json
             self.assertEqual([row['id'] for row in archived['items']],[28])
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE inspection_issue_appeals SET created_at='2026-09-01 00:00:00+08';
+                  UPDATE inspection_issue_appeals SET created_at='2026-10-01 00:00:00+08',reason='边界申诉证据' WHERE id=1;
+                  UPDATE inspection_issue_appeals SET created_at='2026-10-31 23:59:59+08',reason='边界申诉证据' WHERE id=2;
+                  UPDATE inspection_issue_appeals SET created_at='2026-11-01 00:00:00+08',reason='边界申诉证据' WHERE id=3;""")
+            filtered=client.get('/api/issue-appeals',query_string={
+                'stage':'area_pending','region':'浦东','table_id':'1','keyword':'边界申诉证据',
+                'date_from':'2026-10-01','date_to':'2026-10-31','include_filters':'1',
+            })
+            self.assertEqual(filtered.status_code,200,filtered.json)
+            self.assertEqual([row['id'] for row in filtered.json['items']],[2,1])
+            self.assertEqual(filtered.json['total'],2)
+            self.assertEqual(filtered.json['counts']['area_pending'],23)
+            self.assertEqual(filtered.json['filter_options'],{'regions':['浦东'],'tables':[{'id':1,'name':'测试检查表'}]})
+            self.assertEqual(client.get('/api/issue-appeals?region=松金').json['total'],0)
+            ended=client.get('/api/issue-appeals?archive=1&outcome=rejected&unread=1').json
+            self.assertEqual([row['id'] for row in ended['items']],[28])
+            with conn.cursor() as cur:
+                cur.execute('INSERT INTO inspection_issue_appeal_reads SELECT id,7,updated_at FROM inspection_issue_appeals WHERE id=28')
+            self.assertEqual(client.get('/api/issue-appeals?archive=1&outcome=rejected&unread=1').json['total'],0)
         finally:
             conn.rollback();conn.close()
 
@@ -237,6 +305,20 @@ class AppealDatabaseTests(unittest.TestCase):
         self.assertEqual(final['counts']['active'],final['counts']['area_pending']+final['counts']['quality_pending'])
         for identity in ('wrong_station','wrong_area'):
             self.assertNotIn(aid,[item['id'] for item in read('quality_pending',identity)['items']])
+
+    def test_filter_options_cannot_escape_station_or_area_scope(self):
+        self.start()
+        for identity in ('wrong_station', 'wrong_area'):
+            response=self.client.get('/api/issue-appeals?include_filters=1',headers={'X-Test-Identity':identity})
+            self.assertEqual(response.status_code,200,response.json)
+            self.assertEqual(response.json['total'],0)
+            self.assertEqual(response.json['filter_options'],{'regions':[],'tables':[]})
+        for identity in ('station', 'area'):
+            response=self.client.get('/api/issue-appeals?include_filters=1',headers={'X-Test-Identity':identity})
+            self.assertEqual(response.status_code,200,response.json)
+            self.assertIn(self.issue['region'],response.json['filter_options']['regions'])
+            hidden=self.client.get('/api/issue-appeals?region=不存在的测试片区',headers={'X-Test-Identity':identity})
+            self.assertEqual(hidden.json['total'],0)
 
     def state(self):
         self.cur.execute('SELECT status FROM issues WHERE id=%s', (self.issue['id'],))
