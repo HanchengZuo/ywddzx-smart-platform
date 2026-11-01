@@ -139,6 +139,9 @@ def register_web_push(app, *, connect, has_permission):
             capability,permission=data.get('capability'),data.get('permission')
             if capability not in CAPABILITIES or permission not in PERMISSIONS: raise ValueError('设备能力状态无效。')
             subscription=data.get('subscription')
+            if existing and not existing['active'] and data.get('subscribe') is not True:
+                # A passive heartbeat must not undo deletion from another device.
+                subscription=None
             config=configuration()
             if subscription is not None:
                 if not config['ready']: raise ValueError('管理员尚未配置 Web Push 密钥，暂不能订阅。')
@@ -181,6 +184,24 @@ def register_web_push(app, *, connect, has_permission):
         def operation(cur,user):
             cur.execute('SELECT * FROM web_push_devices WHERE user_id=%s ORDER BY last_seen_at DESC',(user['id'],))
             return jsonify(items=[public_device(row) for row in cur.fetchall()])
+        return run(operation)
+
+    @bp.delete('/api/notifications/devices/<uuid:identifier>')
+    def remove_device(identifier):
+        def operation(cur,user):
+            cur.execute('SELECT device_hash FROM web_push_devices WHERE id=%s AND user_id=%s',
+                (str(identifier),user['id']))
+            row=cur.fetchone()
+            if not row: raise PermissionError('此订阅设备不存在或不属于当前账号。')
+            cur.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,1230))',(row['device_hash'],))
+            cur.execute('''UPDATE web_push_devices SET active=FALSE,subscription_cipher=NULL,endpoint_hash=NULL,
+              revision=%s,last_error='' WHERE id=%s AND user_id=%s RETURNING id''',
+              (str(uuid.uuid4()),str(identifier),user['id']))
+            if not cur.fetchone(): raise PermissionError('此订阅设备不存在或不属于当前账号。')
+            cur.execute('''UPDATE web_push_deliveries SET status='skipped',last_error='用户已删除设备订阅',
+              updated_at=now() WHERE device_id=%s AND user_id=%s AND status='queued' ''',
+              (str(identifier),user['id']))
+            return jsonify(success=True)
         return run(operation)
 
     @bp.post('/api/notifications/test')

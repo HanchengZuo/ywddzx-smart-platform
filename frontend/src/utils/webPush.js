@@ -153,7 +153,12 @@ function assertDeviceContext(isCurrent) {
     throw error
   }
 }
-async function syncDeviceUnlocked({ active = true, signal, isCurrent = () => true } = {}) {
+async function syncDeviceUnlocked({
+  active = true,
+  subscribe = false,
+  signal,
+  isCurrent = () => true,
+} = {}) {
   assertDeviceContext(isCurrent)
   const capability = pushCapability()
   let subscription = null
@@ -176,6 +181,7 @@ async function syncDeviceUnlocked({ active = true, signal, isCurrent = () => tru
       capability: capability.code,
       permission: window.Notification?.permission || 'unavailable',
       subscription,
+      subscribe,
     },
     { signal, timeout: 10000 },
   )
@@ -209,34 +215,41 @@ export async function enableDevice(publicKey, { isCurrent = () => true } = {}) {
     )
   }
   assertDeviceContext(isCurrent)
-  return deviceOperation((signal) => syncDeviceUnlocked({ signal, isCurrent }))
+  return deviceOperation((signal) => syncDeviceUnlocked({ signal, isCurrent, subscribe: true }))
 }
-export const disableDevice = () =>
+export const removeDevice = (identifier, { current = false } = {}) =>
   deviceOperation(async (signal) => {
-    await axios.delete('/api/notifications/device', {
-      data: { device_key: currentDeviceKey() },
+    await axios.delete(`/api/notifications/devices/${encodeURIComponent(identifier)}`, {
       signal,
       timeout: 10000,
     })
-    if (navigator.serviceWorker) {
-      const registration = await bounded(
-        navigator.serviceWorker.getRegistration('/push-sw.js'),
-        8000,
-        '浏览器通知状态读取超时，请重试。',
-      )
-      const subscription = await bounded(
-        registration?.pushManager.getSubscription(),
-        8000,
-        '浏览器订阅读取超时，请重试。',
-      )
-      if (subscription)
-        await bounded(
-          subscription.unsubscribe(),
-          8000,
-          '设备推送已停用，浏览器清理超时，请稍后刷新状态。',
-        )
+    if (current) {
+      try {
+        await unsubscribeCurrentDevice()
+      } catch {
+        // Server-side cancellation is authoritative, even if this browser cannot clean up offline.
+      }
     }
   })
+async function unsubscribeCurrentDevice() {
+  if (!navigator.serviceWorker) return
+  const registration = await bounded(
+    navigator.serviceWorker.getRegistration('/push-sw.js'),
+    8000,
+    '浏览器通知状态读取超时，请重试。',
+  )
+  const subscription = await bounded(
+    registration?.pushManager.getSubscription(),
+    8000,
+    '浏览器订阅读取超时，请重试。',
+  )
+  if (subscription)
+    await bounded(
+      subscription.unsubscribe(),
+      8000,
+      '设备推送已停用，浏览器清理超时，请稍后刷新状态。',
+    )
+}
 export const pushDeviceStatus = (device) =>
   !device
     ? '尚未登记'

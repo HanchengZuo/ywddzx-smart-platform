@@ -312,6 +312,46 @@ test('storage-only version resets recover the notification device identity witho
   assert.equal(storage.has('token'), false)
 })
 
+test('remote deletion never touches the current native subscription, current deletion cancels server first', async () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  const calls = []
+  const context = {
+    axios: { delete: async (url) => calls.push(url) },
+    navigator: {
+      serviceWorker: {
+        getRegistration: async () => ({
+          pushManager: {
+            getSubscription: async () => ({ unsubscribe: async () => calls.push('unsubscribe') }),
+          },
+        }),
+      },
+    },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    Promise,
+    Error,
+  }
+  vm.createContext(context)
+  vm.runInContext(source + ';globalThis.remove=removeDevice', context)
+  await context.remove('remote')
+  assert.deepEqual(calls, ['/api/notifications/devices/remote'])
+  await context.remove('current', { current: true })
+  assert.deepEqual(calls, [
+    '/api/notifications/devices/remote',
+    '/api/notifications/devices/current',
+    'unsubscribe',
+  ])
+  calls.length = 0
+  context.axios.delete = async () => {
+    throw Error('network')
+  }
+  await assert.rejects(context.remove('current', { current: true }), /network/)
+  assert.deepEqual(calls, [])
+})
+
 test('an account switch during native authorization cannot persist a subscription for the new account', async () => {
   const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
     .replace("import axios from 'axios'", '')

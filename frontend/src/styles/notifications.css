@@ -314,18 +314,6 @@
   gap: 10px;
   margin-top: 20px;
 }
-.notification-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  font-size: 14px;
-}
-.notification-switch input {
-  width: 18px;
-  height: 18px;
-  accent-color: #238a83;
-}
 .notification-device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
@@ -736,3 +724,29 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.notification-device-delete {
+  color: #a62e39 !important;
+  border: 1px solid #dfadb2 !important;
+  background: #fff5f5 !important;
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.notification-device-delete:hover:not(:disabled) { background: #ffe5e7 !important; }
+.notification-device-delete:disabled { opacity: .55; cursor: wait; }
+.notification-device > .notification-device-delete { align-self: flex-start; margin-top: 8px; }
+.notification-delete-dialog {
+  box-sizing: border-box;
+  width: min(460px, calc(100vw - 32px));
+  color: #25475f;
+  background: #fff;
+  border: 1px solid #bdcedd;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 20px 70px #102b4540;
+}
+.notification-delete-dialog::backdrop { background: #102b4566; }
+.notification-delete-dialog h3 { margin-top: 0; }
+.notification-delete-dialog p { line-height: 1.7; }
+.notification-delete-dialog footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 22px; }
+.notification-delete-dialog button { border: 1px solid #bdcedd; border-radius: 8px; padding: 9px 14px; background: #f5f9fc; color: #315b76; }
