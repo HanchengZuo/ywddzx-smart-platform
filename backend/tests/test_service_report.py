@@ -84,8 +84,27 @@ class ServiceDataTests(unittest.TestCase):
         history=[{'issue_id':2,'action_type':'review_submitted','to_status':'已闭环','created_at':date(2026,9,20)},
             {'issue_id':3,'action_type':'appeal_final_approved','to_status':'已销毁','created_at':date(2026,9,20)}]
         value=cumulative(rows,history,date(2026,10,1),normalize_settings({}))
-        self.assertEqual(value['total_count'],2);self.assertEqual(value['rectified_count'],1);self.assertEqual(value['pending_count'],1)
+        self.assertEqual(value['total_count'],3);self.assertEqual(value['rectified_count'],1);self.assertEqual(value['pending_count'],2)
         self.assertEqual(value['cutoff'],'2026-09-30')
+
+    def test_cumulative_counts_all_open_states_and_excludes_destroyed_legacy_rows(self):
+        from service_report_data import historical_status
+        end=date(2026,10,1)
+        rows=[raw(1,audit_status='pending',audited_at=None,status='待整改'),
+            raw(2,status='待整改'),raw(3,status='待整改',station_manager_signed_at=date(2026,9,3)),
+            raw(4,status='待复核'),raw(5,status='申诉中'),raw(6,status='已闭环'),
+            raw(7,status='已销毁'),raw(8,audit_status='rejected',status='待整改'),
+            raw(9,status='站级无法整改')]
+        self.assertEqual([historical_status(row,[],end) for row in rows],
+            ['待审核','待签名','待整改','待复核','申诉中','已闭环',None,None,'站级无法整改'])
+        value=cumulative(rows,[],end,normalize_settings({}))
+        self.assertEqual((value['total_count'],value['rectified_count'],value['pending_count'],value['unable_count']),(7,1,5,1))
+        # A later closure must not turn a historical pending issue into a closed one.
+        self.assertEqual(historical_status(raw(status='已闭环',review_result='整改通过',review_at=date(2026,10,2)),[],end),'待签名')
+        # Audit resets and rejected appeals take precedence over earlier events.
+        history=[dict(issue_id=1,action_type='audit_changed',to_status='审核通过',created_at=date(2026,9,2)),
+            dict(issue_id=1,action_type='audit_changed',to_status='待审核',created_at=date(2026,9,3))]
+        self.assertEqual(historical_status(rows[0],history,end),'待审核')
 
     def test_strict_ai_reference_validation_and_manual_settings(self):
         context=behavior_context(serialize([raw(),raw(2)],catalog()),[])
@@ -105,6 +124,7 @@ class ServiceDataTests(unittest.TestCase):
             self.assertAlmostEqual(prs.slide_width/prs.slide_height,16/9,places=5)
             text='\n'.join(shape.text for slide in prs.slides for shape in slide.shapes if shape.has_text_frame)
             self.assertNotIn('上月问题整改',text);self.assertNotIn('在上月',text);self.assertIn('2026年09月',text);self.assertIn('2026年09月30日',text)
+            self.assertIn('截至至今问题整改情况',text)
             self.assertEqual(sum(shape.has_chart for slide in prs.slides for shape in slide.shapes),9)
             self.assertTrue(any(shape.has_table for shape in prs.slides[4].shapes))
             for slide in prs.slides:
