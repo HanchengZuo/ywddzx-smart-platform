@@ -15,6 +15,15 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v12.3.6', date: '2026-11-01', title: '通知开通能力检测完善',
+    summary: '登录后先核验实际推送能力，无法开启的环境不再弹出开通提示。',
+    items: [
+      '补齐后台服务、原生通知及订阅接口检查，增加无打扰权限与订阅读取预检；被禁用、检查失败或设备状态不明时不弹开通窗口。',
+      '明确不支持的旧版 iOS 不显示安装开通引导；Windows 按实际浏览器能力判断，不按系统版本一刀切。',
+      '检测不请求授权、不创建订阅、不发送消息；通知中心保留手动开启与实际接收测试入口。'
+    ]
+  },
+  {
     version: 'v12.3.5', date: '2026-11-01', title: '按设备管理通知订阅',
     summary: '简化通知中心，在我的订阅设备中统一删除订阅。',
     items: [

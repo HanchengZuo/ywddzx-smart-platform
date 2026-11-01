@@ -7,9 +7,9 @@ import { pushCapability, pushDeviceStatus } from '../src/utils/webPush.js'
 
 const capable = {
   isSecureContext: true,
-  navigator: { userAgent: 'Windows Chrome', serviceWorker: {} },
+  navigator: { userAgent: 'Windows Chrome', serviceWorker: { register() {} } },
   PushManager: class {},
-  Notification: { permission: 'default' },
+  Notification: { permission: 'default', requestPermission() {} },
   matchMedia: () => ({ matches: false }),
 }
 test('capability detection distinguishes HTTPS, installed iOS, unsupported browsers and real API capability', () => {
@@ -43,6 +43,130 @@ test('capability detection distinguishes HTTPS, installed iOS, unsupported brows
     'supported',
   )
   assert.equal(pushDeviceStatus({ active: false, permission: 'denied' }), '浏览器已拒绝')
+})
+
+test('partial browser APIs and old iOS never invite permission or home-screen installation', () => {
+  for (const env of [
+    { ...capable, navigator: { ...capable.navigator, serviceWorker: {} } },
+    { ...capable, Notification: { permission: 'default' } },
+    { ...capable, Notification: { requestPermission() {} } },
+    { ...capable, PushManager: {} },
+  ])
+    assert.equal(pushCapability(env).code, 'unsupported')
+  for (const userAgent of [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 15_7 like Mac OS X) Version/15.6 Mobile Safari/604.1',
+    'Mozilla/5.0 (iPad; CPU OS 16_3 like Mac OS X) Version/16.3 Mobile Safari/604.1',
+    'Mozilla/5.0 (Macintosh) Version/15.0 Mobile Safari/604.1',
+  ])
+    for (const standalone of [false, true]) {
+      assert.equal(
+        pushCapability({
+          ...capable,
+          navigator: {
+            ...capable.navigator,
+            userAgent,
+            standalone,
+            maxTouchPoints: 5,
+          },
+        }).code,
+        'unsupported',
+      )
+    }
+  assert.equal(
+    pushCapability({
+      ...capable,
+      navigator: {
+        ...capable.navigator,
+        userAgent: 'iPhone; CPU iPhone OS 16_4 like Mac OS X',
+      },
+    }).code,
+    'ios_install_required',
+  )
+})
+
+test('enrollment preflight uses read-only APIs and refuses partial, blocked or failing push implementations', async () => {
+  const source = readFileSync(new URL('../src/utils/webPush.js', import.meta.url), 'utf8')
+    .replace("import axios from 'axios'", '')
+    .replaceAll('export ', '')
+  for (const scenario of [
+    'no-manager',
+    'no-display',
+    'no-subscribe',
+    'no-read',
+    'denied',
+    'unknown',
+    'read-failed',
+    'permission-failed',
+    'prompt',
+    'granted',
+    'no-permission-api',
+  ]) {
+    let nativeCalls = 0
+    let state = scenario
+    const registration = {
+      showNotification: () => {
+        nativeCalls++
+      },
+      pushManager: {
+        subscribe: () => {
+          nativeCalls++
+        },
+        getSubscription: async () => {
+          if (scenario === 'read-failed') throw Error('restricted browser')
+          return null
+        },
+        permissionState: async (options) => {
+          assert.equal(options.userVisibleOnly, true)
+          if (scenario === 'permission-failed') throw Error('disabled by policy')
+          return state
+        },
+      },
+    }
+    if (scenario === 'no-manager') delete registration.pushManager
+    if (scenario === 'no-display') delete registration.showNotification
+    if (scenario === 'no-subscribe') delete registration.pushManager.subscribe
+    if (scenario === 'no-read') delete registration.pushManager.getSubscription
+    if (scenario === 'no-permission-api') delete registration.pushManager.permissionState
+    const context = {
+      window: {
+        ...capable,
+        Notification: {
+          permission: 'default',
+          requestPermission: () => {
+            nativeCalls++
+          },
+        },
+      },
+      navigator: {
+        serviceWorker: { register: async () => registration, ready: Promise.resolve(registration) },
+      },
+      Promise,
+      Error,
+      setTimeout,
+      clearTimeout,
+    }
+    vm.createContext(context)
+    vm.runInContext(
+      source + ';globalThis.check=canPromptForPush;globalThis.prepared=isPushPrepared',
+      context,
+    )
+    assert.equal(
+      await context.check(),
+      ['prompt', 'granted', 'no-permission-api'].includes(scenario),
+      scenario,
+    )
+    assert.equal(nativeCalls, 0, scenario)
+    if (scenario === 'prompt') {
+      state = 'denied'
+      assert.equal(
+        await context.check(),
+        false,
+        'permission is rechecked even after preparation was cached',
+      )
+    }
+    if (scenario.startsWith('no-') && scenario !== 'no-permission-api')
+      assert.equal(context.prepared(), false)
+  }
 })
 
 function workerFixture() {
@@ -181,7 +305,9 @@ test('Safari subscribe enters the native permission flow directly in the click g
   const calls = []
   let gesture = false
   const registration = {
+    showNotification() {},
     pushManager: {
+      getSubscription: async () => null,
       subscribe: () => {
         calls.push(['subscribe', gesture])
         return Promise.reject({ name: 'NotAllowedError' })
@@ -360,7 +486,9 @@ test('an account switch during native authorization cannot persist a subscriptio
     current = true
   const requests = [],
     registration = {
+      showNotification() {},
       pushManager: {
+        getSubscription: async () => null,
         subscribe: () =>
           new Promise((resolve) => {
             grant = resolve

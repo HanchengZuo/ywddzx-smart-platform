@@ -66,6 +66,7 @@ function setup(options = {}) {
     clearTimeout() {},
     pushCapability: () => ({ code: options.capability || 'supported' }),
     isPushPrepared: () => options.ready !== false,
+    canPromptForPush: options.canPromptForPush || (async () => options.promptAvailable !== false),
     syncDevice: options.syncDevice || (async () => ({ active: !!options.active })),
     enableDevice:
       options.enableDevice ||
@@ -184,6 +185,7 @@ test('subscribed, paused, denied, unsupported and unconfigured environments neve
     { capability: 'insecure' },
     { configured: false },
     { ready: false },
+    { promptAvailable: false },
   ]) {
     const s = setup(options)
     await s.state.inspect()
@@ -193,6 +195,30 @@ test('subscribed, paused, denied, unsupported and unconfigured environments neve
       false,
     )
   }
+})
+
+test('failed default-permission device checks stay silent, and a delayed failed preflight cannot reopen a dismissed prompt', async () => {
+  const failed = setup({
+    syncDevice: async () => {
+      throw Error('browser unavailable')
+    },
+  })
+  await failed.state.inspect()
+  assert.equal(failed.state.show.value, false)
+  let release
+  const s = setup({
+    canPromptForPush: () =>
+      new Promise((resolve) => {
+        release = resolve
+      }),
+  })
+  const inspection = s.state.inspect()
+  await flush()
+  s.state.dismiss()
+  release(true)
+  await inspection
+  assert.equal(s.state.show.value, false)
+  assert.equal(s.native.open, false)
 })
 
 test('an allowed browser with a missing subscription can repair in place; iOS outside home screen receives steps only', async () => {
