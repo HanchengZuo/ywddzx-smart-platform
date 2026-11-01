@@ -25,6 +25,7 @@ STAGE_LABELS = {
     'service_phrases': '现场服务规范环节短语',
     'service_behaviors': '现场服务问题行为分类',
     'service_unit_evidence': '各片区环节概括与代表照片',
+    'service_conclusion': '现场服务问题总结与下一步建议',
     'service_examples': '现场服务代表照片选题',
     'safety_requirements': '安全质量规范要求准备',
     'safety_examples': '安全质量分类代表问题选题',

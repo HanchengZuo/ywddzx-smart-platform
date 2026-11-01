@@ -10,3 +10,7 @@ Chapter two follows pages 14-35 of the user-supplied full deck
 9月业务督导中心现场服务巡检报告.pptx, especially the two-column layout on page 17.
 The editable chapter is recreated with native shapes and contain-fit evidence photos,
 ordered by business units and paginated from real category/stage content, not example data.
+
+The last five editable pages follow full-deck pages 36-40: two section dividers,
+two common-issue summary pages, and three recommendations in a rounded dash-dot frame.
+Only validated evidence-grounded AI text is substituted; no example findings are reused.

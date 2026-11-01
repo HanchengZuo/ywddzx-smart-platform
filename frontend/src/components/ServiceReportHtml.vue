@@ -137,6 +137,30 @@
         </article>
       </details>
     </section>
+    <section v-if="report.service_conclusion">
+      <h3>问题、亮点总结</h3>
+      <p>依据本期已确认问题归纳共性表现，不将建议写成已完成成果。</p>
+      <div class="conclusion-themes">
+        <article v-for="(item, index) in report.service_conclusion.themes" :key="index">
+          <span>{{ String(index + 1).padStart(2, '0') }}</span>
+          <h4>{{ item.title }}</h4>
+          <ul>
+            <li v-for="point in item.points" :key="point">{{ point }}</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+    <section v-if="report.service_conclusion">
+      <h3>下一步建议</h3>
+      <article
+        v-for="(item, index) in report.service_conclusion.recommendations"
+        :key="index"
+        class="recommendation"
+      >
+        <h4>（{{ '一二三'[index] }}）{{ item.title }}</h4>
+        <p>{{ item.content }}</p>
+      </article>
+    </section>
   </div>
 </template>
 <script setup>
@@ -149,6 +173,35 @@ const findIssue = (id) => props.report.service_issues?.find((row) => row.issue_i
   display: grid;
   gap: 22px;
   color: #233f55;
+}
+.conclusion-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 20px;
+}
+.conclusion-themes article {
+  border: 1px solid #d7e4ed;
+  border-radius: 12px;
+  padding: 20px;
+  background: #f5f9fc;
+}
+.conclusion-themes article > span {
+  color: #337a97;
+  font-weight: 700;
+}
+.conclusion-themes h4,
+.recommendation h4 {
+  color: #143f5c;
+  line-height: 1.6;
+}
+.conclusion-themes li {
+  margin: 10px 0;
+  line-height: 1.8;
+}
+.recommendation + .recommendation {
+  border-top: 1px solid #d7e4ed;
+  margin-top: 20px;
+  padding-top: 12px;
 }
 .unit-group img {
   width: min(100%, 300px);
