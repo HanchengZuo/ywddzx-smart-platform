@@ -27593,6 +27593,7 @@ def generate_on_site_service_report_job(task_id,user_id,report_month,snapshot_sc
     from service_report_data import serialize,chosen,cumulative,build_report
     from service_report_analysis import load_settings,normalize_settings,ensure_phrases,behaviors,examples,category_groups
     from service_report_units import unit_discoveries
+    from service_report_conclusion import generate_conclusion
     start,end=resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE,report_month,generation_options)
     update_inspection_report_job(task_id,'running',12,'正在读取现场服务有效规范、视频与现场问题数据')
     conn=get_db_connection();cur=conn.cursor()
@@ -27624,8 +27625,11 @@ def generate_on_site_service_report_job(task_id,user_id,report_month,snapshot_sc
     update_inspection_report_job(task_id,'running',84,'正在准备各片区问题发现的环节概括和代表照片，未变化证据复用历史结果')
     service_progress[0]=84
     report['unit_discoveries']=unit_discoveries(get_db_connection,None,selected,phrases,settings,True,usage)
+    service_progress[0]=88
+    update_inspection_report_job(task_id,'running',88,'正在汇总共性问题与下一步建议，证据未变时复用历史AI结果')
+    report['service_conclusion']=generate_conclusion(get_db_connection,report,usage)
     report['summary']['generated_at']=datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')
-    update_inspection_report_job(task_id,'running',90,'现场服务第一章与各片区问题发现已编排，正在保存')
+    update_inspection_report_job(task_id,'running',90,'现场服务四章报告已编排，正在保存')
     conn=get_db_connection();cur=conn.cursor()
     try:
         user=get_user_by_id(cur,user_id)

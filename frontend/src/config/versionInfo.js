@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.4.2', date: '2026-11-02', title: '现场服务报告完善与配置体验升级',
+    summary: '补齐问题总结与下一步建议五页，优化专属配置留白及片区证据弹窗。',
+    items: ['参考完整版第36至40页完成章节过渡、四项共性问题和三项建议，保持原生可编辑及16:9排版。',
+      'AI总结仅基于已核验问题及环节概括，引用范围严格校验，证据不变复用历史并保留生成日志。',
+      '配置面板增加四周间距与底部留白；片区、类别与证据区使用齐高面板，移动端使用层级选择器。'] },
   { version: 'v12.4.1', date: '2026-11-01', title: '现场服务报告各片区问题发现',
     summary: '新增按片区、检查类别与环节分层的第二章，双栏虚线分隔、自适应续页与证据照片。',
     items: ['按既定片区单位顺序汇总现场与视频数据，统计数量和站点，AI概括环节问题并选择代表照片。',

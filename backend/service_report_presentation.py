@@ -17,7 +17,7 @@ from safety_report_presentation import photo,textbox
 from safety_report_data import unit_label
 
 TEMPLATE_FILE=Path(__file__).parent/'assets/service_report_template/template.pptx'
-RENDERER_VERSION='service-native-1241-1'
+RENDERER_VERSION='service-native-1242-1'
 FONT='Microsoft YaHei'
 
 def walk(shapes):
@@ -235,6 +235,8 @@ def build_service_presentation(report,output_path,storage_root):
     # Chapter one stays intact; chapter two shares the exact exported/previewed artifact.
     from service_report_unit_presentation import add_unit_chapter
     add_unit_chapter(prs,report,root)
+    from service_report_conclusion_presentation import add_conclusion
+    add_conclusion(prs,report)
     for slide in prs.slides:
         if slide.has_notes_slide:slide.notes_slide.notes_text_frame.text=''
         used={value for node in slide._element.iter() for key,value in node.attrib.items()

@@ -46,6 +46,7 @@
       <dialog
         ref="dialog"
         class="service-config-dialog"
+        :class="{ 'units-dialog': panel === 'units' }"
         aria-labelledby="service-config-title"
         @cancel.prevent="close"
       >
@@ -70,7 +71,7 @@
           可查看和保存人工调整；调用 AI 需要生成AI报告权限。
         </p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <div v-if="data" class="dialog-body">
+        <div v-if="data" class="dialog-body" :class="{ 'units-dialog-body': panel === 'units' }">
           <template v-if="panel === 'source'">
             <aside>
               <h4>选择站点范围</h4>
@@ -168,6 +169,7 @@
             :issues="data.issues"
             :overrides="draft.unit_evidence"
             :resolve-image="resolveImage"
+            :disabled="working || busy"
             @edit="editUnit"
             @photo="$emit('photo', $event)"
           />
@@ -542,14 +544,17 @@ onBeforeUnmount(() => {
 .service-config {
   color: #243d54;
   display: grid;
-  gap: 18px;
+  gap: 22px;
+  padding: 24px 24px 30px;
+  background: #f4f8fb;
+  box-sizing: border-box;
 }
 .source-panel,
 .config-grid article {
   border: 1px solid #cadbe7;
-  background: #f8fbfe;
+  background: #ffffff;
   border-radius: 16px;
-  padding: 22px;
+  padding: 24px;
 }
 .source-panel header {
   display: flex;
@@ -577,9 +582,13 @@ p {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   margin: 22px 0;
-  border-block: 1px solid #d8e4ec;
-  padding: 18px 0;
-  gap: 16px;
+  gap: 12px;
+}
+.metrics > div {
+  padding: 15px;
+  background: #f0f6fa;
+  border: 1px solid #dce8ef;
+  border-radius: 12px;
 }
 .metrics span {
   display: block;
@@ -597,6 +606,7 @@ p {
   color: #245f57;
   padding: 12px 16px;
   border-radius: 9px;
+  margin-bottom: 0;
 }
 .config-grid {
   display: grid;
@@ -606,6 +616,12 @@ p {
 .config-grid article {
   display: flex;
   flex-direction: column;
+  border-top: 3px solid #287c91;
+  box-shadow: 0 4px 14px #234a6510;
+}
+.config-grid article > button {
+  align-self: flex-start;
+  margin-top: 15px;
 }
 .config-grid article p {
   flex: 1;
@@ -645,6 +661,16 @@ p {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+}
+.service-config-dialog.units-dialog {
+  width: min(1320px, calc(100vw - 32px));
+  height: min(900px, 92dvh);
+}
+.dialog-body.units-dialog-body {
+  display: block;
+  overflow: hidden;
+  max-height: none;
+  background: #edf3f8;
 }
 .dialog-head,
 .dialog-toolbar,
@@ -895,6 +921,36 @@ p {
   gap: 8px;
 }
 @media (max-width: 768px) {
+  .service-config {
+    padding: 16px 14px 22px;
+    gap: 16px;
+  }
+  .source-panel,
+  .config-grid article {
+    padding: 18px;
+  }
+  .metrics {
+    gap: 8px;
+    margin: 18px 0;
+  }
+  .metrics > div {
+    padding: 10px;
+  }
+  .metrics strong {
+    font-size: 24px;
+  }
+  .units-dialog .dialog-head h3 {
+    font-size: 18px;
+    line-height: 1.45;
+  }
+  .units-dialog .dialog-toolbar {
+    padding: 12px 16px;
+    gap: 10px;
+  }
+  .units-dialog .dialog-footer {
+    padding: 12px 16px;
+    gap: 10px;
+  }
   .metrics {
     grid-template-columns: repeat(3, 1fr);
   }

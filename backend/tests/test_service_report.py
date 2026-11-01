@@ -23,6 +23,19 @@ from service_report_presentation import build_service_presentation,TEMPLATE_FILE
 from service_report_http import register_service_report
 from safety_report_data import UNIT_ORDER
 from service_report_units import hierarchy,unit_discoveries,evidence_context
+from service_report_conclusion import generate_conclusion,context_for
+
+def conclusion_report():
+    report=fixture_report(count=6)
+    report['unit_discoveries']=hierarchy(report['service_issues'],{})
+    for unit in report['unit_discoveries']:
+        for category in unit['categories']:
+            for group in category['groups']:group.update(summary='顾客使用手机未被及时劝阻。',photo_ids=[])
+    return report
+
+def conclusion_payload(ids):
+    return {'themes':[{'title':'现场服务标准执行需持续关注','points':['顾客使用手机时未被及时劝阻。','应结合本期检查记录持续核验服务动作执行情况。'],'issue_ids':ids[:1]} for _ in range(4)],
+        'recommendations':[{'title':'聚焦服务标准与现场秩序','content':'建议对照已确认的问题开展复查，关注现场劝阻和服务动作落实，持续跟进整改与复核。','issue_ids':ids[:1]} for _ in range(3)]}
 
 def catalog():
     return [{'key':f'{mode}:{i}','mode':mode,'external_standard_id':str(i),
@@ -46,6 +59,36 @@ def fixture_report(photo='',count=36):
         {'video:10001':'礼貌劝阻','onsite:11001':'油罐区及卸油区'},analysis,photos,behavior_photos)
 
 class ServiceDataTests(unittest.TestCase):
+    def test_conclusion_validation_rejects_outside_references_and_overflow(self):
+        report=conclusion_report();context=context_for(report);payload=conclusion_payload([1])
+        self.assertEqual(validate({'items':{'R1':payload}},context)['items']['R1'],payload)
+        for path in ('count','reference','content'):
+            bad=copy.deepcopy(payload)
+            if path=='count':bad['themes'].pop()
+            elif path=='reference':bad['themes'][0]['issue_ids']=[99999]
+            else:bad['recommendations'][0]['content']='长'*221
+            with self.assertRaises(ValueError):validate({'items':{'R1':bad}},context)
+        with patch('service_report_conclusion.run_ai',side_effect=AssertionError('No paid call for no data')):
+            self.assertFalse(generate_conclusion(None,fixture_report(count=0))['generated'])
+
+    def test_final_five_pages_are_editable_bounded_and_preserve_prior_chapters(self):
+        report=conclusion_report()
+        with tempfile.TemporaryDirectory() as directory:
+            first=Path(directory)/'before.pptx';last=Path(directory)/'after.pptx'
+            build_service_presentation(report,first,directory);old=Presentation(first)
+            report['service_conclusion']=conclusion_payload([1]);build_service_presentation(report,last,directory);prs=Presentation(last)
+            self.assertEqual(len(prs.slides),len(old.slides)+5)
+            text=lambda slides:[[s.text for s in slide.shapes if s.has_text_frame] for slide in slides]
+            self.assertEqual(text(old.slides),text(list(prs.slides)[:-5]))
+            for slide in list(prs.slides)[-5:]:
+                for shape in slide.shapes:
+                    self.assertLessEqual(shape.left+shape.width,prs.slide_width+10000)
+                    self.assertLessEqual(shape.top+shape.height,prs.slide_height+10000)
+            ending=''.join(''.join(items) for items in text(list(prs.slides)[-5:])).replace('\n','')
+            self.assertIn('问题总结',ending);self.assertIn('下一步建议',ending)
+            self.assertIn(report['service_conclusion']['recommendations'][0]['content'],ending)
+            self.assertNotIn('黄金加油六部曲',ending)
+            self.assertNotIn('…',ending)
     def test_unit_hierarchy_and_strict_summary_photo_references(self):
         rows=serialize([raw(2,'onsite'),raw(1,issue_photo='photo.jpg'),raw(3,region=UNIT_ORDER[0])],catalog())
         units=hierarchy(rows,{'video:10001':'礼貌劝阻'})
@@ -282,6 +325,23 @@ class ServicePersistenceTests(unittest.TestCase):
             self.assertEqual(client.chat.completions.create.call_count,2)
             last=json.loads(client.chat.completions.create.call_args.kwargs['messages'][1]['content'])
             self.assertEqual(len(last['items']),1)
+
+    def test_conclusion_memory_survives_repeated_generations_and_validates_before_saving(self):
+        report=conclusion_report();client=MagicMock();client.with_options.return_value=client
+        payload={'items':{'R1':conclusion_payload([1])}}
+        client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            first=generate_conclusion(self.connect,report)
+            report['month_label']='日期标签变化不影响证据'
+            self.assertEqual(generate_conclusion(self.connect,report),first)
+            self.assertEqual(client.chat.completions.create.call_count,1)
+            report['unit_discoveries'][0]['categories'][0]['groups'][0]['summary']='人工调整了环节表现'
+            payload['items']['R1']['themes'][0]['issue_ids']=[999]
+            client.chat.completions.create.return_value.choices[0].message.content=json.dumps(payload)
+            with self.assertRaises(ValueError):generate_conclusion(self.connect,report)
+            with self.connect() as conn,conn.cursor() as cur:
+                cur.execute("SELECT count(*) AS n FROM inspection_report_ai_memory WHERE operation='service_conclusion'")
+                self.assertEqual(cur.fetchone()['n'],1)
     def test_ai_cache_reuses_across_calls_invalid_results_not_saved_and_scene_routed(self):
         client=MagicMock();client.with_options.return_value=client
         client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"items":{"R1":"礼貌劝阻"}}'))])
