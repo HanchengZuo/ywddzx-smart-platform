@@ -92,7 +92,13 @@
 import { computed, ref, onMounted, onBeforeUnmount, nextTick, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
-import { pushCapability, syncDevice, enableDevice, isPushPrepared } from '../utils/webPush'
+import {
+  pushCapability,
+  syncDevice,
+  enableDevice,
+  isPushPrepared,
+  canPromptForPush,
+} from '../utils/webPush'
 
 const props = defineProps({ userId: [String, Number] })
 const router = useRouter()
@@ -202,14 +208,16 @@ async function inspect(force = false) {
       }
       return
     }
-    // Unknown server state does not prove that an already-authorized device needs repair.
-    if (
-      (device.status !== 'fulfilled' || !device.value) &&
-      permission.value === 'granted' &&
-      !force
-    )
-      return
+    // Neither failed metadata checks nor partial browser APIs prove that enrollment is possible.
+    if (device.status !== 'fulfilled' || !device.value) return
     if (!ready.value && !force) return
+    const available = await canPromptForPush()
+    if (!current()) return
+    if (!available) {
+      ready.value = false
+      if (show.value) closePrompt()
+      return
+    }
     mode.value = 'enable'
   }
   show.value = true

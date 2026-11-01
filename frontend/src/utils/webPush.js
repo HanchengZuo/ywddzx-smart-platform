@@ -12,12 +12,33 @@ export function pushCapability(env = window) {
       code: 'insecure',
       hint: '需要 HTTPS 安全连接（本机 localhost 可测试），普通 HTTP 无法接收推送。',
     }
+  const iosVersion =
+    ios &&
+    (ua.match(/(?:CPU (?:iPhone )?OS|iPhone OS) (\d+)[._](\d+)/) ||
+      ua.match(/Version\/(\d+)\.(\d+)/))
+  if (
+    iosVersion &&
+    (Number(iosVersion[1]) < 16 || (Number(iosVersion[1]) === 16 && Number(iosVersion[2]) < 4))
+  )
+    return {
+      code: 'unsupported',
+      hint: '当前 iPhone / iPad 系统版本不支持 Web Push，请升级至 iOS / iPadOS 16.4 及以上。',
+    }
+  if (typeof env.navigator?.serviceWorker?.register !== 'function')
+    return {
+      code: 'unsupported',
+      hint: '当前浏览器无法运行推送所需的后台服务，请使用受支持的新版浏览器。',
+    }
   if (ios && !standalone)
     return {
       code: 'ios_install_required',
       hint: 'iPhone / iPad 请升级至 iOS 16.4 及以上，在 Safari 中打开本网站，点“分享”→“添加到主屏幕”，再从主屏幕图标打开并开启通知。',
     }
-  if (!env.navigator?.serviceWorker || !env.PushManager || !env.Notification)
+  if (
+    typeof env.PushManager !== 'function' ||
+    typeof env.Notification?.requestPermission !== 'function' ||
+    !['default', 'granted', 'denied'].includes(env.Notification?.permission)
+  )
     return {
       code: 'unsupported',
       hint: '当前浏览器未提供完整 Web Push 能力。微信、部分华为及其他品牌内置浏览器可能不支持，请尝试系统支持的 Chrome、Edge、Firefox 或 Safari。',
@@ -136,6 +157,12 @@ export function preparePush() {
   if (!preparation)
     preparation = readyRegistration()
       .then((registration) => {
+        if (
+          typeof registration?.showNotification !== 'function' ||
+          typeof registration?.pushManager?.subscribe !== 'function' ||
+          typeof registration?.pushManager?.getSubscription !== 'function'
+        )
+          throw new Error('当前浏览器没有完整的消息推送能力，无法开启通知。')
         preparedRegistration = registration
         return registration
       })
@@ -143,6 +170,27 @@ export function preparePush() {
         preparation = null
       })
   return preparation
+}
+export async function canPromptForPush() {
+  if (pushCapability().code !== 'supported' || window.Notification.permission === 'denied')
+    return false
+  try {
+    const registration = await preparePush()
+    // These read-only checks must never subscribe, show a test message or request permission.
+    if (typeof registration.pushManager.permissionState === 'function') {
+      const permission = await bounded(
+        registration.pushManager.permissionState({ userVisibleOnly: true }),
+        5000,
+        '推送权限检测超时。',
+      )
+      if (!['prompt', 'granted'].includes(permission)) return false
+    }
+    await bounded(registration.pushManager.getSubscription(), 5000, '推送能力检测超时。')
+    return true
+  } catch {
+    // Unknown or restricted environments must not invite an impossible enrollment.
+    return false
+  }
 }
 export const syncDevice = (options = {}) =>
   deviceOperation((signal) => syncDeviceUnlocked({ ...options, signal }))

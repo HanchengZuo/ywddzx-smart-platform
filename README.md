@@ -14,6 +14,10 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.3.6 通知开通能力检测完善
+
+登录后的自动开通提示增加实际接口和只读权限预检；接口不完整、权限禁用、检测失败及明确不支持的旧版 iOS 均保持静默。不按 Windows 版本屏蔽，按浏览器实际能力判断。不在预检期间请求权限、创建订阅或发送测试消息，通知中心保留手动入口；详见下方“登录后直接开通通知”的检测与边界说明。本版无数据库迁移。
+
 ## v12.3.5 按设备管理订阅
 
 通知中心移除账号推送偏好和停用当前设备按钮，统一在“我的订阅设备”卡片中删除订阅（含确认弹窗）。`DELETE /api/notifications/devices/<uuid>` 仅允许删除自己的设备：在原设备同步锁内撤销有效状态、清除订阅密钥、更新revision并跳过尚未发送队列，保留设备和发送记录供审计。已送达或发送途中的推送无法撤回。当前设备同时尽力清理浏览器原生订阅；远程设备无需在线即可停止后续发送。
@@ -25,6 +29,8 @@
 点击 Web Push 通知后携带消息 UUID 进入通知中心；服务端仅在当前账号收件箱内按原分页顺序查找消息所在页，前端自动切页、滚动及高亮“本次通知”。无需逐页查找，后台刷新不反复抢占阅读位置，不自动标为已读或确认收到。登录前点击会保留定位目标，登录后继续定位；目标已不存在或不属于当前账号时提示，不返回其他用户正文。历史推送可从原有受控消息标签恢复定位；任意外部URL或非法标识不能用于跳转。本版无数据库迁移。
 
 ## v12.3.3 登录后直接开通通知
+
+自动提示前还会核验完整的注册、授权和推送接口，实际 Service Worker 注册对象必须提供 `showNotification`、`subscribe` 和 `getSubscription`。无打扰预检只读取订阅及可用的 `permissionState`，不申请权限、不创建订阅、不发送测试消息；被拒绝、检测失败或无法确认设备状态时不弹开通窗口。明确低于 iOS / iPadOS 16.4 的系统也不显示无法完成的安装引导。Windows 不按系统版本一刀切，而按当前浏览器实际能力判断。系统级通知总开关、专注模式及厂商推送网络未必能被网页识别，不能保证通过检测就一定实收，仍需用户在通知中心发测试消息确认。参考：[WebKit iOS Web Push 支持条件](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)、[MDN permissionState](https://developer.mozilla.org/en-US/docs/Web/API/PushManager/permissionState)。
 
 用户正常登录后，系统自动检查当前设备的浏览器能力、通知权限、有效订阅及服务端配置。满足条件且未订阅时自动显示就地开通窗口；点击“立即开启”直接复用通知中心的 `enableDevice`，在原始点击事件中调用原生订阅接口，不先跳转页面或等待网络，适配 Safari 的用户手势要求。浏览器不允许网站无条件自动授权或绕过本人确认，不能保证登录完成后无需点击就弹出原生权限框。[Apple 的直接点击要求](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)。
 
