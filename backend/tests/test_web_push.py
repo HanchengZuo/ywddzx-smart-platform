@@ -166,7 +166,7 @@ class PushDatabaseTests(unittest.TestCase):
 
     def register(self,user=2,key=None,suffix='test'):
         response=self.call('/api/notifications/device','post',user,json={'device_key':key or self.key,
-            'capability':'supported','permission':'granted','subscription':subscription(suffix)})
+            'capability':'supported','permission':'granted','subscription':subscription(suffix),'subscribe':True})
         self.assertEqual(response.status_code,200,response.json)
         return response.json['device']
 
@@ -243,6 +243,30 @@ class PushDatabaseTests(unittest.TestCase):
         self.register(key=b64(bytes(range(1,33))),suffix='replacement')
         self.assertEqual(len([d for d in self.call('/api/notifications/devices',user=2).json['items'] if d['active']]),1)
         self.assertEqual(len(self.call('/api/management/notifications/users/2/devices').json['items']),2)
+
+    def test_delete_device_preserves_history_cancels_queue_and_requires_explicit_reenrollment(self):
+        first=self.register()
+        second=self.register(key=b64(bytes(range(1,33))),suffix='second')
+        self.dispatch()
+        path='/api/notifications/devices/'+first['id']
+        self.assertEqual(self.client.delete(path).status_code,401)
+        self.assertEqual(self.call(path,'delete',user=3).status_code,403)
+        self.assertEqual(self.call(path,'delete',user=2).status_code,200)
+        self.assertEqual(self.call(path,'delete',user=2).status_code,200)
+        with self.connect() as conn,conn.cursor() as cur:
+            cur.execute('SELECT * FROM web_push_devices WHERE id=%s',(first['id'],))
+            row=cur.fetchone()
+            self.assertFalse(row['active']);self.assertIsNone(row['subscription_cipher']);self.assertIsNone(row['endpoint_hash'])
+            cur.execute('SELECT status FROM web_push_deliveries WHERE device_id=%s',(first['id'],))
+            self.assertEqual(cur.fetchone()['status'],'skipped')
+            cur.execute('SELECT active FROM web_push_devices WHERE id=%s',(second['id'],))
+            self.assertTrue(cur.fetchone()['active'])
+        # A browser may still have its native endpoint after remote cancellation.
+        heartbeat=self.call('/api/notifications/device','post',user=2,json={
+            'device_key':self.key,'capability':'supported','permission':'granted','subscription':subscription()})
+        self.assertFalse(heartbeat.json['device']['active'])
+        self.assertTrue(self.register()['active'])
+        self.assertEqual(self.call('/api/notifications',user=2).json['total'],1)
 
     def test_ownership_rebind_skips_old_account_jobs_and_scopes_personal_inbox(self):
         original=self.register();identifier=self.dispatch()

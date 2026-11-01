@@ -15,6 +15,14 @@ export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
   {
+    version: 'v12.3.5', date: '2026-11-01', title: '按设备管理通知订阅',
+    summary: '简化通知中心，在我的订阅设备中统一删除订阅。',
+    items: [
+      '移除当前设备的账号推送偏好和停用入口，订阅设备卡片提供删除确认，可取消本账号任一设备订阅。',
+      '删除保留发送历史并停止后续推送；自动同步不会重新启用已取消的设备，须在对应设备主动开启恢复。'
+    ]
+  },
+  {
     version: 'v12.3.4', date: '2026-11-01', title: '推送消息精准定位',
     summary: '点击系统通知后直接定位通知中心的对应消息，跨页自动查找并高亮。',
     items: [

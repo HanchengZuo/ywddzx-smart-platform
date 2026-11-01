@@ -53,7 +53,7 @@ function setup(overrides = {}) {
     currentDeviceKey: () => 'fixture-key',
     newRequestId: () => 'fixture-request',
     enableDevice: async () => ({ id: 'current', active: true }),
-    disableDevice: async () => {},
+    removeDevice: async () => {},
     syncDevice: async () => ({ id: 'current', active: true }),
     axios: {
       get: async (url, options) => {
@@ -189,6 +189,35 @@ test('refresh has independent bounded progress and completion feedback, then ret
   assert.ok(s.state.lastUpdated.value)
   s.timers.at(-1)()
   assert.equal(s.state.refreshDone.value, false)
+})
+
+test('device cards delete a selected subscription; only current-device removal requests native cleanup', async () => {
+  const removed = []
+  const s = setup({ removeDevice: async (...args) => removed.push(args) })
+  s.state.device.value = { id: 'current', active: true }
+  s.state.deletingDevice.value = { id: 'other-computer' }
+  await s.state.deleteSubscription()
+  assert.deepEqual(removed[0], ['other-computer', { current: false }])
+  assert.equal(s.state.device.value.active, true)
+  assert.equal(s.state.deletingDevice.value, null)
+  s.state.deletingDevice.value = { id: 'current' }
+  await s.state.deleteSubscription()
+  assert.deepEqual(removed[1], ['current', { current: true }])
+  assert.equal(s.state.device.value.active, false)
+  assert.match(s.state.notice.value, /已删除/)
+})
+
+test('failed device cancellation leaves the confirmation open and permits retry', async () => {
+  const s = setup({
+    removeDevice: async () => {
+      throw Error('取消失败')
+    },
+  })
+  s.state.deletingDevice.value = { id: 'current' }
+  await s.state.deleteSubscription()
+  assert.equal(s.state.deletingDevice.value.id, 'current')
+  assert.equal(s.state.busy.value, false)
+  assert.match(s.state.error.value, /取消失败/)
 })
 
 test('background reads do not disable actions and active subscriptions deduplicate by identity, not browser label', async () => {

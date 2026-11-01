@@ -44,14 +44,6 @@
           <h3>当前设备</h3>
           <p>同一浏览器资料仅为最后登录的账号接收推送，其他设备不受影响。</p>
         </div>
-        <label class="notification-switch"
-          ><input
-            type="checkbox"
-            :checked="enabled"
-            :disabled="busy || refreshing"
-            @change="setEnabled($event.target.checked)"
-          />账号推送偏好 {{ enabled ? '允许' : '暂停' }}</label
-        >
       </header>
       <div class="notification-device-state">
         <span :class="['notification-dot', { ready: device?.active }]" />
@@ -65,7 +57,7 @@
         </div>
       </div>
       <p v-if="!configured" class="notification-error" role="status">
-        服务器尚未完成推送身份配置，暂无法开通。上面的账号开关仅表示接收偏好，不代表当前设备已经订阅。请管理员完成配置后刷新状态。
+        服务器尚未完成推送身份配置，暂无法开通。请管理员完成配置后刷新状态，再为当前设备开启订阅。
       </p>
       <div class="notification-guidance">
         <strong>{{
@@ -92,9 +84,7 @@
         >
           开启 / 修复当前设备订阅</button
         ><button :disabled="busy || refreshing || !device?.active || !enabled" @click="testPush">
-          发送测试通知</button
-        ><button :disabled="busy || refreshing || !device?.active" @click="disable">
-          停用当前设备
+          发送测试通知
         </button>
       </div>
     </section>
@@ -105,7 +95,7 @@
             我的订阅设备 <small>{{ devices.length }}</small>
           </h3>
           <p>
-            只展示有效订阅，同一浏览器订阅不重复显示。不同电脑或浏览器仍独立保留；离线设备权限以最近上报为准。
+            只展示有效订阅。删除后该设备不再接收新推送，其他设备不受影响；如需恢复，请在对应设备主动开启订阅。
           </p>
         </div>
       </header>
@@ -120,12 +110,38 @@
           ><small>最近连接 {{ formatTime(entry.last_seen_at) }}</small
           ><small>最近发送 {{ formatTime(entry.last_sent_at) }}</small>
           <p v-if="entry.last_error">{{ entry.last_error }}</p>
+          <button
+            class="notification-device-delete"
+            :disabled="busy || refreshing"
+            @click="deletingDevice = entry"
+          >
+            删除订阅
+          </button>
         </article>
         <p v-if="!devices.length" class="notification-muted">
           暂无有效订阅设备，请在当前设备开启通知。停用及历史上报仍保留在管理记录中。
         </p>
       </div>
     </section>
+    <Teleport to="body">
+      <dialog
+        ref="deleteDialog"
+        class="notification-delete-dialog"
+        aria-labelledby="notification-delete-title"
+        @cancel.prevent="deletingDevice = null"
+      >
+        <h3 id="notification-delete-title">删除设备订阅？</h3>
+        <p>{{ deletingDevice?.platform }} · {{ deletingDevice?.browser }}</p>
+        <p>删除后此设备将不再接收新推送，其他设备不受影响。已经送达的通知不会撤回。</p>
+        <footer>
+          <button :disabled="busy" @click="deletingDevice = null">取消</button>
+          <button class="notification-device-delete" :disabled="busy" @click="deleteSubscription">
+            {{ busy ? '正在删除…' : '确认删除' }}
+          </button>
+        </footer>
+        <p v-if="error" role="alert" class="notification-error">{{ error }}</p>
+      </dialog>
+    </Teleport>
     <section class="notification-surface">
       <header class="notification-section-title">
         <div>
@@ -205,12 +221,19 @@ import {
   pushDeviceStatus,
   currentDeviceKey,
   enableDevice,
-  disableDevice,
+  removeDevice,
   syncDevice,
   newRequestId,
 } from '../utils/webPush'
 import '../styles/notifications.css'
 const route = useRoute()
+const deletingDevice = ref(null),
+  deleteDialog = ref(null)
+watch(deletingDevice, async (value) => {
+  await nextTick()
+  if (value && !deleteDialog.value?.open) deleteDialog.value?.showModal()
+  else if (!value) deleteDialog.value?.close()
+})
 const focusedMessage = ref('')
 let resolvedMessage = ''
 const businessPath = (item) =>
@@ -340,17 +363,17 @@ const enable = () =>
     await read()
     notice.value = '当前设备已订阅，请发送测试通知确认实际接收。'
   })
-const disable = () =>
+const deleteSubscription = () =>
   action(async () => {
-    await disableDevice()
-    device.value = await syncDevice({ active: false })
+    const selected = deletingDevice.value
+    if (!selected) return
+    const current = selected.id === device.value?.id
+    await removeDevice(selected.id, { current })
+    if (!alive) return
+    if (current) device.value = { ...device.value, active: false }
+    deletingDevice.value = null
     await read()
-    notice.value = '已停用当前设备；其他设备不受影响。'
-  })
-const setEnabled = (value) =>
-  action(async () => {
-    await axios.put('/api/notifications/preference', { enabled: value }, { timeout: 10000 })
-    await read()
+    notice.value = '已删除该设备订阅，其他设备不受影响。'
   })
 const testPush = () =>
   action(async () => {
