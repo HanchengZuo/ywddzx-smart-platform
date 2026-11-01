@@ -104,6 +104,9 @@ class PptCompatibilityTests(unittest.TestCase):
                 with self.subTest(kind=kind):
                     from tests.test_safety_report import fixture_report
                     payload = fixture_report() if kind == 'safety_quality' else report
+                    if kind == 'on_site_service':
+                        from tests.test_service_report import fixture_report as service_fixture
+                        payload = service_fixture()
                     directory,manifest=build_artifact(kind,payload,root)
                     calls=renderer.call_count
                     reused,again=build_artifact(kind,payload,root)

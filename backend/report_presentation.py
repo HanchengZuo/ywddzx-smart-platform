@@ -127,6 +127,9 @@ class InspectionReportPresentation:
         self._image_aspect_cache = {}
 
     def build(self, output_path):
+        if self.report_type == 'on_site_service':
+            from service_report_presentation import build_service_presentation
+            return build_service_presentation(self.report, output_path, self.storage_root)
         if self.report_type == 'safety_quality':
             from safety_report_presentation import build_safety_presentation
             return build_safety_presentation(self.report, output_path, self.storage_root)
@@ -143,7 +146,6 @@ class InspectionReportPresentation:
         builders = {
             "quality_measurement": self._build_quality_measurement,
             "finance": self._build_finance,
-            "on_site_service": self._build_on_site_service,
             "equipment_facilities": self._build_equipment_facilities,
             "non_oil": self._build_non_oil,
         }
@@ -1997,45 +1999,6 @@ class InspectionReportPresentation:
         self._add_analysis_cards("问题分析", deep.get("problem_analysis") or [], ai=True)
         self._add_analysis_cards("工作建议", deep.get("work_suggestions") or [], ai=True)
 
-    def _build_on_site_service(self):
-        summary = self.report.get("summary") or {}
-        self._add_section("CHAPTER 01", "检查基本情况", "线上与线下巡检分线统计，并结合上月整改情况进行分析。")
-        self._add_narrative_slide(
-            "现场服务检查概览",
-            self.report.get("overview_text"),
-            metrics=[
-                ("检查站次", summary.get("station_visit_count"), "座"),
-                ("发现问题", summary.get("total_issue_count"), "项"),
-                ("视频站均", summary.get("video_average_issue_count"), "项"),
-                ("现场站均", summary.get("onsite_average_issue_count"), "项"),
-            ],
-        )
-        self._add_chart_slides("各单位问题与站均问题对比", self.report.get("unit_comparison") or [], name_key="unit_name", value_keys=("issue_count", "average_issue_count"), series_names=("问题总数", "站均问题"))
-        previous = self.report.get("previous_month_rectification") or {}
-        self._add_chart_slides("上月各单位整改情况", previous.get("units") or [], name_key="unit_name", value_keys=("unreceived_count", "pending_count", "rectified_count"), series_names=("未签收", "未整改", "已整改"), narrative=previous.get("narrative") or "")
-        for mode in self.report.get("mode_summaries") or []:
-            self._add_chart_slides(f"{mode.get('label')} · 单位站均问题", mode.get("units") or [], name_key="unit_name", value_keys=("average_issue_count",), series_names=("站均问题",), narrative=mode.get("narrative") or "")
-        self._add_section("CHAPTER 02", "分环节汇总")
-        for section in self.report.get("category_sections") or []:
-            items = section.get("items") or []
-            self._add_chart_slides(f"{section.get('label')} · 分类分布", items, name_key="name", narrative=section.get("narrative") or "")
-        deep = self.report.get("deep_analysis") or {}
-        self._add_section("CHAPTER 03", "各单位问题分析", "AI按服务环节筛选重点问题并保留原始描述与照片。")
-        for unit in (deep.get("unit_analyses") or [])[:20]:
-            areas = (
-                unit.get("service_areas")
-                or unit.get("areas")
-                or unit.get("area_analyses")
-                or []
-            )
-            issues = self._collect_nested_issues(
-                areas,
-                defaults={"unit_name": unit.get("unit_name")},
-            )
-            self._add_issue_slides(f"{unit.get('unit_name') or '单位'} · 重点问题", issues, ai=bool(unit.get("ai_generated", True)), subtitle=unit.get("summary") or "", max_issues=8)
-        self._add_section("CHAPTER 04", "问题总结与下一步建议")
-        self._add_analysis_cards("问题总结", deep.get("problem_summary") or [], ai=True)
-        self._add_analysis_cards("下一步建议", deep.get("next_steps") or [], ai=True)
 
     def _build_non_oil(self):
         summary = self.report.get("summary") or {}
