@@ -43,7 +43,7 @@ SCENARIOS = {
     'equipment_insights': ('设备设施检查报告', '典型问题与分析建议', '典型问题、问题分析和工作建议。'),
     'safety_insights': ('安全质量检查报告', '规范要求、选题与分析建议', '规范要求整理、问题再分类、代表照片选题与工作建议；有效历史结果持续复用。'),
     'finance_insights': ('财务检查报告', '检查结果与内容建议', '检查结果分析与内容建议。'),
-    'service_insights': ('现场服务检查报告', '重点问题与总结建议', '片区重点问题、总结与下一步计划。'),
+    'service_insights': ('现场服务检查报告', '环节短语、问题表现与照片选题', '规范短语整理、行为表现分类及代表照片选择；已保存结果持续复用。'),
 }
 _loader = None
 _target = ContextVar('ai_model_target', default=None)

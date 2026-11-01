@@ -192,7 +192,6 @@ class RoutingTests(unittest.TestCase):
             'non_oil_insights': ai_utils.generate_non_oil_report_insights,
             'equipment_insights': ai_utils.generate_equipment_facilities_report_insights,
             'finance_insights': ai_utils.generate_finance_report_insights,
-            'service_insights': ai_utils.generate_on_site_service_report_insights,
         }
         with patch.object(ai_utils, 'get_deepseek_client', return_value=client):
             for scene, function in functions.items():

@@ -47,6 +47,10 @@ export function reportConfigurationDiffers(report, current) {
     return current.safety_settings !== null && current.safety_settings !== undefined
       && !equal(safetySettings(current.safety_settings), safetySettings(context.safety_settings || report.safety_settings || {}))
   }
+  if (current.type === 'on_site_service') {
+    return current.service_settings !== null && current.service_settings !== undefined
+      && !equal(current.service_settings,context.service_settings || report.service_settings || {})
+  }
   if (current.type === 'equipment_facilities') {
     const library = context.issue_library || report.issue_library_snapshot
     const included = rows => ids(rows.filter(item => item.included !== false).map(item => item.issue_id))

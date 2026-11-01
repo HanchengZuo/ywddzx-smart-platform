@@ -3,6 +3,14 @@ import assert from 'node:assert/strict'
 import { reportConfigurationDiffers } from '../src/utils/reportConfiguration.js'
 
 const period = { date_from: '2026-07-01', date_to: '2026-07-31' }
+test('service saved source, phrases, classifications and photos match snapshots until a real setting changes', () => {
+  const settings = {station_ids:null,phrases:{'video:1':'礼貌劝阻'},examples:{暖心服务:[1,2,3]},behavior_assignments:{},behavior_examples:{}}
+  const report = {month:'2026-07',summary:period,service_settings:settings}
+  const current = {...period,type:'on_site_service',service_settings:JSON.parse(JSON.stringify(settings))}
+  assert.equal(reportConfigurationDiffers(report,current),false)
+  current.service_settings.phrases['video:1']='服务劝阻'
+  assert.equal(reportConfigurationDiffers(report,current),true)
+})
 const flow = { issue_id: 51, station_id: 1, effective_category: '人员管理' }
 const quality = () => ({
   month: '2026-07', snapshot: { ...period }, workspace_revision: 1,

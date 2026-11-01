@@ -22,6 +22,9 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    'service_phrases': '现场服务规范环节短语',
+    'service_behaviors': '现场服务问题行为分类',
+    'service_examples': '现场服务代表照片选题',
     'safety_requirements': '安全质量规范要求准备',
     'safety_examples': '安全质量分类代表问题选题',
     'safety_detail': '安全质量问题再分类、原因与建议',
@@ -32,7 +35,6 @@ STAGE_LABELS = {
     "quality_insights": "质量计量选题、管理追溯与工作计划",
     "finance_insights": "财务检查结果分析与建议",
     "equipment_insights": "设备设施典型问题、分析与建议",
-    "service_insights": "现场服务重点问题、总结与建议",
     "non_oil_insights": "非油典型问题、归因分析与改善建议",
 }
 INSIGHT_FIELDS = {
@@ -42,7 +44,6 @@ INSIGHT_FIELDS = {
     "quality_insights": {"management_trace": dict, "work_plan": list, "prohibited_decisions": list},
     "finance_insights": {"result_analysis": list, "content_suggestions": list},
     "equipment_insights": {"typical_issue": dict, "problem_analysis": list, "work_suggestions": list},
-    "service_insights": {"region_highlights": list, "problem_summary": list, "next_steps": list},
     "non_oil_insights": {"unit_highlights": list, "typical_issues": list, "core_findings": list,
                          "attribution_analysis": list, "improvement_suggestions": list,
                          "action_priorities": list},
@@ -370,6 +371,10 @@ def set_report_ai_evidence(rows, settings=None):
 def report_ai_generation_log():
     memory = _current.get()
     return memory.snapshot() if memory else None
+
+
+def current_report_ai_memory():
+    return _current.get()
 
 
 def record_safety_requirements_result(result):

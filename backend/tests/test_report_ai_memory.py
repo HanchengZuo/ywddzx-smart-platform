@@ -58,7 +58,7 @@ class MemoryUnitTest(unittest.TestCase):
         self.assertFalse(valid_insights(payload, "finance_insights", {1}))
 
     def test_all_six_insight_schemas_registered(self):
-        self.assertEqual(len(INSIGHT_FIELDS), 8)
+        self.assertEqual(len(INSIGHT_FIELDS), 7)
         self.assertEqual(INSIGHT_FIELDS['safety_examples'], {'selections': list})
         self.assertEqual(INSIGHT_FIELDS['equipment_topics'], {'issue_ids': list})
 
@@ -297,7 +297,6 @@ class MemoryPostgresTest(unittest.TestCase):
             "quality_insights": "generate_quality_measurement_report_insights",
             "finance_insights": "generate_finance_report_insights",
             "equipment_insights": "generate_equipment_facilities_report_insights",
-            "service_insights": "generate_on_site_service_report_insights",
             "non_oil_insights": "generate_non_oil_report_insights",
         }
         client = MagicMock()
@@ -316,7 +315,7 @@ class MemoryPostgresTest(unittest.TestCase):
                     self.assertEqual(first["payload"], second["payload"], operation)
                 finally:
                     end_report_ai_memory(token)
-        self.assertEqual(client.chat.completions.create.call_count, 5)
+        self.assertEqual(client.chat.completions.create.call_count, 4)
 
     def test_safety_native_analysis_persists_across_jobs_and_manual_changes_need_no_ai(self):
         from safety_report_analysis import generate_analysis, effective_analysis, cached_analysis, analysis_context, analyze
