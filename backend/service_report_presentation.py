@@ -1,4 +1,4 @@
-"""Thirteen editable template pages, adapted from 4:3 to 16:9 without rasterizing text/charts."""
+"""Editable 16:9 service report: thirteen template pages and adaptive unit evidence."""
 from copy import deepcopy
 from pathlib import Path
 from collections import Counter
@@ -17,7 +17,7 @@ from safety_report_presentation import photo,textbox
 from safety_report_data import unit_label
 
 TEMPLATE_FILE=Path(__file__).parent/'assets/service_report_template/template.pptx'
-RENDERER_VERSION='service-native-124-2'
+RENDERER_VERSION='service-native-1241-1'
 FONT='Microsoft YaHei'
 
 def walk(shapes):
@@ -232,8 +232,10 @@ def build_service_presentation(report,output_path,storage_root):
         group=rows[i] if i<len(rows) else None
         ids=report['behavior_examples'].get(group['name'],[]) if group else []
         picture(s,by_id.get(ids[0]) if ids else None,root,box,group['name'] if group else '')
-    # Page 13 remains the supplied explanatory matrix, not model-invented risk scores.
-    for slide in slides:
+    # Chapter one stays intact; chapter two shares the exact exported/previewed artifact.
+    from service_report_unit_presentation import add_unit_chapter
+    add_unit_chapter(prs,report,root)
+    for slide in prs.slides:
         if slide.has_notes_slide:slide.notes_slide.notes_text_frame.text=''
         used={value for node in slide._element.iter() for key,value in node.attrib.items()
             if key.startswith('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}')}
@@ -250,4 +252,4 @@ def build_service_presentation(report,output_path,storage_root):
             if rel.reltype.endswith(('/comments','/commentAuthors')):part.drop_rel(rel.rId)
     _normalize_package_fonts(prs)
     output_path=Path(output_path);output_path.parent.mkdir(parents=True,exist_ok=True);prs.save(output_path)
-    return {'ppt_path':str(output_path),'slide_count':13}
+    return {'ppt_path':str(output_path),'slide_count':len(prs.slides)}

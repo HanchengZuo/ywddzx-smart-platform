@@ -22,6 +22,7 @@ from service_report_analysis import (normalize_settings,validate,phrase_context,
 from service_report_presentation import build_service_presentation,TEMPLATE_FILE
 from service_report_http import register_service_report
 from safety_report_data import UNIT_ORDER
+from service_report_units import hierarchy,unit_discoveries,evidence_context
 
 def catalog():
     return [{'key':f'{mode}:{i}','mode':mode,'external_standard_id':str(i),
@@ -45,6 +46,51 @@ def fixture_report(photo='',count=36):
         {'video:10001':'礼貌劝阻','onsite:11001':'油罐区及卸油区'},analysis,photos,behavior_photos)
 
 class ServiceDataTests(unittest.TestCase):
+    def test_unit_hierarchy_and_strict_summary_photo_references(self):
+        rows=serialize([raw(2,'onsite'),raw(1,issue_photo='photo.jpg'),raw(3,region=UNIT_ORDER[0])],catalog())
+        units=hierarchy(rows,{'video:10001':'礼貌劝阻'})
+        self.assertEqual([u['unit_name'] for u in units],UNIT_ORDER[:2])
+        self.assertEqual(units[0]['categories'][0]['count'],2)
+        group=units[0]['categories'][0]['groups'][0]
+        self.assertEqual(group['issue_ids'],[1,3])
+        context=evidence_context([(units[0]['unit_name'],units[0]['categories'][0]['name'],group)],{r['issue_id']:r for r in rows})
+        for value in [{'summary':'','photo_ids':['I1']},{'summary':'未劝阻手机使用','photo_ids':['I3']},
+            {'summary':'x'*161,'photo_ids':['I1']},{'summary':'未劝阻手机使用','photo_ids':[]}]:
+            with self.assertRaises(ValueError):validate({'items':{'G1':value}},context)
+        self.assertEqual(validate({'items':{'G1':{'summary':'未劝阻手机使用','photo_ids':['I1']}}},context)['items']['G1']['photo_ids'],['I1'])
+
+    def test_two_column_chapter_keeps_first_chapter_and_paginates_without_losing_evidence(self):
+        from service_report_unit_presentation import panels
+        report=fixture_report(count=6)
+        units=hierarchy(report['service_issues'],{'video:10001':'礼貌劝阻'})
+        for unit in units:
+            for category in unit['categories']:
+                for group in category['groups']:group.update(summary='员工未及时劝阻顾客在加油现场使用手机。',photo_ids=[])
+        report['unit_discoveries']=units
+        # A long clause must continue rather than be truncated or disappear into notes.
+        category=copy.deepcopy(units[0]['categories'][0]);group=category['groups'][0]
+        group['summary']='描述较长但必须全部保留。'*15
+        group['station_names']=['很长的站点名称'+str(i) for i in range(40)]
+        category['station_names']=group['station_names']
+        chunks=panels(category)
+        self.assertGreater(len(chunks),1)
+        self.assertTrue(all(len(p['lines'])<=12 for p in chunks))
+        text=''.join(line[0] for p in chunks for line in p['lines'])
+        self.assertIn(group['summary'],text);self.assertIn(group['station_names'][-1],text)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'units.pptx';build_service_presentation(report,path,directory)
+            prs=Presentation(path)
+            self.assertGreater(len(prs.slides),14)
+            for slide in list(prs.slides)[14:]:
+                for shape in slide.shapes:
+                    self.assertLessEqual(shape.left+shape.width,prs.slide_width+10000)
+                    self.assertLessEqual(shape.top+shape.height,prs.slide_height+10000)
+            self.assertIn('礼貌劝阻',''.join(s.text for sl in list(prs.slides)[14:] for s in sl.shapes if s.has_text_frame))
+            # Prefix text and existing counts remain identical to chapter-one output.
+            del report['unit_discoveries'];first=Path(directory)/'first.pptx';build_service_presentation(report,first,directory)
+            old=Presentation(first)
+            self.assertEqual([[s.text for s in slide.shapes if s.has_text_frame] for slide in old.slides],
+                [[s.text for s in slide.shapes if s.has_text_frame] for slide in list(prs.slides)[:13]])
     def test_repository_denied_scope_never_reads_business_rows(self):
         from service_report_repository import fetch_inputs,fetch_catalog
         cur=MagicMock()
@@ -206,6 +252,36 @@ class ServicePersistenceTests(unittest.TestCase):
             {**value['settings'],'phrases':{'video:999':'非法规范'}}]:
             self.assertEqual(self.call(method='put',json={'settings':settings,'revision':0,'data_signature':value['data_signature']}).status_code,400)
         self.assertEqual(self.call().json['meta']['revision'],0)
+
+    def test_unit_manual_edits_shared_and_bad_group_or_photo_rolls_back(self):
+        with patch('service_report_units.run_ai',side_effect=AssertionError('Reading/saving must not call AI')):
+            value=self.call().json;group=value['unit_discoveries'][0]['categories'][0]['groups'][0]
+            settings=value['settings'];settings['unit_evidence'][group['key']]={'summary':'人工归纳的问题表现','photo_ids':[]}
+            body={'settings':settings,'revision':0,'data_signature':value['data_signature']}
+            self.assertEqual(self.call(method='put',json=body).status_code,200)
+            self.assertEqual(self.call(user=2).json['unit_discoveries'][0]['categories'][0]['groups'][0]['summary'],'人工归纳的问题表现')
+            for key,entry in [('outside',{'summary':'范围外组'}),(group['key'],{'summary':'新文本','photo_ids':[2]})]:
+                bad=copy.deepcopy(settings);bad['unit_evidence'][key]=entry
+                self.assertEqual(self.call(method='put',json={**body,'settings':bad,'revision':1}).status_code,400)
+            self.assertEqual(self.call().json['meta']['revision'],1)
+
+    def test_unit_memory_reuses_unchanged_groups_and_reanalyzes_only_changed_group(self):
+        rows=serialize([raw(1,issue_photo='one.jpg'),raw(2,'onsite',issue_photo='two.jpg')],catalog())
+        settings=normalize_settings({});client=MagicMock();client.with_options.return_value=client
+        def response(**kwargs):
+            evidence=json.loads(kwargs['messages'][1]['content'])
+            payload={'items':{g['ref']:{'summary':'根据组内描述归纳的实际问题表现','photo_ids':[next(r['ref'] for r in g['issues'] if r['photo'])]} for g in evidence['items']}}
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        client.chat.completions.create.side_effect=response
+        with patch('ai_utils.get_deepseek_client',return_value=client),patch('ai_routing._loader',None):
+            first=unit_discoveries(self.connect,None,rows,{},settings,True)
+            second=unit_discoveries(self.connect,None,rows,{},settings,True)
+            self.assertEqual(first,second);self.assertEqual(client.chat.completions.create.call_count,1)
+            rows[0]['description']='改变第一个环节的问题描述'
+            unit_discoveries(self.connect,None,rows,{},settings,True)
+            self.assertEqual(client.chat.completions.create.call_count,2)
+            last=json.loads(client.chat.completions.create.call_args.kwargs['messages'][1]['content'])
+            self.assertEqual(len(last['items']),1)
     def test_ai_cache_reuses_across_calls_invalid_results_not_saved_and_scene_routed(self):
         client=MagicMock();client.with_options.return_value=client
         client.chat.completions.create.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"items":{"R1":"礼貌劝阻"}}'))])

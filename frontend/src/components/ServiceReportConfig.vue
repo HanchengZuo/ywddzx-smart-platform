@@ -162,6 +162,15 @@
               </article>
             </div>
           </template>
+          <ServiceReportUnits
+            v-else-if="panel === 'units'"
+            :units="data.unit_discoveries"
+            :issues="data.issues"
+            :overrides="draft.unit_evidence"
+            :resolve-image="resolveImage"
+            @edit="editUnit"
+            @photo="$emit('photo', $event)"
+          />
           <template v-else>
             <aside>
               <p v-if="panel === 'behaviors'" class="hint">
@@ -280,6 +289,7 @@
 <script setup>
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import axios from 'axios'
+import ServiceReportUnits from './ServiceReportUnits.vue'
 const props = defineProps({
   month: String,
   dateFrom: String,
@@ -333,8 +343,17 @@ const panels = [
     description: '按真实描述分类、计算数量占比，为前几类选择代表照片。',
     action: '查看分类与代表问题',
   },
+  {
+    key: 'units',
+    number: '05',
+    name: '各片区问题发现',
+    title: '片区 · 类别 · 环节证据',
+    description: '逐层查看环节问题概括、全部原始问题与PPT代表照片；证据未变复用历史AI结果。',
+    action: '查看与调整片区问题发现',
+  },
 ]
 const titles = {
+  units: '各片区问题发现 · 环节概括与代表照片',
   source: '本次报告数据来源',
   photos: '高频类别代表照片',
   stages: '环节分类与短语',
@@ -471,6 +490,10 @@ async function save() {
     if (alive) saving.value = false
   }
 }
+function editUnit(key, value) {
+  draft.value.unit_evidence ||= {}
+  draft.value.unit_evidence[key] = value
+}
 async function analyze() {
   if (dirty.value || working.value || !props.canGenerate) return
   analyzing.value = true
@@ -481,11 +504,13 @@ async function analyze() {
       {
         ...params(),
         kind:
-          panel.value === 'photos'
-            ? 'examples'
-            : panel.value === 'stages'
-              ? 'phrases'
-              : 'behaviors',
+          panel.value === 'units'
+            ? 'units'
+            : panel.value === 'photos'
+              ? 'examples'
+              : panel.value === 'stages'
+                ? 'phrases'
+                : 'behaviors',
         revision: data.value.meta.revision,
         data_signature: data.value.data_signature,
       },
@@ -575,7 +600,7 @@ p {
 }
 .config-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
 .config-grid article {

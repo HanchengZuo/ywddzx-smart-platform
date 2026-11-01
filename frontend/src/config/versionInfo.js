@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.4.1', date: '2026-11-01', title: '现场服务报告各片区问题发现',
+    summary: '新增按片区、检查类别与环节分层的第二章，双栏虚线分隔、自适应续页与证据照片。',
+    items: ['按既定片区单位顺序汇总现场与视频数据，统计数量和站点，AI概括环节问题并选择代表照片。',
+      '新增片区问题发现配置弹窗，支持查看全部原始问题、编辑概括及更换照片；保存全局共享，证据不变复用AI历史。',
+      '第一章保持不变，PPT预览与导出使用同一份可编辑成稿，HTML阅读版同步展示第二章。'] },
   {
     version: 'v12.4', date: '2026-11-01', title: '现场服务检查报告第一章重制',
     summary: '基于业务督导中心模板重制13页16:9报告，原生文字图表可编辑，预览与导出共用同一成稿。',

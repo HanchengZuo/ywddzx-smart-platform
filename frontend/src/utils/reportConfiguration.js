@@ -49,7 +49,7 @@ export function reportConfigurationDiffers(report, current) {
   }
   if (current.type === 'on_site_service') {
     return current.service_settings !== null && current.service_settings !== undefined
-      && !equal(current.service_settings,context.service_settings || report.service_settings || {})
+      && !equal({ unit_evidence: {}, ...current.service_settings },{ unit_evidence: {}, ...(context.service_settings || report.service_settings || {}) })
   }
   if (current.type === 'equipment_facilities') {
     const library = context.issue_library || report.issue_library_snapshot
