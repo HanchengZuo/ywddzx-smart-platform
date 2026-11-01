@@ -182,6 +182,25 @@ class PushDatabaseTests(unittest.TestCase):
         self.assertEqual(self.call('/api/management/notifications/send','post',user=2,json={}).status_code,403)
         self.assertEqual(self.client.get('/api/notifications',headers={'X-User':'2','X-Impersonated':'1'}).status_code,403)
 
+    def test_message_locator_resolves_old_pages_and_never_exposes_another_inbox(self):
+        ids=[str(uuid.uuid4()) for _ in range(43)]
+        with self.connect() as conn,conn.cursor() as cur:
+            for identifier in ids:
+                cur.execute('''INSERT INTO web_push_messages(id,request_id,sender_id,sender_name,title,body,kind,created_at)
+                  VALUES(%s,%s,1,'test','title','body','manual','2026-10-01')''',(identifier,str(uuid.uuid4())))
+                cur.execute('INSERT INTO web_push_recipients(message_id,user_id) VALUES(%s,2)',(identifier,))
+        target=sorted(ids)[41]
+        result=self.call('/api/notifications?message='+target,user=2)
+        self.assertEqual(result.status_code,200)
+        self.assertTrue(result.json['focus_found'])
+        self.assertEqual(result.json['page'],3)
+        self.assertIn(target,[str(row['id']) for row in result.json['items']])
+        self.assertIsNone(next(row for row in result.json['items'] if str(row['id'])==target)['read_at'])
+        other=self.call('/api/notifications?message='+target,user=3).json
+        self.assertFalse(other['focus_found']);self.assertEqual(other['items'],[])
+        self.assertFalse(self.call('/api/notifications?message='+str(uuid.uuid4()),user=2).json['focus_found'])
+        self.assertEqual(self.call('/api/notifications?message=invalid',user=2).status_code,400)
+
     def test_default_enabled_and_unknown_users_are_not_classified_unsupported(self):
         self.assertTrue(self.call('/api/notifications',user=2).json['enabled'])
         data=self.call('/api/management/notifications').json
@@ -255,6 +274,7 @@ class PushDatabaseTests(unittest.TestCase):
         sender=MagicMock(return_value=SimpleNamespace(status_code=201))
         self.assertTrue(deliver_one(self.connect,'test-only-encryption-key',self.configuration,sender))
         payload=sender.call_args.args[1]
+        self.assertEqual(payload['message_id'],identifier)
         self.assertNotIn('业务正文',json.dumps(payload));self.assertEqual(payload['url'],'/notifications')
         row=self.call('/api/notifications',user=2).json['items'][0]
         self.assertEqual(row['accepted'],1);self.assertIsNone(row['confirmed_at'])

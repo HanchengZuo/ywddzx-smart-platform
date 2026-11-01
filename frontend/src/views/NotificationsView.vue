@@ -139,10 +139,13 @@
         v-for="item in items"
         :key="item.id"
         class="notification-message"
-        :class="{ unread: !item.read_at }"
+        :id="'notification-' + item.id"
+        tabindex="-1"
+        :class="{ unread: !item.read_at, targeted: item.id === focusedMessage }"
       >
         <header>
           <h4>{{ item.title }}</h4>
+          <span v-if="item.id === focusedMessage" class="notification-target-label">本次通知</span>
           <time>{{ formatTime(item.created_at) }}</time>
         </header>
         <p>{{ item.body }}</p>
@@ -192,7 +195,9 @@
   </div>
 </template>
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, nextTick, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { notificationMessageId } from '../utils/notificationTarget'
 import axios from 'axios'
 import {
   pushCapability,
@@ -205,6 +210,9 @@ import {
   newRequestId,
 } from '../utils/webPush'
 import '../styles/notifications.css'
+const route = useRoute()
+const focusedMessage = ref('')
+let resolvedMessage = ''
 const businessPath = (item) =>
   item.kind === 'business' &&
   ['/inspection/appeals', '/inspection/records'].includes(item.action_path)
@@ -248,8 +256,13 @@ async function read() {
   reading.value = true
   try {
     const options = { signal: readController.signal, timeout: 10000 }
+    const target = notificationMessageId(route.query.message)
+    const locate = target && target !== resolvedMessage
     const [inbox, allDevices] = await Promise.all([
-      axios.get('/api/notifications', { ...options, params: { page: page.value } }),
+      axios.get('/api/notifications', {
+        ...options,
+        params: { page: page.value, ...(locate ? { message: target } : {}) },
+      }),
       axios.get('/api/notifications/devices', options),
     ])
     if (!alive || serial !== readSerial) return
@@ -260,12 +273,25 @@ async function read() {
     enabled.value = data.enabled
     configured.value = data.configured
     publicKey.value = data.public_key
+    page.value = data.page || page.value
     devices.value = [
       ...new Map(
         allDevices.data.items.filter((entry) => entry.active).map((entry) => [entry.id, entry]),
       ).values(),
     ]
     lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    if (locate) {
+      resolvedMessage = target
+      focusedMessage.value = data.focus_found ? target : ''
+      if (!data.focus_found) notice.value = '该消息已不可用或不属于当前账号，请确认登录账号。'
+      await nextTick()
+      if (!alive || serial !== readSerial) return
+      const element = document.getElementById('notification-' + target)
+      if (data.focus_found && element) {
+        element.scrollIntoView({ block: 'center', behavior: 'instant' })
+        element.focus({ preventScroll: true })
+      }
+    }
   } finally {
     if (alive && serial === readSerial) reading.value = false
   }
@@ -351,6 +377,14 @@ const changePage = (offset) => {
   return action(read)
 }
 const openTodayArrangement = () => window.dispatchEvent(new Event('inspection-tasks-open'))
+watch(
+  () => route.query.message,
+  () => {
+    resolvedMessage = ''
+    focusedMessage.value = ''
+    action(read)
+  },
+)
 onMounted(() => {
   refresh()
   timer = setInterval(() => {

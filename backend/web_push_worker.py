@@ -40,7 +40,7 @@ def deliver_one(connect, secret, config=None, sender=send, recipients=None):
         conn.commit()
         # Only a controlled action/deadline hint may appear on the lock screen.
         payload={'title':'业务督导中心 · 新通知','body':'你有一条系统消息，请登录通知中心查看。',
-            'url':'/notifications','tag':'ywddzx-'+str(job['message_id'])}
+            'url':'/notifications','message_id':str(job['message_id']),'tag':'ywddzx-'+str(job['message_id'])}
         if message['kind']=='business':
             payload.update(scene=message['source'],hint=message['push_hint'])
         code=None;status='failed';error='推送发送失败，请检查密钥、网络及设备设置。';retry=False

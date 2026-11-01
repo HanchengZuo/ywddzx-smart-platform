@@ -14,6 +14,10 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.3.4 推送消息精准定位
+
+点击 Web Push 通知后携带消息 UUID 进入通知中心；服务端仅在当前账号收件箱内按原分页顺序查找消息所在页，前端自动切页、滚动及高亮“本次通知”。无需逐页查找，后台刷新不反复抢占阅读位置，不自动标为已读或确认收到。登录前点击会保留定位目标，登录后继续定位；目标已不存在或不属于当前账号时提示，不返回其他用户正文。历史推送可从原有受控消息标签恢复定位；任意外部URL或非法标识不能用于跳转。本版无数据库迁移。
+
 ## v12.3.3 登录后直接开通通知
 
 用户正常登录后，系统自动检查当前设备的浏览器能力、通知权限、有效订阅及服务端配置。满足条件且未订阅时自动显示就地开通窗口；点击“立即开启”直接复用通知中心的 `enableDevice`，在原始点击事件中调用原生订阅接口，不先跳转页面或等待网络，适配 Safari 的用户手势要求。浏览器不允许网站无条件自动授权或绕过本人确认，不能保证登录完成后无需点击就弹出原生权限框。[Apple 的直接点击要求](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)。

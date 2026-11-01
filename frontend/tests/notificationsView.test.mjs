@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import * as vue from 'vue'
+import { notificationMessageId } from '../src/utils/notificationTarget.js'
 
 function setup(overrides = {}) {
   const { descriptor } = parse(
@@ -21,12 +22,14 @@ function setup(overrides = {}) {
     calls = []
   const environment = {
     ...vue,
+    useRoute: () => ({ query: {} }),
+    notificationMessageId,
     AbortController,
     window: {
       Notification: { permission: 'granted' },
       dispatchEvent: (event) => events.push(event.type),
     },
-    document: { hidden: false },
+    document: { hidden: false, getElementById: () => null },
     Event,
     onMounted: (callback) => {
       mount = callback
@@ -111,6 +114,58 @@ function setup(overrides = {}) {
 const flush = async () => {
   for (let i = 0; i < 15; i++) await Promise.resolve()
 }
+
+test('deep-linked messages resolve their server page and scroll/focus once without marking read', async () => {
+  const id = '01234567-89ab-cdef-0123-456789abcdef'
+  const scroll = [],
+    focus = [],
+    requests = []
+  const s = setup({
+    useRoute: () => ({ query: { message: id } }),
+    document: {
+      getElementById: (key) => {
+        assert.equal(key, 'notification-' + id)
+        return {
+          scrollIntoView: (options) => scroll.push(options),
+          focus: (options) => focus.push(options),
+        }
+      },
+    },
+    axios: {
+      get: async (url, options) => {
+        requests.push({ url, options })
+        return {
+          data: url.endsWith('/devices')
+            ? { items: [] }
+            : {
+                items: [{ id }],
+                page: 3,
+                total: 43,
+                focus_found: true,
+              },
+        }
+      },
+    },
+  })
+  await s.state.read()
+  assert.equal(requests[0].options.params.message, id)
+  assert.equal(s.state.page.value, 3)
+  assert.equal(s.state.focusedMessage.value, id)
+  assert.equal(scroll.length, 1)
+  assert.equal(focus.length, 1)
+  await s.state.read()
+  assert.equal(requests[2].options.params.message, undefined)
+  assert.equal(scroll.length, 1)
+})
+
+test('missing or other-account targets show a clear notice without scrolling to an unrelated message', async () => {
+  const s = setup({
+    useRoute: () => ({ query: { message: '01234567-89ab-cdef-0123-456789abcdef' } }),
+  })
+  await s.state.read()
+  assert.equal(s.state.focusedMessage.value, '')
+  assert.match(s.state.notice.value, /不属于当前账号/)
+})
 
 test('refresh has independent bounded progress and completion feedback, then returns to idle', async () => {
   let release

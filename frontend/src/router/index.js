@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { notificationTarget } from '../utils/notificationTarget'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
 import { operationsPages } from '../config/operationsCatalog'
@@ -309,6 +310,8 @@ router.beforeEach(async (to, from, next) => {
 
   if (to.meta.public) {
     if (to.path === '/login' && token && (await verifyStoredAuthToken())) {
+      const target = notificationTarget(to.query.message)
+      if (target) { next(target); return }
       const verifiedRole = localStorage.getItem('user_role')
       const verifiedPermissions = parseStoredPermissions()
       const visibilitySettings = await fetchPageVisibility()
@@ -324,7 +327,8 @@ router.beforeEach(async (to, from, next) => {
   }
 
   if (!token || !(await verifyStoredAuthToken())) {
-    next('/login')
+    const target = to.path === '/notifications' && notificationTarget(to.query.message)
+    next(target ? { path: '/login', query: target.query } : '/login')
     return
   }
 
