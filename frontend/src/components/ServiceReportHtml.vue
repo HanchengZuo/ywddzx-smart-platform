@@ -13,7 +13,7 @@
       </div>
     </section>
     <section>
-      <h3>截至报告期末问题整改情况</h3>
+      <h3>截至至今问题整改情况</h3>
       <p>{{ report.cumulative_rectification?.narrative }}</p>
       <div class="table">
         <table>

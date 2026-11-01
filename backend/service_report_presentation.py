@@ -17,7 +17,7 @@ from safety_report_presentation import photo,textbox
 from safety_report_data import unit_label
 
 TEMPLATE_FILE=Path(__file__).parent/'assets/service_report_template/template.pptx'
-RENDERER_VERSION='service-native-124-1'
+RENDERER_VERSION='service-native-124-2'
 FONT='Microsoft YaHei'
 
 def walk(shapes):
@@ -174,7 +174,7 @@ def build_service_presentation(report,output_path,storage_root):
     # Cumulative, cutoff-aware rectification replaces the original previous-month calculation.
     rect=report['cumulative_rectification'];s=slides[2]
     body=by_text(s,'截至')
-    write(by_text(s,'上月问题整改情况'),['截至报告期末问题整改情况'],23)
+    write(by_text(s,'上月问题整改情况'),['截至至今问题整改情况'],23)
     body.height=Inches(.9);write(body,[rect['narrative']],14,True)
     rows=rect['units'];graph=next(sh for sh in s.shapes if sh.has_chart)
     chart(graph,[unit_label(r['unit_name']) for r in rows],[('已整改',[r['rectified_count'] for r in rows],'0'),('未闭环',[r['pending_count'] for r in rows],'0'),('整改率',[r['rate'] for r in rows],'0%')],rect['cutoff']+'累计各片区整改情况')

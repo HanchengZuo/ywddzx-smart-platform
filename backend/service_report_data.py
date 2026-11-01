@@ -61,17 +61,23 @@ def scope(issues,visits,mode=None):
 def historical_status(row,events,end):
     events=[e for e in events if is_before(e.get('created_at'),end)]
     audits=[e for e in events if e['action_type']=='audit_changed']
-    approved=audits[-1]['to_status']=='审核通过' if audits else row.get('audit_status')=='approved' and (
-        not row.get('audited_at') or is_before(row['audited_at'],end))
-    if not approved: return None
-    states=[e['to_status'] for e in events if e.get('to_status') in ('待整改','待复核','已闭环','站级无法整改','申诉中','已销毁')]
+    if audits: audit=audits[-1]['to_status']
+    elif row.get('audited_at') and not is_before(row['audited_at'],end): audit='pending'
+    else: audit=row.get('audit_status') or 'pending'
+    if audit in ('rejected','审核否决'): return None
+    states=[e['to_status'] for e in events if e.get('to_status') in ('待审核','待签名','待整改','待复核','已闭环','站级无法整改','申诉中','已销毁')]
     state=states[-1] if states else '待整改'
     if not states:
         if is_before(row.get('review_at'),end):
             result=row.get('review_result')
             state='已闭环' if result in ('整改通过','已整改') else '站级无法整改' if result in ('通过站级无法整改','站级无法整改') else '待整改'
         elif is_before(row.get('rectification_at'),end): state='待复核'
-    return None if state=='已销毁' else state
+        elif not row.get('review_at') and not row.get('rectification_at'):
+            state=row.get('status') or '待整改'
+    if state=='已销毁': return None
+    if audit not in ('approved','审核通过'): return '待审核'
+    if state=='待整改' and not is_before(row.get('station_manager_signed_at'),end): return '待签名'
+    return state
 
 def cumulative(rows,history,end,settings):
     events=defaultdict(list); units={}
