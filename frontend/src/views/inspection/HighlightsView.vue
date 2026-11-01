@@ -36,7 +36,7 @@
       <div v-if="loading" class="table-empty-state" role="status"><div><div class="filter-kicker">筛选中</div><h3>正在查询亮点记录</h3><p>系统正在按已应用条件查询当前页，无需加载全部亮点。</p><div class="filter-query-progress" aria-hidden="true"><span></span></div></div></div>
       <div v-else-if="!rows.length" class="table-empty-state"><div><div class="filter-kicker">暂无记录</div><h3>当前没有符合条件的亮点记录</h3><p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p></div></div>
       <div v-else class="table-content">
-        <div class="desktop-table"><table :style="{ zoom: tableFullscreen ? tableZoom : 1 }"><thead><tr><th v-if="visible('id')">亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th v-if="visible('photo')">亮点照片</th><th v-if="visible('status')">亮点状态</th><th v-if="visible('audit')">审核</th><th v-if="canManage">操作</th></tr></thead>
+        <div ref="tableScrollRef" class="desktop-table"><table :style="{ zoom: tableFullscreen ? tableZoom : 1 }"><thead><tr><th v-if="visible('id')">亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th v-if="visible('photo')">亮点照片</th><th v-if="visible('status')">亮点状态</th><th v-if="visible('audit')">审核</th><th v-if="canManage">操作</th></tr></thead>
           <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td v-if="visible('id')"><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
             <td v-if="visible('photo')"><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
             <td v-if="visible('status')"><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
@@ -50,6 +50,8 @@
           <div v-if="canManage" class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑亮点' : '调整检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button></div>
         </article></div>
       </div>
+      <TableHorizontalNavigator :target="tableScrollRef" label="亮点清单" :disabled="tableFullscreen || columnSettingsOpen"
+        :refresh-key="`${tableZoom}:${visibleDefinitions.length}:${page}:${rows.length}`" />
       <nav class="pagination-bar" aria-label="亮点清单分页">
         <div class="pagination-summary">共 {{ total }} 条</div>
         <div class="pagination-controls">
@@ -78,9 +80,11 @@ import FilterSummary from '@/components/FilterSummary.vue'
 import DateRangePicker from '@/components/DateRangePicker.vue'
 import InspectionFilterSelect from '@/components/InspectionFilterSelect.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
+import TableHorizontalNavigator from '@/components/TableHorizontalNavigator.vue'
 import { buildFilterSummary } from '@/utils/filterSummary'
 const showMobileFilters = ref(false)
 const tableCard = ref(null), overlayHost = ref(null), tableFullscreen = ref(false), tableZoom = ref(1)
+const tableScrollRef = ref(null)
 const columnSettings = ref(null), columnSettingsOpen = ref(false), hiddenColumns = ref([]), canManage = ref(false)
 const editing = ref(null), deletion = ref(null), saving = ref(false), editError = ref(''), editInspectors = ref([]), inspectorsLoading = ref(false)
 const COLUMN_KEY = 'highlight-list-hidden-columns-v1'

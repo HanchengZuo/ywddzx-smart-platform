@@ -1,7 +1,7 @@
 <template>
-  <div v-show="state.visible" class="table-horizontal-navigator" role="group" aria-label="问题清单横向浏览"
+  <div v-show="state.visible" class="table-horizontal-navigator" role="group" :aria-label="`${label}横向浏览`"
     :style="{ left: `${state.left}px`, top: `${state.top}px`, width: `${state.width}px` }">
-    <input type="range" min="0" :max="state.max" step="1" :value="state.value" aria-label="问题清单横向位置"
+    <input type="range" min="0" :max="state.max" step="1" :value="state.value" :aria-label="`${label}横向位置`"
       :aria-valuetext="`已浏览 ${percent}%`"
       @input="moveTo(Number($event.target.value))" @keydown="handleKey" />
   </div>
@@ -11,7 +11,7 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { horizontalNavigationState, horizontalNavigationDestination } from '@/utils/tableHorizontalNavigation'
 
-const props = defineProps({ target: { default: null }, disabled: Boolean, refreshKey: { default: '' } })
+const props = defineProps({ target: { default: null }, disabled: Boolean, refreshKey: { default: '' }, label: { type: String, default: '问题清单' } })
 const state = ref({ visible: false, max: 0, value: 0, left: 0, top: 0, width: 0 })
 const percent = computed(() => state.value.max ? Math.round(state.value.value / state.value.max * 100) : 0)
 let frame = null, disconnect = () => {}
