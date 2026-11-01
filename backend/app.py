@@ -973,31 +973,17 @@ PERMISSION_CATALOG = [
         "defaults": {"root": True},
     },
     {
-        "key": "view_own_certificates",
-        "name": "查看本站数据",
-        "category": "站点证照有效期管理",
-        "description": "查看当前账号所属站点的证照有效期和到期提醒。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
-    },
-    {
-        "key": "limit_certificate_station_region_scope",
-        "name": "查看片区站点数据",
-        "category": "站点证照有效期管理",
-        "description": "只查看选定片区/归属地的站点证照有效期和到期提醒。与“查看本站数据”“查看全部站点数据”三选一。",
-        "defaults": {"root": False, "supervisor": False, "station_manager": False, "quality_safety": False},
-    },
-    {
-        "key": "edit_own_certificates",
-        "name": "编辑本站证照",
-        "category": "站点证照有效期管理",
-        "description": "仅在选择“查看本站数据”时可用，用于录入、修改、删除当前账号所属站点证照。",
-        "defaults": {"root": True, "supervisor": False, "station_manager": True, "quality_safety": False},
+        "key": "register_all_certificates",
+        "name": "登记全部站点数据",
+        "category": "证照管理",
+        "description": "可为全部站点重新登记证照。站点默认登记本站、片区默认登记管辖站点；此权限扩大登记范围，不自动扩大台账查看范围。",
+        "defaults": {"root": True},
     },
     {
         "key": "view_all_certificates",
         "name": "查看全部站点数据",
-        "category": "站点证照有效期管理",
-        "description": "查看所有站点的证照有效期和到期提醒。与“查看本站数据”“查看片区站点数据”三选一。",
+        "category": "证照管理",
+        "description": "统一查看全部站点证照台账、照片、历史和提醒；优先于站点与片区默认范围，不授予登记权限。",
         "defaults": {"root": True, "supervisor": True, "station_manager": False, "quality_safety": True},
     },
     {
@@ -1150,10 +1136,8 @@ PERMISSION_KEYS = {item["key"] for item in PERMISSION_CATALOG}
 PERMISSION_EXCLUSIVE_GROUPS = [
     ("view_own_inspection_issues", "limit_issue_station_region_scope", "view_all_inspection_issues"),
     ("view_own_inspection_records", "limit_record_station_region_scope", "view_all_inspection_records"),
-    ("view_own_certificates", "limit_certificate_station_region_scope", "view_all_certificates"),
 ]
 PERMISSION_DEPENDENCIES = {
-    "edit_own_certificates": "view_own_certificates",
     "adjust_station_scores": "view_station_scores",
     "reset_station_account_password": "manage_stations",
     "generate_inspection_reports": "view_inspection_reports",
@@ -1316,7 +1300,6 @@ CERTIFICATE_TYPES = [
     },
 ]
 
-CERTIFICATE_TYPE_BY_CODE = {item["code"]: item for item in CERTIFICATE_TYPES}
 
 
 def beijing_now():
@@ -14157,36 +14140,6 @@ def can_adjust_station_scores(cur, user):
     return has_permission(cur, user, "adjust_station_scores")
 
 
-def can_view_own_certificates(cur, user):
-    return bool(get_effective_permissions(cur, user).get("view_own_certificates"))
-
-
-def can_edit_own_certificates(cur, user):
-    return bool(get_effective_permissions(cur, user).get("edit_own_certificates"))
-
-
-def can_view_all_certificates(cur, user):
-    return bool(get_effective_permissions(cur, user).get("view_all_certificates"))
-
-
-def can_view_region_certificates(cur, user):
-    return bool(get_effective_permissions(cur, user).get("limit_certificate_station_region_scope"))
-
-
-def can_edit_all_certificates(user):
-    return is_root_user(user)
-
-
-def can_view_certificates(cur, user):
-    return (
-        can_edit_all_certificates(user)
-        or can_view_all_certificates(cur, user)
-        or can_view_region_certificates(cur, user)
-        or can_view_own_certificates(cur, user)
-        or can_edit_own_certificates(cur, user)
-    )
-
-
 def normalize_text(value, max_length=None):
     text = str(value or "").strip()
     if max_length and len(text) > max_length:
@@ -15406,51 +15359,6 @@ def ensure_inspection_table_original_files_table(cur):
     )
 
 
-def ensure_station_certificates_table(cur):
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS station_certificates (
-            id SERIAL PRIMARY KEY,
-            station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
-            certificate_type TEXT NOT NULL,
-            certificate_name TEXT NOT NULL,
-            start_date DATE,
-            expiry_date DATE NOT NULL,
-            remark TEXT,
-            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (station_id, certificate_type)
-        );
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE station_certificates
-        ADD COLUMN IF NOT EXISTS remark TEXT;
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE station_certificates
-        ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-        """
-    )
-    cur.execute(
-        """
-        ALTER TABLE station_certificates
-        ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-        """
-    )
-    cur.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_station_certificates_expiry_date
-        ON station_certificates (expiry_date);
-        """
-    )
-
-
 def normalize_optional_date(value):
     value_text = str(value or "").strip()
     if not value_text:
@@ -15545,6 +15453,11 @@ def get_notification_summary():
         from inspection_schedule_tasks import task_count, personal_agenda
         schedule_task_pending_count = task_count(cur, current_user['id'])
         schedule_agenda = personal_agenda(cur, current_user['id'])
+        from certificates import unread_count as certificate_unread_count
+        certificate_count = certificate_unread_count(
+            cur, current_user, get_effective_permissions(cur, current_user),
+            certificate_regions(cur, current_user), CERTIFICATE_TYPES,
+        )
         conn.commit()
         return jsonify(
             {
@@ -15555,6 +15468,7 @@ def get_notification_summary():
                 "appeal_notification_count": appeal_counts['total'],
                 "schedule_task_pending_count": schedule_task_pending_count,
                 "schedule_agenda": schedule_agenda,
+                "certificate_unread_count": certificate_count,
             }
         )
     except Exception as e:
@@ -24063,345 +23977,6 @@ def delete_management_checklist_standard(inspection_table_id, standard_id):
         if conn:
             conn.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/station-certificates", methods=["GET"])
-def get_station_certificates():
-    user_id = str(request.args.get("user_id", "")).strip()
-    if not user_id:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_station_certificates_table(cur)
-        conn.commit()
-
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            return jsonify({"success": False, "error": "用户不存在。"}), 404
-
-        if not can_view_certificates(cur, user):
-            return (
-                jsonify({"success": False, "error": "当前账号无权访问证照管理。"}),
-                403,
-            )
-
-        scope_all = can_edit_all_certificates(user) or can_view_all_certificates(cur, user)
-        scope_region = (not scope_all) and can_view_region_certificates(cur, user)
-        can_edit_own = can_edit_own_certificates(cur, user)
-        empty_scope_response = {
-            "success": True,
-            "certificate_types": CERTIFICATE_TYPES,
-            "stations": [],
-            "records": [],
-            "can_view_all": scope_all,
-            "can_view_region": scope_region,
-            "can_edit_all": can_edit_all_certificates(user),
-            "can_edit_own": can_edit_own,
-        }
-
-        station_params = []
-        station_where_clauses = []
-        if scope_all:
-            pass
-        elif scope_region:
-            if not append_station_region_scope_filter(
-                cur,
-                user,
-                station_where_clauses,
-                station_params,
-                "region",
-                "limit_certificate_station_region_scope",
-            ):
-                return jsonify(empty_scope_response)
-        else:
-            if not user["station_id"]:
-                return jsonify(empty_scope_response)
-            station_where_clauses.append("id = %s")
-            station_params.append(user["station_id"])
-        station_where = f"WHERE {' AND '.join(station_where_clauses)}" if station_where_clauses else ""
-
-        cur.execute(
-            f"""
-            SELECT
-                id,
-                station_name,
-                region,
-                address,
-                station_type,
-                asset_type,
-                status
-            FROM stations
-            {station_where}
-            ORDER BY region NULLS LAST, station_name ASC, id ASC;
-            """,
-            tuple(station_params),
-        )
-        stations = cur.fetchall()
-
-        record_params = []
-        record_where_clauses = []
-        if scope_all:
-            pass
-        elif scope_region:
-            if not append_station_region_scope_filter(
-                cur,
-                user,
-                record_where_clauses,
-                record_params,
-                "s.region",
-                "limit_certificate_station_region_scope",
-            ):
-                return jsonify(empty_scope_response)
-        else:
-            record_where_clauses.append("sc.station_id = %s")
-            record_params.append(user["station_id"])
-        record_where = f"WHERE {' AND '.join(record_where_clauses)}" if record_where_clauses else ""
-
-        cur.execute(
-            f"""
-            SELECT
-                sc.id,
-                sc.station_id,
-                s.station_name,
-                s.region,
-                s.asset_type,
-                sc.certificate_type,
-                sc.certificate_name,
-                TO_CHAR(sc.start_date, 'YYYY-MM-DD') AS start_date,
-                TO_CHAR(sc.expiry_date, 'YYYY-MM-DD') AS expiry_date,
-                sc.remark,
-                TO_CHAR(sc.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
-                TO_CHAR(sc.updated_at, 'YYYY-MM-DD HH24:MI') AS updated_at
-            FROM station_certificates sc
-            JOIN stations s ON sc.station_id = s.id
-            {record_where}
-            ORDER BY sc.expiry_date ASC, s.station_name ASC, sc.certificate_name ASC;
-            """,
-            tuple(record_params),
-        )
-        records = cur.fetchall()
-
-        for record in records:
-            type_meta = CERTIFICATE_TYPE_BY_CODE.get(record["certificate_type"], {})
-            if type_meta:
-                record["certificate_name"] = type_meta.get(
-                    "name", record["certificate_name"]
-                )
-            record["recommended_reminder_days"] = type_meta.get(
-                "recommended_reminder_days", 30
-            )
-            record["legal_reminder_days"] = type_meta.get("legal_reminder_days", 7)
-            record["recommended_label"] = type_meta.get("recommended_label")
-            record["legal_label"] = type_meta.get("legal_label")
-            record["rule"] = type_meta.get("rule")
-
-        return jsonify(
-            {
-                "success": True,
-                "certificate_types": CERTIFICATE_TYPES,
-                "stations": stations,
-                "records": records,
-                "can_view_all": scope_all,
-                "can_view_region": scope_region,
-                "can_edit_all": can_edit_all_certificates(user),
-                "can_edit_own": can_edit_own,
-            }
-        )
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/station-certificates", methods=["POST"])
-def save_station_certificate():
-    data = request.get_json(silent=True) or {}
-    user_id = str(data.get("user_id", "")).strip()
-
-    if not user_id:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-
-    station_id = data.get("station_id")
-    certificate_type = str(data.get("certificate_type", "")).strip()
-    remark = str(data.get("remark", "")).strip() or None
-
-    if not station_id:
-        return jsonify({"success": False, "error": "请选择站点。"}), 400
-
-    if certificate_type not in CERTIFICATE_TYPE_BY_CODE:
-        return jsonify({"success": False, "error": "请选择有效的证照类型。"}), 400
-
-    try:
-        start_date = normalize_optional_date(data.get("start_date"))
-        expiry_date = normalize_optional_date(data.get("expiry_date"))
-    except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
-
-    if not expiry_date:
-        return jsonify({"success": False, "error": "到期时间必须录入。"}), 400
-
-    if start_date and start_date > expiry_date:
-        return jsonify({"success": False, "error": "起始日期不能晚于到期时间。"}), 400
-
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_station_certificates_table(cur)
-
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            return jsonify({"success": False, "error": "用户不存在。"}), 404
-
-        can_edit_all = can_edit_all_certificates(user)
-        can_edit_own = can_edit_own_certificates(cur, user)
-        if not can_edit_all and not can_edit_own:
-            return (
-                jsonify(
-                    {"success": False, "error": "当前账号无权维护证照有效期。"}
-                ),
-                403,
-            )
-
-        if not can_edit_all and str(station_id) != str(user.get("station_id") or ""):
-            return jsonify({"success": False, "error": "当前账号只能维护本站证照有效期。"}), 403
-
-        cur.execute(
-            """
-            SELECT id
-            FROM stations
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (station_id,),
-        )
-        if not cur.fetchone():
-            return jsonify({"success": False, "error": "站点不存在。"}), 404
-
-        type_meta = CERTIFICATE_TYPE_BY_CODE[certificate_type]
-        cur.execute(
-            """
-            INSERT INTO station_certificates (
-                station_id,
-                certificate_type,
-                certificate_name,
-                start_date,
-                expiry_date,
-                remark,
-                created_by,
-                updated_by,
-                created_at,
-                updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (station_id, certificate_type)
-            DO UPDATE SET
-                certificate_name = EXCLUDED.certificate_name,
-                start_date = EXCLUDED.start_date,
-                expiry_date = EXCLUDED.expiry_date,
-                remark = EXCLUDED.remark,
-                updated_by = EXCLUDED.updated_by,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING id;
-            """,
-            (
-                station_id,
-                certificate_type,
-                type_meta["name"],
-                start_date,
-                expiry_date,
-                remark,
-                user["id"],
-                user["id"],
-            ),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "证照有效期已保存。",
-                "id": row["id"],
-            }
-        )
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
-
-
-@app.route("/api/station-certificates/<int:certificate_id>", methods=["DELETE"])
-def delete_station_certificate(certificate_id):
-    data = request.get_json(silent=True) or {}
-    user_id = str(data.get("user_id") or request.args.get("user_id", "")).strip()
-
-    if not user_id:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-
-    conn = None
-    cur = None
-
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_station_certificates_table(cur)
-
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            return jsonify({"success": False, "error": "用户不存在。"}), 404
-
-        can_edit_all = can_edit_all_certificates(user)
-        can_edit_own = can_edit_own_certificates(cur, user)
-        if not can_edit_all and not can_edit_own:
-            return (
-                jsonify(
-                    {"success": False, "error": "当前账号无权删除证照记录。"}
-                ),
-                403,
-            )
-
-        cur.execute(
-            """
-            SELECT id, station_id
-            FROM station_certificates
-            WHERE id = %s
-            LIMIT 1;
-            """,
-            (certificate_id,),
-        )
-        certificate = cur.fetchone()
-        if not certificate:
-            return jsonify({"success": False, "error": "证照记录不存在。"}), 404
-
-        if not can_edit_all and str(certificate["station_id"]) != str(user.get("station_id") or ""):
-            return jsonify({"success": False, "error": "当前账号只能删除本站证照记录。"}), 403
-
-        cur.execute(
-            """
-            DELETE FROM station_certificates
-            WHERE id = %s
-            RETURNING id;
-            """,
-            (certificate_id,),
-        )
-
-        conn.commit()
-        return jsonify({"success": True, "message": "证照记录已删除。"})
     except Exception as e:
         if conn:
             conn.rollback()
@@ -34203,6 +33778,31 @@ register_help_documents(app, connect=get_db_connection, has_permission=has_permi
 
 from safety_report_http import register_safety_report
 from service_report_http import register_service_report
+from certificates import register_certificates
+
+def certificate_regions(cur, user):
+    if user.get('role') != 'area_account':
+        return set()
+    # Area binding is fixed, independent of the unrelated issue-view toggle.
+    return get_effective_station_region_scope_values(
+        cur, user, 'limit_issue_station_region_scope',
+        {'limit_issue_station_region_scope': True},
+    ) or set()
+
+def certificate_file_user():
+    token = str(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or '').strip()
+    if not token:
+        raise PermissionError('请先登录后查看证照图片。')
+    user = verify_file_access_token(token)
+    if user.get('_password_change_enforced'):
+        raise PermissionError('请先完成密码修改。')
+    return user
+
+register_certificates(
+    app, connect=get_db_connection, permissions=get_effective_permissions,
+    regions=certificate_regions, types=CERTIFICATE_TYPES,
+    storage_root=STORAGE_ROOT, file_user=certificate_file_user,
+)
 register_service_report(app,connect=get_db_connection,authorize=get_authorized_inspection_report_user,
     period=resolve_inspection_report_period,fetch_inputs=fetch_service_report_inputs,fetch_catalog=fetch_service_report_catalog,
     has_permission=has_permission,save_workspace=save_report_workspace,log_usage=record_ai_usage_log)

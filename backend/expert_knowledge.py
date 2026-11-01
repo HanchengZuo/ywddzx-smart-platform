@@ -198,7 +198,7 @@ def business_evidence(core, cur, question, options):
     for row in recall(cur, '''SELECT c.id,c.certificate_name,c.certificate_type,c.expiry_date,c.remark,s.station_name,s.region
         FROM station_certificates c JOIN stations s ON s.id=c.station_id''',
         ['c.certificate_name','c.certificate_type','c.remark','s.station_name'], question, region_where, region_params):
-        result.append(source('certificate:' + str(row['id']), '证照', row['station_name'] + ' · ' + row['certificate_name'], json.dumps(row, ensure_ascii=False, default=str), '/inspection/certificates'))
+        result.append(source('certificate:' + str(row['id']), '证照', row['station_name'] + ' · ' + row['certificate_name'], json.dumps(row, ensure_ascii=False, default=str), '/certificates/ledger'))
     for row in recall(cur, 'SELECT s.id,s.station_name,s.region,s.address,s.station_type,s.asset_type,s.status,s.station_manager_name FROM stations s',
         ['s.station_name','s.region','s.address'], question, region_where, region_params):
         result.append(source('station:' + str(row['id']), '站点资料', row['station_name'], json.dumps(row, ensure_ascii=False, default=str), '/inspection/station-map'))
