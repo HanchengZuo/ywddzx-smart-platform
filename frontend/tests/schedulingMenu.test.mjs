@@ -72,9 +72,9 @@ test('page visibility still wins and collapsed navigation retains accessible tit
 })
 
 test('user and role permission editors inherit the same new menu order', () => {
-  const groups = ['AI报告生成', '巡检排班', '路网数据', '人员档期', '排班地图', '站点证照有效期管理'].map(category => ({ category, items: [] }))
+  const groups = ['AI报告生成', '巡检排班', '路网数据', '人员档期', '排班地图', '证照管理'].map(category => ({ category, items: [] }))
   assert.deepEqual(sortPermissionGroups(groups).map(group => group.category), [
-    '站点证照有效期管理', '排班地图', '路网数据', '人员档期', '巡检排班', 'AI报告生成',
+    '排班地图', '路网数据', '人员档期', '巡检排班', 'AI报告生成', '证照管理',
   ])
 })
 

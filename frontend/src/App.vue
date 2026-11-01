@@ -251,12 +251,6 @@
           <span v-if="!sidebarCollapsed">我的待复核问题</span>
         </button>
 
-        <button v-if="canViewCertificates" class="nav-item"
-          :class="{ active: isActive('/inspection/certificates'), collapsed: sidebarCollapsed }" type="button"
-          @click="go('/inspection/certificates')" :title="sidebarCollapsed ? '证照管理' : ''">
-          <span class="nav-item-icon">证</span>
-          <span v-if="!sidebarCollapsed">证照管理</span>
-        </button>
         <button v-if="isPageVisible('/inspection/appeals')" class="nav-item"
           :class="{ active: isActive('/inspection/appeals'), collapsed: sidebarCollapsed }" type="button"
           @click="go('/inspection/appeals')" :title="sidebarCollapsed ? '申诉空间' : ''">
@@ -308,6 +302,15 @@
       </div>
 
 
+      <div v-if="visibleCertificatePages.length" class="menu-section">
+        <div v-if="!sidebarCollapsed" class="menu-section-title">证照系统</div>
+        <button v-for="page in visibleCertificatePages" :key="page.path" class="nav-item"
+          :class="{ active: isActive(page.path), collapsed: sidebarCollapsed }" type="button"
+          @click="go(page.path)" :title="sidebarCollapsed ? page.title : ''">
+          <span class="nav-item-icon feedback-nav-icon">{{ page.icon }}<span v-if="page.path === '/certificates/reminders' && certificateUnreadCount > 0" class="feedback-unread-badge">{{ certificateUnreadCount > 99 ? '99+' : certificateUnreadCount }}</span></span>
+          <span v-if="!sidebarCollapsed">{{ page.title }}</span>
+        </button>
+      </div>
       <div v-if="canViewVehicle" class="menu-section">
         <div v-if="!sidebarCollapsed" class="menu-section-title">车辆系统</div>
         <button class="nav-item" :class="{ active: isActive('/vehicle'), collapsed: sidebarCollapsed }" type="button"
@@ -657,6 +660,7 @@ import { notificationTarget } from './utils/notificationTarget'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
 import { schedulingMenuPages } from './config/schedulingCatalog'
+import { certificatePages, canAccessCertificates } from './config/certificateCatalog'
 import { reportPerspective } from './utils/reportAccess'
 import ScheduleTaskInbox from './components/ScheduleTaskInbox.vue'
 import { isSupervisorRole, SUPERVISOR_ROLE_LABELS } from './utils/roles'
@@ -848,6 +852,7 @@ const birthdayBlessing = reactive({
 })
 const birthdaySparkles = Array.from({ length: 26 }, (_, index) => index + 1)
 const feedbackUnreadCount = ref(0)
+const certificateUnreadCount = ref(0)
 const inspectionSignPendingCount = ref(0)
 const myPendingRectificationCount = ref(0)
 const scheduleTaskPendingCount = ref(0)
@@ -983,13 +988,7 @@ const canViewRecords = computed(() => (
 ) && isPageVisible('/inspection/records'))
 const canViewHighlights = computed(() => (isRoot.value || ['view_all_inspection_issues', 'limit_issue_station_region_scope', 'view_own_inspection_issues', 'submit_inspections'].some(key => localPermissions.value[key])) && isPageVisible('/inspection/highlights'))
 const canViewInspectionReports = computed(() => Boolean(reportPerspective(authState.role, localPermissions.value)) && isPageVisible('/inspection/reports'))
-const canViewCertificates = computed(() => (
-  isRoot.value ||
-  Boolean(localPermissions.value.view_all_certificates) ||
-  Boolean(localPermissions.value.limit_certificate_station_region_scope) ||
-  Boolean(localPermissions.value.view_own_certificates) ||
-  Boolean(localPermissions.value.edit_own_certificates)
-) && isPageVisible('/inspection/certificates'))
+const visibleCertificatePages = computed(() => certificatePages.filter(page => canAccessCertificates(authState.role, localPermissions.value, page.path) && isPageVisible(page.path)))
 const canViewMyIssues = computed(() => (isSupervisor.value || isStationManager.value) && isPageVisible('/inspection/my-issues'))
 const canViewStationMyIssues = computed(() => isStationManager.value && isPageVisible('/inspection/my-issues'))
 const canViewSupervisorMyIssues = computed(() => isSupervisor.value && isPageVisible('/inspection/my-issues'))
@@ -1002,8 +1001,7 @@ const canViewInspectionSection = computed(() => (
   canViewIssues.value ||
   canViewHighlights.value ||
   canViewRecords.value ||
-  canViewInspectionReports.value ||
-  canViewCertificates.value
+  canViewInspectionReports.value
 ))
 const canViewAssessmentHome = computed(() => hasPermissionKey('view_assessment') && isPageVisible('/assessment'))
 const canViewAttendance = computed(() => hasPermissionKey('view_attendance') && isPageVisible('/assessment/attendance'))
@@ -1505,6 +1503,7 @@ const handlePasswordChangeRequired = () => {
 }
 
 const resetNotificationCounts = () => {
+  certificateUnreadCount.value = 0
   feedbackUnreadCount.value = 0
   inspectionSignPendingCount.value = 0
   myPendingRectificationCount.value = 0
@@ -1515,6 +1514,7 @@ const resetNotificationCounts = () => {
 }
 
 const applyNotificationSummary = (payload = {}) => {
+  certificateUnreadCount.value = Number(payload.certificate_unread_count || 0)
   feedbackUnreadCount.value = Number(payload.feedback_unread_count || 0)
   inspectionSignPendingCount.value = Number(payload.inspection_sign_pending_count || 0)
   myPendingRectificationCount.value = Number(payload.my_pending_rectification_count || 0)
@@ -1710,6 +1710,7 @@ onMounted(() => {
   window.addEventListener('storage', handleAuthStorageChange)
   window.addEventListener('focus', handleWindowFocus)
   window.addEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
+  window.addEventListener('certificates-updated', handleInspectionSignPendingRefresh)
   window.addEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.addEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.addEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
@@ -1752,6 +1753,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('storage', handleAuthStorageChange)
   window.removeEventListener('focus', handleWindowFocus)
   window.removeEventListener(INSPECTION_SIGN_PENDING_REFRESH_EVENT, handleInspectionSignPendingRefresh)
+  window.removeEventListener('certificates-updated', handleInspectionSignPendingRefresh)
   window.removeEventListener(MY_PENDING_RECTIFICATION_REFRESH_EVENT, handleMyPendingRectificationRefresh)
   window.removeEventListener(BIRTHDAY_BLESSING_PREVIEW_EVENT, handleBirthdayBlessingPreview)
   window.removeEventListener(PAGE_VISIBILITY_UPDATED_EVENT, handlePageVisibilityUpdated)
@@ -1806,14 +1808,7 @@ const resolveHomePath = (user) => {
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
   if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
-  if (
-    permissions.view_all_certificates ||
-    permissions.limit_certificate_station_region_scope ||
-    permissions.view_own_certificates ||
-    permissions.edit_own_certificates
-  ) {
-    candidates.push('/inspection/certificates')
-  }
+  candidates.push(...certificatePages.filter(page => canAccessCertificates(role, permissions, page.path)).map(page => page.path))
   if (permissions.view_attendance) candidates.push('/assessment/attendance')
   if (permissions.view_station_scores) candidates.push('/assessment/station-score')
   if (permissions.view_assessment) candidates.push('/assessment')

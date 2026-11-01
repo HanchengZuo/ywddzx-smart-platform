@@ -3,6 +3,7 @@ import { notificationTarget } from '../utils/notificationTarget'
 import InspectionStandardsView from '../views/inspection/InspectionStandardsView.vue'
 import StationMapView from '../views/inspection/StationMapView.vue'
 import { operationsPages } from '../config/operationsCatalog'
+import { certificatePages, canAccessCertificates } from '../config/certificateCatalog'
 import { isSupervisorRole } from '../utils/roles'
 import { reportPerspective } from '../utils/reportAccess'
 import { clearAuthSession, isUsableAuthToken, verifyAuthSession } from '../utils/authSession'
@@ -151,8 +152,9 @@ const routes = [
   },
   {
     path: '/inspection/certificates',
-    component: () => import('../views/inspection/CertificatesView.vue')
+    redirect: '/certificates/ledger'
   },
+  ...certificatePages.map(page => ({ path: page.path, component: () => import('../views/certificates/CertificatesView.vue'), props: { mode: page.path.split('/').pop() } })),
   {
     path: '/inspection/appeals',
     component: () => import('../views/inspection/AppealsView.vue')
@@ -220,13 +222,7 @@ const canAccessPath = (path, role, permissions) => {
   }
   if (path === '/inspection/plan') return hasPermission(role, permissions, 'view_inspection_schedule')
   if (path === '/inspection/reports') return Boolean(reportPerspective(role, permissions))
-  if (path === '/inspection/certificates') {
-    return Boolean(
-      permissions.view_all_certificates ||
-      permissions.view_own_certificates ||
-      permissions.edit_own_certificates
-    )
-  }
+  if (path.startsWith('/certificates/')) return canAccessCertificates(role, permissions, path)
   if (path === '/inspection/my-issues') return isSupervisorRole(role) || role === 'station_manager'
   if (path === '/assessment') return hasPermission(role, permissions, 'view_assessment')
   if (path === '/assessment/attendance') return hasPermission(role, permissions, 'view_attendance')
@@ -262,9 +258,7 @@ const resolveFallbackPath = (role, permissions, isPathVisible = () => true) => {
   }
   if (permissions.view_inspection_schedule) candidates.push('/inspection/plan')
   if (reportPerspective(role, permissions)) candidates.push('/inspection/reports')
-  if (permissions.view_all_certificates || permissions.view_own_certificates || permissions.edit_own_certificates) {
-    candidates.push('/inspection/certificates')
-  }
+  candidates.push(...certificatePages.filter(page => canAccessCertificates(role, permissions, page.path)).map(page => page.path))
   if (permissions.view_attendance) candidates.push('/assessment/attendance')
   if (permissions.view_station_scores) candidates.push('/assessment/station-score')
   if (permissions.view_assessment) candidates.push('/assessment')

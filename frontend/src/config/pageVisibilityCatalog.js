@@ -1,5 +1,6 @@
 import { operationsMenuPages } from './operationsCatalog.js'
 import { schedulingMenuPages } from './schedulingCatalog.js'
+import { certificatePages } from './certificateCatalog.js'
 
 export const PAGE_VISIBILITY_GROUPS = [
   {
@@ -11,7 +12,7 @@ export const PAGE_VISIBILITY_GROUPS = [
   {
     key: 'inspection',
     title: '巡检系统',
-    description: '巡检登记、规范、问题、记录和证照页面',
+    description: '巡检登记、规范、问题和记录页面',
     pages: [
       {
         key: '/inspection/register',
@@ -54,12 +55,6 @@ export const PAGE_VISIBILITY_GROUPS = [
         path: '/inspection/records',
         title: '巡检记录',
         description: '查看巡检记录、问题明细和巡检流程状态。'
-      },
-      {
-        key: '/inspection/certificates',
-        path: '/inspection/certificates',
-        title: '证照管理',
-        description: '维护和查看站点证照有效期与到期提醒。'
       },
       {
         key: '/inspection/appeals',
@@ -112,6 +107,12 @@ export const PAGE_VISIBILITY_GROUPS = [
         description: '按站点、可评分检查表及自然月核对审核通过的问题。'
       }
     ]
+  },
+  {
+    key: 'certificates',
+    title: '证照系统',
+    description: '证照登记、台账与到期提醒',
+    pages: certificatePages.map(page => ({ ...page, key: page.path }))
   },
   {
     key: 'vehicle',

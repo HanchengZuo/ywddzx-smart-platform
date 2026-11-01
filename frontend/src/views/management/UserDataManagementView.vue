@@ -442,6 +442,7 @@
             :permissions="rolePermissionDialog.permissions" :role="rolePermissionDialog.role" :active="activeRolePermissionCategory"
             controls="role-permission-detail" @select="selectRolePermissionCategory" />
         <div id="role-permission-detail" ref="rolePermissionDetailRef" class="permission-groups user-permission-groups role-template-groups">
+          <p v-if="activeRolePermissionCategory === '证照管理'" class="account-inheritance-note">默认规则不可调整：站点查看、登记本站证照；片区查看、登记管辖站点证照。下面的全部站点授权分别扩大查看或登记范围，不设置编辑、删除权限。</p>
           <div v-for="group in visibleRolePermissionGroups" :key="`role-${group.category}`" class="permission-group">
             <div class="permission-group-title">
               <span>{{ group.category }}</span>
@@ -679,12 +680,10 @@ const birthdayMonthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
 
 const exclusivePermissionGroups = [
   ['view_own_inspection_issues', 'limit_issue_station_region_scope', 'view_all_inspection_issues'],
-  ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records'],
-  ['view_own_certificates', 'limit_certificate_station_region_scope', 'view_all_certificates']
+  ['view_own_inspection_records', 'limit_record_station_region_scope', 'view_all_inspection_records']
 ]
 
 const dependentPermissionMap = {
-  edit_own_certificates: 'view_own_certificates',
   adjust_station_scores: 'view_station_scores',
   reset_station_account_password: 'manage_stations',
   generate_inspection_reports: 'view_inspection_reports',
@@ -707,8 +706,7 @@ const inspectionTableScopePermissionKeys = [
 
 const stationRegionScopePermissionKeys = [
   'limit_issue_station_region_scope',
-  'limit_record_station_region_scope',
-  'limit_certificate_station_region_scope'
+  'limit_record_station_region_scope'
 ]
 
 const inspectionScopeConfigs = {
@@ -734,11 +732,6 @@ const stationRegionScopeConfigs = {
     permissionKey: 'limit_record_station_region_scope',
     title: '巡检记录片区站点范围',
     description: '选择“查看片区站点数据”后，在这里指定可查看哪些片区/归属地的站点记录。'
-  },
-  '站点证照有效期管理': {
-    permissionKey: 'limit_certificate_station_region_scope',
-    title: '证照管理片区站点范围',
-    description: '选择“查看片区站点数据”后，只展示选定片区/归属地内站点的证照有效期和提醒。'
   }
 }
 
@@ -794,9 +787,10 @@ const scopedPermissionLayouts = {
     scopeKeys: ['view_inspection_schedule'],
     actionKeys: ['edit_inspection_schedule']
   },
-  '站点证照有效期管理': {
-    scopeKeys: ['view_own_certificates', 'limit_certificate_station_region_scope', 'view_all_certificates'],
-    actionKeys: ['edit_own_certificates']
+  '证照管理': {
+    scopeKeys: ['view_all_certificates', 'register_all_certificates'], actionKeys: [],
+    readonlyItems: [{ key: 'certificate_default_scope', name: '站点与片区默认范围（不可调整）',
+      description: '站点默认查看、登记本站证照；片区默认查看、登记账号管辖站点证照。查看权限统一用于台账、历史、照片和提醒；更大的全部站点授权优先，登记全部站点需另行授权。' }]
   }
 }
 
@@ -855,7 +849,7 @@ const buildPermissionGroupsFor = (role, includeReadonlyItems = true) => {
 
     const scopeKeys = new Set(layout.scopeKeys || [])
     const actionKeys = new Set(layout.actionKeys || [])
-    const readonlyItems = includeReadonlyItems && isSupervisorRole(role) ? (layout.readonlyItems || []) : []
+    const readonlyItems = (group.category === '证照管理' || (includeReadonlyItems && isSupervisorRole(role))) ? (layout.readonlyItems || []) : []
     return {
       ...group,
       hasScopedLayout: true,
@@ -907,9 +901,6 @@ const applyAreaAccountRegionScope = () => {
   form.permissions.view_all_inspection_issues = false
   form.permissions.view_own_inspection_records = false
   form.permissions.view_all_inspection_records = false
-  form.permissions.view_own_certificates = false
-  form.permissions.view_all_certificates = false
-  form.permissions.edit_own_certificates = false
   form.permissions = enforceExclusivePermissions(form.permissions, form.role)
 }
 
