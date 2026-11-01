@@ -27592,6 +27592,7 @@ def fetch_service_report_inputs(cur,user,start,end,cumulative=False):
 def generate_on_site_service_report_job(task_id,user_id,report_month,snapshot_scope_key,generation_options=None):
     from service_report_data import serialize,chosen,cumulative,build_report
     from service_report_analysis import load_settings,normalize_settings,ensure_phrases,behaviors,examples,category_groups
+    from service_report_units import unit_discoveries
     start,end=resolve_inspection_report_period(REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE,report_month,generation_options)
     update_inspection_report_job(task_id,'running',12,'正在读取现场服务有效规范、视频与现场问题数据')
     conn=get_db_connection();cur=conn.cursor()
@@ -27607,9 +27608,11 @@ def generate_on_site_service_report_job(task_id,user_id,report_month,snapshot_sc
         conn.commit()
     finally:close_db_resources(cur,conn)
     usage_results=[]
+    service_progress=[35]
     def usage(result):
         usage_results.append(result)
-        update_inspection_report_job(task_id,'running',min(82,35+len(usage_results)),
+        service_progress[0]=max(service_progress[0],min(89,35+len(usage_results)))
+        update_inspection_report_job(task_id,'running',service_progress[0],
             f'正在准备现场服务环节、行为表现及代表照片，已处理 {len(usage_results)} 批，未变化结果自动复用')
     selected=chosen(rows,settings)
     phrases=ensure_phrases(get_db_connection,catalog,settings,usage) if selected else {}
@@ -27618,12 +27621,15 @@ def generate_on_site_service_report_job(task_id,user_id,report_month,snapshot_sc
     photos=examples(get_db_connection,None,selected,category_groups(selected),settings['examples'],3,True,usage)
     behavior_photos=examples(get_db_connection,None,selected,analysis['groups'][:4],settings['behavior_examples'],1,True,usage)
     report=build_report(start,end,rows,visits,pending,settings,phrases,analysis,photos,behavior_photos)
+    update_inspection_report_job(task_id,'running',84,'正在准备各片区问题发现的环节概括和代表照片，未变化证据复用历史结果')
+    service_progress[0]=84
+    report['unit_discoveries']=unit_discoveries(get_db_connection,None,selected,phrases,settings,True,usage)
     report['summary']['generated_at']=datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M')
-    update_inspection_report_job(task_id,'running',90,'现场服务第一章13页数据已编排，正在保存')
+    update_inspection_report_job(task_id,'running',90,'现场服务第一章与各片区问题发现已编排，正在保存')
     conn=get_db_connection();cur=conn.cursor()
     try:
         user=get_user_by_id(cur,user_id)
-        for result in usage_results:record_ai_usage_log(cur,user,result,'AI报告生成','现场服务第一章分析',report['month_label'])
+        for result in usage_results:record_ai_usage_log(cur,user,result,'AI报告生成','现场服务报告分析',report['month_label'])
         save_inspection_report_snapshot(cur,REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE,report_month,snapshot_scope_key,report,user,generation_options)
         conn.commit()
     except Exception:

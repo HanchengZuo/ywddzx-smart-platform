@@ -8,6 +8,11 @@ test('service saved source, phrases, classifications and photos match snapshots 
   const report = {month:'2026-07',summary:period,service_settings:settings}
   const current = {...period,type:'on_site_service',service_settings:JSON.parse(JSON.stringify(settings))}
   assert.equal(reportConfigurationDiffers(report,current),false)
+  current.service_settings.unit_evidence={}
+  assert.equal(reportConfigurationDiffers(report,current),false)
+  current.service_settings.unit_evidence.group={summary:'人工编辑环节概括',photo_ids:[1]}
+  assert.equal(reportConfigurationDiffers(report,current),true)
+  current.service_settings.unit_evidence={}
   current.service_settings.phrases['video:1']='服务劝阻'
   assert.equal(reportConfigurationDiffers(report,current),true)
 })

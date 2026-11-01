@@ -115,6 +115,28 @@
         </table>
       </div>
     </section>
+    <section v-for="unit in report.unit_discoveries || []" :key="unit.unit_name">
+      <h3>各片区问题发现 · {{ unit.unit_name }}</h3>
+      <details v-for="category in unit.categories" :key="category.name" open>
+        <summary>{{ category.number }}. {{ category.name }} · {{ category.count }} 项</summary>
+        <p>发现问题共{{ category.count }}次，涉及{{ category.station_names.join('、') }}。</p>
+        <article v-for="(group, index) in category.groups" :key="group.key" class="unit-group">
+          <p>
+            <b>{{ index + 1 }}、{{ group.stage }}：</b>{{ group.summary }}（{{
+              group.station_names.join('、')
+            }}）。
+          </p>
+          <button v-for="id in group.photo_ids" :key="id" @click="$emit('photo', findIssue(id))">
+            <img
+              :src="resolveImage(findIssue(id)?.issue_photo)"
+              :alt="`代表问题 #${id}`"
+              loading="lazy"
+            />
+            <span>{{ findIssue(id)?.station_name }} · #{{ id }}</span>
+          </button>
+        </article>
+      </details>
+    </section>
   </div>
 </template>
 <script setup>
@@ -127,6 +149,26 @@ const findIssue = (id) => props.report.service_issues?.find((row) => row.issue_i
   display: grid;
   gap: 22px;
   color: #233f55;
+}
+.unit-group img {
+  width: min(100%, 300px);
+  height: 200px;
+  object-fit: contain;
+  display: block;
+}
+.unit-group button {
+  border: 1px solid #cbdce8;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f5f9fc;
+  color: #29465d;
+  cursor: pointer;
+}
+.service-reading summary {
+  padding: 14px 0;
+  font-weight: 600;
+  color: #195c7b;
+  cursor: pointer;
 }
 .service-reading section {
   padding: 26px;

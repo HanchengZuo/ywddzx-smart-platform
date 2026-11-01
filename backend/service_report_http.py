@@ -4,6 +4,7 @@ from report_ai_memory import fingerprint
 from service_report_data import serialize,chosen,scope
 from service_report_analysis import (load_settings,normalize_settings,save_settings,read_phrases,
     ensure_phrases,behaviors,examples,category_groups)
+from service_report_units import unit_discoveries
 
 def register_service_report(app,*,connect,authorize,period,fetch_inputs,fetch_catalog,has_permission,save_workspace,log_usage):
     bp=Blueprint('service_report',__name__)
@@ -29,7 +30,8 @@ def register_service_report(app,*,connect,authorize,period,fetch_inputs,fetch_ca
             issues=selected,catalog=[dict(item,phrase=phrases.get(item['key'],'')) for item in catalog],
             stations=sorted(stations.values(),key=lambda r:(unit_key(r['region']),r['station_name'])),
             summary=scope(selected,selected_visits),modes=[scope(selected,selected_visits,mode) for mode in ('video','onsite')],
-            category_groups=category_groups(selected),examples=photos,behaviors=analysis,behavior_examples=behavior_photos)
+            category_groups=category_groups(selected),examples=photos,behaviors=analysis,behavior_examples=behavior_photos,
+            unit_discoveries=unit_discoveries(connect,cur,selected,phrases,settings))
     def run(operation):
         conn=connect()
         try:
@@ -59,6 +61,15 @@ def register_service_report(app,*,connect,authorize,period,fetch_inputs,fetch_ca
                 for key,value in settings['behavior_assignments'].items():
                     if value!=old['behavior_assignments'].get(key) and (not key.isdecimal() or int(key) not in by_id):raise ValueError('问题表现调整包含范围外问题。')
                 analysis=behaviors(connect,cur,selected,settings)
+                unit_groups={g['key']:g for u in unit_discoveries(connect,cur,selected,read_phrases(cur,catalog,settings),settings)
+                    for c in u['categories'] for g in c['groups']}
+                for key,item in settings['unit_evidence'].items():
+                    if item==old['unit_evidence'].get(key):continue
+                    if key not in unit_groups:raise ValueError('片区环节已变化，请重新读取后再保存。')
+                    if 'photo_ids' in item and not item['photo_ids'] and any(by_id[i]['issue_photo'] for i in unit_groups[key]['issue_ids']):
+                        raise ValueError('有照片的环节请选择一张代表照片。')
+                    if any(i not in unit_groups[key]['issue_ids'] or not by_id[i]['issue_photo'] for i in item.get('photo_ids',[])):
+                        raise ValueError('片区代表照片必须来自对应环节的有照片问题。')
                 groups={'examples':{g['name']:set(g['issue_ids']) for g in category_groups(selected)},
                     'behavior_examples':{g['name']:set(g['issue_ids']) for g in analysis['groups']}}
                 for section in groups:
@@ -79,13 +90,16 @@ def register_service_report(app,*,connect,authorize,period,fetch_inputs,fetch_ca
             if not has_permission(cur,user,'generate_inspection_reports'):raise PermissionError('当前账号无生成AI报告权限，不能调用AI分析。')
             if source.get('revision')!=meta['revision'] or source.get('data_signature')!=signature(rows,catalog):raise ValueError('配置或数据已变化，请重新读取后再分析。')
             kind=source.get('kind');selected=chosen(rows,meta['settings']);usage=[]
-            if kind not in ('phrases','examples','behaviors'):raise ValueError('请选择有效的分析任务。')
+            if kind not in ('phrases','examples','behaviors','units'):raise ValueError('请选择有效的分析任务。')
             conn.commit()  # Do not hold a read transaction during provider calls.
             if kind=='phrases':ensure_phrases(connect,catalog,meta['settings'],usage.append)
             if kind=='examples':examples(connect,None,selected,category_groups(selected),meta['settings']['examples'],3,True,usage.append)
             if kind=='behaviors':
                 value=behaviors(connect,None,selected,meta['settings'],True,usage.append)
                 examples(connect,None,selected,value['groups'][:4],meta['settings']['behavior_examples'],1,True,usage.append)
+            if kind=='units':
+                phrases=ensure_phrases(connect,catalog,meta['settings'],usage.append)
+                unit_discoveries(connect,None,selected,phrases,meta['settings'],True,usage.append)
             for value in usage:log_usage(cur,user,value,'AI报告生成','现场服务面板分析',kind)
             conn.commit()
             # Re-read shared settings if a colleague saved while the provider was running.

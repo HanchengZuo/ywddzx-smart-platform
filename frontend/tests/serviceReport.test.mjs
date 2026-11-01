@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc'
 
-for (const file of ['ServiceReportConfig.vue', 'ServiceReportHtml.vue'])
+for (const file of ['ServiceReportConfig.vue', 'ServiceReportHtml.vue', 'ServiceReportUnits.vue'])
   test(`${file} compiles template, bindings and responsive styles`, () => {
     const source = readFileSync(new URL('../src/components/' + file, import.meta.url), 'utf8')
     const { descriptor, errors } = parse(source)
