@@ -722,3 +722,17 @@
     max-height: 200px;
   }
 }
+.notification-message.targeted {
+  outline: 2px solid #247c9a;
+  outline-offset: 3px;
+  background: #eef8fc;
+  scroll-margin-block: 110px;
+}
+.notification-target-label {
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #17667f;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}

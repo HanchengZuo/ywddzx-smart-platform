@@ -122,6 +122,37 @@ test('notification clicks only open a same-origin authenticated page', async () 
   assert.equal(closed, true)
   assert.deepEqual(opened, ['/notifications'])
 })
+test('push message identity survives display and opens the exact inbox entry, including legacy tags', async () => {
+  const { handlers, shown, opened, self } = workerFixture()
+  const id = '01234567-89ab-cdef-0123-456789abcdef'
+  let pending
+  const waitUntil = (promise) => {
+    pending = promise
+  }
+  handlers.push({ data: { json: () => ({ message_id: id, tag: 'ywddzx-' + id }) }, waitUntil })
+  await pending
+  assert.equal(shown[0].options.data.messageId, id)
+  handlers.notificationclick({
+    notification: { close() {}, data: shown[0].options.data },
+    waitUntil,
+  })
+  await pending
+  assert.equal(opened[0], '/notifications?message=' + id)
+  const navigated = []
+  self.clients.matchAll = async () => [
+    {
+      url: self.location.origin + '/other',
+      navigate: async (url) => navigated.push(url),
+      focus: async () => {},
+    },
+  ]
+  handlers.notificationclick({
+    notification: { close() {}, tag: 'ywddzx-' + id, data: {} },
+    waitUntil,
+  })
+  await pending
+  assert.deepEqual(navigated, ['/notifications?message=' + id])
+})
 test('business notifications display only the controlled action/deadline hint, never the message body', async () => {
   const { handlers, shown } = workerFixture()
   let pending

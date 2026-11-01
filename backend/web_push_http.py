@@ -85,6 +85,18 @@ def register_web_push(app, *, connect, has_permission):
     def inbox():
         def operation(cur,user):
             page=max(1,min(100000,int(request.args.get('page',1))))
+            focus=request.args.get('message')
+            found=None
+            if focus:
+                try: focus=str(uuid.UUID(focus))
+                except ValueError: raise ValueError('消息标识无效。') from None
+                # Rank only this recipient's inbox, using the same stable order as pagination.
+                cur.execute('''SELECT position FROM (
+                  SELECT m.id,row_number() OVER (ORDER BY m.created_at DESC,m.id) AS position
+                  FROM web_push_recipients r JOIN web_push_messages m ON m.id=r.message_id
+                  WHERE r.user_id=%s) ranked WHERE id=%s''',(user['id'],focus))
+                match=cur.fetchone();found=bool(match)
+                if match: page=(match['position']-1)//20+1
             cur.execute('SELECT enabled FROM web_push_preferences WHERE user_id=%s',(user['id'],))
             preference=cur.fetchone()
             cur.execute('''SELECT m.id,m.title,m.body,m.kind,m.source,m.action_path,m.sender_name,m.created_at,r.read_at,r.confirmed_at,r.delivery_note,
@@ -98,7 +110,7 @@ def register_web_push(app, *, connect, has_permission):
             counts=cur.fetchone()
             config=configuration()
             return jsonify(items=items,**counts,enabled=preference['enabled'] if preference else True,
-                configured=config['ready'],public_key=config['public_key'],page=page)
+                configured=config['ready'],public_key=config['public_key'],page=page,focus_found=found)
         return run(operation)
 
     @bp.put('/api/notifications/preference')

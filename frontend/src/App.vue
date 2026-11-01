@@ -653,6 +653,7 @@ import PushNotificationBridge from './components/PushNotificationBridge.vue'
 import axios from 'axios'
 import { createAdaptivePolling } from './utils/adaptivePolling'
 import { useRoute, useRouter } from 'vue-router'
+import { notificationTarget } from './utils/notificationTarget'
 import { appVersion, versionHistory } from './config/versionInfo'
 import { operationsPages, operationsMenuPages } from './config/operationsCatalog'
 import { schedulingMenuPages } from './config/schedulingCatalog'
@@ -1935,7 +1936,7 @@ const finishAuthenticatedLogin = async (responseData, submittedPassword = '') =>
   lastIdleActivityMarkedAt = Date.now()
   scheduleIdleLogout()
   loginForm.password = ''
-  await router.push(resolveHomePath(user))
+  await router.push(notificationTarget(route.query.message) || resolveHomePath(user))
 }
 
 const resetRootPasskeySetup = () => {
