@@ -17,7 +17,7 @@ from safety_report_presentation import photo,textbox
 from safety_report_data import unit_label
 
 TEMPLATE_FILE=Path(__file__).parent/'assets/service_report_template/template.pptx'
-RENDERER_VERSION='service-native-1262-1'
+RENDERER_VERSION='service-native-1262-2'
 FONT='Microsoft YaHei'
 
 def walk(shapes):
