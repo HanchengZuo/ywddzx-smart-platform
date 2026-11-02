@@ -107,7 +107,7 @@ def paragraph(shape, spans, size, *, first=False, bold=False, props=None, align=
             if node.tag in {qn('a:buNone'), qn('a:buFont'), qn('a:buChar')}:
                 pr.remove(node)
         font = OxmlElement('a:buFont'); font.set('typeface', FONT)
-        char = OxmlElement('a:buChar'); char.set('char', '■' if bullet=='square' else '▶')
+        char = OxmlElement('a:buChar'); char.set('char', {'square':'■','hollow-square':'□'}.get(bullet,'▶'))
         # OOXML requires bullet properties before tabs/default run properties.
         before = next((n for n in pr if n.tag in {qn('a:tabLst'), qn('a:defRPr'), qn('a:extLst')}), None)
         index = pr.index(before) if before is not None else len(pr)
@@ -276,7 +276,7 @@ def clone_pie_chart(slide, source, x, y, w, h):
     return shape
 
 
-def compact_pie_layout(slide, shape, rows, title):
+def compact_pie_layout(slide, shape, rows, title, *, top=1.36, bottom=7.12, title_size=16, legend_size=None):
     """Keep the title, editable 3D plot and legend in explicit, adjacent bands.
 
     Office/WPS/LibreOffice reserve different amounts of whitespace for a native
@@ -286,25 +286,40 @@ def compact_pie_layout(slide, shape, rows, title):
     for node in shape.chart._chartSpace.xpath('.//c:plotArea/c:layout'):
         for child in list(node):node.remove(child)
     x,w=shape.left/914400,shape.width/914400
-    heading=slide.shapes.add_textbox(Inches(x),Inches(1.36),Inches(w),Inches(.42))
+    heading=slide.shapes.add_textbox(Inches(x),Inches(top),Inches(w),Inches(.42))
     heading.name='safety-pie-title'
-    paragraph(heading,[(title,'595959')],16,first=True,bold=True,align=PP_ALIGN.CENTER)
-    columns=3 if len(rows)>6 else 2
-    legend_rows=max(1,math.ceil(len(rows)/columns))
+    paragraph(heading,[(title,'595959')],title_size,first=True,bold=True,align=PP_ALIGN.CENTER)
     from unicodedata import east_asian_width
-    cell=(w-.24*(columns-1))/columns
-    row_heights=[]
-    font_size=9 if len(rows)>6 else 10
-    for row in range(legend_rows):
-        names=rows[row*columns:(row+1)*columns]
-        lines=max([math.ceil(sum(1 if east_asian_width(c) in 'WF' else .55 for c in item['name']) * font_size / ((cell-.15)*72)) for item in names] or [1])
-        row_heights.append(max(.24,lines*font_size*1.25/72+.03))
+    compact = bottom-top < 4
+    dense = compact and len(rows)>8
+    legend_items = [dict(row,name=row['name']+(f"  {row['percentage']:.2f}%" if dense else '')) for row in rows]
+    columns=3 if len(rows)>6 else 2
+    font_size=legend_size or (9 if len(rows)>6 else 10)
+    def measure(columns,size):
+        cell=(w-.24*(columns-1))/columns
+        heights=[]
+        for row in range(max(1,math.ceil(len(rows)/columns))):
+            names=legend_items[row*columns:(row+1)*columns]
+            lines=max([math.ceil(sum(1 if east_asian_width(c) in 'WF' else .55 for c in item['name']) * size / ((cell-.15)*72)) for item in names] or [1])
+            heights.append(max(.2 if compact else .24,lines*size*1.25/72+.03))
+        return cell,heights
+    cell,row_heights=measure(columns,font_size)
+    if compact:
+        fitted=False
+        for size in range(font_size,5,-1):
+            for cols in (columns,3,4):
+                cell,heights=measure(cols,size)
+                if sum(heights)<=bottom-top-1.4:
+                    font_size,columns,row_heights=size,cols,heights;fitted=True;break
+            if fitted:break
+        if not fitted:raise ValueError('视频重点问题子类图例过长，请合并过细的子类后重新生成。')
+    legend_rows=len(row_heights)
     legend_height=sum(row_heights)
-    legend_top=7.12-legend_height
-    shape.top=Inches(1.86);shape.height=Inches(legend_top-1.94)
+    legend_top=bottom-legend_height
+    shape.top=Inches(top+.5);shape.height=Inches(max(.4,legend_top-top-.58))
     palette=['4F81BD','C0504D','9BBB59','8064A2','4BACC6','F79646','A5A5A5','264478']
     for row_index in range(legend_rows):
-        items=rows[row_index*columns:(row_index+1)*columns]
+        items=legend_items[row_index*columns:(row_index+1)*columns]
         widths=[min(cell,.3+sum(1 if east_asian_width(c) in 'WF' else .55 for c in item['name'])*font_size/72) for item in items]
         left=x+(w-sum(widths)-.24*max(0,len(items)-1))/2
         top=legend_top+sum(row_heights[:row_index])
@@ -329,7 +344,11 @@ def compact_pie_layout(slide, shape, rows, title):
         if old is not None:labels.remove(old)
         before=labels.find(qn('c:txPr'))
         labels.insert(labels.index(before) if before is not None else 0,props)
-    if len(rows)>10:
+    if dense:
+        # Two stacked charts cannot fit dense outside callouts; retain every
+        # percentage in its editable legend instead of overlapping tiny labels.
+        with editable_plot(shape.chart):shape.chart.plots[0].has_data_labels=False
+    elif len(rows)>10:
         pie_percentage_callouts(slide,shape,rows)
 
 

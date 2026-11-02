@@ -368,10 +368,10 @@ class SafetyPresentationTest(unittest.TestCase):
             prs=Presentation(path)
             for page,source in [(10,7),(11,8)]:
                 slide=prs.slides[SLIDE_ORDER.index(page)]
-                body=next(s for s in slide.shapes if s.has_text_frame and s.text.startswith('问题分布'))
+                body=next(s for s in slide.shapes if s.name=='safety-key-problem-text')
                 self.assertIn('问题分布：如右图所示',body.text)
                 self.assertIn('产生原因：',body.text)
-                self.assertNotIn('占比较高问题分析',body.text)
+                self.assertIn('占比较高问题分析',body.text)
                 self.assertEqual(len(body._element.xpath('.//a:buChar[@char="■"]')),2)
                 self.assertTrue(all(n.get('val')=='FF0000' for n in body._element.xpath('.//a:buClr/a:srgbClr')))
                 graphs=[s for s in slide.shapes if s.has_chart]

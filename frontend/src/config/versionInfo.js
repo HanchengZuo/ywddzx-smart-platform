@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.6.1', date: '2026-11-02', title: '安全质量重点问题分析口径调整',
+    summary: '现场分析最高频固定检查主题，视频分析前两类的问题表现子类。',
+    items: ['恢复占比较高问题分析标题；现场只统计最高频主题下的检查内容，视频按两个最高频固定类别分别汇总已确认的AI子类。',
+      '视频两类描述以分号分隔，右侧上下两个独立可编辑3D饼图，标题与数据范围同步调整。',
+      '原因仅复用选中类别的已有分析，不新增AI调用；保持31页顺序和其他报告内容。'] },
   { version: 'v12.6', date: '2026-11-02', title: '设备设施短语与站点特性问题升级',
     summary: '新增检查内容短语编辑与站点分类代表照片，持久复用AI分析结果。',
     items: ['短语面板覆盖设备设施现场规范，支持搜索和人工调整；9067默认为非检查表类问题。',

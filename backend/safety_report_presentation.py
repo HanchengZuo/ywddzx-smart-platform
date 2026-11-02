@@ -19,9 +19,10 @@ from safety_template_styles import (paragraph, fit_size, update_chart, frame_pro
     clone_pie_chart, compact_pie_layout, evidence_textbox, evidence_text_height, fit_evidence_layout,
     EVIDENCE_INTRO_BOX, EVIDENCE_CAPTION_BOXES, EVIDENCE_REQUIREMENTS_BOX)
 from safety_video_themes import selected_video_group
+from safety_problem_analysis import problem_analysis
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-1218-1'
+RENDERER_VERSION = 'safety-native-1261-1'
 # Keep template indexes while composing, then move chapter three behind all
 # chapter-two evidence. Only the slide ID order changes, not relationships.
 SLIDE_ORDER = (*range(9), *range(12,24), 9, 10, 11, *range(24,31))
@@ -178,6 +179,49 @@ def template_distribution_page(slide, section):
     graph.left=Inches(6.15);graph.top=Inches(1.28);graph.width=Inches(6.95);graph.height=Inches(5.95)
     update_chart(graph,rows,(('问题数量','count'),),pie=True,title=f'{mode}巡查问题汇总分析')
     compact_pie_layout(slide,graph,rows,f'{mode}巡查问题汇总分析')
+
+
+def key_problem_page(slide, report, mode, pie_source):
+    value = problem_analysis(report, mode)
+    body = next(s for s in slide.shapes if s.has_text_frame and '问题分布' in s.text)
+    title_props = frame_props(body)
+    distribution_props, cause_props, item_props = frame_props(body,1),frame_props(body,2),frame_props(body,3)
+    for shape in list(slide.shapes):
+        if shape.has_chart:
+            refs = shape._element.xpath('.//c:chart/@r:id')
+            remove(shape)
+            for rid in refs: slide.part.drop_rel(rid)
+    body.name = 'safety-key-problem-text'
+    body.left=Inches(.55);body.top=Inches(1.25);body.width=Inches(6.2);body.height=Inches(5.87)
+    reasons = [f'（{i+1}）{sentence(text)}' for i,text in enumerate(value['causes'])] or ['当前选中类别暂无已确认的原因分析。']
+    paragraphs = [value['heading'],value['narrative'],'产生原因：',*reasons]
+    size = 10
+    for candidate in range(16,9,-1):
+        height=sum(evidence_text_height([text],5.65,candidate,line_height=candidate*1.4)-.1 for text in paragraphs)
+        if height+40/72 <= 5.87:
+            size=candidate;break
+    # Never truncate a category or reason to fit the fixed two analysis pages.
+    if sum(evidence_text_height([text],5.65,size,line_height=size*1.4)-.1 for text in paragraphs)+40/72 > 5.87:
+        raise ValueError('重点问题分析文字过长，请在固定章节证据面板合并过细的子类后重新生成。')
+    body.text_frame.clear();body.text_frame.word_wrap=True
+    p=paragraph(body,[(value['heading'],'000000')],size,first=True,bold=True,props=title_props,bullet='hollow-square')
+    p.line_spacing=Pt(size*1.4);p.space_after=Pt(10)
+    p=paragraph(body,[(value['narrative'],'000000')],size,bold=True,props=distribution_props,bullet='square')
+    p.line_spacing=Pt(size*1.4);p.space_after=Pt(10)
+    p=paragraph(body,[('产生原因：','000000')],size,bold=True,props=cause_props,bullet='square')
+    p.line_spacing=Pt(size*1.4);p.space_after=Pt(4)
+    for reason in reasons:
+        p=paragraph(body,[(reason,'000000')],size,bold=True,props=item_props)
+        p.line_spacing=Pt(size*1.4);p.space_after=Pt(5)
+    blocks=value['blocks'] or [{'distribution':[],'chart_title':('现场' if mode=='onsite' else '视频')+'重点问题分布（暂无数据）'}]
+    for index, block in enumerate(blocks):
+        top,bottom = ((1.35,4.12) if index==0 else (4.3,7.12)) if len(blocks)==2 else (1.36,7.12)
+        rows = block['distribution']
+        graph=clone_pie_chart(slide,pie_source,6.85,top,6.25,bottom-top)
+        graph.name=f'safety-key-problem-chart-{index+1}'
+        update_chart(graph,rows,(('问题数量','count'),),pie=True,title=block['chart_title'])
+        compact_pie_layout(slide,graph,rows,block['chart_title'],top=top,bottom=bottom,
+            title_size=14 if len(blocks)==2 else 16,legend_size=8 if len(blocks)==2 else None)
 
 
 def video_typical_narrative(report):
@@ -407,8 +451,8 @@ def build_safety_presentation(report, output_path, storage_root=None):
     overview(source[2],sections['onsite']);overview(source[3],sections['video'])
     typical_page(source[5],report,root)
     distribution_page(source[7],sections['onsite']);distribution_page(source[8],sections['video'])
-    distribution_page(source[10],sections['onsite'],report['analysis_causes']['onsite'],next(s for s in source[7].shapes if s.has_chart))
-    distribution_page(source[11],sections['video'],report['analysis_causes']['video'],next(s for s in source[8].shapes if s.has_chart))
+    key_problem_page(source[10],report,'onsite',next(s for s in source[7].shapes if s.has_chart))
+    key_problem_page(source[11],report,'video',next(s for s in source[8].shapes if s.has_chart))
     issues=report['safety_issues'];analyses=report['safety_analysis'];focus=report['focus_category']
     key='onsite:topic:'+focus;value=analyses.get(key,{})
     selected=category_rows(issues,'onsite','topic:'+focus)
