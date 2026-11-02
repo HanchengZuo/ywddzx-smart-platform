@@ -239,6 +239,18 @@ class VersionDatabaseTests(unittest.TestCase):
             self.assertTrue(response.data.startswith(b'%PDF-'))
             response.close()
             self.assertEqual(client.get(f'/api/checklist-versions/{pdf_version}/original').status_code,401)
+            self.assertEqual(client.get(f'/storage/checklist-versions/{pdf_version}/original').status_code,401)
+            self.cur.execute('SELECT auth_version FROM users WHERE id=1')
+            auth_version=self.cur.fetchone()['auth_version'];self.conn.rollback()
+            cookie=api.get_file_access_serializer().dumps({'uid':1,'av':auth_version,'exp':api.current_epoch_seconds()+60,'scope':'storage:read'})
+            client.set_cookie(api.FILE_ACCESS_COOKIE_NAME,cookie,path='/storage')
+            response=client.get(f'/storage/checklist-versions/{pdf_version}/original')
+            self.assertEqual(response.status_code,200,response.json)
+            self.assertTrue(response.data.startswith(b'%PDF-'))
+            self.assertEqual(response.headers['Cache-Control'],'private, no-store')
+            response.close()
+            # The read-only file cookie grants neither API edits nor upload.
+            self.assertEqual(client.post(f'/api/checklist-versions/{pdf_version}/original').status_code,401)
 
 
 if __name__ == '__main__':unittest.main()
