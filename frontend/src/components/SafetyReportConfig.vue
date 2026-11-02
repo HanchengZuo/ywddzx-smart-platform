@@ -3,7 +3,35 @@
     <p v-if="error" class="safety-error" role="alert">
       {{ error }} <button @click="load">重新读取</button>
     </p>
-    <div v-if="loading" role="status">正在核对现场、视频问题与已保存配置…</div>
+    <div
+      v-if="loading"
+      class="safety-loading"
+      role="status"
+      aria-live="polite"
+      aria-label="正在读取安全报告专属配置"
+      aria-busy="true"
+    >
+      <div class="safety-loading-heading">
+        <div>
+          <small>安全质量检查报告 · 专属配置</small>
+          <h3>正在准备报告配置</h3>
+          <p>核对现场与视频数据，读取最近一次保存的设置。</p>
+        </div>
+        <span class="safety-loading-status"
+          ><span class="safety-loading-spinner" aria-hidden="true"></span>读取中</span
+        >
+      </div>
+      <div class="safety-loading-metrics" aria-hidden="true">
+        <span v-for="n in 5" :key="n"><i></i><b></b></span>
+      </div>
+      <div class="safety-loading-tools" aria-hidden="true">
+        <div v-for="name in ['典型选题', '规范要求', '月度重点', '固定章节证据']" :key="name">
+          <strong>{{ name }}</strong
+          ><i></i><i></i>
+        </div>
+      </div>
+      <small class="safety-loading-note">仅核对已有数据和配置，不会调用 AI 生成报告。</small>
+    </div>
     <template v-else-if="data">
       <article class="safety-source">
         <div>
@@ -974,6 +1002,154 @@ onBeforeUnmount(() => {
 <style scoped>
 .safety-config {
   color: #294b65;
+}
+.safety-loading {
+  padding: 24px;
+  border: 1px solid #c3d4df;
+  border-left: 4px solid #205977;
+  border-radius: 16px;
+  background: linear-gradient(120deg, #f1f7fa, #fff);
+  overflow: hidden;
+}
+.safety-loading-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.safety-loading-heading small {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.safety-loading-heading h3 {
+  margin: 8px 0;
+  font-size: 20px;
+}
+.safety-loading-heading p {
+  margin: 0;
+  color: #536f80;
+  font-size: 14px;
+}
+.safety-loading-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  color: #1c6579;
+  background: #e2eff4;
+  border: 1px solid #c5dce7;
+  border-radius: 8px;
+  padding: 9px 13px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.safety-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #b7d3df;
+  border-top-color: #246b83;
+  border-radius: 50%;
+  animation: safety-loading-spin 1s linear infinite;
+}
+.safety-loading-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid #d6e3ec;
+  border-radius: 10px;
+  background: #fff;
+}
+.safety-loading-metrics span {
+  display: grid;
+  gap: 13px;
+  padding: 0 9px;
+  border-right: 1px solid #e0e9ef;
+}
+.safety-loading-metrics span:last-child {
+  border: 0;
+}
+.safety-loading i,
+.safety-loading b {
+  display: block;
+  height: 9px;
+  width: 75%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #dce7ed, #edf3f6, #dce7ed);
+  background-size: 200% 100%;
+  animation: safety-loading-shimmer 2s ease-in-out infinite;
+}
+.safety-loading b {
+  height: 24px;
+  width: 45%;
+}
+.safety-loading-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.safety-loading-tools > div {
+  padding: 18px;
+  border: 1px solid #d6e3ec;
+  border-radius: 10px;
+  background: #fff;
+  display: grid;
+  gap: 14px;
+}
+.safety-loading-tools strong {
+  font-size: 14px;
+  color: #36596e;
+}
+.safety-loading-tools i:last-child {
+  width: 55%;
+}
+.safety-loading-note {
+  display: block;
+  margin-top: 18px;
+  line-height: 1.6;
+}
+@keyframes safety-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes safety-loading-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .safety-loading-spinner,
+  .safety-loading i,
+  .safety-loading b {
+    animation: none;
+  }
+}
+@media (max-width: 650px) {
+  .safety-loading {
+    padding: 18px;
+  }
+  .safety-loading-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .safety-loading-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 14px;
+    gap: 16px 8px;
+  }
+  .safety-loading-metrics span {
+    border: 0;
+    padding: 0;
+  }
+  .safety-loading-tools > div {
+    padding: 14px;
+  }
+  .safety-loading-heading p {
+    line-height: 1.7;
+  }
 }
 .safety-step-label {
   font-size: 13px;
