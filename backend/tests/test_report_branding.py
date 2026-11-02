@@ -1,16 +1,18 @@
 """Native logo coverage across six renderers, without AI or production writes."""
 import hashlib
 import json
+from io import BytesIO
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.util import Inches
 
-from report_branding import LOGO_FILE, LEGACY_LOGO_DIGESTS, apply_report_branding
+from report_branding import LOGO_FILE, LEGACY_LOGO_DIGESTS, add_logo, apply_report_branding
 from report_presentation import InspectionReportPresentation
 from tests.test_non_oil_report_presentation import NonOilReportPresentationTest
 
@@ -32,6 +34,48 @@ def owners(prs):
 
 
 class ReportBrandingTests(unittest.TestCase):
+    def test_native_ppt_keeps_supplied_transparent_png_without_background_flattening(self):
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        add_logo(slide.shapes, Inches(1), Inches(1), Inches(1), Inches(1))
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)/'transparent.pptx'
+            prs.save(path)
+            picture = next(pictures(Presentation(path).slides[0].shapes))
+            self.assertEqual(picture.image.blob, LOGO_FILE.read_bytes())
+            with Image.open(BytesIO(picture.image.blob)) as image:
+                self.assertEqual(image.mode, 'RGBA')
+                alpha = image.getchannel('A')
+                self.assertEqual(alpha.getextrema(), (0, 255))
+                for x, y in [(0, 0), (image.width-1, 0), (0, image.height-1),
+                             (image.width-1, image.height-1)]:
+                    self.assertEqual(alpha.getpixel((x, y)), 0)
+
+    def test_saved_deck_replaces_opaque_operations_center_logo_without_changing_source(self):
+        from non_oil_report_presentation import copy_existing_non_oil_presentation
+        from pptx_compatibility import COMPATIBILITY_VERSION
+        previous_digest = '269197b9a3df64f869ea93a3fd691b0e37050e1b31fd599209651bbe731d9716'
+        self.assertIn(previous_digest, LEGACY_LOGO_DIGESTS)
+        with tempfile.TemporaryDirectory() as root:
+            opaque = BytesIO()
+            Image.new('RGB', (8, 8), (250, 246, 230)).save(opaque, format='PNG')
+            digest = hashlib.sha256(opaque.getvalue()).hexdigest()
+            prs = Presentation()
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            opaque.seek(0)
+            old = slide.shapes.add_picture(opaque, Inches(1), Inches(2), Inches(1), Inches(1))
+            geometry = (old.left, old.top, old.width, old.height)
+            prs.core_properties.version = COMPATIBILITY_VERSION
+            source, target = Path(root)/'saved.pptx', Path(root)/'export.pptx'
+            prs.save(source)
+            before = source.read_bytes()
+            with patch('report_branding.LEGACY_LOGO_DIGESTS', LEGACY_LOGO_DIGESTS | {digest}):
+                copy_existing_non_oil_presentation({'presentation': {'ppt_path': 'saved.pptx'}}, target, root)
+            self.assertEqual(source.read_bytes(), before)
+            picture = next(pictures(Presentation(target).slides[0].shapes))
+            self.assertEqual(picture.image.blob, LOGO_FILE.read_bytes())
+            self.assertEqual((picture.left, picture.top, picture.width, picture.height), geometry)
+
     def assert_branding(self, prs, expected=True):
         digest = hashlib.sha256(LOGO_FILE.read_bytes()).hexdigest()
         found = []
