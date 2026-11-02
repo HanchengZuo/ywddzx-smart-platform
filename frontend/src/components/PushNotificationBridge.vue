@@ -98,6 +98,7 @@ import {
   enableDevice,
   isPushPrepared,
   canPromptForPush,
+  isMobilePushDevice,
 } from '../utils/webPush'
 
 const props = defineProps({ userId: [String, Number] })
@@ -159,7 +160,14 @@ function openCenter() {
 }
 async function present() {
   await nextTick()
-  if (!accountCurrent() || !show.value || document.hidden || !dialog.value || dialog.value.open)
+  if (
+    !isMobilePushDevice() ||
+    !accountCurrent() ||
+    !show.value ||
+    document.hidden ||
+    !dialog.value ||
+    dialog.value.open
+  )
     return
   // A business dialog already in use takes precedence over this login reminder.
   if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return
@@ -176,6 +184,9 @@ async function inspect(force = false) {
     syncDevice({ isCurrent: current }),
   ])
   if (!current()) return
+  // Desktop devices still sync existing subscriptions and status, but never
+  // open automatic enrollment or installation prompts, including forced checks.
+  if (!isMobilePushDevice()) return
   if (settings.status !== 'fulfilled') {
     if (force) {
       ready.value = false
@@ -212,7 +223,7 @@ async function inspect(force = false) {
     if (device.status !== 'fulfilled' || !device.value) return
     if (!ready.value && !force) return
     const available = await canPromptForPush()
-    if (!current()) return
+    if (!current() || !isMobilePushDevice()) return
     if (!available) {
       ready.value = false
       if (show.value) closePrompt()
@@ -226,6 +237,7 @@ async function inspect(force = false) {
 async function enable() {
   if (
     busy.value ||
+    !isMobilePushDevice() ||
     !show.value ||
     !accountCurrent() ||
     mode.value !== 'enable' ||

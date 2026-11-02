@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import * as vue from 'vue'
+import { isMobilePushDevice } from '../src/utils/webPush.js'
 
 function setup(options = {}) {
   const { descriptor } = parse(
@@ -47,7 +48,15 @@ function setup(options = {}) {
     onBeforeUnmount: (callback) => {
       dispose = callback
     },
-    window: { Notification: { permission: options.permission || 'default' } },
+    window: {
+      Notification: { permission: options.permission || 'default' },
+      navigator: {
+        userAgent:
+          options.userAgent ?? 'Mozilla/5.0 (Linux; Android 14) Chrome/130.0 Mobile Safari/537.36',
+        maxTouchPoints: options.maxTouchPoints ?? 0,
+        userAgentData: options.userAgentData,
+      },
+    },
     document: {
       hidden: false,
       querySelector: () => null,
@@ -65,6 +74,7 @@ function setup(options = {}) {
     },
     clearTimeout() {},
     pushCapability: () => ({ code: options.capability || 'supported' }),
+    isMobilePushDevice: () => isMobilePushDevice(environment.window),
     isPushPrepared: () => options.ready !== false,
     canPromptForPush: options.canPromptForPush || (async () => options.promptAvailable !== false),
     syncDevice: options.syncDevice || (async () => ({ active: !!options.active })),
@@ -126,7 +136,7 @@ const flush = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve()
 }
 
-test('login automatically presents direct enrollment, without requesting native permission before a click', async () => {
+test('mobile login automatically presents direct enrollment, without requesting native permission before a click', async () => {
   const s = setup()
   s.mount()
   await flush()
@@ -139,6 +149,72 @@ test('login automatically presents direct enrollment, without requesting native 
   s.dispose()
   assert.equal(s.native.open, false)
   assert.equal(s.listeners.size, 0)
+})
+
+test('desktop login keeps device synchronization but never opens onboarding, even on forced checks or visibility events', async () => {
+  for (const userAgent of [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) Version/18.0 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
+  ]) {
+    let syncs = 0,
+      preflights = 0
+    const s = setup({
+      userAgent,
+      maxTouchPoints: 10,
+      syncDevice: async () => {
+        syncs++
+        return { active: false }
+      },
+      canPromptForPush: async () => {
+        preflights++
+        return true
+      },
+    })
+    // Only a touch-capable Mac is an iPad desktop-UA signal, not a real Mac.
+    if (userAgent.includes('Macintosh')) s.environment.window.navigator.maxTouchPoints = 0
+    s.mount()
+    await flush()
+    await s.state.recheck()
+    s.listeners.get('visibilitychange')()
+    s.listeners.get('close')()
+    await flush()
+    assert.equal(syncs, 2)
+    assert.equal(preflights, 0)
+    assert.equal(s.state.show.value, false)
+    assert.equal(s.native.open, false)
+    assert.equal(
+      s.calls.some(([kind]) => ['show', 'enable', 'put'].includes(kind)),
+      false,
+    )
+    assert.equal(s.session.size, 0)
+    s.dispose()
+  }
+})
+
+test('iPad desktop-UA still receives mobile onboarding and delayed preflight cannot open on a desktop', async () => {
+  const ipad = setup({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Version/18.0 Safari/605.1.15',
+    maxTouchPoints: 5,
+  })
+  await ipad.state.inspect()
+  assert.equal(ipad.native.open, true)
+  ipad.dispose()
+  let release
+  const s = setup({
+    canPromptForPush: () =>
+      new Promise((resolve) => {
+        release = resolve
+      }),
+  })
+  const inspection = s.state.inspect()
+  await flush()
+  s.environment.window.navigator.userAgent = 'Windows Chrome'
+  release(true)
+  await inspection
+  assert.equal(s.native.open, false)
+  assert.equal(s.state.show.value, false)
+  s.dispose()
 })
 
 test('immediate enable runs in the same gesture, persists only after subscription, and does not navigate', async () => {

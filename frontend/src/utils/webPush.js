@@ -1,5 +1,17 @@
 import axios from 'axios'
 
+export function isMobilePushDevice(env = window) {
+  const navigator = env.navigator
+  const ua = navigator?.userAgent || ''
+  // iPadOS may identify as a Mac. Touchscreen PCs and narrow desktop windows
+  // must still stay silent; this is onboarding policy, not push capability.
+  return (
+    navigator?.userAgentData?.mobile === true ||
+    /Android|iPhone|iPad|iPod|Windows Phone|IEMobile|Opera Mini|Mobile/i.test(ua) ||
+    (/Macintosh/i.test(ua) && navigator?.maxTouchPoints > 1)
+  )
+}
+
 export function pushCapability(env = window) {
   const ua = env.navigator?.userAgent || ''
   const ios =

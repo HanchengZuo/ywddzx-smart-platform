@@ -14,6 +14,12 @@
 
 参考：[Microsoft Authenticator添加其他帐户](https://support.microsoft.com/en-us/authenticator/how-to-add-your-accounts-to-microsoft-authenticator)、[Fernet加密说明](https://cryptography.io/en/latest/fernet/)。
 
+## v12.6.3 通知开通提示仅限移动端
+
+登录后的“为当前设备开启通知”窗口及主屏幕安装引导只对移动设备显示，按浏览器设备标识（含iPad桌面UA）判断，不按窗口宽度或单独的触摸能力判断；电脑缩小窗口及触屏Windows设备不弹窗。移动端仍需通过原有通知能力、权限、订阅及服务端配置检查，不具备开通条件时保持静默。
+
+桌面端继续同步已有设备和订阅状态，不取消订阅或改变账号通知偏好；通知中心的手动开启、修复和测试入口仍支持桌面端。自动弹窗的强制重检及可见性回调也遵守移动端限制。本版无后端业务调整、权限或数据库迁移。
+
 ## v12.6.2 报告品牌与统计短语
 
 现场服务报告在16:9适配完成后统一替换品牌标识：封面采用用户提供的完整中国石油图，后续各页右上角仅保留独立LOGO，不附带文字，图片等比完整放置，去除母版、版式及页面继承的旧页眉图标。预览和导出同步更新渲染器缓存版本。
@@ -93,7 +99,7 @@
 
 自动提示前还会核验完整的注册、授权和推送接口，实际 Service Worker 注册对象必须提供 `showNotification`、`subscribe` 和 `getSubscription`。无打扰预检只读取订阅及可用的 `permissionState`，不申请权限、不创建订阅、不发送测试消息；被拒绝、检测失败或无法确认设备状态时不弹开通窗口。明确低于 iOS / iPadOS 16.4 的系统也不显示无法完成的安装引导。Windows 不按系统版本一刀切，而按当前浏览器实际能力判断。系统级通知总开关、专注模式及厂商推送网络未必能被网页识别，不能保证通过检测就一定实收，仍需用户在通知中心发测试消息确认。参考：[WebKit iOS Web Push 支持条件](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/)、[MDN permissionState](https://developer.mozilla.org/en-US/docs/Web/API/PushManager/permissionState)。
 
-用户正常登录后，系统自动检查当前设备的浏览器能力、通知权限、有效订阅及服务端配置。满足条件且未订阅时自动显示就地开通窗口；点击“立即开启”直接复用通知中心的 `enableDevice`，在原始点击事件中调用原生订阅接口，不先跳转页面或等待网络，适配 Safari 的用户手势要求。浏览器不允许网站无条件自动授权或绕过本人确认，不能保证登录完成后无需点击就弹出原生权限框。[Apple 的直接点击要求](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)。
+用户正常登录后，系统自动检查当前设备的浏览器能力、通知权限、有效订阅及服务端配置。自v12.6.3起，仅移动端满足条件且未订阅时自动显示就地开通窗口，桌面端保留同步及通知中心手动开通。点击“立即开启”直接复用通知中心的 `enableDevice`，在原始点击事件中调用原生订阅接口，不先跳转页面或等待网络，适配 Safari 的用户手势要求。浏览器不允许网站无条件自动授权或绕过本人确认，不能保证登录完成后无需点击就弹出原生权限框。[Apple 的直接点击要求](https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers)。
 
 已开通设备、明确暂停账号推送、已拒绝权限、不支持或不安全环境不反复请求。iPhone / iPad 尚未安装主屏幕应用时，窗口直接显示添加步骤，不尝试无效订阅。选择“稍后设置”仅延后当前登录会话的提示，不关闭账号推送；不保存登录令牌副本，只用UI指纹在sessionStorage区分会话。失败可就地重试，拒绝后提示先调整系统设置；通知中心的开启、修复与测试仍作为第二道入口。
 
