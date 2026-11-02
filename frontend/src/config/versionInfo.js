@@ -14,6 +14,10 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.5.1', date: '2026-11-02', title: '证照登记与更新入口优化',
+    summary: '本站登记固定站点，去掉名称编号，台账新增更新证照入口。',
+    items: ['本站范围的所属站点置灰固定，不再显示下拉框；有全部登记授权时仍可选择站点。',
+      '站点选择不显示数字编号；台账提供更新证照按钮，明确重新登记替换当前信息、历史仍保留。'] },
   { version: 'v12.5', date: '2026-11-02', title: '独立证照系统与历史台账',
     summary: '拆分证照登记、证照台账与证照提醒，统一范围授权，登记照片并留存历史。',
     items: ['证照系统移至考核系统下方，登记有证照时必须上传照片，也支持明确登记无此证照。',
