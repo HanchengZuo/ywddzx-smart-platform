@@ -14,6 +14,11 @@ export const formatAppVersion = (value) => {
 export const appVersion = formatAppVersion(appPackage.version || '1.0.0')
 
 export const versionHistory = [
+  { version: 'v12.6.3', date: '2026-11-02', title: '通知开通提示仅限移动端',
+    summary: '电脑浏览器不再自动弹出通知开通窗口，移动端保留能力检测与开通引导。',
+    items: ['按设备标识识别手机及平板，兼容iPad桌面模式；电脑窄窗口、触屏电脑不会因布局尺寸被误判。',
+      '桌面端仍同步设备状态、接收已订阅消息，也可在通知中心手动开启或修复订阅。',
+      '移动端继续检查浏览器能力、通知权限及已有订阅，不支持或检测失败时不弹窗。无新增权限或数据库迁移。'] },
   { version: 'v12.6.2', date: '2026-11-02', title: '报告品牌标识与统计短语升级',
     summary: '现场服务品牌图等比适配，安全报告新增统计短语库与横向排名图。',
     items: ['现场服务封面使用提供的中国石油完整图片，后续各页右上角仅保留等比LOGO，不附带文字。',

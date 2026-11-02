@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { setImmediate } from 'node:timers'
-import { pushCapability, pushDeviceStatus } from '../src/utils/webPush.js'
+import { isMobilePushDevice, pushCapability, pushDeviceStatus } from '../src/utils/webPush.js'
 
 const capable = {
   isSecureContext: true,
@@ -12,6 +12,33 @@ const capable = {
   Notification: { permission: 'default', requestPermission() {} },
   matchMedia: () => ({ matches: false }),
 }
+test('automatic onboarding uses mobile identity, not desktop viewport, touch or push support', () => {
+  for (const navigator of [
+    { userAgent: 'Windows Chrome', maxTouchPoints: 10 },
+    { userAgent: 'Macintosh Safari', maxTouchPoints: 0 },
+    { userAgent: 'X11; Linux x86_64; Firefox' },
+    { userAgent: 'CrOS Chrome' },
+    {},
+  ]) {
+    const env = {
+      ...capable,
+      navigator: { ...capable.navigator, ...navigator },
+      innerWidth: 375,
+      matchMedia: () => ({ matches: true }),
+    }
+    assert.equal(isMobilePushDevice(env), false)
+    assert.equal(pushCapability(env).code, 'supported', 'manual desktop enrollment stays available')
+  }
+  for (const navigator of [
+    { userAgent: 'iPhone Safari' },
+    { userAgent: 'iPad Safari' },
+    { userAgent: 'Macintosh Safari', maxTouchPoints: 5 },
+    { userAgent: 'Android Chrome', userAgentData: { mobile: false } },
+    { userAgent: 'Chrome Mobile' },
+    { userAgentData: { mobile: true } },
+  ])
+    assert.equal(isMobilePushDevice({ navigator }), true)
+})
 test('capability detection distinguishes HTTPS, installed iOS, unsupported browsers and real API capability', () => {
   assert.equal(pushCapability(capable).code, 'supported')
   assert.equal(pushCapability({ ...capable, isSecureContext: false }).code, 'insecure')
