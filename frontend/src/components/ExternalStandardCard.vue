@@ -2,6 +2,7 @@
   <article class="external-standard-card">
     <div class="external-standard-top">
       <span>外部规范ID {{ standard.external_standard_id }}</span>
+      <em :class="{ linked: standard.is_active }">{{ standard.is_active ? '启用' : standard.standard_enabled === false ? '规范已停用' : '所属版本未启用' }}</em>
       <em :class="{ linked: standard.linked_internal_standard_id }">
         {{ standard.linked_internal_standard_id
           ? `${compact ? '内部' : '已关联内部规范'} ${standard.linked_internal_standard_id}`

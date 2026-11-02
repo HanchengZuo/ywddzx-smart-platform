@@ -29,7 +29,7 @@
           min="1900-01"
           max="2100-12"
           aria-label="评分月份"
-          @change="fetchScores"
+          @change="changeScoreMonth"
         /><small>{{
           filters.month === defaultMonth ? '默认统计上一个月' : '按所选自然月统计'
         }}</small></label
@@ -168,11 +168,11 @@
     </div>
 
     <section v-else class="score-ledger-list">
-      <article v-for="table in visibleScoreTables" :key="table.id" class="ledger-card">
+      <article v-for="table in visibleScoreTables" :key="`${table.id}:${table.checklist_version_id || ''}`" class="ledger-card">
         <div class="ledger-head">
           <div>
             <div class="table-title-line">
-              <h3>{{ table.table_name }}</h3>
+              <h3>{{ table.table_name }}<small v-if="table.version_number"> · v{{ table.version_number }}</small></h3>
               <span :class="['mode-pill', table.checklist_mode]">{{
                 table.checklist_mode_label
               }}</span>
@@ -917,7 +917,7 @@ const fetchStations = async () => {
 
 const fetchScorableChecklists = async () => {
   const response = await axios.get('/api/assessment/station-scores/scorable-checklists', {
-    params: { _ts: Date.now() },
+    params: { _ts: Date.now(), month: filters.month },
   })
   scorableChecklists.value = Array.isArray(response.data?.checklists)
     ? response.data.checklists
@@ -930,6 +930,10 @@ const fetchScorableChecklists = async () => {
   }
 }
 
+async function changeScoreMonth() {
+  await fetchScorableChecklists()
+  await fetchScores()
+}
 const fetchScores = async () => {
   const ticket = ++scoreSerial
   scoreController?.abort()

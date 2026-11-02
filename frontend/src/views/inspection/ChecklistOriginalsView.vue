@@ -7,7 +7,7 @@
         <p class="page-desc">集中查看上海公司事业部检查表 PDF 原件，并追溯由检查表拆解形成的外部规范列表。</p>
       </div>
       <div class="header-badges">
-        <span class="status-pill info">检查表 {{ checklistItems.length }}</span>
+        <span class="status-pill info">检查表 {{ checklistCount }} · {{ checklistItems.length }} 个版本</span>
         <span class="status-pill success">已上传 {{ uploadedCount }}</span>
         <span class="status-pill standard-count">外部规范 {{ externalStandardCount }}</span>
         <span v-if="canManage && !isMobileView" class="status-pill manager">可维护原件</span>
@@ -22,7 +22,7 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">检查表目录</div>
-            <h3>共 {{ checklistItems.length }} 张检查表</h3>
+            <h3>{{ checklistCount }} 张检查表 · {{ checklistItems.length }} 个版本</h3>
           </div>
         </div>
 
@@ -32,6 +32,7 @@
             <div class="checklist-card-main">
               <div>
                 <h4>{{ item.table_name }}</h4>
+                <span :class="['status-pill', item.is_active ? 'success' : 'neutral']">v{{ item.version_number }} · {{ item.version_name }} · {{ item.is_active ? '当前启用' : '历史 / 未启用' }}</span>
                 <p>{{ item.description || '暂无检查表说明。' }}</p>
               </div>
               <span :class="['status-pill', item.has_pdf ? 'success' : 'neutral']">
@@ -62,7 +63,7 @@
                 :class="{ disabled: uploadingId === item.inspection_table_id }" @click.stop>
                 <input type="file" accept="application/pdf,.pdf" :disabled="uploadingId === item.inspection_table_id"
                   @change="handlePdfChange(item, $event)" />
-                {{ uploadingId === item.inspection_table_id ? '上传中...' : item.has_pdf ? '上传新版' : '上传PDF' }}
+                {{ uploadingId === item.inspection_table_id ? '上传中...' : item.has_pdf ? '更新本版原件' : '上传PDF' }}
               </label>
             </div>
 
@@ -110,7 +111,7 @@
           <div class="preview-header">
             <div>
               <div class="section-kicker">PDF 原件预览</div>
-              <h3>{{ activeItem.table_name }}</h3>
+              <h3>{{ activeItem.table_name }} · v{{ activeItem.version_number }}</h3>
               <p>{{ activeItem.original_filename || '当前检查表暂未上传 PDF 原件。' }}</p>
             </div>
             <div class="preview-actions">
@@ -243,6 +244,7 @@ import ExternalStandardCard from '@/components/ExternalStandardCard.vue'
 import { paginateByHeight } from '@/utils/heightPagination'
 
 const currentUserId = ref(localStorage.getItem('user_id') || '')
+const checklistCount = computed(() => new Set(checklistItems.value.map(item => item.logical_table_id)).size)
 const currentRole = localStorage.getItem('user_role') || ''
 let localPermissions
 try {
@@ -338,7 +340,7 @@ const paginatedActiveExternalStandards = computed(() => {
 
 const getExternalStandardsByTable = (inspectionTableId) => {
   return externalStandards.value.filter((item) => {
-    return String(item.inspection_table_id) === String(inspectionTableId || '')
+    return String(item.checklist_version_id) === String(inspectionTableId || '')
   })
 }
 
@@ -444,8 +446,8 @@ const exportActiveStandards = async () => {
   try {
     exportingTableId.value = item.inspection_table_id
     const response = await axios.get(
-      `/api/inspection-table-originals/${item.inspection_table_id}/external-standards/export`,
-      { responseType: 'blob' }
+      `/api/inspection-table-originals/${item.logical_table_id}/external-standards/export`,
+      { responseType: 'blob', params: { version_id: item.version_id } }
     )
     const blobUrl = window.URL.createObjectURL(response.data)
     const link = document.createElement('a')
@@ -501,7 +503,9 @@ const fetchOriginals = async () => {
         _ts: Date.now()
       }
     })
-    checklistItems.value = response.data?.items || []
+    // The directory selection key is a version, not the stable permission/table ID.
+    checklistItems.value = (response.data?.items || []).map(item => ({ ...item,
+      logical_table_id: item.inspection_table_id, inspection_table_id: item.version_id }))
     canManage.value = Boolean(response.data?.can_manage)
 
     if (!checklistItems.value.some((item) => String(item.inspection_table_id) === String(activeTableId.value))) {
@@ -529,7 +533,8 @@ const fetchFieldsForTable = async (inspectionTableId) => {
   if (!tableKey || fieldMap.value[tableKey]) return
   try {
     const response = await axios.get('/api/inspection-table-fields', {
-      params: { table_id: tableKey, _ts: Date.now() }
+      params: { table_id: checklistItems.value.find(item => String(item.version_id) === tableKey)?.logical_table_id,
+        version_id: tableKey, _ts: Date.now() }
     })
     fieldMap.value = {
       ...fieldMap.value,
@@ -566,7 +571,7 @@ const handlePdfChange = async (item, event) => {
     formData.append('user_id', currentUserId.value)
     formData.append('pdf', file)
     const response = await axios.post(
-      `/api/inspection-table-originals/${item.inspection_table_id}/pdf`,
+      `/api/checklist-versions/${item.version_id}/original`,
       formData
     )
     setActionMessage(response.data?.message || '检查表原件 PDF 已更新。', 'success')

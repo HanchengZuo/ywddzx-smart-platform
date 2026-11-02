@@ -16,7 +16,7 @@
         <div class="filter-item" :data-filter-state="filterFieldState('id')"><label for="highlight-id">亮点ID</label><input id="highlight-id" v-model.trim="draft.id" placeholder="例如 HL1（精确匹配）" /></div>
         <div class="filter-item" :data-filter-state="filterFieldState('month')"><label for="highlight-month">检查月度</label><input id="highlight-month" v-model="draft.month" type="month" @change="draft.date_from = ''; draft.date_to = ''" /></div>
         <div class="filter-item" :data-filter-state="filterFieldState('dateRange')"><label>检查时间范围</label><DateRangePicker v-model:date-from="draft.date_from" v-model:date-to="draft.date_to" placeholder="选择检查时间范围" aria-label="选择亮点检查时间范围" @change="draft.month = ''" /></div>
-        <div v-for="field in optionFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label>{{ field.label }}</label><InspectionFilterSelect v-model="draft[field.key]" :multiple="field.key !== 'manager'" :label="field.label" :options="options[field.options] || []" :loading="optionsLoading" :error="optionsError" @retry="loadOptions" /></div>
+        <div v-for="field in optionFields" :key="field.key" class="filter-item" :data-filter-state="filterFieldState(field.key)"><label>{{ field.label }}</label><ChecklistVersionSelect v-if="field.key === 'table'" v-model="draft.table" :options="options[field.options] || []" /><InspectionFilterSelect v-else v-model="draft[field.key]" :multiple="field.key !== 'manager'" :label="field.label" :options="options[field.options] || []" :loading="optionsLoading" :error="optionsError" @retry="loadOptions" /></div>
         <div class="filter-item" :data-filter-state="filterFieldState('description')"><label for="highlight-description">亮点描述</label><input id="highlight-description" v-model.trim="draft.description" placeholder="输入亮点描述" /></div>
         <div class="filter-item" :data-filter-state="filterFieldState('status')"><label for="highlight-status">亮点状态</label><select id="highlight-status" v-model="draft.status"><option value="">全部</option><option v-for="(label,key) in labels" :key="key" :value="key">{{ label }}</option></select></div>
       </div>
@@ -37,7 +37,7 @@
       <div v-else-if="!rows.length" class="table-empty-state"><div><div class="filter-kicker">暂无记录</div><h3>当前没有符合条件的亮点记录</h3><p>可以调整筛选条件，然后点击“开始筛选”重新查询。</p></div></div>
       <div v-else class="table-content">
         <div ref="tableScrollRef" class="desktop-table"><table :style="{ zoom: tableFullscreen ? tableZoom : 1 }"><thead><tr><th v-if="visible('id')">亮点ID</th><th v-for="column in columns" :key="column.key">{{ column.label }}</th><th v-if="visible('photo')">亮点照片</th><th v-if="visible('status')">亮点状态</th><th v-if="visible('audit')">审核</th><th v-if="canManage">操作</th></tr></thead>
-          <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td v-if="visible('id')"><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ row[column.key] || '—' }}</td>
+          <tbody><tr v-for="row in rows" :key="row.id" :class="`audit-${row.audit_status}`"><td v-if="visible('id')"><strong>{{ row.display_id }}</strong></td><td v-for="column in columns" :key="column.key" :class="{ description: column.key === 'description' }">{{ (column.key === 'inspection_table_name' ? row.inspection_table_display_name : row[column.key]) || '—' }}</td>
             <td v-if="visible('photo')"><button class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button></td>
             <td v-if="visible('status')"><span class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></td>
             <td v-if="visible('audit')"><div class="actions audit-actions"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in row.can_audit ? auditActions(row) : []" :key="action.key" class="btn btn-sm" :class="auditButtonClass(action.key)" @click="audit(row, action.key)">{{ action.label }}</button><span v-if="!row.can_audit && row.audit_status === 'pending'">待审核</span></template></div><div v-if="row.audited_by_name" class="audit-meta">{{ row.audited_by_name }}<br />{{ formatTime(row.audited_at) }}</div><p v-if="row.audit_note">{{ row.audit_note }}</p></td>
@@ -45,7 +45,7 @@
           </tr></tbody></table></div>
         <div class="mobile-cards"><article v-for="row in rows" :key="row.id" class="highlight-card"><header><strong v-if="visible('id')">{{ row.display_id }}</strong><span v-if="visible('status')" class="status" :class="row.audit_status">{{ labels[row.audit_status] }}</span></header>
           <p v-if="visible('description')" class="description">{{ row.description }}</p><button v-if="visible('photo')" class="photo" @click="preview = image(row.photo_path)"><img :src="image(row.photo_path)" loading="lazy" alt="亮点照片，点击放大" /></button>
-          <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ row[column.key] || '—' }}</dd></template><template v-if="visible('audit')"><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></template></dl>
+          <dl><template v-for="column in columns.filter(c => c.key !== 'description')" :key="column.key"><dt>{{ column.label }}</dt><dd>{{ (column.key === 'inspection_table_name' ? row.inspection_table_display_name : row[column.key]) || '—' }}</dd></template><template v-if="visible('audit')"><dt>审核人员</dt><dd>{{ row.audited_by_name || '待审核' }}</dd><dt>审核时间</dt><dd>{{ formatTime(row.audited_at) || '—' }}</dd><dt>审核说明</dt><dd>{{ row.audit_note || '—' }}</dd></template></dl>
           <div class="actions audit-actions" v-if="row.can_audit && visible('audit')"><span v-if="busy.has(row.id)" class="audit-submitting-chip">后台提交中</span><template v-else><button v-for="action in auditActions(row)" :key="action.key" class="btn" :class="auditButtonClass(action.key)" @click="audit(row, action.key)">{{ action.label }}</button></template></div>
           <div v-if="canManage" class="table-actions"><button v-if="row.can_edit || row.can_change_inspector" class="btn btn-secondary" :disabled="busy.has(row.id)" @click="openEdit(row)">{{ row.can_edit ? '编辑亮点' : '调整检查人' }}</button><button v-if="row.can_delete" class="btn btn-danger" :disabled="busy.has(row.id)" @click="openDelete(row)">删除</button></div>
         </article></div>
@@ -74,6 +74,7 @@
 </template>
 
 <script setup>
+import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import FilterSummary from '@/components/FilterSummary.vue'

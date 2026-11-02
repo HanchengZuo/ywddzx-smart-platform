@@ -93,17 +93,7 @@
 
         <div class="filter-item" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
-          <div class="search-select" ref="inspectionTableSelectRef">
-            <input v-model="filters.inspectionTableName" placeholder="搜索或选择检查表"
-              @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
-            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
-              <div v-for="option in filteredInspectionTableOptions" :key="option" class="search-select-option"
-                @click="selectFilterOption('inspectionTableName', option)">
-                <div class="option-main">{{ option }}</div>
-              </div>
-              <div v-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
-            </div>
-          </div>
+          <ChecklistVersionSelect :model-value="filters.inspectionTableName ? [filters.inspectionTableName] : []" :options="inspectionTableOptions" @update:model-value="values => filters.inspectionTableName = values.at(-1) || ''" />
         </div>
       </div>
 
@@ -113,6 +103,7 @@
           <div v-if="key === 'dateRange'" class="review-date-range">
             <input v-model="filters.dateFrom" type="date" aria-label="开始日期" /><span>至</span><input v-model="filters.dateTo" type="date" aria-label="结束日期" />
           </div>
+          <ChecklistVersionSelect v-else-if="key === 'inspectionTableName'" v-model="filters[key]" :options="inspectionTableOptions" />
           <FilterMultiSelect v-else-if="reviewMultiOptions[key]" v-model="filters[key]" :options="reviewMultiOptions[key]" :placeholder="isMobileReview ? '搜索并多选' + label : undefined" />
           <template v-else-if="key === 'keyword'">
             <input id="review-keyword" v-model="filters.keyword" type="search" placeholder="搜索规范详情、问题描述、整改说明等" maxlength="1000" enterkeyhint="search" aria-label="关键词搜索" aria-describedby="review-keyword-hint" @keydown.enter.prevent="!$event.isComposing && !loading && applyFilters()" />
@@ -154,7 +145,7 @@
           :class="{ 'is-review-returned': isReturnedForRectification(item), 'is-review-card': isReviewQueue }">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
-              <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
+              <span class="mobile-card-category">{{ item.inspection_table_display_name || item.inspection_table_name || '暂无' }}</span>
               <span :class="issueStatusClass(item)">{{ issueStatusLabel(item) }}</span>
             </div>
             <div class="mobile-card-code">{{ isReviewQueue ? `问题ID：${item.id}` : `规范ID：${item.standard_id || '暂无'}` }}</div>
@@ -163,7 +154,7 @@
           <div class="mobile-card-body">
             <div class="mobile-card-row"><span>站点</span><strong>{{ item.station }}</strong></div>
 
-            <div v-if="!isReviewQueue" class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_name || '暂无' }}</strong></div>
+            <div v-if="!isReviewQueue" class="mobile-card-row"><span>检查表</span><strong>{{ item.inspection_table_display_name || item.inspection_table_name || '暂无' }}</strong></div>
             <div v-if="currentRole === 'station_manager'" class="mobile-card-row">
               <span>检查表签名状态</span>
               <strong>{{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}</strong>
@@ -342,7 +333,7 @@
                 <td v-if="isMyIssueColumnVisible('issue_category')">{{ myIssueCategoryLabel(item) }}</td>
                 <td v-if="isMyIssueColumnVisible('region')">{{ item.region || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('station')">{{ item.station }}</td>
-                <td v-if="isMyIssueColumnVisible('inspection_table_name')">{{ item.inspection_table_name || '暂无' }}</td>
+                <td v-if="isMyIssueColumnVisible('inspection_table_name')">{{ item.inspection_table_display_name || item.inspection_table_name || '暂无' }}</td>
                 <td v-if="isMyIssueColumnVisible('inspection_sign_status')">
                   <span :class="isInspectionSigned(item) ? 'status-tag success' : 'status-tag warning'">
                     {{ isInspectionSigned(item) ? '已签名确认' : '未签名确认' }}
@@ -629,6 +620,7 @@
 </template>
 
 <script setup>
+import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import { useRouter } from 'vue-router'
 import { isSupervisorRole } from '@/utils/roles'
 import AppealSubmitDialog from '../../components/AppealSubmitDialog.vue'
