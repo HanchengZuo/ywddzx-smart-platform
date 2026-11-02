@@ -29,7 +29,7 @@
           :class="issueAuditRowClass(item)">
           <div class="mobile-card-head">
             <div class="mobile-card-title-row">
-              <span class="mobile-card-category">{{ item.inspection_table_name || '暂无' }}</span>
+              <span class="mobile-card-category">{{ item.inspection_table_display_name || item.inspection_table_name || '暂无' }}</span>
               <div class="mobile-card-title-actions">
                 <button class="excellent-star mobile" type="button"
                   :class="{ active: item.is_excellent, locked: !canToggleExcellentIssue(item) }"
@@ -351,33 +351,7 @@
 
         <div class="filter-item" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
-          <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
-            <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
-              <div class="multi-selected-values">
-                <span v-for="value in filters.inspectionTableName" :key="`table-${value}`" class="multi-selected-chip">
-                  {{ value }}
-                  <button type="button" @click.stop="removeMultiFilterValue('inspectionTableName', value)">×</button>
-                </span>
-                <input ref="inspectionTableFilterInputRef" v-model="filterSearch.inspectionTableName" type="text"
-                  :placeholder="filters.inspectionTableName.length ? '继续搜索检查表' : '搜索并多选检查表'"
-                  @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
-              </div>
-              <span v-if="filters.inspectionTableName.length" class="multi-selected-count">已选 {{ filters.inspectionTableName.length }}</span>
-            </div>
-            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
-              <button v-for="option in filteredInspectionTableOptions" :key="option" type="button"
-                class="search-select-option multi-select-option"
-                :class="{ selected: isMultiFilterSelected('inspectionTableName', option) }"
-                @mousedown.prevent @click="toggleMultiFilter('inspectionTableName', option)">
-                <span class="multi-option-check">{{ isMultiFilterSelected('inspectionTableName', option) ? '✓' : '' }}</span>
-                <div class="option-main">{{ option }}</div>
-              </button>
-              <div v-if="issueFilterOptionsLoading && !issueFilterOptionsLoaded" class="search-select-empty option-loading">正在加载检查表...</div>
-              <button v-else-if="issueFilterOptionsError && !issueFilterOptionsLoaded" class="search-select-retry" type="button"
-                @mousedown.prevent @click.stop="fetchIssueFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
-              <div v-else-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
-            </div>
-          </div>
+          <ChecklistVersionSelect v-model="filters.inspectionTableName" :options="inspectionTableOptions" scope="issues" />
         </div>
 
         <div class="filter-item" :data-filter-state="filterFieldState('standardId')">
@@ -621,7 +595,7 @@
                 <td v-if="isIssueColumnVisible('station_manager_phone')" class="nowrap">{{ item.station_manager_phone }}</td>
                 <td v-if="isIssueColumnVisible('inspector')" class="nowrap">{{ item.inspector }}</td>
                 <td v-if="isIssueColumnVisible('inspector_phone')" class="nowrap">{{ item.inspector_phone }}</td>
-                <td v-if="isIssueColumnVisible('inspection_table_name')" class="nowrap">{{ item.inspection_table_name || '暂无' }}</td>
+                <td v-if="isIssueColumnVisible('inspection_table_name')" class="nowrap">{{ item.inspection_table_display_name || item.inspection_table_name || '暂无' }}</td>
                 <td v-if="isIssueColumnVisible('standard_id')" class="nowrap standard-id-cell">
                   <div class="standard-id-stack">
                     <span v-for="part in getStandardIdParts(item)" :key="`${item.id}-table-${part.type}`"
@@ -981,7 +955,7 @@
             </div>
             <div>
               <span>检查表</span>
-              <strong>{{ editDialog.issue?.inspection_table_name || '-' }}</strong>
+              <strong>{{ editDialog.issue?.inspection_table_display_name || editDialog.issue?.inspection_table_name || '-' }}</strong>
             </div>
             <div>
               <span>规范ID</span>
@@ -1025,7 +999,7 @@
                         <div class="option-main">
                           {{ standard.standard_id }}｜{{ getEditStandardTitle(standard) }}
                         </div>
-                        <div class="option-sub option-table-name">{{ standard.inspection_table_name || '未关联外部检查表' }}
+                        <div class="option-sub option-table-name">{{ standard.inspection_table_display_name || standard.inspection_table_name || '未关联外部检查表' }}
                         </div>
                         <div class="option-sub standard-detail-preview">{{ getEditStandardPreview(standard) }}</div>
                       </div>
@@ -1049,7 +1023,7 @@
                   </div>
                   <div>
                     <span>检查表</span>
-                    <strong>{{ selectedEditStandard?.inspection_table_name || editDialog.issue?.inspection_table_name ||
+                    <strong>{{ selectedEditStandard?.inspection_table_display_name || selectedEditStandard?.inspection_table_name || editDialog.issue?.inspection_table_name ||
                       '-'
                       }}</strong>
                   </div>
@@ -1330,6 +1304,7 @@
 </template>
 
 <script setup>
+import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import IssueFlowTimeline from '../../components/IssueFlowTimeline.vue'
 import { isSupervisorRole } from '@/utils/roles'
 import { reviewOptionsFor } from '../../utils/issueWorkflow'

@@ -4,7 +4,7 @@
       <div>
         <div class="page-kicker">管理系统</div>
         <h2>检查表数据管理</h2>
-        <p class="page-desc">管理上海公司事业部检查表、字段结构和拆解后的外部规范数据。</p>
+        <p class="page-desc">检查表身份保持不变，字段、规范与原件按版本管理。历史问题保留录入时的版本与规范快照。</p>
       </div>
       <div v-if="hasPermission" class="header-actions">
         <button class="btn btn-secondary" type="button" :disabled="loading" @click="fetchChecklists">
@@ -13,11 +13,6 @@
         <button class="btn btn-secondary" type="button" :disabled="backupExporting" @click="exportBackup">
           {{ backupExporting ? '导出中...' : '导出备份' }}
         </button>
-        <button class="btn btn-import" type="button" :disabled="backupImporting" @click="triggerBackupImport">
-          {{ backupImporting ? '导入中...' : '导入备份覆盖' }}
-        </button>
-        <input ref="backupFileInputRef" class="hidden-file-input" type="file" accept="application/json,.json"
-          :disabled="backupImporting" @change="importBackup" />
         <button class="btn btn-primary" type="button" @click="openCreateDialog">新建检查表</button>
       </div>
     </div>
@@ -45,9 +40,8 @@
               :class="{ active: selectedChecklist && String(selectedChecklist.id) === String(item.id) }"
               @click="selectChecklist(item)">
               <div>
-                <div class="table-code">{{ item.table_code }}</div>
+                <div class="table-code">{{ item.versions?.length || 1 }} 个版本 · 当前 v{{ item.versions?.find(v => v.is_active)?.version_number || '—' }}</div>
                 <strong>{{ item.table_name }}</strong>
-                <p>{{ item.description || '暂无说明。' }}</p>
               </div>
               <div class="item-meta">
                 <span :class="['status-pill', item.is_active ? 'success' : 'neutral']">
@@ -60,13 +54,7 @@
                 <span>{{ item.standard_count || 0 }} 条规范</span>
               </div>
               <div class="item-actions">
-                <button class="btn btn-secondary btn-sm" type="button" @click.stop="openEditDialog(item)">
-                  编辑检查表
-                </button>
-                <button class="btn btn-danger btn-sm" type="button" :disabled="deletingId === item.id"
-                  @click.stop="deleteChecklist(item)">
-                  {{ deletingId === item.id ? '删除中...' : '删除' }}
-                </button>
+                <span class="version-footnote">点击查看版本、字段及规范</span>
               </div>
             </article>
             <div v-if="!loading && !checklists.length" class="empty-block">
@@ -75,7 +63,7 @@
           </div>
         </section>
 
-        <section class="card-surface standards-card">
+        <section ref="standardsPanelRef" class="card-surface standards-card">
           <div v-if="selectedChecklist" class="standards-panel">
             <div class="pane-head">
               <div>
@@ -84,6 +72,15 @@
                 <p>{{ selectedChecklist.description || '当前检查表暂无说明。' }}</p>
               </div>
               <button class="btn btn-primary" type="button" @click="openStandardDialog">维护规范数据</button>
+            </div>
+
+            <div class="version-workspace">
+              <div><label for="edition-picker">检查表版本</label><select id="edition-picker" v-model="selectedVersionId" @change="changeVersion">
+                <option v-for="v in selectedChecklist.versions" :key="v.id" :value="v.id">v{{ v.version_number }} · {{ v.version_name }}（{{ v.is_active ? '当前启用' : '未启用' }}）</option>
+              </select></div>
+              <div class="version-actions"><button class="btn btn-secondary" @click="newVersion.visible = true">新增版本</button><button class="btn btn-secondary" @click="openEditDialog(selectedChecklist)">版本与字段</button><button v-if="selectedVersion && !selectedVersion.is_active" class="btn btn-primary" :disabled="saving" @click="activateVersion">启用此版本</button></div>
+              <p>{{ selectedVersion?.is_active ? '当前可用于登记；其他版本仅供历史查看。' : '此版本未启用，规范不会出现在巡检登记或 AI 引用中。' }} 字段结构大改请新增版本，不会覆盖旧版。</p>
+              <small v-if="selectedVersion">最近维护：{{ selectedVersion.updated_by_name }} · {{ formatVersionDate(selectedVersion.updated_at) }}</small>
             </div>
 
             <div class="summary-grid">
@@ -181,6 +178,13 @@
         </section>
       </div>
     </template>
+
+    <Teleport to="body"><div v-if="newVersion.visible" class="version-overlay" @click.self="!saving && (newVersion.visible = false)"><form class="version-create card-surface" role="dialog" aria-modal="true" aria-labelledby="new-version-title" @submit.prevent="createVersion">
+      <div class="pane-head"><div><div class="section-kicker">保留历史 · 新建草稿</div><h3 id="new-version-title">新增检查表版本</h3></div><button type="button" class="btn btn-secondary" :disabled="saving" @click="newVersion.visible = false">关闭</button></div>
+      <p>{{ selectedChecklist?.table_name }}</p><label>版本名称<input v-model.trim="newVersion.name" maxlength="80" required placeholder="例如：2026年11月修订版" /></label>
+      <label>修订说明<textarea v-model="newVersion.description" maxlength="1000" rows="3" /></label>
+      <p>复制所选版本的字段结构，不复制规范与规范 ID。创建后可修改全部字段，维护新规范后再启用。</p><button class="btn btn-primary" :disabled="saving">{{ saving ? '创建中…' : '创建未启用版本' }}</button>
+    </form></div></Teleport>
 
     <div v-if="createDialog.visible" class="dialog-backdrop">
       <section class="edit-dialog create-dialog card-surface">
@@ -327,8 +331,8 @@
 
             <div class="form-grid">
               <label class="form-field">
-                <span>检查表名称</span>
-                <input v-model.trim="editDialog.table_name" type="text" placeholder="请输入检查表名称" />
+                <span>版本名称</span>
+                <input v-model.trim="editDialog.table_name" type="text" placeholder="请输入版本名称" maxlength="80" />
               </label>
 
               <label class="form-field">
@@ -341,7 +345,7 @@
 
               <label class="form-field">
                 <span>检查表模式</span>
-                <select v-model="editDialog.checklist_mode">
+                <select v-model="editDialog.checklist_mode" disabled>
                   <option v-for="option in checklistModeOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
                   </option>
@@ -353,10 +357,7 @@
                 <textarea v-model.trim="editDialog.description" rows="3" placeholder="说明这张检查表的使用场景"></textarea>
               </label>
 
-              <label class="switch-field">
-                <input v-model="editDialog.is_active" type="checkbox" />
-                <span>启用这张检查表</span>
-              </label>
+              <p>启用操作请在版本面板进行。已有规范或业务记录的版本不能改变字段名称或顺序；请先配置新版本字段，再维护规范。</p>
             </div>
           </div>
 
@@ -546,12 +547,12 @@
                       <td>{{ item.created_at || '-' }}</td>
                       <td>
                         <div class="row-actions">
-                          <button type="button" role="switch" :aria-checked="item.is_active !== false"
+                          <button type="button" role="switch" :aria-checked="item.standard_enabled !== false"
                             :aria-label="`外部规范 ${item.standard_id} 启用状态`"
-                            class="standard-switch" :class="{ enabled: item.is_active !== false }"
+                            class="standard-switch" :class="{ enabled: item.standard_enabled !== false }"
                             :disabled="togglingStandards.has(item.standard_id)" @click="toggleStandard(item)">
                             <span class="switch-track"><span /></span>
-                            {{ togglingStandards.has(item.standard_id) ? '保存中' : item.is_active !== false ? '已启用' : '已停用' }}
+                            {{ togglingStandards.has(item.standard_id) ? '保存中' : item.standard_enabled !== false ? '已启用' : '已停用' }}
                           </button>
                           <button class="btn btn-secondary btn-sm" type="button"
                             @click="startEditStandard(standardState, item, selectedFields)">
@@ -618,6 +619,37 @@ const backupImporting = ref(false)
 const backupFileInputRef = ref(null)
 const checklists = ref([])
 const selectedChecklist = ref(null)
+const standardsPanelRef = ref(null)
+const selectedVersionId = ref(null)
+const selectedVersion = computed(() => selectedChecklist.value?.versions?.find(v => v.id === Number(selectedVersionId.value)))
+const newVersion = reactive({ visible: false, name: '', description: '' })
+const formatVersionDate = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
+function ensureVersion() {
+  const versions = selectedChecklist.value?.versions || []
+  if (!versions.some(v => v.id === Number(selectedVersionId.value))) selectedVersionId.value = versions.find(v => v.is_active)?.id || versions[0]?.id
+}
+async function changeVersion() {
+  resetStandardState(standardState, selectedFields.value)
+  await fetchStandards(standardState, selectedChecklist.value.id, selectedFields.value, 1)
+}
+async function createVersion() {
+  saving.value = true
+  try {
+    const { data } = await axios.post(`/api/management/checklists/${selectedChecklist.value.id}/versions`, { version_name: newVersion.name, description: newVersion.description, fields: selectedFields.value })
+    selectedVersionId.value = data.version_id; newVersion.visible = false; newVersion.name = ''; newVersion.description = ''
+    await fetchChecklists(); openEditDialog(selectedChecklist.value); setMessage(data.message, 'success')
+  } catch (e) { setMessage(e.response?.data?.error || '版本创建失败。', 'error') }
+  finally { saving.value = false }
+}
+async function activateVersion() {
+  if (!window.confirm(`启用 v${selectedVersion.value.version_number}？旧版将仅供历史查询，依赖旧版字段的报告会暂停新生成。`)) return
+  saving.value = true
+  try {
+    const { data } = await axios.post(`/api/management/checklists/${selectedChecklist.value.id}/versions/${selectedVersionId.value}/activate`, { expected_active_version_id: selectedChecklist.value.active_version_id })
+    await fetchChecklists(); setMessage(data.message, 'success')
+  } catch (e) { setMessage(e.response?.data?.error || '启用失败，原版保持不变。', 'error') }
+  finally { saving.value = false }
+}
 const message = reactive({
   text: '',
   type: 'info'
@@ -643,7 +675,7 @@ const standardIdRangeLabel = (checklist) => {
   return `${base}-${base + 999}`
 }
 
-const selectedFields = computed(() => selectedChecklist.value?.fields || [])
+const selectedFields = computed(() => selectedVersion.value?.fields || selectedChecklist.value?.fields || [])
 
 const normalizeKey = (value) => String(value || '')
   .trim()
@@ -679,6 +711,7 @@ const createField = (field = {}, index = 1, tableCode = '') => ({
   field_label: field.field_label || '',
   is_filterable: field.is_filterable ?? true,
   is_register_visible: field.is_register_visible ?? true,
+  is_long_text: field.is_long_text ?? false,
   is_scorable: field.is_scorable ?? false
 })
 
@@ -714,7 +747,7 @@ const createStandardDraft = (fields = []) => ({
 const createStandardState = () => ({
   items: [],
   page: 1,
-  pageSize: 8,
+  pageSize: 30,
   total: 0,
   totalPages: 1,
   keyword: '',
@@ -804,6 +837,7 @@ const buildStandardPayload = (draft, fields) => {
   }
   return {
     user_id: currentUserId,
+    version_id: selectedVersionId.value,
     values
   }
 }
@@ -820,6 +854,7 @@ const buildChecklistPayload = (source) => ({
     field_label: field.field_label,
     is_filterable: Boolean(field.is_filterable),
     is_register_visible: Boolean(field.is_register_visible),
+    is_long_text: Boolean(field.is_long_text),
     is_scorable: Boolean(field.is_scorable)
   }))
 })
@@ -856,6 +891,7 @@ const fetchStandards = async (state, checklistId, fields = [], page = state.page
     const response = await axios.get(`/api/management/checklists/${checklistId}/standards`, {
       params: {
         user_id: currentUserId,
+        version_id: selectedVersionId.value,
         page,
         page_size: state.pageSize,
         keyword: state.keyword,
@@ -896,6 +932,7 @@ const fetchChecklists = async (options = {}) => {
       ? checklists.value.find((item) => String(item.id) === String(previousSelectedId))
       : checklists.value[0]
     selectedChecklist.value = nextSelected || null
+    ensureVersion()
     if (selectedChecklist.value && reloadStandards) {
       await fetchStandards(standardState, selectedChecklist.value.id, selectedFields.value, standardState.page || 1)
     } else if (!selectedChecklist.value) {
@@ -910,8 +947,11 @@ const fetchChecklists = async (options = {}) => {
 
 const selectChecklist = async (item, options = {}) => {
   selectedChecklist.value = item
+  selectedVersionId.value = item.active_version_id || item.versions?.[0]?.id
   resetStandardState(standardState, selectedFields.value)
   await fetchStandards(standardState, item.id, selectedFields.value, 1)
+  await nextTick()
+  standardsPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   if (!options.silent) setMessage(`已选择【${item.table_name}】。`, 'info')
 }
 
@@ -926,15 +966,15 @@ const closeCreateDialog = () => {
 }
 
 const hydrateEditDialog = (item) => {
-  const localFields = item.local_fields || (item.fields || []).filter((field) => !field.is_public)
+  const localFields = selectedVersion.value?.fields || item.local_fields || item.fields || []
   Object.assign(editDialog, {
     visible: true,
     id: item.id,
     table_code: item.table_code || '',
-    table_name: item.table_name || '',
+    table_name: selectedVersion.value?.version_name || '',
     checklist_mode: normalizeChecklistMode(item.checklist_mode),
-    description: item.description || '',
-    is_active: Boolean(item.is_active),
+    description: selectedVersion.value?.description || '',
+    is_active: Boolean(selectedVersion.value?.is_active),
     fields: localFields.map((field, index) => createField(field, index + 1, item.table_code)),
     standard_count: Number(item.standard_count || 0),
     physical_table_name: item.physical_table_name || '',
@@ -973,8 +1013,9 @@ const toggleStandard = async (item) => {
   standardStatusError.value = ''
   togglingStandards.value.add(item.standard_id)
   try {
-    const { data } = await axios.put(`/api/management/checklists/${selectedChecklist.value.id}/standards/${item.standard_id}/status`, { is_active: item.is_active === false })
-    item.is_active = data.is_active
+    const { data } = await axios.put(`/api/management/checklists/${selectedChecklist.value.id}/standards/${item.standard_id}/status`, { is_active: item.standard_enabled === false })
+    item.standard_enabled = data.is_active
+    item.is_active = data.is_active && selectedVersion.value.is_active
   } catch (error) {
     standardStatusError.value = error.response?.data?.error || '规范状态保存失败，请重试。'
   } finally { togglingStandards.value.delete(item.standard_id) }
@@ -1073,7 +1114,8 @@ const saveEditDialog = async () => {
 
   try {
     editDialog.saving = true
-    const response = await axios.put(`/api/management/checklists/${editDialog.id}`, buildChecklistPayload(editDialog))
+    const response = await axios.put(`/api/management/checklists/${editDialog.id}/versions/${selectedVersionId.value}`, {
+      ...buildChecklistPayload(editDialog), version_name: editDialog.table_name, revision: selectedVersion.value.revision })
     const editedId = editDialog.id
     closeEditDialog()
     await fetchChecklists({ reloadStandards: false })
@@ -1262,7 +1304,7 @@ const deleteStandard = async (state, checklistId, fields = [], item) => {
     state.deletingId = item.standard_id
     const response = await axios.delete(
       `/api/management/checklists/${checklistId}/standards/${encodeURIComponent(item.standard_id)}`,
-      { data: { user_id: currentUserId } }
+      { data: { user_id: currentUserId, version_id: selectedVersionId.value } }
     )
     if (String(state.editingStandardId) === String(item.standard_id)) cancelEditStandard(state)
     const nextPage = state.items.length <= 1 && state.page > 1 ? state.page - 1 : state.page
@@ -1283,6 +1325,7 @@ onMounted(fetchChecklists)
 </script>
 
 <style scoped>
+.version-workspace{padding:20px;background:linear-gradient(115deg,#edf6f7,#f4f7fb);border:1px solid #c4dbe2;border-radius:14px;margin:18px 0;color:#294b65}.version-workspace label{display:block;font-weight:700;margin-bottom:8px}.version-workspace select{width:100%;padding:12px;border:1px solid #acc6d4;background:white;border-radius:9px;font:inherit;color:#173b56}.version-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.version-workspace p,.version-create p{font-size:14px;line-height:1.7}.version-footnote,.version-workspace small{font-size:12px;color:#688296}.version-overlay{position:fixed;inset:0;z-index:4000;display:grid;place-items:center;background:#102d4766;padding:20px}.version-create{width:min(600px,95vw);padding:28px;max-height:90dvh;overflow:auto}.version-create label{display:grid;gap:8px;margin:16px 0;font-weight:600}.version-create input,.version-create textarea{padding:12px;border:1px solid #b9cddc;border-radius:8px;font:inherit}.standards-panel{min-height:100%}.standard-table td{max-width:340px;overflow-wrap:anywhere}.standard-table-wrap{flex:1}
 .page-shell {
   display: flex;
   flex-direction: column;
@@ -1404,12 +1447,13 @@ onMounted(fetchChecklists)
   display: grid;
   grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .list-card,
 .standards-card {
   padding: 20px;
+  scroll-margin-top: 110px;
 }
 
 .section-head,
@@ -1425,8 +1469,7 @@ onMounted(fetchChecklists)
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 780px;
-  overflow: auto;
+  overflow: visible;
   padding-right: 4px;
 }
 

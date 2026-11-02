@@ -77,33 +77,7 @@
         </div>
         <div class="filter-item filter-item-table" :data-filter-state="filterFieldState('inspectionTableName')">
           <label>检查表</label>
-          <div class="search-select multi-search-select" ref="inspectionTableSelectRef">
-            <div class="multi-select-control" @click="focusMultiFilterInput('inspectionTableName')">
-              <div class="multi-selected-values">
-                <span v-for="value in filters.inspectionTableName" :key="`table-${value}`" class="multi-selected-chip">
-                  {{ value }}
-                  <button type="button" @click.stop="removeMultiFilterValue('inspectionTableName', value)">×</button>
-                </span>
-                <input ref="inspectionTableFilterInputRef" v-model="filterSearch.inspectionTableName" type="text"
-                  :placeholder="filters.inspectionTableName.length ? '继续搜索检查表' : '搜索并多选检查表'"
-                  @focus="openFilterDropdown('inspectionTableName')" @input="openFilterDropdown('inspectionTableName')" />
-              </div>
-              <span v-if="filters.inspectionTableName.length" class="multi-selected-count">已选 {{ filters.inspectionTableName.length }}</span>
-            </div>
-            <div v-if="dropdownVisible.inspectionTableName" class="search-select-dropdown">
-              <button v-for="option in filteredInspectionTableOptions" :key="option" type="button"
-                class="search-select-option multi-select-option"
-                :class="{ selected: isMultiFilterSelected('inspectionTableName', option) }"
-                @mousedown.prevent @click="toggleMultiFilter('inspectionTableName', option)">
-                <span class="multi-option-check">{{ isMultiFilterSelected('inspectionTableName', option) ? '✓' : '' }}</span>
-                <div class="option-main">{{ option }}</div>
-              </button>
-              <div v-if="filterOptionsLoading && !filterOptionsLoaded" class="search-select-empty option-loading">正在加载检查表...</div>
-              <button v-else-if="filterOptionsError && !filterOptionsLoaded" class="search-select-retry" type="button"
-                @mousedown.prevent @click.stop="fetchInspectionFilterOptions({ force: true })">筛选项加载失败，点击重试</button>
-              <div v-else-if="filteredInspectionTableOptions.length === 0" class="search-select-empty">无匹配检查表</div>
-            </div>
-          </div>
+          <ChecklistVersionSelect v-model="filters.inspectionTableName" :options="inspectionTableOptions" scope="records" />
         </div>
         <div v-if="!hideInspectorContactInfo" class="filter-item filter-item-inspector" :data-filter-state="filterFieldState('inspector')">
           <label>检查人</label>
@@ -224,7 +198,7 @@
           <div class="mobile-batch-list">
             <div v-for="record in batch.records" :key="record.id" class="mobile-batch-item">
               <div class="mobile-batch-item-head">
-                <div class="mobile-batch-table-name">{{ record.inspection_table_name || '暂无' }}</div>
+                <div class="mobile-batch-table-name">{{ record.inspection_table_display_name || record.inspection_table_name || '暂无' }}</div>
                 <span :class="statusClass(record.result)">{{ record.result }}</span>
               </div>
               <div class="mobile-batch-item-meta-row">
@@ -388,7 +362,7 @@
                     </div>
                   </td>
                   <td class="long-text">
-                    {{ record.inspection_table_name || '暂无' }}
+                    {{ record.inspection_table_display_name || record.inspection_table_name || '暂无' }}
                     <div class="record-table-date">{{ record.date }}</div>
                   </td>
                   <td>
@@ -569,11 +543,11 @@
         <div class="signature-dialog-header">
           <div>
             <div class="batch-detail-kicker">站经理签名验收</div>
-            <h3>{{ signatureDialog.record?.inspection_table_name || '站经理签名验收' }}</h3>
+            <h3>{{ signatureDialog.record?.inspection_table_display_name || signatureDialog.record?.inspection_table_name || '站经理签名验收' }}</h3>
             <div class="batch-detail-meta">
               <span>巡检日期：{{ signatureDialog.record?.date || '-' }}</span>
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
-              <span>检查表：{{ signatureDialog.record?.inspection_table_name || '-' }}</span>
+              <span>检查表：{{ signatureDialog.record?.inspection_table_display_name || signatureDialog.record?.inspection_table_name || '-' }}</span>
             </div>
           </div>
           <button class="btn btn-secondary" type="button" @click="closeSignatureDialog">关闭</button>
@@ -586,7 +560,7 @@
             <div class="signature-side-meta">
               <span>站点：{{ signatureDialog.record?.station || '-' }}</span>
               <span>日期：{{ signatureDialog.record?.date || '-' }}</span>
-              <span>检查表：{{ signatureDialog.record?.inspection_table_name || '-' }}</span>
+              <span>检查表：{{ signatureDialog.record?.inspection_table_display_name || signatureDialog.record?.inspection_table_name || '-' }}</span>
             </div>
           </div>
 
@@ -613,7 +587,7 @@
         <div class="batch-detail-header">
           <div class="batch-detail-header-main">
             <div class="batch-detail-kicker">检查表录入问题</div>
-            <h3>{{ batchDetail.inspection?.inspection_table_name || '检查表详情' }}</h3>
+            <h3>{{ batchDetail.inspection?.inspection_table_display_name || batchDetail.inspection?.inspection_table_name || '检查表详情' }}</h3>
             <div class="batch-detail-meta">
               <span>巡检日期：{{ getInspectionDate(batchDetail.inspection) }}</span>
               <span>站点：{{ getInspectionStation(batchDetail.inspection) }}</span>
@@ -636,7 +610,7 @@
           <div class="batch-detail-summary-grid">
             <div>
               <span>检查表</span>
-              <strong>{{ batchDetail.inspection?.inspection_table_name || '-' }}</strong>
+              <strong>{{ batchDetail.inspection?.inspection_table_display_name || batchDetail.inspection?.inspection_table_name || '-' }}</strong>
             </div>
             <div>
               <span>所属片区</span>
@@ -662,7 +636,7 @@
             <div v-for="issue in batchDetail.issues" :key="issue.id" class="batch-issue-card">
               <div class="batch-issue-card-head">
                 <div>
-                  <div class="batch-issue-title">{{ issue.inspection_table_name || '未命名检查表' }}</div>
+                  <div class="batch-issue-title">{{ issue.inspection_table_display_name || issue.inspection_table_name || '未命名检查表' }}</div>
                   <div class="batch-issue-subtitle">{{ issue.created_at || '暂无登记时间' }}</div>
                 </div>
                 <div class="batch-issue-id">问题 #{{ issue.id }}</div>
@@ -742,6 +716,7 @@
 </template>
 
 <script setup>
+import ChecklistVersionSelect from '@/components/ChecklistVersionSelect.vue'
 import FilterSummary from '@/components/FilterSummary.vue'
 import WorkflowDeadline from '@/components/WorkflowDeadline.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'

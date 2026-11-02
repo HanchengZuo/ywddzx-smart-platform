@@ -22,13 +22,19 @@ export const issueTagLabel = tag => tag.group_name ? `${tag.group_name}：${tag.
 const text = value => String(value ?? '').trim().toLowerCase()
 const contains = (value, query) => !text(query) || text(value).includes(text(query))
 const selected = (value, query) => Array.isArray(query) ? !query.length || query.includes(value) : contains(value, query)
+const tableSelected = (item, query) => {
+  const choices = copySelection(query)
+  return !choices.length || choices.some(value => / · v[1-9]\d*$/.test(value)
+    ? value === `${item.inspection_table_name} · v${item.version_number}`
+    : contains(item.inspection_table_name, value))
+}
 export function matchesMyIssue(item, filters) {
   const date = String(item.time || '').slice(0, 10)
   return (!filters.id || String(item.id) === String(filters.id).trim())
     && (!filters.month || item.month === filters.month)
     && (!filters.dateFrom || date >= filters.dateFrom) && (!filters.dateTo || date <= filters.dateTo)
     && selected(item.region, filters.region) && selected(item.station, filters.station)
-    && selected(item.inspection_table_name, filters.inspectionTableName) && selected(item.inspector, filters.inspector)
+    && tableSelected(item, filters.inspectionTableName) && selected(item.inspector, filters.inspector)
     && contains(item.station_manager, filters.stationManager)
     && (!filters.standardId || String(item.standard_id) === String(filters.standardId).trim())
     && contains(`${item.standard_detail_text || ''} ${item.internal_standard_detail_text || ''}`, filters.standardDetail)

@@ -87,13 +87,14 @@
             v-if="canGenerateReports"
             type="button"
             class="period-generate-btn"
-            :disabled="loading || workspaceSaving || templateUnavailable || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)"
+            :disabled="loading || workspaceSaving || templateUnavailable || !!currentReportType.version_warning || !validReportDateRange || (isNonOilReport && !!nonOilRectificationError)"
             @click="startGeneration({ force: true })"
           >
             {{ hasReport ? '重新生成报告' : '生成此时间段报告' }}
           </button>
         </div>
         <small v-if="!canGenerateReports" class="period-readonly-note">当前日期范围为只读，始终展示最后生成成功的报告。</small>
+        <p v-if="currentReportType.version_warning" class="workspace-pending-note" role="alert">{{ currentReportType.version_warning }}</p>
         <p v-if="workspaceSaving" class="workspace-save-note" role="status">正在保存日期设置...</p>
         <p v-else-if="workspaceSaveError" class="workspace-error" role="alert">{{ workspaceSaveError }}</p>
         <p v-else class="workspace-save-note">{{ configSavedLabel('date_range') }}</p>

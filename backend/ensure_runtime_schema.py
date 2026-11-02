@@ -219,6 +219,23 @@ def main():
                 verify_account_security_schema(cur)
                 verify_quality_deadline_schema(cur)
                 verify_expert_qa_schema(cur)
+                for table, columns in (
+                    ('inspection_checklist_versions', {'inspection_table_id','version_number','fields','original_document','revision'}),
+                    ('checklist_standard_registry', {'standard_id','inspection_table_id','checklist_version_id','is_deleted'}),
+                    ('checklist_version_events', {'checklist_version_id','action','actor_id','detail'}),
+                    ('inspection_report_version_bindings', {'inspection_table_id','checklist_version_id'}),
+                    ('inspection_tables', {'active_version_id'}),
+                    ('issues', {'checklist_version_id'}),
+                    ('inspections', {'checklist_version_id'}),
+                    ('inspection_highlights', {'checklist_version_id'}),
+                ):
+                    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s", (table,))
+                    if not columns.issubset({r[0] for r in cur.fetchall()}):
+                        raise RuntimeError(f'Checklist version migration missing: {table}')
+                cur.execute('''SELECT t.id FROM inspection_tables t LEFT JOIN inspection_checklist_versions v
+                    ON v.id=t.active_version_id AND v.inspection_table_id=t.id WHERE v.id IS NULL LIMIT 1''')
+                if cur.fetchone():
+                    raise RuntimeError('Checklist version identity is incomplete')
                 cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='has_driving_permit' AND is_nullable='NO' AND data_type='boolean'")
                 if not cur.fetchone():
                     raise RuntimeError('User driving permit migration missing')

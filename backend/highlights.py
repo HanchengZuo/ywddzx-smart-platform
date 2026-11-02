@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from types import SimpleNamespace
 from flask import jsonify, request
+import checklist_versions as editions
 
 LABELS = {'pending': '待审核', 'approved': '已确认亮点', 'rejected': '审核未通过'}
 # Compatibility alias for the shared issue visibility predicate, not an inspection record.
@@ -65,7 +66,8 @@ def filters(core, cur, user, source):
                         ('table', 't.table_name')]:
         value = selections(key)
         if value:
-            where.append(f'{column} = ANY(%s)'); params.append(value)
+            if key == 'table': editions.append_filter(where, params, value)
+            else: where.append(f'{column} = ANY(%s)'); params.append(value)
     if source.get('status'):
         where.append('i.audit_status = %s'); params.append(source['status'])
     for key, column in [('description', 'i.description'), ('manager', 's.station_manager_name')]:
@@ -140,6 +142,7 @@ def register_highlights(app, namespace):
                 to_char(i.audited_at, 'YYYY-MM-DD HH24:MI:SS') AS audited_at
                 {JOINS} WHERE {where} ORDER BY i.id DESC LIMIT %s OFFSET %s''', [*params, size, (page-1)*size])
             rows = [dict(row) for row in cur.fetchall()]
+            editions.attach_rows(cur, rows, 'inspection_highlights')
             hide = core.should_hide_inspector_contact_info(cur, user)
             audit_allowed = core.can_audit_inspection_issues(cur, user)
             audit_all = core.can_view_all_inspection_issues(cur, user) or core.can_view_region_inspection_issues(cur, user)

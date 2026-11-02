@@ -11,6 +11,7 @@ import equipment_report_analysis as equipment_analysis
 import issue_export_cache
 import issue_export_download
 from external_standard_status import disabled_standard_ids, require_active_standards
+import checklist_versions as checklist_editions
 from inspection_registration import parse_standard_selections
 from pending_review_search import pending_review_keyword_clause
 from issue_description_filter import (
@@ -34,6 +35,7 @@ import time
 import uuid
 import zipfile
 from collections import OrderedDict
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
@@ -348,6 +350,7 @@ CHECKLIST_FIELD_KEY_MAX_LENGTH = 63
 CHECKLIST_STANDARD_ID_BLOCK_SIZE = 1000
 SCHEMA_MIGRATION_LOCK_KEY = 2026051601
 RESERVED_CHECKLIST_FIELD_KEYS = {
+    "checklist_version_id",
     "id",
     "standard_id",
     "created_at",
@@ -2680,6 +2683,15 @@ def require_signed_api_token():
         return None
 
     token = extract_bearer_token()
+    if not token and request.endpoint == 'version_original' and request.method in {'GET', 'HEAD'}:
+        try:
+            user = verify_file_access_token(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or '')
+            if user.get('_password_change_enforced'):
+                raise PermissionError('请先完成密码修改。')
+            g.current_user = user
+            return None
+        except PermissionError as exc:
+            return jsonify(error=str(exc)), 401
     download_grant = (
         request.cookies.get(issue_export_download.COOKIE_NAME)
         if request.endpoint == "download_issue_export_task" and request.method in {"GET", "HEAD"}
@@ -3217,11 +3229,20 @@ def ensure_checklist_physical_table(cur, physical_table_name):
             """
         ).format(sql.Identifier(physical_table_name))
     )
+    if checklist_editions.available(cur):
+        cur.execute("SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass(%s) AND tgname='checklist_standard_version') AS ready", (physical_table_name,))
+        if not cur.fetchone()['ready']:
+            from checklist_version_migration import install_physical
+            install_physical(cur, physical_table_name)
 
 
 def ensure_checklist_field_columns(cur, physical_table_name, fields):
     ensure_checklist_physical_table(cur, physical_table_name)
+    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s", (physical_table_name,))
+    present_columns = {row['column_name'] for row in cur.fetchall()}
     for field in fields:
+        if field['field_key'] in present_columns:
+            continue
         cur.execute(
             sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} TEXT;").format(
                 sql.Identifier(physical_table_name),
@@ -3246,7 +3267,9 @@ def get_checklist_row_count(cur, physical_table_name):
     return int(row["total"] or 0)
 
 
-def get_management_checklist_fields(cur, inspection_table_id, include_public=False):
+def get_management_checklist_fields(cur, inspection_table_id, include_public=False, version_id=None):
+    if version_id:
+        return checklist_editions.version(cur, inspection_table_id, version_id)['fields']
     def column_exists(column_name):
         cur.execute(
             """
@@ -3407,6 +3430,7 @@ def upsert_checklist_fields(cur, inspection_table_id, fields):
                 field["sort_order"],
             ),
         )
+    checklist_editions.sync_active_fields(cur, inspection_table_id, fields)
 
 
 def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
@@ -3431,7 +3455,7 @@ def ensure_unique_checklist_field_keys(cur, fields, inspection_table_id=None):
 def serialize_management_checklist(cur, row):
     physical_table_name = get_physical_table_name_by_code(row["table_code"])
     local_fields = [dict(field) for field in get_management_checklist_fields(cur, row["id"])]
-    return {
+    result = {
         "id": row["id"],
         "table_code": row["table_code"],
         "table_name": row["table_name"],
@@ -3449,6 +3473,10 @@ def serialize_management_checklist(cur, row):
         "local_fields": local_fields,
         "standard_count": get_checklist_row_count(cur, physical_table_name),
     }
+    if checklist_editions.available(cur):
+        result['versions'] = checklist_editions.versions(cur, row['id'])
+        result['active_version_id'] = result['versions'][0]['active_version_id'] if result['versions'] else None
+    return result
 
 
 def fetch_management_checklist(cur, inspection_table_id):
@@ -3737,6 +3765,9 @@ def get_next_checklist_standard_id(cur, checklist, physical_table_name):
     )
     row = cur.fetchone()
     next_standard_id = int(row["max_standard_id"] or (range_start - 1)) + 1
+    if checklist_editions.available(cur):
+        cur.execute('SELECT COALESCE(MAX(standard_id),%s-1) AS n FROM checklist_standard_registry WHERE standard_id BETWEEN %s AND %s', (range_start, range_start, range_end))
+        next_standard_id = max(next_standard_id, int(cur.fetchone()['n']) + 1)
     if next_standard_id > range_end:
         raise ValueError(
             f"该检查表外部规范ID号段 {range_start}-{range_end} 已用完，"
@@ -3791,12 +3822,19 @@ def sync_referenced_internal_standard_detail_text(cur, internal_standard_id, det
     return cur.rowcount
 
 
-def get_management_checklist_standard_context(cur, inspection_table_id, require_fields=True):
+def get_management_checklist_standard_context(cur, inspection_table_id, require_fields=True, version_id=None):
     checklist = fetch_management_checklist(cur, inspection_table_id)
     if not checklist:
         raise LookupError("检查表不存在。")
 
-    fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
+    # Management and originals explicitly select a version; legacy callers use
+    # the active compatibility projection, never a mixture of schemas.
+    if checklist_editions.available(cur):
+        chosen = checklist_editions.version(cur, inspection_table_id, version_id, lock=True)
+        checklist['version_id'] = chosen['id']
+        fields = [dict(field) for field in chosen['fields']]
+    else:
+        fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
     if require_fields and not fields:
         raise ValueError("请先配置检查表字段，再维护规范数据。")
 
@@ -4667,6 +4705,7 @@ def find_period_inspection(cur, station_id, inspection_table_id, target_date, pe
         FROM inspections
         WHERE station_id = %s
           AND inspection_table_id = %s
+          AND checklist_version_id = (SELECT active_version_id FROM inspection_tables WHERE id=inspection_table_id)
           AND inspection_date >= %s
           AND inspection_date < %s
         ORDER BY
@@ -6026,6 +6065,9 @@ def get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions=N
 
 
 def append_inspection_table_scope_filter(cur, user, where_clauses, params, column_sql, scope_key, permissions=None):
+    if permissions and permissions.get('_report_version_scope') and column_sql in {'i.inspection_table_id','ins.inspection_table_id'} and checklist_editions.available(cur):
+        alias = column_sql.split('.')[0]
+        where_clauses.append(f'{alias}.checklist_version_id IN (SELECT checklist_version_id FROM inspection_report_version_bindings)')
     scope_ids = get_effective_inspection_table_scope_ids(cur, user, scope_key, permissions)
     if scope_ids is None:
         return True
@@ -8098,6 +8140,7 @@ def append_inspection_report_station_filter(
 # Reports and their configuration are shared; business pages retain their own scopes.
 # Report endpoints must still authorize view/generation permissions separately.
 REPORT_SHARED_SCOPE_PERMISSIONS = {
+    "_report_version_scope": True,
     "limit_plan_inspection_table_scope": False,
     "limit_plan_station_region_scope": False,
 }
@@ -12613,6 +12656,10 @@ def build_issue_export_table_field_map(cur, rows):
             }
             for field in get_management_checklist_fields(cur, table_id, include_public=True)
         ]
+    for row in rows:
+        if row.get('checklist_version_id') and (row['inspection_table_id'], row['checklist_version_id']) not in field_map:
+            edition = checklist_editions.version(cur, row['inspection_table_id'], row['checklist_version_id'])
+            field_map[(row['inspection_table_id'], row['checklist_version_id'])] = edition['fields']
     return field_map
 
 
@@ -12634,11 +12681,12 @@ def group_issue_export_rows_by_table(rows):
     grouped = OrderedDict()
     for row in rows:
         table_id = row.get("inspection_table_id")
-        table_name = row.get("inspection_table_name") or "未命名检查表"
-        group_key = table_id if table_id is not None else table_name
+        table_name = row.get('inspection_table_display_name') or row.get("inspection_table_name") or "未命名检查表"
+        group_key = (table_id, row['checklist_version_id']) if row.get('checklist_version_id') else (table_id if table_id is not None else table_name)
         if group_key not in grouped:
             grouped[group_key] = {
                 "table_id": table_id,
+                "version_id": row.get('checklist_version_id'),
                 "table_name": table_name,
                 "rows": [],
             }
@@ -12648,7 +12696,7 @@ def group_issue_export_rows_by_table(rows):
 
 def build_issue_export_standard_field_columns(group, table_field_map):
     table_id = group.get("table_id")
-    configured_fields = table_field_map.get(table_id, []) if table_id is not None else []
+    configured_fields = table_field_map.get((table_id, group['version_id']), []) if group.get('version_id') else table_field_map.get(table_id, [])
     columns = []
     seen_labels = set()
     for field in configured_fields:
@@ -12832,6 +12880,8 @@ def write_issue_export_xlsx(
                         value = external_values.get(label, "-")
                     else:
                         value = "" if row.get(key) is None else str(row.get(key))
+                        if key == 'inspection_table_name':
+                            value = row.get('inspection_table_display_name') or value
 
                     if value == "":
                         worksheet.write_blank(row_index, column_index, None, cell_format)
@@ -13307,7 +13357,17 @@ def fetch_station_for_score(cur, station_id):
     return cur.fetchone()
 
 
-def fetch_scorable_checklist_rows(cur):
+def fetch_scorable_checklist_rows(cur, month_start=None, next_month=None):
+    if checklist_editions.available(cur):
+        cur.execute('''SELECT t.*,v.id AS checklist_version_id,v.version_number,v.fields AS version_fields
+            FROM inspection_tables t JOIN inspection_checklist_versions v ON v.inspection_table_id=t.id
+            WHERE EXISTS(SELECT 1 FROM jsonb_array_elements(v.fields) f WHERE f->>'is_scorable'='true')
+            AND (CASE WHEN %s::date IS NOT NULL AND EXISTS(SELECT 1 FROM inspections i
+                    WHERE i.inspection_table_id=t.id AND i.inspection_date>=%s AND i.inspection_date<%s)
+                THEN EXISTS(SELECT 1 FROM inspections i WHERE i.checklist_version_id=v.id AND i.inspection_date>=%s AND i.inspection_date<%s)
+                ELSE t.is_active AND t.active_version_id=v.id END)
+            ORDER BY t.id,v.version_number''', (month_start,month_start,next_month,month_start,next_month))
+        return [dict(r) for r in cur.fetchall()]
     cur.execute(
         """
         SELECT DISTINCT
@@ -13448,7 +13508,7 @@ def build_station_score_payload(
     if inspection_table_id:
         selected_table_ids.add(int(inspection_table_id))
 
-    checklists = fetch_scorable_checklist_rows(cur)
+    checklists = fetch_scorable_checklist_rows(cur, month_start, next_month)
     if selected_table_ids:
         checklists = [
             checklist
@@ -13472,7 +13532,7 @@ def build_station_score_payload(
     }
 
     for checklist in checklists:
-        fields = [dict(field) for field in get_management_checklist_fields(cur, checklist["id"], include_public=True)]
+        fields = checklist.get('version_fields') or [dict(field) for field in get_management_checklist_fields(cur, checklist["id"], include_public=True)]
         scorable_fields = [field for field in fields if normalize_boolean_flag(field.get("is_scorable"), False)]
         if not scorable_fields:
             continue
@@ -13481,6 +13541,11 @@ def build_station_score_payload(
             continue
         ensure_checklist_field_columns(cur, physical_table_name, fields)
         standard_rows = fetch_checklist_standard_rows(cur, physical_table_name, fields)
+        if checklist.get('checklist_version_id'):
+            ids = checklist_editions.standard_ids(cur, checklist['checklist_version_id'])
+            cur.execute('SELECT DISTINCT standard_id FROM issues WHERE inspection_table_id=%s AND checklist_version_id=%s', (checklist['id'],checklist['checklist_version_id']))
+            ids.update(int(r['standard_id']) for r in cur.fetchall())
+            standard_rows = [r for r in standard_rows if int(r['standard_id']) in ids]
         item_count = len(standard_rows)
         max_score_per_item = 100 / item_count if item_count else 0
 
@@ -13544,6 +13609,8 @@ def build_station_score_payload(
                 "id": checklist["id"],
                 "table_code": checklist["table_code"],
                 "table_name": checklist["table_name"],
+                "checklist_version_id": checklist.get('checklist_version_id'),
+                "version_number": checklist.get('version_number'),
                 "checklist_mode": normalize_checklist_mode(checklist.get("checklist_mode")),
                 "checklist_mode_label": "视频检查" if normalize_checklist_mode(checklist.get("checklist_mode")) == "online" else "现场检查",
                 "scorable_fields": [
@@ -14149,7 +14216,8 @@ def fetch_station_score_standard_context(
     checklist = fetch_management_checklist(cur, inspection_table_id)
     if not checklist or not checklist.get("is_active"):
         raise LookupError("检查表不存在或未启用。")
-    fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
+    edition_meta = checklist_editions.standard_metadata(cur, [int(standard_id)]).get(int(standard_id)) if checklist_editions.available(cur) else None
+    fields = edition_meta['fields'] if edition_meta else [dict(field) for field in get_management_checklist_fields(cur, inspection_table_id, include_public=True)]
     if not any(normalize_boolean_flag(field.get("is_scorable"), False) for field in fields):
         raise ValueError("该检查表未配置可评分字段。")
     physical_table_name = get_physical_table_name_by_code(checklist["table_code"])
@@ -14160,6 +14228,8 @@ def fetch_station_score_standard_context(
     if not standard:
         raise LookupError("外部规范不存在。")
     item_count = get_checklist_row_count(cur, physical_table_name)
+    if edition_meta:
+        item_count = len(checklist_editions.standard_ids(cur, edition_meta['checklist_version_id']))
     if item_count <= 0:
         raise ValueError("该检查表暂无规范数据，不能调整评分。")
     return {
@@ -16495,6 +16565,7 @@ def fetch_internal_standard_tags_by_codes(cur, internal_standard_ids):
 def attach_internal_standard_tags_to_issue_rows(cur, rows):
     if not rows:
         return rows
+    checklist_editions.attach_rows(cur, rows)
     tag_map = fetch_internal_standard_tags_by_codes(
         cur,
         [row.get("internal_standard_id") for row in rows],
@@ -16637,12 +16708,12 @@ def fetch_external_standard_map(cur, external_standard_ids=None):
         return {}
     params = []
     filter_ids = {int(item) for item in external_standard_ids or [] if str(item).strip()}
+    edition_meta = checklist_editions.standard_metadata(cur, list(filter_ids) or None) if checklist_editions.available(cur) else {}
     result = {}
     cur.execute(
         """
         SELECT id, table_code, table_name
         FROM inspection_tables
-        WHERE is_active = TRUE
         ORDER BY id ASC;
         """
     )
@@ -16666,13 +16737,18 @@ def fetch_external_standard_map(cur, external_standard_ids=None):
             params,
         )
         for row in cur.fetchall():
-            item = serialize_standard_row(field_meta, row, register_field_meta)
+            edition = edition_meta.get(int(row['standard_id']))
+            row_fields = edition['fields'] if edition else fields
+            item = serialize_standard_row([(f['field_key'],f['field_label']) for f in row_fields], row, build_register_display_field_meta(row_fields))
+            if edition:
+                item.update({key:edition[key] for key in ('checklist_version_id','version_number','version_name','is_active','standard_enabled')})
             standard_id = int(item["standard_id"])
             result[standard_id] = {
                 **item,
                 "external_standard_id": standard_id,
                 "inspection_table_id": table["id"],
                 "inspection_table_name": table["table_name"],
+                "inspection_table_display_name": f"{table['table_name']} · v{edition['version_number']}" if edition else table['table_name'],
                 "inspection_table_code": table["table_code"],
             }
     return result
@@ -23402,6 +23478,8 @@ def update_management_checklist(inspection_table_id):
         if not current_row:
             return jsonify({"success": False, "error": "检查表不存在。"}), 404
         fields = normalize_checklist_field_rows(data.get("fields"), current_row["table_code"])
+        if checklist_editions.available(cur):
+            raise ValueError('请通过版本设置维护字段；需要改变字段结构时请新增版本，以保留历史信息。')
         ensure_unique_checklist_field_keys(cur, fields, inspection_table_id)
         physical_table_name = get_physical_table_name_by_code(current_row["table_code"])
         ensure_checklist_field_columns(cur, physical_table_name, fields)
@@ -23455,6 +23533,9 @@ def delete_management_checklist(inspection_table_id):
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
+
+        if checklist_editions.available(cur):
+            raise ValueError('检查表已纳入版本归档，不能永久删除。请切换启用版本保留历史数据。')
 
         current_row = fetch_management_checklist(cur, inspection_table_id)
         if not current_row:
@@ -23548,13 +23629,20 @@ def export_management_checklists():
                     "standards": fetch_checklist_standard_rows(cur, physical_table_name, fields),
                 }
             )
+            if checklist_editions.available(cur):
+                entry = exported_checklists[-1]
+                entry['versions'] = checklist_editions.versions(cur, row['id'])
+                for edition in entry['versions']:
+                    version_standard_ids = checklist_editions.standard_ids(cur, edition['id'])
+                    edition['standards'] = [r for r in fetch_checklist_standard_rows(cur, physical_table_name, edition['fields'])
+                        if int(r['standard_id']) in version_standard_ids]
 
         conn.commit()
         now = beijing_now()
         response = jsonify(
             {
                 "backup_type": "ywddzx_checklists",
-                "version": 2,
+                "version": 3,
                 "exported_at": now.isoformat(),
                 "checklists": exported_checklists,
             }
@@ -23588,6 +23676,9 @@ def import_management_checklists_backup():
         cur = conn.cursor()
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
+
+        if checklist_editions.available(cur):
+            raise ValueError('为保护版本与历史引用，不再支持覆盖式导入。请在目标检查表中新建版本后维护规范；整库恢复请使用数据备份管理。')
 
         cur.execute(
             """
@@ -23738,10 +23829,14 @@ def get_management_checklist_standards(inspection_table_id):
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
         _checklist, fields, physical_table_name = get_management_checklist_standard_context(
-            cur, inspection_table_id, require_fields=False
+            cur, inspection_table_id, require_fields=False, version_id=request.args.get('version_id')
         )
 
         where_sql, where_params = build_standard_search_sql(fields, keyword)
+        if _checklist.get('version_id'):
+            extra = sql.SQL('checklist_version_id = %s')
+            where_sql = where_sql + sql.SQL(' AND ') + extra if where_params else sql.SQL(' WHERE ')+extra
+            where_params.append(_checklist['version_id'])
         cur.execute(
             sql.SQL("SELECT COUNT(*) AS total FROM {}{};").format(
                 sql.Identifier(physical_table_name),
@@ -23779,8 +23874,10 @@ def get_management_checklist_standards(inspection_table_id):
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         items = [serialize_standard_row(field_meta, row) for row in cur.fetchall()]
         disabled = disabled_standard_ids(cur)
+        edition_meta = checklist_editions.standard_metadata(cur, [int(i['standard_id']) for i in items]) if items and checklist_editions.available(cur) else {}
         for item in items:
             item['is_active'] = int(item['standard_id']) not in disabled
+            item['standard_enabled'] = edition_meta.get(int(item['standard_id']), {}).get('standard_enabled', item['is_active'])
         conn.commit()
         return jsonify(
             {
@@ -23817,8 +23914,8 @@ def set_external_standard_status(inspection_table_id, standard_id):
         data = request.get_json(silent=True) or {}
         if type(data.get('is_active')) is not bool:
             return jsonify(error='启停状态必须为布尔值。'), 400
-        _, _, physical = get_management_checklist_standard_context(cur, inspection_table_id, require_fields=False)
         cur.execute('SELECT pg_advisory_xact_lock(%s)', (standard_id,))
+        _, _, physical = get_management_checklist_standard_context(cur, inspection_table_id, require_fields=False)
         if not fetch_standard_from_table(cur, physical, standard_id):
             return jsonify(error='外部规范不存在。'), 404
         cur.execute('''INSERT INTO external_standard_status(standard_id,is_active,updated_by)
@@ -23850,12 +23947,14 @@ def create_management_checklist_standard(inspection_table_id):
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
         checklist, fields, physical_table_name = get_management_checklist_standard_context(
-            cur, inspection_table_id
+            cur, inspection_table_id, version_id=data.get('version_id')
         )
         row = normalize_checklist_standard_payload(data, fields)
         row["standard_id"] = get_next_checklist_standard_id(cur, checklist, physical_table_name)
 
         columns = ["standard_id", *[field["field_key"] for field in fields]]
+        if checklist.get('version_id'):
+            columns.append('checklist_version_id'); row['checklist_version_id'] = checklist['version_id']
         cur.execute(
             sql.SQL(
                 """
@@ -23921,8 +24020,10 @@ def update_management_checklist_standard(inspection_table_id, standard_id):
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
         _checklist, fields, physical_table_name = get_management_checklist_standard_context(
-            cur, inspection_table_id
+            cur, inspection_table_id, version_id=data.get('version_id')
         )
+        if _checklist.get('version_id'):
+            checklist_editions.require_standard_version(cur, old_standard_id, _checklist['version_id'])
         row = normalize_checklist_standard_payload(data, fields)
 
         cur.execute(
@@ -23961,12 +24062,8 @@ def update_management_checklist_standard(inspection_table_id, standard_id):
         )
         if not standard_detail_text:
             raise ValueError("规范详情生成失败，请至少保留一项规范内容。")
-        synced_count = sync_referenced_standard_detail_text(
-            cur,
-            inspection_table_id,
-            old_standard_id,
-            standard_detail_text,
-        )
+        # A registered issue owns its original normative text, not a live link.
+        synced_count = 0
 
         cur.execute(
             """
@@ -24015,8 +24112,10 @@ def delete_management_checklist_standard(inspection_table_id, standard_id):
         ensure_inspection_checklist_management_schema(cur)
         require_management_user(cur, user_id, "manage_checklists")
         _checklist, fields, physical_table_name = get_management_checklist_standard_context(
-            cur, inspection_table_id, require_fields=False
+            cur, inspection_table_id, require_fields=False, version_id=data.get('version_id') or request.args.get('version_id')
         )
+        if _checklist.get('version_id'):
+            checklist_editions.require_standard_version(cur, standard_id_value, _checklist['version_id'])
         ensure_checklist_field_columns(cur, physical_table_name, fields)
 
         reference_counts = get_checklist_standard_reference_counts(
@@ -24028,7 +24127,7 @@ def delete_management_checklist_standard(inspection_table_id, standard_id):
         if reference_message:
             raise ValueError(
                 f"无法删除：该规范已被{reference_message}引用。"
-                "可以编辑规范内容，系统会同步更新已引用该规范的业务数据，但不能删除已被使用的规范。"
+                "请停用此规范，历史问题的规范快照不会被覆盖。"
             )
 
         cur.execute(
@@ -24408,6 +24507,18 @@ def get_inspection_table_originals():
         if not can_view_checklist_originals(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看检查表原件库。"}), 403
 
+        if checklist_editions.available(cur):
+            items = []
+            for table in checklist_editions.catalog(cur):
+                for edition in checklist_editions.versions(cur, table['id']):
+                    doc = edition['original_document'] or {}
+                    items.append(dict(doc, inspection_table_id=table['id'], version_id=edition['id'],
+                        version_number=edition['version_number'], version_name=edition['version_name'],
+                        table_name=table['table_name'], description=edition['description'], is_active=edition['is_active'],
+                        has_pdf=bool(doc.get('file_path') or doc.get('asset')),
+                        file_url=f"/api/checklist-versions/{edition['id']}/original?revision={edition['revision']}", updated_at=edition['updated_at']))
+            return jsonify(success=True, can_manage=can_manage_checklist_originals(cur,user), items=items)
+
         cur.execute(
             """
             SELECT
@@ -24487,16 +24598,19 @@ def export_inspection_table_external_standards(inspection_table_id):
             return jsonify({"success": False, "error": "当前账号无权导出检查表外部规范。"}), 403
 
         inspection_table = get_inspection_table_record(cur, inspection_table_id)
-        if not inspection_table or not inspection_table.get("is_active"):
+        if not inspection_table:
             return jsonify({"success": False, "error": "检查表不存在或未启用。"}), 404
 
-        fields = get_management_checklist_fields(cur, inspection_table_id, include_public=True)
+        edition = checklist_editions.version(cur, inspection_table_id, request.args.get('version_id'))
+        fields = edition['fields']
         physical_table_name = get_physical_table_name_by_code(inspection_table.get("table_code"))
         rows = (
             fetch_checklist_standard_rows(cur, physical_table_name, fields)
             if physical_table_name
             else []
         )
+        ids = checklist_editions.standard_ids(cur, edition['id'])
+        rows = [r for r in rows if int(r['standard_id']) in ids]
         if not rows:
             return jsonify({"success": False, "error": "该检查表暂未维护外部规范，无法导出。"}), 400
 
@@ -24534,112 +24648,17 @@ def export_inspection_table_external_standards(inspection_table_id):
     methods=["POST"],
 )
 def upload_inspection_table_original_pdf(inspection_table_id):
-    user_id = str(request.form.get("user_id", "")).strip()
-    if not user_id:
-        return jsonify({"success": False, "error": "缺少用户信息。"}), 400
-
-    pdf_file = request.files.get("pdf") or request.files.get("file")
-    new_file_path = None
-    old_file_path = None
-    conn = None
-    cur = None
-
+    # Legacy clients target the active version; the version endpoint preserves
+    # previous documents and never deletes another version's original.
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        ensure_inspection_table_original_files_table(cur)
-
-        user = get_user_by_id(cur, user_id)
-        if not user:
-            return jsonify({"success": False, "error": "用户不存在。"}), 404
-
-        if not can_manage_checklist_originals(cur, user):
-            return jsonify({"success": False, "error": "当前账号无权上传检查表原件。"}), 403
-
-        cur.execute(
-            """
-            SELECT id, table_name
-            FROM inspection_tables
-            WHERE id = %s AND is_active = TRUE
-            LIMIT 1;
-            """,
-            (inspection_table_id,),
-        )
-        inspection_table = cur.fetchone()
-        if not inspection_table:
-            return jsonify({"success": False, "error": "检查表不存在或未启用。"}), 404
-
-        cur.execute(
-            """
-            SELECT file_path
-            FROM inspection_table_original_files
-            WHERE inspection_table_id = %s
-            LIMIT 1;
-            """,
-            (inspection_table_id,),
-        )
-        old_row = cur.fetchone()
-        old_file_path = old_row["file_path"] if old_row else None
-
-        new_file_path, original_filename, file_size = save_inspection_original_pdf(pdf_file)
-        cur.execute(
-            """
-            INSERT INTO inspection_table_original_files (
-                inspection_table_id,
-                file_path,
-                original_filename,
-                file_size,
-                uploaded_by,
-                created_at,
-                updated_at
-            )
-            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (inspection_table_id)
-            DO UPDATE SET
-                file_path = EXCLUDED.file_path,
-                original_filename = EXCLUDED.original_filename,
-                file_size = EXCLUDED.file_size,
-                uploaded_by = EXCLUDED.uploaded_by,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING id;
-            """,
-            (
-                inspection_table_id,
-                new_file_path,
-                original_filename,
-                file_size,
-                user["id"],
-            ),
-        )
-        row = cur.fetchone()
-        conn.commit()
-
-        if old_file_path and old_file_path != new_file_path:
-            remove_storage_file(old_file_path)
-
-        return jsonify(
-            {
-                "success": True,
-                "message": f"【{inspection_table['table_name']}】原件 PDF 已更新。",
-                "document_id": row["id"],
-                "file_path": new_file_path,
-                "file_url": f"/storage{new_file_path}",
-            }
-        )
+        with closing(get_db_connection()) as version_conn:
+            with version_conn.cursor() as version_cur:
+                selected = checklist_editions.version(version_cur, inspection_table_id)
     except ValueError as exc:
-        if conn:
-            conn.rollback()
-        if new_file_path:
-            remove_storage_file(new_file_path)
-        return jsonify({"success": False, "error": str(exc)}), 400
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        if new_file_path:
-            remove_storage_file(new_file_path)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        close_db_resources(cur, conn)
+        return jsonify(error=str(exc)),404
+    return app.view_functions['version_original'](selected['id'])
+
+
 
 
 # 新增 inspection-tables API
@@ -24655,7 +24674,8 @@ def get_inspection_tables():
         ensure_inspection_checklist_management_schema(cur)
         conn.commit()
 
-        where_clauses = ["is_active = TRUE"]
+        historical = scope_context in {'issues','records','highlights','issue_list','inspection_records'} or request.args.get('include_inactive') == '1'
+        where_clauses = ['TRUE' if historical else 'is_active = TRUE']
         params = []
         if user_id:
             user = get_user_by_id(cur, user_id)
@@ -24692,6 +24712,10 @@ def get_inspection_tables():
             params,
         )
         rows = cur.fetchall()
+        if checklist_editions.available(cur):
+            version_map = {t['id']:t['versions'] for t in checklist_editions.catalog(cur, [r['id'] for r in rows])}
+            for row in rows:
+                row['versions'] = version_map.get(row['id'], [])
         return jsonify(rows)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -24716,11 +24740,11 @@ def get_inspection_table_fields():
         inspection_table = get_inspection_table_record(cur, table_id)
         if not inspection_table:
             return jsonify({"success": False, "error": "检查表不存在。"}), 404
-        if not inspection_table["is_active"]:
+        if not inspection_table["is_active"] and not request.args.get('version_id'):
             return jsonify({"success": False, "error": "检查表未启用。"}), 400
 
         return jsonify(
-            [dict(field) for field in get_management_checklist_fields(cur, table_id, include_public=True)]
+            [dict(field) for field in get_management_checklist_fields(cur, table_id, include_public=True, version_id=request.args.get('version_id'))]
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -24811,34 +24835,40 @@ def get_inspection_table_standards():
         if not inspection_table:
             return jsonify({"success": False, "error": "检查表不存在。"}), 404
 
-        if not inspection_table["is_active"]:
+        if not inspection_table["is_active"] and request.args.get('include_inactive') != '1':
             return jsonify({"success": False, "error": "检查表未启用。"}), 400
 
         physical_table_name = get_physical_table_name_by_code(
             inspection_table["table_code"]
         )
-        fields = [dict(field) for field in get_management_checklist_fields(cur, inspection_table["id"], include_public=True)]
+        edition = checklist_editions.version(cur, table_id, request.args.get('version_id'))
+        fields = edition['fields']
         field_meta = [(field["field_key"], field["field_label"]) for field in fields]
         register_field_meta = build_register_display_field_meta(fields)
         if not physical_table_name or not checklist_physical_table_exists(cur, physical_table_name):
             return jsonify({"success": False, "error": "检查表未配置物理表映射。"}), 400
 
         cur.execute(
-            sql.SQL("SELECT * FROM {} ORDER BY standard_id ASC;").format(
+            sql.SQL("SELECT * FROM {} WHERE checklist_version_id=%s ORDER BY standard_id ASC;").format(
                 sql.Identifier(physical_table_name)
-            )
+            ), (edition['id'],)
         )
         rows = cur.fetchall()
 
         filters = {
             key: str(value).strip().lower()
             for key, value in request.args.items()
-            if key not in {"table_id", "keyword"} and str(value).strip()
+            if key not in {"table_id", "keyword", "version_id", "include_inactive", "user_id"} and str(value).strip()
         }
 
         result = []
+        metadata = checklist_editions.standard_metadata(cur, [r['standard_id'] for r in rows])
         for row in rows:
             item = serialize_standard_row(field_meta, row, register_field_meta)
+            status = metadata.get(int(row['standard_id']), {})
+            item.update({k:status.get(k) for k in ('is_active','standard_enabled','checklist_version_id','version_number','version_name')})
+            if not item['is_active'] and request.args.get('include_inactive') != '1':
+                continue
             haystack = "\n".join(
                 [str(v).strip() for v in item.values() if v is not None]
             ).lower()
@@ -25857,6 +25887,7 @@ def inspection_register():
 
         today = beijing_today()
         if has_issue == "no":
+            checklist_editions.require_active(cur, inspection_table_id)
             inspection_table = get_inspection_table_record(cur, inspection_table_id)
             if not inspection_table or not inspection_table["is_active"]:
                 raise ValueError("检查表不存在或未启用。")
@@ -26495,8 +26526,7 @@ def append_issue_list_filter_clauses(where_clauses, params, filters, hide_inspec
         where_clauses.append("COALESCE(issue_inspector.real_name, '') = ANY(%s)")
         params.append(filters["inspectors"])
     if filters["inspection_tables"]:
-        where_clauses.append("t.table_name = ANY(%s)")
-        params.append(filters["inspection_tables"])
+        checklist_editions.append_filter(where_clauses, params, filters['inspection_tables'])
     if filters["standard_id"]:
         where_clauses.append("COALESCE(i.standard_id::text, '') = %s")
         params.append(filters["standard_id"])
@@ -27245,6 +27275,7 @@ def generate_safety_quality_report_job(task_id,user_id,report_month,snapshot_sco
 
 def fetch_service_report_catalog(cur,user):
     from service_report_repository import fetch_catalog
+    checklist_editions.report_guard(cur, INSPECTION_REPORT_TYPE_CONFIGS[REPORT_SNAPSHOT_TYPE_ON_SITE_SERVICE]['target_tables'])
     return fetch_catalog(cur,user,removed=DISPLAY_REMOVED_STATION_PHRASE,
         table_scope=append_inspection_table_scope_filter,permissions=REPORT_SHARED_SCOPE_PERMISSIONS,
         physical_name=get_physical_table_name_by_code,exists=checklist_physical_table_exists,metadata=get_checklist_field_meta)
@@ -28200,6 +28231,9 @@ def run_owned_inspection_report_generation_job(task_id):
     memory_token = None
     try:
         report_type = job.get("report_type")
+        with closing(get_db_connection()) as guard_conn:
+            with guard_conn.cursor() as guard_cur:
+                checklist_editions.report_guard(guard_cur, INSPECTION_REPORT_TYPE_CONFIGS[report_type]['target_tables'])
         memory_token = begin_report_ai_memory(get_db_connection, task_id, report_type)
         if report_type == REPORT_SNAPSHOT_TYPE_QUALITY_MEASUREMENT:
             generate_quality_measurement_report_job(
@@ -28484,9 +28518,17 @@ def get_inspection_report_types():
         cur = conn.cursor()
         user = get_authorized_inspection_report_user(cur, allow_department=True)
         permitted = allowed_report_types(user, get_effective_permissions(cur, user), INSPECTION_REPORT_TYPE_CONFIGS)
+        report_types = []
+        for key in permitted:
+            item = dict(INSPECTION_REPORT_TYPE_CONFIGS[key])
+            try:
+                checklist_editions.report_guard(cur, item['target_tables'])
+            except ValueError as exc:
+                item['version_warning'] = str(exc)
+            report_types.append(item)
         return jsonify({
             "success": True,
-            "report_types": [INSPECTION_REPORT_TYPE_CONFIGS[key] for key in permitted],
+            "report_types": report_types,
             **get_inspection_report_capabilities(cur, user),
         })
     except LookupError as exc:
@@ -29545,6 +29587,7 @@ def create_inspection_report_generation_job():
         user = get_authorized_inspection_report_user(cur)
         if not has_permission(cur, user, "generate_inspection_reports"):
             raise PermissionError("当前账号只有AI报告查看权限，不能生成或重新生成报告。")
+        checklist_editions.report_guard(cur, config['target_tables'])
         if data.get("use_saved_configuration") is True:
             saved_dates = get_report_workspace(cur, report_type)["generation_options"]
             if saved_dates.get("date_from") and saved_dates.get("date_to"):
@@ -30712,6 +30755,14 @@ def update_issue(issue_id):
                 "external",
                 standard_id=standard_id or issue.get("standard_id"),
             )
+        if (target_standard['inspection_table_id'], target_standard['standard_id']) == (current_standard['inspection_table_id'], current_standard['standard_id']):
+            target_standard = current_standard
+        elif checklist_editions.available(cur):
+            cur.execute('SELECT checklist_version_id FROM issues WHERE id=%s', (issue_id,))
+            original_version = cur.fetchone()['checklist_version_id']
+            target_meta = checklist_editions.standard_metadata(cur, [target_standard['standard_id']]).get(target_standard['standard_id'])
+            if not target_meta or target_meta['checklist_version_id'] != original_version:
+                raise ValueError('历史问题不能改挂到其他检查表版本；请保留原规范，必要时重新登记。')
         if not is_inspection_table_allowed_for_user(
             cur,
             user,
@@ -31811,7 +31862,7 @@ def get_assessment_station_scores():
         if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
 
-        if inspection_table_id and inspection_table_id not in {r['id'] for r in fetch_scorable_checklist_rows(cur)}:
+        if inspection_table_id and inspection_table_id not in {r['id'] for r in fetch_scorable_checklist_rows(cur, month_start, next_month)}:
             return jsonify(success=False, error='该检查表未启用或未配置可评分字段。'), 400
         payload = build_station_score_payload(cur, station_id, month, month_start, next_month, user,
                                              inspection_table_id=inspection_table_id)
@@ -31838,7 +31889,12 @@ def get_assessment_station_score_scorable_checklists():
         if not can_view_station_scores(cur, user):
             return jsonify({"success": False, "error": "当前账号无权查看站点评分。"}), 403
         checklists = []
-        for checklist in fetch_scorable_checklist_rows(cur):
+        _, month_start, next_month = parse_station_score_month(request.args.get('month'))
+        seen = set()
+        for checklist in fetch_scorable_checklist_rows(cur, month_start, next_month):
+            if checklist['id'] in seen:
+                continue
+            seen.add(checklist['id'])
             checklist["checklist_mode"] = normalize_checklist_mode(checklist.get("checklist_mode"))
             checklist["checklist_mode_label"] = "视频检查" if checklist["checklist_mode"] == "online" else "现场检查"
             checklists.append(checklist)
@@ -31905,7 +31961,7 @@ def create_assessment_station_score_export_task():
             filter_summary = build_station_score_export_filter_summary(mode, month, station, table)
             download_filename = f"站点评分_{station.get('station_name') or '站点'}_{table.get('table_name') or '检查表'}_{month}.xlsx"
         else:
-            scorable_checklists = fetch_scorable_checklist_rows(cur)
+            scorable_checklists = fetch_scorable_checklist_rows(cur, month_start, next_month)
             scorable_ids = {int(item["id"]) for item in scorable_checklists}
             if inspection_table_ids:
                 invalid_ids = [table_id for table_id in inspection_table_ids if table_id not in scorable_ids]
@@ -32620,8 +32676,7 @@ def get_inspections():
             where_clauses.append("s.station_name = ANY(%s)")
             params.append(selected_stations)
         if selected_tables:
-            where_clauses.append("t.table_name = ANY(%s)")
-            params.append(selected_tables)
+            checklist_editions.append_filter(where_clauses, params, selected_tables, version_column='ins.checklist_version_id')
         if selected_inspectors:
             where_clauses.append(
                 """
@@ -32845,6 +32900,7 @@ def get_inspections():
         )
         rows = cur.fetchall()
         items = []
+        checklist_editions.attach_rows(cur, rows, 'inspections')
         for row in rows:
             item = dict(row)
             inspectors = item.get("inspectors") or []
@@ -33161,6 +33217,7 @@ def get_inspection_issues(inspection_id):
         )
         inspectors = [dict(row) for row in cur.fetchall()]
         inspection = dict(inspection)
+        checklist_editions.attach_rows(cur, [inspection], 'inspections')
         inspection["inspectors"] = inspectors
         inspection["inspector_names"] = "、".join(
             [
@@ -33939,6 +33996,12 @@ register_root_authenticator(app,connect=get_db_connection,fetch_user=fetch_auth_
 
 from web_push_http import register_web_push
 register_web_push(app,connect=get_db_connection,has_permission=has_permission)
+from checklist_version_http import register_checklist_versions
+register_checklist_versions(app, db=get_db_connection, current_user=get_current_request_user,
+    has_permission=has_permission, normalize_fields=normalize_checklist_field_rows,
+    ensure_columns=ensure_checklist_field_columns, physical_name=get_physical_table_name_by_code,
+    upsert_fields=upsert_checklist_fields, save_pdf=save_inspection_original_pdf,
+    storage_path=resolve_storage_abs_path)
 from web_push_business import recipient_resolver
 push_recipients = recipient_resolver(can_sign=can_sign_inspection_records,has_permission=has_permission,
     normalize_region=normalize_station_region_value,region_scope=get_effective_station_region_scope_values)

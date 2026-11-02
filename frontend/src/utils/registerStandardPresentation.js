@@ -1,5 +1,5 @@
 export const getRegisterStandardLabel = (standard) =>
-  `${standard?.standard_id || ''}｜${standard?.inspection_table_name || '未关联外部检查表'}`
+  `${standard?.standard_id || ''}｜${standard?.inspection_table_display_name || standard?.inspection_table_name || '未关联外部检查表'}`
 
 export const getRegisterStandardPreview = (standard) => {
   // An empty visible-field projection must never fall back to hidden full details.
