@@ -229,7 +229,7 @@ class ServiceDataTests(unittest.TestCase):
             # Original risk matrix text remains, rather than fabricated monthly risk scores.
             original=Presentation(TEMPLATE_FILE)
             self.assertEqual([s.text for s in original.slides[12].shapes if s.has_text_frame],
-                [s.text for s in prs.slides[12].shapes if s.has_text_frame])
+                [s.text for s in prs.slides[12].shapes if s.has_text_frame and s.name!='service-header-brand-name'])
 
     def test_empty_report_does_not_add_overflow_slides(self):
         with tempfile.TemporaryDirectory() as directory:

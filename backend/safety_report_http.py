@@ -26,7 +26,7 @@ def config_categories(issues, settings, catalog=None):
     return options, focus_options, focus
 
 
-def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage, fetch_topics=None, fetch_requirements=None):
+def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has_permission, save_workspace, log_usage, fetch_topics=None, fetch_requirements=None, fetch_phrases=None):
     blueprint = Blueprint('safety_report', __name__)
 
     def read_context(cur, source):
@@ -41,6 +41,9 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
             requirements = fetch_requirements(cur,user)
             all_issues = attach_requirements(all_issues,requirements)
             settings['requirements_signature'] = requirements_signature(requirements)
+        if fetch_phrases:
+            from safety_report_phrases import phrases_signature
+            settings['phrases_signature'] = phrases_signature(fetch_phrases(cur, user, settings))
         return user, start, end, all_issues, visits, meta, settings
 
     def selected_analysis(cur, chosen, mode, category, override):
@@ -61,6 +64,8 @@ def register_safety_report(app, *, connect, authorize, period, fetch_inputs, has
                 new = normalize_settings(source.get('settings'))
                 if new['requirements_signature'] != settings['requirements_signature']:
                     raise ValueError('规范要求已更新，请重新读取配置后再保存。')
+                if new['phrases_signature'] != settings['phrases_signature'] or new['analysis_phrases'] != settings['analysis_phrases']:
+                    raise ValueError('统计短语已更新，请重新读取配置；短语请在统计短语面板保存。')
                 available_stations = {row['station_id'] for row in all_issues} | {row['station_id'] for row in visits}
                 if new['station_ids'] != settings['station_ids'] and new['station_ids'] is not None and not set(new['station_ids']).issubset(available_stations):
                     raise ValueError('数据来源包含当前范围不可用的站点。')

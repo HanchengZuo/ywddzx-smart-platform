@@ -14,3 +14,8 @@ ordered by business units and paginated from real category/stage content, not ex
 The last five editable pages follow full-deck pages 36-40: two section dividers,
 two common-issue summary pages, and three recommendations in a rounded dash-dot frame.
 Only validated evidence-grounded AI text is substituted; no example findings are reused.
+
+Brand assets supplied by the user on 2026-11-02: petrochina-wordmark.png (cover)
+and petrochina-icon.png (all subsequent headers with editable Chinese text).
+The renderer replaces legacy header marks after adapting the full deck, preserving
+each image's intrinsic aspect ratio rather than stretching it with slide geometry.

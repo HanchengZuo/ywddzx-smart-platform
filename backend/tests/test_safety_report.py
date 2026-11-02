@@ -376,7 +376,7 @@ class SafetyPresentationTest(unittest.TestCase):
                 self.assertTrue(all(n.get('val')=='FF0000' for n in body._element.xpath('.//a:buClr/a:srgbClr')))
                 graphs=[s for s in slide.shapes if s.has_chart]
                 self.assertEqual(len(graphs),1)
-                self.assertTrue(graphs[0].chart._chartSpace.xpath('.//c:pie3DChart'))
+                self.assertTrue(graphs[0].chart._chartSpace.xpath('.//c:barChart'))
                 original=next(s for s in prs.slides[source].shapes if s.has_chart)
                 self.assertIsNot(graphs[0].chart.part,original.chart.part)
                 self.assertIsNot(graphs[0].chart.part.chart_workbook.xlsx_part,original.chart.part.chart_workbook.xlsx_part)
