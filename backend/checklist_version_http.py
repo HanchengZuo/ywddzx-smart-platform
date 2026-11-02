@@ -3,13 +3,13 @@ import copy
 import logging
 from pathlib import Path
 
-from flask import jsonify, request, send_file
+from flask import g, jsonify, request, send_file
 from psycopg2.extras import Json
 import checklist_versions as editions
 
 
 def register_checklist_versions(app, *, db, current_user, has_permission, normalize_fields,
-        ensure_columns, physical_name, upsert_fields, save_pdf, storage_path):
+        ensure_columns, physical_name, upsert_fields, save_pdf, storage_path, file_user):
     def authorize(cur, user, permission='manage_checklists'):
         if not has_permission(cur, user, permission):
             raise PermissionError('当前账号无权维护检查表版本。')
@@ -165,7 +165,9 @@ def register_checklist_versions(app, *, db, current_user, has_permission, normal
             elif document.get('file_path'):path=Path(storage_path(document['file_path']))
             else:return jsonify(error='此版本尚未上传原件。'),404
             if not path.is_file():return jsonify(error='此版本尚未上传原件。'),404
-            return send_file(path,mimetype='application/pdf',download_name=document.get('original_filename') or '检查表.pdf')
+            response = send_file(path,mimetype='application/pdf',download_name=document.get('original_filename') or '检查表.pdf')
+            response.headers['Cache-Control'] = 'private, no-store'
+            return response
         except PermissionError as exc:
             if conn:conn.rollback()
             return jsonify(error=str(exc)),403
@@ -181,3 +183,16 @@ def register_checklist_versions(app, *, db, current_user, has_permission, normal
                 path=Path(storage_path(uploaded))
                 if path.is_file():path.unlink()
             if conn:conn.close()
+
+    @app.route('/storage/checklist-versions/<int:version_id>/original', methods=['GET'])
+    def version_original_file(version_id):
+        # The existing HttpOnly read cookie is deliberately scoped to /storage.
+        # Iframes cannot add a Bearer header; never broaden the cookie's scope.
+        try:
+            user = file_user()
+            if user.get('_password_change_enforced'):
+                raise PermissionError('请先完成密码修改。')
+            g.current_user = user
+            return version_original(version_id)
+        except PermissionError as exc:
+            return jsonify(error=str(exc)),401

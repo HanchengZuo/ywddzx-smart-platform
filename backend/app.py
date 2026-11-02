@@ -2683,15 +2683,6 @@ def require_signed_api_token():
         return None
 
     token = extract_bearer_token()
-    if not token and request.endpoint == 'version_original' and request.method in {'GET', 'HEAD'}:
-        try:
-            user = verify_file_access_token(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or '')
-            if user.get('_password_change_enforced'):
-                raise PermissionError('请先完成密码修改。')
-            g.current_user = user
-            return None
-        except PermissionError as exc:
-            return jsonify(error=str(exc)), 401
     download_grant = (
         request.cookies.get(issue_export_download.COOKIE_NAME)
         if request.endpoint == "download_issue_export_task" and request.method in {"GET", "HEAD"}
@@ -24516,7 +24507,7 @@ def get_inspection_table_originals():
                         version_number=edition['version_number'], version_name=edition['version_name'],
                         table_name=table['table_name'], description=edition['description'], is_active=edition['is_active'],
                         has_pdf=bool(doc.get('file_path') or doc.get('asset')),
-                        file_url=f"/api/checklist-versions/{edition['id']}/original?revision={edition['revision']}", updated_at=edition['updated_at']))
+                        file_url=f"/storage/checklist-versions/{edition['id']}/original?revision={edition['revision']}", updated_at=edition['updated_at']))
             return jsonify(success=True, can_manage=can_manage_checklist_originals(cur,user), items=items)
 
         cur.execute(
@@ -34001,7 +33992,8 @@ register_checklist_versions(app, db=get_db_connection, current_user=get_current_
     has_permission=has_permission, normalize_fields=normalize_checklist_field_rows,
     ensure_columns=ensure_checklist_field_columns, physical_name=get_physical_table_name_by_code,
     upsert_fields=upsert_checklist_fields, save_pdf=save_inspection_original_pdf,
-    storage_path=resolve_storage_abs_path)
+    storage_path=resolve_storage_abs_path,
+    file_user=lambda: verify_file_access_token(request.cookies.get(FILE_ACCESS_COOKIE_NAME) or ''))
 from web_push_business import recipient_resolver
 push_recipients = recipient_resolver(can_sign=can_sign_inspection_records,has_permission=has_permission,
     normalize_region=normalize_station_region_value,region_scope=get_effective_station_region_scope_values)
