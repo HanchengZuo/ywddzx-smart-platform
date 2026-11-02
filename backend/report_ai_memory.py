@@ -22,6 +22,7 @@ CLASSIFICATION_TABLES = {
     "non_oil_key": "inspection_report_non_oil_key_issue_classifications",
 }
 STAGE_LABELS = {
+    'safety_phrases': '安全质量检查内容与评分项统计短语',
     'equipment_station': '设备设施站点问题分类与代表照片',
     'service_phrases': '现场服务规范环节短语',
     'service_behaviors': '现场服务问题行为分类',
@@ -141,10 +142,10 @@ class ReportMemory:
                         (Json(self.snapshot()), self.task_id))
 
     @contextmanager
-    def locked(self, key):
+    def locked(self, key, *, timeout=600):
         lock_id = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
         with self.connection() as cur:
-            deadline = time.monotonic() + 600
+            deadline = time.monotonic() + timeout
             while True:
                 cur.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (lock_id,))
                 if cur.fetchone()["acquired"]:

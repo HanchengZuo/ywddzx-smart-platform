@@ -26,6 +26,8 @@ const categoriesChanged = (current = [], saved = []) => {
 }
 const safetySettings = (value = {}) => ({ ...value,
   typical_video_category: value.typical_video_category || '',
+  analysis_phrases: value.analysis_phrases || {},
+  phrases_signature: value.phrases_signature || '',
   requirements_signature: value.requirements_signature || '' })
 
 // Compare effective inputs, not save timestamps, actor names, AI provenance or revision counters.

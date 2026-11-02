@@ -1,5 +1,6 @@
 """Strict evidence-bound safety analysis, shared manual overrides and persistent AI memory."""
 import json
+import re
 import time
 from zoneinfo import ZoneInfo
 from psycopg2.extras import Json
@@ -175,9 +176,14 @@ def normalize_settings(raw, issues=None, station_ids=None):
     requirement_signature = raw.get('requirements_signature') or ''
     if not isinstance(requirement_signature,str) or (requirement_signature and (len(requirement_signature)!=64 or any(c not in '0123456789abcdef' for c in requirement_signature))):
         raise ValueError('规范要求版本无效，请重新读取配置。')
+    from safety_report_phrases import normalize_phrases
+    phrase_signature = raw.get('phrases_signature') or ''
+    if not isinstance(phrase_signature, str) or (phrase_signature and not re.fullmatch('[0-9a-f]{64}', phrase_signature)):
+        raise ValueError('统计短语版本无效，请重新读取配置。')
     return {'station_ids': sorted(set(selected)) if selected is not None else None, 'typical_issue_ids': typical,
         'focus_category': focus, 'classifications': overrides, 'typical_video_category': video_category.strip(),
-        'requirements_signature': requirement_signature}
+        'requirements_signature': requirement_signature,
+        'analysis_phrases': normalize_phrases(raw.get('analysis_phrases') or {}), 'phrases_signature': phrase_signature}
 
 
 def save_settings(cur, raw, revision, user):
@@ -248,12 +254,14 @@ def photo_examples(issues, analysis, limit, distinct_groups=False):
     return selected
 
 
-def build_report(start, end, raw_issues, visits, pending, settings, log_usage=None, requirements=None):
+def build_report(start, end, raw_issues, visits, pending, settings, log_usage=None, requirements=None, phrases=None):
     from safety_report_data import serialize
     issues = [serialize(row) for row in raw_issues]
     if requirements is not None:
         from safety_requirements import attach_requirements
         issues = attach_requirements(issues, requirements)
+    from safety_report_phrases import attach_phrases
+    issues = attach_phrases(issues, phrases or [], settings)
     station_ids = settings['station_ids']
     if station_ids is not None:
         issues = [row for row in issues if row['station_id'] in station_ids]
@@ -343,6 +351,7 @@ def build_report(start, end, raw_issues, visits, pending, settings, log_usage=No
         'data_scope_note': '采用质量安全环保现场、视频检查表的审核通过问题，受检站点包含已确认完成的零问题巡检记录。',
         'target_tables': list(TABLES.values()), 'safety_template_version': 2,
         'safety_settings': settings, 'safety_issues': issues, 'safety_analysis': analyses, 'focus_category': focus,
+        'safety_phrases': phrases or [],
         'sections': sections, 'typical_findings': typical, 'pending_rectification': pending, 'analysis_causes': causes,
         'work_suggestions': suggestions, 'rectification_suggestions': rectification_suggestions,
         'summary': {'station_count': station_count, 'total_issue_count': len(issues), 'total_issues': len(issues),

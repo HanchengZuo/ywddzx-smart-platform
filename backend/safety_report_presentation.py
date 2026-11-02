@@ -22,7 +22,7 @@ from safety_video_themes import selected_video_group
 from safety_problem_analysis import problem_analysis
 
 TEMPLATE_FILE = Path(__file__).parent / 'assets/safety_report_template/template.pptx'
-RENDERER_VERSION = 'safety-native-1261-1'
+RENDERER_VERSION = 'safety-native-1262-1'
 # Keep template indexes while composing, then move chapter three behind all
 # chapter-two evidence. Only the slide ID order changes, not relationships.
 SLIDE_ORDER = (*range(9), *range(12,24), 9, 10, 11, *range(24,31))
@@ -181,7 +181,7 @@ def template_distribution_page(slide, section):
     compact_pie_layout(slide,graph,rows,f'{mode}巡查问题汇总分析')
 
 
-def key_problem_page(slide, report, mode, pie_source):
+def key_problem_page(slide, report, mode):
     value = problem_analysis(report, mode)
     body = next(s for s in slide.shapes if s.has_text_frame and '问题分布' in s.text)
     title_props = frame_props(body)
@@ -213,15 +213,11 @@ def key_problem_page(slide, report, mode, pie_source):
     for reason in reasons:
         p=paragraph(body,[(reason,'000000')],size,bold=True,props=item_props)
         p.line_spacing=Pt(size*1.4);p.space_after=Pt(5)
-    blocks=value['blocks'] or [{'distribution':[],'chart_title':('现场' if mode=='onsite' else '视频')+'重点问题分布（暂无数据）'}]
+    blocks=value['blocks'] or [{'chart_rows':[],'chart_title':('现场' if mode=='onsite' else '视频')+'重点问题分布（暂无数据）'}]
+    from safety_analysis_charts import ranking_chart
     for index, block in enumerate(blocks):
         top,bottom = ((1.35,4.12) if index==0 else (4.3,7.12)) if len(blocks)==2 else (1.36,7.12)
-        rows = block['distribution']
-        graph=clone_pie_chart(slide,pie_source,6.85,top,6.25,bottom-top)
-        graph.name=f'safety-key-problem-chart-{index+1}'
-        update_chart(graph,rows,(('问题数量','count'),),pie=True,title=block['chart_title'])
-        compact_pie_layout(slide,graph,rows,block['chart_title'],top=top,bottom=bottom,
-            title_size=14 if len(blocks)==2 else 16,legend_size=8 if len(blocks)==2 else None)
+        ranking_chart(slide, block, index+1, top, bottom, textbox)
 
 
 def video_typical_narrative(report):
@@ -451,8 +447,8 @@ def build_safety_presentation(report, output_path, storage_root=None):
     overview(source[2],sections['onsite']);overview(source[3],sections['video'])
     typical_page(source[5],report,root)
     distribution_page(source[7],sections['onsite']);distribution_page(source[8],sections['video'])
-    key_problem_page(source[10],report,'onsite',next(s for s in source[7].shapes if s.has_chart))
-    key_problem_page(source[11],report,'video',next(s for s in source[8].shapes if s.has_chart))
+    key_problem_page(source[10],report,'onsite')
+    key_problem_page(source[11],report,'video')
     issues=report['safety_issues'];analyses=report['safety_analysis'];focus=report['focus_category']
     key='onsite:topic:'+focus;value=analyses.get(key,{})
     selected=category_rows(issues,'onsite','topic:'+focus)

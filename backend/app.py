@@ -27120,6 +27120,11 @@ def fetch_safety_requirements(cur, user):
     return load_requirements(cur,fetch_safety_standard_catalog(cur,user))
 
 
+def fetch_safety_phrases(cur, user, settings):
+    from safety_report_phrases import load_phrases
+    return load_phrases(cur, fetch_safety_standard_catalog(cur, user), settings)
+
+
 def fetch_safety_report_topics(cur, user):
     from safety_report_data import TABLES
     cur.execute("SELECT id,table_code FROM inspection_tables WHERE REPLACE(table_name,%s,'')=%s AND is_active=TRUE ORDER BY id LIMIT 1",
@@ -27218,8 +27223,11 @@ def generate_safety_quality_report_job(task_id,user_id,report_month,snapshot_sco
     update_inspection_report_job(task_id,"running",25,"正在准备规范要求，未变化的规范直接复用历史内容")
     requirements,_=ensure_requirements(get_db_connection,catalog,user,log_usage=usage)
     settings['requirements_signature']=requirements_signature(requirements)
+    from safety_report_phrases import ensure_phrases, phrases_signature
+    phrases = ensure_phrases(get_db_connection, catalog, settings, log_usage=usage)
+    settings['phrases_signature'] = phrases_signature(phrases)
     update_inspection_report_job(task_id,"running",38,f"已读取 {len(rows)} 项审核通过问题，正在分析现场与视频")
-    report=build_report(start,end,rows,visits,pending,settings,usage,requirements=requirements)
+    report=build_report(start,end,rows,visits,pending,settings,usage,requirements=requirements,phrases=phrases)
     report['summary']['generated_at']=datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
     update_inspection_report_job(task_id,"running",90,"安全报告分析完成，正在保存模板数据")
     conn=get_db_connection();cur=conn.cursor()
@@ -28320,6 +28328,8 @@ def queue_or_get_inspection_report_job(
         from safety_requirements import requirements_signature
         normalized_generation_options['safety_settings'] = normalize_settings(load_settings(cur)['settings'])
         normalized_generation_options['safety_settings']['requirements_signature']=requirements_signature(fetch_safety_requirements(cur,user))
+        from safety_report_phrases import phrases_signature
+        normalized_generation_options['safety_settings']['phrases_signature']=phrases_signature(fetch_safety_phrases(cur,user,normalized_generation_options['safety_settings']))
     cur.execute(
         """
         INSERT INTO inspection_report_jobs (
@@ -33901,12 +33911,17 @@ register_service_report(app,connect=get_db_connection,authorize=get_authorized_i
 register_safety_report(app, connect=get_db_connection, authorize=get_authorized_inspection_report_user,
     period=resolve_inspection_report_period, fetch_inputs=fetch_safety_report_inputs,
     has_permission=has_permission, save_workspace=save_report_workspace, log_usage=record_ai_usage_log,
-    fetch_topics=fetch_safety_report_topics, fetch_requirements=fetch_safety_requirements)
+    fetch_topics=fetch_safety_report_topics, fetch_requirements=fetch_safety_requirements, fetch_phrases=fetch_safety_phrases)
 
 from safety_requirements_http import register_safety_requirements
 register_safety_requirements(app,connect=get_db_connection,authorize=get_authorized_inspection_report_user,
     has_permission=has_permission,fetch_catalog=fetch_safety_standard_catalog,
     save_workspace=save_report_workspace,log_usage=record_ai_usage_log)
+
+from safety_phrases_http import register_safety_phrases
+register_safety_phrases(app, connect=get_db_connection, authorize=get_authorized_inspection_report_user,
+    has_permission=has_permission, fetch_catalog=fetch_safety_standard_catalog,
+    save_workspace=save_report_workspace, log_usage=record_ai_usage_log)
 
 def record_root_authenticator_event(cur, user, action, result):
     record_security_event(cur,user,action,result,target=user,request_ip=get_request_client_ip(),

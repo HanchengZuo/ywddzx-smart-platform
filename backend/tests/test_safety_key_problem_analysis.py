@@ -29,6 +29,9 @@ def report_fixture():
         for i in range(start, start + count):
             rows.append(raw_issue(i, "video", standard_detail_text=f"检查内容：{name}"))
     result = fixture_report(rows=rows)
+    for row in result['safety_issues']:
+        if row['mode'] == 'video':
+            row['analysis_phrase'] = ('警示防护' if row['issue_id'] < 24 else '劳动防护') if row['topic'] == '设备维修作业' else ('管线连接' if row['issue_id'] < 33 else '应急准备')
     result["safety_analysis"]["video:设备维修作业"].update(
         groups=[
             {"name": "消防隔离不到位", "issue_ids": [20, 21, 22, 23]},
@@ -63,7 +66,7 @@ class KeyProblemAnalysisTest(unittest.TestCase):
         self.assertIn("设备设施类5项问题", value["heading"])
         self.assertEqual(value["causes"], ["设施维护原因"])
 
-    def test_video_top_two_fixed_categories_use_manual_effective_subgroups_and_semicolon(
+    def test_video_top_two_fixed_categories_use_scoring_phrases_not_ai_subgroups_and_semicolon(
         self,
     ):
         report = report_fixture()
@@ -82,9 +85,8 @@ class KeyProblemAnalysisTest(unittest.TestCase):
         report["safety_analysis"]["video:卸油作业"]["groups"][0][
             "name"
         ] = "人工调整后的表现"
-        self.assertIn(
-            "人工调整后的表现", problem_analysis(report, "video")["narrative"]
-        )
+        self.assertNotIn('人工调整后的表现', problem_analysis(report, 'video')['narrative'])
+        self.assertIn('管线连接', problem_analysis(report, 'video')['narrative'])
 
     def test_ties_use_fixed_order_and_risk_category_merges_its_two_topics(self):
         report = report_fixture()
@@ -107,17 +109,15 @@ class KeyProblemAnalysisTest(unittest.TestCase):
             problem_analysis(report, "onsite")["blocks"][0]["name"], "设备设施"
         )
 
-    def test_incomplete_subgroups_never_use_wrong_whole_mode_distribution(self):
+    def test_scoring_phrases_do_not_depend_on_subgroup_completeness(self):
         report = report_fixture()
         report["safety_analysis"]["video:卸油作业"]["groups"] = []
         value = problem_analysis(report, "video")
-        self.assertEqual(value["blocks"][1]["distribution"], [])
-        self.assertIn("暂无已确认", value["narrative"])
+        self.assertEqual([r['count'] for r in value['blocks'][1]['distribution']], [3, 1])
         report["safety_analysis"]["video:卸油作业"]["groups"] = [
             {"name": "重复", "issue_ids": [30, 30]}
         ]
-        with self.assertRaises(ValueError):
-            problem_analysis(report, "video")
+        self.assertEqual([r['count'] for r in problem_analysis(report, 'video')['blocks'][1]['distribution']], [3, 1])
 
     def test_stacked_charts_have_independent_editable_workbooks_and_correct_totals(
         self,
@@ -135,7 +135,7 @@ class KeyProblemAnalysisTest(unittest.TestCase):
                 for graph, counts in zip(charts, values):
                     with editable_plot(graph.chart):
                         self.assertEqual(list(graph.chart.series[0].values), counts)
-                    self.assertTrue(graph.chart._chartSpace.xpath(".//c:pie3DChart"))
+                    self.assertTrue(graph.chart._chartSpace.xpath(".//c:barChart"))
                     self.assertIsNotNone(graph.chart.part.chart_workbook.xlsx_part)
                 if len(charts) == 2:
                     self.assertLess(charts[0].top + charts[0].height, charts[1].top)
@@ -173,10 +173,10 @@ class KeyProblemAnalysisTest(unittest.TestCase):
                 output = Path(root) / "safety.pptx"
                 build_safety_presentation(report, output, root)
                 slide = Presentation(output).slides[SLIDE_ORDER.index(11)]
-                self.assertEqual(sum(s.has_chart for s in slide.shapes), 1)
+                self.assertEqual(sum(s.has_chart for s in slide.shapes), count)
             self.assertEqual(len(problem_analysis(report, "video")["blocks"]), count)
 
-    def test_dense_stacked_legends_retain_every_percentage_without_overlapping_callouts(
+    def test_dense_stacked_rankings_show_top_six_and_keep_full_denominator(
         self,
     ):
         report = report_fixture()
@@ -184,7 +184,7 @@ class KeyProblemAnalysisTest(unittest.TestCase):
         report["safety_issues"] = []
         for offset, category in [(100, "设备维修作业"), (200, "卸油作业")]:
             rows = [
-                dict(base, issue_id=offset + i, topic=category, category_name=category)
+                dict(base, issue_id=offset + i, topic=category, category_name=category, analysis_phrase=f'评分短语{i+1}')
                 for i in range(10)
             ]
             report["safety_issues"].extend(rows)
@@ -197,11 +197,24 @@ class KeyProblemAnalysisTest(unittest.TestCase):
             build_safety_presentation(report, path, root)
             prs = Presentation(path)
             slide = prs.slides[SLIDE_ORDER.index(11)]
-            labels = [s for s in slide.shapes if s.name == "safety-pie-label"]
-            self.assertEqual(len(labels), 20)
-            self.assertTrue(all("10.00%" in s.text for s in labels))
+            charts = [s.chart for s in slide.shapes if s.has_chart]
+            self.assertEqual(len(charts), 2)
+            for chart in charts:
+                self.assertEqual(len(chart.series[0].values), 6)
+                self.assertTrue(all('10.0%' in str(c.label) for c in chart.plots[0].categories))
             self.assertFalse(
                 any(s.name.startswith("safety-pie-percentage-") for s in slide.shapes)
             )
             for s in slide.shapes:
                 self.assertLessEqual(s.top + s.height, prs.slide_height)
+
+    def test_onsite_narrative_top_two_chart_top_six_preserves_total_and_alias(self):
+        report = report_fixture()
+        base = report['safety_issues'][0]
+        report['safety_issues'] = [dict(base, issue_id=i, category_name=f'短语{i}', analysis_phrase=f'短语{i}') for i in range(10)]
+        value = problem_analysis(report, 'onsite')
+        self.assertEqual(len(value['blocks'][0]['chart_rows']), 6)
+        self.assertEqual(value['blocks'][0]['omitted_count'], 4)
+        self.assertIn('短语0（1项）', value['narrative'])
+        self.assertIn('短语1（1项）', value['narrative'])
+        self.assertNotIn('短语2', value['narrative'])

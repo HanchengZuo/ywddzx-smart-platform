@@ -97,7 +97,7 @@ class SafetyEvidenceLayoutTest(unittest.TestCase):
         cls.temp.cleanup()
 
     def test_all_31_slides_and_static_text_geometry_are_preserved(self):
-        self.assertEqual(RENDERER_VERSION,'safety-native-1261-1')
+        self.assertEqual(RENDERER_VERSION,'safety-native-1262-1')
         self.assertEqual(len(self.prs.slides),31)
         for index in (1,4,6,9,24,26,30):
             before=self.template.slides[index];after=rendered(self.prs,index)

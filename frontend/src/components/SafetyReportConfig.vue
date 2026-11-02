@@ -25,7 +25,10 @@
         <span v-for="n in 5" :key="n"><i></i><b></b></span>
       </div>
       <div class="safety-loading-tools" aria-hidden="true">
-        <div v-for="name in ['典型选题', '规范要求', '月度重点', '固定章节证据']" :key="name">
+        <div
+          v-for="name in ['典型选题', '规范要求', '月度重点', '固定章节证据', '统计短语']"
+          :key="name"
+        >
           <strong>{{ name }}</strong
           ><i></i><i></i>
         </div>
@@ -79,6 +82,11 @@
           <p>分别维护现场五类与视频四类固定章节，查看问题子类、规范要求和代表照片顺序。</p>
           <button :disabled="busy" @click="open('evidence')">查看与调整固定章节</button>
         </article>
+        <SafetyPhrasesPanel
+          :can-generate="canGenerate"
+          :busy="busy || saving || analyzing || !!active"
+          @saved="requirementsSaved"
+        />
       </div>
       <div class="safety-saved" role="status">
         <span class="safety-saved-mark" aria-hidden="true"></span>
@@ -532,6 +540,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
 import SafetyRequirementsPanel from './SafetyRequirementsPanel.vue'
+import SafetyPhrasesPanel from './SafetyPhrasesPanel.vue'
 import SafetyEvidencePanel from './SafetyEvidencePanel.vue'
 import {
   manualClassificationChanges,
@@ -1101,6 +1110,9 @@ onBeforeUnmount(() => {
 .safety-loading-tools strong {
   font-size: 14px;
   color: #36596e;
+}
+.safety-loading-tools > div:last-child {
+  grid-column: 1 / -1;
 }
 .safety-loading-tools i:last-child {
   width: 55%;
