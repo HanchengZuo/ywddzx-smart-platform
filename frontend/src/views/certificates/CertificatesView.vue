@@ -24,7 +24,14 @@
           </div>
           <fieldset class="form-grid" :disabled="saving">
             <label class="wide"
-              >所属站点<InspectionFilterSelect
+              >所属站点<input
+                v-if="options.scope === 'station'"
+                :value="options.stations[0]?.station_name || '未绑定站点'"
+                disabled
+                class="fixed-station"
+                aria-label="所属站点（本站固定）" />
+              <InspectionFilterSelect
+                v-else
                 v-model="stationLabel"
                 :options="stationLabels"
                 label="站点（支持名称或拼音）"
@@ -189,8 +196,24 @@
             }}</span>
             <h3>{{ mode === 'reminders' ? '需要关注的证照' : '站点证照台账' }}</h3>
           </div>
-          <span>筛选结果 {{ total }} 条</span>
+          <div class="ledger-tools">
+            <span>筛选结果 {{ total }} 条</span>
+            <button
+              v-if="mode === 'ledger'"
+              class="primary"
+              :disabled="!canRegister"
+              :title="
+                canRegister ? '前往证照登记更新信息' : '当前账号没有证照登记权限，请联系管理员'
+              "
+              @click="router.push('/certificates/register')"
+            >
+              更新证照
+            </button>
+          </div>
         </div>
+        <p v-if="mode === 'ledger'" class="note">
+          需要更新证照或更正录入信息？点击“更新证照”，在证照登记中选择相同站点和证照类型，重新登记即可替换当前信息；旧照片、有效期和登记记录会保留在历史中。
+        </p>
         <p v-if="mode === 'reminders'" class="note">
           已读只消除未读标记，不会移除到期事项；更新证照或进入新的提醒阶段后，会产生新的未读提醒。
         </p>
@@ -356,10 +379,12 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import axios from 'axios'
+import { useRouter } from 'vue-router'
 import InspectionFilterSelect from '@/components/InspectionFilterSelect.vue'
 import InspectionPhotoUpload from '@/components/InspectionPhotoUpload.vue'
 import InspectionPhotoPreview from '@/components/InspectionPhotoPreview.vue'
 const props = defineProps({ mode: { type: String, default: 'ledger' } })
+const router = useRouter()
 const options = ref({
   stations: [],
   certificate_types: [],
@@ -403,7 +428,10 @@ const form = reactive({
   remark: '',
 })
 const stationLabels = computed(() =>
-  options.value.stations.map((s) => `${s.region || '未填写片区'} / ${s.station_name} #${s.id}`),
+  options.value.stations.map((s) => `${s.region || '未填写片区'} / ${s.station_name}`),
+)
+const canRegister = computed(() =>
+  ['all', 'region', 'station'].includes(options.value.register_scope),
 )
 const findStation = (label) =>
   options.value.stations.find((s, i) => stationLabels.value[i] === label)
@@ -728,6 +756,23 @@ button.primary:hover:not(:disabled) {
 button:focus-visible {
   outline: 3px solid #68b4d0;
   outline-offset: 2px;
+}
+.fixed-station:disabled {
+  background: #edf2f6;
+  color: #486174;
+  border-color: #d4dfe7;
+  opacity: 1;
+  cursor: not-allowed;
+  -webkit-text-fill-color: #486174;
+}
+.ledger-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: #71879a;
+  font-size: 13px;
 }
 .hero {
   padding: 30px;
